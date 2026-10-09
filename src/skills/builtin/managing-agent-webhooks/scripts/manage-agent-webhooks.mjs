@@ -268,9 +268,6 @@ function isSensitiveFieldName(key, path, trustedPaths) {
   if (trustedPaths.has([...path, key].join("."))) return false;
   const tokens = fieldNameTokens(key);
   const compact = key.replace(/[^A-Za-z0-9]+/g, "").toLowerCase();
-  if (tokens.length === 2 && tokens[0] === "token" && tokens[1] === "count") {
-    return false;
-  }
   return (
     /^(?:apikey|apitoken|authorizationheader|authheader|authenticationheader|accesstoken|authtoken|bearertoken|refreshtoken|securitykey|privatekey|signingkey|clientsecret|databasepassword|passwordhash|idtoken|sessiontoken)$/.test(
       compact,
@@ -305,6 +302,7 @@ function redactString(value, sensitiveValues) {
 
 function redactSensitiveValue(value, sensitiveValues, options = {}, path = []) {
   const trustedPaths = options.trustedPaths ?? new Set();
+  const trustedObjectPaths = options.trustedObjectPaths ?? new Set();
   if (typeof value === "string") {
     return redactString(value, sensitiveValues);
   }
@@ -316,7 +314,9 @@ function redactSensitiveValue(value, sensitiveValues, options = {}, path = []) {
   if (value && typeof value === "object") {
     return Object.fromEntries(
       Object.entries(value).map(([key, entry]) => {
-        const redactedKey = redactString(key, sensitiveValues);
+        const redactedKey = trustedObjectPaths.has(path.join("."))
+          ? key
+          : redactString(key, sensitiveValues);
         return [
           redactedKey,
           isSensitiveFieldName(key, path, trustedPaths)
@@ -689,7 +689,7 @@ function managementHeaders(apiKey) {
 
 function serializeSanitizedJson(value, sensitiveValues, options) {
   const sanitized = redactSensitiveValue(value, sensitiveValues, options);
-  return redactString(JSON.stringify(sanitized, null, 2), sensitiveValues);
+  return JSON.stringify(sanitized, null, 2);
 }
 
 function printJson(value, sensitiveValues = [], options = {}) {
@@ -722,15 +722,20 @@ const CREATE_OUTPUT_TRUSTED_PATHS = new Set([
   "credential_is_recoverable_from_server",
   "webhook.requires_authorization_header",
 ]);
+const CREATE_OUTPUT_TRUSTED_OBJECT_PATHS = new Set(["", "webhook"]);
 const LIST_OUTPUT_TRUSTED_PATHS = new Set([
   "webhooks.*.requires_authorization_header",
 ]);
+const LIST_OUTPUT_TRUSTED_OBJECT_PATHS = new Set(["", "webhooks.*"]);
 const REQUEST_OUTPUT_TRUSTED_PATHS = new Set([
   "requests.*.authorization_passed",
 ]);
+const REQUEST_OUTPUT_TRUSTED_OBJECT_PATHS = new Set(["", "requests.*"]);
 const WEBHOOK_OUTPUT_TRUSTED_PATHS = new Set([
   "webhook.requires_authorization_header",
 ]);
+const WEBHOOK_OUTPUT_TRUSTED_OBJECT_PATHS = new Set(["", "webhook"]);
+const ROOT_OUTPUT_TRUSTED_OBJECT_PATHS = new Set([""]);
 
 function requireWebhookId(args) {
   return requireString(args["webhook-id"], "Pass --webhook-id");
@@ -774,6 +779,7 @@ async function runManagementCommand(params) {
           reason: "Webhook list exceeded the 1 MiB display limit",
           webhook_count: webhooks.length,
         },
+        trustedObjectPaths: LIST_OUTPUT_TRUSTED_OBJECT_PATHS,
         trustedPaths: LIST_OUTPUT_TRUSTED_PATHS,
       },
     );
@@ -926,6 +932,7 @@ async function runManagementCommand(params) {
             webhook_id: webhook.id,
             webhook_url: webhook.webhook_url,
           },
+          trustedObjectPaths: CREATE_OUTPUT_TRUSTED_OBJECT_PATHS,
           trustedPaths: CREATE_OUTPUT_TRUSTED_PATHS,
         },
       );
@@ -978,24 +985,42 @@ async function runManagementCommand(params) {
         entry,
         "Request history item must be an object",
       );
-      const {
-        enqueued: _enqueued,
-        request_body: requestBody,
-        ...acceptedRequest
-      } = request;
-      if (
-        Object.hasOwn(request, "authorization_passed") &&
-        typeof request.authorization_passed !== "boolean"
-      ) {
+      const id = requireString(
+        request.id,
+        "Request history item is missing id",
+      );
+      if (!Number.isInteger(request.status_code)) {
+        throw new Error("Request history item status_code must be an integer");
+      }
+      if (typeof request.authorization_passed !== "boolean") {
         throw new Error(
           "Request history item authorization_passed must be a boolean",
         );
       }
+      if (typeof request.enqueued !== "boolean") {
+        throw new Error("Request history item enqueued must be a boolean");
+      }
+      if (
+        request.error_message !== null &&
+        typeof request.error_message !== "string"
+      ) {
+        throw new Error(
+          "Request history item error_message must be a string or null",
+        );
+      }
+      const createdAt = requireString(
+        request.created_at,
+        "Request history item is missing created_at",
+      );
       return {
-        ...acceptedRequest,
+        authorization_passed: request.authorization_passed,
         accepted: request.status_code === 202,
+        created_at: createdAt,
+        error_message: request.error_message,
+        id,
+        status_code: request.status_code,
         ...(params.args["include-body"] === true
-          ? { request_body: requestBody }
+          ? { request_body: request.request_body }
           : {}),
       };
     });
@@ -1005,6 +1030,7 @@ async function runManagementCommand(params) {
         reason: "Request history exceeded the 1 MiB display limit",
         request_count: requests.length,
       },
+      trustedObjectPaths: REQUEST_OUTPUT_TRUSTED_OBJECT_PATHS,
       trustedPaths: REQUEST_OUTPUT_TRUSTED_PATHS,
     });
     return;
@@ -1047,15 +1073,19 @@ async function runManagementCommand(params) {
         );
       }
     } catch {
-      printJson({
-        accepted: true,
-        body_omitted: true,
-        operation: params.command,
-        reason:
-          "Successful update response could not be validated; list webhooks to reconcile before retrying",
-        status_code: mutation.response.status,
-        webhook_id: webhookId,
-      });
+      printJson(
+        {
+          accepted: true,
+          body_omitted: true,
+          operation: params.command,
+          reason:
+            "Successful update response could not be validated; list webhooks to reconcile before retrying",
+          status_code: mutation.response.status,
+          webhook_id: webhookId,
+        },
+        [],
+        { trustedObjectPaths: ROOT_OUTPUT_TRUSTED_OBJECT_PATHS },
+      );
       return;
     }
     printJson(
@@ -1070,6 +1100,7 @@ async function runManagementCommand(params) {
           updated: true,
           webhook_id: webhookId,
         },
+        trustedObjectPaths: WEBHOOK_OUTPUT_TRUSTED_OBJECT_PATHS,
         trustedPaths: WEBHOOK_OUTPUT_TRUSTED_PATHS,
       },
     );
@@ -1112,15 +1143,19 @@ async function runManagementCommand(params) {
         );
       }
     } catch {
-      printJson({
-        accepted: true,
-        body_omitted: true,
-        operation: "rotate",
-        reason:
-          "Successful rotate response could not be validated; list webhooks to reconcile before retrying",
-        status_code: mutation.response.status,
-        webhook_id: webhookId,
-      });
+      printJson(
+        {
+          accepted: true,
+          body_omitted: true,
+          operation: "rotate",
+          reason:
+            "Successful rotate response could not be validated; list webhooks to reconcile before retrying",
+          status_code: mutation.response.status,
+          webhook_id: webhookId,
+        },
+        [],
+        { trustedObjectPaths: ROOT_OUTPUT_TRUSTED_OBJECT_PATHS },
+      );
       return;
     }
     printJson(
@@ -1135,6 +1170,7 @@ async function runManagementCommand(params) {
           rotated: true,
           webhook_id: webhookId,
         },
+        trustedObjectPaths: WEBHOOK_OUTPUT_TRUSTED_OBJECT_PATHS,
         trustedPaths: WEBHOOK_OUTPUT_TRUSTED_PATHS,
       },
     );
@@ -1181,6 +1217,8 @@ async function runManagementCommand(params) {
             status_code: mutation.response.status,
             webhook_id: webhookId,
           },
+      [],
+      { trustedObjectPaths: ROOT_OUTPUT_TRUSTED_OBJECT_PATHS },
     );
     return;
   }
@@ -1242,14 +1280,18 @@ async function runManagementCommand(params) {
       },
     );
     if (delivery.bodyReadFailed) {
-      printJson({
-        accepted: true,
-        accepted_for_processing: delivery.response.status === 202,
-        body_omitted: true,
-        dispatch_verified: false,
-        note: "The ingress endpoint accepted the request, but its response body could not be read. Request history cannot reliably reconcile asynchronous dispatch. Do not retry without renewed affirmative user consent and explicit acceptance of duplicate work risk.",
-        status_code: delivery.response.status,
-      });
+      printJson(
+        {
+          accepted: true,
+          accepted_for_processing: delivery.response.status === 202,
+          body_omitted: true,
+          dispatch_verified: false,
+          note: "The ingress endpoint accepted the request, but its response body could not be read. Request history cannot reliably reconcile asynchronous dispatch. Do not retry without renewed affirmative user consent and explicit acceptance of duplicate work risk.",
+          status_code: delivery.response.status,
+        },
+        [],
+        { trustedObjectPaths: ROOT_OUTPUT_TRUSTED_OBJECT_PATHS },
+      );
       return;
     }
     printJson(
@@ -1270,6 +1312,7 @@ async function runManagementCommand(params) {
           reason: "Webhook response body exceeded the 1 MiB display limit",
           status_code: delivery.response.status,
         },
+        trustedObjectPaths: ROOT_OUTPUT_TRUSTED_OBJECT_PATHS,
       },
     );
     return;

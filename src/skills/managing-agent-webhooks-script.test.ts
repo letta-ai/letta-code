@@ -304,14 +304,22 @@ describe("managing-agent-webhooks helper", () => {
         return;
       }
       if (request.method === "GET" && request.url?.includes("/requests?")) {
+        const malformedAuthorization =
+          new URL(request.url, "http://fixture.test").searchParams.get(
+            "limit",
+          ) === "1";
         response.writeHead(200);
         response.end(
           JSON.stringify({
             requests: [
               {
-                authorization_passed: true,
+                authorization_passed: malformedAuthorization ? "yes" : true,
+                body: { customer_ssn: "123-45-6789" },
+                created_at: "2026-10-09T00:00:00.000Z",
                 enqueued: true,
+                error_message: null,
                 id: "request-1",
+                raw_request: { account: "sensitive" },
                 request_body: { secret: "hidden-by-default" },
                 status_code: 202,
               },
@@ -340,7 +348,11 @@ describe("managing-agent-webhooks helper", () => {
       if (!address || typeof address === "string") {
         throw new Error("Expected a TCP test server address");
       }
-      const runNode = async (args: string[]): Promise<unknown> => {
+      const runNode = async (
+        args: string[],
+        stdin?: string,
+        expectedExitCode = 0,
+      ): Promise<unknown> => {
         const child = Bun.spawn(["node", aliasedPackagedScript, ...args], {
           env: {
             ...process.env,
@@ -349,15 +361,21 @@ describe("managing-agent-webhooks helper", () => {
             LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
           },
           stderr: "pipe",
+          stdin: stdin === undefined ? undefined : "pipe",
           stdout: "pipe",
         });
+        if (stdin !== undefined) {
+          child.stdin.write(stdin);
+          child.stdin.end();
+        }
         const [exitCode, stdout, stderr] = await Promise.all([
           child.exited,
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
         ]);
+        expect(exitCode).toBe(expectedExitCode);
+        if (expectedExitCode !== 0) return { stderr, stdout };
         expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
         expect(stdout.length).toBeGreaterThan(0);
         return JSON.parse(stdout);
       };
@@ -394,6 +412,10 @@ describe("managing-agent-webhooks helper", () => {
       });
       expect(history.requests[0]).not.toHaveProperty("enqueued");
       expect(history.requests[0]).not.toHaveProperty("request_body");
+      expect(history.requests[0]).not.toHaveProperty("body");
+      expect(history.requests[0]).not.toHaveProperty("raw_request");
+      expect(JSON.stringify(history)).not.toContain("123-45-6789");
+      expect(JSON.stringify(history)).not.toContain("sensitive");
 
       const historyWithBody = (await runNode([
         "requests",
@@ -404,6 +426,17 @@ describe("managing-agent-webhooks helper", () => {
       expect(historyWithBody.requests[0]?.request_body).toEqual({
         secret: "[REDACTED]",
       });
+      expect(historyWithBody.requests[0]).not.toHaveProperty("body");
+      expect(historyWithBody.requests[0]).not.toHaveProperty("raw_request");
+      const malformedHistory = (await runNode(
+        ["requests", "--webhook-id", "webhook-agent-1", "--limit", "1"],
+        undefined,
+        1,
+      )) as { stderr: string; stdout: string };
+      expect(malformedHistory.stdout).toBe("");
+      expect(malformedHistory.stderr).toContain(
+        "authorization_passed must be a boolean",
+      );
 
       expect(
         await runNode(["test", "--webhook-id", "webhook-agent-1", "--confirm"]),
@@ -466,6 +499,45 @@ describe("managing-agent-webhooks helper", () => {
       );
       expect(secured.webhook).not.toHaveProperty("safe_message");
       expect(secured.webhook).not.toHaveProperty("items");
+
+      for (const [index, securityKey] of [
+        "true",
+        "200",
+        "status_code",
+        '"',
+      ].entries()) {
+        const name = `Adversarial key ${index}`;
+        const createdWithAdversarialKey = (await runNode(
+          ["create", "--name", name, "--security-key-stdin"],
+          securityKey,
+        )) as { webhook: Record<string, unknown> };
+        expect(createdWithAdversarialKey.webhook).toMatchObject({
+          enabled: true,
+          name,
+          requires_authorization_header: true,
+        });
+        expect(createdWithAdversarialKey.webhook).not.toHaveProperty(
+          "authorization_header",
+        );
+        const testResult = (await runNode(
+          [
+            "test",
+            "--webhook-id",
+            "webhook-agent-1",
+            "--security-key-stdin",
+            "--confirm",
+          ],
+          securityKey,
+        )) as Record<string, unknown>;
+        expect(testResult).toMatchObject({
+          accepted_for_processing: true,
+          body: { ok: true },
+          dispatch_verified: false,
+          status_code: 202,
+        });
+        expect(typeof testResult.accepted_for_processing).toBe("boolean");
+        expect(typeof testResult.status_code).toBe("number");
+      }
       const credential = JSON.parse(
         await readFile(credentialOutput, "utf8"),
       ) as {
@@ -483,12 +555,12 @@ describe("managing-agent-webhooks helper", () => {
       if (process.platform !== "win32") {
         expect((await stat(credentialOutput)).mode & 0o777).toBe(0o600);
       }
-      const secureCreateRequest = received
-        .filter(
-          (request) =>
-            request.method === "POST" && request.path?.endsWith("/webhooks"),
-        )
-        .at(-1);
+      const secureCreateRequest = received.find((request) => {
+        if (request.method !== "POST" || !request.path?.endsWith("/webhooks")) {
+          return false;
+        }
+        return JSON.parse(request.body ?? "{}").name === "Secured build events";
+      });
       expect(JSON.parse(secureCreateRequest?.body ?? "")).toEqual({
         enabled: true,
         name: "Secured build events",

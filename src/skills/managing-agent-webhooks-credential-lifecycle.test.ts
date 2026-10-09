@@ -582,10 +582,13 @@ describe("managing-agent-webhooks credential lifecycle", () => {
             errors: [{ security_key: securityKey }],
             [`leak-${securityKey}`]: "ok",
             message: `Reflected ${securityKey}`,
-            nested: { ...secretFields },
+            nested: {
+              ...secretFields,
+              token_count: { value: "nested-token-count-secret" },
+            },
             nestedArray: [{ ...secretFields }],
             secretary: "Ada",
-            token_count: 42,
+            token_count: "top-level-token-count-secret",
           }),
         );
         return;
@@ -669,8 +672,11 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         "leak-[REDACTED]": "[REDACTED]",
         message: "Reflected [REDACTED]",
         secretary: "Ada",
-        token_count: 42,
+        token_count: "[REDACTED]",
       });
+      expect((acceptedBody.nested as Record<string, unknown>).token_count).toBe(
+        "[REDACTED]",
+      );
       for (const field of Object.keys(secretFields)) {
         expect(acceptedBody[field]).toBe("[REDACTED]");
         expect((acceptedBody.nested as Record<string, unknown>)[field]).toBe(

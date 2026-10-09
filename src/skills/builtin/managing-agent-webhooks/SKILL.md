@@ -37,10 +37,13 @@ payload as a user message.
   webhook/error fields; normalizes camelCase and punctuation before classifying
   secret-bearing property names; recursively redacts their values plus the exact
   generated key, Basic header, encoded credential, and management token; then
-  applies one final exact-value pass before anything reaches stdout, stderr, or
-  a thrown error. Safe output-field exemptions apply only to locally constructed,
-  type-validated envelopes. Successful ingress response bodies receive the same
-  redaction. Serialized output is capped at 1 MiB; accepted side effects whose
+  redacts structurally before serialization so low-entropy secret values cannot
+  rewrite JSON syntax or envelope semantics. Promised schema keys are preserved
+  only at locally constructed, type-validated object paths; untrusted keys and
+  values are still redacted. Safe output-field exemptions apply only to those
+  trusted paths; untrusted `token_count` and similar fields receive normal
+  secret-name redaction. Successful ingress
+  response bodies receive the same redaction. Serialized output is capped at 1 MiB; accepted side effects whose
   body exceeds that limit emit a bounded success envelope rather than a failure
   that could invite a duplicate retry.
 - Response ingestion is also capped at 1 MiB. The helper stops reading and does
@@ -64,6 +67,11 @@ payload as a user message.
 - Request bodies may contain sensitive third-party data. `requests` omits them
   unless `--include-body` is explicitly passed. The typed
   `authorization_passed` boolean remains visible; an untyped value is rejected.
+  History output is constructed only from typed `id`, `status_code`,
+  `authorization_passed`, `enqueued`, nullable `error_message`, and `created_at`,
+  plus the locally derived `accepted`; `enqueued` is validated but intentionally
+  omitted, and alternate body-like or future server fields are never spread into
+  stdout.
 - Sending a test starts asynchronous agent work. Ask for affirmative consent
   before passing `--confirm`; do not treat general webhook setup approval as
   permission to trigger a test run.
