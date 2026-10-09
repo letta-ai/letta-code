@@ -37,6 +37,11 @@ import {
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
 import {
+  type CurrentPendingApprovalLoader,
+  retainIncompleteApprovalRequests,
+  revalidateRecoveredApprovalBoundary,
+} from "./stream-approval-recovery";
+import {
   abortStreamController,
   summarizeChunkForDebug,
   summarizeStreamForDebug,
@@ -52,8 +57,12 @@ import {
 } from "./stream-processor";
 import {
   discoverFallbackRunIdWithTimeout,
+  isCompletedApprovalBoundary,
   isReplayableRun,
+  isRunStatusReconciliationError,
   mergeApprovalRequests,
+  recoverApprovalBoundaryAfterResumeFailure,
+  retrieveRunForResume,
   type StreamResumePolicy,
   waitForResumeRetry,
 } from "./stream-resume";
@@ -559,6 +568,7 @@ export async function drainStreamWithResume(
   contextTracker?: ContextTracker,
   seenSequenceCursor?: StreamSequenceCursor | null,
   resumePolicy?: StreamResumePolicy,
+  loadCurrentPendingApprovals?: CurrentPendingApprovalLoader,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   recordTuiPerf("stream_lifecycle:start");
@@ -592,11 +602,7 @@ export async function drainStreamWithResume(
   let runIdSource: "stream_chunk" | "discovery" | "otid" | null =
     result.lastRunId ? "stream_chunk" : null;
 
-  // If the stream failed before exposing run_id, attempt to find the right run.
-  // Prefer OTID-based lookup via the conversations stream endpoint: it lets the
-  // server resolve exactly which run corresponds to this client's message, which
-  // is safe in multi-client scenarios (timestamp heuristic is not).
-  // Fall back to timestamp-based discovery if OTID is unavailable.
+  // Prefer OTID lookup; fall back to timestamp discovery when unavailable.
   if (
     result.stopReason === "error" &&
     !runIdToResume &&
@@ -605,7 +611,6 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     if (streamOtid) {
-      // OTID path: server resolves the run — no client-side discovery needed.
       runIdSource = "otid";
       debugLog(
         "stream",
@@ -613,7 +618,6 @@ export async function drainStreamWithResume(
         streamOtid,
       );
     } else {
-      // Fallback: timestamp-based run discovery.
       try {
         debugLog(
           "stream",
@@ -651,17 +655,13 @@ export async function drainStreamWithResume(
     }
   }
 
-  // If stream ended without proper stop_reason and we have resume info, try once to reconnect.
-  // Only resume if we have an abortSignal AND it's not aborted (explicit check prevents
-  // undefined abortSignal from accidentally allowing resume after user cancellation).
-  // Approval-pending conflicts are not resumable disconnects — let App's approval
-  // recovery path handle them instead.
-  // "waiting for approval on a tool call" = server in requires_approval state, not resumable
-  // (distinct from "is currently being processed" = conversation-busy 409, which IS resumable)
+  // Approval-pending conflicts are terminal; conversation-busy conflicts can replay.
   const isApprovalPendingConflict =
     result.fallbackError?.includes("waiting for approval on a tool call") ??
     false;
   let replayGenericError = false;
+  let authoritativeApprovalBoundary = false;
+  let replayedApprovalBoundary = false;
   if (
     resumePolicy &&
     result.stopReason === "error" &&
@@ -671,9 +671,14 @@ export async function drainStreamWithResume(
     !abortSignal.aborted
   ) {
     try {
-      replayGenericError = isReplayableRun(
-        await getBackend().retrieveRun(runIdToResume, recoveryRequestOptions),
+      const run = await retrieveRunForResume(
+        getBackend(),
+        runIdToResume,
+        recoveryRequestOptions,
+        abortSignal,
       );
+      authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
+      replayGenericError = isReplayableRun(run);
     } catch {
       // If status cannot be checked, keep the streamed stop reason authoritative.
     }
@@ -685,15 +690,11 @@ export async function drainStreamWithResume(
     (runIdToResume || runIdSource === "otid") &&
     abortSignal &&
     !abortSignal.aborted;
+  let resumeFailed = false;
 
   if (canResume) {
-    // Resume path: markCurrentLineAsFinished was skipped in the catch block.
-    // If resume fails below, we call it in the catch. If no resume condition is
-    // met (else branch), we call it there instead.
-    // Preserve original state in case resume needs to merge or fails
     const originalFallbackError = result.fallbackError;
     let originalApprovals = result.approvals;
-    let originalApproval = result.approval;
 
     try {
       const backend = getBackend();
@@ -723,8 +724,7 @@ export async function drainStreamWithResume(
           streamOtid ?? "none",
         );
 
-        // Reset interrupted state before each replay so resumed chunks can be
-        // accumulated. The final failure path below cancels incomplete tools.
+        // Let replayed chunks accumulate; final failure cleans up incomplete tools.
         buffers.commitGeneration = (buffers.commitGeneration || 0) + 1;
         buffers.interrupted = false;
 
@@ -804,23 +804,28 @@ export async function drainStreamWithResume(
             originalApprovals,
             candidate.approvals,
           );
-          originalApproval = originalApprovals[0] ?? null;
 
-          if (candidate.sawStopReasonChunk && runIdToResume) {
-            const run = await backend.retrieveRun(
+          if (runIdToResume) {
+            const run = await retrieveRunForResume(
+              backend,
               runIdToResume,
               recoveryRequestOptions,
+              abortSignal,
             );
+            authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
             if (!isReplayableRun(run)) break;
           }
         } catch (resumeError) {
           lastResumeError = resumeError;
-          if (runIdToResume) {
+          if (runIdToResume && !isRunStatusReconciliationError(resumeError)) {
             try {
-              const run = await backend.retrieveRun(
+              const run = await retrieveRunForResume(
+                backend,
                 runIdToResume,
                 recoveryRequestOptions,
+                abortSignal,
               );
+              authoritativeApprovalBoundary = isCompletedApprovalBoundary(run);
               if (!isReplayableRun(run)) break;
             } catch {
               // A failed status check should not hide a recoverable stream drop.
@@ -847,42 +852,26 @@ export async function drainStreamWithResume(
         resumeResult.stopReason,
       );
       result = resumeResult;
+      if (result.stopReason !== "requires_approval") {
+        buffers.approvalsPending = false;
+      }
 
-      // The resumed stream uses a fresh streamProcessor that won't have
-      // approval_request_message chunks from before the disconnect (they
-      // had seq_id <= lastSeqId).
-      //
-      // Two cases:
-      // 1. All approval chunks were before the drop (resume has no approvals):
-      //    carry over the originals unchanged.
-      // 2. Approval args were split across the drop (original has prefix,
-      //    resume has suffix): merge them so the full args string is intact.
-      if (
-        result.stopReason === "requires_approval" &&
-        (originalApprovals?.length ?? 0) > 0
-      ) {
-        if ((result.approvals?.length ?? 0) === 0) {
-          // Case 1: full carry-over
-          result.approvals = originalApprovals;
-          result.approval = originalApproval;
-        } else {
-          // Case 2: merge prefix args from original with suffix args from resume
-          result.approvals = (result.approvals ?? []).map((resumeApproval) => {
-            const orig = originalApprovals?.find(
-              (a) => a.toolCallId === resumeApproval.toolCallId,
-            );
-            if (!orig) return resumeApproval;
-            return {
-              ...resumeApproval,
-              toolName: resumeApproval.toolName || orig.toolName,
-              toolArgs: (orig.toolArgs || "") + (resumeApproval.toolArgs || ""),
-            };
-          });
-          result.approval = result.approvals[0] ?? null;
-        }
+      // Preserve approval IDs and same-ID argument fragments from both sides
+      // of the disconnect; the fresh resume processor lacks earlier chunks.
+      const pendingOriginalApprovals =
+        result.stopReason === "requires_approval" ||
+        result.stopReason === "end_turn"
+          ? retainIncompleteApprovalRequests(buffers, originalApprovals)
+          : [];
+      if (result.stopReason === "requires_approval") {
+        result.approvals = retainIncompleteApprovalRequests(
+          buffers,
+          mergeApprovalRequests(pendingOriginalApprovals, result.approvals),
+        );
+        result.approval = result.approvals[0] ?? null;
       } else if (
         result.stopReason === "end_turn" &&
-        (originalApprovals?.length ?? 0) > 0
+        pendingOriginalApprovals.length > 0
       ) {
         debugWarn(
           "stream",
@@ -897,19 +886,26 @@ export async function drainStreamWithResume(
           },
         );
         result.stopReason = "requires_approval";
-        result.approvals = originalApprovals;
-        result.approval = originalApproval;
+        result.approvals = pendingOriginalApprovals;
+        result.approval = pendingOriginalApprovals[0] ?? null;
+      }
+      if (result.stopReason === "requires_approval") {
+        authoritativeApprovalBoundary = true;
+        replayedApprovalBoundary = true;
       }
     } catch (resumeError) {
-      // Resume failed - cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
-      markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
-      markCurrentLineAsFinished(buffers);
+      // Defer cleanup until authoritative approval recovery classifies the result.
+      resumeFailed = true;
       const resumeErrorMsg =
         resumeError instanceof Error
           ? resumeError.message
           : String(resumeError);
       result.fallbackError = originalFallbackError ?? resumeErrorMsg;
+      result.approvals = retainIncompleteApprovalRequests(
+        buffers,
+        originalApprovals,
+      );
+      result.approval = result.approvals[0] ?? null;
       debugWarn(
         "stream",
         "[MID-STREAM RESUME] ❌ Failed (runId=%s): %s",
@@ -927,7 +923,33 @@ export async function drainStreamWithResume(
     }
   }
 
-  // Log when stream errored but resume was NOT attempted, with reasons why
+  authoritativeApprovalBoundary = await revalidateRecoveredApprovalBoundary(
+    result,
+    authoritativeApprovalBoundary,
+    streamRequestContext,
+    loadCurrentPendingApprovals,
+    abortSignal,
+  );
+  if (replayedApprovalBoundary && !authoritativeApprovalBoundary) {
+    result.stopReason = "error";
+    result.fallbackError ??= "Approval boundary is no longer current";
+    buffers.approvalsPending = false;
+    resumeFailed = true;
+  }
+
+  if (
+    recoverApprovalBoundaryAfterResumeFailure(
+      result,
+      authoritativeApprovalBoundary,
+    )
+  ) {
+    debugWarn(
+      "stream",
+      "Recovering approval boundary after stream ended without stop_reason (runId=%s)",
+      result.lastRunId ?? "unknown",
+    );
+  }
+
   if (result.stopReason === "error") {
     const skipReasons: string[] = [];
     if (result.sawStopReasonChunk && !replayGenericError)
@@ -937,12 +959,12 @@ export async function drainStreamWithResume(
     if (!abortSignal) skipReasons.push("no_abort_signal");
     if (abortSignal?.aborted) skipReasons.push("user_aborted");
 
-    // Only log if we actually skipped for a reason (i.e., we didn't enter the resume branch above)
-    if (skipReasons.length > 0) {
-      // No resume — cancel tools and finalize the streaming line now
-      // (both were skipped in the initial drain's catch block above)
+    if (resumeFailed || skipReasons.length > 0) {
       markIncompleteToolsAsCancelled(buffers, false, "stream_error", true);
       markCurrentLineAsFinished(buffers);
+    }
+
+    if (skipReasons.length > 0) {
       debugLog(
         "stream",
         "Mid-stream resume skipped: %s",
@@ -959,9 +981,6 @@ export async function drainStreamWithResume(
     }
   }
 
-  // If the initial drain's catch block set buffers.interrupted=true (skipCancelToolsOnError)
-  // but the stream ended with complete requires_approval data (stop_reason chunk arrived
-  // before the drop), no resume is needed — clean up so the approval prompt renders correctly.
   if (
     result.stopReason === "requires_approval" &&
     (result.approvals?.length ?? 0) > 0 &&
@@ -971,7 +990,6 @@ export async function drainStreamWithResume(
     markCurrentLineAsFinished(buffers);
   }
 
-  // Update duration to reflect total time (including resume attempt)
   result.apiDurationMs = performance.now() - overallStartTime;
   recordTuiPerf(`stream_lifecycle:end:${result.stopReason}`, {
     ms: result.apiDurationMs,
