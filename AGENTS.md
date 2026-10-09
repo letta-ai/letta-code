@@ -39,6 +39,16 @@ transcript behavior must identify and run the focused tests for every affected
 path. `bun run check` is always required, but it does not replace those behavior
 tests.
 
+### Tool results scrub exact secret values
+
+Every tool result is scrubbed of exact secret values before it reaches the
+model — not just streaming shell tools. Tool returns, stdout, stderr, thrown
+errors, and `tool_end` overrides all pass through the shared scrubber, seeded
+at launch with the invocation's `$NAME` secrets plus the ambient runtime auth
+credentials every shell child inherits (`src/tools/secret-substitution.ts`).
+Never gate the scrub on `STREAMING_SHELL_TOOLS`; that set only controls ANSI
+stripping and the shell streaming output path.
+
 ---
 
 ## Rules and Why They Exist
