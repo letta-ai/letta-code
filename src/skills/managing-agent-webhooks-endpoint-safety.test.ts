@@ -194,7 +194,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
     let redirectedRequests = 0;
     const target = createServer(async (request, response) => {
       for await (const _chunk of request) {
-        // Consume any incorrectly redirected body.
       }
       redirectedRequests += 1;
       response.writeHead(400);
@@ -526,7 +525,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
         return;
       }
       for await (const _chunk of request) {
-        // Consume request bodies before responding.
       }
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url?.endsWith("/webhooks")) {
@@ -567,12 +565,16 @@ describe("managing-agent-webhooks endpoint safety", () => {
           JSON.stringify(
             deleteRequests === 1
               ? { data: "x".repeat(1_100_000) }
-              : {
-                  ...secretFields,
-                  nested: { ...secretFields },
-                  secretary: "Ada",
-                  token_count: 42,
-                },
+              : deleteRequests === 2
+                ? {
+                    ...secretFields,
+                    nested: { ...secretFields },
+                    secretary: "Ada",
+                    token_count: 42,
+                  }
+                : deleteRequests === 3
+                  ? { success: false }
+                  : { success: true },
           ),
         );
         return;
@@ -614,8 +616,10 @@ describe("managing-agent-webhooks endpoint safety", () => {
       ]);
       expect(deleted).toMatchObject({ exitCode: 0, stderr: "" });
       expect(JSON.parse(deleted.stdout)).toMatchObject({
+        accepted: true,
         body_omitted: true,
-        deleted: true,
+        deletion_confirmed: false,
+        operation: "delete",
         status_code: 200,
         webhook_id: "webhook-agent-oversized",
       });
@@ -633,14 +637,46 @@ describe("managing-agent-webhooks endpoint safety", () => {
         unknown
       >;
       expect(sanitizedBody).toMatchObject({
+        accepted: true,
         body_omitted: true,
-        deleted: true,
+        deletion_confirmed: false,
+        operation: "delete",
         status_code: 200,
       });
       for (const secret of Object.values(secretFields)) {
         expect(sanitizedDelete.stdout).not.toContain(secret);
       }
       expect(deleteRequests).toBe(2);
+
+      const contradictedDelete = await runHelper(baseUrl, [
+        "delete",
+        "--webhook-id",
+        "webhook-agent-oversized",
+        "--confirm",
+      ]);
+      expect(contradictedDelete).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(contradictedDelete.stdout)).toMatchObject({
+        accepted: true,
+        deletion_confirmed: false,
+        operation: "delete",
+        status_code: 200,
+      });
+      expect(contradictedDelete.stdout).not.toContain('"deleted": true');
+      expect(deleteRequests).toBe(3);
+
+      const confirmedDelete = await runHelper(baseUrl, [
+        "delete",
+        "--webhook-id",
+        "webhook-agent-oversized",
+        "--confirm",
+      ]);
+      expect(confirmedDelete).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(confirmedDelete.stdout)).toEqual({
+        deleted: true,
+        status_code: 200,
+        webhook_id: "webhook-agent-oversized",
+      });
+      expect(deleteRequests).toBe(4);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });
@@ -662,6 +698,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
     let ingressRequests = 0;
     let rotateRequests = 0;
     let updateRequests = 0;
+    let deleteRequests = 0;
     const server = createServer(async (request, response) => {
       const address = server.address();
       if (!address || typeof address === "string") {
@@ -670,7 +707,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
         return;
       }
       for await (const _chunk of request) {
-        // Consume request bodies before responding.
       }
       response.setHeader("Content-Type", "application/json");
       if (request.method === "GET" && request.url?.endsWith("/webhooks")) {
@@ -764,6 +800,14 @@ describe("managing-agent-webhooks endpoint safety", () => {
         );
         return;
       }
+      if (request.method === "DELETE") {
+        deleteRequests += 1;
+        response.writeHead(200, { "Content-Length": "100" });
+        response.flushHeaders();
+        response.write('{"partial":');
+        setImmediate(() => response.destroy());
+        return;
+      }
       response.writeHead(404);
       response.end();
     });
@@ -792,7 +836,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
         status_code: 202,
       });
       expect(ingressRequests).toBe(1);
-
       const ambiguousDelivery = await runHelper(baseUrl, [
         "test",
         "--webhook-id",
@@ -812,7 +855,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
       expect(ambiguousDelivery.stderr).toContain("duplicate work risk");
       expect(ambiguousDelivery.stderr).not.toContain("Reconcile webhook state");
       expect(ingressRequests).toBe(2);
-
       const rotated = await runHelper(baseUrl, [
         "rotate",
         "--webhook-id",
@@ -827,7 +869,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
         status_code: 200,
       });
       expect(rotateRequests).toBe(1);
-
       const ambiguousRotate = await runHelper(baseUrl, [
         "rotate",
         "--webhook-id",
@@ -841,7 +882,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
       );
       expect(ambiguousRotate.stderr).toContain("do not blindly retry");
       expect(rotateRequests).toBe(2);
-
       const mismatchedRotate = await runHelper(baseUrl, [
         "rotate",
         "--webhook-id",
@@ -858,7 +898,6 @@ describe("managing-agent-webhooks endpoint safety", () => {
       });
       expect(mismatchedRotate.stdout).not.toContain("different-webhook");
       expect(rotateRequests).toBe(3);
-
       const unchangedRotate = await runHelper(baseUrl, [
         "rotate",
         "--webhook-id",
@@ -936,6 +975,23 @@ describe("managing-agent-webhooks endpoint safety", () => {
         status_code: 200,
       });
       expect(updateRequests).toBe(3);
+
+      const truncatedDelete = await runHelper(baseUrl, [
+        "delete",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(truncatedDelete).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(truncatedDelete.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        deletion_confirmed: false,
+        operation: "delete",
+        status_code: 200,
+      });
+      expect(truncatedDelete.stdout).not.toContain('"deleted": true');
+      expect(deleteRequests).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });

@@ -79,6 +79,10 @@ payload as a user message.
   or cannot be validated, the helper emits an operation-specific exit-0 receipt
   with the HTTP status and reconciliation guidance rather than a generic error
   that could trigger a duplicate mutation.
+- Delete reports `deleted: true` only after a `200` JSON object with literal
+  `success: true`. A false, missing, malformed, null, empty, oversized, or
+  unreadable receipt means deletion was accepted but remains unconfirmed; list
+  webhooks before treating the capability URL as removed or retrying.
 - Normal update output additionally requires the returned webhook ID and
   `enabled` state to match the requested operation; normal rotate output
   requires the returned webhook ID to match. Canonical but contradictory 2xx

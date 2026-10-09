@@ -1124,12 +1124,36 @@ async function runManagementCommand(params) {
       },
       { operation: "Webhook deletion" },
     );
-    printJson({
-      body_omitted: mutation.bodyReadFailed || mutation.body !== null,
-      deleted: true,
-      status_code: mutation.response.status,
-      webhook_id: webhookId,
-    });
+    let deletionConfirmed = false;
+    if (!mutation.bodyReadFailed) {
+      try {
+        const response = jsonObject(
+          mutation.body,
+          "Delete response must be an object",
+        );
+        deletionConfirmed = response.success === true;
+      } catch {
+        deletionConfirmed = false;
+      }
+    }
+    printJson(
+      deletionConfirmed
+        ? {
+            deleted: true,
+            status_code: mutation.response.status,
+            webhook_id: webhookId,
+          }
+        : {
+            accepted: true,
+            body_omitted: true,
+            deletion_confirmed: false,
+            operation: "delete",
+            reason:
+              "Successful delete response did not confirm deletion; list webhooks before treating the capability as removed or retrying",
+            status_code: mutation.response.status,
+            webhook_id: webhookId,
+          },
+    );
     return;
   }
 
