@@ -82,9 +82,10 @@ describe("listener cwd change handling", () => {
     );
   });
 
-  // Root bypasses directory permission checks, so this only reproduces as a
-  // normal user (as CI and unprivileged `letta server` installs run).
-  test.skipIf(process.getuid?.() === 0)(
+  // POSIX-only: root bypasses directory permission checks, and Windows ignores
+  // chmod for directories, so this only reproduces as a normal POSIX user (as
+  // unprivileged `letta server` installs run).
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "keeps the current cwd when the requested one is not accessible",
     async () => {
       const listener = createRuntime();
