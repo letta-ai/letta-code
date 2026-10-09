@@ -288,7 +288,9 @@ function toOAuthActionError(
 /**
  * Device Code Flow - Step 1: Request device code
  */
-export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
+export async function requestDeviceCode(
+  organizationId?: string,
+): Promise<DeviceCodeResponse> {
   const authHost = getOAuthAuthHost();
 
   for (
@@ -304,6 +306,7 @@ export async function requestDeviceCode(): Promise<DeviceCodeResponse> {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             client_id: OAUTH_CONFIG.clientId,
+            ...(organizationId && { organization_id: organizationId }),
           }),
         },
       );

@@ -7,6 +7,7 @@ import {
   requestDeviceCode,
 } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import { activateOrgCredentials } from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
 import {
@@ -14,6 +15,10 @@ import {
   type RegisterOptions,
 } from "@/websocket/listen-register";
 import { getSpawnerListenerInstanceId } from "@/websocket/listener/identity";
+import {
+  type OrgCredentials,
+  orgCredentialStore,
+} from "@/websocket/listener/org-credentials";
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
@@ -21,6 +26,43 @@ const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
 >;
+
+/**
+ * Where a listener's cloud credentials live. The global slot is the sign-in
+ * shared with `letta`; an organization slot belongs to one `--org` listener.
+ */
+type CredentialSlot = {
+  read(): Promise<OrgCredentials>;
+  write(credentials: OrgCredentials & { apiKey: string }): Promise<void>;
+};
+
+function globalCredentialSlot(settings: ListenerSettings): CredentialSlot {
+  return {
+    async read() {
+      return {
+        apiKey: settings.env?.LETTA_API_KEY,
+        refreshToken: settings.refreshToken,
+        tokenExpiresAt: settings.tokenExpiresAt,
+      };
+    },
+    async write(credentials) {
+      settingsManager.updateSettings({
+        env: { LETTA_API_KEY: credentials.apiKey },
+        refreshToken: credentials.refreshToken,
+        tokenExpiresAt: credentials.tokenExpiresAt,
+      });
+      await settingsManager.flush();
+    },
+  };
+}
+
+function orgCredentialSlot(organizationId: string): CredentialSlot {
+  return {
+    read: () => orgCredentialStore.load(organizationId),
+    write: (credentials) =>
+      orgCredentialStore.save(organizationId, credentials),
+  };
+}
 
 type ListenerOAuthDeps = {
   LETTA_CLOUD_API_URL: string;
@@ -32,6 +74,12 @@ type ListenerOAuthDeps = {
 
 type ListenerAuthOptions = {
   allowInteractiveOAuth?: boolean;
+  /**
+   * Sign in to this organization specifically. Credentials live in a slot
+   * keyed by the organization, so the global sign-in is neither used nor
+   * replaced.
+   */
+  organizationId?: string;
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
@@ -121,38 +169,37 @@ export function isCloudListenerServerUrl(serverUrl: string): boolean {
 }
 
 function shouldRefreshListenerAccessToken(
-  settings: ListenerSettings,
-  apiKey: string | undefined,
+  credentials: OrgCredentials,
 ): boolean {
-  if (!settings.refreshToken) {
+  if (!credentials.refreshToken) {
     return false;
   }
-  if (!apiKey) {
+  if (!credentials.apiKey) {
     return true;
   }
   return (
-    settings.tokenExpiresAt !== undefined &&
-    Date.now() >= settings.tokenExpiresAt - LISTENER_TOKEN_REFRESH_WINDOW_MS
+    credentials.tokenExpiresAt !== undefined &&
+    Date.now() >= credentials.tokenExpiresAt - LISTENER_TOKEN_REFRESH_WINDOW_MS
   );
 }
 
 function isAccessTokenStillValid(
-  settings: ListenerSettings,
-  apiKey: string | undefined,
-): apiKey is string {
+  credentials: OrgCredentials,
+): credentials is OrgCredentials & { apiKey: string } {
   return Boolean(
-    apiKey &&
-      (settings.tokenExpiresAt === undefined ||
-        Date.now() < settings.tokenExpiresAt),
+    credentials.apiKey &&
+      (credentials.tokenExpiresAt === undefined ||
+        Date.now() < credentials.tokenExpiresAt),
   );
 }
 
 async function refreshListenerAccessToken(
-  settings: ListenerSettings,
+  credentials: OrgCredentials,
+  slot: CredentialSlot,
   deviceId: string,
   connectionName: string,
 ): Promise<string> {
-  if (!settings.refreshToken) {
+  if (!credentials.refreshToken) {
     throw new MissingListenerApiKeyError();
   }
 
@@ -160,31 +207,32 @@ async function refreshListenerAccessToken(
   debugLog("Listen", "Access token expired, refreshing...");
 
   const tokens = await refreshAccessTokenSingleFlight(
-    settings.refreshToken,
+    credentials.refreshToken,
     deviceId,
     connectionName,
     getListenerOAuthDeps().refreshAccessToken,
   );
 
-  settingsManager.updateSettings({
-    env: { LETTA_API_KEY: tokens.access_token },
-    refreshToken: tokens.refresh_token ?? settings.refreshToken,
+  await slot.write({
+    apiKey: tokens.access_token,
+    refreshToken: tokens.refresh_token ?? credentials.refreshToken,
     tokenExpiresAt: now + tokens.expires_in * 1000,
   });
-  await settingsManager.flush();
 
   debugLog("Listen", "Token refreshed successfully.");
   return tokens.access_token;
 }
 
 async function runListenerOAuthLogin(
+  slot: CredentialSlot,
   deviceId: string,
   connectionName: string,
+  organizationId?: string,
 ): Promise<string> {
   const oauthDeps = getListenerOAuthDeps();
   console.log("No API key found. Starting OAuth login...\n");
 
-  const deviceData = await oauthDeps.requestDeviceCode();
+  const deviceData = await oauthDeps.requestDeviceCode(organizationId);
   console.log("Opening your browser to sign in...");
   console.log(
     `If it didn't open, visit: ${deviceData.verification_uri_complete}`,
@@ -202,12 +250,11 @@ async function runListenerOAuthLogin(
   );
   const now = Date.now();
 
-  settingsManager.updateSettings({
-    env: { LETTA_API_KEY: tokens.access_token },
-    ...(tokens.refresh_token ? { refreshToken: tokens.refresh_token } : {}),
+  await slot.write({
+    apiKey: tokens.access_token,
+    refreshToken: tokens.refresh_token,
     tokenExpiresAt: now + tokens.expires_in * 1000,
   });
-  await settingsManager.flush();
 
   console.log("Authenticated successfully.\n");
   return tokens.access_token;
@@ -221,35 +268,82 @@ async function resolveListenerAuth(
   const allowInteractiveOAuth = options.allowInteractiveOAuth ?? true;
   const settings = await settingsManager.getSettingsWithSecureTokens();
   const serverUrl = getListenerServerUrl(settings);
+
+  // An organization listener signs in on its own; ambient keys and the
+  // global sign-in belong to whichever organization the user picked there.
+  if (options.organizationId) {
+    if (!isCloudListenerServerUrl(serverUrl)) {
+      throw new Error("--org is only supported with Letta Cloud");
+    }
+    const slot = orgCredentialSlot(options.organizationId);
+    const apiKey = await resolveCloudCredentials(
+      slot,
+      deviceId,
+      connectionName,
+      allowInteractiveOAuth,
+      options.organizationId,
+    );
+    // Turns, memfs, and subagents in this process read the organization
+    // sign-in from here, so they act as the organization the computer joined.
+    const credentials = await slot.read();
+    activateOrgCredentials(options.organizationId, deviceId, {
+      ...credentials,
+      apiKey,
+    });
+    return { serverUrl, apiKey };
+  }
+
   const envApiKey = getDesktopAccessToken() || process.env.LETTA_API_KEY;
 
   if (envApiKey) {
     return { serverUrl, apiKey: envApiKey };
   }
 
-  let apiKey = settings.env?.LETTA_API_KEY;
   if (!isCloudListenerServerUrl(serverUrl)) {
+    const apiKey = settings.env?.LETTA_API_KEY;
     if (!apiKey) {
       throw new MissingListenerApiKeyError();
     }
     return { serverUrl, apiKey };
   }
 
-  if (shouldRefreshListenerAccessToken(settings, apiKey)) {
+  return {
+    serverUrl,
+    apiKey: await resolveCloudCredentials(
+      globalCredentialSlot(settings),
+      deviceId,
+      connectionName,
+      allowInteractiveOAuth,
+    ),
+  };
+}
+
+async function resolveCloudCredentials(
+  slot: CredentialSlot,
+  deviceId: string,
+  connectionName: string,
+  allowInteractiveOAuth: boolean,
+  organizationId?: string,
+): Promise<string> {
+  const credentials = await slot.read();
+  let apiKey = credentials.apiKey;
+
+  if (shouldRefreshListenerAccessToken(credentials)) {
     try {
       apiKey = await refreshListenerAccessToken(
-        settings,
+        credentials,
+        slot,
         deviceId,
         connectionName,
       );
     } catch (refreshError) {
       const retryable =
         !(refreshError instanceof OAuthRefreshError) || refreshError.retryable;
-      if (retryable && isAccessTokenStillValid(settings, apiKey)) {
+      if (retryable && isAccessTokenStillValid(credentials)) {
         console.warn(
           `Token refresh failed; using the current access token: ${errorMessage(refreshError)}`,
         );
-        return { serverUrl, apiKey };
+        return credentials.apiKey;
       }
       if (retryable) {
         throw new ListenerAuthRetryableError(refreshError);
@@ -267,10 +361,15 @@ async function resolveListenerAuth(
     if (!allowInteractiveOAuth) {
       throw new ListenerReauthenticationRequiredError();
     }
-    apiKey = await runListenerOAuthLogin(deviceId, connectionName);
+    apiKey = await runListenerOAuthLogin(
+      slot,
+      deviceId,
+      connectionName,
+      organizationId,
+    );
   }
 
-  return { serverUrl, apiKey };
+  return apiKey;
 }
 
 export async function resolveListenerRegistrationOptions(
@@ -296,13 +395,16 @@ export async function resolveListenerRegistrationOptions(
 }
 
 export async function resolveListenerReconnectAuth(
-  options: Pick<StartListenerOptions, "deviceId" | "connectionName">,
+  options: Pick<
+    StartListenerOptions,
+    "deviceId" | "connectionName" | "organizationId"
+  >,
 ): Promise<{ kind: "ready"; apiKey: string } | { kind: "retry" }> {
   try {
     const auth = await resolveListenerAuth(
       options.deviceId,
       options.connectionName,
-      { allowInteractiveOAuth: false },
+      { allowInteractiveOAuth: false, organizationId: options.organizationId },
     );
     return { kind: "ready", apiKey: auth.apiKey };
   } catch (error) {

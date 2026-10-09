@@ -20,6 +20,7 @@ import {
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
@@ -328,8 +329,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     getRuntimeContext()?.executionSettings,
   );
   const env = { ...executionEnv };
-  const desktopAccessToken = getDesktopAccessToken();
-  if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
+  const sessionAccessToken = peekOrgAccessToken() ?? getDesktopAccessToken();
+  if (sessionAccessToken) env.LETTA_API_KEY = sessionAccessToken;
   const pathKey =
     Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const pathPrefixes: string[] = [];
@@ -538,9 +539,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
   // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
-  if (desktopAccessToken) {
+  if (sessionAccessToken) {
     const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;
-    const encoded = Buffer.from(`letta:${desktopAccessToken}`).toString(
+    const encoded = Buffer.from(`letta:${sessionAccessToken}`).toString(
       "base64",
     );
     appendGitConfigEnv(env, `credential.${memfsPrefix}.helper`, "");
