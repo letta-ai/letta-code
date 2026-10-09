@@ -273,16 +273,28 @@ function readOwnerDirectory(lockPath: string): {
     if (read !== bytes.length) throw new Error("Short durable lock owner read");
     const owner = parseOwner(JSON.parse(bytes.toString("utf8")));
     const stableName = ownerFileName(owner);
+    // A publisher removes .installing after linking the stable owner. If that
+    // happens after readdir, propagate ENOENT so acquisition retries rather
+    // than classifying a legitimate publication transition as corruption.
+    const matchingLinks =
+      names.length === 2 &&
+      names.includes(stableName) &&
+      names.includes(INSTALLING_OWNER_NAME)
+        ? (() => {
+            const stable = lstatSync(join(lockPath, stableName));
+            const installing = lstatSync(join(lockPath, INSTALLING_OWNER_NAME));
+            return (
+              stable.dev === installing.dev && stable.ino === installing.ino
+            );
+          })()
+        : false;
     const validNames =
       (names.length === 1 &&
         (names[0] === stableName || names[0] === INSTALLING_OWNER_NAME)) ||
       (names.length === 2 &&
         names.includes(stableName) &&
         names.includes(INSTALLING_OWNER_NAME) &&
-        sameFile(
-          join(lockPath, stableName),
-          join(lockPath, INSTALLING_OWNER_NAME),
-        ));
+        matchingLinks);
     if (!validNames) throw new Error("Invalid durable lock owner filename");
     return {
       owner,
