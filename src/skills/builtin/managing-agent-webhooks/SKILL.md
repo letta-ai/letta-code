@@ -42,8 +42,9 @@ payload as a user message.
   only at locally constructed, type-validated object paths; untrusted keys and
   values are still redacted. Safe output-field exemptions apply only to those
   trusted paths; untrusted `token_count` and similar fields receive normal
-  secret-name redaction. Successful ingress
-  response bodies receive the same redaction. Serialized output is capped at 1 MiB; accepted side effects whose
+  secret-name redaction. Successful ingress response bodies are never displayed,
+  validated for display, or summarized; test output uses only a locally
+  constructed status/acceptance envelope. Serialized output is capped at 1 MiB; accepted side effects whose
   body exceeds that limit emit a bounded success envelope rather than a failure
   that could invite a duplicate retry.
 - Response ingestion is also capped at 1 MiB. The helper stops reading and does
@@ -243,7 +244,9 @@ printf '%s' "$WEBHOOK_SECURITY_KEY" | \
 
 For a custom payload, prefer an existing protected JSON file. Never place
 sensitive payload JSON directly in argv, shell history, or process listings.
-Delete temporary payload files after the test.
+Delete temporary payload files after the test. The helper never prints,
+validates for display, or summarizes the ingress response body, because a
+provider could echo protected payload-file values under otherwise benign keys.
 
 Inspect recent accepted requests separately:
 

@@ -494,9 +494,11 @@ describe("managing-agent-webhooks credential lifecycle", () => {
     }
   });
 
-  test("redacts credential-backed ingress responses from stdout and stderr", async () => {
+  test("omits credential-backed ingress responses from stdout and stderr", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-webhook-credential-"));
     const credentialPath = join(root, "credential.json");
+    const payloadPath = join(root, "payload.json");
+    const payloadSecret = "payload-file-only-echo-secret";
     const securityKey = "credential-backed-test-secret";
     const authorizationHeader =
       buildAgentWebhookBasicAuthorization(securityKey);
@@ -535,6 +537,11 @@ describe("managing-agent-webhooks credential lifecycle", () => {
       }),
       { mode: 0o600 },
     );
+    await writeFile(
+      payloadPath,
+      JSON.stringify({ message: payloadSecret, value: payloadSecret }),
+      { mode: 0o600 },
+    );
     let ingressShouldFail = true;
     const server = createServer(async (request, response) => {
       const address = server.address();
@@ -567,9 +574,9 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         request.method === "POST" &&
         request.url === "/v1/agent-webhooks/private"
       ) {
-        for await (const _chunk of request) {
-          // Consume the request before responding.
-        }
+        let requestBody = "";
+        for await (const chunk of request) requestBody += chunk;
+        const payload = JSON.parse(requestBody) as Record<string, unknown>;
         response.writeHead(ingressShouldFail ? 401 : 202);
         response.end(
           JSON.stringify({
@@ -581,7 +588,8 @@ describe("managing-agent-webhooks credential lifecycle", () => {
             },
             errors: [{ security_key: securityKey }],
             [`leak-${securityKey}`]: "ok",
-            message: `Reflected ${securityKey}`,
+            echo: payload,
+            message: payload.message,
             nested: {
               ...secretFields,
               token_count: { value: "nested-token-count-secret" },
@@ -614,6 +622,8 @@ describe("managing-agent-webhooks credential lifecycle", () => {
             "webhook-agent-secure",
             "--credential-file",
             credentialPath,
+            "--payload-file",
+            payloadPath,
             "--confirm",
           ],
           {
@@ -638,11 +648,14 @@ describe("managing-agent-webhooks credential lifecycle", () => {
       const failed = await runNode();
       expect(failed.exitCode).toBe(1);
       expect(failed.stdout).toBe("");
-      expect(failed.stderr).toContain("[REDACTED]");
+      expect(failed.stderr).toContain(
+        "Webhook test delivery failed with HTTP 401",
+      );
       for (const secret of [
         securityKey,
         authorizationHeader,
         authorizationHeader.slice("Basic ".length),
+        payloadSecret,
         ...Object.values(secretFields),
       ]) {
         expect(failed.stdout).not.toContain(secret);
@@ -657,42 +670,18 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         securityKey,
         authorizationHeader,
         authorizationHeader.slice("Basic ".length),
+        payloadSecret,
         ...Object.values(secretFields),
       ]) {
         expect(accepted.stdout).not.toContain(secret);
       }
-      const acceptedBody = JSON.parse(accepted.stdout).body as Record<
-        string,
-        unknown
-      >;
-      expect(acceptedBody).toMatchObject({
-        authorization_header: "[REDACTED]",
-        error: { "leak-[REDACTED]": "[REDACTED]" },
-        errors: [{ security_key: "[REDACTED]" }],
-        "leak-[REDACTED]": "[REDACTED]",
-        message: "Reflected [REDACTED]",
-        secretary: "Ada",
-        token_count: "[REDACTED]",
+      expect(JSON.parse(accepted.stdout)).toEqual({
+        accepted_for_processing: true,
+        body_omitted: true,
+        dispatch_verified: false,
+        note: "HTTP 202 confirms only that the ingress handler accepted the request; the untrusted response body is omitted, and conversation creation and queue submission happen asynchronously.",
+        status_code: 202,
       });
-      expect((acceptedBody.nested as Record<string, unknown>).token_count).toBe(
-        "[REDACTED]",
-      );
-      for (const field of Object.keys(secretFields)) {
-        expect(acceptedBody[field]).toBe("[REDACTED]");
-        expect((acceptedBody.nested as Record<string, unknown>)[field]).toBe(
-          "[REDACTED]",
-        );
-        expect((acceptedBody.error as Record<string, unknown>)[field]).toBe(
-          "[REDACTED]",
-        );
-        expect(
-          (
-            (
-              acceptedBody.nestedArray as Array<Record<string, unknown>>
-            )[0] as Record<string, unknown>
-          )[field],
-        ).toBe("[REDACTED]");
-      }
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));

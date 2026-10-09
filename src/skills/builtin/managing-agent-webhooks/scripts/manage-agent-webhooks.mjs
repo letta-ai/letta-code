@@ -116,10 +116,10 @@ function requireString(value, message) {
 }
 
 function requireResponseString(value, message) {
-  if (typeof value !== "string" || !value.trim()) {
+  if (typeof value !== "string" || !value.trim() || value !== value.trim()) {
     throw new Error(message);
   }
-  return value.trim();
+  return value;
 }
 
 export function resolveAgentWebhookTarget(currentAgentId) {
@@ -432,7 +432,9 @@ async function requestSideEffect(url, init, options) {
     bodyReadFailed = true;
   }
   if (!response.ok) {
-    const error = httpError(response, body, sensitiveValues);
+    const error = options.omitResponseBody
+      ? new Error(`${options.operation} failed with HTTP ${response.status}`)
+      : httpError(response, body, sensitiveValues);
     if (DEFINITIVE_MUTATION_REJECTION_STATUSES.has(response.status)) {
       throw error;
     }
@@ -1286,6 +1288,7 @@ async function runManagementCommand(params) {
         ambiguityGuidance:
           "Delivery may already have triggered agent work, and request history cannot reliably reconcile asynchronous dispatch. Do not retry without renewed affirmative user consent and explicit acceptance of duplicate work risk.",
         operation: "Webhook test delivery",
+        omitResponseBody: true,
         sensitiveValues,
       },
     );
@@ -1307,9 +1310,9 @@ async function runManagementCommand(params) {
     printJson(
       {
         accepted_for_processing: delivery.response.status === 202,
-        body: delivery.body,
+        body_omitted: true,
         dispatch_verified: false,
-        note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
+        note: "HTTP 202 confirms only that the ingress handler accepted the request; the untrusted response body is omitted, and conversation creation and queue submission happen asynchronously.",
         status_code: delivery.response.status,
       },
       sensitiveValues,
@@ -1318,7 +1321,7 @@ async function runManagementCommand(params) {
           accepted_for_processing: delivery.response.status === 202,
           body_omitted: true,
           dispatch_verified: false,
-          note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
+          note: "HTTP 202 confirms only that the ingress handler accepted the request; the untrusted response body is omitted, and conversation creation and queue submission happen asynchronously.",
           reason: "Webhook response body exceeded the 1 MiB display limit",
           status_code: delivery.response.status,
         },

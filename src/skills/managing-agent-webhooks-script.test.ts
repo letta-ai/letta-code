@@ -7,6 +7,7 @@ import {
   rm,
   stat,
   symlink,
+  writeFile,
 } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -230,6 +231,13 @@ describe("managing-agent-webhooks helper", () => {
       process.platform === "win32" ? "junction" : "dir",
     );
     const aliasedPackagedScript = packagedScript.replace(root, aliasRoot);
+    const payloadSecret = "payload-file-only-secret";
+    const payloadPath = join(root, "protected-payload.json");
+    await writeFile(
+      payloadPath,
+      JSON.stringify({ message: payloadSecret, value: payloadSecret }),
+      { mode: 0o600 },
+    );
 
     const received: Array<{
       authorization?: string;
@@ -283,11 +291,26 @@ describe("managing-agent-webhooks helper", () => {
             ? buildAgentWebhookBasicAuthorization(createBody.security_key)
             : "Basic generated-one-time"
           : null;
+        const responseWebhook = {
+          ...webhook,
+          agent_id:
+            createBody.name === "Padded agent ID"
+              ? ` ${webhook.agent_id} `
+              : webhook.agent_id,
+          id:
+            createBody.name === "Padded webhook ID"
+              ? ` ${webhook.id} `
+              : webhook.id,
+          webhook_slug:
+            createBody.name === "Padded webhook slug"
+              ? ` ${webhook.webhook_slug} `
+              : webhook.webhook_slug,
+        };
         response.writeHead(201);
         response.end(
           JSON.stringify({
             webhook: {
-              ...webhook,
+              ...responseWebhook,
               authorization_header: listedAuthorizationHeader,
               enabled: createBody.enabled,
               items: [listedAuthorizationHeader],
@@ -321,6 +344,7 @@ describe("managing-agent-webhooks helper", () => {
                     "7": 0,
                     "8": false,
                     "9": ["invalid"],
+                    "50": " 2026-10-09T00:00:00.000Z ",
                   }[requestedLimit ?? ""] ?? "2026-10-09T00:00:00.000Z",
                 enqueued: true,
                 error_message: null,
@@ -330,6 +354,7 @@ describe("managing-agent-webhooks helper", () => {
                     "4": true,
                     "5": ["invalid"],
                     "6": { invalid: true },
+                    "49": " request-1 ",
                   }[requestedLimit ?? ""] ?? "request-1",
                 raw_request: { account: "sensitive" },
                 request_body: { secret: "hidden-by-default" },
@@ -344,8 +369,15 @@ describe("managing-agent-webhooks helper", () => {
         request.method === "POST" &&
         request.url === "/v1/agent-webhooks/private-slug"
       ) {
+        const payload = JSON.parse(body) as Record<string, unknown>;
         response.writeHead(202);
-        response.end('{"ok":true}');
+        response.end(
+          JSON.stringify({
+            echo: payload,
+            message: payload.message,
+            value: payload.value,
+          }),
+        );
         return;
       }
       response.writeHead(404);
@@ -385,7 +417,11 @@ describe("managing-agent-webhooks helper", () => {
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
         ]);
-        expect(exitCode).toBe(expectedExitCode);
+        if (exitCode !== expectedExitCode) {
+          throw new Error(
+            `Expected exit ${expectedExitCode}, received ${exitCode}: ${stderr}`,
+          );
+        }
         if (expectedExitCode !== 0) return { stderr, stdout };
         expect(stderr).toBe("");
         expect(stdout.length).toBeGreaterThan(0);
@@ -410,6 +446,20 @@ describe("managing-agent-webhooks helper", () => {
       ]);
       expect(created).not.toHaveProperty("webhook.authorization_header");
       expect(created).not.toHaveProperty("webhook.webhook_slug");
+
+      for (const [name, expectedError] of [
+        ["Padded agent ID", "Webhook response is missing agent_id"],
+        ["Padded webhook ID", "Webhook response is missing id"],
+        ["Padded webhook slug", "Webhook response is missing webhook_slug"],
+      ] as const) {
+        const paddedIdentity = (await runNode(
+          ["create", "--name", name, "--public"],
+          undefined,
+          1,
+        )) as { stderr: string; stdout: string };
+        expect(paddedIdentity.stdout).toBe("");
+        expect(paddedIdentity.stderr).toContain(expectedError);
+      }
 
       const history = (await runNode([
         "requests",
@@ -450,6 +500,8 @@ describe("managing-agent-webhooks helper", () => {
         ["7", "Request history item created_at must be a nonblank string"],
         ["8", "Request history item created_at must be a nonblank string"],
         ["9", "Request history item created_at must be a nonblank string"],
+        ["49", "Request history item id must be a nonblank string"],
+        ["50", "Request history item created_at must be a nonblank string"],
       ] as const) {
         const malformedHistory = (await runNode(
           ["requests", "--webhook-id", "webhook-agent-1", "--limit", limit],
@@ -460,15 +512,22 @@ describe("managing-agent-webhooks helper", () => {
         expect(malformedHistory.stderr).toContain(expectedError);
       }
 
-      expect(
-        await runNode(["test", "--webhook-id", "webhook-agent-1", "--confirm"]),
-      ).toEqual({
+      const payloadTest = await runNode([
+        "test",
+        "--webhook-id",
+        "webhook-agent-1",
+        "--payload-file",
+        payloadPath,
+        "--confirm",
+      ]);
+      expect(payloadTest).toEqual({
         accepted_for_processing: true,
-        body: { ok: true },
+        body_omitted: true,
         dispatch_verified: false,
-        note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
+        note: "HTTP 202 confirms only that the ingress handler accepted the request; the untrusted response body is omitted, and conversation creation and queue submission happen asynchronously.",
         status_code: 202,
       });
+      expect(JSON.stringify(payloadTest)).not.toContain(payloadSecret);
 
       expect(received[0]).toMatchObject({
         authorization: "Bearer dummy-secret",
@@ -492,8 +551,8 @@ describe("managing-agent-webhooks helper", () => {
           request.path === "/v1/agent-webhooks/private-slug",
       );
       expect(JSON.parse(ingressRequest?.body ?? "")).toMatchObject({
-        event: "agent-webhook-test",
-        message: "Test delivery from Letta Code",
+        message: payloadSecret,
+        value: payloadSecret,
       });
 
       const credentialOutput = join(root, "generated-webhook-credential.json");
@@ -553,10 +612,11 @@ describe("managing-agent-webhooks helper", () => {
         )) as Record<string, unknown>;
         expect(testResult).toMatchObject({
           accepted_for_processing: true,
-          body: { ok: true },
+          body_omitted: true,
           dispatch_verified: false,
           status_code: 202,
         });
+        expect(testResult).not.toHaveProperty("body");
         expect(typeof testResult.accepted_for_processing).toBe("boolean");
         expect(typeof testResult.status_code).toBe("number");
       }
