@@ -7,7 +7,7 @@
       "dependencies": {
         "@earendil-works/pi-ai": "^0.99.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
-        "@letta-ai/letta-agent-sdk": "0.8.36",
+        "@letta-ai/letta-agent-sdk": "0.8.38",
         "@letta-ai/letta-client": "^1.10.2",
         "@letta-ai/trajectory": "0.2.0",
         "@modelcontextprotocol/sdk": "1.30.0",
@@ -196,7 +196,7 @@
 
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
-    "@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.36", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "@letta-ai/letta-code": "0.34.8", "ajv": "^8.20.0" } }, "sha512-ACmE3K5jcrzMjALO4p/ouN6VbjmdS7AuY0i8y1cWzudlTHxyoyZhS4FnOFNjgwF5oW3sya9NRu/cl/KG4kiOWA=="],
+    "@letta-ai/letta-agent-sdk": ["@letta-ai/letta-agent-sdk@0.8.38", "", { "dependencies": { "@letta-ai/letta-client": "^1.12.1", "ajv": "^8.20.0" }, "peerDependencies": { "@letta-ai/letta-code": ">=0.34.9 <0.35.0" } }, "sha512-ayMN6fNMRlj368RPRPDBVYQQDujxcawqEnsNmyefEgIm0j0q1+33VZpAUNfVAvB0Vivvx4FTQDx/E9Lbmpafhw=="],
 
     "@letta-ai/letta-client": ["@letta-ai/letta-client@1.10.2", "", {}, "sha512-BYAPkIl6wHYORJ+zHmlWaPSrlsMbN5YkoSnHnEUvaIJBOpa5kLwldNjzHIALcSAV19Qc0ktRoIQy0i0Vqb21yQ=="],
 
