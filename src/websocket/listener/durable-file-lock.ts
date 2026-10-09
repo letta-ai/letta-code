@@ -46,6 +46,8 @@ export type DurableFileLockOptions = {
   afterCanonicalOwnerLink?: (lockPath: string) => void;
   afterCanonicalDirectorySync?: (lockPath: string) => void;
   afterInstallingOwnerUnlink?: (lockPath: string) => void;
+  /** Deterministic race injection after reading an incumbent owner. */
+  afterOwnerDirectoryRead?: (lockPath: string) => void;
   /** Deterministic injection after observing an empty incumbent directory. */
   beforeEmptyCleanup?: (lockPath: string) => void;
   /** Deterministic clock and backoff seams used by bounded-retry tests. */
@@ -249,7 +251,10 @@ function ownerFileName(owner: DurableLockOwner): string {
   return `${owner.pid}-${owner.token}.json`;
 }
 
-function readOwnerDirectory(lockPath: string): {
+function readOwnerDirectory(
+  lockPath: string,
+  afterRead?: (path: string) => void,
+): {
   owner: DurableLockOwner;
   ownerPath: string;
 } | null {
@@ -272,17 +277,35 @@ function readOwnerDirectory(lockPath: string): {
     const read = readSync(fd, bytes, 0, bytes.length, 0);
     if (read !== bytes.length) throw new Error("Short durable lock owner read");
     const owner = parseOwner(JSON.parse(bytes.toString("utf8")));
+    afterRead?.(lockPath);
     const stableName = ownerFileName(owner);
+    // A publisher removes .installing after linking the stable owner. If that
+    // happens after readdir, propagate ENOENT so acquisition retries rather
+    // than classifying a legitimate publication transition as corruption.
+    const matchingLinks =
+      names.length === 2 &&
+      names.includes(stableName) &&
+      names.includes(INSTALLING_OWNER_NAME)
+        ? (() => {
+            const stable = lstatSync(join(lockPath, stableName), {
+              bigint: true,
+            });
+            const installing = lstatSync(
+              join(lockPath, INSTALLING_OWNER_NAME),
+              { bigint: true },
+            );
+            return (
+              stable.dev === installing.dev && stable.ino === installing.ino
+            );
+          })()
+        : false;
     const validNames =
       (names.length === 1 &&
         (names[0] === stableName || names[0] === INSTALLING_OWNER_NAME)) ||
       (names.length === 2 &&
         names.includes(stableName) &&
         names.includes(INSTALLING_OWNER_NAME) &&
-        sameFile(
-          join(lockPath, stableName),
-          join(lockPath, INSTALLING_OWNER_NAME),
-        ));
+        matchingLinks);
     if (!validNames) throw new Error("Invalid durable lock owner filename");
     return {
       owner,
@@ -640,7 +663,10 @@ export function acquireDurableFileLock(
 
       let incumbent: ReturnType<typeof readOwnerDirectory>;
       try {
-        incumbent = readOwnerDirectory(lockPath);
+        incumbent = readOwnerDirectory(
+          lockPath,
+          options.afterOwnerDirectoryRead,
+        );
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
         if (code === "ENOENT") {
