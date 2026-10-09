@@ -34,7 +34,7 @@ function persistentRuntime(path: string) {
 
 function messageWithContent(
   clientMessageId: string,
-  content: IncomingMessage["messages"][number]["content"],
+  content: string | Record<string, unknown>[],
 ): IncomingMessage {
   return {
     type: "message",
@@ -42,7 +42,7 @@ function messageWithContent(
     conversationId: "conversation-durable",
     messages: [
       { role: "user", content, client_message_id: clientMessageId },
-    ] as IncomingMessage["messages"],
+    ] as unknown as IncomingMessage["messages"],
   };
 }
 
