@@ -550,6 +550,7 @@ describe("managing-agent-webhooks credential lifecycle", () => {
           JSON.stringify({
             webhooks: [
               {
+                agent_id: "agent-current",
                 authorization_header: null,
                 id: "webhook-agent-secure",
                 name: "Secure events",
@@ -715,6 +716,7 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         JSON.stringify({
           webhooks: [
             {
+              agent_id: "agent-current",
               authorization_header: null,
               id: "webhook-agent-malformed",
               name: "Malformed file test",

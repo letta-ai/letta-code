@@ -255,7 +255,9 @@ describe("managing-agent-webhooks helper", () => {
         return;
       }
       const webhook = {
+        agent_id: "agent-current/encoded",
         authorization_header: listedAuthorizationHeader,
+        enabled: true,
         id: "webhook-agent-1",
         name: "Build events",
         requires_authorization_header: listedAuthorizationHeader !== null,
@@ -270,6 +272,9 @@ describe("managing-agent-webhooks helper", () => {
       }
       if (request.method === "POST" && request.url?.endsWith("/webhooks")) {
         const createBody = JSON.parse(body) as {
+          enabled?: boolean;
+          name?: string;
+          preprompt?: string;
           requires_authorization_header?: boolean;
           security_key?: string;
         };
@@ -284,7 +289,10 @@ describe("managing-agent-webhooks helper", () => {
             webhook: {
               ...webhook,
               authorization_header: listedAuthorizationHeader,
+              enabled: createBody.enabled,
               items: [listedAuthorizationHeader],
+              name: createBody.name,
+              preprompt: createBody.preprompt ?? null,
               requires_authorization_header: listedAuthorizationHeader !== null,
               safe_message:
                 createBody.security_key ?? "unpromised-public-field",

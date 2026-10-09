@@ -378,11 +378,14 @@ async function requestSideEffect(url, init, options) {
     ...authorizationSensitiveValues(managementAuthorization),
   ];
   let response;
+  const ambiguityGuidance =
+    options.ambiguityGuidance ??
+    "Reconcile webhook state before retrying; do not blindly retry.";
   try {
     response = await fetch(url, { ...init, redirect: "error" });
   } catch (error) {
     throw new Error(
-      `${options.operation} status is unknown and may have succeeded. Reconcile webhook state before retrying; do not blindly retry.`,
+      `${options.operation} status is unknown and may have succeeded. ${ambiguityGuidance}`,
       { cause: safeErrorCause(error, sensitiveValues) },
     );
   }
@@ -399,7 +402,7 @@ async function requestSideEffect(url, init, options) {
       throw error;
     }
     throw new Error(
-      `${safeErrorMessage(error, sensitiveValues)} ${options.operation} status is unknown and may have succeeded. Reconcile webhook state before retrying; do not blindly retry.`,
+      `${safeErrorMessage(error, sensitiveValues)} ${options.operation} status is unknown and may have succeeded. ${ambiguityGuidance}`,
       { cause: safeErrorCause(error, sensitiveValues) },
     );
   }
@@ -433,21 +436,29 @@ function webhookFromUnknown(value) {
   };
 }
 
-function validatedWebhookFromUnknown(value, baseUrl) {
+function validatedWebhookFromUnknown(value, baseUrl, agentId) {
   const webhook = webhookFromUnknown(value);
+  const responseAgentId = requireString(
+    webhook.agent_id,
+    "Webhook response is missing agent_id",
+  );
+  if (responseAgentId !== agentId) {
+    throw new Error("Webhook response belongs to a different agent");
+  }
   return {
     ...webhook,
+    agent_id: responseAgentId,
     webhook_url: validatedWebhookIngressUrl(webhook, baseUrl),
   };
 }
 
-function webhookList(value, baseUrl) {
+function webhookList(value, baseUrl, agentId) {
   const body = jsonObject(value, "Webhook list response must be an object");
   if (!Array.isArray(body.webhooks)) {
     throw new Error("Webhook list response is missing webhooks");
   }
   return body.webhooks.map((webhook) =>
-    validatedWebhookFromUnknown(webhook, baseUrl),
+    validatedWebhookFromUnknown(webhook, baseUrl, agentId),
   );
 }
 
@@ -713,6 +724,7 @@ async function listWebhooks(params) {
       },
     ),
     params.baseUrl,
+    params.agentId,
   );
 }
 
@@ -818,6 +830,7 @@ async function runManagementCommand(params) {
       const webhook = validatedWebhookFromUnknown(
         response.webhook,
         params.baseUrl,
+        params.agentId,
       );
       const requestedAuthorization = usesGeneratedCredential || usesSecurityKey;
       if (webhook.requires_authorization_header !== requestedAuthorization) {
@@ -845,6 +858,17 @@ async function runManagementCommand(params) {
       ) {
         throw new Error(
           "Create response unexpectedly returned a credential for a public webhook",
+        );
+      }
+      const returnedPreprompt =
+        webhook.preprompt === null ? undefined : webhook.preprompt;
+      if (
+        webhook.name !== body.name ||
+        webhook.enabled !== body.enabled ||
+        returnedPreprompt !== body.preprompt
+      ) {
+        throw new Error(
+          "Create response does not match the requested webhook configuration",
         );
       }
       const credentialFile = credentialReservation
@@ -976,7 +1000,11 @@ async function runManagementCommand(params) {
         mutation.body,
         "Update response must be an object",
       );
-      webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
+      webhook = validatedWebhookFromUnknown(
+        response.webhook,
+        params.baseUrl,
+        params.agentId,
+      );
       const expectedEnabled = params.command === "enable";
       if (
         webhook.id !== webhookId ||
@@ -1019,6 +1047,10 @@ async function runManagementCommand(params) {
 
   if (params.command === "rotate") {
     requireConfirmation(params.args, "Rotating a webhook URL");
+    const existingWebhook = (await listWebhooks(params)).find(
+      (candidate) => candidate.id === webhookId,
+    );
+    if (!existingWebhook) throw new Error(`Webhook not found: ${webhookId}`);
     const mutation = await requestSideEffect(
       `${itemUrl}/refresh`,
       {
@@ -1034,9 +1066,19 @@ async function runManagementCommand(params) {
         mutation.body,
         "Rotate response must be an object",
       );
-      webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
-      if (webhook.id !== webhookId) {
-        throw new Error("Rotate response does not match the requested webhook");
+      webhook = validatedWebhookFromUnknown(
+        response.webhook,
+        params.baseUrl,
+        params.agentId,
+      );
+      if (
+        webhook.id !== webhookId ||
+        webhook.webhook_url === existingWebhook.webhook_url ||
+        webhook.webhook_slug === existingWebhook.webhook_slug
+      ) {
+        throw new Error(
+          "Rotate response does not prove the requested webhook URL changed",
+        );
       }
     } catch {
       printJson({
@@ -1138,6 +1180,8 @@ async function runManagementCommand(params) {
         method: "POST",
       },
       {
+        ambiguityGuidance:
+          "Delivery may already have triggered agent work, and request history cannot reliably reconcile asynchronous dispatch. Do not retry without renewed affirmative user consent and explicit acceptance of duplicate work risk.",
         operation: "Webhook test delivery",
         sensitiveValues,
       },
@@ -1148,7 +1192,7 @@ async function runManagementCommand(params) {
         accepted_for_processing: delivery.response.status === 202,
         body_omitted: true,
         dispatch_verified: false,
-        note: "The ingress endpoint accepted the request, but its response body could not be read. Do not blindly retry.",
+        note: "The ingress endpoint accepted the request, but its response body could not be read. Request history cannot reliably reconcile asynchronous dispatch. Do not retry without renewed affirmative user consent and explicit acceptance of duplicate work risk.",
         status_code: delivery.response.status,
       });
       return;

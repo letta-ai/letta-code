@@ -52,6 +52,10 @@ payload as a user message.
   the explicit pre-handler rejection allowlist. Reconcile before retrying and
   never treat a redirect target or non-definitive status as proof that the
   mutation did nothing.
+- Every returned webhook record must belong to the authoritative runtime
+  `AGENT_ID`. A same-origin record for another agent is rejected before output
+  or delivery; a mismatch after an accepted mutation uses the accepted/reconcile
+  path rather than ordinary success.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -60,6 +64,10 @@ payload as a user message.
 - Sending a test starts asynchronous agent work. Ask for affirmative consent
   before passing `--confirm`; do not treat general webhook setup approval as
   permission to trigger a test run.
+- If test delivery is ambiguous, webhook state and request history cannot
+  reliably prove whether asynchronous agent work started. Do not retry without
+  renewed affirmative user consent and explicit acceptance of duplicate-work
+  risk.
 - After a secure-create request is dispatched, any transport failure, 5xx, or
   unreadable/truncated/contradictory success response is ambiguous. The helper
   validates the returned authentication mode for public, generated-key, and
@@ -76,6 +84,11 @@ payload as a user message.
   requires the returned webhook ID to match. Canonical but contradictory 2xx
   records receive the same accepted/reconcile envelope and are never printed as
   ordinary success.
+- Normal create output also requires returned name, enabled state, and normalized
+  absent/null preprompt to match the request. Rotate first reads the current
+  agent-bound record and reports ordinary success only when the returned
+  canonical slug/URL changed; an unchanged result is accepted but requires
+  reconciliation.
 
 ## Environment
 

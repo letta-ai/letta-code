@@ -123,6 +123,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
           JSON.stringify({
             webhooks: [
               {
+                agent_id: "agent-endpoint-safety",
                 authorization_header: null,
                 id: "webhook-agent-endpoint",
                 name: "Endpoint safety",
@@ -206,7 +207,13 @@ describe("managing-agent-webhooks endpoint safety", () => {
     if (!targetAddress || typeof targetAddress === "string") {
       throw new Error("Expected redirect target address");
     }
-    let mode: "redirect" | "poisoned-create" | "poisoned-list" = "redirect";
+    let mode:
+      | "redirect"
+      | "poisoned-create"
+      | "poisoned-list"
+      | "wrong-agent-create"
+      | "wrong-agent-list" = "redirect";
+    let ingressRequests = 0;
     const management = createServer(async (request, response) => {
       let body = "";
       for await (const chunk of request) body += chunk;
@@ -224,18 +231,34 @@ describe("managing-agent-webhooks endpoint safety", () => {
         return;
       }
       response.setHeader("Content-Type", "application/json");
+      if (
+        mode === "wrong-agent-list" &&
+        request.method === "POST" &&
+        request.url === "/v1/agent-webhooks/wrong-agent"
+      ) {
+        ingressRequests += 1;
+        response.writeHead(202);
+        response.end('{"ok":true}');
+        return;
+      }
       if (request.method === "GET") {
+        const wrongAgent = mode === "wrong-agent-list";
         response.writeHead(200);
         response.end(
           JSON.stringify({
             webhooks: [
               {
+                agent_id: wrongAgent ? "agent-other" : "agent-endpoint-safety",
                 authorization_header: null,
-                id: "webhook-poisoned-list",
+                id: wrongAgent
+                  ? "webhook-wrong-agent"
+                  : "webhook-poisoned-list",
                 name: "Poisoned list",
                 requires_authorization_header: false,
-                webhook_slug: "poisoned-list",
-                webhook_url: "http://127.0.0.1:9/capture",
+                webhook_slug: wrongAgent ? "wrong-agent" : "poisoned-list",
+                webhook_url: wrongAgent
+                  ? `http://127.0.0.1:${address.port}/v1/agent-webhooks/wrong-agent`
+                  : "http://127.0.0.1:9/capture",
               },
             ],
           }),
@@ -247,6 +270,10 @@ describe("managing-agent-webhooks endpoint safety", () => {
       response.end(
         JSON.stringify({
           webhook: {
+            agent_id:
+              mode === "wrong-agent-create"
+                ? "agent-other"
+                : "agent-endpoint-safety",
             authorization_header: buildAgentWebhookBasicAuthorization(
               create.security_key,
             ),
@@ -254,7 +281,10 @@ describe("managing-agent-webhooks endpoint safety", () => {
             name: "Poisoned create",
             requires_authorization_header: true,
             webhook_slug: "poisoned-create",
-            webhook_url: "http://127.0.0.1:9/capture",
+            webhook_url:
+              mode === "wrong-agent-create"
+                ? `http://127.0.0.1:${address.port}/v1/agent-webhooks/poisoned-create`
+                : "http://127.0.0.1:9/capture",
           },
         }),
       );
@@ -297,6 +327,28 @@ describe("managing-agent-webhooks endpoint safety", () => {
       const poisonedList = await runHelper(baseUrl, ["list"]);
       expect(poisonedList).toMatchObject({ exitCode: 1, stdout: "" });
       expect(poisonedList.stderr).toContain("active runtime origin");
+
+      await rm(credentialPath, { force: true });
+      mode = "wrong-agent-create";
+      const wrongAgentCreate = await runHelper(baseUrl, createArgs);
+      expect(wrongAgentCreate).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(wrongAgentCreate.stderr).toContain("different agent");
+      expect(wrongAgentCreate.stderr).toContain("Run list and reconcile");
+      expect(await readFile(credentialPath, "utf8")).toContain("security_key");
+
+      mode = "wrong-agent-list";
+      const wrongAgentList = await runHelper(baseUrl, ["list"]);
+      expect(wrongAgentList).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(wrongAgentList.stderr).toContain("different agent");
+      const wrongAgentTest = await runHelper(baseUrl, [
+        "test",
+        "--webhook-id",
+        "webhook-wrong-agent",
+        "--confirm",
+      ]);
+      expect(wrongAgentTest).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(wrongAgentTest.stderr).toContain("different agent");
+      expect(ingressRequests).toBe(0);
     } finally {
       await Promise.all([
         new Promise<void>((resolve) => management.close(() => resolve())),
@@ -314,7 +366,9 @@ describe("managing-agent-webhooks endpoint safety", () => {
       let body = "";
       for await (const chunk of request) body += chunk;
       const create = JSON.parse(body) as {
+        enabled: boolean;
         name: string;
+        preprompt?: string;
         security_key?: string;
       };
       const address = server.address();
@@ -325,22 +379,31 @@ describe("managing-agent-webhooks endpoint safety", () => {
       }
       const isGenerated = create.name === "Generated mismatch";
       const isPublic = create.name === "Public mismatch";
+      const isConfigMismatch = create.name === "Config mismatch";
       const responseKey = isPublic
         ? "unexpected-public-key"
-        : isGenerated
-          ? create.security_key
-          : "different-key";
+        : isConfigMismatch
+          ? undefined
+          : isGenerated
+            ? create.security_key
+            : "different-key";
       response.setHeader("Content-Type", "application/json");
       response.writeHead(200);
       response.end(
         JSON.stringify({
           webhook: {
+            agent_id: "agent-endpoint-safety",
             authorization_header: responseKey
               ? buildAgentWebhookBasicAuthorization(responseKey)
               : null,
             id: `webhook-${create.name}`,
-            name: create.name,
-            requires_authorization_header: isPublic || !isGenerated,
+            enabled: isConfigMismatch ? !create.enabled : create.enabled,
+            name: isConfigMismatch ? "Different name" : create.name,
+            preprompt: isConfigMismatch
+              ? "Different preprompt"
+              : (create.preprompt ?? null),
+            requires_authorization_header:
+              !isConfigMismatch && (isPublic || !isGenerated),
             webhook_slug: "auth-state",
             webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/auth-state`,
           },
@@ -392,6 +455,21 @@ describe("managing-agent-webhooks endpoint safety", () => {
       );
       expect(supplied.stderr).toContain("Run list and reconcile");
       expect(supplied.stderr).not.toContain(suppliedKey);
+
+      const configMismatch = await runHelper(baseUrl, [
+        "create",
+        "--name",
+        "Config mismatch",
+        "--preprompt",
+        "Expected preprompt",
+        "--disabled",
+        "--public",
+      ]);
+      expect(configMismatch).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(configMismatch.stderr).toContain(
+        "does not match the requested webhook configuration",
+      );
+      expect(configMismatch.stderr).toContain("Run list and reconcile");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });
@@ -440,6 +518,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
           JSON.stringify({
             webhooks: [
               {
+                agent_id: "agent-endpoint-safety",
                 authorization_header: null,
                 id: "webhook-agent-oversized",
                 name: "Oversized",
@@ -583,6 +662,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
           JSON.stringify({
             webhooks: [
               {
+                agent_id: "agent-endpoint-safety",
                 authorization_header: null,
                 id: "webhook-agent-truncated",
                 name: "Truncated",
@@ -600,10 +680,15 @@ describe("managing-agent-webhooks endpoint safety", () => {
         request.url === "/v1/agent-webhooks/truncated"
       ) {
         ingressRequests += 1;
-        response.writeHead(202, { "Content-Length": "100" });
-        response.flushHeaders();
-        response.write('{"partial":');
-        setImmediate(() => response.destroy());
+        if (ingressRequests === 1) {
+          response.writeHead(202, { "Content-Length": "100" });
+          response.flushHeaders();
+          response.write('{"partial":');
+          setImmediate(() => response.destroy());
+        } else {
+          response.writeHead(500);
+          response.end('{"error":"delivery status unknown"}');
+        }
         return;
       }
       if (request.method === "POST" && request.url?.endsWith("/refresh")) {
@@ -616,16 +701,22 @@ describe("managing-agent-webhooks endpoint safety", () => {
           response.write('{"partial":');
           setImmediate(() => response.destroy());
         } else {
+          const unchanged = rotateRequests === 4;
+          const wrongIdentity = rotateRequests === 3;
+          const returnedSlug = unchanged ? "truncated" : "different-rotate";
           response.writeHead(200);
           response.end(
             JSON.stringify({
               webhook: {
+                agent_id: "agent-endpoint-safety",
                 authorization_header: null,
-                id: "different-webhook",
+                id: wrongIdentity
+                  ? "different-webhook"
+                  : "webhook-agent-truncated",
                 name: "Wrong rotate record",
                 requires_authorization_header: true,
-                webhook_slug: "different-rotate",
-                webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/different-rotate`,
+                webhook_slug: returnedSlug,
+                webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/${returnedSlug}`,
               },
             }),
           );
@@ -640,6 +731,7 @@ describe("managing-agent-webhooks endpoint safety", () => {
             ? "not-json"
             : JSON.stringify({
                 webhook: {
+                  agent_id: "agent-endpoint-safety",
                   authorization_header: null,
                   enabled: true,
                   id:
@@ -683,6 +775,26 @@ describe("managing-agent-webhooks endpoint safety", () => {
         status_code: 202,
       });
       expect(ingressRequests).toBe(1);
+
+      const ambiguousDelivery = await runHelper(baseUrl, [
+        "test",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--credential-file",
+        credentialPath,
+        "--confirm",
+      ]);
+      expect(ambiguousDelivery).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(ambiguousDelivery.stderr).toContain("HTTP 500");
+      expect(ambiguousDelivery.stderr).toContain(
+        "request history cannot reliably reconcile asynchronous dispatch",
+      );
+      expect(ambiguousDelivery.stderr).toContain(
+        "renewed affirmative user consent",
+      );
+      expect(ambiguousDelivery.stderr).toContain("duplicate work risk");
+      expect(ambiguousDelivery.stderr).not.toContain("Reconcile webhook state");
+      expect(ingressRequests).toBe(2);
 
       const rotated = await runHelper(baseUrl, [
         "rotate",
@@ -729,6 +841,38 @@ describe("managing-agent-webhooks endpoint safety", () => {
       });
       expect(mismatchedRotate.stdout).not.toContain("different-webhook");
       expect(rotateRequests).toBe(3);
+
+      const unchangedRotate = await runHelper(baseUrl, [
+        "rotate",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(unchangedRotate).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(unchangedRotate.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "rotate",
+        status_code: 200,
+        webhook_id: "webhook-agent-truncated",
+      });
+      expect(rotateRequests).toBe(4);
+
+      const changedRotate = await runHelper(baseUrl, [
+        "rotate",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(changedRotate).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(changedRotate.stdout)).toMatchObject({
+        webhook: {
+          agent_id: "agent-endpoint-safety",
+          id: "webhook-agent-truncated",
+          webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/different-rotate`,
+        },
+      });
+      expect(rotateRequests).toBe(5);
 
       const updated = await runHelper(baseUrl, [
         "enable",
