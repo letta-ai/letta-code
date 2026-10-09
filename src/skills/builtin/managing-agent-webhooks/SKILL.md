@@ -43,15 +43,18 @@ payload as a user message.
   redaction. Serialized output is capped at 1 MiB; accepted side effects whose
   body exceeds that limit emit a bounded success envelope rather than a failure
   that could invite a duplicate retry.
-- Before a test sends payload or authorization, the returned URL must use the
+- Every management request rejects redirects. Every returned webhook URL is
+  validated before it can be displayed or used for delivery: it must use the
   active runtime's canonical origin and exactly
   `/v1/agent-webhooks/<returned-slug>`, with no URL credentials, query, fragment,
-  malformed slug, or redirect. Treat a validation or redirect failure as a
-  blocked delivery, not as an accepted webhook request.
+  malformed slug, or redirect. A redirect or transport failure after a mutation
+  dispatch is ambiguous; reconcile before retrying and never treat a redirect
+  target's response as a definitive rejection.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
-  unless `--include-body` is explicitly passed.
+  unless `--include-body` is explicitly passed. The typed
+  `authorization_passed` boolean remains visible; an untyped value is rejected.
 - Sending a test starts asynchronous agent work. Ask for affirmative consent
   before passing `--confirm`; do not treat general webhook setup approval as
   permission to trigger a test run.
@@ -61,6 +64,11 @@ payload as a user message.
   user-supplied-key creation, plus the returned Basic header for both secured
   modes. It preserves generated credentials and tells you to list webhooks and
   reconcile the name before any retry. Never blindly retry an ambiguous create.
+- For test, update, rotate, and delete, successful HTTP headers establish that
+  the side effect was accepted. If the success body is truncated, malformed,
+  or cannot be validated, the helper emits an operation-specific exit-0 receipt
+  with the HTTP status and reconciliation guidance rather than a generic error
+  that could trigger a duplicate mutation.
 
 ## Environment
 

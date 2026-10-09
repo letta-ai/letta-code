@@ -187,6 +187,125 @@ describe("managing-agent-webhooks endpoint safety", () => {
     }
   });
 
+  test("blocks management redirects and poisoned returned URLs", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-management-"));
+    const credentialPath = join(root, "generated.json");
+    let redirectedRequests = 0;
+    const target = createServer(async (request, response) => {
+      for await (const _chunk of request) {
+        // Consume any incorrectly redirected body.
+      }
+      redirectedRequests += 1;
+      response.writeHead(400);
+      response.end('{"error":"must not arrive"}');
+    });
+    await new Promise<void>((resolve) =>
+      target.listen(0, "127.0.0.1", resolve),
+    );
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress === "string") {
+      throw new Error("Expected redirect target address");
+    }
+    let mode: "redirect" | "poisoned-create" | "poisoned-list" = "redirect";
+    const management = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const address = management.address();
+      if (!address || typeof address === "string") {
+        response.writeHead(500);
+        response.end();
+        return;
+      }
+      if (mode === "redirect" && request.method === "POST") {
+        response.writeHead(307, {
+          Location: `http://127.0.0.1:${targetAddress.port}/capture`,
+        });
+        response.end();
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET") {
+        response.writeHead(200);
+        response.end(
+          JSON.stringify({
+            webhooks: [
+              {
+                authorization_header: null,
+                id: "webhook-poisoned-list",
+                name: "Poisoned list",
+                requires_authorization_header: false,
+                webhook_slug: "poisoned-list",
+                webhook_url: "http://127.0.0.1:9/capture",
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      const create = JSON.parse(body) as { security_key: string };
+      response.writeHead(200);
+      response.end(
+        JSON.stringify({
+          webhook: {
+            authorization_header: buildAgentWebhookBasicAuthorization(
+              create.security_key,
+            ),
+            id: "webhook-poisoned-create",
+            name: "Poisoned create",
+            requires_authorization_header: true,
+            webhook_slug: "poisoned-create",
+            webhook_url: "http://127.0.0.1:9/capture",
+          },
+        }),
+      );
+    });
+    await new Promise<void>((resolve) =>
+      management.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = management.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected management server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const createArgs = [
+        "create",
+        "--name",
+        "Management boundary",
+        "--secure",
+        "--credential-output",
+        credentialPath,
+      ];
+      const redirected = await runHelper(baseUrl, createArgs);
+      expect(redirected).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(redirected.stderr).toContain(
+        "status is unknown or may have succeeded",
+      );
+      expect(redirected.stderr).toContain("Run list and reconcile");
+      expect(redirectedRequests).toBe(0);
+      expect(await readFile(credentialPath, "utf8")).toContain("security_key");
+
+      await rm(credentialPath, { force: true });
+      mode = "poisoned-create";
+      const poisonedCreate = await runHelper(baseUrl, createArgs);
+      expect(poisonedCreate).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(poisonedCreate.stderr).toContain("active runtime origin");
+      expect(poisonedCreate.stderr).toContain("Run list and reconcile");
+      expect(await readFile(credentialPath, "utf8")).toContain("security_key");
+
+      mode = "poisoned-list";
+      const poisonedList = await runHelper(baseUrl, ["list"]);
+      expect(poisonedList).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(poisonedList.stderr).toContain("active runtime origin");
+    } finally {
+      await Promise.all([
+        new Promise<void>((resolve) => management.close(() => resolve())),
+        new Promise<void>((resolve) => target.close(() => resolve())),
+      ]);
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
   test("rejects contradictory authentication state after accepted creation", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-webhook-auth-state-"));
     const credentialPath = join(root, "generated.json");
@@ -399,8 +518,9 @@ describe("managing-agent-webhooks endpoint safety", () => {
       ]);
       expect(deleted).toMatchObject({ exitCode: 0, stderr: "" });
       expect(JSON.parse(deleted.stdout)).toMatchObject({
+        body_omitted: true,
         deleted: true,
-        output_omitted: true,
+        status_code: 200,
         webhook_id: "webhook-agent-oversized",
       });
       expect(deleteRequests).toBe(1);
@@ -417,17 +537,146 @@ describe("managing-agent-webhooks endpoint safety", () => {
         unknown
       >;
       expect(sanitizedBody).toMatchObject({
-        secretary: "Ada",
-        token_count: 42,
+        body_omitted: true,
+        deleted: true,
+        status_code: 200,
       });
-      for (const [field, secret] of Object.entries(secretFields)) {
+      for (const secret of Object.values(secretFields)) {
         expect(sanitizedDelete.stdout).not.toContain(secret);
-        expect(sanitizedBody[field]).toBe("[REDACTED]");
-        expect((sanitizedBody.nested as Record<string, unknown>)[field]).toBe(
-          "[REDACTED]",
-        );
       }
       expect(deleteRequests).toBe(2);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("reports truncated and malformed successful mutations as accepted", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-truncated-"));
+    const credentialPath = join(root, "credential.json");
+    const key = "truncated-response-key";
+    await writeFile(
+      credentialPath,
+      JSON.stringify({
+        authorization_header: buildAgentWebhookBasicAuthorization(key),
+        security_key: key,
+      }),
+      { mode: 0o600 },
+    );
+    let ingressRequests = 0;
+    let rotateRequests = 0;
+    let updateRequests = 0;
+    const server = createServer(async (request, response) => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        response.writeHead(500);
+        response.end();
+        return;
+      }
+      for await (const _chunk of request) {
+        // Consume request bodies before responding.
+      }
+      response.setHeader("Content-Type", "application/json");
+      if (request.method === "GET" && request.url?.endsWith("/webhooks")) {
+        response.writeHead(200);
+        response.end(
+          JSON.stringify({
+            webhooks: [
+              {
+                authorization_header: null,
+                id: "webhook-agent-truncated",
+                name: "Truncated",
+                requires_authorization_header: true,
+                webhook_slug: "truncated",
+                webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/truncated`,
+              },
+            ],
+          }),
+        );
+        return;
+      }
+      if (
+        request.method === "POST" &&
+        request.url === "/v1/agent-webhooks/truncated"
+      ) {
+        ingressRequests += 1;
+        response.writeHead(202, { "Content-Length": "100" });
+        response.flushHeaders();
+        response.write('{"partial":');
+        setImmediate(() => response.destroy());
+        return;
+      }
+      if (request.method === "POST" && request.url?.endsWith("/refresh")) {
+        rotateRequests += 1;
+        response.writeHead(200, { "Content-Length": "100" });
+        response.flushHeaders();
+        response.write('{"partial":');
+        setImmediate(() => response.destroy());
+        return;
+      }
+      if (request.method === "PATCH") {
+        updateRequests += 1;
+        response.writeHead(200);
+        response.end("not-json");
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected server address");
+      }
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const tested = await runHelper(baseUrl, [
+        "test",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--credential-file",
+        credentialPath,
+        "--confirm",
+      ]);
+      expect(tested).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(tested.stdout)).toMatchObject({
+        accepted: true,
+        accepted_for_processing: true,
+        body_omitted: true,
+        status_code: 202,
+      });
+      expect(ingressRequests).toBe(1);
+
+      const rotated = await runHelper(baseUrl, [
+        "rotate",
+        "--webhook-id",
+        "webhook-agent-truncated",
+        "--confirm",
+      ]);
+      expect(rotated).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(rotated.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "rotate",
+        status_code: 200,
+      });
+      expect(rotateRequests).toBe(1);
+
+      const updated = await runHelper(baseUrl, [
+        "enable",
+        "--webhook-id",
+        "webhook-agent-truncated",
+      ]);
+      expect(updated).toMatchObject({ exitCode: 0, stderr: "" });
+      expect(JSON.parse(updated.stdout)).toMatchObject({
+        accepted: true,
+        body_omitted: true,
+        operation: "enable",
+        status_code: 200,
+      });
+      expect(updateRequests).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });

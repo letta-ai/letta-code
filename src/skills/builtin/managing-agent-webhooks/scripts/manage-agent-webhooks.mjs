@@ -224,6 +224,7 @@ const SAFE_ERROR_FIELDS = new Set([
 ]);
 function fieldNameTokens(key) {
   return key
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .replace(/[^A-Za-z0-9]+/g, "_")
     .toLowerCase()
@@ -240,16 +241,22 @@ function hasTokenPair(tokens, left, right) {
 function isSensitiveFieldName(key, path, trustedPaths) {
   if (trustedPaths.has([...path, key].join("."))) return false;
   const tokens = fieldNameTokens(key);
+  const compact = key.replace(/[^A-Za-z0-9]+/g, "").toLowerCase();
   if (tokens.length === 2 && tokens[0] === "token" && tokens[1] === "count") {
     return false;
   }
   return (
+    /^(?:apikey|apitoken|authorizationheader|authheader|authenticationheader|accesstoken|authtoken|bearertoken|refreshtoken|securitykey|privatekey|signingkey|clientsecret|databasepassword|passwordhash|idtoken|sessiontoken)$/.test(
+      compact,
+    ) ||
     tokens.includes("authorization") ||
     tokens.includes("credential") ||
     tokens.includes("credentials") ||
     tokens.includes("password") ||
     tokens.includes("secret") ||
     tokens.includes("token") ||
+    hasTokenPair(tokens, "auth", "header") ||
+    hasTokenPair(tokens, "authentication", "header") ||
     hasTokenPair(tokens, "api", "key") ||
     hasTokenPair(tokens, "private", "key") ||
     hasTokenPair(tokens, "security", "key") ||
@@ -353,12 +360,41 @@ async function requestJson(url, init, options = {}) {
     ...(options.sensitiveValues ?? []),
     ...authorizationSensitiveValues(managementAuthorization),
   ];
-  const response = await fetch(url, init);
+  const response = await fetch(url, { ...init, redirect: "error" });
   const body = await parseResponse(response);
   if (!response.ok) {
     throw httpError(response, body, sensitiveValues);
   }
   return body;
+}
+
+async function requestSideEffect(url, init, options) {
+  const managementAuthorization =
+    init?.headers?.Authorization ?? init?.headers?.authorization;
+  const sensitiveValues = [
+    ...(options.sensitiveValues ?? []),
+    ...authorizationSensitiveValues(managementAuthorization),
+  ];
+  let response;
+  try {
+    response = await fetch(url, { ...init, redirect: "error" });
+  } catch (error) {
+    throw new Error(
+      `${options.operation} status is unknown and may have succeeded. Reconcile webhook state before retrying; do not blindly retry.`,
+      { cause: safeErrorCause(error, sensitiveValues) },
+    );
+  }
+  let body;
+  let bodyReadFailed = false;
+  try {
+    body = await parseResponse(response);
+  } catch {
+    bodyReadFailed = true;
+  }
+  if (!response.ok) {
+    throw httpError(response, body, sensitiveValues);
+  }
+  return { body, bodyReadFailed, response };
 }
 
 function jsonObject(value, message) {
@@ -388,12 +424,22 @@ function webhookFromUnknown(value) {
   };
 }
 
-function webhookList(value) {
+function validatedWebhookFromUnknown(value, baseUrl) {
+  const webhook = webhookFromUnknown(value);
+  return {
+    ...webhook,
+    webhook_url: validatedWebhookIngressUrl(webhook, baseUrl),
+  };
+}
+
+function webhookList(value, baseUrl) {
   const body = jsonObject(value, "Webhook list response must be an object");
   if (!Array.isArray(body.webhooks)) {
     throw new Error("Webhook list response is missing webhooks");
   }
-  return body.webhooks.map(webhookFromUnknown);
+  return body.webhooks.map((webhook) =>
+    validatedWebhookFromUnknown(webhook, baseUrl),
+  );
 }
 
 async function readSecurityKey(args) {
@@ -631,6 +677,9 @@ const CREATE_OUTPUT_TRUSTED_PATHS = new Set([
 const LIST_OUTPUT_TRUSTED_PATHS = new Set([
   "webhooks.*.requires_authorization_header",
 ]);
+const REQUEST_OUTPUT_TRUSTED_PATHS = new Set([
+  "requests.*.authorization_passed",
+]);
 const WEBHOOK_OUTPUT_TRUSTED_PATHS = new Set([
   "webhook.requires_authorization_header",
 ]);
@@ -654,6 +703,7 @@ async function listWebhooks(params) {
         headers: params.headers,
       },
     ),
+    params.baseUrl,
   );
 }
 
@@ -739,6 +789,7 @@ async function runManagementCommand(params) {
         body: JSON.stringify(body),
         headers: params.headers,
         method: "POST",
+        redirect: "error",
       });
       if (rawResponse.ok) {
         creationState = "accepted";
@@ -753,7 +804,10 @@ async function runManagementCommand(params) {
         responseBody,
         "Create response must be an object",
       );
-      const webhook = webhookFromUnknown(response.webhook);
+      const webhook = validatedWebhookFromUnknown(
+        response.webhook,
+        params.baseUrl,
+      );
       const requestedAuthorization = usesGeneratedCredential || usesSecurityKey;
       if (webhook.requires_authorization_header !== requestedAuthorization) {
         throw new Error(
@@ -863,6 +917,14 @@ async function runManagementCommand(params) {
         request_body: requestBody,
         ...acceptedRequest
       } = request;
+      if (
+        Object.hasOwn(request, "authorization_passed") &&
+        typeof request.authorization_passed !== "boolean"
+      ) {
+        throw new Error(
+          "Request history item authorization_passed must be a boolean",
+        );
+      }
       return {
         ...acceptedRequest,
         accepted: request.status_code === 202,
@@ -877,6 +939,7 @@ async function runManagementCommand(params) {
         reason: "Request history exceeded the 1 MiB display limit",
         request_count: requests.length,
       },
+      trustedPaths: REQUEST_OUTPUT_TRUSTED_PATHS,
     });
     return;
   }
@@ -885,17 +948,39 @@ async function runManagementCommand(params) {
     if (params.command === "disable") {
       requireConfirmation(params.args, "Disabling a webhook");
     }
-    const response = jsonObject(
-      await requestJson(itemUrl, {
+    const mutation = await requestSideEffect(
+      itemUrl,
+      {
         body: JSON.stringify({ enabled: params.command === "enable" }),
         headers: params.headers,
         method: "PATCH",
-      }),
-      "Update response must be an object",
+      },
+      {
+        operation: `Webhook ${params.command}`,
+      },
     );
+    let webhook;
+    try {
+      const response = jsonObject(
+        mutation.body,
+        "Update response must be an object",
+      );
+      webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
+    } catch {
+      printJson({
+        accepted: true,
+        body_omitted: true,
+        operation: params.command,
+        reason:
+          "Successful update response could not be validated; list webhooks to reconcile before retrying",
+        status_code: mutation.response.status,
+        webhook_id: webhookId,
+      });
+      return;
+    }
     printJson(
       {
-        webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
+        webhook: safeAgentWebhook(webhook),
       },
       managementSensitiveValues,
       {
@@ -913,17 +998,37 @@ async function runManagementCommand(params) {
 
   if (params.command === "rotate") {
     requireConfirmation(params.args, "Rotating a webhook URL");
-    const response = jsonObject(
-      await requestJson(`${itemUrl}/refresh`, {
+    const mutation = await requestSideEffect(
+      `${itemUrl}/refresh`,
+      {
         body: "{}",
         headers: params.headers,
         method: "POST",
-      }),
-      "Rotate response must be an object",
+      },
+      { operation: "Webhook rotation" },
     );
+    let webhook;
+    try {
+      const response = jsonObject(
+        mutation.body,
+        "Rotate response must be an object",
+      );
+      webhook = validatedWebhookFromUnknown(response.webhook, params.baseUrl);
+    } catch {
+      printJson({
+        accepted: true,
+        body_omitted: true,
+        operation: "rotate",
+        reason:
+          "Successful rotate response could not be validated; list webhooks to reconcile before retrying",
+        status_code: mutation.response.status,
+        webhook_id: webhookId,
+      });
+      return;
+    }
     printJson(
       {
-        webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
+        webhook: safeAgentWebhook(webhook),
       },
       managementSensitiveValues,
       {
@@ -941,22 +1046,21 @@ async function runManagementCommand(params) {
 
   if (params.command === "delete") {
     requireConfirmation(params.args, "Deleting a webhook");
-    printJson(
-      await requestJson(itemUrl, {
+    const mutation = await requestSideEffect(
+      itemUrl,
+      {
         body: "{}",
         headers: params.headers,
         method: "DELETE",
-      }),
-      managementSensitiveValues,
-      {
-        oversizedFallback: {
-          deleted: true,
-          output_omitted: true,
-          reason: "Delete output exceeded the 1 MiB display limit",
-          webhook_id: webhookId,
-        },
       },
+      { operation: "Webhook deletion" },
     );
+    printJson({
+      body_omitted: mutation.bodyReadFailed || mutation.body !== null,
+      deleted: true,
+      status_code: mutation.response.status,
+      webhook_id: webhookId,
+    });
     return;
   }
 
@@ -1002,38 +1106,46 @@ async function runManagementCommand(params) {
       headers.Authorization = authorizationHeader;
     }
     const ingressUrl = validatedWebhookIngressUrl(webhook, params.baseUrl);
-    const response = await fetch(ingressUrl, {
-      body: JSON.stringify(await readPayload(params.args)),
-      headers,
-      method: "POST",
-      redirect: "error",
-    });
-    const body = await parseResponse(response);
-    if (!response.ok) {
-      throw httpError(
-        response,
-        body,
+    const delivery = await requestSideEffect(
+      ingressUrl,
+      {
+        body: JSON.stringify(await readPayload(params.args)),
+        headers,
+        method: "POST",
+      },
+      {
+        operation: "Webhook test delivery",
         sensitiveValues,
-        "Webhook test failed with HTTP",
-      );
+      },
+    );
+    if (delivery.bodyReadFailed) {
+      printJson({
+        accepted: true,
+        accepted_for_processing: delivery.response.status === 202,
+        body_omitted: true,
+        dispatch_verified: false,
+        note: "The ingress endpoint accepted the request, but its response body could not be read. Do not blindly retry.",
+        status_code: delivery.response.status,
+      });
+      return;
     }
     printJson(
       {
-        accepted_for_processing: response.status === 202,
-        body,
+        accepted_for_processing: delivery.response.status === 202,
+        body: delivery.body,
         dispatch_verified: false,
         note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
-        status_code: response.status,
+        status_code: delivery.response.status,
       },
       sensitiveValues,
       {
         oversizedFallback: {
-          accepted_for_processing: response.status === 202,
+          accepted_for_processing: delivery.response.status === 202,
           body_omitted: true,
           dispatch_verified: false,
           note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
           reason: "Webhook response body exceeded the 1 MiB display limit",
-          status_code: response.status,
+          status_code: delivery.response.status,
         },
       },
     );

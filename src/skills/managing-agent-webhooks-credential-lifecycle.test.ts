@@ -501,7 +501,17 @@ describe("managing-agent-webhooks credential lifecycle", () => {
     const authorizationHeader =
       buildAgentWebhookBasicAuthorization(securityKey);
     const secretFields = {
+      APIKey: "upper-api-key-value",
+      APIToken: "upper-api-token-value",
       apiToken: "api-token-value",
+      apikey: "compact-api-key-value",
+      apitoken: "compact-api-token-value",
+      accesstoken: "compact-access-token-value",
+      authHeader: "auth-header-value",
+      authenticationHeader: "authentication-header-value",
+      authorizationheader: "compact-authorization-header-value",
+      authtoken: "compact-auth-token-value",
+      bearertoken: "compact-bearer-token-value",
       clientSecret: "client-secret-value",
       credential_file: "untrusted-credential-file-value",
       databasePassword: "database-password-value",
@@ -510,7 +520,9 @@ describe("managing-agent-webhooks credential lifecycle", () => {
       private_key: "private-key-value",
       privateKey: "private-camel-key-value",
       requires_authorization_header: "untrusted-auth-mode-value",
+      refreshtoken: "compact-refresh-token-value",
       sessionToken: "session-token-value",
+      securitykey: "compact-security-key-value",
       signing_key: "signing-key-value",
     };
     await writeFile(
@@ -568,6 +580,7 @@ describe("managing-agent-webhooks credential lifecycle", () => {
             [`leak-${securityKey}`]: "ok",
             message: `Reflected ${securityKey}`,
             nested: { ...secretFields },
+            nestedArray: [{ ...secretFields }],
             secretary: "Ada",
             token_count: 42,
           }),
@@ -663,6 +676,13 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         expect((acceptedBody.error as Record<string, unknown>)[field]).toBe(
           "[REDACTED]",
         );
+        expect(
+          (
+            (
+              acceptedBody.nestedArray as Array<Record<string, unknown>>
+            )[0] as Record<string, unknown>
+          )[field],
+        ).toBe("[REDACTED]");
       }
     } finally {
       await new Promise<void>((resolve, reject) => {

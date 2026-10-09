@@ -299,6 +299,7 @@ describe("managing-agent-webhooks helper", () => {
           JSON.stringify({
             requests: [
               {
+                authorization_passed: true,
                 enqueued: true,
                 id: "request-1",
                 request_body: { secret: "hidden-by-default" },
@@ -377,6 +378,7 @@ describe("managing-agent-webhooks helper", () => {
       ])) as { requests: Array<Record<string, unknown>> };
       expect(history.requests[0]).toMatchObject({
         accepted: true,
+        authorization_passed: true,
         id: "request-1",
         status_code: 202,
       });
