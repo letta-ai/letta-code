@@ -16,6 +16,7 @@ describe("isSkillAvailableForAgent", () => {
     for (const id of [
       "curating-memory-palace",
       "image-generation",
+      "managing-agent-webhooks",
       "managing-shared-memory",
       "working-across-computers",
     ]) {
