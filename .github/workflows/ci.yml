@@ -352,6 +352,13 @@ jobs:
           cache_dir="$(mktemp -d)"
           BUN_RUNTIME_TRANSPILER_CACHE_PATH="$cache_dir" letta --version
           test -n "$(find "$cache_dir" -type f -name '*.pile' -print -quit)"
+          consumer_dir="$(mktemp -d)"
+          tarball="$(realpath ./letta-ai-letta-code-*.tgz)"
+          trap 'rm -rf "$cache_dir" "$consumer_dir"' EXIT
+          cd "$consumer_dir"
+          npm init -y
+          npm install "$tarball"
+          npm install --no-save picomatch@2.3.1
 
       - name: Headless smoke test (packaged local backend)
         env:

@@ -196,7 +196,7 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "prepare": "node .husky/install.mjs",
+    "prepare": "node scripts/install-husky.mjs",
     "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
     "typecheck": "tsc --noEmit",
