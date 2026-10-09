@@ -450,6 +450,23 @@ silently affect `bar.test.ts` if they share a worker.
 - **Review signal:** any test using `mock.module()` without `afterAll`
   restoration, especially if the mocked module is consumed by other test files.
 
+### Tool-Output Credential Redaction
+
+Ambient runtime auth (inherited `process.env.LETTA_API_KEY`, the settings-env
+key, the Desktop access token, and its base64 `letta:<token>` git-credential
+encoding) is merged into the redaction set and must reach every model-facing
+tool-output sink: streamed chunks, final tool returns, thrown errors,
+background/overflow files, post-tool hook feedback, and `tool_end` mod override
+output.
+
+- Scrub after appending hook feedback and mod overrides, and before truncation
+  to an overflow file; otherwise raw credentials can land verbatim.
+- Stream scrubbers must hold back trailing bytes that are a prefix of a known
+  secret and flush that held-back tail through the scrubber before `finish()`.
+- **Review signal:** PRs touching tool-return sanitization, hook feedback,
+  `tool_end` overrides, or background-output files must verify that final
+  model-facing text remains redacted.
+
 ### Don't Rename Existing Test Fixtures
 
 When adding a feature that uses a different provider/entity name, ADD new
@@ -473,6 +490,13 @@ exact string match.
 - Any PR touching `vendor/ink/build/*` or `scripts/postinstall-patches.js` is a
   red zone: patches are fragile to Ink version bumps, semantically invisible to
   normal review, and coordinated across multiple runtime files.
+- `ink` must stay a pinned runtime dependency and `ink-link` must stay on the
+  major whose peer range resolves to that pinned Ink. `ink-link@5` peer-requires
+  `ink >= 6`, which the vendored patches cannot match, so a clean install ships
+  silently unpatched. The postinstall swallow of total patch failure
+  (`|| echo`) keeps that hazard standing, so keep the CI assertion that proves a
+  patch took effect (currently the `.pile` cache in the Unix package smoke
+  test).
 - Verify the exact matched strings still exist and the throw-on-missing guard is
   preserved.
 - After editing vendor files, must run build for changes to take effect.
@@ -924,6 +948,10 @@ and create draft parity PRs when warranted.
 - Compact prompt for re-reviews (existing conversation detected).
 - Background agent gets stuck on complex reviews requiring repo setup + extensive
   reading. Do those in the foreground.
+- The `review` check is an AI reviewer action that occasionally crashes with
+  an agent-side error (exit 1, output hidden, after ~30s) even when the diff is
+  sound. Rerun just that job (`gh run rerun <run> --job <id>`) rather than
+  treating the diff as failing; source suites are the real signal.
 
 ### Secret Injection Syntax
 
