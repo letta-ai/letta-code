@@ -1,147 +1,176 @@
 ---
 name: curating-memory-palace
-description: Rules for the Memory Palace (palace/), the view on your Memory page in the Letta dashboard that shows the user where things stand, what you could do next, and how to make you more useful. Load it before creating or editing anything in palace/, when a message starts with "Palace action:" or "Palace reply on", and, when palace/ exists, whenever you notice a blocker, a decision for the user, work you could offer, or a routine that started, broke, or changed.
+description: Rules for the Memory Palace (palace/), the page on your Memory dashboard that shows the user where things stand and what you can take on. Load it before editing anything in palace/, when a message starts with "Palace", and when you notice something that belongs on that page.
 ---
 
 # Curating the Memory Palace
 
-The Memory Palace is the page a user opens to understand you. Someone who has not looked in a week should know within 30 seconds:
+The Memory Palace is the page a user opens to understand you. Someone who has not looked in a week should know within 30 seconds where things stand, what needs them, what you can take off their plate, and what you will look into, and should be able to act on any item in one click.
 
-1. **Where things stand:** what you are working on, which routines are running or broken, and what changed recently.
-2. **What you could do next, and why:** work you noticed you can take on or pick back up.
-3. **How to make you better or more independent:** one click to unblock you, fill a gap, or let you handle something on your own from now on.
+It is a command center for state, not a log, a transcript recap, or a page about the Palace itself. "You" always means the agent that owns the Palace. You can update it in a conversation, during reflection, or on a schedule. All three follow these rules.
 
-The user acts on it with buttons and replies. It is not a log, a transcript recap, or a page about the Palace itself.
+## Scope
 
-You can update the Palace yourself, in a conversation or during reflection, or an update can run on a schedule. Either works, and both follow these rules. "You" always means the agent that owns the Palace.
+The page covers only the user's own work: things they own, promised, or were asked about, anything blocked on them, and work their own agents do for them. Work that sits with someone else stays off the page entirely, even when it's in the user's channels or they joined the thread. It goes in no section, not Needs Attention and not the Overview.
+
+## Gates
+
+An item that breaks one of these does more harm than an empty section.
+
+- **Nothing false.** Every item is supported by its evidence. Nothing settled reads as open, and nothing open reads as settled. Check the latest message on the work: a later fix, grant, closure, handoff, or "that already works" changes the item.
+- **Nothing misattributed.** Never describe someone else's message, change, or request as the user's.
+- **No claims of absence.** Never say the user didn't do something or that no reply exists. You rarely see everything. State what was asked or promised, and when, and let a button offer the check.
+- **Nothing private.** No secrets, tokens, or keys, nothing from DMs or private channels, and no internal error text. The Palace is shown in the app and sent in messages.
+- **Nothing claimed as done.** Never say you asked, sent, checked, or set up something unless you did. Offer work. Don't describe it as underway.
 
 ## Sections
 
-Every Palace starts with these three sections, in this order:
+Keep these sections in this order:
 
-1. **Overview** (`overview.md`): a snapshot, not a to-do list. What you are working on now; each standing routine (schedules, digests, checks) and whether it is running or broken; one line on what changed since the last update.
-2. **Needs Attention** (`needs-attention.md`): decisions and blockers waiting on the user. Every item has a button. If nothing waits on the user, say so in one line, such as "Nothing needs you right now."
-3. **Suggestions** (`suggestions.md`): work you noticed you can do, including unfinished work to resume and routines you could take over. Each item says what prompted it, with a date, and has a button.
+1. **Overview** (`overview.md`): where things stand. Open with the user's role and where their main work stands right now. A role line alone isn't enough. Then what you are working on for them, each standing routine (schedules, digests, checks) and whether it is running or broken, and what changed recently. A snapshot, not a to-do list.
+2. **Needs Attention** (`needs-attention.md`): only things the user has to close. Three kinds qualify: a promise the user made, a question asked directly to them, and someone blocked waiting on them (an okay, a yes or no, an escalation only they can make). Put the highest stakes first: outside people or their data, then a blocked teammate, then internal chores. Each item says plainly that it's waiting on the user, and who is waiting. Once the user has given their okay and the work moves to someone else, the item leaves the page. If nothing qualifies, say "Nothing needs you right now."
+3. **Suggestions** (`suggestions.md`): work you can take off the user's plate, routines you could run, and access that would make you more independent. Each item says what prompted it and when.
+4. **Curiosities** (`curiosities.md`): things you can't settle yet but will look into, mainly for you to pick up later. Delete the file and its index line when it is empty.
 
-Add up to three more sections only when they hold something the first three cannot, such as "Recently Learned". Merge or remove sections that overlap. At most six sections and three items per section. Keep the first three even when one has nothing to show, and say so in one line; delete an extra section, and its index line, when it is empty.
+Curiosities hold three kinds of item:
+
+- Work that looks open, where the close may have happened somewhere you can't see (another channel, GitHub, a release page). Don't offer a fix for these in Needs Attention or Suggestions, because the user may already have finished it.
+- A promise you can check yourself: a release, deploy, or PR. The headline names the thing, never a question to the user: "Desktop release with the login fix", not "Did you cut the Desktop release?"
+- A question the user asked that a tool could answer once connected. Put the Connect link on that item.
+
+Each Curiosity gives the last known fact and where you will look. Its button names the check, such as "Check PR 324's status" or "Find the latest Desktop release". A bare "Investigate" is wrong when the item names something specific to look up. A question a tool could answer gets its Connect link and no button. Never a fix, draft, or schedule button.
+
+Don't pad the section. Leave out topics that are already settled, and PRs or tasks that one of the user's own agents already tracks.
+
+Add another section only when it holds something these cannot. Keep the first three even when one is empty, and say so in one line.
+
+### Promises you can't see closed
+
+Shape the item by where the promise would be kept:
+
+- **Outside contact** (email a customer, reply on Discord, write to a vendor): you usually can't see these kept. The headline is a question, such as "Did you email the vendor?", with two buttons, "Yes, clear it" and "Draft ..." (the message). Never a draft button alone.
+- **A release, deploy, PR, or other artifact you can look up:** a Curiosity, not Needs Attention.
+
+### Budget
+
+- At most 20 items in total: Overview up to 5, Needs Attention up to 8, Suggestions up to 10, Curiosities up to 5. The caps add up to more than 20, so a page can't fill every section.
+- A long page is fine. Filler isn't. Every item has to survive "so what?".
+- Each piece of work appears in exactly one section. Messages across channels about the same ID, customer, incident, or PR become one item.
 
 ## Buttons
 
-A button sends its instruction to you, so offer only what you can do. Each button is one of three kinds:
+A button sends its instruction to you, so offer only what you can do. Each button does one of three things:
 
-- **Do it now:** a one-off task, such as reviewing a PR, or a standing rule you record once when the user keeps approving the same kind of decision.
-- **Schedule:** recurring work you run without being asked, such as a weekly report or a daily check. The instruction asks you to set up the schedule. See "Offering a schedule".
-- **Fill a gap:** something you lack, such as a tool to connect, access or a permission to grant, or a question only the user can answer.
+- **Do it now:** a one-off task, such as drafting a reply or reviewing a PR.
+- **From now on:** a schedule or standing rule. See "Offering a schedule".
+- **Fill a gap:** a connection, access, or an answer only the user has.
 
-Every blocker gets a button. When an item is a decision with real options, give each option its own button, two or three at most, so the user picks one: for example "Make it a ticket", "Assign it to Charles", and "Close it". Otherwise give the item one strong button, not several weak ones. The kinds are only for choosing buttons. Never write a kind's name, or any other caption, above a button.
+Give each item one button, except a Curiosity that only needs a Connect link (no button), a decision with real options (two or three buttons, such as "Make it a ticket", "Assign it to Charles", "Close it") and an outside-contact promise ("Yes, clear it" plus "Draft ..."). Never write a caption or a button type above a button.
 
-When only the user can fix something (raise a quota, attach a tool, log in), the item says what the user needs to do, and the button is still something you can do, such as "Walk me through fixing this" or "I fixed it, check again". For the second, re-run the failing check and clear the item if it passes.
+When only the user can fix something (raise a quota, log in), say what they need to do, and make the button something you can do, such as "I fixed it, check again". Re-run the failing check and clear the item if it passes.
 
-Offer the most reliable fix first, which usually means moving the work to Cloud. Anything that depends on the user's computer, such as a local schedule or a sign-in that lives on one machine, stops whenever that computer sleeps or Letta Code is closed. Offer to run the schedule in Cloud and to connect the account there before asking the user to keep a computer on. Suggest a fix on the user's computer only when Cloud cannot do the job, and say why.
+Offer the most reliable fix first, which usually means Cloud. A local schedule or a sign-in on one machine stops whenever that computer sleeps or Letta Code is closed. Suggest a fix on the user's computer only when Cloud can't do the job, and say why.
 
-The headline says what is going on; the button says what to do. Never repeat the button's label in the headline, and do not end the text with a "Next: ..." sentence that restates the button. Write the headline "**Grok CLI regression may still be live.**" with the button "Verify the Grok CLI regression", not the headline "**Verify the Grok CLI regression.**"
+Labels start with a verb, except a confirmation such as "Yes, clear it", and never repeat the headline or write-up. The headline says what is going on, the button says what to do.
 
 ### Offering a schedule
 
-Offer a Schedule button when the evidence shows recurring work: the user asked for the same thing on three or more days or said they want it regularly, you did the same manual check on three or more days, a deadline repeats, or something slipped that a regular check would have caught. If a routine you already run is broken, offer to fix it instead of adding another.
+Offer one when the evidence shows recurring work: several people or agents brought the same kind of thing on different days, the user asked for it on three or more days, you did the same manual check on three or more days, a deadline repeats, or something slipped that a regular check would have caught. The strongest offers name a pattern across threads rather than one task, such as "Decisions for you pile up across agents and threads". If a routine you already run is broken, offer to fix it instead of adding another.
 
-Do not offer one for one-off work, for work that reports when it finishes (such as CI or a deploy), for anything more often than hourly, for work that needs the user during the run, or for anything on the Dismissed list. Offer at most two at a time.
+Don't offer one for one-off work, for work that reports when it finishes (CI, a deploy), for anything more often than hourly, for work another agent or teammate already runs, or for anything on the Dismissed list.
 
-The label names the work and when it runs, with a time zone. The instruction asks you to set it up and says what to do, when, where to send results, and when to stay quiet. Set it up in Cloud unless the work truly needs one of the user's computers, record it in memory, and tell the user where it runs.
+The label names the work and when it runs, with a time zone. The instruction says what to do, when, where to send results, and when to stay quiet. Set it up in Cloud unless it truly needs one of the user's computers, record it in memory, and tell the user where it runs. Once it exists, it moves from Suggestions to the routines in the Overview.
 
 ### Button format
 
-A fenced code block with the language `palace-action` becomes a button. It holds one strict JSON object and nothing else. Put it directly under its item. A Suggestions item with a Schedule button:
+A fenced code block with the language `palace-action` becomes a button. It holds one strict JSON object and nothing else. Put it directly under its item:
 
 ````markdown
 **The dependency report is still manual.** You asked for it on Sep 15, Sep 22, and Sep 29.
 
 ```palace-action
-{"actionId": "schedule-dep-report", "label": "Send the dependency report Mondays at 9am PT", "conversationId": "new", "instruction": "Set up a Cloud schedule for Mondays at 9am PT: run the dependency report, post it to #eng-deps, and skip weeks with no changes. Record it in memory and tell me where it runs."}
+{"actionId": "schedule-dep-report", "label": "Send the dependency report Mondays at 9am PT", "kind": "schedule", "conversationId": "new", "instruction": "Set up a Cloud schedule for Mondays at 9am PT: run the dependency report, post it to #eng-deps, and skip weeks with no changes. Record it in memory and tell me where it runs."}
 ```
 ````
 
 - `actionId` (required): 1 to 64 characters, no spaces, unique within the section.
-- `label` (required): the button text, up to 80 characters. Start it with a verb; a confirmation such as "I fixed it, check again" is the one exception.
-- `instruction` (optional): what you do when it is clicked. An instruction over 300 characters renders as an error; aim for under 200. Name the work, where to find it, and any limits, not every detail. Count the characters with a short script rather than estimating.
+- `label` (required): the button text, up to 80 characters.
+- `instruction` (optional): what you do when it is clicked, up to 1,000 characters. Stay short and aim for under 200. Name the work, where to find it, and any limits, not every detail.
+- `kind` (optional): `"schedule"` shows a clock on the button. Leave it out for other buttons.
 - `conversationId` (optional): one of your real conversation ids, or `new` for a fresh conversation. Leave it out to use the main chat.
 
-Any other key, or invalid JSON, renders the block as an error instead of a button.
+Use only the keys above. Unknown keys are ignored (such as `cadence` or `time`), so put timing in the label and instruction. A block that is still invalid, such as bad JSON or a missing `label`, doesn't show at all.
+
+### Links
+
+A fenced block with the language `palace-links` shows link chips under its item, such as a tool's Connect page or the PR an item is about. It holds a strict JSON array of 1 to 4 objects with exactly `label` (up to 60 characters) and `url` (an absolute `https://` URL):
+
+````markdown
+```palace-links
+[{"label": "PR #4127", "url": "https://github.com/letta-ai/letta-code/pull/4127"}]
+```
+````
+
+An item's text plus the action and links blocks directly under it form one card. Text with no block under it renders as plain Markdown, not a card.
 
 ## Files
 
-- Each Markdown file directly inside `palace/` is one section, except `palace/MEMORY.md`. Nested folders and other files are not shown, so do not create them.
+- Each Markdown file directly inside `palace/` is one section, except `palace/MEMORY.md`. Nested folders and other files are not shown.
 - The title comes from the file name: `needs-attention.md` shows as "Needs Attention". Keep the frontmatter `name` equal to the title.
-- Frontmatter holds exactly two non-empty keys, `name` and `description`. MemFS rejects any other key. The description shows under the title, so write it as the section's purpose in one short line.
-- The body is Markdown. The date beside the title is the file's last commit, so leave a file untouched when nothing in it changed.
-- The icon comes from the title: "attention" or "blocker" gives a flag, "overview" or "summary" a house, "learned" or "insight" a lightbulb, and "suggestions" or "next steps" a bolt. Most other titles get a note.
+- Frontmatter holds exactly two non-empty keys, `name` and `description`. MemFS rejects any other key. The description shows under the title as the section's purpose in one short line.
+- The date beside the title is the file's last commit, so leave a file untouched when nothing in it changed.
+- The icon comes from the title: "attention", "urgent", "blocker", "risk", or "to-do" gives a flag; "overview", "summary", or "about" a house; "learn" or "insight" a lightbulb; "suggest", "recommend", or "next step" a bolt; "plan", "schedule", or "calendar" a calendar; "history" or "recent" a history mark; "question" an info mark. Other titles, including Curiosities, get a note.
 
-`palace/MEMORY.md` is the index. It has no frontmatter. It lists the sections in display order, one relative link per line; the first mention of a file sets its place, and unlisted sections follow in file-name order. Keep it in sync when you add, rename, or remove a section, and keep the Feedback and Dismissed lists below the links:
+`palace/MEMORY.md` is the index. It has no frontmatter. It lists the sections in display order, one relative link per line. Unlisted sections follow in file-name order. Keep it in sync when you add, rename, or remove a section, and keep the Feedback and Dismissed lists below the links:
 
 ```markdown
 # Memory Palace
 
 - [Overview](overview.md) - Where things stand
-- [Needs Attention](needs-attention.md) - Decisions and blockers waiting on you
-- [Suggestions](suggestions.md) - Work I can do next, and why
+- [Needs Attention](needs-attention.md) - Decisions and promises only you can close
+- [Suggestions](suggestions.md) - Work I can take off your plate
+- [Curiosities](curiosities.md) - Things I'll look into
 
 ## Dismissed
 
 - Summaries of every Slack thread (Sep 20)
 ```
 
-Example `palace/needs-attention.md`:
-
-````markdown
----
-name: Needs Attention
-description: Decisions and blockers waiting on you.
----
-**The nightly eval run has failed since Sep 24.** The OpenAI key is over its monthly quota. Raise the limit in the OpenAI billing settings; I can't change billing.
-
-```palace-action
-{"actionId": "recheck-evals", "label": "I fixed it, check again", "instruction": "Re-run the eval smoke test. If it passes, clear this item; if not, say what still fails."}
-```
-````
-
 ## Writing rules
 
-- Lead with the point. An item is a short bold headline plus one sentence, two at most; what you need to act goes in the button's instruction.
-- Never paste a raw URL into the text. Name the thing and link the name, such as [LET-13139](https://linear.app/...), and never use a link as the headline.
-- Write in your own voice to the user: "I" for you, "you" for the user.
-- Write absolute dates, with a time zone when it matters, such as "Sep 25, 5pm PT". Never write "today" or "tomorrow": the Palace is read days later.
-- Distinguish what the user said, what you infer, and what you propose. Do not present guesses as facts or proposals as work already underway.
-- Make continuation offers concrete: name the unfinished work and the next step.
-- Outside Needs Attention and Suggestions, add a button only for a specific, useful action. Every section has a Reply button, so a section can exist just to show understanding.
-- Do not repeat an item in two sections.
-- No transcript restatements, timelines, or logs of your own work.
-- Never write secrets, tokens, keys, or credentials. The Palace is shown in the app and sent in messages.
+- **Headline:** short and bold, at most 60 characters, naming the thing in plain words ("Security audit review"). IDs and handles go in the write-up. Only an outside-contact promise uses a question headline.
+- **Write-up:** one or two sentences by default. Go longer only when the user needs more to act, and never to retell a thread's history. Add what the headline lacks (IDs, dates, counts, consequences, who is waiting), and never restate the headline.
+- **Report, don't interpret.** Say what happened, where it stands, and who holds it. No verdicts on what the work needs, no advice, and no hopeful or alarming spin. "The sync job needs a different approach" and "A customer's only copy may be recoverable" both fail. When the outcome is unknown, state the known fact ("The deploy agent couldn't reach the VM"). The button is the suggestion. Don't put suggestions in the text.
+- Don't ask the user something you could look up, and don't narrate your own reasoning.
+- No prefixes, hedges, semicolons, attribution chains, or raw URLs. Link the name of a thing instead, such as [LET-13139](https://linear.app/...), and never use a link as the headline. At most two links per item.
+- Write absolute dates ("on Sep 29"). Use a clock time only when the state changes within the day. Never write "today" or "tomorrow": the Palace is read days later.
+- Write in your own voice: "I" for you, "you" for the user.
+- **Names:** use a name only as your sources use it (a display or real name, or a name in message text). Give anyone outside the workspace a short role, such as "Sam, a Discord user". Never build a name from an email address, username, or handle. An agent's name isn't its user's name: "the customer on the Scout agent".
+- Don't offer work the user's own agent, another agent, or a teammate already owns.
 
 ## Signals from the user
 
-The user's reactions to the Palace are the strongest evidence of what they want.
+The user's reactions to the Palace are the strongest evidence of what they want. Each item card has Reply and Dismiss controls.
 
-- A message that starts with "Palace reply on" is a reply to a section. Apply it. A dismissal ("drop this", "I don't care about X") means remove that item and add a short line to the Dismissed list.
-- A message that starts with "Palace action:" means the user clicked a button. The work it started shows what the user values. Clear or update the item once that work is done.
-- `palace/MEMORY.md` may have a "Feedback" list of notes the user left on sections. Apply each note, then remove it from the list.
-- `palace/MEMORY.md` may have a "Dismissed" list. Do not bring back anything on it unless something important has changed. Create the list the first time you need it.
+- "Palace action:" means the user clicked a button. Do the work in that conversation. Clear or update the item once it is done.
+- "Palace reply on" is a note on an item or section. Apply it, answer any question in the conversation, and update the section if the answer changes it. A dismissal in a reply ("drop this") works like Dismiss.
+- "Palace dismiss:" means remove that item and add a short dated line to the Dismissed list in `palace/MEMORY.md`.
+- Don't bring back anything on the Dismissed list unless something important has changed. Apply each note in a "Feedback" list, then remove it.
+
+Each message comes with a hidden system reminder naming the section's path and current content. Reply briefly with what you changed.
 
 ## Updating the whole Palace
 
-For a scheduled update, a reflection, or when the user asks for one:
+For a scheduled update, a reflection, or when the user asks:
 
-1. Read `palace/MEMORY.md` and every section first. If `palace/` does not exist, create it only when the user asked for a Palace or your instructions for this run say to.
-2. Remove items that are done, no longer true, dismissed, or past a date with nothing left to do.
-3. Add items the evidence supports and the user would want to see.
-4. Edit sections in place and keep what is still true. Keep the first three sections first and in order.
-5. Check each routine's latest runs when you can, not just what memory says. For schedules, find IDs with `letta cron list --agent <agent-id>` and inspect each with `letta cron runs --id <id> --agent <agent-id>`. Report their health in the Overview even when nothing changed.
-6. Check every button against the format above before you save, counting each instruction's characters with a script.
+1. Read `palace/MEMORY.md` and every section. If `palace/` doesn't exist, create it only when the user asked for a Palace or your instructions for this run say to.
+2. Check the current state of every item at its source (ticket, PR, thread, schedule), not just what memory says. Remove items that are done, no longer true, dismissed, or past a date with nothing left to do.
+3. Move anything you can check yourself out of Needs Attention and into Curiosities.
+4. Add items the evidence supports. Edit sections in place, keep what is still true, and keep the sections in order.
+5. Check each routine's latest runs. Find IDs with `letta cron list --agent <agent-id>` and inspect each with `letta cron runs --id <id> --agent <agent-id>`. Report their health in the Overview even when nothing changed.
+6. Validate every `palace-action` and `palace-links` block against the formats above with a short script before you save: documented keys only, label and instruction lengths, https URLs.
 
 ## In a conversation
 
-This section applies only while you are talking with the user.
-
-- **Keep it current as you work.** If `palace/` exists and you notice a blocker, a decision for the user, work you could do, or a routine that changed, update the right section. Mention it in the conversation too if it matters now. Skip things that only matter inside this conversation.
-- **Set up or update.** When the user asks you to set up the Palace, build it from what you already know, starting with the three sections above. For an update, follow "Updating the whole Palace".
-- **A clicked button.** The app opens the button's conversation and sends one message. A hidden system reminder in it names the action, the section's path, and the section's current content. Do what the label and instruction ask, in that conversation, then update the item. A schedule you set up leaves Suggestions and joins the routines in the Overview.
-- **A reply.** The user's note comes with a hidden system reminder that holds the section's path and content. Apply it as described in "Signals from the user", answer any question in the conversation, and update the section if the answer changes it. Then reply briefly with what you changed.
+- **Keep it current as you work.** If `palace/` exists and you notice a blocker, a decision or promise for the user, work you could do, or a routine that changed, update the right section. Mention it in the conversation too if it matters now. Skip things that only matter inside this conversation.
+- **Set up or update.** When the user asks you to set up the Palace, build it from what you already know, starting with the sections above. For an update, follow "Updating the whole Palace".
