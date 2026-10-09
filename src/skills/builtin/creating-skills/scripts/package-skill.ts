@@ -1,13 +1,13 @@
-#!/usr/bin/env -S npx tsx
+#!/usr/bin/env node
 /**
  * Skill Packager - Creates a distributable .skill file of a skill folder
  *
  * Usage:
- *   npx tsx package-skill.ts <path/to/skill-folder> [output-directory]
+ *   node package-skill.ts <path/to/skill-folder> [output-directory]
  *
  * Example:
- *   npx tsx package-skill.ts .skills/my-skill
- *   npx tsx package-skill.ts .skills/my-skill ./dist
+ *   node package-skill.ts .skills/my-skill
+ *   node package-skill.ts .skills/my-skill ./dist
  */
 
 import {
@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 // Simple zip implementation using Node.js built-in zlib
 // For a proper zip file, we'll create the structure manually
 import { deflateSync } from "node:zlib";
-import { validateSkill } from "./validate-skill";
+import { validateSkill } from "./validate-skill.ts";
 
 interface ZipEntry {
   path: string;
@@ -252,11 +252,11 @@ if (isMainModule()) {
 
   if (args.length < 1) {
     console.log(
-      "Usage: npx tsx package-skill.ts <path/to/skill-folder> [output-directory]",
+      "Usage: node package-skill.ts <path/to/skill-folder> [output-directory]",
     );
     console.log("\nExample:");
-    console.log("  npx tsx package-skill.ts .skills/my-skill");
-    console.log("  npx tsx package-skill.ts .skills/my-skill ./dist");
+    console.log("  node package-skill.ts .skills/my-skill");
+    console.log("  node package-skill.ts .skills/my-skill ./dist");
     process.exit(1);
   }
 
