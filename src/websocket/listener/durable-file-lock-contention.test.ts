@@ -1,44 +1,52 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  linkSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  unlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { acquireDurableFileLock } from "./durable-file-lock";
 
-test("concurrent lock publication is not mistaken for corrupt ownership", async () => {
-  const root = mkdtempSync(join(tmpdir(), "letta-lock-contention-"));
-  const modulePath = join(import.meta.dir, "durable-file-lock.ts");
-  const script = `
-    import { acquireDurableFileLock } from ${JSON.stringify(modulePath)};
-    const errors = [];
-    for (let i = 0; i < 150; i++) {
-      try {
-        const release = acquireDurableFileLock(${JSON.stringify(join(root, "ledger"))});
-        release();
-      } catch (error) { errors.push(String(error)); }
-    }
-    console.log(JSON.stringify(errors));
-  `;
-  const children = Array.from({ length: 16 }, () =>
-    Bun.spawn([process.execPath, "-e", script], {
-      stdout: "pipe",
-      stderr: "pipe",
-    }),
-  );
+test("removing the installation link after a reader lists it retries the live owner", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-lock-publication-"));
+  const path = join(root, "ledger");
+  let removed = false;
   try {
-    const results = await Promise.all(
-      children.map(async (child) => ({
-        output: await new Response(child.stdout).text(),
-        errors: await new Response(child.stderr).text(),
-        code: await child.exited,
-      })),
-    );
-    for (const result of results) {
-      expect(result.code).toBe(0);
-      expect(result.errors).toBe("");
-      expect(JSON.parse(result.output)).toEqual([]);
-    }
+    const release = acquireDurableFileLock(path, {
+      afterCanonicalOwnerLink(lockPath) {
+        const stableName = readdirSync(lockPath).find(
+          (name) => name !== ".installing",
+        );
+        if (!stableName) throw new Error("Missing published lock owner");
+        let clock = 0;
+        try {
+          // Pause publication with both real hard links present, then remove
+          // the temporary link after the contender has listed both names.
+          expect(() =>
+            acquireDurableFileLock(path, {
+              waitMs: 50,
+              now: () => clock,
+              afterOwnerDirectoryRead(directory) {
+                if (removed) return;
+                unlinkSync(join(directory, ".installing"));
+                removed = true;
+                clock = 51;
+              },
+            }),
+          ).toThrow("Timed out acquiring durable filesystem lock");
+        } finally {
+          if (removed)
+            linkSync(join(lockPath, stableName), join(lockPath, ".installing"));
+        }
+      },
+    });
+    release();
+    expect(removed).toBe(true);
+    acquireDurableFileLock(path)();
   } finally {
-    for (const child of children) child.kill();
-    await Promise.all(children.map((child) => child.exited));
     rmSync(root, { recursive: true, force: true });
   }
-}, 60_000);
+});
