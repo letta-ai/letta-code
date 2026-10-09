@@ -949,6 +949,26 @@ Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
 environment is not active. Rulesets (not branch protection) govern the cloud
 side.
 
+### CLI Cloud Authentication
+
+`letta server` authenticates to Cloud through device-code OAuth against
+`app.letta.com` (`OAUTH_CONFIG.authBaseUrl` in `src/auth/oauth.ts`). The token's
+organization is bound server-side to the account's active org, so an
+OAuth-authenticated listener registers its computer under that org regardless of
+any dashboard session switch. To pin a listener to a specific org and skip the
+browser approval, set `LETTA_API_KEY` to an org-scoped API key instead:
+`resolveListenerAuth` (`src/websocket/listener/auth.ts`) checks that env var
+before OAuth.
+
+The env-var key is per-process and is not persisted — re-set it on every
+restart. Do not write the key into `~/.letta/settings.json`: that file holds one
+login profile per machine, and a stored key replaces the machine's existing
+chat.letta.com login.
+
+Installer scripts and wrapper commands solve packaging only (installing the CLI
+and running it with a credential); they do not change how authentication works.
+Authentication is device-code OAuth or an API key.
+
 ### Desktop Device Selection
 
 `pickDesktopLocalConnection` selects the desktop local connection for device
