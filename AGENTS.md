@@ -386,6 +386,23 @@ Features added to one may be missing from the other.
 
 - **Review signal:** any shell tool change, check both tools have parity.
 
+### Permissions Report is Configured, Not Exhaustive
+
+`letta permissions` reports configured direct access for a Cloud agent (owner,
+org sharing, shared users, and direct incoming/outgoing peer grants). Do not
+present it, or extend it, as an exhaustive "every principal who can access this
+agent" list: org admins can hold elevated access without a shared-user grant,
+agents inherit the acting human's access (so no stable reverse enumeration
+exists), and `/v1/agents/:id/peers` carries only direct machine-principal
+grants. An authoritative effective-access summary would need a new Cloud
+aggregate endpoint. When processing peer grants, dedupe IDs, resolve each
+peer, filter hidden and unresolvable agents to match the Cloud UI, and keep the
+resolved peer name in output.
+
+- **Review signal:** any change to the permissions report or peer-grant
+  processing; preserve the configured-not-exhaustive labels and the
+  hidden/unresolved peer filter.
+
 ### Interrupt Lock / State Cleanup
 
 `EAGER_CANCEL` path and non-EAGER fallback BOTH need to clear ALL state flags
