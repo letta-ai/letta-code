@@ -380,9 +380,10 @@ describe("managing-agent-webhooks endpoint safety", () => {
       const isGenerated = create.name === "Generated mismatch";
       const isPublic = create.name === "Public mismatch";
       const isConfigMismatch = create.name === "Config mismatch";
+      const isMissingDefault = create.name === "Missing default preprompt";
       const responseKey = isPublic
         ? "unexpected-public-key"
-        : isConfigMismatch
+        : isConfigMismatch || isMissingDefault
           ? undefined
           : isGenerated
             ? create.security_key
@@ -401,9 +402,13 @@ describe("managing-agent-webhooks endpoint safety", () => {
             name: isConfigMismatch ? "Different name" : create.name,
             preprompt: isConfigMismatch
               ? "Different preprompt"
-              : (create.preprompt ?? null),
+              : isMissingDefault
+                ? null
+                : (create.preprompt ?? null),
             requires_authorization_header:
-              !isConfigMismatch && (isPublic || !isGenerated),
+              !isConfigMismatch &&
+              !isMissingDefault &&
+              (isPublic || !isGenerated),
             webhook_slug: "auth-state",
             webhook_url: `http://127.0.0.1:${address.port}/v1/agent-webhooks/auth-state`,
           },
@@ -470,6 +475,18 @@ describe("managing-agent-webhooks endpoint safety", () => {
         "does not match the requested webhook configuration",
       );
       expect(configMismatch.stderr).toContain("Run list and reconcile");
+
+      const missingDefault = await runHelper(baseUrl, [
+        "create",
+        "--name",
+        "Missing default preprompt",
+        "--public",
+      ]);
+      expect(missingDefault).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(missingDefault.stderr).toContain(
+        "does not match the requested webhook configuration",
+      );
+      expect(missingDefault.stderr).toContain("Run list and reconcile");
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(root, { force: true, recursive: true });

@@ -860,12 +860,15 @@ async function runManagementCommand(params) {
           "Create response unexpectedly returned a credential for a public webhook",
         );
       }
-      const returnedPreprompt =
-        webhook.preprompt === null ? undefined : webhook.preprompt;
+      const prepromptMatches =
+        body.preprompt === undefined
+          ? typeof webhook.preprompt === "string" &&
+            webhook.preprompt.trim().length > 0
+          : webhook.preprompt === body.preprompt;
       if (
         webhook.name !== body.name ||
         webhook.enabled !== body.enabled ||
-        returnedPreprompt !== body.preprompt
+        !prepromptMatches
       ) {
         throw new Error(
           "Create response does not match the requested webhook configuration",

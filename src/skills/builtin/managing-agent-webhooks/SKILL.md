@@ -84,11 +84,13 @@ payload as a user message.
   requires the returned webhook ID to match. Canonical but contradictory 2xx
   records receive the same accepted/reconcile envelope and are never printed as
   ordinary success.
-- Normal create output also requires returned name, enabled state, and normalized
-  absent/null preprompt to match the request. Rotate first reads the current
-  agent-bound record and reports ordinary success only when the returned
-  canonical slug/URL changed; an unchanged result is accepted but requires
-  reconciliation.
+- Normal create output also requires returned name and enabled state to match.
+  An explicitly supplied preprompt must round-trip exactly; when preprompt is
+  omitted, the server-owned default is accepted only as a nonblank string, while
+  missing, null, empty, whitespace-only, and non-string values are contradictory.
+  Rotate first reads the current agent-bound record and reports ordinary success
+  only when the returned canonical slug/URL changed; an unchanged result is
+  accepted but requires reconciliation.
 
 ## Environment
 

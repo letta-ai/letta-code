@@ -292,7 +292,9 @@ describe("managing-agent-webhooks helper", () => {
               enabled: createBody.enabled,
               items: [listedAuthorizationHeader],
               name: createBody.name,
-              preprompt: createBody.preprompt ?? null,
+              preprompt:
+                createBody.preprompt ??
+                "Use the webhook payload to decide what work to perform.",
               requires_authorization_header: listedAuthorizationHeader !== null,
               safe_message:
                 createBody.security_key ?? "unpromised-public-field",
@@ -459,6 +461,9 @@ describe("managing-agent-webhooks helper", () => {
         credential_is_recoverable_from_server: false,
       });
       expect(secured.webhook).not.toHaveProperty("authorization_header");
+      expect(secured.webhook.preprompt).toBe(
+        "Use the webhook payload to decide what work to perform.",
+      );
       expect(secured.webhook).not.toHaveProperty("safe_message");
       expect(secured.webhook).not.toHaveProperty("items");
       const credential = JSON.parse(
