@@ -151,7 +151,7 @@
   "dependencies": {
     "@earendil-works/pi-ai": "^0.99.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
-    "@letta-ai/letta-agent-sdk": "0.8.24",
+    "@letta-ai/letta-agent-sdk": "0.8.35",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
@@ -275,5 +275,5 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-NkEBUY1HKUlzrKrw9Z5465jdqkp+u7tLYNly5lGlHQKUAoN/8N4gGSsIXTsc3u2Eiz9f05ryN0l5zJOf1/q1iA=="
+  "lettaRuntimeGraphSha512": "sha512-mvtCO9hIIFl9tzEXJdzD/IxHly2mI9mJdkV/lRSlLYhotsNtsZUVpsTSagKJz3ziy64qs0h2oV9EMDQopnf1NQ=="
 }
