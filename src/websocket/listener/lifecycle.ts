@@ -7,7 +7,6 @@ import {
   getTerminalTelemetrySurface,
   telemetry,
 } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
@@ -65,6 +64,7 @@ import {
   assertAdoptableListenerClientReplacement,
   createListenerClientReplacement,
 } from "./listener-replacement";
+import { runDetachedListenerTask, trackListenerError } from "./listener-task";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -127,32 +127,6 @@ import type {
 import { clearListenerWarmState } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
 
-function trackListenerError(
-  errorType: string,
-  error: unknown,
-  context: string,
-): void {
-  trackBoundaryError({
-    errorType,
-    error,
-    context,
-  });
-}
-
-export function runDetachedListenerTask(
-  commandName: string,
-  task: () => Promise<void>,
-): void {
-  void task().catch((error) => {
-    trackListenerError(
-      `listener_${commandName}_failed`,
-      error,
-      `listener_${commandName}`,
-    );
-    if (isDebugEnabled())
-      console.error(`[Listen] ${commandName} failed:`, error);
-  });
-}
 export function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {

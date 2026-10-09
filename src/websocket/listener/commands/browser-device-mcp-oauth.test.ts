@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import type WebSocket from "ws";
 import {
   type BrowserDeviceMcpOAuthRequest,
@@ -962,24 +962,20 @@ describe("browser-device MCP OAuth command handling", () => {
   });
 });
 
-test("advertises the selected-device command and starts no fixed HTTP bridge", () => {
+test("advertises the selected-device command without restoring its fixed HTTP bridge", () => {
   expect(
     SUPPORTED_REMOTE_COMMANDS.filter(
       (command) => command === "browser_device_mcp_oauth",
     ),
   ).toHaveLength(1);
-  expect(
-    existsSync(
-      new URL("../../../browser-discovery-server.ts", import.meta.url),
-    ),
-  ).toBe(false);
-  expect(
-    readFileSync(new URL("../../../index.ts", import.meta.url), "utf8"),
-  ).not.toContain("startBrowserDiscoveryServer");
-  expect(
-    readFileSync(
-      new URL("../../../cli/subcommands/server.ts", import.meta.url),
-      "utf8",
-    ),
-  ).not.toContain("startBrowserDiscoveryServer");
+  const sources = [
+    "../../../browser-discovery-server.ts",
+    "../../../index.ts",
+    "../../../cli/subcommands/server.ts",
+  ];
+  for (const source of sources) {
+    expect(
+      readFileSync(new URL(source, import.meta.url), "utf8"),
+    ).not.toContain("/mcp-oauth/connect");
+  }
 });

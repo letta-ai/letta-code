@@ -572,8 +572,7 @@ async function getLocalBackendStartupFallbackSession(
 async function main(): Promise<void> {
   markMilestone("CLI_START");
   await initializeDesktopCredentials();
-  // Exit when the owning Desktop or terminal process dies.
-  startOrphanDetection();
+  startOrphanDetection(); // Exit when the owning Desktop or terminal process dies.
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
