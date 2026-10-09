@@ -333,6 +333,10 @@ directory first. Otherwise the run reads and mutates your real
 - **Settings manager 3-level precedence.** Global, project, local. When adding
   a new configurable setting, add the field to ALL THREE settings interfaces,
   add to project settings loading, and add collision routing in `updateSettings`.
+- **`bun --cwd` space form prints help and exits 0.** `bun --cwd <dir> run ...`
+  (space-separated) prints Bun's help and exits 0 without running; use
+  `--cwd=<dir>`. A documented or smoke-test command written with the space form
+  "passes" without ever executing.
 
 ---
 
@@ -385,6 +389,19 @@ but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
 Features added to one may be missing from the other.
 
 - **Review signal:** any shell tool change, check both tools have parity.
+
+### Shared Wire-Field Parity (Local Backend Consumers)
+
+A change to the shape of a turn-body wire field read on more than one path
+(`client_tools`, `client_skills`) must update every consumer. The local dev
+backend's `buildProviderTurnInput` (`src/backend/dev/provider-turn-executor.ts`)
+accepts only arrays and silently coerces an unexpected object shape to `[]`, so
+re-shaping a field on the send path without touching that consumer drops all
+client tools for a `--backend local` turn.
+
+- **Review signal:** re-shaping a shared wire field (e.g. `client_tools` from
+  array to `{ mode, definitions }`) and checking only the send path; grep every
+  consumer (provider executor, SDK, headless) for the old shape.
 
 ### Interrupt Lock / State Cleanup
 
@@ -476,6 +493,41 @@ exact string match.
 - Verify the exact matched strings still exist and the throw-on-missing guard is
   preserved.
 - After editing vendor files, must run build for changes to take effect.
+
+### Subagent MCP Scope Inherits Through getMcpScopeAgentId
+
+Subagent MCP scope resolves to the parent agent through `getMcpScopeAgentId`
+(`src/mcp-scope.ts`), so workers inherit the parent's MCP servers. Any new
+subagent path that builds an MCP catalog or associates servers by agent must
+route through that function, not the subagent's own ID
+(`capabilities.agentId`).
+
+- **Review signal:** a subagent toolset/MCP path keying servers by the
+  subagent's own ID instead of the inherited scope.
+
+### Remote External-Agent Launch Handshake
+
+When launching a remote external coding agent
+(`src/tools/impl/remote-external-coding-agent.ts`), two invariants:
+
+- Check caller capacity/limits BEFORE the worker starts. A limit checked only
+  after launch leaves an at-limit worker running unattended and its result is
+  discarded.
+- Treat a launch-response disconnect as ambiguous: the worker may be running
+  even though no response arrived. Reporting failure strands an orphaned
+  worker; blind retry starts duplicates. The launch must survive an
+  acknowledged-but-untracked outcome.
+
+### Approval Shape Parity (`tool_calls` vs `tool_call`)
+
+Keep the legacy singular `tool_call` in sync with the `tool_calls` array. The
+canonical parser (`approvalRequestsFromMessage`) handles both; a new approval
+check or replay path that reads only one shape while streaming falls back to
+the other drops the approval and can leave the conversation blocked behind a
+pending server-side approval.
+
+- **Review signal:** a new approval recheck that treats an empty `tool_calls`
+  array as final instead of reusing the dual-shape parser.
 
 ---
 
