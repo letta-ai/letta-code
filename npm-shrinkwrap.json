@@ -1596,9 +1596,9 @@
       }
     },
     "node_modules/@letta-ai/letta-agent-sdk": {
-      "version": "0.8.35",
-      "resolved": "https://registry.npmjs.org/@letta-ai/letta-agent-sdk/-/letta-agent-sdk-0.8.35.tgz",
-      "integrity": "sha512-S6x8fiU/gjwT2/ldpqqYtlDcRYemq3AfIPnNViToZPc8P48cnJlsA87IvLrt9hoR7X9HyxV9KnJ6buQFWXeUdg==",
+      "version": "0.8.36",
+      "resolved": "https://registry.npmjs.org/@letta-ai/letta-agent-sdk/-/letta-agent-sdk-0.8.36.tgz",
+      "integrity": "sha512-ACmE3K5jcrzMjALO4p/ouN6VbjmdS7AuY0i8y1cWzudlTHxyoyZhS4FnOFNjgwF5oW3sya9NRu/cl/KG4kiOWA==",
       "license": "Apache-2.0",
       "dependencies": {
         "@letta-ai/letta-client": "^1.12.1",
@@ -5789,7 +5789,7 @@
       "dependencies": {
         "@earendil-works/pi-ai": "^0.99.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
-        "@letta-ai/letta-agent-sdk": "0.8.35",
+        "@letta-ai/letta-agent-sdk": "0.8.36",
         "@letta-ai/letta-client": "^1.10.2",
         "@letta-ai/trajectory": "0.2.0",
         "@modelcontextprotocol/sdk": "1.30.0",
