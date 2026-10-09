@@ -20,6 +20,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { redactWsEventForLogging } from "./ws-event-redaction";
 
 const REMOTE_LOG_DIR = join(homedir(), ".letta", "logs", "remote");
 const MAX_LOG_FILES = 10;
@@ -104,7 +105,7 @@ export class RemoteSessionLog {
   ): void {
     const arrow = direction === "send" ? "→ send" : "← recv";
     const tag = label === "client" ? "" : ` (${label})`;
-    const json = JSON.stringify(event);
+    const json = JSON.stringify(redactWsEventForLogging(event));
     this.log(`${arrow}${tag}  ${json}`);
   }
 

@@ -110,6 +110,25 @@ describe("subcommand router", () => {
     }
   });
 
+  test("routes the remote alias to the ordinary listener help", async () => {
+    const messages: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => {
+      messages.push(String(message));
+    };
+
+    try {
+      const exitCode = await runSubcommand(["remote", "--help"]);
+
+      expect(exitCode).toBe(0);
+      expect(messages.join("\n")).toContain(
+        "Usage: letta server [--computer-name <name>]",
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
   test("keeps app-server as a deprecated alias", async () => {
     const messages: string[] = [];
     const warnings: string[] = [];

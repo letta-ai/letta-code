@@ -17,6 +17,7 @@ import {
   rejectPendingApprovalResolversForConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
+import { disposeBrowserDeviceMcpOAuthOperationsForRuntime } from "./commands/browser-device-mcp-oauth";
 import {
   getOrCreateProcessTransport,
   isCurrentInitializedListenerConnection,
@@ -215,6 +216,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);
@@ -325,6 +327,11 @@ export async function startConnectedListenerRuntime(
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
+  // Reset backoff on close only after startup completed; a stalled startup
+  // marked earlier would loop at attempt 0 and never hit the retry deadline.
+  if (options.updateReconnectState) {
+    runtime.hasSuccessfulConnection = true;
+  }
   if (options.startProcessServices === false) return;
   const scheduleNonEmptyQueuePumps = createRestoredQueuePumpWake(
     runtime,
@@ -423,6 +430,7 @@ export async function attachOpenListenerSocket(
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: connection.startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -730,10 +738,14 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
+  // Reserve before constructing the handler so re-registered connection IDs use
+  // the inherited replacement lineage from their first accepted frame onward.
+  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -748,8 +760,6 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  // Buffer pre-ready ingress under explicit replacement lineage ownership.
-  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const pendingStartupFrames = StartupFrameBuffer.forSockets(
     socket,
     () => streamSocket,
