@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
 import WebSocket from "ws";
@@ -81,6 +81,44 @@ describe("listener cwd change handling", () => {
       "cwd_changed",
     );
   });
+
+  // Root bypasses directory permission checks, so this only reproduces as a
+  // normal user (as CI and unprivileged `letta server` installs run).
+  test.skipIf(process.getuid?.() === 0)(
+    "keeps the current cwd when the requested one is not accessible",
+    async () => {
+      const listener = createRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+      const socket = new MockSocket();
+      const lockedDirectory = join(tempHome as string, "locked");
+      await mkdir(lockedDirectory);
+      await chmod(lockedDirectory, 0o000);
+
+      try {
+        await handleCwdChange(
+          {
+            agentId: "agent-1",
+            conversationId: "conv-1",
+            cwd: lockedDirectory,
+          },
+          socket as unknown as WebSocket,
+          runtime,
+        );
+      } finally {
+        await chmod(lockedDirectory, 0o700);
+      }
+
+      expect(socket.sentPayloads).toHaveLength(1);
+      const updated = JSON.parse(socket.sentPayloads[0] as string);
+      expect(updated.type).toBe("update_device_status");
+      expect(updated.device_status.current_working_directory).toBe(
+        listener.bootWorkingDirectory,
+      );
+      expect(
+        getConversationWorkingDirectory(listener, "agent-1", "conv-1"),
+      ).toBe(listener.bootWorkingDirectory);
+    },
+  );
 
   test("repeated normalized cwd keeps reminder state and revision unchanged", async () => {
     const listener = createRuntime();

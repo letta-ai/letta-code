@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { access, constants, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import type WebSocket from "ws";
 import { getBackend } from "@/backend";
@@ -68,9 +68,17 @@ function trackListenerError(
   });
 }
 
-function isMissingWorkingDirectoryError(error: unknown): boolean {
+// A cwd this process can't use: missing, not a directory, or not searchable by
+// the runtime user (e.g. another computer's /root pushed to an unprivileged
+// listener). Keep the current directory instead of breaking every later spawn.
+function isUnusableWorkingDirectoryError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code;
-  return code === "ENOENT" || code === "ENOTDIR";
+  return (
+    code === "ENOENT" ||
+    code === "ENOTDIR" ||
+    code === "EACCES" ||
+    code === "EPERM"
+  );
 }
 
 /**
@@ -645,6 +653,7 @@ export async function handleCwdChange(
     if (!stats.isDirectory()) {
       throw new Error(`Not a directory: ${normalizedPath}`);
     }
+    await access(normalizedPath, constants.R_OK | constants.X_OK);
 
     setConversationWorkingDirectory(
       runtime.listener,
@@ -671,14 +680,14 @@ export async function handleCwdChange(
       conversationId,
     });
   } catch (error) {
-    if (isMissingWorkingDirectoryError(error)) {
+    if (isUnusableWorkingDirectoryError(error)) {
       bumpWorkingDirectoryRevision(runtime.listener);
       runtime.reminderState.hasSentSessionContext = false;
       runtime.reminderState.pendingSessionContextReason = "cwd_changed";
 
       debugLog(
         "listener",
-        `Rejected stale working directory change to ${msg.cwd}; restoring ${currentWorkingDirectory}`,
+        `Rejected unusable working directory change to ${msg.cwd}; restoring ${currentWorkingDirectory}`,
       );
       emitDeviceStatusUpdate(socket, runtime, {
         agent_id: agentId,
