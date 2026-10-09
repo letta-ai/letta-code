@@ -121,6 +121,8 @@ describe("managing-agent-webhooks helper", () => {
         authorization_header: "Basic do-not-print",
         id: "webhook-agent-1",
         name: "Build events",
+        safe_message: "must-not-pass-through",
+        items: ["must-not-pass-through"],
         webhook_slug: "private-slug",
         webhook_url: "https://api.example.test/v1/agent-webhooks/private-slug",
       }),
@@ -282,7 +284,10 @@ describe("managing-agent-webhooks helper", () => {
             webhook: {
               ...webhook,
               authorization_header: listedAuthorizationHeader,
+              items: [listedAuthorizationHeader],
               requires_authorization_header: listedAuthorizationHeader !== null,
+              safe_message:
+                createBody.security_key ?? "unpromised-public-field",
             },
           }),
         );
@@ -382,7 +387,7 @@ describe("managing-agent-webhooks helper", () => {
         "--include-body",
       ])) as { requests: Array<Record<string, unknown>> };
       expect(historyWithBody.requests[0]?.request_body).toEqual({
-        secret: "hidden-by-default",
+        secret: "[REDACTED]",
       });
 
       expect(
@@ -439,6 +444,8 @@ describe("managing-agent-webhooks helper", () => {
         credential_is_recoverable_from_server: false,
       });
       expect(secured.webhook).not.toHaveProperty("authorization_header");
+      expect(secured.webhook).not.toHaveProperty("safe_message");
+      expect(secured.webhook).not.toHaveProperty("items");
       const credential = JSON.parse(
         await readFile(credentialOutput, "utf8"),
       ) as {

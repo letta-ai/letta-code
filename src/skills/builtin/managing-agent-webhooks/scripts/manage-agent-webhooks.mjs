@@ -123,12 +123,22 @@ export function resolveAgentWebhookTarget(currentAgentId) {
 }
 
 export function safeAgentWebhook(webhook) {
-  const {
-    authorization_header: _authorizationHeader,
-    webhook_slug: _webhookSlug,
-    ...safe
-  } = webhook;
-  return safe;
+  const safeFields = [
+    "agent_id",
+    "created_at",
+    "disabled_at",
+    "enabled",
+    "id",
+    "name",
+    "preprompt",
+    "requires_authorization_header",
+    "webhook_url",
+  ];
+  return Object.fromEntries(
+    safeFields
+      .filter((field) => Object.hasOwn(webhook, field))
+      .map((field) => [field, webhook[field]]),
+  );
 }
 
 export function buildAgentWebhookBasicAuthorization(securityKey) {
@@ -172,7 +182,21 @@ const SAFE_ERROR_FIELDS = new Set([
   "request_id",
 ]);
 const SENSITIVE_FIELD_PATTERN =
-  /authorization|credential|password|secret|security[_-]?key|token/i;
+  /(?:^|[_-])(?:api[_-]?key|auth(?:entication|orization)?(?:[_-]?header)?|(?:access|auth|bearer|refresh)[_-]?token|credentials?|password|secret|security[_-]?key)(?:$|[_-])/i;
+const SAFE_NON_SECRET_FIELD_NAMES = new Set([
+  "authorization_passed",
+  "credential_file",
+  "credential_file_is_sensitive",
+  "credential_is_recoverable_from_server",
+  "requires_authorization_header",
+]);
+
+function isSensitiveFieldName(key) {
+  return (
+    !SAFE_NON_SECRET_FIELD_NAMES.has(key) &&
+    (key.toLowerCase() === "token" || SENSITIVE_FIELD_PATTERN.test(key))
+  );
+}
 
 function redactString(value, sensitiveValues) {
   let redacted = value;
@@ -194,12 +218,15 @@ function redactSensitiveValue(value, sensitiveValues) {
   }
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        SENSITIVE_FIELD_PATTERN.test(key)
-          ? "[REDACTED]"
-          : redactSensitiveValue(entry, sensitiveValues),
-      ]),
+      Object.entries(value).map(([key, entry]) => {
+        const redactedKey = redactString(key, sensitiveValues);
+        return [
+          redactedKey,
+          isSensitiveFieldName(key)
+            ? "[REDACTED]"
+            : redactSensitiveValue(entry, sensitiveValues),
+        ];
+      }),
     );
   }
   return value;
@@ -216,7 +243,10 @@ function safeResponseDetails(body, sensitiveValues = []) {
       Object.entries(redacted).filter(([key]) => SAFE_ERROR_FIELDS.has(key)),
     );
     if (Object.keys(allowed).length > 0) {
-      return JSON.stringify(allowed).slice(0, 500);
+      return redactString(JSON.stringify(allowed), sensitiveValues).slice(
+        0,
+        500,
+      );
     }
   }
   return "[response details omitted]";
@@ -228,10 +258,7 @@ function safeErrorMessage(error, sensitiveValues = []) {
 }
 
 function safeErrorCause(error, sensitiveValues = []) {
-  const message = safeErrorMessage(error, sensitiveValues);
-  return error instanceof Error && error.message === message
-    ? error
-    : new Error(message);
+  return new Error(safeErrorMessage(error, sensitiveValues));
 }
 
 function authorizationSensitiveValues(authorizationHeader, securityKey) {
@@ -369,20 +396,17 @@ export async function cleanupCredentialFile(
   try {
     await reservation.handle.close();
   } catch (error) {
-    cleanupFailures.push(`close: ${safeErrorMessage(error)}`);
+    cleanupFailures.push(`close: ${safeErrorMessage(error, sensitiveValues)}`);
   }
   try {
     await unlinkFile(reservation.path);
   } catch (error) {
-    cleanupFailures.push(`unlink: ${safeErrorMessage(error)}`);
+    cleanupFailures.push(`unlink: ${safeErrorMessage(error, sensitiveValues)}`);
   }
   const originalMessage = safeErrorMessage(originalError, sensitiveValues);
   const safeCause = safeErrorCause(originalError, sensitiveValues);
   if (cleanupFailures.length === 0) {
-    return originalError instanceof Error &&
-      originalError.message === originalMessage
-      ? originalError
-      : new Error(originalMessage, { cause: safeCause });
+    return new Error(originalMessage, { cause: safeCause });
   }
   return new Error(
     `${originalMessage} Credential cleanup did not complete; a sensitive file may remain at ${reservation.path}. Remove it manually. Cleanup errors: ${cleanupFailures.join("; ")}`,
@@ -404,7 +428,7 @@ export async function preserveCredentialFile(
   try {
     await reservation.handle.close();
   } catch (error) {
-    closeFailure = safeErrorMessage(error);
+    closeFailure = safeErrorMessage(error, sensitiveValues);
   }
   const suffix = closeFailure
     ? ` The file handle did not close cleanly (${closeFailure}); the process will release it on exit.`
@@ -419,8 +443,15 @@ async function readCredentialAuthorizationHeader(pathValue) {
   const path = resolve(
     requireString(pathValue, "Pass --credential-file <path>"),
   );
+  const credentialText = await readFile(path, "utf8");
+  let parsedCredential;
+  try {
+    parsedCredential = JSON.parse(credentialText);
+  } catch {
+    throw new Error("Credential file contains invalid JSON");
+  }
   const credential = jsonObject(
-    JSON.parse(await readFile(path, "utf8")),
+    parsedCredential,
     "Credential file must contain a JSON object",
   );
   const authorizationHeader = requireString(
@@ -453,7 +484,12 @@ async function readCredentialAuthorizationHeader(pathValue) {
 
 async function readPayload(args) {
   if (args["payload-file"]) {
-    return JSON.parse(await readFile(String(args["payload-file"]), "utf8"));
+    const payloadText = await readFile(String(args["payload-file"]), "utf8");
+    try {
+      return JSON.parse(payloadText);
+    } catch {
+      throw new Error("Payload file contains invalid JSON");
+    }
   }
   return {
     event: "agent-webhook-test",
@@ -490,8 +526,16 @@ function managementHeaders(apiKey) {
   };
 }
 
-function printJson(value) {
-  console.log(JSON.stringify(value, null, 2));
+function printJson(value, sensitiveValues = []) {
+  const sanitized = redactSensitiveValue(value, sensitiveValues);
+  const serialized = redactString(
+    JSON.stringify(sanitized, null, 2),
+    sensitiveValues,
+  );
+  if (Buffer.byteLength(serialized, "utf8") > 1024 * 1024) {
+    throw new Error("Sanitized output exceeds the 1 MiB display limit");
+  }
+  console.log(serialized);
 }
 
 function requireWebhookId(args) {
@@ -519,10 +563,16 @@ async function listWebhooks(params) {
 async function runManagementCommand(params) {
   const encodedAgentId = encodeURIComponent(params.agentId);
   const collectionUrl = `${params.baseUrl}/v1/agents/${encodedAgentId}/webhooks`;
+  const managementSensitiveValues = authorizationSensitiveValues(
+    params.headers.Authorization,
+  );
 
   if (params.command === "list") {
     const webhooks = await listWebhooks(params);
-    printJson({ webhooks: webhooks.map(safeAgentWebhook) });
+    printJson(
+      { webhooks: webhooks.map(safeAgentWebhook) },
+      managementSensitiveValues,
+    );
     return;
   }
 
@@ -611,16 +661,19 @@ async function runManagementCommand(params) {
       const credentialFile = credentialReservation
         ? await finishCredentialFile(credentialReservation)
         : undefined;
-      printJson({
-        ...(credentialFile
-          ? {
-              credential_file: credentialFile,
-              credential_file_is_sensitive: true,
-              credential_is_recoverable_from_server: false,
-            }
-          : {}),
-        webhook: safeAgentWebhook(webhook),
-      });
+      printJson(
+        {
+          ...(credentialFile
+            ? {
+                credential_file: credentialFile,
+                credential_file_is_sensitive: true,
+                credential_is_recoverable_from_server: false,
+              }
+            : {}),
+          webhook: safeAgentWebhook(webhook),
+        },
+        sensitiveValues,
+      );
     } catch (error) {
       if (credentialReservation) {
         if (
@@ -683,7 +736,7 @@ async function runManagementCommand(params) {
           : {}),
       };
     });
-    printJson({ requests });
+    printJson({ requests }, managementSensitiveValues);
     return;
   }
 
@@ -699,9 +752,12 @@ async function runManagementCommand(params) {
       }),
       "Update response must be an object",
     );
-    printJson({
-      webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
-    });
+    printJson(
+      {
+        webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
+      },
+      managementSensitiveValues,
+    );
     return;
   }
 
@@ -715,9 +771,12 @@ async function runManagementCommand(params) {
       }),
       "Rotate response must be an object",
     );
-    printJson({
-      webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
-    });
+    printJson(
+      {
+        webhook: safeAgentWebhook(webhookFromUnknown(response.webhook)),
+      },
+      managementSensitiveValues,
+    );
     return;
   }
 
@@ -729,6 +788,7 @@ async function runManagementCommand(params) {
         headers: params.headers,
         method: "DELETE",
       }),
+      managementSensitiveValues,
     );
     return;
   }
@@ -788,13 +848,16 @@ async function runManagementCommand(params) {
         "Webhook test failed with HTTP",
       );
     }
-    printJson({
-      accepted_for_processing: response.status === 202,
-      body: redactSensitiveValue(body, sensitiveValues),
-      dispatch_verified: false,
-      note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
-      status_code: response.status,
-    });
+    printJson(
+      {
+        accepted_for_processing: response.status === 202,
+        body,
+        dispatch_verified: false,
+        note: "HTTP 202 confirms only that the ingress handler accepted the request; conversation creation and queue submission happen asynchronously.",
+        status_code: response.status,
+      },
+      sensitiveValues,
+    );
     return;
   }
 

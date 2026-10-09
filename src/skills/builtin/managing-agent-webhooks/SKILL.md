@@ -34,10 +34,11 @@ payload as a user message.
 - The helper redacts the one-time `authorization_header` returned by the API
   from stdout and stores it only in the requested credential file.
 - Management and ingress responses are untrusted. The helper allowlists safe
-  error fields and recursively redacts secret-shaped fields plus the exact
-  generated key, Basic header, encoded credential, and management token before
-  anything reaches stdout, stderr, or a thrown error. Successful ingress
-  response bodies receive the same recursive redaction.
+  webhook/error fields; recursively redacts secret-shaped property names and
+  values plus the exact generated key, Basic header, encoded credential, and
+  management token; then applies one final exact-value pass before anything
+  reaches stdout, stderr, or a thrown error. Successful ingress response bodies
+  receive the same redaction, and serialized output is capped at 1 MiB.
 - Rotating invalidates the old URL. Deleting is permanent. Use the required
   `--confirm` flag only after the user has approved that exact action.
 - Request bodies may contain sensitive third-party data. `requests` omits them
@@ -236,6 +237,9 @@ longer works.
   or deleting anything. A retry without reconciliation can create a duplicate.
 - If cleanup reports that a sensitive file may remain, tell the user the path
   without reading it and remove it manually once it is safe to do so.
+- Malformed credential or payload JSON produces a fixed diagnostic that does
+  not quote source fragments. Repair the protected file outside the transcript;
+  never paste its contents into chat to diagnose it.
 - A `202 {"ok":true}` response means accepted by the ingress handler, not
   dispatched or completed. Do not report successful conversation creation or
   queueing from that response or from the history `enqueued` field; the server

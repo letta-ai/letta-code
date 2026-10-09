@@ -543,8 +543,12 @@ describe("managing-agent-webhooks credential lifecycle", () => {
         response.end(
           JSON.stringify({
             authorization_header: authorizationHeader,
+            error: { [`leak-${securityKey}`]: "bad" },
             errors: [{ security_key: securityKey }],
+            [`leak-${securityKey}`]: "ok",
             message: `Reflected ${securityKey}`,
+            secretary: "Ada",
+            token_count: 42,
           }),
         );
         return;
@@ -617,9 +621,108 @@ describe("managing-agent-webhooks credential lifecycle", () => {
       }
       expect(JSON.parse(accepted.stdout).body).toEqual({
         authorization_header: "[REDACTED]",
+        error: { "leak-[REDACTED]": "[REDACTED]" },
         errors: [{ security_key: "[REDACTED]" }],
+        "leak-[REDACTED]": "[REDACTED]",
         message: "Reflected [REDACTED]",
+        secretary: "Ada",
+        token_count: 42,
       });
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      });
+      await rm(root, { force: true, recursive: true });
+    }
+  });
+
+  test("uses fixed diagnostics for malformed credential and payload files", async () => {
+    const root = await mkdtemp(join(tmpdir(), "agent-webhook-malformed-"));
+    const credentialPath = join(root, "credential.json");
+    const payloadPath = join(root, "payload.json");
+    const fragment = "must-not-appear-in-json-diagnostic";
+    await writeFile(credentialPath, `{"security_key":"${fragment}`, "utf8");
+    await writeFile(payloadPath, `{"message":"${fragment}`, "utf8");
+    let secured = true;
+    const server = createServer((_request, response) => {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        response.writeHead(500);
+        response.end();
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.writeHead(200);
+      response.end(
+        JSON.stringify({
+          webhooks: [
+            {
+              authorization_header: null,
+              id: "webhook-agent-malformed",
+              name: "Malformed file test",
+              requires_authorization_header: secured,
+              webhook_slug: "private",
+              webhook_url: `http://127.0.0.1:${address.port}/ingress`,
+            },
+          ],
+        }),
+      );
+    });
+    await new Promise<void>((resolve) => {
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("Expected a TCP test server address");
+      }
+      const runNode = async (fileArgs: string[]) => {
+        const child = Bun.spawn(
+          [
+            "node",
+            SCRIPT_PATH,
+            "test",
+            "--webhook-id",
+            "webhook-agent-malformed",
+            ...fileArgs,
+            "--confirm",
+          ],
+          {
+            env: {
+              ...process.env,
+              AGENT_ID: "agent-current",
+              LETTA_API_KEY: "dummy-secret",
+              LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
+            },
+            stderr: "pipe",
+            stdout: "pipe",
+          },
+        );
+        const [exitCode, stdout, stderr] = await Promise.all([
+          child.exited,
+          new Response(child.stdout).text(),
+          new Response(child.stderr).text(),
+        ]);
+        return { exitCode, stderr, stdout };
+      };
+
+      const malformedCredential = await runNode([
+        "--credential-file",
+        credentialPath,
+      ]);
+      expect(malformedCredential).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(malformedCredential.stderr).toContain(
+        "Credential file contains invalid JSON",
+      );
+      expect(malformedCredential.stderr).not.toContain(fragment);
+
+      secured = false;
+      const malformedPayload = await runNode(["--payload-file", payloadPath]);
+      expect(malformedPayload).toMatchObject({ exitCode: 1, stdout: "" });
+      expect(malformedPayload.stderr).toContain(
+        "Payload file contains invalid JSON",
+      );
+      expect(malformedPayload.stderr).not.toContain(fragment);
     } finally {
       await new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -724,7 +827,10 @@ describe("managing-agent-webhooks credential lifecycle", () => {
     expect(result.message).toContain("/tmp/sensitive-credential.json");
     expect(result.message).toContain("close: close failed");
     expect(result.message).toContain("unlink: unlink failed");
-    expect((result as Error & { cause?: unknown }).cause).toBe(originalError);
+    const cause = (result as Error & { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toBe(originalError.message);
+    expect(cause).not.toBe(originalError);
   });
 
   test("reports close failure while preserving an ambiguous credential", async () => {
@@ -749,6 +855,29 @@ describe("managing-agent-webhooks credential lifecycle", () => {
     expect(result.message).toContain(
       "Run list and reconcile the webhook name before retrying",
     );
-    expect((result as Error & { cause?: unknown }).cause).toBe(originalError);
+    const cause = (result as Error & { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toBe(originalError.message);
+    expect(cause).not.toBe(originalError);
+  });
+
+  test("drops secret-bearing nested error causes", async () => {
+    const nestedSecret = "nested-cause-secret";
+    const originalError = new Error("safe outer", {
+      cause: new Error(nestedSecret),
+    });
+    const result = await preserveCredentialFile(
+      {
+        handle: { close: async () => {} },
+        path: "/tmp/preserved-credential.json",
+      },
+      originalError,
+      [nestedSecret],
+    );
+    const cause = (result as Error & { cause?: unknown }).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect((cause as Error).message).toBe("safe outer");
+    expect((cause as Error & { cause?: unknown }).cause).toBeUndefined();
+    expect(JSON.stringify(cause)).not.toContain(nestedSecret);
   });
 });
