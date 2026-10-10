@@ -36,6 +36,8 @@ export interface SubagentState {
   totalTokens: number;
   durationMs: number;
   error?: string;
+  /** Final report published for a caller-notified launch. */
+  result?: string;
   model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
@@ -316,7 +318,12 @@ export function addToolCall(
  */
 export function completeSubagent(
   id: string,
-  result: { success: boolean; error?: string; totalTokens?: number },
+  result: {
+    success: boolean;
+    error?: string;
+    totalTokens?: number;
+    result?: string;
+  },
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -326,6 +333,7 @@ export function completeSubagent(
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
+    ...(result.result !== undefined ? { result: result.result } : {}),
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),

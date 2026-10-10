@@ -26,7 +26,21 @@ export type SubagentLaunchResult =
       agent_id: string | null;
       conversation_id: string | null;
     }
-  | { success: false; error: string };
+  | {
+      success: false;
+      error: string;
+      /** Why a claude-code/codex worker could not start on this computer. */
+      error_code?: SubagentStartupErrorCode;
+    };
+
+export type SubagentStartupErrorCode = "not_installed" | "not_signed_in";
+
+/**
+ * `caller`: the launching client owns the completion notification. The
+ * computer skips its own notification and publishes the final report as
+ * `result` on the `update_subagent_state` snapshot.
+ */
+export type SubagentLaunchNotify = "caller";
 
 export interface LaunchSubagentCommand {
   type: "launch_subagent";
@@ -36,9 +50,13 @@ export interface LaunchSubagentCommand {
   args: SubagentLaunchArgs;
   /** The originating Agent or external-tool call, when present. */
   tool_call_id?: string;
+  /** Requires the `launch_subagent_notify_caller` capability. */
+  notify?: SubagentLaunchNotify;
 }
 
 export type LaunchSubagentResponse = SubagentLaunchResult & {
   type: "launch_subagent_response";
   request_id: string;
+  /** The launch command's parent runtime, so relays can scope the reply. */
+  runtime?: AgentRuntimeScope;
 };
