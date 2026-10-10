@@ -356,10 +356,40 @@ export function readJsonFile<T>(path: string): T | undefined {
 
 export function readJsonlFile<T>(path: string): T[] {
   if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as T);
+
+  const items: T[] = [];
+  const buffer = Buffer.alloc(64 * 1024);
+  const pending: Buffer[] = [];
+  const fd = openSync(path, "r");
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      let lineStart = 0;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] !== 0x0a) continue;
+        const suffix = buffer.subarray(lineStart, index);
+        const line = pending.length
+          ? Buffer.concat([...pending, suffix])
+          : suffix;
+        pending.length = 0;
+        const text = line.toString("utf8");
+        if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+        lineStart = index + 1;
+      }
+      if (lineStart < bytesRead) {
+        pending.push(Buffer.from(buffer.subarray(lineStart, bytesRead)));
+      }
+    } while (bytesRead > 0);
+  } finally {
+    closeSync(fd);
+  }
+
+  if (pending.length > 0) {
+    const text = Buffer.concat(pending).toString("utf8");
+    if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+  }
+  return items;
 }
 
 export function readJsonlFileSuffix<T>(
