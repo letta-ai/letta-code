@@ -56,7 +56,7 @@ jobs:
             FILES_MATCH=false
           fi
 
-          for file in $CHANGED_FILES; do
+          for file in "$CHANGED_FILES"; do
             case "$file" in
               package.json) ;;
               *)
