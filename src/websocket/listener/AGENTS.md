@@ -120,3 +120,26 @@ When logs show contradictory state:
 
 Keep new tests next to their owner and below 1,000 lines. Do not grow the legacy
 protocol/concurrency test monoliths; move focused coverage here instead.
+
+## Durable File Lock
+
+`durable-file-lock.ts` is the cross-process filesystem lock protecting
+accepted-input and interruption-recovery records shared by every harness process
+with the same home directory and server URL; concurrent listener/App Server
+starts contend on it.
+
+Preserve these invariants when changing the lock or its callers:
+
+- Publication is two-phase: link the stable owner, then remove the `.installing`
+  hard link. A contender that lists the directory between those steps must retry
+  inside its bounded acquisition deadline when `.installing` vanishes — never
+  classify a legitimate publication transition as corrupt ownership
+  (`Invalid durable lock owner filename`), which aborts listener startup.
+  Genuinely mismatched or corrupt owners still fail closed.
+- Compare lock file identities as exact `bigint` `dev`/`ino` values
+  (`lstatSync({ bigint: true })`, `sameFile`), never number-precision
+  `lstatSync`: large inode values alias through number rounding.
+
+Lay contention regression tests as deterministic interleavings through the
+lock's `after*` seams with real hard links, not high-volume probabilistic stress
+workloads that exceed Windows CI deadlines.
