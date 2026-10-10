@@ -151,11 +151,16 @@ function buildQueuedTurnMessage(
   const batchActingUserId = batch.items.some((item) => item.kind === "message")
     ? getBatchActingUserId(batch.items)
     : (template?.actingUserId ?? getBatchActingUserId(batch.items));
+  // A batch with no client message (cron prompts, task notifications, mod
+  // continuations) has no client waiting on its output, so its turn must not
+  // block on a subscribed delivery owner after tool execution (see #4925).
+  const processOwnedTurn = !batch.items.some((item) => item.kind === "message");
   return {
     type: "message",
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
+    ...(processOwnedTurn ? { processOwnedTurn: true } : {}),
     actingUserId: batchActingUserId ?? undefined,
     suppressActingUserFallback:
       batchActingUserId === null ||
