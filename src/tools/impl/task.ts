@@ -191,6 +191,31 @@ interface SpawnBackgroundSubagentTaskDeps {
   getSubagentSnapshotImpl: typeof getSubagentSnapshot;
 }
 
+/**
+ * A remote child whose connection dropped may still be running; reporting it
+ * as failed tells the parent to redo or abandon work that is still in flight.
+ */
+function isUnconfirmedSubagentOutcome(error: string | undefined): boolean {
+  return error?.includes("may still be running") ?? false;
+}
+
+function completionStatus(
+  success: boolean,
+  error: string | undefined,
+): "completed" | "failed" | "unknown" {
+  if (success) return "completed";
+  return isUnconfirmedSubagentOutcome(error) ? "unknown" : "failed";
+}
+
+function defaultCompletionSummary(
+  description: string,
+  status: "completed" | "failed" | "unknown",
+): string {
+  return status === "unknown"
+    ? `Agent "${description}" lost its connection; it may still be running`
+    : `Agent "${description}" ${status}`;
+}
+
 async function resolveCompletionSummary(
   defaultSummary: string,
   completionSummary:
@@ -445,7 +470,8 @@ export function spawnBackgroundSubagentTask(
           { workingDirectory: userCwd },
         );
 
-        const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
+        const status = completionStatus(result.success, result.error);
+        const defaultSummary = defaultCompletionSummary(description, status);
         const summary = await resolveCompletionSummary(
           defaultSummary,
           completionSummary,
@@ -454,7 +480,7 @@ export function spawnBackgroundSubagentTask(
 
         const notificationXml = formatTaskNotificationFn({
           taskId,
-          status: result.success ? "completed" : "failed",
+          status,
           summary,
           result: truncatedResult,
           outputFile,
@@ -532,7 +558,8 @@ export function spawnBackgroundSubagentTask(
           },
           "error",
         );
-        const defaultSummary = `Agent "${description}" failed`;
+        const status = completionStatus(false, errorMessage);
+        const defaultSummary = defaultCompletionSummary(description, status);
         const summary = await resolveCompletionSummary(
           defaultSummary,
           completionSummary,
@@ -541,7 +568,7 @@ export function spawnBackgroundSubagentTask(
 
         const notificationXml = formatTaskNotificationFn({
           taskId,
-          status: "failed",
+          status,
           summary,
           result: `${header}\n\nError: ${errorMessage}`,
           outputFile,
