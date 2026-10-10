@@ -293,7 +293,9 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
-    if (params.noWait)
+    // Agent callers follow this receipt until the Super Run completes. The
+    // child's first end_turn may only be waiting for its own background work.
+    if (params.noWait || params.settings.agent_role === "subagent")
       return {
         status: "queued",
         receipt: { ...accepted, connection_id: params.connectionId },

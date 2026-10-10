@@ -26,7 +26,6 @@ const scope: AgentRuntimeScope = {
 };
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
-  agent_role: "subagent",
   allowed_tools: ["Read"],
   disallowed_tools: ["Write"],
   disable_memory_guard: false,
@@ -584,41 +583,72 @@ test("initial assignment identity survives enqueue without leaking into later la
   expect(new Set(submitted).size).toBe(3);
 });
 
-test("noWait returns the enqueue receipt once Cloud accepts the send and reads nothing else", async () => {
-  // The Agent tool's child uses this: it configures the listener, submits,
-  // and exits. The parent process follows the remote turn from the receipt.
-  const wire = transport();
-  const retrieveRun = mock(backend.retrieveRun);
-  const listRunMessages = mock(async () => [] as Message[]);
-  const result = await launchListenerConversation(
-    {
-      connectionId: "conn-target",
-      scope,
-      content: "hello",
-      backend: { retrieveRun },
-      settings,
-      mode: "standard",
-      noWait: true,
-    },
-    {
-      client: wire.client,
-      enqueue: async (input) => {
-        expect(wire.commands[0]).toMatchObject({
-          type: "runtime_start",
-          execution_settings: settings,
-        });
-        return receipt(input.clientMessageId);
+test.each([
+  { noWait: true, agentRole: undefined },
+  { noWait: false, agentRole: "subagent" as const },
+])(
+  "returns a receipt for a tracked child launch: %j",
+  async ({ noWait, agentRole }) => {
+    // The Agent tool's child uses this: it configures the listener, submits,
+    // and exits. The parent process follows the remote turn from the receipt.
+    const wire = transport();
+    const retrieveRun = mock(backend.retrieveRun);
+    const listRunMessages = mock(
+      async () =>
+        [
+          {
+            id: "message-waiting",
+            date: "now",
+            message_type: "assistant_message",
+            content: "My workers are still running; waiting for them.",
+          },
+        ] as Message[],
+    );
+    const executionSettings = {
+      ...settings,
+      ...(agentRole ? { agent_role: agentRole } : {}),
+    };
+    const result = await launchListenerConversation(
+      {
+        connectionId: "conn-target",
+        scope,
+        content: "hello",
+        backend: { retrieveRun },
+        settings: executionSettings,
+        mode: "standard",
+        noWait,
       },
-      listRunMessages,
-    },
-  );
-  expect(result.status).toBe("queued");
-  if (result.status !== "queued") throw new Error("expected queued");
-  expect(result.receipt).toMatchObject({
-    status: "queued",
-    conversation_id: "conv-child",
-    super_run_id: "sr",
-  });
-  expect(retrieveRun).not.toHaveBeenCalled();
-  expect(listRunMessages).not.toHaveBeenCalled();
-});
+      {
+        client: wire.client,
+        enqueue: async (input) => {
+          expect(wire.commands[0]).toMatchObject({
+            type: "runtime_start",
+            execution_settings: executionSettings,
+          });
+          wire.emit({
+            type: "update_loop_status",
+            runtime: scope,
+            loop_status: loop(input.clientMessageId, false),
+          });
+          wire.emit({
+            type: "turn_finished",
+            runtime: scope,
+            run_id: "run-own",
+            stop_reason: "end_turn",
+          });
+          return receipt(input.clientMessageId);
+        },
+        listRunMessages,
+      },
+    );
+    expect(result.status).toBe("queued");
+    if (result.status !== "queued") throw new Error("expected queued");
+    expect(result.receipt).toMatchObject({
+      status: "queued",
+      conversation_id: "conv-child",
+      super_run_id: "sr",
+    });
+    expect(retrieveRun).not.toHaveBeenCalled();
+    expect(listRunMessages).not.toHaveBeenCalled();
+  },
+);

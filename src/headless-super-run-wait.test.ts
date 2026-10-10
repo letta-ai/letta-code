@@ -111,6 +111,41 @@ test("returns assistant text when it is available", async () => {
   expect(result.text).toBe("Done");
 });
 
+test("ignores an early end_turn while the child's Super Run still owns workers", async () => {
+  let finished = false;
+  const reads: string[] = [];
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async () => ({
+        ...exact(finished ? "COM" : "STC"),
+        run_ids: [finished ? "run-final" : "run-waiting"],
+      }),
+      sleep: async () => {
+        finished = true;
+      },
+      run: async (id) => {
+        reads.push(id);
+        return { ...run(), id };
+      },
+      messages: async (id) => [
+        {
+          id: "message-final",
+          date: "now",
+          message_type: "assistant_message",
+          content:
+            id === "run-final"
+              ? "All workers finished."
+              : "Waiting for workers.",
+        },
+      ],
+    }),
+  );
+  expect(reads).toEqual(["run-final"]);
+  expect(result.text).toBe("All workers finished.");
+});
+
 test("a recovered child error does not fail the successful accepted send", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,
