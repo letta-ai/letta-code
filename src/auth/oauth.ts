@@ -535,9 +535,11 @@ export async function refreshAccessToken(
 }
 
 /**
- * Revoke a refresh token (logout)
+ * Revoke a refresh token (logout).
+ * Never throws: callers still clear local credentials either way.
+ * Returns true when the server confirmed the revoke, false otherwise.
  */
-export async function revokeToken(refreshToken: string): Promise<void> {
+export async function revokeToken(refreshToken: string): Promise<boolean> {
   try {
     const response = await fetch(
       `${OAUTH_CONFIG.authBaseUrl}/api/oauth/revoke`,
@@ -554,17 +556,23 @@ export async function revokeToken(refreshToken: string): Promise<void> {
 
     // OAuth 2.0 revoke endpoint should return 200 even if token is already invalid
     if (!response.ok) {
-      const error = (await response.json()) as OAuthError;
+      const error = (await response.json().catch(() => ({}))) as
+        | Partial<OAuthError>
+        | undefined;
+      const detail = error?.error_description || error?.error;
+      const message = detail
+        ? `HTTP ${response.status}: ${detail}`
+        : `HTTP ${response.status}`;
       trackBoundaryError({
         errorType: "oauth_revoke_failed",
-        error: error.error_description || error.error,
+        error: message,
+        httpStatus: response.status,
         context: "auth_oauth_revoke",
       });
-      console.error(
-        `Warning: Failed to revoke token: ${error.error_description || error.error}`,
-      );
-      // Don't throw - we still want to clear local credentials
+      console.error(`Warning: Failed to revoke token: ${message}`);
+      return false;
     }
+    return true;
   } catch (error) {
     trackBoundaryError({
       errorType: "oauth_revoke_exception",
@@ -572,7 +580,7 @@ export async function revokeToken(refreshToken: string): Promise<void> {
       context: "auth_oauth_revoke",
     });
     console.error("Warning: Failed to revoke token:", error);
-    // Don't throw - we still want to clear local credentials
+    return false;
   }
 }
 
