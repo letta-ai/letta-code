@@ -192,8 +192,13 @@ export function estimateProviderContextTokens(
   input: ProviderTurnInput,
 ): number | undefined {
   const contextEstimate = estimateLocalContextTokens(input.uiMessages);
+  // 待发送的内存更新尚未进入历史，也不包含在上一次 provider usage 中。
+  const memoryUpdateTokens = estimateSerializedTokens(
+    input.midConversationSystemPrompt,
+  );
   if (contextEstimate.lastUsageIndex !== null) {
-    return contextEstimate.tokens > 0 ? contextEstimate.tokens : undefined;
+    const total = contextEstimate.tokens + memoryUpdateTokens;
+    return total > 0 ? total : undefined;
   }
 
   const systemPromptTokens = estimateSerializedTokens(
@@ -201,7 +206,8 @@ export function estimateProviderContextTokens(
   );
   const messageTokens = contextEstimate.tokens;
   const toolTokens = estimateSerializedTokens(input.clientTools);
-  const total = systemPromptTokens + messageTokens + toolTokens;
+  const total =
+    systemPromptTokens + messageTokens + toolTokens + memoryUpdateTokens;
   return total > 0 ? total : undefined;
 }
 
