@@ -14,6 +14,7 @@ import {
   LocalTranscriptRepairRequiredError,
   type LocalTranscriptRowsResult,
   overlayResidentLocalMessageSuffix,
+  readJsonlFile,
   readLocalTranscriptTailWindow,
   restrictLocalTranscriptToResidentMessages,
   spliceOutOfContextMessages,
@@ -46,6 +47,36 @@ function userMessage(id: string, text: string): LocalMessage {
     timestamp: 0,
   } as LocalMessage;
 }
+
+describe("readJsonlFile", () => {
+  test("parses rows across chunks without splitting multibyte characters", async () => {
+    const storageDir = await createStorageDirectory();
+    const path = join(storageDir, "messages.jsonl");
+    const chunkSize = 64 * 1024;
+    const jsonPrefix = '{"text":"';
+    const text = `${"x".repeat(chunkSize - 2 - Buffer.byteLength(jsonPrefix))}😀`;
+    await writeFile(
+      path,
+      `${JSON.stringify({ text })}\n${JSON.stringify({ text: "next" })}\n`,
+    );
+
+    expect(readJsonlFile<{ text: string }>(path)).toEqual([
+      { text },
+      { text: "next" },
+    ]);
+  });
+
+  test("skips blank lines and parses a final row without a trailing newline", async () => {
+    const storageDir = await createStorageDirectory();
+    const path = join(storageDir, "messages.jsonl");
+    await writeFile(path, '{"value":1}\n\n  \n{"value":2}');
+
+    expect(readJsonlFile<{ value: number }>(path)).toEqual([
+      { value: 1 },
+      { value: 2 },
+    ]);
+  });
+});
 
 describe("readLocalTranscriptTailWindow", () => {
   test("stops once the suffix covers every in-context id", async () => {
