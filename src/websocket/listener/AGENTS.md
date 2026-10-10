@@ -74,6 +74,27 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Durable File Lock
+
+`durable-file-lock.ts` is a correctness-critical cross-process filesystem lock.
+It guards shared ledger files (accepted-input dispositions, interrupted-turn
+records, completion receipts) that every process using the same home directory
+and server URL contends on. Preserve these invariants:
+
+- Compare file identity with exact bigint `dev`/`ino`
+  (`lstatSync({ bigint: true })`); never plain-number `ino`.
+- A listed link disappearing mid-inspection is a legitimate publication
+  transition (the publisher unlinks `.installing` after linking the stable
+  owner): propagate `ENOENT` so acquisition retries inside its bounded deadline
+  instead of classifying temporary contention as corruption. Only genuinely
+  corrupt or multiple-owner directories fail closed.
+- Reclaim a dead owner or empty candidate only when process-start identity
+  proves the pid was not reused; unknown identity fails closed.
+- Yield through the shared wait budget and throw
+  `Timed out acquiring durable filesystem lock`; never spin.
+- Windows skips unsupported directory fsync; keep the lock and its tests
+  cross-platform.
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
@@ -92,6 +113,8 @@ after the producer path has a regression test.
 - `queue.ts`: queue ingestion and lifecycle-snapshot gating.
 - `inbound-dispatch.ts`: serialized direct-message ownership handoff.
 - `inbound-queue.ts`: lossless inbound-message queue registration.
+- `durable-file-lock.ts`: correctness-critical cross-process lock for shared
+  recovery ledgers (see Durable File Lock).
 
 ## Investigation Checklist
 
@@ -117,6 +140,12 @@ When logs show contradictory state:
 - `message-router.test.ts`: direct-message ownership handoff and queue drain.
 - `listener-queue-adapter.test.ts`: queue decisions from valid snapshots.
 - `channel-turn-session.test.ts`: channel progress lifecycle fan-out.
+- `durable-file-lock.test.ts`: lock invariants, fail-closed identity, and
+  dead-owner/PID-reuse cleanup.
+- `durable-file-lock-contention.test.ts`: concurrent publication races,
+  including that contention is never classified as corruption.
 
 Keep new tests next to their owner and below 1,000 lines. Do not grow the legacy
-protocol/concurrency test monoliths; move focused coverage here instead.
+protocol/concurrency test monoliths; move focused coverage here instead. Lock
+race coverage uses the deterministic `after*` injection hooks to reproduce
+publication interleavings; do not substitute slow stress tests.
