@@ -293,6 +293,8 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
+    // Tracked callers follow this receipt until the Super Run completes. The
+    // child's first end_turn may only be waiting for its own background work.
     if (params.noWait)
       return {
         status: "queued",
