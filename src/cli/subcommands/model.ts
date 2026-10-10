@@ -159,6 +159,15 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       const byokCapabilities = new Map<string, boolean | undefined>();
       // The local runtime inventory is entirely user-configured, not hosted.
       if (local && values.hosted) catalog = [];
+      // Never present a failed local catalog build as "no models configured".
+      if (local && !values.hosted && catalog.length === 0) {
+        const available = await getAvailableModelHandles();
+        if (available.models.length > 0) {
+          throw new Error(
+            `Local backend has ${available.models.length} models but the model catalog could not be built. Re-run with LETTA_DEBUG=1 for details.`,
+          );
+        }
+      }
       // Cloud hosted rows only come from /models/catalog. /models adds BYOK
       // rows, never replacement/fallback hosted rows. Local/custom catalogs
       // are already projected from their runtime inventory by initialization.
