@@ -93,6 +93,16 @@ after the producer path has a regression test.
 - `inbound-dispatch.ts`: serialized direct-message ownership handoff.
 - `inbound-queue.ts`: lossless inbound-message queue registration.
 
+## Durable File Lock
+
+`durable-file-lock.ts` serializes shared `~/.letta/state` records (accepted
+inputs, interrupted turns) across every process on the same home + server
+runtime; concurrent startup can expose filesystem races there. For a race
+regression, force the exact interleaving with real hard links via the lock's
+test hooks (e.g. `afterOwnerDirectoryRead`, `now`); timing-based multi-process
+stress exceeds the Windows CI deadline. Compare `dev`/`ino` identity as `bigint`
+— plain numbers alias through rounding.
+
 ## Investigation Checklist
 
 When logs show contradictory state:
