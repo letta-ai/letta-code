@@ -157,6 +157,69 @@ describe("spawnBackgroundSubagentTask", () => {
     expect(outputContent).toContain("[Task completed]");
   });
 
+  test("reports a dropped listener connection as unknown, not failed", async () => {
+    const spawnSubagentImpl = mock(async () => {
+      throw new Error(
+        "Listener connection closed; execution may still be running. Do not resend automatically.",
+      );
+    });
+
+    spawnBackgroundSubagentTask({
+      subagentType: "general-purpose",
+      prompt: "Build",
+      description: "Build storyboard",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const notification = formatTaskNotificationImpl.mock.calls[0]?.[0] as {
+      status: string;
+      summary: string;
+    };
+    expect(notification.status).toBe("unknown");
+    expect(notification.summary).toContain("may still be running");
+    expect(notification.summary).not.toContain("failed");
+  });
+
+  test("still reports an ordinary subagent error as failed", async () => {
+    const spawnSubagentImpl = mock(async () => {
+      throw new Error("model refused");
+    });
+
+    spawnBackgroundSubagentTask({
+      subagentType: "general-purpose",
+      prompt: "Build",
+      description: "Build storyboard",
+      deps: {
+        spawnSubagentImpl,
+        addToMessageQueueImpl,
+        formatTaskNotificationImpl,
+        runSubagentStopHooksImpl,
+        generateSubagentIdImpl,
+        registerSubagentImpl,
+        completeSubagentImpl,
+        getSubagentSnapshotImpl,
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const notification = formatTaskNotificationImpl.mock.calls[0]?.[0] as {
+      status: string;
+      summary: string;
+    };
+    expect(notification.status).toBe("failed");
+    expect(notification.summary).toBe('Agent "Build storyboard" failed');
+  });
+
   test("keeps launch-time acting user through delayed completion", async () => {
     let resolveSpawn: ((result: SubagentResult) => void) | undefined;
     const spawnSubagentImpl = mock(

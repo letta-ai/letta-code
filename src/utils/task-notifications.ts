@@ -21,7 +21,8 @@ export interface NotificationScope {
 
 export interface TaskNotification {
   taskId: string;
-  status: "completed" | "failed";
+  /** `unknown`: the connection to a remote child dropped mid-run. */
+  status: "completed" | "failed" | "unknown";
   summary: string;
   result: string;
   outputFile?: string;
