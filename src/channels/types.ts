@@ -207,6 +207,12 @@ export type ChannelTurnLifecycleEvent =
   | {
       type: "queued";
       source: ChannelTurnSource;
+      /**
+       * Listener-owned submit disposition when known. The historical `queued`
+       * event also covers early ingress and immediately started inputs, so its
+       * type alone does not prove that an input is waiting in the listener queue.
+       */
+      disposition?: "started" | "queued";
     }
   | {
       type: "processing";
