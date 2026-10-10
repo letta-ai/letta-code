@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import {
   getFeedbackClientType,
@@ -14,6 +15,7 @@ export interface FeedbackSubcommandDependencies {
   getDeviceId?: () => string;
   getApiKey?: () => string | undefined;
   getClientType?: typeof getFeedbackClientType;
+  readMessageFile?: (path: string) => Promise<string>;
   stdout?: (message: string) => void;
   stderr?: (message: string) => void;
 }
@@ -23,10 +25,12 @@ function printUsage(stdout: (message: string) => void = console.log): void {
     `
 Usage:
   letta feedback --message <text>
+  letta feedback --message-file <path>
 
 Options:
-  --message <text>   Feedback to send to the Letta team
-  -h, --help         Show this help
+  --message <text>         Feedback to send to the Letta team
+  --message-file <path>    Read the feedback from a UTF-8 text file
+  -h, --help               Show this help
 
 Notes:
   - Ask the user for permission before submitting feedback on their behalf.
@@ -48,6 +52,7 @@ export async function runFeedbackSubcommand(
       options: {
         help: { type: "boolean", short: "h" },
         message: { type: "string" },
+        "message-file": { type: "string" },
       },
       strict: true,
       allowPositionals: false,
@@ -63,12 +68,30 @@ export async function runFeedbackSubcommand(
     return 0;
   }
 
-  const message =
-    typeof parsed.values.message === "string"
-      ? parsed.values.message.trim()
-      : "";
+  const inlineMessage = parsed.values.message;
+  const messageFile = parsed.values["message-file"];
+  if (typeof inlineMessage === "string" && typeof messageFile === "string") {
+    stderr("Pass either --message or --message-file, not both.");
+    return 1;
+  }
+
+  let rawMessage = typeof inlineMessage === "string" ? inlineMessage : "";
+  if (typeof messageFile === "string") {
+    try {
+      rawMessage = await (
+        deps.readMessageFile ?? ((path) => readFile(path, "utf8"))
+      )(messageFile);
+    } catch {
+      stderr(`Could not read feedback file: ${messageFile}`);
+      return 1;
+    }
+  }
+
+  const message = rawMessage.trim();
   if (!message) {
-    stderr("Feedback message required: pass --message <text>.");
+    stderr(
+      "Feedback message required: pass --message <text> or --message-file <path>.",
+    );
     return 1;
   }
   if (message.length > FEEDBACK_MESSAGE_MAX) {
