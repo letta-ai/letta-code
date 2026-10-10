@@ -2,11 +2,15 @@ import { expect, test } from "bun:test";
 import WebSocket from "ws";
 import { openListenerConnection } from "@/websocket/listener/connection";
 import { createRuntime, stopRuntime } from "@/websocket/listener/lifecycle";
-import { setActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  getActiveRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
 import {
   applyGatewayLifecycleReadiness,
   completeListenerConnectionStartup,
   createListenerReadinessController,
+  createRuntimeBoundGatewayStarter,
 } from "./listener-readiness";
 
 test("publishes readiness only for the exact open ingress-live connection", async () => {
@@ -224,4 +228,36 @@ test("initial gateway readiness composes with Cloud readiness", () => {
 
   expect(readiness.getState().ready).toBe(true);
   expect(transitions).toEqual([true]);
+});
+
+test("rebuilds the channel gateway when re-registration replaces the runtime", async () => {
+  const events: string[] = [];
+  const runtimes = new Map<object, string>();
+  const startGateway = createRuntimeBoundGatewayStarter({
+    getRuntime: getActiveRuntime,
+    start: async (runtime) => {
+      events.push(`start:${runtimes.get(runtime)}`);
+    },
+    close: async () => {
+      events.push("close");
+    },
+  });
+
+  const runtimeA = createRuntime();
+  runtimes.set(runtimeA, "A");
+  setActiveRuntime(runtimeA);
+  await startGateway();
+  await startGateway();
+  expect(events).toEqual(["start:A"]);
+
+  // Re-registration: the old runtime is stopped and a new one becomes active.
+  stopRuntime(runtimeA, true);
+  const runtimeB = createRuntime();
+  runtimes.set(runtimeB, "B");
+  setActiveRuntime(runtimeB);
+  await Promise.all([startGateway(), startGateway()]);
+  expect(events).toEqual(["start:A", "close", "start:B"]);
+
+  stopRuntime(runtimeB, true);
+  setActiveRuntime(null);
 });

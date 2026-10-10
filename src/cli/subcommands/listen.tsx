@@ -24,6 +24,7 @@ import {
   applyGatewayLifecycleReadiness,
   completeListenerConnectionStartup,
   createListenerReadinessController,
+  createRuntimeBoundGatewayStarter,
 } from "@/cli/subcommands/listener-readiness";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 import { settingsManager } from "@/settings-manager";
@@ -58,7 +59,10 @@ import {
 } from "@/websocket/listener/manual-instance-lock";
 import { deriveOrgDeviceId } from "@/websocket/listener/org-credentials";
 import { flushRemoteSettingsWrites } from "@/websocket/listener/remote-settings";
-import type { ListenerClientReplacement } from "@/websocket/listener/types";
+import type {
+  ListenerClientReplacement,
+  ListenerRuntime,
+} from "@/websocket/listener/types";
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -483,18 +487,25 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       (ready) => lifecycleOutput?.emit(ready ? "connected" : "reconnecting"),
       (status) => lifecycleOutput?.emitListenerStatus(status),
     );
-    let channelGatewayStart: Promise<void> | null = null;
-    const startChannelGateway = (): Promise<void> => {
-      if (channelGatewayStart) return channelGatewayStart;
-      channelGatewayStart = (async () => {
-        if (channelNames.length === 0 && !restoreEnabledChannels) return;
+    let startRuntimeChannelGateway: (() => Promise<void>) | null = null;
+    const startChannelGateway = async (): Promise<void> => {
+      if (channelNames.length === 0 && !restoreEnabledChannels) return;
+      if (!startRuntimeChannelGateway) {
         const { getActiveRuntime } = await import(
           "@/websocket/listener/runtime"
         );
-        const runtime = getActiveRuntime();
-        if (!runtime) {
-          throw new Error("Listener runtime is not active for ChannelGateway");
-        }
+        startRuntimeChannelGateway ??= createRuntimeBoundGatewayStarter({
+          getRuntime: getActiveRuntime,
+          close: closeChannelGateway,
+          start: startChannelGatewayForRuntime,
+        });
+      }
+      return startRuntimeChannelGateway();
+    };
+    const startChannelGatewayForRuntime = (
+      runtime: ListenerRuntime,
+    ): Promise<void> =>
+      (async () => {
         const { startAppServer } = await import("@/websocket/app-server");
         channelAppServer = await startAppServer({
           runtime,
@@ -572,17 +583,6 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           runtime.serviceCommandTypes.clear();
         };
       })();
-      void channelGatewayStart.catch(async () => {
-        try {
-          await closeChannelGateway();
-        } catch {
-          // Preserve the startup error; cleanup is best effort.
-        } finally {
-          channelGatewayStart = null;
-        }
-      });
-      return channelGatewayStart;
-    };
     sessionLog.log(`Session started (debug=${debugMode})`);
     sessionLog.log(`deviceId: ${deviceId}`);
     sessionLog.log(`connectionName: ${connectionName}`);
