@@ -748,6 +748,22 @@ catalog must use this fixture.
 - Completed/error agents retained ~30s before cleanup. Consumers must filter on
   `status` if they only want active agents.
 
+### Child Completion Wait
+
+For nested Agent work, distinguish a CLI task's completion notification from
+the child's durable Super Run:
+
+- A listener-hosted child can end its first turn with a "waiting" reply
+  (`turn_finished`/`end_turn`) while its own background workers continue. Do not
+  treat that first reply as the completed assignment.
+- Managed `Agent` launches return the accepted enqueue receipt; the parent
+  follows that exact Super Run until terminal completion, then reads its newest
+  run's final report.
+- `agent_role` ("subagent") alone does not opt an ordinary CLI launch into the
+  receipt handoff; only tracked Agent launches (`noWait`) use it.
+- Never re-launch a child to collect a missing final report. Read the
+  conversation or the terminal run's messages instead.
+
 ### Product-Status Panel
 
 - `order: 1` = product-status replacement (singleton, newest-wins).
