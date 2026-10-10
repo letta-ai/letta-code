@@ -26,7 +26,6 @@ const scope: AgentRuntimeScope = {
 };
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
-  agent_role: "subagent",
   allowed_tools: ["Read"],
   disallowed_tools: ["Write"],
   disable_memory_guard: false,
@@ -584,7 +583,7 @@ test("initial assignment identity survives enqueue without leaking into later la
   expect(new Set(submitted).size).toBe(3);
 });
 
-test("noWait returns the enqueue receipt once Cloud accepts the send and reads nothing else", async () => {
+test("noWait returns a receipt for a tracked Agent launch", async () => {
   // The Agent tool's child uses this: it configures the listener, submits,
   // and exits. The parent process follows the remote turn from the receipt.
   const wire = transport();
@@ -602,13 +601,7 @@ test("noWait returns the enqueue receipt once Cloud accepts the send and reads n
     },
     {
       client: wire.client,
-      enqueue: async (input) => {
-        expect(wire.commands[0]).toMatchObject({
-          type: "runtime_start",
-          execution_settings: settings,
-        });
-        return receipt(input.clientMessageId);
-      },
+      enqueue: async (input) => receipt(input.clientMessageId),
       listRunMessages,
     },
   );
@@ -621,4 +614,46 @@ test("noWait returns the enqueue receipt once Cloud accepts the send and reads n
   });
   expect(retrieveRun).not.toHaveBeenCalled();
   expect(listRunMessages).not.toHaveBeenCalled();
+});
+
+test("subagent identity does not make an ordinary CLI launch return early", async () => {
+  const wire = transport();
+  const executionSettings = { ...settings, agent_role: "subagent" as const };
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope,
+      content: "hello",
+      backend,
+      settings: executionSettings,
+      mode: "standard",
+    },
+    {
+      client: wire.client,
+      enqueue: async (input) => {
+        wire.emit({
+          type: "update_loop_status",
+          runtime: scope,
+          loop_status: loop(input.clientMessageId, false),
+        });
+        wire.emit({
+          type: "turn_finished",
+          runtime: scope,
+          run_id: "run-own",
+          stop_reason: "end_turn",
+        });
+        return receipt(input.clientMessageId);
+      },
+      listRunMessages: async () =>
+        [
+          {
+            id: "message-final",
+            date: "now",
+            message_type: "assistant_message",
+            content: "Done",
+          },
+        ] as Message[],
+    },
+  );
+  expect(result).toMatchObject({ status: "completed", text: "Done" });
 });
