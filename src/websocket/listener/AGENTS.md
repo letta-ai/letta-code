@@ -74,9 +74,31 @@ Do not add queue self-healing as the primary fix for an impossible state. Find
 and repair the transition that produced the state. Defensive telemetry is fine
 after the producer path has a regression test.
 
+## Durable File Lock Publication
+
+`durable-file-lock.ts` serializes concurrent worker access to a shared
+input-ledger directory. A publisher links its unique owner under a temporary
+`.installing` name, then removes `.installing` after linking the stable owner
+name. A reader can list both names and then observe `.installing` disappear
+before the identity comparison runs.
+
+- **Preserve the missing-file error at that boundary** so
+  `acquireDurableFileLock` retries within its bounded wait. Converting the
+  disappearance into `false` (a `sameFile()`-style helper) or throwing
+  `Invalid durable lock owner filename` misclassifies a normal publication
+  transition as corruption and aborts worker startup or the initial input.
+- **Fail closed only for genuinely divergent surviving owners.** A mismatched or
+  unreadable owner file that persists is real corruption and must still throw.
+- **Review signal:** any change to the owner-directory read, or a helper that
+  maps a missing name to a corruption verdict, reintroduces this race. Keep the
+  regression coverage in `durable-file-lock-contention.test.ts` (it fails on the
+  pre-fix base).
+
 ## Module Map
 
 - `turn-lifecycle.ts`: canonical state, leases, and transitions.
+- `durable-file-lock.ts`: inter-process durable filesystem lock and its
+  `.installing` publication transition.
 - `turn.ts`: one-turn orchestration and the stream stop-reason loop.
 - `turn-setup.ts`: input normalization, reminders, mod start, and tool context.
 - `turn-send.ts`: initial/retry send selection and recovered terminal results.
@@ -111,6 +133,8 @@ When logs show contradictory state:
 
 - `turn-lifecycle.test.ts`: pure transition table, exact-once, stale leases.
 - `turn-lifecycle-integration.test.ts`: cross-module producer regressions.
+- `durable-file-lock-contention.test.ts`: publication race; fails on the
+  pre-fix base.
 - `approval.test.ts`: approval wait/resolution/cancellation ownership.
 - `recovery-lease.test.ts`: recovered approval await/lease boundaries.
 - `send-lease.test.ts`: pre-stream recovery await/queue boundaries.
