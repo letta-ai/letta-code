@@ -111,50 +111,67 @@ def get_base_url() -> str:
 # Letta API
 # =============================================================================
 
+class MemoryFetchError(Exception):
+    """记忆读取失败，与成功返回的空列表明确区分。"""
+
+
 def fetch_all_memory_blocks(agent_id: str, verbose: bool = False) -> list[dict]:
     """Fetch all memory blocks for an agent from the Letta API."""
-    api_key = get_api_key()
-    base_url = get_base_url()
-
-    if not api_key:
-        if verbose:
-            print("  ERROR: No API key available")
-        return []
-
-    url = f"{base_url}/v1/agents/{agent_id}/core-memory/blocks"
-
-    if verbose:
-        print(f"  URL: {url}")
-
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-
     try:
+        api_key = get_api_key()
+        base_url = get_base_url()
+        if not api_key:
+            raise MemoryFetchError(
+                "No API key available; sign in or set LETTA_API_KEY."
+            )
+
+        url = f"{base_url}/v1/agents/{agent_id}/core-memory/blocks"
+        if verbose:
+            print(f"  URL: {url}")
+
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
         req = urllib.request.Request(url, headers=headers, method="GET")
         with urllib.request.urlopen(req, timeout=10) as response:
             data = json.loads(response.read().decode("utf-8"))
             if verbose:
                 print(f"  Response type: {type(data).__name__}")
-            return data if isinstance(data, list) else []
+            if not isinstance(data, list) or not all(
+                isinstance(block, dict) for block in data
+            ):
+                raise MemoryFetchError(
+                    "Expected a list of memory blocks; check the API response format."
+                )
+            return data
+    except MemoryFetchError:
+        raise
     except urllib.error.HTTPError as e:
-        if verbose:
-            print(f"  HTTP Error: {e.code} {e.reason}")
-            try:
-                body = e.read().decode("utf-8")
-                print(f"  Response: {body[:200]}")
-            except Exception:
-                pass
-        return []
-    except (urllib.error.URLError, json.JSONDecodeError, TimeoutError) as e:
-        if verbose:
-            print(f"  Error: {type(e).__name__}: {e}")
-        return []
+        raise MemoryFetchError(
+            f"HTTP {e.code}; check agent access, API credentials, and service availability."
+        ) from e
+    except urllib.error.URLError as e:
+        raise MemoryFetchError(
+            "Memory fetch failed due to a network error; check LETTA_BASE_URL and connectivity."
+        ) from e
+    except TimeoutError as e:
+        raise MemoryFetchError(
+            "Memory fetch timed out; check API connectivity and service availability."
+        ) from e
+    except json.JSONDecodeError as e:
+        raise MemoryFetchError(
+            "Memory API returned invalid JSON; check the API endpoint and response format."
+        ) from e
+    except UnicodeDecodeError as e:
+        raise MemoryFetchError(
+            "Memory API returned invalid UTF-8; check the API response encoding."
+        ) from e
     except Exception as e:
-        if verbose:
-            print(f"  Unexpected error: {type(e).__name__}: {e}")
-        return []
+        # 不回显异常正文，避免服务端响应或网络错误携带凭据。
+        raise MemoryFetchError(
+            f"Unexpected {type(e).__name__} while fetching memory; check the logger configuration."
+        ) from e
 
 
 # =============================================================================
@@ -428,7 +445,7 @@ def cmd_show(logs_dir: Path, block_name: str):
         print(f"Error reading block: {e}")
 
 
-def cmd_debug(agent_id: str):
+def cmd_debug(agent_id: str) -> int:
     """Debug command to test API connectivity."""
     print("=== Memory Logger Debug ===\n")
 
@@ -448,7 +465,7 @@ def cmd_debug(agent_id: str):
         print("  - macOS Keychain (service: letta-code, account: letta-api-key)")
         print("  - Environment variable: LETTA_API_KEY")
         print("  - Settings file: ~/.letta/settings.json -> env.LETTA_API_KEY")
-        return
+        return 1
 
     # Check base URL
     base_url = get_base_url()
@@ -456,7 +473,11 @@ def cmd_debug(agent_id: str):
 
     # Test API call
     print(f"\nFetching memory blocks for agent: {agent_id}")
-    blocks = fetch_all_memory_blocks(agent_id, verbose=True)
+    try:
+        blocks = fetch_all_memory_blocks(agent_id, verbose=True)
+    except MemoryFetchError as e:
+        print(f"Memory logger: {e}", file=sys.stderr)
+        return 1
 
     if blocks:
         print(f"\nSuccess! Found {len(blocks)} memory block(s):\n")
@@ -467,10 +488,8 @@ def cmd_debug(agent_id: str):
             preview = preview.replace("\n", "\\n")
             print(f"  - {label}: {preview}")
     else:
-        print("\nNo blocks returned. Possible issues:")
-        print("  - Invalid agent_id")
-        print("  - API key doesn't have access to this agent")
-        print("  - Network/API error")
+        print("\nNo memory blocks are attached to this agent.")
+    return 0
 
 
 def cmd_history(logs_dir: Path, block_name: str):
@@ -585,7 +604,7 @@ def cmd_history(logs_dir: Path, block_name: str):
 # Main
 # =============================================================================
 
-def main():
+def main() -> int:
     """Main entry point."""
     args = sys.argv[1:]
 
@@ -594,9 +613,12 @@ def main():
         try:
             data = json.load(sys.stdin)
             handle_hook(data)
+        except MemoryFetchError as e:
+            print(f"Memory logger: {e}", file=sys.stderr)
+            return 1
         except (json.JSONDecodeError, IOError):
             pass
-        return
+        return 0
 
     # CLI commands
     logs_dir = get_logs_dir()
@@ -608,20 +630,20 @@ def main():
     elif command == "show":
         if len(args) < 2:
             print("Usage: memory_logger.py show <block_name>")
-            return
+            return 0
         cmd_show(logs_dir, args[1])
 
     elif command == "history":
         if len(args) < 2:
             print("Usage: memory_logger.py history <block_name>")
-            return
+            return 0
         cmd_history(logs_dir, args[1])
 
     elif command == "debug":
         if len(args) < 2:
             print("Usage: memory_logger.py debug <agent_id>")
-            return
-        cmd_debug(args[1])
+            return 0
+        return cmd_debug(args[1])
 
     else:
         print("Memory Logger - Track memory block changes")
@@ -633,7 +655,8 @@ def main():
         print("  debug <agent_id>  Test API key and connectivity")
         print()
         print("This script also runs as a PostToolUse hook to track changes.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
