@@ -17,6 +17,7 @@ import {
   discoverSkills,
   GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
+  getBundledSkillsPath,
   isModelInvocableSkill,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
@@ -158,6 +159,11 @@ function getSkillRoots(components: {
   }
   if (sourceSet.has("global")) {
     roots.add(GLOBAL_SKILLS_DIR);
+  }
+  if (sourceSet.has("bundled")) {
+    // Bundled skills are read from the install directory, which an in-place
+    // upgrade can replace while this process keeps running.
+    roots.add(getBundledSkillsPath());
   }
   if (components.agentId && sourceSet.has("agent")) {
     roots.add(getAgentSkillsDir(components.agentId));
@@ -607,7 +613,7 @@ export async function buildClientSkillsPayload(
 
   // When a custom discoverSkillsFn is provided (tests / DI), bypass the cache
   // so the injected function is always called.
-  const useCache = !options.discoverSkillsFn;
+  let useCache = !options.discoverSkillsFn;
 
   const memorySkillsDirs = getMemorySkillsDirs(options.agentId);
   const sharedMemoryContext = await resolveSharedMemorySkillsContext({
@@ -625,7 +631,9 @@ export async function buildClientSkillsPayload(
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
   });
   if (useCache && shouldStartSkillWatchers()) {
-    getWatcher().ensureRoots(skillRoots);
+    // Without a watcher on every root nothing invalidates the cache entry, so
+    // rediscover on each call instead of serving a snapshot forever.
+    useCache = getWatcher().ensureRoots(skillRoots);
   }
   const cacheComponents = {
     agentId: options.agentId,
