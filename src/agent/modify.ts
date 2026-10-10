@@ -51,7 +51,8 @@ export function buildModelSettings(
   // provider_type is supplied by the server model catalog.
   const isOpenAICodex =
     explicitProviderType === "chatgpt_oauth" ||
-    modelHandle.startsWith("openai-codex/");
+    modelHandle.startsWith("openai-codex/") ||
+    modelHandle.startsWith(`${OPENAI_CODEX_PROVIDER_NAME}/`);
   const isOpenAI =
     explicitProviderType === "openai" ||
     modelHandle.startsWith("openai/") ||
