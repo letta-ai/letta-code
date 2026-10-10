@@ -111,3 +111,46 @@ export function createListenerReadinessController(
     getState: () => ({ cloudReady, gatewayReady, ready }),
   };
 }
+
+/**
+ * Memoize a gateway start per listener runtime. Re-registration replaces the
+ * active runtime and stops the old one, so a gateway bound to the old runtime
+ * can never become ready again; close it and start fresh on the new runtime.
+ */
+export function createRuntimeBoundGatewayStarter<R extends object>(options: {
+  getRuntime: () => R | null;
+  start: (runtime: R) => Promise<void>;
+  close: () => Promise<void>;
+}): () => Promise<void> {
+  let current: { runtime: R; promise: Promise<void> } | null = null;
+  return () => {
+    const runtime = options.getRuntime();
+    if (!runtime) {
+      return Promise.reject(
+        new Error("Listener runtime is not active for ChannelGateway"),
+      );
+    }
+    if (current?.runtime === runtime) return current.promise;
+    const previous = current;
+    const promise = (async () => {
+      if (previous) {
+        await previous.promise.catch(() => {});
+        await options.close();
+      }
+      await options.start(runtime);
+    })();
+    const entry = { runtime, promise };
+    current = entry;
+    void promise.catch(async () => {
+      if (current !== entry) return;
+      try {
+        await options.close();
+      } catch {
+        // Preserve the startup error; cleanup is best effort.
+      } finally {
+        if (current === entry) current = null;
+      }
+    });
+    return promise;
+  };
+}
