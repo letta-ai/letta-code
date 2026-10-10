@@ -37,6 +37,7 @@ import type { ChannelAccount, SupportedChannelId } from "./types";
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -83,6 +84,12 @@ export function isAccountConfigured(account: ChannelAccount): boolean {
 
   if (isSignalChannelAccount(account)) {
     return account.baseUrl.trim().length > 0;
+  }
+
+  if (isFeishuChannelAccount(account)) {
+    return (
+      account.appId.trim().length > 0 && account.appSecret.trim().length > 0
+    );
   }
 
   if (!isSlackChannelAccount(account)) {
@@ -231,6 +238,26 @@ export function toAccountSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+      createdAt: account.createdAt,
+      updatedAt: account.updatedAt,
+    };
+  }
+
+  if (isFeishuChannelAccount(account)) {
+    return {
+      channelId: "feishu",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      configured: isAccountConfigured(account),
+      running,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelAccountProtocolConfig(account),
+      agentId: account.agentId,
+      groupMode: account.groupMode,
+      domain: account.domain,
+      hasAppSecret: account.appSecret.trim().length > 0,
       createdAt: account.createdAt,
       updatedAt: account.updatedAt,
     };
@@ -429,6 +456,22 @@ export function getChannelConfigSnapshot(
       transcribeVoice: account.transcribeVoice === true,
       downloadMedia: account.downloadMedia === true,
       mediaMaxBytes: account.mediaMaxBytes,
+    };
+  }
+
+  if (isFeishuChannelAccount(account)) {
+    return {
+      channelId: "feishu",
+      accountId: account.accountId,
+      displayName: account.displayName,
+      enabled: account.enabled,
+      dmPolicy: account.dmPolicy,
+      allowedUsers: [...account.allowedUsers],
+      config: toChannelConfigSnapshotProtocolConfig(account),
+      agentId: account.agentId,
+      groupMode: account.groupMode,
+      domain: account.domain,
+      hasAppSecret: account.appSecret.trim().length > 0,
     };
   }
 

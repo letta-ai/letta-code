@@ -4,6 +4,8 @@ import { normalizeDisplayName } from "./service-shared";
 import type {
   ChannelAccount,
   CustomChannelAccount,
+  FeishuDomain,
+  FeishuGroupMode,
   SignalGroupMode,
   SupportedChannelId,
   TelegramGroupMode,
@@ -12,6 +14,7 @@ import type {
 import {
   DEFAULT_SLACK_PERMISSION_MODE,
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -38,6 +41,18 @@ function normalizeSignalGroupMode(
   return value === "disabled" || value === "mention" || value === "open"
     ? value
     : undefined;
+}
+
+function normalizeFeishuGroupMode(
+  value: ChannelAccountPatch["groupMode"],
+): FeishuGroupMode | undefined {
+  return value === "open" || value === "mention-only" ? value : undefined;
+}
+
+function normalizeFeishuDomain(
+  value: ChannelAccountPatch["domain"],
+): FeishuDomain | undefined {
+  return value === "feishu" || value === "lark" ? value : undefined;
 }
 
 function normalizeOptionalConfigString(
@@ -157,6 +172,25 @@ export function createAccountFromPatch(
       transcribeVoice: normalizedPatch.transcribeVoice === true,
       downloadMedia: normalizedPatch.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
+
+  if (channelId === "feishu") {
+    return {
+      channel: "feishu",
+      accountId,
+      displayName: normalizeDisplayName(normalizedPatch.displayName),
+      enabled: normalizedPatch.enabled ?? false,
+      appId: normalizedPatch.appId ?? "",
+      appSecret: normalizedPatch.appSecret ?? "",
+      domain: normalizeFeishuDomain(normalizedPatch.domain) ?? "feishu",
+      groupMode:
+        normalizeFeishuGroupMode(normalizedPatch.groupMode) ?? "mention-only",
+      agentId: normalizedPatch.agentId ?? null,
+      dmPolicy: normalizedPatch.dmPolicy ?? "pairing",
+      allowedUsers: normalizedPatch.allowedUsers ?? [],
       createdAt: now,
       updatedAt: now,
     };
@@ -356,6 +390,27 @@ export function mergeAccountPatch(
       downloadMedia:
         normalizedPatch.downloadMedia ?? existing.downloadMedia ?? true,
       mediaMaxBytes: normalizedPatch.mediaMaxBytes ?? existing.mediaMaxBytes,
+      updatedAt: nextUpdatedAt,
+    };
+  }
+
+  if (isFeishuChannelAccount(existing)) {
+    return {
+      ...existing,
+      displayName:
+        normalizedPatch.displayName !== undefined
+          ? normalizeDisplayName(normalizedPatch.displayName)
+          : existing.displayName,
+      enabled: normalizedPatch.enabled ?? existing.enabled,
+      appId: normalizedPatch.appId ?? existing.appId,
+      appSecret: normalizedPatch.appSecret ?? existing.appSecret,
+      domain: normalizeFeishuDomain(normalizedPatch.domain) ?? existing.domain,
+      groupMode:
+        normalizeFeishuGroupMode(normalizedPatch.groupMode) ??
+        existing.groupMode,
+      agentId: normalizedPatch.agentId ?? existing.agentId,
+      dmPolicy: normalizedPatch.dmPolicy ?? existing.dmPolicy,
+      allowedUsers: normalizedPatch.allowedUsers ?? existing.allowedUsers,
       updatedAt: nextUpdatedAt,
     };
   }
