@@ -26,6 +26,8 @@ export interface LocalEndpointModelMetadata {
   contextLength?: number;
   /** Engine-specific output cap; defaults to the shared constant. */
   maxTokens?: number;
+  /** Engine-specific mapping for pi-ai thinking levels. */
+  thinkingLevelMap?: Model<"openai-completions">["thinkingLevelMap"];
   /** Engine-specific OpenAI-compat overrides merged over the defaults. */
   compat?: Model<"openai-completions">["compat"];
 }
@@ -174,6 +176,9 @@ export function createLocalEndpointPiProvider(
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow,
       maxTokens,
+      ...(metadata.thinkingLevelMap
+        ? { thinkingLevelMap: metadata.thinkingLevelMap }
+        : {}),
       compat: {
         supportsDeveloperRole: false,
         supportsReasoningEffort: false,
