@@ -95,12 +95,18 @@ import {
   applyListenerPairIdentity,
   attachSplitStreamSocketHandlers,
   createListenerPairIdentity,
+  formatListenerSocketClose,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
 } from "./split-stream-lifecycle";
+import {
+  createListenerSocketStartup,
+  type ListenerStartupDeadline,
+  type ListenerStartupStep,
+} from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
@@ -243,6 +249,7 @@ export async function startConnectedListenerRuntime(
     recoverRecordedWork?: typeof recoverRecordedTurns;
     restoreDurableQueuedInputs?: typeof restoreDurableQueuedInputs;
     activateIngress?: () => Promise<boolean>;
+    onStartupStep?: (step: ListenerStartupStep) => void;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
@@ -280,6 +287,7 @@ export async function startConnectedListenerRuntime(
     ))
   )
     return;
+  options.onStartupStep?.("initial state sent");
   const isExactOpenConnection = (): boolean =>
     runtime === getActiveRuntime() &&
     runtime.connections.get(startupConnection.id) === startupConnection &&
@@ -292,14 +300,17 @@ export async function startConnectedListenerRuntime(
     await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
     restoreQueuedInputs(runtime);
     if (!isExactOpenConnection()) return;
+    options.onStartupStep?.("recovery done");
   }
   if (options.activateIngress && !(await options.activateIngress())) return;
   if (!isExactOpenConnection()) return;
+  options.onStartupStep?.("ingress drained");
   startupConnection.ingressReady = true;
   await opts.onConnectionReady?.(startupConnection);
   if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
+    options.onStartupStep?.("heartbeat started");
   }
   // Reset backoff on close only after startup completed; a stalled startup
   // marked earlier would loop at attempt 0 and never hit the retry deadline.
@@ -711,6 +722,9 @@ async function connectWithRetry(
   runtime.socket = socket;
   runtime.streamSocket = streamSocket;
   const transport = socket;
+  const startup = createListenerSocketStartup(runtime, opts, stopRuntime);
+  const { log } = startup;
+  let startupDeadline: ListenerStartupDeadline | undefined;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
   // Reserve before constructing the handler so re-registered connection IDs use
   // the inherited replacement lineage from their first accepted frame onward.
@@ -754,9 +768,11 @@ async function connectWithRetry(
       runtime,
       streamSocket,
       trackListenerError,
+      log,
     });
   }
   socket.on("open", () => {
+    startupDeadline = startup.arm(socket, () => streamSocket);
     void (async () => {
       const streamOpen = pairIdentity
         ? await preparePairedListenerTransport({
@@ -784,6 +800,7 @@ async function connectWithRetry(
           runtime,
           streamSocket: streamOpen.streamSocket,
           trackListenerError,
+          log,
         });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
@@ -806,6 +823,7 @@ async function connectWithRetry(
           startCronScheduler: true,
           updateReconnectState: true,
           streamTransport,
+          onStartupStep: (step) => startupDeadline?.reached(step),
           activateIngress: activateStartupIngress(
             pendingStartupFrames,
             handleMessage,
@@ -838,6 +856,8 @@ async function connectWithRetry(
   });
 
   socket.on("close", (code: number, reason: Buffer) => {
+    startupDeadline?.dispose();
+    log(formatListenerSocketClose("control", code, reason));
     abortStartupIngress();
     if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
       return;
@@ -861,12 +881,6 @@ async function connectWithRetry(
     }
 
     clearRuntimeTimers(runtime);
-
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
-      );
-    }
 
     if (!terminalClose) {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -946,6 +960,7 @@ async function connectWithRetry(
 
   socket.on("error", (error: Error) => {
     trackListenerError("listener_websocket_error", error, "listener_socket");
+    log(`control socket error: ${error.message}`);
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_error",
       message: error.message,
