@@ -3,12 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import {
   isMissingCwdGitError,
   isRetryableGitTransientError,
   runGitWithRetry,
 } from "@/agent/memory-git";
+import { describe as describeGitTimeout } from "@/agent/memory-git-timeout";
 
 describe("isRetryableGitTransientError", () => {
   test.each([
@@ -131,5 +131,30 @@ describe("runGitWithRetry HTTP failures", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(cwd, { recursive: true, force: true });
     }
+  });
+});
+
+describe("describeGitTimeout", () => {
+  test("names a git command killed by the timeout", () => {
+    const err = Object.assign(
+      new Error("Command failed: git push -u origin main"),
+      {
+        killed: true,
+        signal: "SIGTERM",
+      },
+    );
+    const out = describeGitTimeout(err, "push", 60_000) as Error;
+    expect(out.message.startsWith("git push timed out after 60s")).toBe(true);
+    expect(out.message).toContain("Command failed: git push");
+  });
+
+  test("leaves ordinary git failures unchanged", () => {
+    const err = Object.assign(new Error("Command failed: git push\nrejected"), {
+      killed: false,
+      signal: null,
+    });
+    expect((describeGitTimeout(err, "push", 60_000) as Error).message).toBe(
+      "Command failed: git push\nrejected",
+    );
   });
 });
