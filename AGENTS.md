@@ -333,6 +333,14 @@ directory first. Otherwise the run reads and mutates your real
 - **Settings manager 3-level precedence.** Global, project, local. When adding
   a new configurable setting, add the field to ALL THREE settings interfaces,
   add to project settings loading, and add collision routing in `updateSettings`.
+- **Subagent completion = accepted Super Run, not the child's first reply.**
+  Agent-tool child launches force `noWait` and hand the accepted-send receipt
+  to `waitForAcceptedSuperRun`, which owns completion. A listener-hosted child
+  can close its first turn with a "waiting for my own workers" message; treat
+  that as an interim turn and keep polling the accepted Super Run until it is
+  terminal, then return the final assistant message. Ordinary (non-Agent-tool)
+  headless/CLI launches still return their first completed reply; do not unify
+  the two paths or simplify the waiter to first-completed-reply-wins.
 
 ---
 
