@@ -309,3 +309,28 @@ describe("pre-commit hook: non-memory files", () => {
     expect(result.success).toBe(true);
   });
 });
+
+describe("pre-commit hook: paths with spaces", () => {
+  test("validates staged files whose names contain spaces and quotes", () => {
+    const fullPath = join(tempDir, "system", "Circe's Deep Core.md");
+    mkdirSync(join(tempDir, "system"), { recursive: true });
+    writeFileSync(fullPath, `${VALID_FM}Block content here.\n`, "utf-8");
+    execSync(`git add -- "system/Circe's Deep Core.md"`, {
+      cwd: tempDir,
+      env: GIT_ENV,
+    });
+    const result = tryCommit();
+    expect(result.output).not.toContain("could not read Git contents");
+    expect(result.success).toBe(true);
+  });
+
+  test("still rejects invalid frontmatter in a path with spaces", () => {
+    const fullPath = join(tempDir, "system", "My Notes.md");
+    mkdirSync(join(tempDir, "system"), { recursive: true });
+    writeFileSync(fullPath, "no frontmatter here\n", "utf-8");
+    execSync(`git add -- "system/My Notes.md"`, { cwd: tempDir, env: GIT_ENV });
+    const result = tryCommit();
+    expect(result.success).toBe(false);
+    expect(result.output).toContain("system/My Notes.md: missing frontmatter");
+  });
+});
