@@ -19,6 +19,10 @@ import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
+import {
+  peekOrganizationId,
+  warmOrganizationId,
+} from "@/agent/organization-id";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
@@ -365,6 +369,16 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
+  }
+  // Expose the signed-in organization when known. Never block on resolving it:
+  // the first shell may miss it while the cached one-shot lookup warms up.
+  if (!env.LETTA_ORGANIZATION_ID?.trim()) {
+    const organizationId = peekOrganizationId();
+    if (organizationId) {
+      env.LETTA_ORGANIZATION_ID = organizationId;
+    } else {
+      void warmOrganizationId();
+    }
   }
   const listenerConnectionId = getRuntimeContext()?.connectionId;
   if (listenerConnectionId?.startsWith("conn-")) {
