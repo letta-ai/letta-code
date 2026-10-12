@@ -1,0 +1,31 @@
+name: Usage startup diagnostic
+on:
+  push:
+    branches: [letta/diagnose-macos-usage-startup-c04ba89e]
+permissions:
+  contents: read
+jobs:
+  trace:
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Trace original unit shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/usage-startup
+          node scripts/run-unit-tests.cjs --shard 2/4 --base 62a7610ce240c5ac8fec76b7de1c517b1accb9e3 --head 7cdc33ffb129af6bf1cf299d0bf0be3b07ef1fdc
+      - name: Upload startup samples
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: usage-startup-samples
+          path: artifacts/usage-startup
+          if-no-files-found: ignore

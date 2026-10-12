@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -16,8 +16,18 @@ afterAll(async () => rm(home, { recursive: true, force: true }));
 
 async function cli(args: string[]) {
   const bundle = process.env.LETTA_TEST_CLI_BUNDLE;
+  const started = Date.now();
+  const preload = resolve("scripts/usage-startup-preload.cjs");
+  await mkdir(resolve("artifacts/usage-startup"), { recursive: true });
+  const traceFile = resolve(`artifacts/usage-startup/trace-${started}.txt`);
   const child = Bun.spawn(
-    [bundle ? "node" : process.execPath, bundle || "src/index.ts", ...args],
+    [
+      bundle ? "node" : process.execPath,
+      bundle ? "--require" : "--preload",
+      preload,
+      bundle || "src/index.ts",
+      ...args,
+    ],
     {
       cwd: resolve(import.meta.dir, "../../.."),
       env: {
@@ -30,16 +40,57 @@ async function cli(args: string[]) {
         LETTA_API_KEY: "",
         LETTA_DEBUG: "0",
         LETTA_DISABLE_MODS: "1",
+        LETTA_DEBUG_TIMINGS: "1",
+        LETTA_TIMING_TRACE_FILE: traceFile,
       },
       stdout: "pipe",
       stderr: "pipe",
     },
   );
+  console.error(
+    `[usage-trace] spawned pid=${child.pid} args=${JSON.stringify(args)} at=${new Date().toISOString()}`,
+  );
+  const sampleTimer = setTimeout(async () => {
+    console.error(
+      `[usage-trace] still running pid=${child.pid} elapsed_ms=${Date.now() - started}`,
+    );
+    console.error(
+      await readFile(traceFile, "utf8").catch(() => "preload has not run"),
+    );
+    if (process.platform === "darwin") {
+      Bun.spawn(
+        [
+          "/usr/bin/sample",
+          String(child.pid),
+          "1",
+          "10",
+          "-file",
+          resolve(`artifacts/usage-startup/sample-${child.pid}.txt`),
+        ],
+        { stdout: "inherit", stderr: "inherit" },
+      );
+    }
+  }, 8_000);
+  async function capture(stream: ReadableStream<Uint8Array>, label: string) {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+      console.error(
+        `[usage-trace] pid=${child.pid} elapsed_ms=${Date.now() - started} ${label}: ${Buffer.from(chunk).toString()}`,
+      );
+    }
+    return Buffer.concat(chunks).toString();
+  }
   const [stdout, stderr, code] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
+    capture(child.stdout, "stdout"),
+    capture(child.stderr, "stderr"),
     child.exited,
   ]);
+  clearTimeout(sampleTimer);
+  console.error(await readFile(traceFile, "utf8").catch(() => "no trace file"));
+  console.error(
+    `[usage-trace] completed pid=${child.pid} code=${code} elapsed_ms=${Date.now() - started}`,
+  );
   return { stdout, stderr, code };
 }
 

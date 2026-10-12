@@ -1,5 +1,6 @@
 // src/utils/timing.ts
 // Debug timing utilities - only active when LETTA_DEBUG_TIMINGS env var is set
+import { appendFileSync } from "node:fs";
 
 /**
  * Check if debug timings are enabled via LETTA_DEBUG_TIMINGS env var
@@ -30,7 +31,14 @@ export function formatTimestamp(date: Date): string {
  */
 export function logTiming(message: string): void {
   if (isTimingsEnabled()) {
-    console.error(`[timing] ${message}`);
+    if (process.env.LETTA_TIMING_TRACE_FILE) {
+      appendFileSync(
+        process.env.LETTA_TIMING_TRACE_FILE,
+        `[timing] ${message}\n`,
+      );
+    } else {
+      console.error(`[timing] ${message}`);
+    }
   }
 }
 
@@ -60,8 +68,8 @@ export function markMilestone(name: string): void {
 
   if (isTimingsEnabled()) {
     const relative = now - firstMilestoneTime;
-    console.error(
-      `[timing] MILESTONE ${name} at +${formatDuration(relative)} (${formatTimestamp(new Date())})`,
+    logTiming(
+      `MILESTONE ${name} at +${formatDuration(relative)} (${formatTimestamp(new Date())})`,
     );
   }
 }

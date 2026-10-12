@@ -573,7 +573,7 @@ async function main(): Promise<void> {
   markMilestone("CLI_START");
   await initializeDesktopCredentials();
   startOrphanDetection(); // Exit when the owning Desktop or terminal process dies.
-
+  markMilestone("DIAG_DESKTOP_READY");
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
   let explicitBackendMode: BackendMode | undefined;
@@ -621,7 +621,7 @@ async function main(): Promise<void> {
       configureBackendMode(backendMode);
     }
   }
-
+  markMilestone("DIAG_BACKEND_READY");
   // Subcommands exit before TUI initialization and tool bootstrapping.
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {

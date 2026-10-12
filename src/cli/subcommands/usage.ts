@@ -6,6 +6,7 @@ import {
 } from "@/backend/api/metadata";
 import { isLocalBackendEnabled } from "@/backend/backend";
 import { settingsManager } from "@/settings-manager";
+import { markMilestone } from "@/utils/timing";
 
 export async function runUsageSubcommand(argv: string[]): Promise<number> {
   try {
@@ -16,6 +17,7 @@ export async function runUsageSubcommand(argv: string[]): Promise<number> {
       allowPositionals: false,
     });
     if (values.help) {
+      markMilestone("DIAG_USAGE_HELP_ENTERED");
       console.log(`Usage:
   letta usage
 
@@ -24,6 +26,7 @@ Local backend: model usage requires BYOK.
 
 Options:
   -h, --help   Show this help`);
+      markMilestone("DIAG_USAGE_HELP_PRINTED");
       return 0;
     }
     if (isLocalBackendEnabled()) {
