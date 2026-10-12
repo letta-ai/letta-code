@@ -37,6 +37,8 @@ Stdout lines within 200ms are batched into a single notification, so multiline o
 
 The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
 
+When someone is waiting on the result, set `backup_after_seconds` (e.g. 900). If the monitor goes that long without an event, a durable Wake brings you back to check the real state, so a queued, hung, or dead watch can't leave them waiting in silence.
+
 **ws source** — open a WebSocket and stream each incoming text frame as an event. No shell, no polling: the server pushes, you get notified.
     ws: {url: 'wss://events.example.com/stream', protocols: ['v1']},
     description: 'deploy events',
