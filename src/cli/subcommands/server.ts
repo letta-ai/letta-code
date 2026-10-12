@@ -93,6 +93,8 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
         arg.startsWith("--env-name=") ||
         arg === "--org" ||
         arg.startsWith("--org=") ||
+        arg === "--token" ||
+        arg.startsWith("--token=") ||
         arg === "--channels" ||
         arg.startsWith("--channels=") ||
         arg === "--lifecycle-output" ||

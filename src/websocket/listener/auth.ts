@@ -22,6 +22,9 @@ import {
 import type { StartListenerOptions } from "@/websocket/listener/types";
 
 const LISTENER_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
+// A connect token is already approved, so the exchange only retries on
+// transient failures; this bounds those retries, not a wait for approval.
+const CONNECT_TOKEN_EXCHANGE_TIMEOUT_SECONDS = 60;
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -80,6 +83,11 @@ type ListenerAuthOptions = {
    * replaced.
    */
   organizationId?: string;
+  /**
+   * A pre-approved device code minted by an agent (`letta server --token`).
+   * Exchanged once for credentials; the browser sign-in is skipped.
+   */
+  connectToken?: string;
 };
 
 type ListenerRegistrationOptions = ListenerAuthOptions & {
@@ -260,6 +268,36 @@ async function runListenerOAuthLogin(
   return tokens.access_token;
 }
 
+/**
+ * Exchange a pre-approved device code for credentials. The code was approved
+ * server-side when it was minted, so the first exchange succeeds; no browser.
+ */
+async function redeemConnectToken(
+  slot: CredentialSlot,
+  deviceId: string,
+  connectionName: string,
+  connectToken: string,
+): Promise<string> {
+  console.log("Signing in with the connect token...\n");
+  const tokens = await getListenerOAuthDeps().pollForToken(
+    connectToken,
+    0,
+    CONNECT_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
+    deviceId,
+    connectionName,
+  );
+  const now = Date.now();
+
+  await slot.write({
+    apiKey: tokens.access_token,
+    refreshToken: tokens.refresh_token,
+    tokenExpiresAt: now + tokens.expires_in * 1000,
+  });
+
+  console.log("Authenticated successfully.\n");
+  return tokens.access_token;
+}
+
 async function resolveListenerAuth(
   deviceId: string,
   connectionName: string,
@@ -276,13 +314,20 @@ async function resolveListenerAuth(
       throw new Error("--org is only supported with Letta Cloud");
     }
     const slot = orgCredentialSlot(options.organizationId);
-    const apiKey = await resolveCloudCredentials(
-      slot,
-      deviceId,
-      connectionName,
-      allowInteractiveOAuth,
-      options.organizationId,
-    );
+    const apiKey = options.connectToken
+      ? await redeemConnectToken(
+          slot,
+          deviceId,
+          connectionName,
+          options.connectToken,
+        )
+      : await resolveCloudCredentials(
+          slot,
+          deviceId,
+          connectionName,
+          allowInteractiveOAuth,
+          options.organizationId,
+        );
     // Turns, memfs, and subagents in this process read the organization
     // sign-in from here, so they act as the organization the computer joined.
     const credentials = await slot.read();
@@ -291,6 +336,10 @@ async function resolveListenerAuth(
       apiKey,
     });
     return { serverUrl, apiKey };
+  }
+
+  if (options.connectToken) {
+    throw new Error("--token requires --org");
   }
 
   const envApiKey = getDesktopAccessToken() || process.env.LETTA_API_KEY;

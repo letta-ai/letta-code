@@ -167,6 +167,7 @@ const LISTEN_OPTIONS = {
   "computer-name": { type: "string" },
   "env-name": { type: "string" },
   org: { type: "string" },
+  token: { type: "string" },
   channels: { type: "string" },
   skills: { type: "string" },
   "install-channel-runtimes": { type: "boolean" },
@@ -377,6 +378,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   try {
     const organizationId = values.org;
+    const connectToken = values.token;
+    if (connectToken && !organizationId) {
+      reportError("Error: --token requires --org");
+      await flushListenerTelemetryEnd("listener_token_without_org");
+      return 1;
+    }
     const baseDeviceId =
       spawnerDeviceId ?? settingsManager.getOrCreateDeviceId();
     const deviceId = organizationId
@@ -416,7 +423,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
         registerOptions = await resolveListenerRegistrationOptions(
           deviceId,
           connectionName,
-          { allowInteractiveOAuth: !lifecycleOutput, organizationId },
+          {
+            allowInteractiveOAuth: !lifecycleOutput,
+            organizationId,
+            connectToken,
+          },
         );
       } catch (authErr) {
         if (authErr instanceof MissingListenerApiKeyError) {
@@ -698,6 +709,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");
+      // The connect token was redeemed at startup; reconnects use the
+      // credentials it wrote to the organization slot.
       const nextRegisterOptions = await resolveListenerRegistrationOptions(
         deviceId,
         connectionName,
