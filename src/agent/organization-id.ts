@@ -74,8 +74,10 @@ export function warmOrganizationId(
 
   const attempt = (async (): Promise<string | undefined> => {
     const controller = new AbortController();
+    // Not unref'd: the lookup is short-lived and cleared in `finally`, and an
+    // unref'd timer that is the only pending work may never fire (seen on
+    // Windows), which would leave the abort, and the lookup, hanging.
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    timer.unref?.();
     try {
       const response = await list({ limit: 1, signal: controller.signal });
       for (const entry of response?.connections ?? []) {
