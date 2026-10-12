@@ -3,7 +3,12 @@ import {
   spawnSync,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { type IncomingMessage, request } from "node:http";
+import {
+  createOpencodeClient,
+  type Event,
+  type OpencodeClient,
+} from "@opencode-ai/sdk/v2/client";
+import { Agent } from "undici";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 
 const children = new Set<ChildProcessWithoutNullStreams>();
@@ -34,31 +39,18 @@ function trackProcess(child: ChildProcessWithoutNullStreams): void {
   });
 }
 
-export interface OpenCodeEvent {
-  type: string;
-  properties: {
-    sessionID?: string;
-    part?: {
-      sessionID: string;
-      type: string;
-      callID?: string;
-      tool?: string;
-      state?: { status: string; input?: unknown };
-    };
-  };
-}
-
 /** Private, authenticated loopback server; never attaches to a user's server. */
 export class OpenCodeServer {
+  private readonly connections = process.versions.bun
+    ? undefined
+    : new Agent({ headersTimeout: 0, bodyTimeout: 0 });
   private readonly lifetime = new AbortController();
   private readonly password = randomUUID();
   private url = "";
-  private directory: string;
   private readonly ready: Promise<void>;
   private readonly stopped: Promise<void>;
 
   constructor(cwd: string, env: NodeJS.ProcessEnv) {
-    this.directory = cwd;
     const running = spawnManagedWorkloadProcess(
       "opencode",
       ["serve", "--hostname=127.0.0.1", "--port=0"],
@@ -133,102 +125,68 @@ export class OpenCodeServer {
     }
   }
 
-  setDirectory(directory: string): void {
-    this.directory = directory;
+  client(directory: string): OpencodeClient {
+    return createOpencodeClient({
+      baseUrl: this.url,
+      directory,
+      signal: this.lifetime.signal,
+      // Scope Node's pool to this process, not a port a later server can reuse.
+      fetch: this.connections
+        ? (((request: Request) => {
+            const options = {
+              dispatcher: this.connections,
+              signal: request.signal,
+            };
+            return fetch(request, options as RequestInit);
+          }) as typeof fetch)
+        : undefined,
+      headers: {
+        Authorization: `Basic ${Buffer.from(`opencode:${this.password}`).toString("base64")}`,
+      },
+    });
   }
 
   close(reason = new Error("OpenCode server closed")): Promise<void> {
     this.lifetime.abort(reason);
-    return this.stopped;
-  }
-
-  private async response(
-    path: string,
-    body?: unknown,
-    signal?: AbortSignal,
-  ): Promise<IncomingMessage> {
-    this.lifetime.signal.throwIfAborted();
-    const url = new URL(path, this.url);
-    url.searchParams.set("directory", this.directory);
-    const response = await new Promise<IncomingMessage>((resolve, reject) => {
-      const req = request(
-        url,
-        {
-          method: body === undefined ? "GET" : "POST",
-          // Each server owns its connections. A restarted OpenCode can reuse its
-          // default port; global fetch pooling can reuse the old SSE connection.
-          agent: false,
-          signal: signal
-            ? AbortSignal.any([this.lifetime.signal, signal])
-            : this.lifetime.signal,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Basic ${Buffer.from(`opencode:${this.password}`).toString("base64")}`,
-          },
-        },
-        resolve,
-      );
-      req.once("error", reject);
-      req.end(body === undefined ? undefined : JSON.stringify(body));
-    });
-    if (!response.statusCode || response.statusCode >= 400) {
-      throw new Error(
-        `OpenCode ${path} failed (${response.statusCode}): ${(await responseText(response)).slice(0, 4096)}`,
-      );
-    }
-    return response;
-  }
-
-  async request<T>(
-    path: string,
-    body?: unknown,
-    longRunning = false,
-  ): Promise<T> {
-    const response = await this.response(
-      path,
-      body,
-      longRunning ? undefined : AbortSignal.timeout(30_000),
+    return Promise.all([this.stopped, this.connections?.destroy()]).then(
+      () => undefined,
     );
-    return JSON.parse(await responseText(response)) as T;
+  }
+
+  controlOptions() {
+    return {
+      throwOnError: true as const,
+      signal: AbortSignal.any([
+        this.lifetime.signal,
+        AbortSignal.timeout(30_000),
+      ]),
+    };
   }
 
   /** Subscribe before submitting a prompt so even fast tool calls are visible. */
   async events(
-    onEvent: (event: OpenCodeEvent) => void,
+    client: OpencodeClient,
+    onEvent: (event: Event) => void,
   ): Promise<{ completion: Promise<void> }> {
-    const response = await this.response("/event");
+    let streamError: unknown;
+    const { stream } = await client.event.subscribe(undefined, {
+      sseMaxRetryAttempts: 1,
+      onSseError: (error) => {
+        streamError = error;
+      },
+    });
+    // SDK streams are lazy. Wait for server.connected before starting work.
+    const first = await stream.next();
+    if (first.done)
+      throw streamError ?? new Error("OpenCode event stream closed");
+    onEvent(first.value);
     const consume = async () => {
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for await (const value of response) {
-        buffer += decoder
-          .decode(value, { stream: true })
-          .replace(/\r\n/g, "\n");
-        let boundary = buffer.indexOf("\n\n");
-        while (boundary !== -1) {
-          const frame = buffer.slice(0, boundary);
-          buffer = buffer.slice(boundary + 2);
-          const data = frame
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.slice(5).trimStart())
-            .join("\n");
-          if (data) onEvent(JSON.parse(data) as OpenCodeEvent);
-          boundary = buffer.indexOf("\n\n");
-        }
-      }
-      throw new Error("OpenCode event stream closed");
+      for await (const event of stream) onEvent(event);
+      throw streamError ?? new Error("OpenCode event stream closed");
     };
-    // Do not await the stream here: only wait for subscription headers.
+    // The first event confirms the subscription; consumption stays in background.
     const completion = consume();
     void completion.catch(() => undefined);
     return { completion };
   }
-}
-
-async function responseText(response: IncomingMessage): Promise<string> {
-  response.setEncoding("utf8");
-  let text = "";
-  for await (const chunk of response) text += chunk;
-  return text;
 }

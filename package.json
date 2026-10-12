@@ -155,6 +155,7 @@
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
+    "@opencode-ai/sdk": "1.19.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
     "@shikijs/langs": "4.0.2",
@@ -169,6 +170,7 @@
     "sharp": "^0.34.5",
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
+    "undici": "7.30.0",
     "ws": "^8.19.0"
   },
   "optionalDependencies": {
@@ -275,5 +277,5 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-R2czT+w/9GF9edoE5k4YkzYyy9hALZjCA1uusJFAsnBKCQHlzE+5Kv4ZIVrBOA1oHPHcr8c08zc00L4q8oYLjA=="
+  "lettaRuntimeGraphSha512": "sha512-fPRgfdSZqAtTGg59F03UXI35bB/uwDUKFVVy8iHhlhhFgDwm6s4hEVh37hxUpzr/7sa71YMZ9vlqoqz7nlAuWA=="
 }

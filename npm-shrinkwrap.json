@@ -1793,6 +1793,15 @@
         }
       }
     },
+    "node_modules/@opencode-ai/sdk": {
+      "version": "1.19.0",
+      "resolved": "https://registry.npmjs.org/@opencode-ai/sdk/-/sdk-1.19.0.tgz",
+      "integrity": "sha512-lDFYTD6qxzq1mfwxF6Kq1DAs6rEwF4xoZ2I3G1sB7hAZ8Yb28JurtSmmcK7ZzZ8Z4qBUYbZimHJ6DM4JFq5amw==",
+      "license": "MIT",
+      "dependencies": {
+        "cross-spawn": "7.0.6"
+      }
+    },
     "node_modules/@pierre/theme": {
       "version": "1.0.3",
       "resolved": "https://registry.npmjs.org/@pierre/theme/-/theme-1.0.3.tgz",
@@ -5198,6 +5207,15 @@
       "integrity": "sha512-zu+jc1pcy4UiNThxikUr36f0Rybk9PEeCg/NE6adeWr/SKsdNO4EzZHYRDlv2YCVAfj3Odq3dESSo/jNyoBXzA==",
       "license": "MIT"
     },
+    "node_modules/undici": {
+      "version": "7.30.0",
+      "resolved": "https://registry.npmjs.org/undici/-/undici-7.30.0.tgz",
+      "integrity": "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=20.18.1"
+      }
+    },
     "node_modules/undici-types": {
       "version": "8.9.0",
       "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-8.9.0.tgz",
@@ -5460,6 +5478,7 @@
         "@letta-ai/letta-client": "^1.10.2",
         "@letta-ai/trajectory": "0.2.0",
         "@modelcontextprotocol/sdk": "1.30.0",
+        "@opencode-ai/sdk": "1.19.0",
         "@pierre/diffs": "1.2.2",
         "@scarf/scarf": "^1.4.0",
         "@shikijs/langs": "4.0.2",
@@ -5474,6 +5493,7 @@
         "sharp": "^0.34.5",
         "shiki": "^4.0.2",
         "strip-ansi": "^7.2.0",
+        "undici": "7.30.0",
         "ws": "^8.19.0"
       },
       "optionalDependencies": {
