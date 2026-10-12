@@ -19,6 +19,13 @@ import {
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getBackgroundLauncher } from "./bash.js";
 import {
+  armMonitorBackup,
+  cancelMonitorBackup,
+  detachMonitorBackupsForProcessExit,
+  noteMonitorBackupActivity,
+  validateBackupAfterSeconds,
+} from "./monitor-backup.js";
+import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
@@ -57,6 +64,8 @@ interface MonitorArgs {
   persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
+  backup_after_seconds?: number;
+  backup_prompt?: string;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
@@ -229,6 +238,13 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
   if (typeof normalized.persistent !== "boolean") {
     throw new Error("Monitor persistent must be a boolean");
   }
+  validateBackupAfterSeconds(normalized.backup_after_seconds);
+  if (
+    normalized.backup_prompt !== undefined &&
+    typeof normalized.backup_prompt !== "string"
+  ) {
+    throw new Error("Monitor backup_prompt must be a string");
+  }
   if (
     normalized.command !== undefined &&
     typeof normalized.command !== "string"
@@ -316,6 +332,7 @@ export function queueMonitorEvent(params: {
 }): void {
   const { taskId, event, scope, actingUserId, secrets } = params;
   const sanitizedEvent = sanitizeMonitorText(event, secrets);
+  noteMonitorBackupActivity(taskId);
   addToMessageQueue({
     kind: "task_notification",
     text: formatMonitorEventNotification({
@@ -387,6 +404,7 @@ export function markMonitorFinished(
 ): void {
   processState.status = status;
   processState.exitCode = exitCode;
+  void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
   notifyBackgroundProcessStateChanged(processState.runtimeScope);
   scheduleBackgroundProcessCleanup(taskId);
@@ -783,17 +801,40 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   );
 }
 
+function backupScopeFor(taskId: string) {
+  const processState = backgroundProcesses.get(taskId);
+  const runtimeScope = processState?.runtimeScope;
+  if (!runtimeScope) return undefined;
+  return { ...runtimeScope, actingUserId: processState.actingUserId };
+}
+
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
-  return normalized.command !== undefined
-    ? startCommandMonitor(normalized)
-    : startWebSocketMonitor(normalized);
+  const result =
+    normalized.command !== undefined
+      ? startCommandMonitor(normalized)
+      : startWebSocketMonitor(normalized);
+  if (normalized.backup_after_seconds === undefined) return result;
+  const note = await armMonitorBackup({
+    taskId: result.taskId,
+    description: normalized.description,
+    afterSeconds: normalized.backup_after_seconds,
+    prompt: normalized.backup_prompt,
+    scope: backupScopeFor(result.taskId),
+    isRunning: () =>
+      backgroundProcesses.get(result.taskId)?.status === "running",
+  });
+  const first = result.content[0];
+  if (first) first.text = `${first.text}\n${note}`;
+  return result;
 }
 
 export function stopMonitorsForProcessExit(): void {
+  // Leave backup wakes armed: they exist for exactly this case.
+  detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
     if (processState.kind !== "monitor" || processState.status !== "running") {
       continue;
