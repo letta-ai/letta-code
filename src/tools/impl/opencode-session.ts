@@ -1,4 +1,3 @@
-import type { Event, OpencodeClient } from "@opencode-ai/sdk/v2/client";
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
@@ -6,7 +5,7 @@ import {
   type ExternalToolCallListener,
   formatExternalToolCallArgs,
 } from "./external-tool-call";
-import { OpenCodeServer } from "./opencode-server";
+import { type OpenCodeEvent, OpenCodeServer } from "./opencode-server";
 
 interface OpenCodeTurnOptions {
   prompt: string;
@@ -18,6 +17,16 @@ interface OpenCodeTurnOptions {
   resumeSessionId?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
+}
+
+interface OpenCodeMessage {
+  info: {
+    role: string;
+    modelID?: string;
+    providerID?: string;
+    error?: { name: string; data?: { message?: string } };
+  };
+  parts: Array<{ type: string; text?: string }>;
 }
 
 interface Turn {
@@ -32,7 +41,6 @@ interface Turn {
 interface Session {
   id: string;
   server: OpenCodeServer;
-  client: OpencodeClient;
   model?: { providerID: string; modelID: string };
   mcpReminder?: string;
   active?: Turn;
@@ -103,31 +111,33 @@ function finish(
   });
 }
 
-function onEvent(session: Session, event: Event): void {
+function onEvent(session: Session, event: OpenCodeEvent): void {
   const turn = session.active;
   if (!turn) return;
+  const part = event.properties.part;
+  const sessionID = event.properties.sessionID ?? part?.sessionID;
+  if (sessionID !== session.id) return;
   // Never silently approve permissions or leave a noninteractive worker waiting.
   if (event.type === "permission.asked" || event.type === "question.asked") {
-    if (event.properties.sessionID !== session.id) return;
     dispose(
       session,
       `OpenCode requires interactive ${event.type === "permission.asked" ? "permission approval" : "input"}; resume in OpenCode or configure a noninteractive task`,
     );
     return;
   }
-  if (event.type !== "message.part.updated") return;
-  const part = event.properties.part;
   if (
-    part.sessionID === session.id &&
-    part.type === "tool" &&
-    part.state.status !== "pending" &&
+    event.type === "message.part.updated" &&
+    part?.type === "tool" &&
+    part.callID &&
+    part.tool &&
+    part.state?.status !== "pending" &&
     !turn.seen.has(part.callID)
   ) {
     turn.seen.add(part.callID);
     turn.onToolCall?.({
       id: part.callID,
       name: part.tool,
-      args: formatExternalToolCallArgs(part.state.input),
+      args: formatExternalToolCallArgs(part.state?.input),
     });
   }
 }
@@ -150,27 +160,23 @@ async function createSession(
   options.signal?.addEventListener("abort", abort, { once: true });
   try {
     await server.connect(options.signal);
-    const initialClient = server.client(options.cwd);
-    const { data: info } = options.resumeSessionId
-      ? await initialClient.session.get(
-          { sessionID: options.resumeSessionId },
-          server.controlOptions(),
-        )
-      : await initialClient.session.create({}, server.controlOptions());
+    const info = await server.request<{ id: string; directory: string }>(
+      options.resumeSessionId
+        ? `/session/${options.resumeSessionId}`
+        : "/session",
+      options.resumeSessionId ? undefined : {},
+    );
     if (!/^ses_[a-zA-Z0-9]+$/.test(info.id))
       throw new Error("OpenCode returned an invalid session ID");
-    const client = server.client(info.directory);
+    server.setDirectory(info.directory);
     const session: Session = {
       id: info.id,
       server,
-      client,
       model,
       mcpReminder: options.mcpReminder,
       lock: Promise.resolve(),
     };
-    const stream = await server.events(client, (event) =>
-      onEvent(session, event),
-    );
+    const stream = await server.events((event) => onEvent(session, event));
     sessions.set(session.id, session);
     void stream.completion.catch((error) => dispose(session, message(error)));
     return session;
@@ -201,18 +207,18 @@ async function getSession(
 
 function submit(session: Session, turn: Turn, prompt: string): void {
   const generation = ++turn.generation;
-  void session.client.session
-    .prompt(
+  void session.server
+    .request<OpenCodeMessage>(
+      `/session/${session.id}/message`,
       {
-        sessionID: session.id,
         parts: [{ type: "text", text: prompt }],
         ...(session.model ? { model: session.model } : {}),
         ...(session.mcpReminder ? { system: session.mcpReminder } : {}),
       },
-      { throwOnError: true },
+      true,
     )
     .then(
-      ({ data: reply }) =>
+      (reply) =>
         withLock(session, async () => {
           if (session.stopping || turn.generation !== generation) return;
           if (reply.info.role !== "assistant")
@@ -220,12 +226,7 @@ function submit(session: Session, turn: Turn, prompt: string): void {
           const error = reply.info.error;
           finish(session, turn, {
             success: !error,
-            error: error
-              ? "message" in error.data &&
-                typeof error.data.message === "string"
-                ? error.data.message
-                : error.name
-              : undefined,
+            error: error ? (error.data?.message ?? error.name) : undefined,
             report: reply.parts
               .filter((part) => part.type === "text")
               .map((part) => part.text ?? "")
@@ -324,10 +325,7 @@ export async function sendOpenCodeMessage(
       // Ignore the aborted request's result; the replacement owns this same task.
       active.generation++;
       try {
-        await session.client.session.abort(
-          { sessionID: session.id },
-          session.server.controlOptions(),
-        );
+        await session.server.request(`/session/${session.id}/abort`, {});
         submit(session, active, options.prompt);
       } catch (error) {
         dispose(session, message(error));
