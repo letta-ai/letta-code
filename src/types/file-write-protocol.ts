@@ -12,7 +12,11 @@ export interface WriteFileCommand {
    * start with `~/`. Advertised as `capabilities.write_file_base64`.
    */
   encoding?: "utf8" | "base64";
-  /** base64 only: append to the file so large files can arrive in chunks. */
+  /**
+   * base64 only: append to the file so large files can arrive in chunks.
+   * Commands run detached, so chunked writers must await each chunk's
+   * `write_file_response` before sending the next one.
+   */
   append?: boolean;
   /**
    * base64 only: after writing, rename the file to this path (absolute or
