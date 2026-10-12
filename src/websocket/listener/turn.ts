@@ -23,7 +23,7 @@ import {
 import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type { StopReasonType } from "@/types/protocol_v2";
-import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
+import { isCloudApiRunInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
@@ -434,8 +434,8 @@ async function handleIncomingMessageInner(
           null;
         const quotaError = latestErrorInfo ?? runErrorInfo ?? errorDetail;
         const deploymentInterrupted =
-          isCloudApiDeploymentInterrupted(latestErrorInfo) ||
-          isCloudApiDeploymentInterrupted(runErrorInfo);
+          isCloudApiRunInterrupted(latestErrorInfo) ||
+          isCloudApiRunInterrupted(runErrorInfo);
         if (
           !deploymentInterrupted &&
           shouldAttemptPostStopApprovalRecovery({

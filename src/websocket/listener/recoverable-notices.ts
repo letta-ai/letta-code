@@ -12,7 +12,7 @@ import type { ErrorInfo } from "@/cli/helpers/stream-processor";
 import type { StatusMessage, StopReasonType } from "@/types/protocol_v2";
 import {
   CLOUD_API_UNAVAILABLE_MESSAGE,
-  isCloudApiDeploymentInterrupted,
+  isCloudApiRunInterrupted,
 } from "@/utils/cloud-api-shutdown";
 import { debugLog } from "@/utils/debug";
 import {
@@ -218,8 +218,8 @@ export function getLoopErrorNoticeDecision(params: {
   }
 
   if (
-    isCloudApiDeploymentInterrupted(params.errorInfo) ||
-    isCloudApiDeploymentInterrupted(params.runErrorInfo)
+    isCloudApiRunInterrupted(params.errorInfo) ||
+    isCloudApiRunInterrupted(params.runErrorInfo)
   ) {
     return {
       visibility: "transcript",
