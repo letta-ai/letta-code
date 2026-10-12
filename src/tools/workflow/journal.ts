@@ -28,7 +28,7 @@ export type JournalEntry =
       outcome: SubagentOutcome;
     }
   | {
-      kind: "mcp_call";
+      kind: "tool_call";
       toolName: string;
       isError: boolean;
       durationMs: number;
