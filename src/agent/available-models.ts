@@ -284,6 +284,10 @@ export async function getAvailableModelHandles(options?: {
   if (forceRefresh && backend.capabilities.byokProviderRefresh) {
     await refreshByokProviders();
   }
+  // This cache decides freshness: a miss, clear, or force refetches the
+  // backend's own inventory caches too, while direct listModels() callers
+  // keep reusing them.
+  backend.markModelInventoryStale?.();
 
   const requestGeneration = generation;
   const request: Promise<CacheEntry> = fetchFromNetwork()
