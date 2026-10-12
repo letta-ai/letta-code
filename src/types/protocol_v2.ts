@@ -48,6 +48,10 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
 } from "./external-tool-protocol";
 import type {
+  WriteFileCommand,
+  WriteFileResponseMessage,
+} from "./file-write-protocol";
+import type {
   LoopErrorMessage,
   LoopState,
   RetryMessage,
@@ -82,6 +86,7 @@ export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
+export type * from "./file-write-protocol";
 export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./runtime-start-protocol";
@@ -911,24 +916,6 @@ export interface ReadFileResponseMessage {
   content: string | null;
   /** Encoding of `content`. Mirrors the request; "utf8" when omitted. */
   encoding?: "utf8" | "base64";
-  success: boolean;
-  error?: string;
-}
-
-export interface WriteFileCommand {
-  type: "write_file";
-  /** Absolute path to the file to write. */
-  path: string;
-  /** The full file content to write. */
-  content: string;
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-}
-
-export interface WriteFileResponseMessage {
-  type: "write_file_response";
-  request_id: string;
-  path: string;
   success: boolean;
   error?: string;
 }

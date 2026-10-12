@@ -549,17 +549,16 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
 
 export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    path?: unknown;
-    content?: unknown;
-    request_id?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "write_file" &&
     typeof c.path === "string" &&
     typeof c.content === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64") &&
+    (c.append === undefined || typeof c.append === "boolean")
   );
 }
 

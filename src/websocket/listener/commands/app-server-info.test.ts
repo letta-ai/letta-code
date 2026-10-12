@@ -52,6 +52,7 @@ describe("app-server info protocol", () => {
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
         structured_outputs: false,
+        write_file_base64: true,
         split_channels: false,
       },
     });

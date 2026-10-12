@@ -28,6 +28,8 @@ export interface AppServerInfoResponseMessage {
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
+    /** `write_file` accepts `encoding: "base64"` and `append`. */
+    write_file_base64?: boolean;
     split_channels: boolean;
   };
 }
@@ -75,6 +77,8 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.runtime_external_tools_update === "boolean") &&
     (capabilityRecord.structured_outputs === undefined ||
       typeof capabilityRecord.structured_outputs === "boolean") &&
+    (capabilityRecord.write_file_base64 === undefined ||
+      typeof capabilityRecord.write_file_base64 === "boolean") &&
     typeof capabilityRecord.split_channels === "boolean"
   );
 }
