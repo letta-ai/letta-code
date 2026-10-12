@@ -213,15 +213,14 @@ function resolveDefinition(
   if (!HANDOFF_KEY_PATTERN.test(request.handoffKey)) {
     throw new BrowserDeviceMcpOAuthRequestError("Invalid OAuth handoff key");
   }
-  const definitions = BROWSER_DEVICE_MCP_OAUTH_SERVICES[request.service];
-  if (!definitions) {
+  if (!Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, request.service)) {
     throw new BrowserDeviceMcpOAuthRequestError(
       "Unsupported localhost OAuth service",
     );
   }
-  const requestedUrl = normalizeServerUrl(request.serverUrl);
-  const definition = definitions.find(
-    (candidate) => normalizeServerUrl(candidate.serverUrl) === requestedUrl,
+  const definition = findDefinition(
+    request.service,
+    normalizeServerUrl(request.serverUrl),
   );
   if (!definition) {
     throw new BrowserDeviceMcpOAuthRequestError(
@@ -229,6 +228,48 @@ function resolveDefinition(
     );
   }
   return definition;
+}
+
+function findDefinition(
+  service: string,
+  normalizedServerUrl: string,
+): BrowserDeviceMcpOAuthDefinition | undefined {
+  if (!Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, service)) {
+    return undefined;
+  }
+  return BROWSER_DEVICE_MCP_OAUTH_SERVICES[service]?.find(
+    (candidate) =>
+      normalizeServerUrl(candidate.serverUrl) === normalizedServerUrl,
+  );
+}
+
+/** Allowlisted MCP server URLs per localhost-callback OAuth service. */
+export function browserDeviceMcpOAuthServerUrls(): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(BROWSER_DEVICE_MCP_OAUTH_SERVICES).map(
+      ([service, definitions]) => [
+        service,
+        definitions.map((definition) => definition.serverUrl),
+      ],
+    ),
+  );
+}
+
+/**
+ * Return the canonical allowlisted server URL matching `serverUrl` for
+ * `service`, or undefined when the service or URL is not supported.
+ */
+export function matchBrowserDeviceMcpOAuthServerUrl(
+  service: string,
+  serverUrl: string,
+): string | undefined {
+  let normalized: string;
+  try {
+    normalized = normalizeServerUrl(serverUrl);
+  } catch {
+    return undefined;
+  }
+  return findDefinition(service, normalized)?.serverUrl;
 }
 
 export function canonicalizeBrowserDeviceMcpOAuthRequest(
