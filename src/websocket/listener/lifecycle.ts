@@ -7,7 +7,6 @@ import {
   getTerminalTelemetrySurface,
   telemetry,
 } from "@/telemetry";
-import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
@@ -17,6 +16,7 @@ import {
   rejectPendingApprovalResolversForConnection,
 } from "./approval";
 import { resolveListenerReconnectAuth } from "./auth";
+import { disposeBrowserDeviceMcpOAuthOperationsForRuntime } from "./commands/browser-device-mcp-oauth";
 import {
   getOrCreateProcessTransport,
   isCurrentInitializedListenerConnection,
@@ -64,6 +64,7 @@ import {
   assertAdoptableListenerClientReplacement,
   createListenerClientReplacement,
 } from "./listener-replacement";
+import { runDetachedListenerTask, trackListenerError } from "./listener-task";
 import { createListenerMessageHandler } from "./message-router";
 import {
   disposeListenerModAdapter,
@@ -126,32 +127,6 @@ import type {
 import { clearListenerWarmState } from "./warmup";
 import { stopAllWorktreeWatchers } from "./worktree-watcher";
 
-function trackListenerError(
-  errorType: string,
-  error: unknown,
-  context: string,
-): void {
-  trackBoundaryError({
-    errorType,
-    error,
-    context,
-  });
-}
-
-export function runDetachedListenerTask(
-  commandName: string,
-  task: () => Promise<void>,
-): void {
-  void task().catch((error) => {
-    trackListenerError(
-      `listener_${commandName}_failed`,
-      error,
-      `listener_${commandName}`,
-    );
-    if (isDebugEnabled())
-      console.error(`[Listen] ${commandName} failed:`, error);
-  });
-}
 export function createRuntime(): ListenerRuntime {
   const bootWorkingDirectory = getCurrentWorkingDirectory();
   return {
@@ -215,6 +190,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);
   notifyStreamObserversRuntimeStopped(runtime);
@@ -325,6 +301,11 @@ export async function startConnectedListenerRuntime(
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
+  // Reset backoff on close only after startup completed; a stalled startup
+  // marked earlier would loop at attempt 0 and never hit the retry deadline.
+  if (options.updateReconnectState) {
+    runtime.hasSuccessfulConnection = true;
+  }
   if (options.startProcessServices === false) return;
   const scheduleNonEmptyQueuePumps = createRestoredQueuePumpWake(
     runtime,
@@ -423,6 +404,7 @@ export async function attachOpenListenerSocket(
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: connection.startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -730,10 +712,14 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
+  // Reserve before constructing the handler so re-registered connection IDs use
+  // the inherited replacement lineage from their first accepted frame onward.
+  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
     socket,
     connectionId: opts.connectionId,
+    lineageId: startupOwner.lineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -748,8 +734,6 @@ async function connectWithRetry(
     runDetachedListenerTask,
     trackListenerError,
   });
-  // Buffer pre-ready ingress under explicit replacement lineage ownership.
-  const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const pendingStartupFrames = StartupFrameBuffer.forSockets(
     socket,
     () => streamSocket,

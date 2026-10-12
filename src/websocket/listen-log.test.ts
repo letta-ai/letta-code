@@ -30,6 +30,39 @@ describe("RemoteSessionLog", () => {
     expect(log.path.startsWith(dir)).toBe(true);
   });
 
+  test("redacts parsed and malformed WS events before writing", () => {
+    const log = new RemoteSessionLog({ dir });
+    log.init();
+    log.wsEvent("recv", "client", {
+      type: "browser_device_mcp_oauth",
+      handoff_key: "live-bearer-handoff",
+      nested: {
+        code: "oauth-code",
+        state: "oauth-state",
+        access_token: "provider-token",
+        error: "raw-provider-error",
+      },
+    });
+    log.wsEvent("recv", "lifecycle", {
+      type: "_ws_unparseable",
+      raw: '{"handoff_key":"malformed-live-bearer"',
+    });
+
+    const content = readFileSync(log.path, "utf8");
+    expect(content).toContain("[REDACTED]");
+    expect(content).toContain("[REDACTED_UNPARSEABLE_WS_PAYLOAD]");
+    for (const secret of [
+      "live-bearer-handoff",
+      "oauth-code",
+      "oauth-state",
+      "provider-token",
+      "raw-provider-error",
+      "malformed-live-bearer",
+    ]) {
+      expect(content).not.toContain(secret);
+    }
+  });
+
   test("rotates to a new file once the size cap is exceeded", () => {
     const log = new RemoteSessionLog({ dir, maxBytes: 128 });
     log.init();

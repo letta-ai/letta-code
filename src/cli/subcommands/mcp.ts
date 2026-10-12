@@ -25,6 +25,7 @@ import { formatClientMcpToolName } from "@/mcp-runtime";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
+import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
 import {
   loadMcpToolArgs,
   McpCliError,
@@ -108,7 +109,7 @@ function defaultIsHostedLettaCloud(): boolean {
   }
 }
 
-export interface McpSubcommandDependencies {
+export interface McpSubcommandDependencies extends McpConnectDependencies {
   initializeSettings?: () => Promise<void>;
   lookupParentAgent?: ParentAgentLookup;
   getLocalServers?: (agentId: string) => McpServerConfig[];
@@ -142,6 +143,7 @@ function parseMcpArgs(argv: string[]) {
       full: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
+      "server-url": { type: "string" },
     },
     strict: true,
     allowPositionals: true,
@@ -941,6 +943,14 @@ export async function runMcpSubcommand(
       case "run-tool":
       case "run_tool":
         return await runCall(parsed, deps, agentId, stdout);
+      case "connect":
+        return await runMcpConnect(
+          { ...deps, stderr },
+          agentId,
+          parsed.target,
+          stringValue(parsed.values["server-url"]),
+          stdout,
+        );
       default:
         throw new McpCliError(
           "unknown_command",

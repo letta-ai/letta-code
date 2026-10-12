@@ -24,11 +24,13 @@ If the user says yes, or directly asks you to submit feedback:
    - Concrete evidence already available, such as exact error text, the failed command or action, relevant paths or links, and reliable reproduction steps. Distinguish what the user reported from what you observed or inferred.
 
    Prefer specific nouns and observable behavior over generic judgments. Do not submit context-free summaries such as “the feature is broken,” “the UX should be improved,” or polished product-language filler. Keep unknowns explicit rather than guessing.
-3. Submit it with:
+3. Write the report to a temporary text file, then submit it with:
 
 ```bash
-letta feedback --message '<feedback>'
+letta feedback --message-file <path-to-report>
 ```
+
+   Pass the report as a file rather than inline with `--message`: multi-line command arguments can be cut off at the first line on some platforms (Windows routes `letta` through a `.cmd` shim).
 
 4. Tell the user whether submission succeeded. If it failed, report the safe CLI error and do not claim the team received it.
 

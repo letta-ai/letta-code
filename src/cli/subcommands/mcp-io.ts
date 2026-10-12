@@ -93,6 +93,7 @@ Usage:
   letta mcp schema <tool-name> [--agent <id>]
   letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
+  letta mcp connect <service> [--server-url <url>] [--agent <id>]
 
 Commands:
   list      List MCP servers available to the agent
@@ -101,6 +102,8 @@ Commands:
   schema    Print one tool's complete schema
   search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
+  connect   Authorize comfy or datadog in this computer's browser and save
+            the connection to the Cloud agent
 
 Options:
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
@@ -110,6 +113,8 @@ Options:
   --limit <n>        Search result limit from 1 to 100 (default: 5)
   --args <json>      JSON object passed to a tool
   --args-file <path> Read tool arguments from a file; use - for stdin
+  --server-url <url> MCP server for connect, e.g. a Datadog site's URL
+                     (default: the service's first supported URL)
   -h, --help         Show this help
 
 Output is JSON. Server placement and agent/server/tool IDs are internal.

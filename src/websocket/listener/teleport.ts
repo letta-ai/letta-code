@@ -701,6 +701,7 @@ export function finishClaimedTeleport(
     conversationId: string;
     persistTerminalWithoutConsumers?: boolean;
     expectedInterruptedRevision?: string;
+    teleportHandoff?: boolean;
   }) => TurnFinishTransition,
   options: {
     stopReason?: import("@/types/protocol_v2").StopReasonType;
@@ -729,6 +730,8 @@ export function finishClaimedTeleport(
       conversationId: pending.conversationId,
       persistTerminalWithoutConsumers: intentRevision !== undefined,
       expectedInterruptedRevision: intentRevision,
+      // An active turn continues on the destination, which owns its terminal.
+      teleportHandoff: pending.activeTurn,
     });
   } catch (error) {
     abandonTeleportIntent(runtime.listener, pending, intentRevision);

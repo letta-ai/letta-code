@@ -23,6 +23,7 @@ import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import { handleCwdProtocolCommand } from "./commands/boot-working-directory";
+import { handleBrowserDeviceMcpOAuthProtocolCommand } from "./commands/browser-device-mcp-oauth";
 import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
@@ -127,6 +128,7 @@ type MessageRouterParams = {
   runtime: ListenerRuntime;
   socket: WebSocket;
   connectionId?: ListenerConnectionId;
+  lineageId?: string;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   fileCommandSession: FileCommandSession;
@@ -199,6 +201,7 @@ export function createListenerMessageHandler(
     runtime,
     socket,
     connectionId: explicitConnectionId,
+    lineageId: explicitLineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -215,7 +218,11 @@ export function createListenerMessageHandler(
     processIncomingMessage = handleIncomingMessage,
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
-
+  const lineageId =
+    explicitLineageId ??
+    runtime.connections.get(connectionId)?.startupOwner.lineageId ??
+    connectionId ??
+    runtime.sessionId;
   return async (data: WebSocket.RawData): Promise<void> => {
     if (
       !(await waitForListenerConnectionStartup(runtime, connectionId, socket))
@@ -226,7 +233,6 @@ export function createListenerMessageHandler(
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
     // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
-    const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
@@ -245,15 +251,8 @@ export function createListenerMessageHandler(
       } else {
         safeEmitWsEvent("recv", "lifecycle", {
           type: "_ws_unparseable",
-          raw,
         });
       }
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-        );
-      }
-
       if (!parsed) {
         return;
       }
@@ -814,11 +813,17 @@ export function createListenerMessageHandler(
           socket,
           safeSocketSend,
           runDetachedListenerTask,
+        }) ||
+        handleBrowserDeviceMcpOAuthProtocolCommand(parsed, {
+          socket,
+          owner: runtime,
+          lineageId,
+          safeSocketSend,
+          runDetachedListenerTask,
         })
       ) {
         return;
       }
-
       if (
         handleAgentConversationManagementProtocolCommand(parsed, {
           socket,

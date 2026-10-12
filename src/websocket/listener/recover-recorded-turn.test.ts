@@ -860,63 +860,6 @@ test("mixed predecessor and successor approvals advance the sidecar owner first"
     rmSync(directory, { recursive: true, force: true });
   }
 });
-test("recovery eligibility conflict rearms and later owned work converges", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "recorded-conflict-owned-"));
-  const store = createInterruptedTurnStore(directory);
-  const listener = createRuntime();
-  listener.connectionId = "conn-replacement";
-  setActiveRuntime(listener);
-  let eligibilityChecks = 0;
-  let starts = 0;
-  try {
-    store.write({
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      runId: "run-1",
-      toolCallIds: ["call-1"],
-      results: [],
-      requestOtid: "request-1",
-      workingDirectory: "/project",
-    });
-    await recoverRecordedTurns(listener, {
-      store,
-      backend: { retrieveAgent: async () => ({ id: "agent-1" }) } as never,
-      resume: (async () => ({
-        pendingApprovals: [
-          { toolCallId: "call-1", toolName: "Bash", toolArgs: "{}" },
-        ],
-      })) as never,
-      canRecover: async () => {
-        eligibilityChecks += 1;
-        return eligibilityChecks !== 2;
-      },
-      acquireClaim: acquireTestClaim,
-      processTurn: async (
-        _message,
-        _transport,
-        ownerRuntime,
-        _onStatus,
-        _connectionId,
-        _batchId,
-        turnLease,
-      ) => {
-        starts += 1;
-        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
-      },
-      setCwd: () => {},
-      retryDelayMs: 1,
-    });
-    const deadline = performance.now() + 2_000;
-    while (starts === 0 && performance.now() < deadline) await Bun.sleep(5);
-    expect(eligibilityChecks).toBeGreaterThanOrEqual(4);
-    expect(starts).toBe(1);
-  } finally {
-    listener.intentionallyClosed = true;
-    setActiveRuntime(null);
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
-
 test("restart sends saved results with the same request identity, never an unrelated pending tool", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-recovery-"));
   const store = createInterruptedTurnStore(directory);

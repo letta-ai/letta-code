@@ -1971,7 +1971,7 @@ export async function handleHeadlessCommand(
         })
       : { source: "same-environment" };
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
-      noWait: Boolean(values["no-wait"]),
+      noWait: isAgentLaunch || Boolean(values["no-wait"]),
       clientMessageId: values["client-message-id"],
       connectionId,
       scope: {

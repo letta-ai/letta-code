@@ -186,6 +186,7 @@ describe("listener auth lifecycle", () => {
         nextRetryIn: number,
         connectionId?: string,
       ) => void;
+      onConnectionReady?: () => Promise<void>;
       supportsSplitStatusChannels?: boolean;
     } = {},
   ) {
@@ -200,6 +201,7 @@ describe("listener auth lifecycle", () => {
       onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
       onError: overrides.onError ?? mock(() => {}),
       onRetrying: overrides.onRetrying,
+      onConnectionReady: overrides.onConnectionReady,
     });
   }
 
@@ -348,6 +350,49 @@ describe("listener auth lifecycle", () => {
       "connection-id",
     );
   });
+
+  test("grows reconnect backoff while connected startup never completes", async () => {
+    const releaseStalledStartups: Array<() => void> = [];
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({
+      onRetrying,
+      // Startup reaches an initialized connection, then stalls before the
+      // pong heartbeat starts (as a hung recovery or ready hook would).
+      onConnectionReady: () =>
+        new Promise<void>((resolve) => releaseStalledStartups.push(resolve)),
+    });
+
+    try {
+      for (let socketIndex = 0; socketIndex < 3; socketIndex += 1) {
+        await waitFor(
+          () =>
+            connections.length === socketIndex + 1 &&
+            releaseStalledStartups.length === socketIndex + 1 &&
+            isClientInitialized(),
+          `socket ${socketIndex + 1} did not reach stalled startup`,
+        );
+        expect(getActiveRuntime()?.hasSuccessfulConnection).toBe(false);
+        connections[socketIndex]?.close(1001, "idle timeout");
+        await waitFor(
+          () => onRetrying.mock.calls.length === socketIndex + 1,
+          `socket ${socketIndex + 1} close did not schedule a retry`,
+        );
+      }
+
+      expect(onRetrying.mock.calls.map(([attempt]) => attempt)).toEqual([
+        1, 2, 3,
+      ]);
+    } finally {
+      for (const release of releaseStalledStartups) release();
+    }
+  }, 20_000);
 
   test("transient relay closes preserve turn state queues and approval resolvers", async () => {
     const onDisconnected = mock(() => {});

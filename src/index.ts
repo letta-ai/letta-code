@@ -42,6 +42,7 @@ import {
 } from "./backend";
 import { getBillingTier } from "./backend/api/metadata";
 import { LOCAL_BACKEND_EXPERIMENTAL_ENV } from "./backend/local/paths";
+import { startBrowserDiscoveryServer } from "./browser-discovery-server";
 import {
   extractBackendFlag,
   type ParsedCliArgs,
@@ -571,9 +572,7 @@ async function getLocalBackendStartupFallbackSession(
 async function main(): Promise<void> {
   markMilestone("CLI_START");
   await initializeDesktopCredentials();
-
-  // Exit when the owning Desktop or terminal process dies.
-  startOrphanDetection();
+  startOrphanDetection(); // Exit when the owning Desktop or terminal process dies.
 
   const rawCliArgs = process.argv.slice(2);
   let subcommandArgs = rawCliArgs;
@@ -2554,7 +2553,6 @@ async function main(): Promise<void> {
       fileAutocompleteFdPath,
     });
   }
-
   markMilestone("REACT_RENDER_START");
   render(
     React.createElement(LoadingApp, {
@@ -2572,6 +2570,6 @@ async function main(): Promise<void> {
     },
   );
 }
-
 assertSupportedBunRuntime();
+void startBrowserDiscoveryServer().ready.catch(() => undefined);
 main();

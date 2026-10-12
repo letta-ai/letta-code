@@ -61,10 +61,10 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  runDetachedListenerTask,
   startConnectedListenerRuntime,
   stopRuntime,
 } from "./lifecycle";
+import { runDetachedListenerTask } from "./listener-task";
 import {
   buildDeviceStatus,
   buildLoopStatus,

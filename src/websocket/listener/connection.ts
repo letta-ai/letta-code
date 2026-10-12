@@ -1,4 +1,5 @@
 import type WebSocket from "ws";
+import { rebindBrowserDeviceMcpOAuthOperationsToSocket } from "./commands/browser-device-mcp-oauth";
 import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
 import { reserveStartupIngressOwner } from "./startup-ingress";
@@ -177,6 +178,14 @@ export function markListenerConnectionInitialized(
   ) {
     connection.initialized = true;
     connection.resolveStartupReady();
+    const socket = socketForTransport(connection.writer);
+    if (socket) {
+      rebindBrowserDeviceMcpOAuthOperationsToSocket(
+        runtime,
+        connection.startupOwner.lineageId,
+        socket,
+      );
+    }
   }
 }
 

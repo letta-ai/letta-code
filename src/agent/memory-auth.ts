@@ -1,4 +1,4 @@
-import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { getSessionAccessToken } from "@/auth/org-credentials-session";
 import { getClient } from "@/backend/api/client";
 
 /** Resolve credentials at the start of each Git operation, never persist Desktop OAuth. */
@@ -7,8 +7,8 @@ export async function getAuthToken(): Promise<string> {
   const backend = getBackend();
   if (backend.capabilities.localMemfs && !backend.capabilities.remoteMemfs)
     return "";
-  const desktopToken = getDesktopAccessToken();
-  if (desktopToken) return desktopToken;
+  const sessionToken = await getSessionAccessToken();
+  if (sessionToken) return sessionToken;
   const client = await getClient();
   return client.apiKey ?? "";
 }

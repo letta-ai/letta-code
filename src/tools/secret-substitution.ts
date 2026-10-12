@@ -4,6 +4,7 @@
 
 import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getMcpScopeAgentId, lookupParentAgent } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import { ensureSecretsLoaded, loadSecrets } from "@/utils/secrets-store";
@@ -159,8 +160,11 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
     // Desktop session exists but its token is unavailable; other sources apply.
   }
   add("LETTA_API_KEY", desktopAccessToken);
-  if (desktopAccessToken) {
-    const trimmed = desktopAccessToken.trim();
+  const orgAccessToken = peekOrgAccessToken();
+  add("LETTA_API_KEY", orgAccessToken);
+  const sessionAccessToken = orgAccessToken ?? desktopAccessToken;
+  if (sessionAccessToken) {
+    const trimmed = sessionAccessToken.trim();
     if (trimmed.length >= MIN_AMBIENT_SECRET_LENGTH) {
       add("LETTA_API_KEY", Buffer.from(`letta:${trimmed}`).toString("base64"));
     }

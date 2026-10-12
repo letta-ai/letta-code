@@ -75,13 +75,14 @@ Do not merge the PR, leave GitHub comments, or review other changes.
 
 After the ready PR and reviewers are verified, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Do not use `curl` or another Slack API client.
 
-Use the Notification Slack ID from the run inputs and send exactly one line:
+Use the Notification Slack ID from the run inputs and send the mention and link, then one short sentence describing the verified user-visible change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-cloud/pull/1234
+Memory read calls now show their path and status in Chat and Desktop instead of a generic tool card.
 ```
 
-Replace the example values with that Notification Slack ID and the created PR. The workflow already resolved it — mapped source author for people, configured tool owner for known service-account PRs — so do not derive the recipient yourself. Do not include a prefix, source PR, workflow URL, or any other text. Send no Slack message for `NO_SYNC_NEEDED`.
+Replace the example values and sentence with that Notification Slack ID, the created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. The workflow already resolved the recipient, mapped source author for people, configured tool owner for known service-account PRs, so do not derive it yourself. Do not include a prefix, source PR, workflow URL, or extra text. Send no Slack message for `NO_SYNC_NEEDED`.
 
 ## Final response
 

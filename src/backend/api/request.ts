@@ -1,5 +1,5 @@
-import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { getSessionAccessToken } from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import { getLettaCodeHeaders } from "./http-headers";
 
@@ -42,7 +42,7 @@ export async function getApiRequestConfig(): Promise<ApiRequestConfig> {
       settings.env?.LETTA_BASE_URL ||
       LETTA_CLOUD_API_URL,
     apiKey:
-      getDesktopAccessToken() ||
+      (await getSessionAccessToken()) ||
       process.env.LETTA_API_KEY ||
       settings.env?.LETTA_API_KEY ||
       "",

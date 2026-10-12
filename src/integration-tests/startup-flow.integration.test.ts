@@ -485,7 +485,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--agent + --conversation default succeeds and stays on default route",
+    "--agent + --conversation default submits to the default route",
     async () => {
       let agentIdForTest = testAgentId;
       if (!agentIdForTest) {
@@ -512,20 +512,28 @@ describe("Startup Flow - Integration", () => {
           agentIdForTest,
           "--conversation",
           "default",
+          // The process that created the agent has exited, so verify default
+          // route resolution and Cloud acceptance without waiting for a receiver.
+          "--no-wait",
           // Keep the model set during agent creation.
           "-p",
           "Say OK",
           "--output-format",
           "json",
         ],
-        { timeoutMs: 180000 },
+        {
+          timeoutMs: 60000,
+          retryOnTimeouts: 0,
+          retryOnParseErrors: 0,
+        },
       );
 
       expect(result.exitCode).toBe(0);
       const output = result.output;
+      expect(output.status).toBe("queued");
       expect(output.agent_id).toBe(agentIdForTest);
       expect(output.conversation_id).toBe("default");
     },
-    { timeout: 190000 },
+    { timeout: 70000 },
   );
 });

@@ -79,8 +79,11 @@ describe("request-scoped client toolsets", () => {
       });
 
       expect(prepared.toolset).toBe("letta");
+      // Memory is attached only for MemFS v2 agents; none is scoped here.
       expect(prepared.preparedToolContext.loadedToolNames).toEqual(
-        TOOLSET_CATALOG.letta.tools.map(getServerToolName),
+        TOOLSET_CATALOG.letta.tools
+          .filter((name) => name !== "Memory")
+          .map(getServerToolName),
       );
       expect(prepared.preparedToolContext.loadedToolNames).toContain("Edit");
       expect(prepared.preparedToolContext.loadedToolNames).not.toContain(

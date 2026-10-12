@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "string",
+      "description": "Memory directory or file relative to the memory directory, e.g. \"projects\", \"projects/code\", or \"projects/example.md\"."
+    }
+  },
+  "required": ["path"],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

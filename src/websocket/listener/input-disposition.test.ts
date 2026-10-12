@@ -914,32 +914,6 @@ test("payload retirement failure is reported instead of claiming durable complet
   }
 });
 
-test("oversized queued payload is rejected without a queued tombstone", () => {
-  const root = mkdtempSync(join(tmpdir(), "letta-disposition-size-"));
-  try {
-    const path = join(root, "state.json");
-    const runtime = persistentRuntime(path);
-    const identity = ordinaryInputIdentity("cm-too-large");
-    const admission = reserveInputDisposition(runtime, identity);
-    if (admission.kind !== "reserved") throw new Error("expected reservation");
-    const oversized = durableIncoming("cm-too-large");
-    oversized.messages[0] = {
-      role: "user",
-      content: "x".repeat(1024 * 1024 + 1),
-      client_message_id: "cm-too-large",
-    };
-    expect(
-      commitInputDisposition(runtime, admission.reservation, "queued", {
-        incoming: oversized,
-      }),
-    ).toBe(false);
-    rollbackInputDisposition(runtime, admission.reservation);
-    expect(getInputDisposition(runtime, identity)).toBeUndefined();
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
 test("corrupt durable store fails closed and is never overwritten", () => {
   const root = mkdtempSync(join(tmpdir(), "letta-disposition-corrupt-store-"));
   try {

@@ -2,11 +2,15 @@ import { expect, test } from "bun:test";
 import WebSocket from "ws";
 import { openListenerConnection } from "@/websocket/listener/connection";
 import { createRuntime, stopRuntime } from "@/websocket/listener/lifecycle";
-import { setActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  getActiveRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
 import {
   applyGatewayLifecycleReadiness,
   completeListenerConnectionStartup,
   createListenerReadinessController,
+  createRuntimeBoundGatewayStarter,
 } from "./listener-readiness";
 
 test("publishes readiness only for the exact open ingress-live connection", async () => {
@@ -70,6 +74,65 @@ test("publishes readiness only for the exact open ingress-live connection", asyn
   expect(await completeListenerConnectionStartup(replacement, readiness)).toBe(
     false,
   );
+  stopRuntime(runtime, true);
+  setActiveRuntime(null);
+});
+
+test("starts the channel gateway only after startup ingress is live and before publishing readiness", async () => {
+  const runtime = createRuntime();
+  setActiveRuntime(runtime);
+  const transitions: boolean[] = [];
+  const readiness = createListenerReadinessController(
+    true,
+    (ready) => transitions.push(ready),
+    () => {},
+  );
+  const writer = {
+    readyState: WebSocket.OPEN,
+    bufferedAmount: 0,
+    send: () => {},
+    removeAllListeners: () => {},
+    close: () => {},
+  } as never;
+  const options = {
+    connectionId: "channel-startup",
+    wsUrl: "ws://test",
+    deviceId: "device",
+    connectionName: "connection",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+  };
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: options.connectionId,
+    writer,
+    options,
+  });
+  connection.initialized = true;
+  connection.ingressReady = true;
+  let releaseGateway!: () => void;
+  const gatewayStarted = new Promise<void>((resolve) => {
+    releaseGateway = resolve;
+  });
+
+  const startup = completeListenerConnectionStartup(
+    connection,
+    readiness,
+    async () => {
+      expect(connection.initialized).toBe(true);
+      expect(connection.ingressReady).toBe(true);
+      await gatewayStarted;
+      readiness.setGatewayReady(true);
+    },
+  );
+  await Promise.resolve();
+  expect(transitions).toEqual([]);
+
+  releaseGateway();
+  expect(await startup).toBe(true);
+  expect(transitions).toEqual([true]);
+
   stopRuntime(runtime, true);
   setActiveRuntime(null);
 });
@@ -165,4 +228,36 @@ test("initial gateway readiness composes with Cloud readiness", () => {
 
   expect(readiness.getState().ready).toBe(true);
   expect(transitions).toEqual([true]);
+});
+
+test("rebuilds the channel gateway when re-registration replaces the runtime", async () => {
+  const events: string[] = [];
+  const runtimes = new Map<object, string>();
+  const startGateway = createRuntimeBoundGatewayStarter({
+    getRuntime: getActiveRuntime,
+    start: async (runtime) => {
+      events.push(`start:${runtimes.get(runtime)}`);
+    },
+    close: async () => {
+      events.push("close");
+    },
+  });
+
+  const runtimeA = createRuntime();
+  runtimes.set(runtimeA, "A");
+  setActiveRuntime(runtimeA);
+  await startGateway();
+  await startGateway();
+  expect(events).toEqual(["start:A"]);
+
+  // Re-registration: the old runtime is stopped and a new one becomes active.
+  stopRuntime(runtimeA, true);
+  const runtimeB = createRuntime();
+  runtimes.set(runtimeB, "B");
+  setActiveRuntime(runtimeB);
+  await Promise.all([startGateway(), startGateway()]);
+  expect(events).toEqual(["start:A", "close", "start:B"]);
+
+  stopRuntime(runtimeB, true);
+  setActiveRuntime(null);
 });

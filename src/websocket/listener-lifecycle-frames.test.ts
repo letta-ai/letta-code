@@ -103,7 +103,7 @@ describe("listener lifecycle frames", () => {
     expect(runtime.lastPongAt as number).toBeGreaterThanOrEqual(before);
   });
 
-  test("still logs malformed frames as unparseable lifecycle events", async () => {
+  test("logs only redacted metadata for malformed lifecycle frames", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const events: Array<{
       direction: "send" | "recv";
@@ -121,7 +121,7 @@ describe("listener lifecycle frames", () => {
       {
         direction: "recv",
         label: "lifecycle",
-        event: { type: "_ws_unparseable", raw: "not-json" },
+        event: { type: "_ws_unparseable" },
       },
     ]);
   });

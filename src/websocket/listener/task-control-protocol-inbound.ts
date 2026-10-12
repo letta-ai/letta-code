@@ -1,9 +1,28 @@
 import type {
+  BrowserDeviceMcpOAuthCancelCommand,
+  BrowserDeviceMcpOAuthCommand,
   ExecuteCommandCommand,
   MonitorStopCommand,
   RemoveQueueItemCommand,
 } from "@/types/task-control-protocol";
+import { isBrowserDeviceMcpOAuthProtocolCommand } from "./browser-device-mcp-oauth-protocol-inbound";
 import { isAgentRuntimeScope } from "./protocol-validation";
+
+export function isTaskControlProtocolCommand(
+  value: unknown,
+): value is
+  | BrowserDeviceMcpOAuthCommand
+  | BrowserDeviceMcpOAuthCancelCommand
+  | ExecuteCommandCommand
+  | RemoveQueueItemCommand
+  | MonitorStopCommand {
+  return (
+    isBrowserDeviceMcpOAuthProtocolCommand(value) ||
+    isExecuteCommandCommand(value) ||
+    isRemoveQueueItemCommand(value) ||
+    isMonitorStopCommand(value)
+  );
+}
 
 export function isExecuteCommandCommand(
   value: unknown,

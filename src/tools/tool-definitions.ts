@@ -9,6 +9,7 @@ import ExitWorktreeDescription from "./descriptions/ExitWorktree.md";
 import GlobDescription from "./descriptions/Glob.md";
 import GrepDescription from "./descriptions/Grep.md";
 import LSDescription from "./descriptions/LS.md";
+import MemoryDescription from "./descriptions/Memory.md";
 import MonitorDescription from "./descriptions/Monitor.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
@@ -41,6 +42,7 @@ import { exit_worktree } from "./impl/exit-worktree";
 import { glob } from "./impl/glob";
 import { grep } from "./impl/grep";
 import { ls } from "./impl/ls";
+import { memory } from "./impl/memory";
 import { monitor } from "./impl/monitor";
 import { read } from "./impl/read";
 import { read_lsp } from "./impl/read-lsp";
@@ -70,6 +72,7 @@ import ExitWorktreeSchema from "./schemas/ExitWorktree.json";
 import GlobSchema from "./schemas/Glob.json";
 import GrepSchema from "./schemas/Grep.json";
 import LSSchema from "./schemas/LS.json";
+import MemorySchema from "./schemas/Memory.json";
 import MonitorSchema from "./schemas/Monitor.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
@@ -211,6 +214,11 @@ const toolDefinitions = {
     schema: SetWorkingDirectorySchema,
     description: SetWorkingDirectoryDescription.trim(),
     impl: set_working_directory,
+  }),
+  Memory: defineTool({
+    schema: MemorySchema,
+    description: MemoryDescription.trim(),
+    impl: memory,
   }),
   Skill: defineTool({
     schema: SkillSchema,

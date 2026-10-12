@@ -51,8 +51,15 @@ import type {
 export const ACCEPTED_INPUT_DISPOSITION_TTL_MS = 60 * 60 * 1000;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE = 4096;
 export const MAX_ACCEPTED_INPUT_DISPOSITIONS = 65_536;
-export const MAX_DURABLE_QUEUED_INPUT_BYTES = 1024 * 1024;
-export const MAX_INPUT_DISPOSITION_STORE_BYTES = 64 * 1024 * 1024;
+// Web clients send image attachments inline as base64, so an accepted input can
+// be as large as the web enqueue body cap (letta-cloud
+// MAX_ENQUEUE_MESSAGE_BODY_BYTES = 20 MiB). Allow 1 MiB of headroom for the
+// listener envelope (scope, identity, acting user) so a body Cloud accepted is
+// never dropped here.
+export const MAX_DURABLE_QUEUED_INPUT_BYTES = 21 * 1024 * 1024;
+// Bounds the full-file read/rewrite done by every durable transaction while
+// leaving room for several maximum-size inputs in flight at once.
+export const MAX_INPUT_DISPOSITION_STORE_BYTES = 128 * 1024 * 1024;
 const LOCK_WAIT_MS = 2_000;
 
 export function ordinaryInputIdentity(

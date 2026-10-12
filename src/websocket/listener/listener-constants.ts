@@ -6,6 +6,7 @@
  * and protocol-outbound.ts.
  */
 export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
+  "browser_device_mcp_oauth",
   "clear",
   "clear-messages",
   "doctor",

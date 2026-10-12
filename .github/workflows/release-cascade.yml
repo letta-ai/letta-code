@@ -164,10 +164,18 @@ jobs:
 
           sdk_package="$(read_package_json "letta-ai/letta-agent-sdk")"
           sdk_version="$(jq -r '.version' <<< "$sdk_package")"
-          sdk_code_dependency="$(jq -r '.dependencies["@letta-ai/letta-code"]' <<< "$sdk_package")"
+          sdk_code_dev_dependency="$(jq -r '.devDependencies["@letta-ai/letta-code"]' <<< "$sdk_package")"
+          sdk_code_peer_dependency="$(jq -r '.peerDependencies["@letta-ai/letta-code"]' <<< "$sdk_package")"
+          IFS='.' read -r code_major code_minor _ <<< "$LETTA_CODE_VERSION"
+          expected_sdk_code_peer=">=$LETTA_CODE_VERSION <$code_major.$((code_minor + 1)).0"
 
-          if [ "$sdk_code_dependency" != "$LETTA_CODE_VERSION" ]; then
-            echo "::error::Agent SDK main depends on @letta-ai/letta-code@$sdk_code_dependency, expected $LETTA_CODE_VERSION."
+          if [ "$sdk_code_dev_dependency" != "$LETTA_CODE_VERSION" ]; then
+            echo "::error::Agent SDK main develops against @letta-ai/letta-code@$sdk_code_dev_dependency, expected $LETTA_CODE_VERSION."
+            exit 1
+          fi
+
+          if [ "$sdk_code_peer_dependency" != "$expected_sdk_code_peer" ]; then
+            echo "::error::Agent SDK main accepts @letta-ai/letta-code@$sdk_code_peer_dependency, expected $expected_sdk_code_peer."
             exit 1
           fi
 

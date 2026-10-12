@@ -122,13 +122,14 @@ A `pr_created` outcome remains pending and blocks later upgrade PRs until that P
 
 ## Slack notification
 
-Only for `pr_created`, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send exactly one line using the selected Slack owner ID and PR URL:
+Only for `pr_created`, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send the selected Slack owner mention and PR URL, then one short sentence describing the verified change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
+Adds Ollama image-input support so local models can receive screenshots without losing attachments.
 ```
 
-Replace the example values. Do not include a watcher prefix, tracker URL, workflow URL, or other text. Do not notify Slack for `no_upgrade` or `needs_human_review`.
+Replace the example values and sentence with the selected owner, created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. Do not include a watcher prefix, tracker URL, workflow URL, or extra text. Do not notify Slack for `no_upgrade` or `needs_human_review`.
 
 ## Final response
 

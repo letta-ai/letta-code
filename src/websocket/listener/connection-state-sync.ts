@@ -97,7 +97,8 @@ export async function completeInitialConnectionStartup(
   }
   if (!isCurrent()) return false;
   if (startupOptions.updateReconnectState) {
-    listener.hasSuccessfulConnection = true;
+    // hasSuccessfulConnection is set by the caller once startup is complete;
+    // setting it here would reset reconnect backoff if later startup stalls.
     listener.everConnected = true;
   }
   markListenerConnectionInitialized(listener, options.connectionId, connection);
