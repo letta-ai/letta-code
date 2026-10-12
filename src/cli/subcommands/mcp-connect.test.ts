@@ -72,6 +72,42 @@ describe("letta mcp connect", () => {
     });
   });
 
+  test("keeps the process alive while waiting for the OAuth callback", async () => {
+    // The real callback server is unref'd, so without a ref'd handle the
+    // one-shot CLI would exit before the browser redirect arrives.
+    const originalSetInterval = globalThis.setInterval;
+    const originalClearInterval = globalThis.clearInterval;
+    const live = new Set<unknown>();
+    globalThis.setInterval = ((fn: () => void, ms?: number) => {
+      const handle = originalSetInterval(fn, ms);
+      live.add(handle);
+      return handle;
+    }) as typeof setInterval;
+    globalThis.clearInterval = ((handle: unknown) => {
+      live.delete(handle);
+      originalClearInterval(handle as ReturnType<typeof setInterval>);
+    }) as typeof clearInterval;
+    let liveDuringConnect = 0;
+    try {
+      const { deps } = harness({
+        connectMcpOAuth: async () => {
+          liveDuringConnect = live.size;
+        },
+      });
+      expect(
+        await runMcpSubcommand(
+          ["connect", "comfy", "--agent", "agent-1"],
+          deps,
+        ),
+      ).toBe(0);
+    } finally {
+      globalThis.setInterval = originalSetInterval;
+      globalThis.clearInterval = originalClearInterval;
+    }
+    expect(liveDuringConnect).toBeGreaterThan(0);
+    expect(live.size).toBe(0);
+  });
+
   test("defaults to the service's first server URL and LETTA_AGENT_ID", async () => {
     const h = harness({ env: { LETTA_AGENT_ID: "agent-env" } });
     expect(await runMcpSubcommand(["connect", "comfy"], h.deps)).toBe(0);

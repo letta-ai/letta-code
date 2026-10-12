@@ -135,6 +135,10 @@ export async function runMcpConnect(
     `Opening your browser to authorize ${service}. Complete the sign-in there; waiting for the localhost callback...`,
   );
   let submitting = false;
+  // The OAuth callback server and its timeouts are unref'd so a long-lived
+  // listener can exit cleanly; this one-shot command must stay alive until the
+  // callback arrives or the authorization times out.
+  const keepAlive = setInterval(() => undefined, 60_000);
   try {
     await (deps.connectMcpOAuth ?? defaultConnectMcpOAuth)(
       { handoffKey: handoff.handoff_key, service, serverUrl },
@@ -159,6 +163,8 @@ export async function runMcpConnect(
       );
     }
     throw new McpCliError("authorization_failed", message);
+  } finally {
+    clearInterval(keepAlive);
   }
 
   await stdout(
