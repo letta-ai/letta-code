@@ -5,6 +5,7 @@ import {
   pollForToken,
   refreshAccessToken,
   requestDeviceCode,
+  type TokenResponse,
 } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
 import { activateOrgCredentials } from "@/auth/org-credentials-session";
@@ -277,15 +278,40 @@ async function redeemConnectToken(
   deviceId: string,
   connectionName: string,
   connectToken: string,
+  organizationId: string,
 ): Promise<string> {
   console.log("Signing in with the connect token...\n");
-  const tokens = await getListenerOAuthDeps().pollForToken(
-    connectToken,
-    0,
-    CONNECT_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
-    deviceId,
-    connectionName,
-  );
+  let tokens: TokenResponse;
+  try {
+    tokens = await getListenerOAuthDeps().pollForToken(
+      connectToken,
+      0,
+      CONNECT_TOKEN_EXCHANGE_TIMEOUT_SECONDS,
+      deviceId,
+      connectionName,
+    );
+  } catch (error) {
+    // Single-use and short-lived by design: a restart of the same command
+    // needs a fresh token from the agent, not the one in shell history.
+    const message = errorMessage(error);
+    let reason: string | null = null;
+    if (/expired/i.test(message)) reason = "expired";
+    else if (/already used/i.test(message)) reason = "already used";
+    if (reason) {
+      throw new Error(
+        `This connect token was ${reason}. Ask your agent for a new letta server command.`,
+      );
+    }
+    throw error;
+  }
+  // The token acts in the organization it was minted for regardless of the
+  // flag; refuse rather than file it under the wrong slot and register the
+  // computer somewhere the user did not expect.
+  if (tokens.organization_id && tokens.organization_id !== organizationId) {
+    throw new Error(
+      `This connect token belongs to organization ${tokens.organization_id}, not ${organizationId}. Run the letta server command your agent gave you as is.`,
+    );
+  }
   const now = Date.now();
 
   await slot.write({
@@ -320,6 +346,7 @@ async function resolveListenerAuth(
           deviceId,
           connectionName,
           options.connectToken,
+          options.organizationId,
         )
       : await resolveCloudCredentials(
           slot,

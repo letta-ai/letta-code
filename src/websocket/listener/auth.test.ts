@@ -384,6 +384,54 @@ describe("listener auth", () => {
     expect(orgCredentials["org-123"]?.apiKey).toBe("fresh-org-token");
   });
 
+  test("tells the user to ask for a new command when the connect token was already used", async () => {
+    pollForTokenMock.mockRejectedValue(
+      new Error("OAuth error: Device code already used"),
+    );
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token was already used. Ask your agent for a new letta server command.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+  });
+
+  test("tells the user to ask for a new command when the connect token expired", async () => {
+    pollForTokenMock.mockRejectedValue(new Error("Device code expired"));
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow("This connect token was expired.");
+  });
+
+  test("refuses a connect token minted for another organization", async () => {
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      organization_id: "org-other",
+    });
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token belongs to organization org-other, not org-123.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+    expect(peekOrgAccessToken()).toBeUndefined();
+  });
+
   test("rejects a connect token without an organization", async () => {
     await expect(
       resolveListenerRegistrationOptions("device-id", "listener-name", {

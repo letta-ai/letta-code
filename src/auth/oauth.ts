@@ -31,6 +31,8 @@ export interface TokenResponse {
   token_type: string;
   expires_in: number;
   scope?: string;
+  /** The organization every request with this token acts in. */
+  organization_id?: string;
 }
 
 export interface OAuthError {
