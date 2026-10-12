@@ -2,7 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   __resetCompletedSubagentRetentionMsForTests,
   __setCompletedSubagentRetentionMsForTests,
+  __setPublishedResultRetentionMsForTests,
   clearAllSubagents,
+  clearCompletedSubagents,
   completeSubagent,
   getSubagentByToolCallId,
   getSubagentLifecycleContext,
@@ -31,6 +33,20 @@ describe("subagentState retention", () => {
     expect(getSubagentByToolCallId("tc-task")).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 60));
     expect(getSubagentByToolCallId("tc-task")).toBeUndefined();
+  });
+
+  test("published results outlive ordinary retention for a reconnecting caller", async () => {
+    __setCompletedSubagentRetentionMsForTests(20);
+    __setPublishedResultRetentionMsForTests(200);
+
+    registerSubagent("sub-remote", "claude-code", "Review", "tc-remote", true);
+    completeSubagent("sub-remote", { success: true, result: "report" });
+    clearCompletedSubagents();
+
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(getSubagentByToolCallId("tc-remote")?.result).toBe("report");
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(getSubagentByToolCallId("tc-remote")).toBeUndefined();
   });
 
   test("lifecycle context exposes normalized subagent state", () => {

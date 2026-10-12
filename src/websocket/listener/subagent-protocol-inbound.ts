@@ -11,6 +11,7 @@ const ARGUMENTS = new Set([
   "client_message_id",
   "computer",
   "max_turns",
+  "mcp",
 ]);
 
 export function isLaunchSubagentCommand(
@@ -29,6 +30,7 @@ export function isLaunchSubagentCommand(
       typeof c.runtime.acting_user_id !== "string") ||
     (c.tool_call_id !== undefined &&
       (typeof c.tool_call_id !== "string" || !c.tool_call_id.trim())) ||
+    (c.notify !== undefined && c.notify !== "caller") ||
     !c.args ||
     typeof c.args !== "object" ||
     Array.isArray(c.args)
@@ -57,6 +59,12 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
+  // launchSubagent validates the MCP selection's contents.
+  if (
+    args.mcp !== undefined &&
+    (!args.mcp || typeof args.mcp !== "object" || Array.isArray(args.mcp))
+  )
+    return false;
   return (
     args.max_turns === undefined ||
     (typeof args.max_turns === "number" &&
