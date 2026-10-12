@@ -220,6 +220,8 @@ generic instincts. Read the local guide before changing code there:
 
 Test files live **next to their source** (`local-store.test.ts` next to `local-store.ts`), not in a separate `tests/` directory.
 
+Availability tests for bundled skills (the Cloud-only skills in `LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS`, e.g. `image-generation`) belong in the dedicated `src/agent/skills-agent-availability.test.ts`, not `src/agent/client-skills.test.ts` — that file is size-pinned in `scripts/source-file-size-baseline.json` and may not grow.
+
 ---
 
 ## Reference
