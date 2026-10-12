@@ -8,15 +8,20 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   initSkill,
   titleCaseSkillName,
 } from "@/skills/builtin/creating-skills/scripts/init-skill";
-import { packageSkill } from "@/skills/builtin/creating-skills/scripts/package-skill";
+import {
+  normalizeZipEntryPath,
+  packageSkill,
+} from "@/skills/builtin/creating-skills/scripts/package-skill";
 import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
@@ -408,10 +413,123 @@ description: A skill that can be packaged
 This skill can be packaged.
 `,
     );
+    const scriptsDir = join(skillDir, "scripts");
+    mkdirSync(scriptsDir);
+    const unicodeScriptPath = join(scriptsDir, "café.mjs");
+    writeFileSync(unicodeScriptPath, 'console.log("déjà vu");\n');
 
     const result = packageSkill(skillDir, TEST_DIR);
     expect(result).not.toBeNull();
-    expect(existsSync(join(TEST_DIR, "packagable-skill.skill"))).toBe(true);
+    const archivePath = join(TEST_DIR, "packagable-skill.skill");
+    expect(existsSync(archivePath)).toBe(true);
+
+    if (process.platform === "win32") {
+      // Python and Info-ZIP interoperability run on Unix CI below. On Windows,
+      // inspect the actual archive bytes so a host-native backslash cannot
+      // silently return to either local or central entry names.
+      const archive = readFileSync(archivePath);
+      expect(
+        archive.includes(
+          Buffer.from("packagable-skill/scripts/café.mjs", "utf8"),
+        ),
+      ).toBe(true);
+      expect(
+        archive.includes(
+          Buffer.from("packagable-skill\\scripts\\café.mjs", "utf8"),
+        ),
+      ).toBe(false);
+      return;
+    }
+
+    const extractedDir = join(TEST_DIR, "extracted");
+    mkdirSync(extractedDir);
+    const extraction = spawnSync(
+      "python3",
+      [
+        "-c",
+        [
+          "import json, sys",
+          "from zipfile import ZipFile",
+          "with ZipFile(sys.argv[1]) as archive:",
+          "    print(json.dumps([{'filename': entry.filename, 'create_system': entry.create_system, 'external_attr': entry.external_attr} for entry in archive.infolist()], ensure_ascii=True))",
+          "    archive.extractall(sys.argv[2])",
+        ].join("\n"),
+        archivePath,
+        extractedDir,
+      ],
+      { encoding: "utf8", timeout: 45_000 },
+    );
+    expect(extraction.status).toBe(0);
+    expect(extraction.stderr).toBe("");
+    const zipEntries = JSON.parse(extraction.stdout) as Array<{
+      create_system: number;
+      external_attr: number;
+      filename: string;
+    }>;
+    expect(zipEntries.map((entry) => entry.filename).sort()).toEqual(
+      [
+        "packagable-skill/",
+        "packagable-skill/SKILL.md",
+        "packagable-skill/scripts/",
+        "packagable-skill/scripts/café.mjs",
+      ].sort(),
+    );
+    for (const entry of zipEntries) {
+      expect(entry.create_system).toBe(3);
+      expect(entry.external_attr >>> 16).toBe(
+        entry.filename.endsWith("/") ? 0o40755 : 0o100644,
+      );
+      expect(entry.external_attr & 0x10).toBe(
+        entry.filename.endsWith("/") ? 0x10 : 0,
+      );
+    }
+    expect(readdirSync(extractedDir)).toEqual(["packagable-skill"]);
+    const extractedSkillDir = join(extractedDir, "packagable-skill");
+    expect(readdirSync(extractedSkillDir).sort()).toEqual([
+      "SKILL.md",
+      "scripts",
+    ]);
+    expect(readFileSync(join(extractedSkillDir, "SKILL.md"))).toEqual(
+      readFileSync(join(skillDir, "SKILL.md")),
+    );
+    expect(readdirSync(join(extractedSkillDir, "scripts"))).toEqual([
+      "café.mjs",
+    ]);
+    expect(
+      readFileSync(join(extractedSkillDir, "scripts", "café.mjs")),
+    ).toEqual(readFileSync(unicodeScriptPath));
+
+    const infoZipDir = join(TEST_DIR, "infozip-extracted");
+    mkdirSync(infoZipDir);
+    const infoZipExtraction = spawnSync(
+      "unzip",
+      ["-qq", archivePath, "-d", infoZipDir],
+      { encoding: "utf8" },
+    );
+    expect(infoZipExtraction.status).toBe(0);
+    expect(infoZipExtraction.stderr).toBe("");
+    const infoZipUnicodePath = join(
+      infoZipDir,
+      "packagable-skill",
+      "scripts",
+      "café.mjs",
+    );
+    expect(
+      readdirSync(dirname(infoZipUnicodePath), { encoding: "buffer" }),
+    ).toEqual([Buffer.from("café.mjs", "utf8")]);
+    expect(existsSync(infoZipUnicodePath)).toBe(true);
+    expect(readFileSync(infoZipUnicodePath)).toEqual(
+      readFileSync(unicodeScriptPath),
+    );
+  }, 60_000);
+
+  test("normalizes only the current platform's path separators", () => {
+    expect(normalizeZipEntryPath("skill\\scripts\\helper.mjs", "\\")).toBe(
+      "skill/scripts/helper.mjs",
+    );
+    expect(normalizeZipEntryPath("skill/literal\\name.txt", "/")).toBe(
+      "skill/literal\\name.txt",
+    );
   });
 
   test("fails when skill directory does not exist", () => {
