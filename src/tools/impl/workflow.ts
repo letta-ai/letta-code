@@ -78,6 +78,7 @@ interface WorkflowArgs {
   maxConcurrent?: number;
   model?: string;
   allowedTools?: string[];
+  wait?: boolean;
   // Injected by the tool manager; not in the JSON schema.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
@@ -478,7 +479,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     if (onAbort) args.signal?.removeEventListener("abort", onAbort);
   }
 
-  const taskId = getNextWorkflowId();
   const scriptArgs = normalizeWorkflowArgs(args.args);
   const { executionDir, scriptPath, journalPath } = createExecutionDir(
     defaultExecutionsDir(),
@@ -486,6 +486,33 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     script,
     scriptArgs,
   );
+
+  if (args.wait) {
+    // Foreground: the call's signal aborts the run, and the value is the result.
+    try {
+      const run = await executeWorkflow(handle.spawner, {
+        script,
+        args: scriptArgs,
+        maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+        journalPath,
+        ...(args.signal ? { signal: args.signal } : {}),
+        ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
+      });
+      return {
+        toolReturn: truncateResult(formatCompletionResult(run, executionDir)),
+        status: "success",
+      };
+    } catch (error) {
+      return {
+        toolReturn: `Workflow failed: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+      };
+    } finally {
+      await handle.cleanup().catch(() => {});
+    }
+  }
+
+  const taskId = getNextWorkflowId();
   const outputFile = createBackgroundOutputFile(taskId);
   const scope = resolveNotificationScope(args.parentScope);
   const abortController = new AbortController();

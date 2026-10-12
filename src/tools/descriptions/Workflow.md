@@ -1,8 +1,8 @@
 Execute a workflow script that orchestrates multiple subagents deterministically (loops, conditionals, fan-out) rather than model-driven.
 
-Workflows run in the background: this tool returns immediately with a task ID, and a <task-notification> carrying the script's return value arrives when the workflow completes. Do not poll or sleep for it, and never fabricate the result before it arrives. TaskStop aborts the run.
+Workflows run in the background: this tool returns immediately with a task ID, and a <task-notification> carrying the script's return value arrives when the workflow completes. Do not poll or sleep for it, and never fabricate the result before it arrives. TaskStop aborts the run. With `wait: true`, the workflow runs in the foreground instead and this tool returns the script's value directly; use it for short scripts.
 
-ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first.
+ONLY call this tool when the user has explicitly opted into multi-agent orchestration — they asked for a workflow or multi-agent orchestration in their own words ("use a workflow", "fan out agents"), or invoked a skill whose instructions call this tool. Workflows can spawn many subagents and cost real money. For any other task, even one that would benefit from parallelism, describe what a workflow could do and ask first. A script that only calls `tools.*` (no `agent()` or `decide()`) needs no opt-in.
 
 Scripts can also call the agent's MCP tools directly with `await tools.mcp__server__tool(args)`, subject to the user's permission rules.
 
