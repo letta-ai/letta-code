@@ -95,6 +95,10 @@ let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
+// A published result is how a caller on another computer receives the outcome,
+// and it may reconnect after an outage to read it, so keep those entries longer.
+const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
+let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 
 // ============================================================================
@@ -148,20 +152,25 @@ function scheduleCompletedSubagentCleanup(id: string): void {
   }
 
   clearCompletedSubagentCleanup(id);
-  const timer = setTimeout(() => {
-    const current = store.agents.get(id);
-    if (
-      !current ||
-      (current.status !== "completed" && current.status !== "error")
-    ) {
-      completedSubagentCleanupTimers.delete(id);
-      return;
-    }
+  const timer = setTimeout(
+    () => {
+      const current = store.agents.get(id);
+      if (
+        !current ||
+        (current.status !== "completed" && current.status !== "error")
+      ) {
+        completedSubagentCleanupTimers.delete(id);
+        return;
+      }
 
-    store.agents.delete(id);
-    completedSubagentCleanupTimers.delete(id);
-    notifyListeners();
-  }, completedSubagentRetentionMs);
+      store.agents.delete(id);
+      completedSubagentCleanupTimers.delete(id);
+      notifyListeners();
+    },
+    agent.result !== undefined
+      ? publishedResultRetentionMs
+      : completedSubagentRetentionMs,
+  );
   unrefTimer(timer);
   completedSubagentCleanupTimers.set(id, timer);
 }
@@ -349,6 +358,11 @@ export function __setCompletedSubagentRetentionMsForTests(ms: number): void {
 
 export function __resetCompletedSubagentRetentionMsForTests(): void {
   completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
+  publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
+}
+
+export function __setPublishedResultRetentionMsForTests(ms: number): void {
+  publishedResultRetentionMs = ms;
 }
 
 export function getSubagentToolCount(
@@ -450,6 +464,8 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
+    // A published result waits for its remote caller; its own timer removes it.
+    if (agent.result !== undefined) continue;
     if (agent.status === "completed" || agent.status === "error") {
       clearCompletedSubagentCleanup(id);
       store.agents.delete(id);
