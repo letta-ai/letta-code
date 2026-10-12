@@ -47,9 +47,10 @@ import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
-  WorkflowMcpCaller,
   WorkflowMeta,
   WorkflowProgressEvent,
+  WorkflowToolCaller,
+  WorkflowToolInfo,
 } from "@/tools/workflow/types";
 import {
   DEFAULT_MAX_CONCURRENT,
@@ -93,8 +94,10 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
-  /** Backs the script's `tools.mcp__*()` calls with the invoking agent's MCP tools. */
-  callMcpTool?: WorkflowMcpCaller;
+  /** Backs the script's `tools.*()` calls with the invoking turn's built-ins and agent MCP tools. */
+  callTool?: WorkflowToolCaller;
+  builtinToolNames?: readonly string[];
+  listTools?: () => Promise<WorkflowToolInfo[]>;
   cleanup(): Promise<void>;
 }
 
@@ -104,6 +107,12 @@ type SpawnerFactory = (
 ) => Promise<WorkflowSpawnerHandle>;
 
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
+const SCRIPT_EXCLUDED_TOOLS = new Set([
+  "Agent",
+  "AskUserQuestion",
+  "SendAgentMessage",
+  "Workflow",
+]);
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
@@ -240,9 +249,48 @@ export async function createSdkSpawnerHandle(
         ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
       >
     | undefined;
+  // Built-ins registered for the invoking turn. Orchestration and interactive
+  // tools stay out: scripts already have agent(), and nobody can answer a
+  // question or approval prompt from inside a script.
+  const builtinSchemas = [
+    ...(toolContextId
+      ? (manager
+          .getExecutionContextById(toolContextId)
+          ?.toolRegistry.values() ?? [])
+      : []),
+  ]
+    .map((tool) => ({
+      ...tool.schema,
+      name: manager.getServerToolName(tool.schema.name),
+    }))
+    .filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
+  const builtinToolNames = builtinSchemas.map((schema) => schema.name);
+  const builtins = new Set(builtinToolNames);
+  const mcp = () => {
+    mcpSession ??= import("@/cli/subcommands/mcp").then((module) =>
+      module.createAgentMcpSession(parentAgentId),
+    );
+    return mcpSession;
+  };
   return {
     spawner,
-    callMcpTool: async (toolName, toolArgs) => {
+    builtinToolNames,
+    listTools: async () => {
+      const mcpTools = await (await mcp()).listTools().catch(() => []);
+      return [
+        ...builtinSchemas.map((schema) => ({
+          name: schema.name,
+          description: schema.description,
+          inputSchema: schema.input_schema as Record<string, unknown>,
+        })),
+        ...mcpTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+        })),
+      ];
+    },
+    callTool: async (toolName, toolArgs) => {
       const { decision } = await manager.checkToolPermission(
         toolName,
         toolArgs,
@@ -259,10 +307,21 @@ export async function createSdkSpawnerHandle(
             : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
         );
       }
-      mcpSession ??= import("@/cli/subcommands/mcp").then((mcp) =>
-        mcp.createAgentMcpSession(parentAgentId),
-      );
-      return (await mcpSession).callTool(toolName, toolArgs);
+      if (builtins.has(toolName)) {
+        // executeTool owns hooks, mod events, and secret redaction.
+        const result = await manager.executeTool(toolName, toolArgs, {
+          ...(toolContextId ? { toolContextId } : {}),
+        });
+        const text =
+          typeof result.toolReturn === "string"
+            ? result.toolReturn
+            : JSON.stringify(result.toolReturn);
+        return {
+          content: [{ type: "text", text }],
+          isError: result.status === "error",
+        };
+      }
+      return (await mcp()).callTool(toolName, toolArgs);
     },
     cleanup: async () => {
       await mcpSession
@@ -270,6 +329,16 @@ export async function createSdkSpawnerHandle(
         .catch(() => undefined);
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
+  };
+}
+
+function toolOptions(handle: WorkflowSpawnerHandle) {
+  return {
+    ...(handle.callTool ? { callTool: handle.callTool } : {}),
+    ...(handle.builtinToolNames
+      ? { builtinToolNames: handle.builtinToolNames }
+      : {}),
+    ...(handle.listTools ? { listTools: handle.listTools } : {}),
   };
 }
 
@@ -496,7 +565,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
         maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
         journalPath,
         ...(args.signal ? { signal: args.signal } : {}),
-        ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
+        ...toolOptions(handle),
       });
       return {
         toolReturn: truncateResult(formatCompletionResult(run, executionDir)),
@@ -624,7 +693,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     journalPath,
     signal: abortController.signal,
-    ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
+    ...toolOptions(handle),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
       if (event.kind !== "log") publishProgress();

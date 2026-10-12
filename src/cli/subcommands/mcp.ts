@@ -839,6 +839,7 @@ export interface AgentMcpSession {
     toolName: string,
     args: Record<string, unknown>,
   ): Promise<McpToolResult>;
+  listTools(): Promise<McpToolDefinition[]>;
   close(): Promise<void>;
 }
 
@@ -863,6 +864,7 @@ export function createAgentMcpSession(
   return {
     callTool: async (toolName, args) =>
       callCatalogTool(await load(), deps, agentId, toolName, args),
+    listTools: async () => (await load()).tools.map((tool) => tool.schema),
     close: async () => {
       closed = true;
       const pending = catalog;

@@ -4,7 +4,7 @@ Workflows run in the background: this tool returns immediately with a task ID, a
 
 Scripts that call `agent()` or `decide()` spend money on subagents and model calls. Run one only when the user explicitly asked for a workflow or multi-agent orchestration ("use a workflow", "fan out agents") or a skill's instructions call this tool; otherwise describe the workflow and ask first. Scripts that only call `tools.*` need no opt-in.
 
-Scripts can also call the agent's MCP tools directly with `await tools.mcp__server__tool(args)`, subject to the user's permission rules.
+Scripts can call tools directly: `await tools.<name>(args)` for this turn's built-in tools and `await tools.mcp__server__tool(args)` for the agent's MCP tools, subject to the user's permission rules. `await listTools()` returns `[{ name, description }]`; `await describeTool(name)` returns `{ name, description, inputSchema }`, or `undefined` for an unknown tool.
 
 Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready. Await `agent()` calls: failures reject with the cause, `callIndex`, and `conversationId` when available. `parallel()` and `pipeline()` let siblings finish, then reject if any callback failed; a failed pipeline item skips its remaining stages. Catch errors explicitly inside callbacks for best-effort processing.
 
