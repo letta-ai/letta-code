@@ -77,6 +77,7 @@ export interface RemoteExternalCodingAgentDeps {
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  opencode: "OpenCode",
 };
 
 export function formatRemoteStartupError(

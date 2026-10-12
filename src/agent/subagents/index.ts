@@ -151,7 +151,12 @@ function getGlobalAgentsDir(): string {
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
-const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set(["claude-code", "codex"]);
+// Runtime support is separate from advertising an adapter in the prompt.
+const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
+  "claude-code",
+  "codex",
+  "opencode",
+]);
 
 // ============================================================================
 // Cache

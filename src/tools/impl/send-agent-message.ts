@@ -35,6 +35,7 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
+import { sendOpenCodeMessage } from "./opencode-session";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -160,6 +161,57 @@ export async function send_agent_message(
       }
       args.signal?.throwIfAborted();
       const parentScope = sender;
+      if (externalTarget.type === "opencode") {
+        const receipt = await sendOpenCodeMessage({
+          sessionId: externalTarget.sessionId,
+          prompt: args.message,
+          parentAgentId: parentScope.agentId,
+          cwd: getCurrentWorkingDirectory(),
+          signal: args.signal,
+        });
+        if (receipt.mode === "steered") {
+          return {
+            content: JSON.stringify({
+              status: "accepted",
+              agent_id: args.agent_id,
+              delivery: "session/abort+prompt",
+            }),
+            status: "success",
+          };
+        }
+        if (!receipt.completion || !receipt.interrupt)
+          throw new Error(
+            "OpenCode returned an incomplete background-task receipt",
+          );
+        try {
+          const tracked = (
+            deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+          )({
+            type: "opencode",
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope: {
+              ...parentScope,
+              actingUserId: getRuntimeActingUserAttribution(),
+            },
+            completion: receipt.completion,
+            interrupt: receipt.interrupt,
+          });
+          return {
+            content: JSON.stringify({
+              status: "accepted",
+              agent_id: args.agent_id,
+              delivery: "session/prompt",
+              task_id: tracked.taskId,
+              output_file: tracked.outputFile,
+            }),
+            status: "success",
+          };
+        } catch (error) {
+          await receipt.interrupt();
+          throw error;
+        }
+      }
       if (externalTarget.type === "codex") {
         let captureReservation: NativeSessionCaptureReservation | undefined;
         let receipt: Awaited<ReturnType<typeof sendCodexMessage>>;

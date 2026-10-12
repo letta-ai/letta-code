@@ -217,6 +217,30 @@ jobs:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
         run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
 
+  opencode-integration:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: OpenCode native lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install OpenCode
+        run: npm install --prefix "$RUNNER_TEMP/opencode" opencode-ai@1.19.0
+      - name: Run native OpenCode tests
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          export PATH="$RUNNER_TEMP/opencode/node_modules/.bin:$PATH"
+          bun test ./src/tools/impl/opencode-session.integration.ts
+          bun build src/tools/impl/opencode-session.node-test.ts --target=node --format=esm --outfile="$RUNNER_TEMP/opencode-node-test.mjs"
+          node --test "$RUNNER_TEMP/opencode-node-test.mjs"
+
   build:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
