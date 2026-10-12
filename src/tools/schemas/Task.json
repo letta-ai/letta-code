@@ -11,11 +11,11 @@
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task. Required when launching a new subagent; optional with agent_id or conversation_id, where it defaults to general-purpose. Use claude-code, codex, or opencode for a worker backed by the corresponding local CLI."
+      "description": "The type of specialized agent to use for this task. Required when launching a new subagent; optional with agent_id or conversation_id, where it defaults to general-purpose. Use claude-code or codex for a worker backed by the corresponding local CLI."
     },
     "model": {
       "type": "string",
-      "description": "Optional model to use for this agent. If not specified, inherits from parent (external coding workers use their own configured default). OpenCode accepts provider/model. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
+      "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
     },
     "agent_id": {
       "type": "string",
@@ -31,7 +31,7 @@
     },
     "mcp": {
       "type": "object",
-      "description": "External coding workers automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",
+      "description": "Claude Code and Codex automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",
       "properties": {
         "inherit": {
           "type": "boolean",

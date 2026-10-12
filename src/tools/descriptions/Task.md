@@ -30,15 +30,13 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 ## External Coding Agents
 
-Use `subagent_type: "claude-code"`, `"codex"`, or `"opencode"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`.
+Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`.
 
-The initial receipt includes a synthetic `claude_...`, `codex_...`, or `opencode_ses_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
-
-OpenCode uses its configured default model and agent, including project skills. Pass `model: "provider/model"` to override the model. It must already be installed and configured. Interactive permission or question requests fail the task rather than being silently approved.
+The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
 Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
 
-External coding workers automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
+Claude Code and Codex automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
 
 ```typescript
 Agent({
@@ -162,7 +160,7 @@ Pass `computer` to run the subagent's turn on another connected computer instead
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
-External coding workers also accept `computer`: the CLI runs on that connected computer, where it must be installed and signed in. If the result says it isn't installed or signed in there, don't run it on this machine instead.
+`subagent_type: "claude-code"` and `subagent_type: "codex"` also accept `computer`: the CLI runs on that connected computer, where it must be installed and signed in. If the result says it isn't installed or signed in there, don't run it on this machine instead.
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
