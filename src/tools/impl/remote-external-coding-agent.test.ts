@@ -279,7 +279,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(message.text).toContain("Done after drop");
   });
 
-  test("says the worker was lost when a restarted listener no longer has it", async () => {
+  test("says the worker is no longer listed when the listener lacks it", async () => {
     const first = new FakeComputer(() => accepted);
     // The replacement listener is a new process with no record of the worker.
     const second = new FakeComputer(
@@ -294,8 +294,9 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(second.syncs).toBe(1);
     expect(message.text).toContain("<status>failed</status>");
     expect(message.text).toContain(
-      "the Letta Code listener on brad-box restarted",
+      "The claude-code worker on brad-box is no longer listed",
     );
+    expect(message.text).not.toContain("did not survive");
     expect(message.text).not.toContain("may still be running");
   });
 
