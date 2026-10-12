@@ -3,6 +3,11 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
+import {
+  type ExternalToolCall,
+  type ExternalToolCallListener,
+  formatExternalToolCallArgs,
+} from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -32,6 +37,8 @@ interface TurnWaiter {
   startedAt: number;
   model?: string;
   latestAgentMessage?: string;
+  onToolCall?: ExternalToolCallListener;
+  seenToolCallIds: Set<string>;
 }
 
 interface CodexSession {
@@ -57,6 +64,8 @@ export interface CodexTurnOptions {
   signal?: AbortSignal;
   resumeThreadId?: string;
   onStarted?: (threadId: string, turnId: string) => void;
+  /** Called once per tool-like thread item (command, patch, MCP, search). */
+  onToolCall?: ExternalToolCallListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
 
@@ -266,14 +275,70 @@ function failSession(session: CodexSession, error: Error): void {
   });
 }
 
-function recordCompletedItem(
+/** Map a tool-like app-server ThreadItem to a display tool call. */
+export function describeCodexToolItem(
+  item: Record<string, unknown> | undefined,
+): ExternalToolCall | undefined {
+  const id = readString(item, "id");
+  if (!item || !id) return undefined;
+  const call = (name: string, args: unknown) => ({
+    id,
+    name,
+    args: formatExternalToolCallArgs(args),
+  });
+  switch (item.type) {
+    case "commandExecution":
+      return call("Bash", { command: item.command });
+    case "fileChange": {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      return call("Edit", {
+        files: changes.map((change) => readString(change, "path")),
+      });
+    }
+    case "mcpToolCall":
+      return call(
+        `${readString(item, "server") ?? "mcp"}/${readString(item, "tool") ?? "tool"}`,
+        item.arguments,
+      );
+    case "dynamicToolCall":
+      return call(readString(item, "tool") ?? "tool", item.arguments);
+    case "webSearch": {
+      // The query is often filled in only when the search completes.
+      const query = readString(item, "query");
+      return query ? call("WebSearch", { query }) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  if (!waiter.onToolCall) return;
+  const call = describeCodexToolItem(item);
+  if (!call || waiter.seenToolCallIds.has(call.id)) return;
+  waiter.seenToolCallIds.add(call.id);
+  try {
+    waiter.onToolCall(call);
+  } catch {
+    // Progress display must not break the turn.
+  }
+}
+
+function recordItem(
   session: CodexSession,
   params: Record<string, unknown>,
+  completed: boolean,
 ): boolean {
   const turnId = readString(params, "turnId");
   if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
   const item = asRecord(params.item);
-  if (item?.type === "agentMessage" && typeof item.text === "string") {
+  if (!item) return true;
+  recordToolItem(session.activeWaiter, item);
+  if (
+    completed &&
+    item.type === "agentMessage" &&
+    typeof item.text === "string"
+  ) {
     session.activeWaiter.latestAgentMessage = item.text;
   }
   return true;
@@ -313,8 +378,11 @@ function handleNotification(
   message: JsonRpcMessage,
 ): boolean {
   if (!message.params) return true;
+  if (message.method === "item/started") {
+    return recordItem(session, message.params, false);
+  }
   if (message.method === "item/completed") {
-    return recordCompletedItem(session, message.params);
+    return recordItem(session, message.params, true);
   }
   if (message.method === "turn/completed") {
     return settleTurn(session, message.params);
@@ -472,6 +540,7 @@ async function startTurnUnlocked(
   prompt: string,
   signal?: AbortSignal,
   onStarted?: (threadId: string, turnId: string) => void,
+  onToolCall?: ExternalToolCallListener,
 ): Promise<CodexTurnHandle> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
@@ -499,6 +568,8 @@ async function startTurnUnlocked(
       resolve,
       startedAt: Date.now(),
       model: session.model,
+      onToolCall,
+      seenToolCallIds: new Set(),
     };
   });
   onStarted?.(session.threadId, turnId);
@@ -518,7 +589,7 @@ function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "beforeStart"
+    "prompt" | "signal" | "onStarted" | "onToolCall" | "beforeStart"
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
@@ -528,6 +599,7 @@ function startTurn(
       options.prompt,
       options.signal,
       options.onStarted,
+      options.onToolCall,
     );
   });
 }
@@ -598,6 +670,7 @@ export async function sendCodexMessage(
         options.prompt,
         undefined,
         options.onStarted,
+        options.onToolCall,
       );
       if (options.signal?.aborted) {
         await session.client.request("turn/interrupt", {

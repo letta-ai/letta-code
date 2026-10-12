@@ -23,6 +23,7 @@ import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -57,6 +58,8 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
+  /** Live progress: called once per tool call the worker makes. */
+  onToolCall?: ExternalToolCallListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -506,6 +509,7 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            onToolCall: options.onToolCall,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -561,6 +565,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,
             sessionId,
+            onToolCall: options.onToolCall,
           },
           { env },
         ),

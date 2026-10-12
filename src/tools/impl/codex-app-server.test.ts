@@ -120,6 +120,16 @@ class FakeCodexTransport {
     this.send({ id, result });
   }
 
+  item(
+    method: "item/started" | "item/completed",
+    item: Record<string, unknown>,
+  ): void {
+    this.send({
+      method,
+      params: { threadId: this.threadId, turnId: this.turnId, item },
+    });
+  }
+
   close(detail = "transport died"): void {
     this.stderr.write(detail);
     this.stdout.end();
@@ -180,6 +190,59 @@ describe("Codex app-server lifecycle", () => {
       report: "real final text",
       success: true,
     });
+  });
+
+  test("emits each tool-like item once as a tool call", async () => {
+    const fake = new FakeCodexTransport();
+    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onToolCall: (call) => calls.push(call),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const command = {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "bun test",
+      status: "inProgress",
+    };
+    fake.item("item/started", command);
+    fake.item("item/completed", { ...command, status: "completed" });
+    fake.item("item/started", {
+      type: "fileChange",
+      id: "patch-1",
+      changes: [{ path: "src/a.ts", kind: { type: "update" }, diff: "" }],
+      status: "inProgress",
+    });
+    fake.item("item/started", {
+      type: "mcpToolCall",
+      id: "mcp-1",
+      server: "linear",
+      tool: "get_issue",
+      arguments: { id: "LET-1" },
+      status: "inProgress",
+    });
+    // Web search carries its query only once it completes.
+    fake.item("item/started", { type: "webSearch", id: "ws-1", query: "" });
+    fake.item("item/completed", {
+      type: "webSearch",
+      id: "ws-1",
+      query: "bun test",
+    });
+    fake.item("item/started", { type: "reasoning", id: "r-1", summary: [] });
+    fake.item("item/started", { type: "agentMessage", id: "m-1", text: "" });
+    fake.complete("done");
+    await handle.completion;
+    expect(calls).toEqual([
+      { id: "cmd-1", name: "Bash", args: '{"command":"bun test"}' },
+      { id: "patch-1", name: "Edit", args: '{"files":["src/a.ts"]}' },
+      { id: "mcp-1", name: "linear/get_issue", args: '{"id":"LET-1"}' },
+      { id: "ws-1", name: "WebSearch", args: '{"query":"bun test"}' },
+    ]);
   });
 
   test("replays completion that arrives before turn/start settles", async () => {

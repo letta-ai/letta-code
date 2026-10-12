@@ -429,6 +429,59 @@ describe("Claude stream sessions", () => {
     expect(aborted).toBe(true);
   });
 
+  test("emits one tool call per assistant tool_use block", async () => {
+    const fixture = transportFixture();
+    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onToolCall: (call) => calls.push(call),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    const toolUse = {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me look." },
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "Bash",
+            input: { command: "ls" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_2",
+            name: "Write",
+            input: { file_path: "a.txt", content: "x".repeat(2_000) },
+          },
+        ],
+      },
+    };
+    fixture.emit(toolUse);
+    // Claude Code can repeat an assistant message; each block counts once.
+    fixture.emit(toolUse);
+    fixture.emit({
+      type: "result",
+      is_error: false,
+      subtype: "success",
+      result: "done",
+    });
+    expect(await running).toMatchObject({ success: true });
+    expect(calls.map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: "toolu_1", name: "Bash" },
+      { id: "toolu_2", name: "Write" },
+    ]);
+    expect(calls[0]?.args).toBe('{"command":"ls"}');
+    expect(calls[1]?.args.length).toBeLessThanOrEqual(1_001);
+    expect(calls[1]?.args.endsWith("…")).toBe(true);
+  });
+
   test("cancellation settles failed and evicts the session", async () => {
     const fixture = transportFixture();
     let aborted = false;

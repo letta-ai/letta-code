@@ -6,6 +6,7 @@ import {
   clearAllSubagents,
   getSnapshot as getSubagentSnapshot,
 } from "@/agent/subagent-state";
+import { settingsManager } from "@/settings-manager";
 import { __resetCodexSessionsForTests } from "@/tools/impl/codex-app-server";
 import {
   type QueuedMessage,
@@ -143,6 +144,49 @@ rl.on("line", (line) => {
         error_code: "not_signed_in",
       });
       expect(queued).toHaveLength(0);
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "records Codex tool calls on the subagent snapshot while it runs",
+    async () => {
+      fakeExecutable(
+        "codex",
+        `if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const rl = require("node:readline").createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (typeof request.id !== "number") return;
+  if (request.method === "account/read") return send({ id: request.id, result: { account: { type: "chatgpt" } } });
+  if (request.method === "thread/start") return send({ id: request.id, result: { thread: { id: "thread-1" } } });
+  if (request.method !== "turn/start") return send({ id: request.id, result: {} });
+  send({ id: request.id, result: { turn: { id: "turn-1" } } });
+  const item = { type: "commandExecution", id: "cmd-1", command: "bun test", status: "inProgress" };
+  send({ method: "item/started", params: { threadId: "thread-1", turnId: "turn-1", item } });
+  send({ method: "item/completed", params: { threadId: "thread-1", turnId: "turn-1", item: { ...item, status: "completed" } } });
+  send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", items: [{ type: "agentMessage", text: "Done" }] } } });
+});`,
+      );
+      const originalHome = process.env.HOME;
+      process.env.HOME = bin;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+      try {
+        const result = await launch("codex");
+        expect(result).toMatchObject({ success: true });
+        const taskId = (result as { task_id: string }).task_id;
+        await backgroundTasks.get(taskId)?.completion;
+        const entry = getSubagentSnapshot().agents.find(
+          (agent) => agent.toolCallId === "call-1",
+        );
+        expect(entry?.toolCalls).toEqual([
+          { id: "cmd-1", name: "Bash", args: '{"command":"bun test"}' },
+        ]);
+      } finally {
+        process.env.HOME = originalHome;
+        await settingsManager.reset();
+      }
     },
   );
 });
