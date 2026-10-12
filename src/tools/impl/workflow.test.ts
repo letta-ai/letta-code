@@ -579,6 +579,47 @@ describe("Workflow tool (background launch)", () => {
     });
   });
 
+  test("wait: true returns the script value in the tool result without a background task", async () => {
+    installSpawner(async (request) => ({
+      value: `done:${request.prompt}`,
+      failed: false,
+      durationMs: 1,
+    }));
+    const before = backgroundProcesses.size;
+    const result = await workflow({ script: SCRIPT, wait: true });
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toContain('"count": 2');
+    expect(result.toolReturn).not.toContain("Task ID");
+    expect(backgroundProcesses.size).toBe(before);
+    expect(queuedMessages).toHaveLength(0);
+    expect(cleanupCalls).toBe(1);
+
+    const failed = await workflow({
+      script: `export const meta = { name: 'boom', description: 'fails' }
+throw new Error('boom')`,
+      wait: true,
+    });
+    expect(failed.status).toBe("error");
+    expect(failed.toolReturn).toContain("boom");
+    expect(cleanupCalls).toBe(2);
+  });
+
+  test("wait: true aborts the run when the tool call is interrupted", async () => {
+    installSpawner(gatedSpawner());
+    const controller = new AbortController();
+    const pending = workflow({
+      script: SCRIPT,
+      wait: true,
+      signal: controller.signal,
+    });
+    await Bun.sleep(20);
+    controller.abort();
+    const result = await pending;
+    expect(result.status).toBe("error");
+    expect(cleanupCalls).toBe(1);
+    expect(queuedMessages).toHaveLength(0);
+  });
+
   test("TaskStop aborts the run without waking the agent", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: SCRIPT });

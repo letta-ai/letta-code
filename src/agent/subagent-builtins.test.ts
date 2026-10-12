@@ -81,7 +81,7 @@ describe("built-in subagents", () => {
     expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
-  test.each(["claude-code", "codex"])(
+  test.each(["claude-code", "codex", "opencode"])(
     "does not allow custom files to override reserved %s adapter",
     async (name) => {
       tempDir = createTempProjectDir();

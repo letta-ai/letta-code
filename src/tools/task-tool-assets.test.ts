@@ -40,6 +40,13 @@ describe("stripComputerFromTaskDescription", () => {
     expect(stripped).not.toContain("`computer`");
   });
 
+  test("keeps external coding agent docs but drops their computer routing", () => {
+    const stripped = stripComputerFromTaskDescription(taskDescription);
+    expect(stripped).toContain("## External Coding Agents");
+    expect(stripped).toContain('subagent_type: "claude-code"');
+    expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
+  });
+
   test("keeps the surrounding sections intact", () => {
     const stripped = stripComputerFromTaskDescription(taskDescription);
     expect(stripped).toContain("## Forking Parent Context");

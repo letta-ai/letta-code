@@ -7,6 +7,10 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import {
+  type ExternalToolCallListener,
+  formatExternalToolCallArgs,
+} from "./external-tool-call";
 
 export interface ClaudeSessionTransport {
   process: Pick<ChildProcessWithoutNullStreams, "stdout" | "stderr" | "stdin">;
@@ -48,6 +52,8 @@ interface ClaudeSession {
   pendingControls: Map<string, PendingControl>;
   abortController: AbortController;
   removeUpstreamAbort: () => void;
+  onToolCall?: ExternalToolCallListener;
+  seenToolCallIds: Set<string>;
 }
 
 export interface ClaudeTurnOptions {
@@ -60,6 +66,8 @@ export interface ClaudeTurnOptions {
   resumeSessionId?: string;
   sessionId?: string;
   onStarted?: (sessionId: string) => void;
+  /** Called once per `tool_use` block the worker emits. */
+  onToolCall?: ExternalToolCallListener;
   beforeStart?: () => Promise<void>;
 }
 
@@ -307,6 +315,36 @@ function handleControlResponse(
   }
 }
 
+/** Emit each `tool_use` block of a stream-json `assistant` message once. */
+function handleAssistant(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (!session.onToolCall) return;
+  const content = readRecord(value.message)?.content;
+  if (!Array.isArray(content)) return;
+  for (const entry of content) {
+    const block = readRecord(entry);
+    if (
+      block?.type !== "tool_use" ||
+      typeof block.id !== "string" ||
+      typeof block.name !== "string" ||
+      session.seenToolCallIds.has(block.id)
+    )
+      continue;
+    session.seenToolCallIds.add(block.id);
+    try {
+      session.onToolCall({
+        id: block.id,
+        name: block.name,
+        args: formatExternalToolCallArgs(block.input),
+      });
+    } catch {
+      // Progress display must not break the session.
+    }
+  }
+}
+
 function settleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
@@ -399,6 +437,8 @@ async function launchSession(
     pendingControls: new Map(),
     abortController,
     removeUpstreamAbort,
+    onToolCall: options.onToolCall,
+    seenToolCallIds: new Set(),
   };
   sessions.set(sessionId, session);
   transport.process.stderr.setEncoding("utf8");
@@ -414,6 +454,8 @@ async function launchSession(
         handleControlResponse(session, value);
       } else if (value.type === "result") {
         handleResult(session, value);
+      } else if (value.type === "assistant") {
+        handleAssistant(session, value);
       } else if (
         value.type === "stream_event" &&
         readRecord(value.event)?.type === "message_start"

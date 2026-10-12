@@ -1,4 +1,8 @@
 import WebSocket from "ws";
+import {
+  setExplicitOrganizationId,
+  warmOrganizationId,
+} from "@/agent/organization-id";
 import { startScheduler as startCronScheduler } from "@/cron/scheduler";
 import { createSharedReminderState } from "@/reminders/state";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
@@ -556,6 +560,7 @@ export async function startListenerClient(
   setActiveRuntime(runtime);
   telemetry.setSurface(getListenerTelemetrySurface());
   telemetry.init();
+  setExplicitOrganizationId(opts.organizationId);
 
   await reloadListenerModAdapter(runtime);
   await connectWithRetry(runtime, opts);
@@ -679,6 +684,8 @@ async function connectWithRetry(
     return;
   }
   const apiKey = auth.apiKey;
+  // Best effort, cached, never awaited: lets agent shells see LETTA_ORGANIZATION_ID.
+  void warmOrganizationId();
 
   const url = new URL(opts.wsUrl);
   url.searchParams.set("deviceId", opts.deviceId);

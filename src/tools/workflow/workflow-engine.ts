@@ -24,14 +24,15 @@ import type {
   RunWorkflowOptions,
   SubagentSpawner,
   WorkflowExecutionResult,
-  WorkflowMcpResult,
   WorkflowProgressEvent,
+  WorkflowToolInfo,
+  WorkflowToolResult,
 } from "./types.ts";
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
 const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
-const DEFAULT_MAX_TOTAL_MCP_CALLS = 1000;
+const DEFAULT_MAX_TOTAL_TOOL_CALLS = 1000;
 const MAX_ITEMS_PER_HELPER = 4096;
 
 class Semaphore {
@@ -107,8 +108,8 @@ export async function executeWorkflow(
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
   const maxTotalDecisions =
     options.maxTotalDecisions ?? DEFAULT_MAX_TOTAL_DECISIONS;
-  const maxTotalMcpCalls =
-    options.maxTotalMcpCalls ?? DEFAULT_MAX_TOTAL_MCP_CALLS;
+  const maxTotalToolCalls =
+    options.maxTotalToolCalls ?? DEFAULT_MAX_TOTAL_TOOL_CALLS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
   );
@@ -116,7 +117,7 @@ export async function executeWorkflow(
   let currentPhase: string | null = null;
   let callCounter = 0;
   let decisionCounter = 0;
-  let mcpCallCounter = 0;
+  let toolCallCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
@@ -141,19 +142,53 @@ export async function executeWorkflow(
     return trackCall(callDecision(state, questions, callOptions));
   }
 
-  // Codex-style `tools` global: `await tools.mcp__server__tool(args)`. Only
-  // the invoking agent's MCP tools are exposed; any other name is undefined.
+  // Codex-style `tools` global: `await tools.Read(args)` or
+  // `await tools.mcp__server__tool(args)`. Only the invoking turn's built-ins
+  // and agent MCP tools are exposed; any other name is undefined.
+  const builtinToolNames = new Set(options.builtinToolNames ?? []);
+  const isCallable = (name: string) =>
+    builtinToolNames.has(name) || name.startsWith("mcp__");
   const tools = new Proxy(Object.freeze({}), {
     get: (_target, name) =>
-      typeof name === "string" && name.startsWith("mcp__")
-        ? (args?: unknown) => trackCall(callMcp(name, args))
+      typeof name === "string" && isCallable(name)
+        ? (args?: unknown) => trackCall(callTool(name, args))
         : undefined,
   });
 
-  async function callMcp(toolName: string, args?: unknown): Promise<unknown> {
-    const callMcpTool = options.callMcpTool;
-    if (!callMcpTool) {
-      throw new Error("tools are unavailable: no agent MCP scope.");
+  let toolInfo: Promise<WorkflowToolInfo[]> | undefined;
+  function loadToolInfo(): Promise<WorkflowToolInfo[]> {
+    if (!options.listTools) return Promise.resolve([]);
+    toolInfo ??= options.listTools().catch((error: unknown) => {
+      toolInfo = undefined;
+      throw error;
+    });
+    return toolInfo;
+  }
+
+  /** `[{ name, description }]` for every tool callable through `tools`. */
+  async function listTools(): Promise<
+    Array<{ name: string; description: string }>
+  > {
+    return (await loadToolInfo()).map(({ name, description }) => ({
+      name,
+      description,
+    }));
+  }
+
+  /** `{ name, description, inputSchema }`, or undefined for an unknown tool. */
+  async function describeTool(
+    name: unknown,
+  ): Promise<WorkflowToolInfo | undefined> {
+    if (typeof name !== "string" || !name) {
+      throw new Error("describeTool() requires a tool name string.");
+    }
+    return (await loadToolInfo()).find((tool) => tool.name === name);
+  }
+
+  async function callTool(toolName: string, args?: unknown): Promise<unknown> {
+    const call = options.callTool;
+    if (!call) {
+      throw new Error("tools are unavailable: no invoking tool scope.");
     }
     if (
       args !== undefined &&
@@ -162,29 +197,28 @@ export async function executeWorkflow(
       throw new Error(`tools.${toolName}() arguments must be an object.`);
     }
     if (signal.aborted) throw new Error("Workflow aborted.");
-    if (mcpCallCounter >= maxTotalMcpCalls) {
-      throw new Error(`Lifetime MCP call cap of ${maxTotalMcpCalls} reached.`);
+    if (toolCallCounter >= maxTotalToolCalls) {
+      throw new Error(
+        `Lifetime tool call cap of ${maxTotalToolCalls} reached.`,
+      );
     }
-    mcpCallCounter++;
+    toolCallCounter++;
     await semaphore.acquire();
     const startedAt = Date.now();
     const journal = (isError: boolean, error?: string) => {
       if (!options.journalPath) return;
       appendJournalEntry(options.journalPath, {
-        kind: "mcp_call",
+        kind: "tool_call",
         toolName,
         isError,
         durationMs: Date.now() - startedAt,
         ...(error ? { error } : {}),
       });
     };
-    let result: WorkflowMcpResult;
+    let result: WorkflowToolResult;
     try {
       if (signal.aborted) throw new Error("Workflow aborted.");
-      result = await callMcpTool(
-        toolName,
-        (args ?? {}) as Record<string, unknown>,
-      );
+      result = await call(toolName, (args ?? {}) as Record<string, unknown>);
     } catch (error) {
       journal(true, error instanceof Error ? error.message : String(error));
       throw error;
@@ -197,6 +231,9 @@ export async function executeWorkflow(
       throw new Error(`${toolName} failed: ${message}`);
     }
     journal(false);
+    // Built-ins resolve to their text output verbatim; MCP results normalize.
+    if (builtinToolNames.has(toolName))
+      return mcpText(result.content).join("\n");
     return result.structuredContent ?? mcpContentValue(result.content);
   }
 
@@ -433,6 +470,8 @@ export async function executeWorkflow(
     agent,
     decide,
     tools,
+    listTools,
+    describeTool,
     parallel,
     pipeline,
     phase,

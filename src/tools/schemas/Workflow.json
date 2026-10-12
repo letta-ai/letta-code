@@ -21,6 +21,10 @@
       "type": "string",
       "description": "Default model handle or alias for subagents (see `letta model list`). Omit to inherit the invoking conversation's model; per-call opts.model overrides this."
     },
+    "wait": {
+      "type": "boolean",
+      "description": "Run in the foreground and return the script's value in this tool result instead of launching a background task. Use for short scripts, such as chaining or filtering tool calls."
+    },
     "allowedTools": {
       "type": "array",
       "items": { "type": "string" },

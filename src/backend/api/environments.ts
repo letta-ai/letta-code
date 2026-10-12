@@ -9,6 +9,8 @@ export interface EnvironmentMetadata {
   workingDirectory?: string;
   gitBranch?: string;
   supported_commands?: string[];
+  /** Accepts `launch_subagent` with `notify: "caller"`. */
+  launch_subagent_notify_caller?: boolean;
   [key: string]: unknown;
 }
 

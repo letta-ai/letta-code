@@ -1,0 +1,120 @@
+/**
+ * Best-effort resolution of the Letta organization this runtime is signed into.
+ *
+ * Exposed to agent shells as `LETTA_ORGANIZATION_ID` (see `getShellEnv`).
+ * Resolution order:
+ *   1. An explicit organization (e.g. `letta server --org <id>`).
+ *   2. `GET /v1/metadata/balance` — returns the caller's `organization_id`.
+ *
+ * The lookup runs at most once per cooldown window, has a short timeout, and is
+ * never awaited by turns or tool calls. On failure the value stays unknown.
+ */
+
+import { getBalanceMetadata } from "@/backend/api/metadata";
+import { resolveBackendMode } from "@/backend/backend-mode";
+
+const DEFAULT_TIMEOUT_MS = 5_000;
+const FAILURE_RETRY_COOLDOWN_MS = 5 * 60_000;
+
+type GetBalanceFn = typeof getBalanceMetadata;
+
+let cachedOrganizationId: string | undefined;
+let pending: Promise<string | undefined> | null = null;
+let lastFailureAt: number | null = null;
+// Bumped by clearOrganizationId so a lookup started before /logout can't
+// re-cache the previous organization when it lands.
+let generation = 0;
+
+function normalizeOrganizationId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed === "local") return undefined;
+  return trimmed;
+}
+
+/** Record an organization known up front (e.g. `letta server --org`). */
+export function setExplicitOrganizationId(value: string | undefined): void {
+  const normalized = normalizeOrganizationId(value);
+  if (normalized) cachedOrganizationId = normalized;
+}
+
+/** Synchronously read the cached organization id, if resolved. */
+export function peekOrganizationId(): string | undefined {
+  return cachedOrganizationId;
+}
+
+export interface WarmOrganizationIdOptions {
+  getBalance?: GetBalanceFn;
+  timeoutMs?: number;
+  now?: () => number;
+}
+
+/**
+ * Start (or join) the one-shot organization lookup. Safe to call often: it
+ * returns the cached value or in-flight promise and never throws.
+ */
+export function warmOrganizationId(
+  options: WarmOrganizationIdOptions = {},
+): Promise<string | undefined> {
+  if (cachedOrganizationId) return Promise.resolve(cachedOrganizationId);
+  if (pending) return pending;
+  if (resolveBackendMode() === "local") return Promise.resolve(undefined);
+  // Keep unrelated tests hermetic: no implicit network lookup under `bun test`.
+  if (!options.getBalance && process.env.NODE_ENV === "test") {
+    return Promise.resolve(undefined);
+  }
+
+  const now = options.now ?? Date.now;
+  if (
+    lastFailureAt !== null &&
+    now() - lastFailureAt < FAILURE_RETRY_COOLDOWN_MS
+  ) {
+    return Promise.resolve(undefined);
+  }
+
+  const getBalance = options.getBalance ?? getBalanceMetadata;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+
+  const startedGeneration = generation;
+  const attempt = (async (): Promise<string | undefined> => {
+    const controller = new AbortController();
+    // Not unref'd: the lookup is short-lived and cleared in `finally`, and an
+    // unref'd timer that is the only pending work may never fire (seen on
+    // Windows), which would leave the abort, and the lookup, hanging.
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const balance = await getBalance({ signal: controller.signal });
+      return normalizeOrganizationId(balance?.organization_id);
+    } catch {
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
+  })().then((organizationId) => {
+    // Cleared (signed out) while in flight: drop this stale result.
+    if (startedGeneration !== generation) return undefined;
+    // An explicit org may have been set while the lookup was in flight.
+    if (!cachedOrganizationId && organizationId) {
+      cachedOrganizationId = organizationId;
+    }
+    if (!cachedOrganizationId) lastFailureAt = now();
+    pending = null;
+    return cachedOrganizationId;
+  });
+
+  pending = attempt;
+  return attempt;
+}
+
+/** Forget the resolved organization, e.g. after the user signs out. */
+export function clearOrganizationId(): void {
+  generation++;
+  cachedOrganizationId = undefined;
+  pending = null;
+  lastFailureAt = null;
+}
+
+/** Test-only: clear cached state. */
+export function __resetOrganizationIdForTests(): void {
+  clearOrganizationId();
+}

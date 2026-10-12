@@ -19,9 +19,11 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
+import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
-import { runCodexTurn } from "./codex-app-server";
+import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -29,8 +31,13 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
+import { runOpenCodeTurn } from "./opencode-session";
 
-export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
+export const EXTERNAL_CODING_AGENT_TYPES = [
+  "claude-code",
+  "codex",
+  "opencode",
+] as const;
 export type ExternalCodingAgentType =
   (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
 
@@ -56,6 +63,8 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
+  /** Live progress: called once per tool call the worker makes. */
+  onToolCall?: ExternalToolCallListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -113,6 +122,7 @@ export function isExternalCodingAgentType(
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
+  opencode: "opencode_",
 };
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -132,7 +142,12 @@ export function parseExternalCodingAgentId(
     const prefix = EXTERNAL_AGENT_ID_PREFIXES[type];
     if (agentId.startsWith(prefix)) {
       const sessionId = agentId.slice(prefix.length);
-      if (NATIVE_SESSION_ID_PATTERN.test(sessionId)) {
+      if (
+        (type === "opencode"
+          ? /^ses_[a-zA-Z0-9]+$/
+          : NATIVE_SESSION_ID_PATTERN
+        ).test(sessionId)
+      ) {
         return { type, sessionId };
       }
     }
@@ -212,6 +227,12 @@ export function buildExternalCodingAgentCommand(
     "type" | "prompt" | "model" | "resumeSessionId" | "cwd" | "mcpReminder"
   >,
 ): ExternalCodingAgentCommand {
+  if (options.type === "opencode") {
+    return {
+      executable: "opencode",
+      args: ["serve", "--hostname=127.0.0.1", "--port=0"],
+    };
+  }
   if (options.type === "claude-code") {
     const args = [
       "--print",
@@ -266,6 +287,10 @@ async function runProcess(
   return { exitCode: result.exitCode, stdout, stderr };
 }
 
+const MISSING_EXECUTABLE_PREFIX = "Required executable '";
+const CODEX_NOT_READY_PREFIX = "Codex executable is not ready";
+const CLAUDE_NOT_SIGNED_IN_PREFIX = "claude-code authentication is not ready";
+
 async function defaultRunPreflight(
   executable: string,
   args: string[],
@@ -301,11 +326,28 @@ async function defaultRunPreflight(
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
       throw new Error(
-        `Required executable '${executable}' was not found on PATH`,
+        `${MISSING_EXECUTABLE_PREFIX}${executable}' was not found on PATH`,
       );
     }
     throw error;
   }
+}
+
+/** Classify this module's startup failures for a remote caller. */
+export function classifyExternalCodingAgentStartupError(
+  error: string,
+): SubagentStartupErrorCode | undefined {
+  if (
+    error.startsWith(MISSING_EXECUTABLE_PREFIX) ||
+    error.startsWith(CODEX_NOT_READY_PREFIX)
+  )
+    return "not_installed";
+  if (
+    error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
+    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR)
+  )
+    return "not_signed_in";
+  return undefined;
 }
 
 function preflightArgs(type: ExternalCodingAgentType): string[] {
@@ -329,8 +371,8 @@ function assertPreflightReady(
   }
   throw new Error(
     type === "codex"
-      ? `Codex executable is not ready${output ? `: ${output}` : ""}`
-      : `${type} authentication is not ready${output ? `: ${output}` : ""}`,
+      ? `${CODEX_NOT_READY_PREFIX}${output ? `: ${output}` : ""}`
+      : `${CLAUDE_NOT_SIGNED_IN_PREFIX}${output ? `: ${output}` : ""}`,
   );
 }
 
@@ -459,6 +501,21 @@ export async function runExternalCodingAgent(
       durationMs: Date.now() - startedAt,
     };
   }
+  if (options.type === "opencode") {
+    // OpenCode persists native sessions itself; transcript capture currently
+    // supports only Claude/Codex formats, not OpenCode's database.
+    return runOpenCodeTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(
+            formatExternalCodingAgentId("opencode", sessionId),
+          ),
+      },
+      env,
+    );
+  }
   if (options.type === "codex") {
     try {
       const preflight = await (deps.runPreflight ?? defaultRunPreflight)(
@@ -484,6 +541,7 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            onToolCall: options.onToolCall,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -539,6 +597,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,
             sessionId,
+            onToolCall: options.onToolCall,
           },
           { env },
         ),

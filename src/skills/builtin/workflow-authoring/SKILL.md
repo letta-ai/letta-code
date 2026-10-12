@@ -113,17 +113,22 @@ Cloud decisions service.
       })
       const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
 
-- `tools.mcp__server__tool(args?)` → Promise; not a subagent call. Calls one
-  of the invoking agent's MCP tools directly (find names with
-  `letta mcp search` / `letta mcp tools` before writing the script). Each call
-  goes through the same permission rules as a normal MCP tool call; a tool
-  that would ask for approval throws instead, so the user must allow it first.
-  Resolves to the tool's `structuredContent`, else its text output (parsed
-  when it is JSON), else the raw `content` array. Throws when the tool is
-  unavailable, not allowed, or reports an error; `parallel()` and `pipeline()`
-  propagate that rejection. Use it for deterministic fetches and
-  writes whose arguments the script already knows; use `agent()` when a step
-  needs judgment.
+- `tools.<name>(args?)` → Promise; not a subagent call. Calls a built-in
+  tool registered for the invoking turn (names depend on the toolset, e.g.
+  `tools.Read` or `tools.exec_command`; check `listTools()`) or one of the
+  invoking agent's MCP tools (`tools.mcp__server__tool`) directly. Agent, Workflow,
+  AskUserQuestion, and SendAgentMessage are not exposed. Each call goes
+  through the same permission rules as a normal tool call; a tool that would
+  ask for approval throws instead, so the user must allow it first. A built-in
+  resolves to its text output. An MCP tool resolves to its
+  `structuredContent`, else its text output (parsed when it is JSON), else the
+  raw `content` array. Throws when the tool is unavailable, not allowed, or
+  reports an error; `parallel()` and `pipeline()` propagate that rejection.
+  Use it for deterministic reads and writes whose arguments the script
+  already knows; use `agent()` when a step needs judgment.
+- `listTools()` → Promise of `[{ name, description }]` for every callable
+  tool. `describeTool(name)` → Promise of `{ name, description, inputSchema }`,
+  or `undefined` for an unknown name.
 
       const issues = await tools.mcp__linear__list_issues({ team: 'LET', limit: 20 })
 
@@ -143,8 +148,8 @@ Math, Array, etc.) are available; the hooks are the only globals provided.
 The script runs inside the CLI process with the CLI's own privileges (the
 `vm` context is a scope, not a security boundary), and the user approves it
 by reading it. Keep the script to orchestration: decide what runs and combine
-results. Direct MCP calls belong in `tools.mcp__*()`; other reading, searching, and
-writing belongs in subagents, where the tool allowlist applies.
+results. Direct tool calls with known arguments belong in `tools.*()`; work that
+needs judgment belongs in subagents, where the tool allowlist applies.
 
 ## Pipeline vs barrier
 

@@ -7,6 +7,8 @@ export interface BalanceMetadata {
   monthly_credit_balance: number;
   purchased_credit_balance: number;
   billing_tier: string;
+  /** The caller's organization (newer servers). */
+  organization_id?: string;
 }
 
 type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
@@ -36,8 +38,15 @@ export function getFeedbackClientType(
   return "cli";
 }
 
-export async function getBalanceMetadata(): Promise<BalanceMetadata> {
-  return apiRequest<BalanceMetadata>("GET", "/v1/metadata/balance");
+export async function getBalanceMetadata(
+  options: { signal?: AbortSignal } = {},
+): Promise<BalanceMetadata> {
+  return apiRequest<BalanceMetadata>(
+    "GET",
+    "/v1/metadata/balance",
+    undefined,
+    options.signal ? { signal: options.signal } : {},
+  );
 }
 
 export async function getModelQuotaMetadata(): Promise<ModelQuotaMetadata> {
