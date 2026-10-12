@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { APIConnectionError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -13,6 +14,10 @@ import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
 import { drainRecoveryStreamWithEmission } from "./recovery";
+import {
+  sendApprovalContinuationWithRetry,
+  sendMessageStreamWithRetry,
+} from "./send";
 import type { LocalTransport } from "./transport";
 import { shouldRetryPostStopTurn } from "./turn-send";
 import { drainTurnStreamWithEmission } from "./turn-stream";
@@ -140,6 +145,124 @@ afterEach(() => {
 });
 
 describe("listener stream resume policy", () => {
+  test("cancellation stops a connection retry without another submission", async () => {
+    const transport = new MockTransport();
+    const runtime = createTestRuntime(transport);
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    let submissions = 0;
+    __testSetBackend({
+      capabilities,
+      createConversationMessageStream: async () => {
+        submissions++;
+        setTimeout(
+          () =>
+            runtime.turnLifecycle.requestCancellation({
+              cause: "explicit_user",
+            }),
+          50,
+        );
+        throw new APIConnectionError({});
+      },
+    } as unknown as Backend);
+    try {
+      await expect(
+        sendMessageStreamWithRetry(
+          "conversation-1",
+          [{ role: "user", content: "Continue", otid: "cancel-input" }],
+          {
+            skillSources: [],
+            preparedToolContext: {
+              contextId: "test",
+              loadedToolNames: [],
+              clientTools: [],
+            },
+          },
+          transport,
+          runtime,
+          lease,
+        ),
+      ).rejects.toThrow("Cancelled by user");
+      expect(submissions).toBe(1);
+    } finally {
+      runtime.turnLifecycle.finish(lease, "cancelled");
+    }
+  });
+
+  test.each(["message", "approval"])(
+    "retries unacknowledged %s input without changing its identity",
+    async (kind) => {
+      const transport = new MockTransport();
+      const runtime = createTestRuntime(transport);
+      const lease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      const messages: Parameters<typeof sendMessageStreamWithRetry>[1] =
+        kind === "message"
+          ? [{ role: "user", content: "Continue", otid: "original-input" }]
+          : [
+              {
+                type: "approval",
+                otid: "original-result",
+                approvals: [
+                  {
+                    type: "tool",
+                    tool_call_id: "completed-tool",
+                    status: "success",
+                    tool_return: "already executed",
+                  },
+                ],
+              },
+            ];
+      const submitted: string[] = [];
+      __testSetBackend({
+        capabilities,
+        createConversationMessageStream: async (
+          _id: string,
+          body: { messages: unknown },
+        ) => {
+          submitted.push(JSON.stringify(body.messages));
+          if (submitted.length < 5) throw new APIConnectionError({});
+          return stream([]);
+        },
+      } as unknown as Backend);
+      try {
+        const send =
+          kind === "message"
+            ? sendMessageStreamWithRetry
+            : sendApprovalContinuationWithRetry;
+        await send(
+          "conversation-1",
+          messages,
+          {
+            streamTokens: true,
+            background: true,
+            skillSources: [],
+            preparedToolContext: {
+              contextId: "test",
+              loadedToolNames: [],
+              clientTools: [],
+            },
+          },
+          transport,
+          runtime,
+          lease,
+        );
+        expect(submitted).toHaveLength(5);
+        expect(new Set(submitted).size).toBe(1);
+        expect(submitted[0]).toContain(
+          kind === "message" ? "original-input" : "original-result",
+        );
+      } finally {
+        runtime.turnLifecycle.finish(lease, "end_turn");
+      }
+    },
+    20_000,
+  );
+
   test("lost recovery authority records the run but emits no stale stream state", async () => {
     const transport = new MockTransport();
     const runtime = createTestRuntime(transport);
