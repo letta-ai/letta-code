@@ -6,6 +6,9 @@ import {
   expect,
   test,
 } from "bun:test";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configureBackendMode } from "@/backend";
 import { buildMcpToolCatalog, callMcpCatalogTool } from "@/mcp-tool-catalog";
@@ -48,10 +51,11 @@ async function run(
   approval?: NonNullable<
     Parameters<typeof executeTool>[2]
   >["onNestedToolApproval"],
+  workingDirectory = process.cwd(),
 ) {
   await loadSpecificTools(["CodeMode", "Read", "Bash", "Write"]);
   const turn = await prepareCurrentToolExecutionContext({
-    workingDirectory: process.cwd(),
+    workingDirectory,
     runtimeContext: { agentId },
   });
   return executeTool(
@@ -83,36 +87,87 @@ function configuredLocalServer() {
       : originalGetMcpServers(id);
 }
 
-describe("MCP-only CodeMode", () => {
-  test("isolates JS and denies built-in and non-MCP tools even if registered", async () => {
+describe("CodeMode", () => {
+  test("isolates JS and exposes only registered built-ins and MCP tools", async () => {
     const result =
       await run(`text([typeof process, typeof require, typeof fetch].join(','));
-      for (const name of ['Read','Bash','Write','Workflow','CodeMode','attached_non_mcp']) {
-        try { await tool.call(name, {}); } catch (e) { text(name + ':' + e.message); }
-      }
+      const names = ALL_TOOLS.map((t) => t.name);
+      text('listed:' + ['Read','Bash','Write'].every((n) => names.includes(n)));
+      text('hidden:' + [typeof tools.CodeMode, typeof tools.Edit].join(','));
+      text('searchTools:' + typeof searchTools);
       return 5`);
     expect(result.status).toBe("success");
     const output = JSON.stringify(result.toolReturn);
     expect(output).toContain("undefined,undefined,undefined");
-    for (const name of [
-      "Read",
-      "Bash",
-      "Write",
-      "Workflow",
-      "CodeMode",
-      "attached_non_mcp",
-    ]) {
-      expect(output).toContain(`${name}:MCP tool is not available`);
+    expect(output).toContain("listed:true");
+    // CodeMode never nests; unregistered built-ins are not exposed.
+    expect(output).toContain("hidden:undefined,undefined");
+    expect(output).toContain("searchTools:undefined");
+  });
+
+  test("calls built-in tools through permissions and returns their output", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "codemode-"));
+    const file = join(dir, "note.txt");
+    writeFileSync(file, "alpha\nbeta\n");
+    try {
+      // Read inside the working directory is auto-allowed: no approval needed.
+      const read = await run(
+        `const out = await tools.Read({ file_path: ${JSON.stringify(file)} });
+        return out.includes('beta')`,
+        undefined,
+        dir,
+      );
+      expect(read.status).toBe("success");
+      expect(JSON.stringify(read.toolReturn)).toContain('\\"value\\":true');
+      expect(JSON.stringify(read.toolReturn)).toContain(
+        "Read(file_path): success",
+      );
+
+      // Bash requires approval: unavailable fails closed, approved runs.
+      const marker = join(dir, "marker");
+      const script = `return (await tools.Bash({ command: 'touch ${marker} && echo codemode-bash', description: 'touch' })).trim()`;
+      const denied = await run(script, undefined, dir);
+      expect(JSON.stringify(denied.toolReturn)).toContain(
+        "Bash approval unavailable",
+      );
+      expect(existsSync(marker)).toBe(false);
+      const approvals: string[] = [];
+      const approved = await run(
+        script,
+        async ({ toolName }) => {
+          approvals.push(toolName);
+          return { approved: true };
+        },
+        dir,
+      );
+      expect(approved.status).toBe("success");
+      expect(approvals).toEqual(["Bash"]);
+      expect(JSON.stringify(approved.toolReturn)).toContain("codemode-bash");
+      expect(existsSync(marker)).toBe(true);
+
+      // A failed built-in call throws inside the script.
+      const failed = await run(
+        `try { await tools.Read({ file_path: ${JSON.stringify(join(dir, "missing.txt"))} }); return 'no-throw' } catch (e) { return 'threw' }`,
+        undefined,
+        dir,
+      );
+      expect(JSON.stringify(failed.toolReturn)).toContain("threw");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test("connects agent-configured real stdio MCP on demand and requires approval", async () => {
     configuredLocalServer();
-    const script = `const names = await tool.list(); const found = await tool.search('echo'); const schema = await tool.describe('mcp__everything__echo');
-      const r = await tool.call(schema.name, {message:'hello'}); return {names:names.length, found:found[0].name, schema:schema.inputSchema, result:r.output}`;
+    const script = `const listed = ALL_TOOLS.some((t) => t.name === 'mcp__everything__echo');
+      const schema = await describeTool('mcp__everything__echo');
+      const missing = await describeTool('mcp__everything__nope');
+      const r = await tools.mcp__everything__echo({ message: 'hello' });
+      return { listed, schema: schema.inputSchema, missing: missing === undefined, result: r }`;
     const denied = await run(script);
-    expect(JSON.stringify(denied)).toContain("approval unavailable");
-    expect(JSON.stringify(denied.toolReturn)).toContain("approval unavailable");
+    expect(JSON.stringify(denied.toolReturn)).toContain(
+      "mcp__everything__echo approval unavailable",
+    );
     let approvals = 0;
     const approved = await run(
       script,
@@ -125,10 +180,11 @@ describe("MCP-only CodeMode", () => {
     );
     expect(approved.status).toBe("success");
     expect(approvals).toBe(1);
-    expect(JSON.stringify(approved.toolReturn)).toContain("hello");
-    expect(JSON.stringify(approved.toolReturn)).toContain(
-      "mcp__everything__echo",
-    );
+    const output = JSON.stringify(approved.toolReturn);
+    expect(output).toContain('\\"listed\\":true');
+    expect(output).toContain('\\"missing\\":true');
+    expect(output).toContain("Echo: hello");
+    expect(output).toContain("mcp__everything__echo(message): success");
   });
 
   test("uses Cloud agent associations, scoped tool IDs and run route (not attached Tools)", async () => {

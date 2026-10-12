@@ -603,17 +603,17 @@ export async function executeCodeModeRemoteTool(options: {
   });
 }
 
-export function getCodeModeCapabilities(contextId: string):
-  | {
-      agentId?: string;
-      workingDirectory: string;
-    }
+export function getCodeModeCapabilities(
+  contextId: string,
+):
+  | { agentId?: string; workingDirectory: string; builtins: ToolSchema[] }
   | undefined {
   const context = getExecutionContextById(contextId);
   if (!context || !context.toolRegistry.has("CodeMode")) return undefined;
   return {
     agentId: context.runtimeContext.agentId ?? undefined,
     workingDirectory: context.workingDirectory,
+    builtins: [...context.toolRegistry.values()].map((tool) => tool.schema),
   };
 }
 
