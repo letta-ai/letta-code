@@ -53,12 +53,7 @@ export interface CreateAgentSandboxResponse {
 }
 
 export async function listEnvironments(
-  options: {
-    limit?: number;
-    after?: string;
-    onlineOnly?: boolean;
-    signal?: AbortSignal;
-  } = {},
+  options: { limit?: number; after?: string; onlineOnly?: boolean } = {},
 ): Promise<ListEnvironmentsResponse> {
   return apiRequest<ListEnvironmentsResponse>(
     "GET",
@@ -70,7 +65,6 @@ export async function listEnvironments(
         after: options.after,
         onlineOnly: options.onlineOnly,
       },
-      ...(options.signal && { signal: options.signal }),
     },
   );
 }

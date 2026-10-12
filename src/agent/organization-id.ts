@@ -4,19 +4,19 @@
  * Exposed to agent shells as `LETTA_ORGANIZATION_ID` (see `getShellEnv`).
  * Resolution order:
  *   1. An explicit organization (e.g. `letta server --org <id>`).
- *   2. `GET /v1/environments?limit=1` — entries are scoped to the caller's org.
+ *   2. `GET /v1/metadata/balance` — returns the caller's `organization_id`.
  *
  * The lookup runs at most once per cooldown window, has a short timeout, and is
  * never awaited by turns or tool calls. On failure the value stays unknown.
  */
 
-import { listEnvironments } from "@/backend/api/environments";
+import { getBalanceMetadata } from "@/backend/api/metadata";
 import { resolveBackendMode } from "@/backend/backend-mode";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const FAILURE_RETRY_COOLDOWN_MS = 5 * 60_000;
 
-type ListEnvironmentsFn = typeof listEnvironments;
+type GetBalanceFn = typeof getBalanceMetadata;
 
 let cachedOrganizationId: string | undefined;
 let pending: Promise<string | undefined> | null = null;
@@ -41,7 +41,7 @@ export function peekOrganizationId(): string | undefined {
 }
 
 export interface WarmOrganizationIdOptions {
-  list?: ListEnvironmentsFn;
+  getBalance?: GetBalanceFn;
   timeoutMs?: number;
   now?: () => number;
 }
@@ -57,7 +57,7 @@ export function warmOrganizationId(
   if (pending) return pending;
   if (resolveBackendMode() === "local") return Promise.resolve(undefined);
   // Keep unrelated tests hermetic: no implicit network lookup under `bun test`.
-  if (!options.list && process.env.NODE_ENV === "test") {
+  if (!options.getBalance && process.env.NODE_ENV === "test") {
     return Promise.resolve(undefined);
   }
 
@@ -69,7 +69,7 @@ export function warmOrganizationId(
     return Promise.resolve(undefined);
   }
 
-  const list = options.list ?? listEnvironments;
+  const getBalance = options.getBalance ?? getBalanceMetadata;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   const attempt = (async (): Promise<string | undefined> => {
@@ -79,12 +79,8 @@ export function warmOrganizationId(
     // Windows), which would leave the abort, and the lookup, hanging.
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await list({ limit: 1, signal: controller.signal });
-      for (const entry of response?.connections ?? []) {
-        const organizationId = normalizeOrganizationId(entry?.organizationId);
-        if (organizationId) return organizationId;
-      }
-      return undefined;
+      const balance = await getBalance({ signal: controller.signal });
+      return normalizeOrganizationId(balance?.organization_id);
     } catch {
       return undefined;
     } finally {
