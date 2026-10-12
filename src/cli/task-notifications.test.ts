@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   addToMessageQueue,
   clearPendingMessages,
@@ -165,6 +165,12 @@ describe("messageQueueBridge", () => {
     clearPendingMessages();
   });
 
+  afterEach(() => {
+    // The bridge and its buffered messages are shared with other test files.
+    setMessageQueueAdder(null);
+    clearPendingMessages();
+  });
+
   test("isQueueBridgeConnected returns false when not set", () => {
     expect(isQueueBridgeConnected()).toBe(false);
   });
@@ -209,7 +215,7 @@ describe("messageQueueBridge", () => {
 
     addToMessageQueue({ kind: "user", text: "message 1" });
     setMessageQueueAdder(null);
-    addToMessageQueue({ kind: "user", text: "message 2" }); // Should be dropped
+    addToMessageQueue({ kind: "user", text: "message 2" }); // Buffered until reconnect.
 
     expect(messages).toEqual([{ kind: "user", text: "message 1" }]);
     expect(isQueueBridgeConnected()).toBe(false);
