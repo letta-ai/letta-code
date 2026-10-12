@@ -133,6 +133,12 @@ export const EXTERNAL_CODING_AGENT_DESCRIPTORS = [
       "Start a locally installed Codex coding session with mid-turn steering",
     recommendedModel: "configured Codex default",
   },
+  {
+    name: "opencode",
+    description:
+      "Start a locally installed OpenCode session with steering and native resumption",
+    recommendedModel: "configured OpenCode default",
+  },
 ] as const;
 
 /**
@@ -151,7 +157,9 @@ function getGlobalAgentsDir(): string {
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
-const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set(["claude-code", "codex"]);
+const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set<string>(
+  EXTERNAL_CODING_AGENT_DESCRIPTORS.map(({ name }) => name),
+);
 
 // ============================================================================
 // Cache

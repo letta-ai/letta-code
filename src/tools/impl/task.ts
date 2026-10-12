@@ -637,7 +637,8 @@ export async function launchSubagent(
   if (args.mcp && !isExternalCodingAgent) {
     return {
       success: false,
-      error: "mcp is only supported for claude-code and codex subagents",
+      error:
+        "mcp is only supported for claude-code, codex, and opencode subagents",
     };
   }
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);

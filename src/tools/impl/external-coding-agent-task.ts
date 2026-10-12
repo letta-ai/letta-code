@@ -3,6 +3,7 @@ import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   createExternalCodingAgentConfig,
+  type ExternalCodingAgentType,
   parseExternalCodingAgentId,
   runExternalCodingAgent,
 } from "./external-coding-agent";
@@ -17,7 +18,7 @@ import {
 } from "./task";
 
 export function trackExternalFollowupCompletion(args: {
-  type: "claude-code" | "codex";
+  type: ExternalCodingAgentType;
   agentId: string;
   message: string;
   parentScope: {
@@ -60,7 +61,7 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (target) {
+        if (target && target.type !== "opencode") {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {

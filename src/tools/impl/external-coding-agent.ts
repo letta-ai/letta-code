@@ -31,8 +31,13 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
+import { runOpenCodeTurn } from "./opencode-session";
 
-export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
+export const EXTERNAL_CODING_AGENT_TYPES = [
+  "claude-code",
+  "codex",
+  "opencode",
+] as const;
 export type ExternalCodingAgentType =
   (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
 
@@ -117,6 +122,7 @@ export function isExternalCodingAgentType(
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
+  opencode: "opencode_",
 };
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -136,7 +142,12 @@ export function parseExternalCodingAgentId(
     const prefix = EXTERNAL_AGENT_ID_PREFIXES[type];
     if (agentId.startsWith(prefix)) {
       const sessionId = agentId.slice(prefix.length);
-      if (NATIVE_SESSION_ID_PATTERN.test(sessionId)) {
+      if (
+        (type === "opencode"
+          ? /^ses_[a-zA-Z0-9]+$/
+          : NATIVE_SESSION_ID_PATTERN
+        ).test(sessionId)
+      ) {
         return { type, sessionId };
       }
     }
@@ -216,6 +227,12 @@ export function buildExternalCodingAgentCommand(
     "type" | "prompt" | "model" | "resumeSessionId" | "cwd" | "mcpReminder"
   >,
 ): ExternalCodingAgentCommand {
+  if (options.type === "opencode") {
+    return {
+      executable: "opencode",
+      args: ["serve", "--hostname=127.0.0.1", "--port=0"],
+    };
+  }
   if (options.type === "claude-code") {
     const args = [
       "--print",
@@ -483,6 +500,21 @@ export async function runExternalCodingAgent(
       error: normalizeError(error),
       durationMs: Date.now() - startedAt,
     };
+  }
+  if (options.type === "opencode") {
+    // OpenCode persists native sessions itself; transcript capture currently
+    // supports only Claude/Codex formats, not OpenCode's database.
+    return runOpenCodeTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(
+            formatExternalCodingAgentId("opencode", sessionId),
+          ),
+      },
+      env,
+    );
   }
   if (options.type === "codex") {
     try {
