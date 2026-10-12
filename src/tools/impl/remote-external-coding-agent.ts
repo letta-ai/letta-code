@@ -366,7 +366,7 @@ export async function launchRemoteExternalCodingAgent(
             success: false,
             error:
               error instanceof RemoteWorkerLostError && !signal?.aborted
-                ? `The ${type} worker on ${computer} was lost: the Letta Code listener on ${computer} restarted before the worker reported a result, and the worker did not survive the restart. Launch it again if the work is still needed.`
+                ? `The ${type} worker on ${computer} is no longer listed: it may have finished while this session was disconnected (results are kept for 30 minutes), or the listener restarted. Check ${computer} or launch it again if the work is still needed.`
                 : // No remote stop command exists yet; the worker keeps running.
                   `${signal?.aborted ? "Stopped following this subagent" : errorMessage(error)}. The ${type} worker may still be running on ${computer}.`,
             durationMs: Date.now() - startedAt,
