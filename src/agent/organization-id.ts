@@ -21,6 +21,9 @@ type GetBalanceFn = typeof getBalanceMetadata;
 let cachedOrganizationId: string | undefined;
 let pending: Promise<string | undefined> | null = null;
 let lastFailureAt: number | null = null;
+// Bumped by clearOrganizationId so a lookup started before /logout can't
+// re-cache the previous organization when it lands.
+let generation = 0;
 
 function normalizeOrganizationId(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -72,6 +75,7 @@ export function warmOrganizationId(
   const getBalance = options.getBalance ?? getBalanceMetadata;
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  const startedGeneration = generation;
   const attempt = (async (): Promise<string | undefined> => {
     const controller = new AbortController();
     // Not unref'd: the lookup is short-lived and cleared in `finally`, and an
@@ -87,6 +91,8 @@ export function warmOrganizationId(
       clearTimeout(timer);
     }
   })().then((organizationId) => {
+    // Cleared (signed out) while in flight: drop this stale result.
+    if (startedGeneration !== generation) return undefined;
     // An explicit org may have been set while the lookup was in flight.
     if (!cachedOrganizationId && organizationId) {
       cachedOrganizationId = organizationId;
@@ -102,6 +108,7 @@ export function warmOrganizationId(
 
 /** Forget the resolved organization, e.g. after the user signs out. */
 export function clearOrganizationId(): void {
+  generation++;
   cachedOrganizationId = undefined;
   pending = null;
   lastFailureAt = null;

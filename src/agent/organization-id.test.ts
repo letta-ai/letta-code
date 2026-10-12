@@ -105,4 +105,20 @@ describe("organization id resolution", () => {
     }));
     expect(await warmOrganizationId({ getBalance })).toBe("org-new");
   });
+
+  test("a lookup in flight during clearOrganizationId does not re-cache the old org", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const { getBalance } = fakeBalance(async () => {
+      await gate;
+      return { organization_id: "org-old" };
+    });
+    const inFlight = warmOrganizationId({ getBalance });
+    clearOrganizationId();
+    release();
+    expect(await inFlight).toBeUndefined();
+    expect(peekOrganizationId()).toBeUndefined();
+  });
 });
