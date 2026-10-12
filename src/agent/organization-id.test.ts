@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   __resetOrganizationIdForTests,
+  clearOrganizationId,
   peekOrganizationId,
   setExplicitOrganizationId,
   warmOrganizationId,
@@ -93,5 +94,15 @@ describe("organization id resolution", () => {
       await warmOrganizationId({ getBalance, timeoutMs: 10 }),
     ).toBeUndefined();
     expect(peekOrganizationId()).toBeUndefined();
+  });
+
+  test("clearOrganizationId forgets the org so a new sign-in re-resolves", async () => {
+    setExplicitOrganizationId("org-old");
+    clearOrganizationId();
+    expect(peekOrganizationId()).toBeUndefined();
+    const { getBalance } = fakeBalance(async () => ({
+      organization_id: "org-new",
+    }));
+    expect(await warmOrganizationId({ getBalance })).toBe("org-new");
   });
 });

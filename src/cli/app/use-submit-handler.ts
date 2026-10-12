@@ -1596,7 +1596,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               await revokeToken(currentSettings.refreshToken);
             }
 
-            // Clear all credentials including secrets
+            (await import("@/agent/organization-id")).clearOrganizationId();
             await settingsManager.logout();
 
             // Logged out while already using a local agent → stay in place.

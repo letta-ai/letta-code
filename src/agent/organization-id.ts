@@ -100,9 +100,14 @@ export function warmOrganizationId(
   return attempt;
 }
 
-/** Test-only: clear cached state. */
-export function __resetOrganizationIdForTests(): void {
+/** Forget the resolved organization, e.g. after the user signs out. */
+export function clearOrganizationId(): void {
   cachedOrganizationId = undefined;
   pending = null;
   lastFailureAt = null;
+}
+
+/** Test-only: clear cached state. */
+export function __resetOrganizationIdForTests(): void {
+  clearOrganizationId();
 }
