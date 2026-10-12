@@ -107,6 +107,37 @@ describe("listener write_file", () => {
     expect(harness.sent[1]).toMatchObject({ bytes_written: 2, success: true });
   });
 
+  test("move_to publishes a chunked temporary file at its final path", async () => {
+    const root = await tempRoot();
+    const partial = join(root, "x.bin.partial-1");
+    const target = join(root, "final", "x.bin");
+    const harness = createHarness();
+
+    await harness.send({
+      path: partial,
+      content: Buffer.from([1, 2]).toString("base64"),
+      encoding: "base64",
+      request_id: "m1",
+    });
+    await harness.send({
+      path: partial,
+      content: Buffer.from([3]).toString("base64"),
+      encoding: "base64",
+      append: true,
+      move_to: target,
+      request_id: "m2",
+    });
+    expect(await readFile(target)).toEqual(Buffer.from([1, 2, 3]));
+    await expect(readFile(partial)).rejects.toThrow();
+    expect(harness.sent[1]).toEqual({
+      type: "write_file_response",
+      request_id: "m2",
+      path: target,
+      bytes_written: 1,
+      success: true,
+    });
+  });
+
   test("base64 resolves ~/ against the home directory", async () => {
     const home = await tempRoot();
     process.env.HOME = home;
@@ -151,7 +182,7 @@ describe("listener write_file", () => {
       expect.objectContaining({
         request_id: "e3",
         success: false,
-        error: "write_file append requires base64 encoding",
+        error: "write_file append/move_to require base64",
       }),
     ]);
   });

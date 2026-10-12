@@ -558,7 +558,8 @@ export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
     (c.encoding === undefined ||
       c.encoding === "utf8" ||
       c.encoding === "base64") &&
-    (c.append === undefined || typeof c.append === "boolean")
+    (c.append === undefined || typeof c.append === "boolean") &&
+    (c.move_to === undefined || typeof c.move_to === "string")
   );
 }
 

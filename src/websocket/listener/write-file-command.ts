@@ -1,4 +1,4 @@
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { readUtf8TextStrict } from "@/utils/text-files";
@@ -19,12 +19,14 @@ export function resolveBinaryWritePath(target: string): string {
 /**
  * Writes base64-decoded bytes directly to disk, creating parent directories.
  * `append` adds the bytes to an existing file so large files can arrive in
- * chunks that each fit in one WebSocket message.
+ * chunks that each fit in one WebSocket message. `moveTo` then renames the
+ * finished file into place, so chunks can go to a unique temporary path.
  */
 export async function writeBase64File(params: {
   path: string;
   content: string;
   append?: boolean;
+  move_to?: string;
 }): Promise<{ path: string; bytesWritten: number }> {
   if (params.content.length % 4 !== 0 || !BASE64_PATTERN.test(params.content)) {
     throw new Error("write_file content is not valid base64");
@@ -37,7 +39,13 @@ export async function writeBase64File(params: {
   } else {
     await writeFile(target, bytes);
   }
-  return { path: target, bytesWritten: bytes.length };
+  if (params.move_to === undefined) {
+    return { path: target, bytesWritten: bytes.length };
+  }
+  const destination = resolveBinaryWritePath(params.move_to);
+  await mkdir(path.dirname(destination), { recursive: true });
+  await rename(target, destination);
+  return { path: destination, bytesWritten: bytes.length };
 }
 
 /**

@@ -782,10 +782,10 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("write_file", async () => {
         try {
-          if (parsed.encoding === "base64" || parsed.append) {
+          if (parsed.encoding === "base64" || parsed.append || parsed.move_to) {
             // Binary writes bypass the Edit/text path and write bytes directly.
             if (parsed.encoding !== "base64") {
-              throw new Error("write_file append requires base64 encoding");
+              throw new Error("write_file append/move_to require base64");
             }
             const written = await writeBase64File(parsed);
             logFileCommand(

@@ -28,7 +28,7 @@ export interface AppServerInfoResponseMessage {
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
-    /** `write_file` accepts `encoding: "base64"` and `append`. */
+    /** `write_file` accepts `encoding: "base64"`, `append`, and `move_to`. */
     write_file_base64?: boolean;
     split_channels: boolean;
   };
