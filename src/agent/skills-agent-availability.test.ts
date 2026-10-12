@@ -17,6 +17,7 @@ describe("isSkillAvailableForAgent", () => {
       "curating-memory-palace",
       "image-generation",
       "managing-shared-memory",
+      "speech-generation",
       "working-across-computers",
     ]) {
       const skill: Skill = { ...baseSkill, id };
@@ -53,6 +54,25 @@ describe("isSkillAvailableForAgent", () => {
       );
       if (available) {
         expect((await content).content).toContain("letta teleport cloud");
+      } else {
+        await expect(content).rejects.toThrow("not found");
+      }
+    }
+  });
+
+  test("ships the speech skill only to Cloud agents", async () => {
+    for (const [agentId, available] of [
+      ["agent-local-123", false],
+      ["agent-123", true],
+    ] as const) {
+      const content = readSkillContent(
+        "speech-generation",
+        "/tmp/no-project-skills",
+        agentId,
+        { attachedRepositories: [] },
+      );
+      if (available) {
+        expect((await content).content).toContain("/v1/audio/speech");
       } else {
         await expect(content).rejects.toThrow("not found");
       }
