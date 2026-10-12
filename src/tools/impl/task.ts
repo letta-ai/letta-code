@@ -8,6 +8,7 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
+  addToolCall,
   completeSubagent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
@@ -814,6 +815,7 @@ export async function launchSubagent(
             signal: childSignal,
             onStarted: (agentId) =>
               updateSubagent(subagentId, { agentId, status: "running" }),
+            onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
           }),
       },
     });

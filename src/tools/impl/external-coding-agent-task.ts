@@ -1,3 +1,4 @@
+import { addToolCall } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -106,7 +107,7 @@ export function spawnExternalCodingAgentFollowup(args: {
     parentScope: args.parentScope,
     actingUserId: args.parentScope.actingUserId,
     deps: {
-      spawnSubagentImpl: async (_type, prompt, _model, _subagentId, signal) =>
+      spawnSubagentImpl: async (_type, prompt, _model, subagentId, signal) =>
         runExternalCodingAgent({
           type: target.type,
           prompt,
@@ -116,6 +117,7 @@ export function spawnExternalCodingAgentFollowup(args: {
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,
+          onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
         }),
     },
   });
