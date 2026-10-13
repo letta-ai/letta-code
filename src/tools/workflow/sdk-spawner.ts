@@ -28,6 +28,8 @@ export interface SdkSpawnerConfig {
   resolveModel?: (identifier: string) => string | null;
   /** Parent tool pool, or the workflow's explicit allowlist override. */
   allowedTools?: string[];
+  /** Tool names captured from the invoking parent's prepared tool context. */
+  parentToolNames?: string[];
   /** Invoking session's permission mode. Omit to use the harness default. */
   permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
@@ -348,10 +350,23 @@ function buildQueryOptions(
     ...(!options.model ? config.parentModelSettings : {}),
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
-  const allowedTools = options.allowedTools ?? config.allowedTools;
+  const allowedTools =
+    options.allowedTools ?? config.allowedTools ?? config.parentToolNames;
   const bundledTools = new Set<string>(
     Object.values(TOOLSET_CATALOG).flatMap((preset) => [...preset.tools]),
   );
+  const parentTools = new Set(
+    (config.parentToolNames ?? []).map(getInternalToolName),
+  );
+  const unknownTool = allowedTools?.find((name) => {
+    const internalName = getInternalToolName(name);
+    return !bundledTools.has(internalName) && !parentTools.has(internalName);
+  });
+  if (unknownTool !== undefined) {
+    throw new Error(
+      `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor available to the parent agent.`,
+    );
+  }
   return {
     model,
     ...(options.schema

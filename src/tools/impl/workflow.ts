@@ -217,7 +217,8 @@ export async function createSdkSpawnerHandle(
       parentAgentId,
       model,
       resolveModel,
-      allowedTools: args.allowedTools ?? getRuntimeContext()?.clientToolNames,
+      allowedTools: args.allowedTools,
+      parentToolNames: getRuntimeContext()?.clientToolNames,
       permissionMode:
         getRuntimeContext()?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
