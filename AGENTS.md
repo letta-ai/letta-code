@@ -943,6 +943,21 @@ as success if hashes match.
 
 ## Cloud & Teleport
 
+### Org Context in Sandboxed letta-code
+
+`letta server --org X` signs the machine into organization X: the caller
+supplies X and the CLI uses credentials saved for X or runs OAuth requesting X
+(in-memory session), ignoring ambient/global credentials. It is login
+selection, not a mechanism for a running sandbox to discover its org.
+
+Cloud-managed sandboxes launch from env with `LETTA_API_KEY` and no `--org`.
+Managed `sk-let-` keys embed the org id (`sk-let-` + base64(`orgId:secret`)),
+so the process already holds its org; decoding the effective key is an identity
+hint, while `GET /v1/api-keys/self` → `organization_id` is the authoritative
+source (works for sandbox/service-principal keys). `GET /v1/metadata/user` is
+not a substitute — it 404s for userless sandbox keys. OAuth `at-let-` tokens do
+not embed the org; their org lives in the server's token record.
+
 ### Cloud Environment Bridge
 
 Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
