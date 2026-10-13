@@ -6,7 +6,7 @@ import { join } from "node:path";
 import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
-  LETTA_CODE_SUBAGENT_TAG,
+  MEMFS_DISABLED_TAG,
 } from "@/agent/agent-tags";
 import type { AgentCreateBody } from "@/backend";
 import { settingsManager } from "@/settings-manager";
@@ -66,7 +66,7 @@ describe("LocalBackend per-agent memfs opt-out", () => {
   test("does not initialize or compile memfs for an explicit opt-out", async () => {
     const backend = new LocalBackend({ storageDir });
     const agent = await backend.createAgent(
-      createBody([LETTA_CODE_ORIGIN_TAG]),
+      createBody([LETTA_CODE_ORIGIN_TAG, MEMFS_DISABLED_TAG]),
     );
 
     expect(agent.tags).not.toContain(GIT_MEMORY_ENABLED_TAG);
@@ -92,10 +92,10 @@ describe("LocalBackend per-agent memfs opt-out", () => {
     expect(compiledPrompt(backend, agent.id).content).toContain("# Memory");
   });
 
-  test("does not treat subagent creates as an opt-out", async () => {
+  test("does not infer an opt-out from a missing memfs tag", async () => {
     const backend = new LocalBackend({ storageDir });
     const agent = await backend.createAgent(
-      createBody([LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG]),
+      createBody([LETTA_CODE_ORIGIN_TAG]),
     );
 
     expect(agent.tags).toContain(GIT_MEMORY_ENABLED_TAG);
@@ -105,7 +105,7 @@ describe("LocalBackend per-agent memfs opt-out", () => {
   test("keeps the opt-out stable when settings are not loaded", async () => {
     const backend = new LocalBackend({ storageDir });
     const agent = await backend.createAgent(
-      createBody([LETTA_CODE_ORIGIN_TAG]),
+      createBody([LETTA_CODE_ORIGIN_TAG, MEMFS_DISABLED_TAG]),
     );
     await settingsManager.reset();
 
