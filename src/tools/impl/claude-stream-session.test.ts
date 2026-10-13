@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   __resetClaudeSessionsForTests,
+  buildClaudeStreamArgs,
   type ClaudeSessionTransport,
   runClaudeTurn,
   sendClaudeMessage,
@@ -63,6 +64,33 @@ const base = { parentAgentId: "parent", cwd: "/repo" };
 afterEach(() => __resetClaudeSessionsForTests());
 
 describe("Claude stream sessions", () => {
+  test("launches unattended subagents with bypassed permissions", async () => {
+    const args = buildClaudeStreamArgs({ sessionId: SESSION_ID });
+    expect(args).toContain("--permission-mode");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe(
+      "bypassPermissions",
+    );
+    expect(args).not.toContain("--allowed-tools");
+
+    const fixture = transportFixture();
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      {
+        env: {},
+        createTransport: (options) => {
+          spawnedEnv = options.env;
+          return fixture.transport;
+        },
+      },
+    );
+    await Bun.sleep(0);
+    expect(spawnedEnv?.IS_SANDBOX).toBe("1");
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({ type: "result", is_error: false, result: "ok" });
+    await running;
+  });
+
   test("keeps the original task alive through the exact interrupt event sequence", async () => {
     const fixture = transportFixture();
     let completed = false;

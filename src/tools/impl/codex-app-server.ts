@@ -490,7 +490,7 @@ async function createSession(
           cwd: options.cwd,
           model: options.model,
           approvalPolicy: "never",
-          sandbox: "workspace-write",
+          sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
     response = await client.request(method, params);
@@ -552,11 +552,9 @@ async function startTurnUnlocked(
     cwd: session.cwd,
     model: session.model,
     approvalPolicy: "never",
-    sandboxPolicy: {
-      type: "workspaceWrite",
-      writableRoots: [session.cwd],
-      networkAccess: true,
-    },
+    // Unattended subagent: no approval relay exists, so run without the
+    // workspace sandbox rather than failing writes outside cwd.
+    sandboxPolicy: { type: "dangerFullAccess" },
   });
   const turn = asRecord(response.turn);
   const turnId = readString(turn, "id");
