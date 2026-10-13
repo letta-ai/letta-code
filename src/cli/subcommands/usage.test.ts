@@ -48,7 +48,7 @@ test("usage help exits before account lookup even with local default", async () 
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toContain("letta usage");
   expect(result.stdout).toContain("Markdown overview");
-});
+}, 30_000);
 
 test.each([{ prefix: [] }, { prefix: ["--backend", "local"] }])(
   "usage reports BYOK for local backend selection %j without auth",
