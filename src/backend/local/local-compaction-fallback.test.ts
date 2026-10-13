@@ -161,13 +161,97 @@ describe("local compaction fallback keeps custom prompt", () => {
     // Sliding-window compaction runs with the custom prompt, but the result
     // still exceeds the context window, so compaction falls back to full
     // summarization. That fallback must keep the user's custom prompt too.
-    await backend.compactConversationMessages(conversation.id, {
+    const result = await backend.compactConversationMessages(conversation.id, {
       agent_id: agent.id,
     } as never);
 
     expect(systemPromptsSeen).toHaveLength(2);
     expect(systemPromptsSeen[0]).toBe(customPrompt);
     expect(systemPromptsSeen[1]).toBe(customPrompt);
+    expect(result).toMatchObject({
+      num_messages_before: 4,
+      num_messages_after: 1,
+    });
+
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  test("does not write a summary when full compaction cannot reduce context", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-compaction-irreducible-"),
+    );
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "irreducible-summary",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Nothing to compact." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      complete,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+
+    await expect(
+      backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never),
+    ).rejects.toThrow("Irreducible context");
+
+    const messages = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    expect(messages.getPaginatedItems()).toHaveLength(0);
+
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
+  test("commits a normal full compaction", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-compaction-progress-"),
+    );
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "normal-summary",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Compacted summary." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      complete,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    await drain(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: agent.id,
+        messages: [{ role: "user", content: "remember this" }],
+      } as ConversationMessageCreateBody),
+    );
+
+    const result = await backend.compactConversationMessages(conversation.id, {
+      agent_id: agent.id,
+    } as never);
+
+    expect(result).toMatchObject({
+      num_messages_before: 2,
+      num_messages_after: 1,
+    });
+    const messages = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    expect(messages.getPaginatedItems()).toHaveLength(1);
 
     await rm(storageDir, { recursive: true, force: true });
   });

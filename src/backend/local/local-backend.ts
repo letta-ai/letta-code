@@ -38,6 +38,7 @@ import {
   type LocalCompactionMode,
   type LocalCompactionStats,
   type LocalCompleteFunction,
+  LocalSlidingWindowCompactionPlanningError,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
@@ -116,6 +117,15 @@ interface ResolvedLocalCompactionSettings {
   prompt?: string | null;
   clipChars?: number | null;
   slidingWindowPercentage: number;
+}
+
+function hasLocalCompactionProgress(stats: LocalCompactionStats): boolean {
+  return (
+    (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
+      (stats.messages_count_before ?? 0) ||
+    (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
+      (stats.context_tokens_before ?? 0)
+  );
 }
 
 function compactionSettingsRecord(
@@ -822,6 +832,11 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    if (!hasLocalCompactionProgress(stats)) {
+      throw new Error(
+        "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
+      );
+    }
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -877,6 +892,11 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    if (!hasLocalCompactionProgress(stats)) {
+      throw new LocalSlidingWindowCompactionPlanningError(
+        "Sliding-window compaction would not reduce the message count or estimated tokens.",
+      );
+    }
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
