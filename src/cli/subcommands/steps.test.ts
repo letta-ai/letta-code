@@ -101,6 +101,16 @@ test.each([{ agent_id: "other-agent" }, { step_id: "other-step" }])(
   },
 );
 
+test.each([{ agent_id: null }, { step_id: null }])(
+  "accepts traces with omitted identifiers %j",
+  async (omitted) => {
+    const partial = { ...trace, ...omitted };
+    retrieveTrace.mockResolvedValueOnce(partial);
+    expect(await run()).toBe(0);
+    expect(JSON.parse(stdout[0] ?? "").trace).toEqual(partial);
+  },
+);
+
 test("API/auth failures are errors, not unavailable evidence", async () => {
   retrieveTrace.mockRejectedValueOnce(new Error("401 Unauthorized"));
   expect(await run()).toBe(1);
