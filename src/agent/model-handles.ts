@@ -195,6 +195,13 @@ export function resolveModelHandleFromLlmConfig(
     ) {
       return normalizeKnownModelHandle(normalizedModel);
     }
+    if (
+      normalizedModel.startsWith(
+        `${modelHandleProviderForEndpointType(endpointType)}/`,
+      )
+    ) {
+      return normalizeKnownModelHandle(normalizedModel);
+    }
 
     return normalizeKnownModelHandle(
       `${modelHandleProviderForEndpointType(endpointType)}/${model}`,
