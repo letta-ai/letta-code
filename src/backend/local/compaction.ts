@@ -59,6 +59,18 @@ export class LocalIrreducibleContextError extends Error {
   }
 }
 
+/** True when a compaction would shrink the message count or estimated tokens. */
+export function hasLocalCompactionProgress(
+  stats: LocalCompactionStats,
+): boolean {
+  return (
+    (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
+      (stats.messages_count_before ?? 0) ||
+    (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
+      (stats.context_tokens_before ?? 0)
+  );
+}
+
 export function isLocalSlidingWindowCompactionPlanningError(
   error: unknown,
 ): error is LocalSlidingWindowCompactionPlanningError {

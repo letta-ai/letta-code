@@ -32,6 +32,7 @@ import type {
 import { isRecord } from "@/utils/type-guards";
 import {
   estimateLocalMessageTokens,
+  hasLocalCompactionProgress,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
@@ -118,15 +119,6 @@ interface ResolvedLocalCompactionSettings {
   prompt?: string | null;
   clipChars?: number | null;
   slidingWindowPercentage: number;
-}
-
-function hasLocalCompactionProgress(stats: LocalCompactionStats): boolean {
-  return (
-    (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
-      (stats.messages_count_before ?? 0) ||
-    (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
-      (stats.context_tokens_before ?? 0)
-  );
 }
 
 function compactionSettingsRecord(
