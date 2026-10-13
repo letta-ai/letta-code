@@ -210,24 +210,28 @@ describe("createSdkSpawner", () => {
         "Write",
         "exec_command",
         "Agent",
+        "Grep",
         "custom_tool",
       ],
     });
     for (const options of [
       {},
-      { allowedTools: ["Read"] },
+      { allowedTools: ["Read", "Grep"] },
       { allowedTools: [] },
     ]) {
       await spawner(request(options), new AbortController().signal);
     }
     expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
-      ["Read", "Write", "exec_command", "Agent", "custom_tool"],
-      ["Read"],
+      ["Read", "Write", "exec_command", "Agent", "Grep", "custom_tool"],
+      ["Read", "Grep"],
       [],
     ]);
     expect(client.calls.map((call) => call.options.toolset)).toEqual([
-      { base: "none", include: ["Read", "Write", "exec_command", "Task"] },
-      { base: "none", include: ["Read"] },
+      {
+        base: "none",
+        include: ["Read", "Write", "exec_command", "Task", "Grep"],
+      },
+      { base: "none", include: ["Read", "Grep"] },
       { base: "none", include: [] },
     ]);
     expect(
@@ -243,7 +247,7 @@ describe("createSdkSpawner", () => {
     ]);
     const spawner = createSdkSpawner(client, {
       ...CONFIG,
-      parentToolNames: ["Read", "council_web_search"],
+      parentToolNames: ["Read", "Grep", "council_web_search"],
     });
     await spawner(
       request({ allowedTools: ["council_web_search"] }),
@@ -287,7 +291,6 @@ describe("createSdkSpawner", () => {
       clearModTools();
     }
   });
-
   test("rejects an allowlisted tool absent from bundled and parent tools", async () => {
     const client = fakeClient([
       { type: "result", success: true, result: "wrong" },
@@ -296,7 +299,6 @@ describe("createSdkSpawner", () => {
       ...CONFIG,
       parentToolNames: ["Read", "council_web_search"],
     });
-
     await expect(
       spawner(
         request({ allowedTools: ["missing_tool"] }),
@@ -307,7 +309,6 @@ describe("createSdkSpawner", () => {
     );
     expect(client.calls).toHaveLength(0);
   });
-
   test("resolves per-call model aliases and fails unknown ones before querying", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     const spawner = createSdkSpawner(client, CONFIG);

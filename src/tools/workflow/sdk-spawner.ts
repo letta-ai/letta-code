@@ -7,8 +7,8 @@
 
 import { getBackend } from "@/backend";
 import type { RuntimePermissionMode } from "@/runtime-context";
+import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
-import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -352,9 +352,7 @@ function buildQueryOptions(
   };
   const allowedTools =
     options.allowedTools ?? config.allowedTools ?? config.parentToolNames;
-  const bundledTools = new Set<string>(
-    Object.values(TOOLSET_CATALOG).flatMap((preset) => [...preset.tools]),
-  );
+  const bundledTools = new Set<string>(Object.keys(TOOL_DEFINITIONS));
   const parentTools = new Set(
     (config.parentToolNames ?? []).map(getInternalToolName),
   );

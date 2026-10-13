@@ -34,7 +34,7 @@ import { __listenerWarmupTestUtils } from "./warmup";
 // Task notifications, cron and mod continues reach a turn with no submitting
 // connection. Agent launches in that turn read the tool context's connectionId;
 // without it the child runs as a direct-API process no listener owns.
-test("a process-originated turn's tools carry the listener connection", async () => {
+test("turn setup carries the listener connection and global mods into agent-free workers", async () => {
   const directory = new TestDirectory();
   const originalHome = process.env.HOME;
   await settingsManager.reset();
@@ -79,8 +79,21 @@ test("a process-originated turn's tools carry the listener connection", async ()
   __listenerModAdapterTestUtils.setEnsureMemfsSyncedForAgentForTests(
     async () => false,
   );
+  const globalModsDirectory = directory.createDir("mods");
+  directory.createFile(
+    "mods/council.ts",
+    `export default function activate(letta) {
+      return letta.tools.register({
+        name: "council_web_search",
+        description: "search",
+        parameters: { type: "object", properties: {} },
+        requiresApproval: false,
+        run() { return "council_web_search ok"; },
+      });
+    }`,
+  );
   listener.modAdapter = createListenerModAdapter({
-    globalModsDirectory: directory.createDir("mods"),
+    globalModsDirectory,
     cacheDirectory: directory.createDir("cache"),
   });
   setActiveRuntime(listener);
@@ -93,6 +106,7 @@ test("a process-originated turn's tools carry the listener connection", async ()
 
   try {
     await settingsManager.initialize();
+    await listener.modAdapter.reload();
     const result = await prepareListenerTurn({
       msg: {
         type: "message",
@@ -115,6 +129,47 @@ test("a process-originated turn's tools carry the listener connection", async ()
     expect(
       getExecutionContextById(contextId)?.runtimeContext.connectionId,
     ).toBe("conn-sandbox");
+
+    const worker = getOrCreateScopedRuntime(listener, null, "default");
+    worker.skillSources = [];
+    const workerLease = worker.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: directory.path,
+    });
+    try {
+      const workerResult = await prepareListenerTurn({
+        msg: {
+          type: "message",
+          agentId: null,
+          conversationId: "default",
+          messages: [{ role: "user", content: "search" }],
+          clientToolset: { base: "none", include: [] },
+          clientToolAllowlist: ["council_web_search"],
+        },
+        runtime: worker,
+        agentId: null,
+        conversationId: "default",
+        workingDirectory: directory.path,
+        permissionModeState: { mode: DEFAULT_PERMISSION_MODE },
+        turnLease: workerLease,
+      });
+      expect(workerResult.kind).toBe("ready");
+      if (workerResult.kind !== "ready") {
+        throw new Error("Agent-free worker turn setup was not ready");
+      }
+      expect(
+        workerResult.preparedToolContext.preparedToolContext.clientTools.map(
+          (tool) => tool.name,
+        ),
+      ).toEqual(["council_web_search"]);
+    } finally {
+      finishListenerTurn(worker, workerLease, {
+        stopReason: "end_turn",
+        socket: writer,
+        agentId: null,
+        conversationId: "default",
+      });
+    }
   } finally {
     finishListenerTurn(runtime, lease, {
       stopReason: "end_turn",
