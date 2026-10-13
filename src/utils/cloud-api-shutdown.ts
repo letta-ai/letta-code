@@ -48,6 +48,19 @@ export function isCloudApiShutdownRejection(
   );
 }
 
+/** A dead producer cannot be replayed, but its conversation can continue. */
+export function isCloudApiRunInterrupted(error: unknown): boolean {
+  if (isCloudApiDeploymentInterrupted(error)) return true;
+  if (typeof error !== "object" || error === null) return false;
+  const candidate = error as { error_type?: unknown; error_code?: unknown };
+  // Older servers mark the replay error retryable=false. That describes the
+  // dead run, not whether the enclosing turn can recover from saved history.
+  return (
+    candidate.error_type === "internal_error" &&
+    candidate.error_code === "RUN_STREAM_PRODUCER_LOST"
+  );
+}
+
 export function shouldEmitRetryNotice(error: unknown): boolean {
   return !isCloudApiShutdownRejection(error);
 }

@@ -1,5 +1,9 @@
 # Bun configuration for Letta Code
 
+[install]
+# This repository provides the SDK's Letta Code peer; do not install a second CLI.
+peer = false
+
 [loader]
 ".mdx" = "text"
 ".md" = "text"

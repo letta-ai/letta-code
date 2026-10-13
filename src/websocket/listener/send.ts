@@ -1,4 +1,7 @@
-import { APIError } from "@letta-ai/letta-client/core/error";
+import {
+  APIConnectionError,
+  APIError,
+} from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -29,6 +32,7 @@ import {
 } from "./approval";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import {
+  LISTENER_STREAM_RESUME_POLICY,
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
@@ -510,7 +514,7 @@ export async function resolveStaleApprovals(
 
 /**
  * Wrap sendMessageStream with pre-stream error handling (retry/recovery).
- * Mirrors headless bidirectional mode's pre-stream error handling.
+ * Retains request identities while reconnecting to the API.
  */
 export async function sendMessageStreamWithRetry(
   conversationId: string,
@@ -564,6 +568,10 @@ export async function sendMessageStreamWithRetry(
       }
 
       const errorDetail = extractConflictDetail(preStreamError);
+      const connectionFailure = preStreamError instanceof APIConnectionError;
+      const maxTransientRetries = connectionFailure
+        ? LISTENER_STREAM_RESUME_POLICY.maxAttempts - 1
+        : LLM_API_ERROR_MAX_RETRIES;
       const action = getPreStreamErrorAction(
         errorDetail,
         conversationBusyRetries,
@@ -574,7 +582,7 @@ export async function sendMessageStreamWithRetry(
               ? preStreamError.status
               : undefined,
           transientRetries,
-          maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+          maxTransientRetries,
         },
       );
 
@@ -634,12 +642,17 @@ export async function sendMessageStreamWithRetry(
                 preStreamError.headers?.get("retry-after"),
               )
             : null;
-        const delayMs = getRetryDelayMs({
-          category: "transient_provider",
-          attempt,
-          detail: errorDetail,
-          retryAfterMs,
-        });
+        const delayMs = connectionFailure
+          ? Math.min(
+              LISTENER_STREAM_RESUME_POLICY.initialDelayMs * 2 ** (attempt - 1),
+              LISTENER_STREAM_RESUME_POLICY.maxDelayMs,
+            )
+          : getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail: errorDetail,
+              retryAfterMs,
+            });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
@@ -647,14 +660,14 @@ export async function sendMessageStreamWithRetry(
             message: retryMessage,
             reason: "error",
             attempt,
-            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            maxAttempts: maxTransientRetries,
             delayMs,
             agentId: runtime.agentId ?? undefined,
             conversationId,
           });
         }
 
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await sleepWithAbort(delayMs, abortSignal);
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");
         }
@@ -785,6 +798,10 @@ export async function sendApprovalContinuationWithRetry(
       }
 
       const errorDetail = extractConflictDetail(preStreamError);
+      const connectionFailure = preStreamError instanceof APIConnectionError;
+      const maxTransientRetries = connectionFailure
+        ? LISTENER_STREAM_RESUME_POLICY.maxAttempts - 1
+        : LLM_API_ERROR_MAX_RETRIES;
       const action = getPreStreamErrorAction(
         errorDetail,
         conversationBusyRetries,
@@ -795,7 +812,7 @@ export async function sendApprovalContinuationWithRetry(
               ? preStreamError.status
               : undefined,
           transientRetries,
-          maxTransientRetries: LLM_API_ERROR_MAX_RETRIES,
+          maxTransientRetries,
         },
       );
 
@@ -854,12 +871,17 @@ export async function sendApprovalContinuationWithRetry(
                 preStreamError.headers?.get("retry-after"),
               )
             : null;
-        const delayMs = getRetryDelayMs({
-          category: "transient_provider",
-          attempt,
-          detail: errorDetail,
-          retryAfterMs,
-        });
+        const delayMs = connectionFailure
+          ? Math.min(
+              LISTENER_STREAM_RESUME_POLICY.initialDelayMs * 2 ** (attempt - 1),
+              LISTENER_STREAM_RESUME_POLICY.maxDelayMs,
+            )
+          : getRetryDelayMs({
+              category: "transient_provider",
+              attempt,
+              detail: errorDetail,
+              retryAfterMs,
+            });
 
         const retryMessage = getRetryStatusMessage(errorDetail);
         if (retryMessage && shouldEmitRetryNotice(preStreamError)) {
@@ -867,14 +889,14 @@ export async function sendApprovalContinuationWithRetry(
             message: retryMessage,
             reason: "error",
             attempt,
-            maxAttempts: LLM_API_ERROR_MAX_RETRIES,
+            maxAttempts: maxTransientRetries,
             delayMs,
             agentId: runtime.agentId ?? undefined,
             conversationId,
           });
         }
 
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
+        await sleepWithAbort(delayMs, abortSignal);
         if (abortSignal?.aborted) {
           throw new Error("Cancelled by user");
         }
