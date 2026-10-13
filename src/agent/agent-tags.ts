@@ -38,3 +38,17 @@ export function buildCreatedAgentTags(
   }
   return Array.from(new Set(tags));
 }
+
+/**
+ * Letta Code stamps GIT_MEMORY_ENABLED_TAG on every memfs create, so an
+ * origin-tagged, non-subagent create without it explicitly opted out of MemFS
+ * (e.g. runtime_start with `memfs: false`). Subagents keep existing behavior.
+ */
+export function isMemfsOptOutCreateTags(tags: unknown): boolean {
+  if (!Array.isArray(tags)) return false;
+  return (
+    tags.includes(LETTA_CODE_ORIGIN_TAG) &&
+    !tags.includes(LETTA_CODE_SUBAGENT_TAG) &&
+    !tags.includes(GIT_MEMORY_ENABLED_TAG)
+  );
+}

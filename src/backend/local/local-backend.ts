@@ -1,7 +1,6 @@
 import {
   GIT_MEMORY_ENABLED_TAG,
-  LETTA_CODE_ORIGIN_TAG,
-  LETTA_CODE_SUBAGENT_TAG,
+  isMemfsOptOutCreateTags,
 } from "@/agent/agent-tags";
 import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
 import {
@@ -326,16 +325,9 @@ export class LocalBackend extends HeadlessBackend {
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     let [body, ...restArgs] = args;
-    const requestedTags = Array.isArray((body as Record<string, unknown>).tags)
-      ? ((body as Record<string, unknown>).tags as string[])
-      : [];
-    // Letta Code stamps GIT_MEMORY_ENABLED_TAG on every memfs create, so an
-    // origin-tagged, non-subagent body without it is an explicit opt-out
-    // (e.g. runtime_start with memfs:false). Subagents keep existing behavior.
-    const memfsExplicitlyDisabled =
-      requestedTags.includes(LETTA_CODE_ORIGIN_TAG) &&
-      !requestedTags.includes(LETTA_CODE_SUBAGENT_TAG) &&
-      !requestedTags.includes(GIT_MEMORY_ENABLED_TAG);
+    const memfsExplicitlyDisabled = isMemfsOptOutCreateTags(
+      (body as Record<string, unknown>).tags,
+    );
     // Stamp local memfs agents so downstream tag checks enable memory sync.
     if (this.isLocalMemfsEnabled() && !memfsExplicitlyDisabled) {
       body = stampRootMemoryOnCreateBody(body);
