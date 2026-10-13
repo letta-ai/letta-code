@@ -7,6 +7,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildCreatedAgentTags } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
@@ -208,11 +209,22 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const createBody = withMemfs
+      ? requestedBody
+      : {
+          ...requestedBody,
+          tags: buildCreatedAgentTags({
+            enableMemfs: false,
+            tags: Array.isArray(requestedBody.tags)
+              ? requestedBody.tags
+              : undefined,
+          }),
+        };
     const appliedHarnessToolDefaults =
       requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
-      : requestedBody;
+      ? await prepareRawCreateAgentBodyForMemfs(createBody)
+      : createBody;
     const agent = appliedHarnessToolDefaults
       ? await createAgentWithBaseToolsRecovery(
           (tools) => backend.createAgent({ ...body, tools }),
