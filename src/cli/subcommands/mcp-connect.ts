@@ -1,6 +1,7 @@
 import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import {
   type BrowserDeviceMcpOAuthRequest,
+  BrowserDeviceMcpOAuthSiteMismatchError,
   browserDeviceMcpOAuthServerUrls,
   connectBrowserDeviceMcpOAuth,
   matchBrowserDeviceMcpOAuthServerUrl,
@@ -94,19 +95,12 @@ function isTimeout(error: unknown): boolean {
   );
 }
 
-/**
- * Authorize a localhost-callback MCP server (Datadog, Comfy) on this machine
- * and save the connection to the Cloud agent through a minted OAuth handoff.
- */
-export async function runMcpConnect(
+async function authorizeAndSubmit(
   deps: McpConnectDependencies & { stderr: McpOutput },
   agentId: string,
-  serviceArg: string | undefined,
-  serverUrlArg: string | undefined,
-  stdout: McpOutput,
-): Promise<number> {
-  const { service, serverUrl } = resolveConnectServer(serviceArg, serverUrlArg);
-
+  service: string,
+  serverUrl: string,
+): Promise<void> {
   let handoff: McpOAuthHandoff;
   try {
     handoff = await (deps.mintMcpOAuthHandoff ?? defaultMintMcpOAuthHandoff)(
@@ -147,6 +141,12 @@ export async function runMcpConnect(
       },
     );
   } catch (error) {
+    if (
+      error instanceof BrowserDeviceMcpOAuthSiteMismatchError &&
+      !submitting
+    ) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     if (submitting) {
       throw new McpCliError(
@@ -165,6 +165,45 @@ export async function runMcpConnect(
     throw new McpCliError("authorization_failed", message);
   } finally {
     clearInterval(keepAlive);
+  }
+}
+
+/**
+ * Authorize a localhost-callback MCP server (Datadog, Comfy) on this machine
+ * and save the connection to the Cloud agent through a minted OAuth handoff.
+ */
+export async function runMcpConnect(
+  deps: McpConnectDependencies & { stderr: McpOutput },
+  agentId: string,
+  serviceArg: string | undefined,
+  serverUrlArg: string | undefined,
+  stdout: McpOutput,
+): Promise<number> {
+  const resolved = resolveConnectServer(serviceArg, serverUrlArg);
+  const { service } = resolved;
+  let { serverUrl } = resolved;
+  // Datadog may authorize on the org's real site (e.g. us5) rather than the
+  // selected one. Its callback `domain` names that site, so restart once
+  // against the matching allowlisted URL with a handoff bound to it.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await authorizeAndSubmit(deps, agentId, service, serverUrl);
+      break;
+    } catch (error) {
+      if (!(error instanceof BrowserDeviceMcpOAuthSiteMismatchError)) {
+        throw error;
+      }
+      if (attempt > 0) {
+        throw new McpCliError(
+          "datadog_site_mismatch",
+          `Your Datadog org is on ${error.site}. Re-run: letta mcp connect ${service} --server-url ${error.serverUrl}`,
+        );
+      }
+      serverUrl = error.serverUrl;
+      await deps.stderr(
+        `Your Datadog org is on ${error.site}. Restarting authorization against ${serverUrl}; approve the second browser prompt.`,
+      );
+    }
   }
 
   await stdout(

@@ -114,7 +114,8 @@ Options:
   --args <json>      JSON object passed to a tool
   --args-file <path> Read tool arguments from a file; use - for stdin
   --server-url <url> MCP server for connect, e.g. a Datadog site's URL
-                     (default: the service's first supported URL)
+                     (default: the service's first supported URL; non-US1
+                     Datadog orgs can pass https://mcp.<site>/v1/mcp)
   -h, --help         Show this help
 
 Output is JSON. Server placement and agent/server/tool IDs are internal.
