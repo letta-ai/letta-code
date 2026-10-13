@@ -454,8 +454,15 @@ describe("Codex app-server lifecycle", () => {
       });
       expect(turnStart?.params).toMatchObject({
         input: [{ type: "text", text: "Implement it" }],
-        sandboxPolicy: { networkAccess: true },
+        approvalPolicy: "never",
+        sandboxPolicy: { type: "dangerFullAccess" },
       });
+      if (!resume) {
+        expect(threadStart?.params).toMatchObject({
+          approvalPolicy: "never",
+          sandbox: "danger-full-access",
+        });
+      }
     },
   );
 
