@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { ApiRequestError } from "@/backend/api/request";
-import type { BrowserDeviceMcpOAuthRequest } from "@/browser-device-mcp-oauth";
+import {
+  type BrowserDeviceMcpOAuthRequest,
+  BrowserDeviceMcpOAuthSiteMismatchError,
+} from "@/browser-device-mcp-oauth";
 import { type McpSubcommandDependencies, runMcpSubcommand } from "./mcp";
 
 const HANDOFF_KEY = "k".repeat(43);
@@ -199,5 +202,62 @@ describe("letta mcp connect", () => {
     );
     expect(code).toBe(1);
     expect(parseError(h.stderr).code).toBe("handoff_submit_failed");
+  });
+
+  test("restarts Datadog against the site named by the callback domain", async () => {
+    const connects: BrowserDeviceMcpOAuthRequest[] = [];
+    const h = harness({
+      connectMcpOAuth: async (request) => {
+        connects.push(request);
+        if (request.serverUrl === "https://mcp.datadoghq.com/v1/mcp") {
+          throw new BrowserDeviceMcpOAuthSiteMismatchError(
+            "us5.datadoghq.com",
+            "https://mcp.us5.datadoghq.com/v1/mcp",
+          );
+        }
+      },
+    });
+    const code = await runMcpSubcommand(
+      ["connect", "datadog", "--agent", "agent-1"],
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(h.mints.map((mint) => mint.serverUrl)).toEqual([
+      "https://mcp.datadoghq.com/v1/mcp",
+      "https://mcp.us5.datadoghq.com/v1/mcp",
+    ]);
+    expect(connects.map((request) => request.serverUrl)).toEqual([
+      "https://mcp.datadoghq.com/v1/mcp",
+      "https://mcp.us5.datadoghq.com/v1/mcp",
+    ]);
+    expect(h.stderr.join("\n")).toContain("org is on us5.datadoghq.com");
+    expect(JSON.parse(h.stdout.join(""))).toEqual({
+      connected: true,
+      service: "datadog",
+      server_url: "https://mcp.us5.datadoghq.com/v1/mcp",
+    });
+  });
+
+  test("fails with datadog_site_mismatch if the restart mismatches again", async () => {
+    const h = harness({
+      connectMcpOAuth: async () => {
+        throw new BrowserDeviceMcpOAuthSiteMismatchError(
+          "us5.datadoghq.com",
+          "https://mcp.us5.datadoghq.com/v1/mcp",
+        );
+      },
+    });
+    const code = await runMcpSubcommand(
+      ["connect", "datadog", "--agent", "agent-1"],
+      h.deps,
+    );
+    expect(code).toBe(1);
+    expect(h.mints).toHaveLength(2);
+    expect(parseError(h.stderr)).toMatchObject({
+      code: "datadog_site_mismatch",
+      message:
+        "Your Datadog org is on us5.datadoghq.com. Re-run: letta mcp connect datadog --server-url https://mcp.us5.datadoghq.com/v1/mcp",
+    });
+    expect(h.stdout).toEqual([]);
   });
 });

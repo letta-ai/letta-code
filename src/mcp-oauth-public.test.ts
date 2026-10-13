@@ -120,6 +120,41 @@ describe("public MCP OAuth fetch injection", () => {
     ).toBe(true);
   }, 30_000);
 
+  test("passes the callback domain to the hook before token exchange", async () => {
+    await startOAuthServer();
+    if (!serverUrl) throw new Error("OAuth test server was not started");
+    const paths: string[] = [];
+    const domains: Array<string | undefined> = [];
+    await expect(
+      authorizeMcpServerWithStorage({
+        agentId: "agent-callback-domain",
+        fetch: async (url, init) => {
+          paths.push(new URL(String(url)).pathname);
+          return fetch(url, init);
+        },
+        onAuthorizationCallback: ({ domain }) => {
+          domains.push(domain);
+          throw new Error("site mismatch");
+        },
+        openBrowser: async (authorizationUrl) => {
+          const authorize = await fetch(authorizationUrl, {
+            redirect: "manual",
+          });
+          await authorize.text();
+          const callback = new URL(authorize.headers.get("location") ?? "");
+          callback.searchParams.set("domain", "us5.datadoghq.com");
+          await (await fetch(callback)).text();
+        },
+        serverName: SERVER_NAME,
+        serverUrl,
+        storage: memoryStorage(),
+        storageNamespace: "test-callback-domain",
+      }),
+    ).rejects.toThrow("site mismatch");
+    expect(domains).toEqual(["us5.datadoghq.com"]);
+    expect(paths).not.toContain("/token");
+  }, 30_000);
+
   test("rejects a discovered endpoint before the underlying fetch", async () => {
     await startOAuthServer();
     if (!serverUrl) throw new Error("OAuth test server was not started");

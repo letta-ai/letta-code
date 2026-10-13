@@ -19,6 +19,8 @@ interface BrowserDeviceMcpOAuthDefinition {
   authorizationOrigins: readonly string[];
   serverName: string;
   serverUrl: string;
+  /** Provider site reported by the OAuth callback `domain` param (Datadog). */
+  site?: string;
 }
 
 interface BrowserDeviceMcpOAuthDependencies {
@@ -79,6 +81,21 @@ export class BrowserDeviceMcpOAuthRequestError extends Error {
 }
 
 /**
+ * The OAuth callback named a different allowlisted provider site than the
+ * selected server URL. The code is only redeemable at that site, so the caller
+ * must restart authorization against `serverUrl` with a handoff bound to it.
+ */
+export class BrowserDeviceMcpOAuthSiteMismatchError extends Error {
+  constructor(
+    readonly site: string,
+    readonly serverUrl: string,
+  ) {
+    super(`OAuth provider authorized on ${site}; use ${serverUrl}`);
+    this.name = "BrowserDeviceMcpOAuthSiteMismatchError";
+  }
+}
+
+/**
  * Complete a Cloud agent's localhost-callback MCP authorization from a local
  * Letta Code runtime. Letta Daemon runs the same runtime, so it exposes this
  * bridge without a separate daemon-specific OAuth implementation.
@@ -118,6 +135,15 @@ export async function connectBrowserDeviceMcpOAuth(
         definition,
         dependencies.providerFetch ?? globalThis.fetch,
       ),
+      onAuthorizationCallback: ({ domain }) => {
+        const reported = definitionForCallbackDomain(request.service, domain);
+        if (reported?.site && reported !== definition) {
+          throw new BrowserDeviceMcpOAuthSiteMismatchError(
+            reported.site,
+            reported.serverUrl,
+          );
+        }
+      },
       serverName: definition.serverName,
       serverUrl: definition.serverUrl,
       signal: authorizationSignal,
@@ -240,6 +266,28 @@ function findDefinition(
   return BROWSER_DEVICE_MCP_OAUTH_SERVICES[service]?.find(
     (candidate) =>
       normalizeServerUrl(candidate.serverUrl) === normalizedServerUrl,
+  );
+}
+
+/**
+ * Map an untrusted callback `domain` (e.g. `us5.datadoghq.com`) to an
+ * allowlisted site definition. Anything not on the allowlist is ignored.
+ */
+function definitionForCallbackDomain(
+  service: string,
+  domain: string | undefined,
+): BrowserDeviceMcpOAuthDefinition | undefined {
+  if (!domain || !Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, service)) {
+    return undefined;
+  }
+  const site = domain
+    .trim()
+    .toLowerCase()
+    .replace(/^https:\/\//, "")
+    .replace(/\/+$/, "")
+    .replace(/^(?:app|api)\./, "");
+  return BROWSER_DEVICE_MCP_OAUTH_SERVICES[service]?.find(
+    (candidate) => candidate.site !== undefined && candidate.site === site,
   );
 }
 
@@ -486,6 +534,7 @@ function datadogDefinition(
     authorizationOrigins: [`https://${appHost}`],
     serverName: "Datadog",
     serverUrl: `https://mcp.${mcpHost}/v1/mcp`,
+    site: mcpHost,
   };
 }
 

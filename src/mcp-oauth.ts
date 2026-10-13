@@ -110,6 +110,8 @@ export interface StorageInjectedMcpOAuthSessionOptions {
   interactive: boolean;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
+  /** Inspect callback params before token exchange; throw to abort the flow. */
+  onAuthorizationCallback?: (callback: { domain?: string }) => void;
 }
 
 export async function clearMcpOAuthCredentials(
@@ -212,7 +214,13 @@ export async function createMcpOAuthSessionWithStorage(
     return {
       authProvider: activeProvider,
       ...(activeCallback
-        ? { waitForAuthorizationCode: () => activeCallback.waitForCode() }
+        ? {
+            waitForAuthorizationCode: async () => {
+              const { code, domain } = await activeCallback.waitForCallback();
+              options.onAuthorizationCallback?.({ domain });
+              return code;
+            },
+          }
         : {}),
       exportCredentials: () => activeProvider.exportCredentials(),
       closeCallback: async () => activeCallback?.close(),

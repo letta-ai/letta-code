@@ -51,6 +51,12 @@ export interface AuthorizeMcpServerWithStorageOptions {
   fetch?: McpOAuthFetch;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
+  /**
+   * Inspect provider callback params before the token exchange; throwing
+   * aborts the flow. Flights are shared per fetch function, so pair a custom
+   * hook with its own fetch.
+   */
+  onAuthorizationCallback?: (callback: { domain?: string }) => void;
   signal?: AbortSignal;
 }
 
@@ -133,6 +139,7 @@ async function runAuthorization(
     interactive: true,
     openBrowser: options.openBrowser,
     onStatus: options.onStatus,
+    onAuthorizationCallback: options.onAuthorizationCallback,
   });
   let oauth: Awaited<typeof creating>;
   try {
