@@ -99,6 +99,7 @@ import {
   localMessagesHaveSameSnapshot,
   localTranscriptRowsResult,
   localTranscriptSessionEntries,
+  localTranscriptTailByteBudget,
   localTranscriptTailMessages,
   messagesMissingFrom,
   normalizeLocalMessageForPi,
@@ -2211,10 +2212,7 @@ export class LocalStore {
     this.markConversationFullyResident(key);
   }
 
-  /**
-   * Full load: the entire parsed transcript becomes resident (legacy format,
-   * synthetic timestamp repair, in-memory stores).
-   */
+  /** Load the full transcript for legacy formats and timestamp repair. */
   private loadConversationMessages(
     key: string,
     conversationId: string,
@@ -2239,11 +2237,6 @@ export class LocalStore {
     this.projectLocalMessages(read.messages, agentId, conversationId);
   }
 
-  /**
-   * Tail load: the transcript suffix holding every in-context message becomes
-   * the resident window; append dedup, parent chaining, and rollback
-   * detection only consult it.
-   */
   private loadConversationMessageTail(
     key: string,
     conversationId: string,
@@ -2259,6 +2252,7 @@ export class LocalStore {
       return;
     }
     const conversation = this.conversations.get(key);
+    const activeMessageIds = conversation?.in_context_message_ids ?? [];
     const {
       transcript,
       messages: tailMessages,
@@ -2267,23 +2261,28 @@ export class LocalStore {
     } = readLocalTranscriptTailWindow(
       metadata.messagesPath,
       metadata.messageFormat,
-      conversation?.in_context_message_ids ?? [],
+      activeMessageIds,
       this.residentMessageTailLimit,
       this.storageDir ?? "",
       metadata.conversationDir,
+      localTranscriptTailByteBudget(
+        conversation,
+        this.agents.get(agentId)?.model_settings,
+      ),
     );
-    // The resident window must match a full load's repaired view, since it
-    // wins over the disk read for its ids.
     const toolResultClip = clipOversizedLocalToolResults(tailMessages);
     const messages = toolResultClip.messages;
     if (toolResultClip.clippedToolResultIds.length > 0) {
       this.loadRepairedConversationKeys.add(key);
     }
     this.localMessagesByConversationKey.set(key, messages);
-    // Ids with no row (killed mid-stream) or dropped as orphans leave context.
     if (conversation) conversation.in_context_message_ids = liveInContextIds;
-    // Track the unparsed head for one-time pre-append validation (F13).
-    if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, headBytes);
+    // Negative preserves empty-list validation after explicit live ids exist.
+    if (headBytes > 0)
+      this.unreadTranscriptHeadBytesByKey.set(
+        key,
+        activeMessageIds.length === 0 ? -headBytes : headBytes,
+      );
     else this.unreadTranscriptHeadBytesByKey.delete(key);
     this.loadedConversationKeys.delete(key);
     this.tailResidentConversationKeys.add(key);
@@ -2307,10 +2306,6 @@ export class LocalStore {
     });
   }
 
-  /**
-   * Replace the resident window after a wholesale in-memory rewrite
-   * (compaction); the caller's persist appends the rewrite entry to disk.
-   */
   private setResidentConversationMessages(
     key: string,
     messages: LocalMessage[],
@@ -2401,10 +2396,10 @@ export class LocalStore {
     });
   }
 
-  // Validate the unparsed head pre-append; a throw retains it for retries.
   private validateUnreadTranscriptHeadOnce(key: string): void {
-    const headBytes = this.unreadTranscriptHeadBytesByKey.get(key);
-    if (headBytes === undefined) return;
+    const storedHeadBytes = this.unreadTranscriptHeadBytesByKey.get(key);
+    if (storedHeadBytes === undefined) return;
+    const headBytes = Math.abs(storedHeadBytes);
     const metadata = this.transcriptMetadataByConversationKey.get(key);
     if (metadata) {
       validateUnreadTranscriptHead(
@@ -2412,7 +2407,9 @@ export class LocalStore {
         headBytes,
         this.storageDir ?? "",
         metadata.conversationDir,
-        this.conversations.get(key)?.in_context_message_ids ?? [],
+        storedHeadBytes < 0
+          ? []
+          : (this.conversations.get(key)?.in_context_message_ids ?? []),
       );
     }
     this.unreadTranscriptHeadBytesByKey.delete(key);
