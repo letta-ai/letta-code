@@ -4,11 +4,11 @@ Use this guide when the user is connecting a computer for the first time, no sui
 
 Explain that the user must complete setup **on the computer they want to connect**, signed into the same Letta account they use on chat.letta.com. Remote access lets agents run commands and access files on that machine, subject to tool approvals. Local-only / “Skip login” mode is not sufficient.
 
-When you are running in a Cloud sandbox, use the connect token path first: it skips the browser sign-in entirely. Otherwise recommend Desktop for a personal computer and offer the CLI for a terminal-only machine or VM. Give the relevant steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
+When the user is talking to you through an organization's Slack workspace, use the connect token path: the computer has to be registered in that organization, and the user has no Letta browser session to approve it from. For chat.letta.com and Desktop users, recommend Desktop for a personal computer and offer the CLI for a terminal-only machine or VM. Give the relevant steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
 
-## Option 1: Connect token (Cloud sandbox)
+## Option 1: Connect token (Slack organization)
 
-Mint a connect token with the sandbox credentials. The token is pre-approved for the agent's owner, so the command signs their computer in as them without a browser step:
+Only for requests that arrive through Slack. Mint a connect token with the sandbox credentials. The token is pre-approved for the agent's owner and bound to the organization, so the command signs their computer in as them, in that organization, without a browser step:
 
 ```bash
 curl -sS -X POST "$LETTA_BASE_URL/v1/environments/connect-token" \
@@ -16,7 +16,7 @@ curl -sS -X POST "$LETTA_BASE_URL/v1/environments/connect-token" \
   -H "Content-Type: application/json" -d '{}'
 ```
 
-The response is `{ "deviceCode": "...", "organizationId": "...", "expiresIn": 900 }`. A 403 means this sandbox key does not resolve to an owner; fall back to Option 2 or 3.
+The response is `{ "deviceCode": "...", "organizationId": "...", "expiresIn": 900 }`. A 403 means this sandbox key does not resolve to an owner; tell the user and fall back to Option 3.
 
 Give the user this to run **on the computer they want to connect**, filling in both values from the response:
 
@@ -27,7 +27,7 @@ letta server --org <organizationId> --token <deviceCode> --computer-name "work-l
 
 Tell them the code works once and expires in 15 minutes; if it is used or expired, mint a new one rather than asking them to retry the old command. The CLI refuses a token minted for a different organization than `--org`, so pass the `organizationId` from the same response.
 
-The command signs in as the owner. Send it only to that person: in a chat conversation, reply directly; in Slack, use a DM or the thread where the owner asked, never a broadcast in a shared channel. Do not post the command anywhere a second person can run it first.
+The command signs in as the owner. Send it only to that person: a DM, or the thread where the owner asked, never a broadcast in a shared channel. Do not post the command anywhere a second person can run it first.
 
 ## Option 2: Letta Desktop
 
