@@ -4,9 +4,32 @@ Use this guide when the user is connecting a computer for the first time, no sui
 
 Explain that the user must complete setup **on the computer they want to connect**, signed into the same Letta account they use on chat.letta.com. Remote access lets agents run commands and access files on that machine, subject to tool approvals. Local-only / “Skip login” mode is not sufficient.
 
-Recommend Desktop for a personal computer; offer the CLI for a terminal-only machine or VM. Give the relevant steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
+When you are running in a Cloud sandbox, use the connect token path first: it skips the browser sign-in entirely. Otherwise recommend Desktop for a personal computer and offer the CLI for a terminal-only machine or VM. Give the relevant steps below rather than only saying the computer is unavailable. Do not run registration commands in the Cloud sandbox as a substitute for connecting the user's machine.
 
-## Option 1: Letta Desktop
+## Option 1: Connect token (Cloud sandbox)
+
+Mint a connect token with the sandbox credentials. The token is pre-approved for the agent's owner, so the command signs their computer in as them without a browser step:
+
+```bash
+curl -sS -X POST "$LETTA_BASE_URL/v1/environments/connect-token" \
+  -H "Authorization: Bearer $LETTA_API_KEY" \
+  -H "Content-Type: application/json" -d '{}'
+```
+
+The response is `{ "deviceCode": "...", "organizationId": "...", "expiresIn": 900 }`. A 403 means this sandbox key does not resolve to an owner; fall back to Option 2 or 3.
+
+Give the user this to run **on the computer they want to connect**, filling in both values from the response:
+
+```bash
+npm install -g @letta-ai/letta-code
+letta server --org <organizationId> --token <deviceCode> --computer-name "work-laptop"
+```
+
+Tell them the code works once and expires in 15 minutes; if it is used or expired, mint a new one rather than asking them to retry the old command. The CLI refuses a token minted for a different organization than `--org`, so pass the `organizationId` from the same response.
+
+The command signs in as the owner. Send it only to that person: in a chat conversation, reply directly; in Slack, use a DM or the thread where the owner asked, never a broadcast in a shared channel. Do not post the command anywhere a second person can run it first.
+
+## Option 2: Letta Desktop
 
 Ask the user to:
 
@@ -23,7 +46,7 @@ Show the bundled screenshot when explaining the toggle and name field:
 
 Resolve `assets/allow-remote-access-from-desktop.png` relative to this skill's directory. In chat or Desktop, use the resolved absolute local path in the Markdown image you send, not this reference file's relative path. The screenshot is from the original teleportation skill; surrounding settings may differ in newer Desktop versions.
 
-## Option 2: CLI server
+## Option 3: CLI server (browser sign-in)
 
 Ask the user to install [Node.js 22.19 or newer](https://nodejs.org/en/download), then run these commands in a terminal **on the target computer**:
 
