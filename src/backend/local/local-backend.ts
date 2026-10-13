@@ -523,11 +523,8 @@ export class LocalBackend extends HeadlessBackend {
   }
 
   private isMemfsEnabledForAgent(agentId: string): boolean {
-    return (
-      this.isLocalMemfsEnabled() &&
-      (!settingsManager.isReady ||
-        !settingsManager.isMemfsExplicitlyDisabled(agentId))
-    );
+    const { tags } = this.store.retrieveAgentRecord(agentId);
+    return this.isLocalMemfsEnabled() && !isMemfsOptOutCreateTags(tags);
   }
 
   private async ensureLocalMemoryRepo(

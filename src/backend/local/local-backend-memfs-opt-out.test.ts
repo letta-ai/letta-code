@@ -101,4 +101,29 @@ describe("LocalBackend per-agent memfs opt-out", () => {
     expect(agent.tags).toContain(GIT_MEMORY_ENABLED_TAG);
     expect(settingsManager.isMemfsExplicitlyDisabled(agent.id)).toBe(false);
   });
+
+  test("keeps the opt-out stable when settings are not loaded", async () => {
+    const backend = new LocalBackend({ storageDir });
+    const agent = await backend.createAgent(
+      createBody([LETTA_CODE_ORIGIN_TAG]),
+    );
+    await settingsManager.reset();
+
+    const recompile = (
+      backend as unknown as {
+        compileAndMaybePersistSystemPrompt(
+          conversationId: string,
+          agentId: string,
+          options: { dryRun: boolean },
+        ): Promise<LocalCompiledSystemPrompt>;
+      }
+    ).compileAndMaybePersistSystemPrompt.bind(backend);
+    const compiled = await recompile("default", agent.id, { dryRun: true });
+
+    expect(compiled.memfsRevision).toBeUndefined();
+    expect(compiled.content).not.toContain("# Memory");
+    expect(existsSync(join(storageDir, "memfs", agent.id, "memory"))).toBe(
+      false,
+    );
+  });
 });
