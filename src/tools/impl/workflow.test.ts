@@ -37,6 +37,7 @@ import {
   __setWorkflowSpawnerFactoryForTests,
   __setWorkflowStartupTimeoutForTests,
   createSdkSpawnerHandle,
+  formatFailureResult,
   normalizeWorkflowArgs,
   workflow,
 } from "./workflow";
@@ -670,6 +671,35 @@ throw new Error('kaboom')`,
       /Workflow "explodes" failed after \d+s/,
     );
     expect(queuedMessages[0]?.text).toContain("kaboom");
+  });
+
+  test("a late failure points at the completed results in the journal", async () => {
+    installSpawner(async (request) =>
+      request.prompt === "synthesize"
+        ? {
+            value: null,
+            failed: true,
+            error: "Unexpected stop reason: max_tokens_exceeded",
+          }
+        : { value: `done:${request.prompt}`, failed: false, totalTokens: 10 },
+    );
+    const launched = await workflow({
+      script: `export const meta = { name: 'late', description: 'late failure' }
+await parallel([() => agent('a'), () => agent('b')])
+return await agent('synthesize')`,
+    });
+    taskIdOf(launched.toolReturn);
+    await waitFor(() => queuedMessages.length === 1);
+    const text = queuedMessages[0]?.text ?? "";
+    expect(text).toContain("<status>failed</status>");
+    expect(text).toContain("2 agent calls completed before the failure");
+    expect(text).toContain("journal.jsonl");
+  });
+
+  test("formatFailureResult omits the journal hint when nothing completed", () => {
+    expect(formatFailureResult("boom", 0, "/x/journal.jsonl")).toBe(
+      "Workflow failed: boom",
+    );
   });
 
   test.each([
