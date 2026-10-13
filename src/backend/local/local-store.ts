@@ -2270,6 +2270,7 @@ export class LocalStore {
         this.agents.get(agentId)?.model_settings,
       ),
     );
+    // Must match a full load's repaired view: it wins over disk reads for its ids.
     const toolResultClip = clipOversizedLocalToolResults(tailMessages);
     const messages = toolResultClip.messages;
     if (toolResultClip.clippedToolResultIds.length > 0) {
@@ -2277,12 +2278,9 @@ export class LocalStore {
     }
     this.localMessagesByConversationKey.set(key, messages);
     if (conversation) conversation.in_context_message_ids = liveInContextIds;
-    // Negative preserves empty-list validation after explicit live ids exist.
-    if (headBytes > 0)
-      this.unreadTranscriptHeadBytesByKey.set(
-        key,
-        activeMessageIds.length === 0 ? -headBytes : headBytes,
-      );
+    // Unparsed head for pre-append validation (F13); negative = empty-list mode.
+    const head = activeMessageIds.length === 0 ? -headBytes : headBytes;
+    if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, head);
     else this.unreadTranscriptHeadBytesByKey.delete(key);
     this.loadedConversationKeys.delete(key);
     this.tailResidentConversationKeys.add(key);
@@ -2306,6 +2304,7 @@ export class LocalStore {
     });
   }
 
+  /** Replace the resident window after a compaction rewrite; caller persists. */
   private setResidentConversationMessages(
     key: string,
     messages: LocalMessage[],
@@ -2396,6 +2395,7 @@ export class LocalStore {
     });
   }
 
+  // Validate the unparsed head pre-append; a throw retains it for retries.
   private validateUnreadTranscriptHeadOnce(key: string): void {
     const storedHeadBytes = this.unreadTranscriptHeadBytesByKey.get(key);
     if (storedHeadBytes === undefined) return;
