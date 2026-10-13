@@ -99,6 +99,7 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
+import { renameConvo } from "@/cli/helpers/rename-conversation-target";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
@@ -2295,7 +2296,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
 
             try {
-              const backend = getBackend();
               if (shouldAutoGenerate) {
                 const conversationTitle = await generateConversationTitle();
                 if (!conversationTitle) {
@@ -2304,9 +2304,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   );
                   return { submitted: true };
                 }
-                await backend.updateConversation(conversationId, {
-                  summary: conversationTitle,
-                });
+                await renameConvo(conversationIdRef.current, conversationTitle);
                 setConversationSummary(conversationTitle);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(
@@ -2314,9 +2312,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   true,
                 );
               } else {
-                await backend.updateConversation(conversationId, {
-                  summary: newValue,
-                });
+                await renameConvo(conversationIdRef.current, newValue);
                 setConversationSummary(newValue);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(`Conversation renamed to "${newValue}"`, true);
