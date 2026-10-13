@@ -38,6 +38,7 @@ import {
   type LocalCompactionMode,
   type LocalCompactionStats,
   type LocalCompleteFunction,
+  LocalIrreducibleContextError,
   LocalSlidingWindowCompactionPlanningError,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
@@ -566,11 +567,20 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const result = await this.compactLocalConversation(
-      input.conversationId,
-      input.agentId,
-      "context_window_limit",
-    );
+    let result: Awaited<ReturnType<typeof this.compactLocalConversation>>;
+    try {
+      result = await this.compactLocalConversation(
+        input.conversationId,
+        input.agentId,
+        "context_window_limit",
+      );
+    } catch (error) {
+      // Pressure compaction is opportunistic: it must not fail a turn (or a
+      // completed response). A real overflow still surfaces this error via
+      // the provider overflow path.
+      if (error instanceof LocalIrreducibleContextError) return null;
+      throw error;
+    }
     return {
       uiMessages: this.store.listLocalMessages(
         input.conversationId,
@@ -833,7 +843,7 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
     if (!hasLocalCompactionProgress(stats)) {
-      throw new Error(
+      throw new LocalIrreducibleContextError(
         "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
       );
     }

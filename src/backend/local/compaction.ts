@@ -52,6 +52,13 @@ export class LocalSlidingWindowCompactionPlanningError extends Error {
   }
 }
 
+export class LocalIrreducibleContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalIrreducibleContextError";
+  }
+}
+
 export function isLocalSlidingWindowCompactionPlanningError(
   error: unknown,
 ): error is LocalSlidingWindowCompactionPlanningError {

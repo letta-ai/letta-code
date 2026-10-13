@@ -212,6 +212,56 @@ describe("local compaction fallback keeps custom prompt", () => {
     await rm(storageDir, { recursive: true, force: true });
   });
 
+  test("context-pressure compaction treats irreducible context as a no-op", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "local-compaction-pressure-irreducible-"),
+    );
+    const complete = async (): Promise<AssistantMessage> =>
+      assistantMessage({
+        responseId: "pressure-irreducible-summary",
+        stopReason: "stop",
+        content: [{ type: "text", text: "Nothing to compact." }],
+      });
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      complete,
+      memfsEnabled: false,
+    });
+    const agent = await backend.createAgent({ name: "Local" } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+
+    // Pressure compaction runs after a completed response; an irreducible
+    // context must not turn that successful turn into a failure.
+    const compaction = await (
+      backend as unknown as {
+        compactForContextPressure: (
+          input: unknown,
+          pressure: unknown,
+        ) => Promise<unknown>;
+      }
+    ).compactForContextPressure(
+      { conversationId: conversation.id, agentId: agent.id },
+      {
+        contextTokens: 1,
+        contextWindow: 1,
+        phase: "post_turn",
+        source: "usage",
+      },
+    );
+    expect(compaction).toBeNull();
+
+    const messages = await backend.listConversationMessages(conversation.id, {
+      agent_id: agent.id,
+      order: "asc",
+    } as never);
+    expect(messages.getPaginatedItems()).toHaveLength(0);
+
+    await rm(storageDir, { recursive: true, force: true });
+  });
+
   test("commits a normal full compaction", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-compaction-progress-"),
