@@ -6,6 +6,7 @@ import { join } from "node:path";
 import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
+  LETTA_CODE_SUBAGENT_TAG,
 } from "@/agent/agent-tags";
 import type { AgentCreateBody } from "@/backend";
 import { settingsManager } from "@/settings-manager";
@@ -89,5 +90,15 @@ describe("LocalBackend per-agent memfs opt-out", () => {
     ).toBe(true);
     expect(compiledPrompt(backend, agent.id).memfsRevision).toBeDefined();
     expect(compiledPrompt(backend, agent.id).content).toContain("# Memory");
+  });
+
+  test("does not treat subagent creates as an opt-out", async () => {
+    const backend = new LocalBackend({ storageDir });
+    const agent = await backend.createAgent(
+      createBody([LETTA_CODE_ORIGIN_TAG, LETTA_CODE_SUBAGENT_TAG]),
+    );
+
+    expect(agent.tags).toContain(GIT_MEMORY_ENABLED_TAG);
+    expect(settingsManager.isMemfsExplicitlyDisabled(agent.id)).toBe(false);
   });
 });
