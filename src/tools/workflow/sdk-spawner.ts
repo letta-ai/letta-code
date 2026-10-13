@@ -6,6 +6,7 @@
  */
 
 import { getBackend } from "@/backend";
+import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
@@ -30,6 +31,8 @@ export interface SdkSpawnerConfig {
   allowedTools?: string[];
   /** Tool names captured from the invoking parent's prepared tool context. */
   parentToolNames?: string[];
+  /** Parent-only agent mod tools, which agent-free workers cannot load. */
+  agentScopedToolNames?: string[];
   /** Invoking session's permission mode. Omit to use the harness default. */
   permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
@@ -353,16 +356,29 @@ function buildQueryOptions(
   const allowedTools =
     options.allowedTools ?? config.allowedTools ?? config.parentToolNames;
   const bundledTools = new Set<string>(Object.keys(TOOL_DEFINITIONS));
-  const parentTools = new Set(
-    (config.parentToolNames ?? []).map(getInternalToolName),
+  const globalModTools = new Set(
+    Array.from(getAvailableModToolsRegistry().entries()).flatMap(
+      ([name, tool]) =>
+        tool.owner?.scope === "agent"
+          ? []
+          : [getInternalToolName(name), getInternalToolName(tool.name)],
+    ),
+  );
+  const agentScopedTools = new Set(
+    (config.agentScopedToolNames ?? []).map(getInternalToolName),
   );
   const unknownTool = allowedTools?.find((name) => {
     const internalName = getInternalToolName(name);
-    return !bundledTools.has(internalName) && !parentTools.has(internalName);
+    return !bundledTools.has(internalName) && !globalModTools.has(internalName);
   });
   if (unknownTool !== undefined) {
+    if (agentScopedTools.has(getInternalToolName(unknownTool))) {
+      throw new Error(
+        `Workflow worker tool "${unknownTool}" is agent-scoped and is not available to workflow workers.`,
+      );
+    }
     throw new Error(
-      `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor available to the parent agent.`,
+      `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor a global mod tool available to workflow workers.`,
     );
   }
   return {

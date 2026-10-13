@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { clearModTools, registerModTool } from "@/mods/tool-registry";
-import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import {
   createSdkSpawner,
   DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
@@ -205,14 +204,7 @@ describe("createSdkSpawner", () => {
     const spawner = createSdkSpawner(client, {
       ...CONFIG,
       permissionMode: "acceptEdits",
-      parentToolNames: [
-        "Read",
-        "Write",
-        "exec_command",
-        "Agent",
-        "Grep",
-        "custom_tool",
-      ],
+      parentToolNames: ["Read", "Write", "exec_command", "Agent", "Grep"],
     });
     for (const options of [
       {},
@@ -222,7 +214,7 @@ describe("createSdkSpawner", () => {
       await spawner(request(options), new AbortController().signal);
     }
     expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
-      ["Read", "Write", "exec_command", "Agent", "Grep", "custom_tool"],
+      ["Read", "Write", "exec_command", "Agent", "Grep"],
       ["Read", "Grep"],
       [],
     ]);
@@ -245,21 +237,6 @@ describe("createSdkSpawner", () => {
     const client = fakeClient([
       { type: "result", success: true, result: "done" },
     ]);
-    const spawner = createSdkSpawner(client, {
-      ...CONFIG,
-      parentToolNames: ["Read", "Grep", "council_web_search"],
-    });
-    await spawner(
-      request({ allowedTools: ["council_web_search"] }),
-      new AbortController().signal,
-    );
-    expect(client.calls[0]?.options.allowedTools).toEqual([
-      "council_web_search",
-    ]);
-    expect(client.calls[0]?.options.toolset).toEqual({
-      base: "none",
-      include: [],
-    });
     const activation = new AbortController();
     registerModTool({
       activationSignal: activation.signal,
@@ -273,25 +250,46 @@ describe("createSdkSpawner", () => {
       run: () => "result",
     });
     try {
-      const prepared = await prepareToolExecutionContextForResolvedTarget({
-        modelIdentifier: CONFIG.model,
-        providerType: "openai",
-        toolsetPreference: "default",
-        clientToolset: client.calls[0]?.options.toolset as {
-          base: "none";
-          include: string[];
-        },
-        clientToolAllowlist: client.calls[0]?.options.allowedTools as string[],
+      const spawner = createSdkSpawner(client, {
+        ...CONFIG,
+        parentToolNames: ["Read", "Grep", "council_web_search"],
       });
-      expect(
-        prepared.preparedToolContext.clientTools.map((tool) => tool.name),
-      ).toEqual(["council_web_search"]);
+      await spawner(
+        request({ allowedTools: ["council_web_search"] }),
+        new AbortController().signal,
+      );
+      expect(client.calls[0]?.options.allowedTools).toEqual([
+        "council_web_search",
+      ]);
+      expect(client.calls[0]?.options.toolset).toEqual({
+        base: "none",
+        include: [],
+      });
     } finally {
       activation.abort();
       clearModTools();
     }
   });
-  test("rejects an allowlisted tool absent from bundled and parent tools", async () => {
+
+  test("rejects an agent-scoped parent tool unavailable to workers", async () => {
+    const client = fakeClient([]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      parentToolNames: ["Read", "agent_lookup"],
+      agentScopedToolNames: ["agent_lookup"],
+    });
+    await expect(
+      spawner(
+        request({ allowedTools: ["agent_lookup"] }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      'Workflow worker tool "agent_lookup" is agent-scoped and is not available to workflow workers.',
+    );
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("rejects an allowlisted tool absent from bundled and global mods", async () => {
     const client = fakeClient([
       { type: "result", success: true, result: "wrong" },
     ]);
@@ -305,7 +303,7 @@ describe("createSdkSpawner", () => {
         new AbortController().signal,
       ),
     ).rejects.toThrow(
-      'Unknown workflow worker tool "missing_tool": it is neither a bundled tool nor available to the parent agent.',
+      'Unknown workflow worker tool "missing_tool": it is neither a bundled tool nor a global mod tool available to workflow workers.',
     );
     expect(client.calls).toHaveLength(0);
   });

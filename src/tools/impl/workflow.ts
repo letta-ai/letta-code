@@ -210,6 +210,13 @@ export async function createSdkSpawnerHandle(
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
+  const runtime = getRuntimeContext();
+  const toolContextId = runtime?.toolContextId ?? null;
+  // Lazy: tool impls are loaded by the manager, so a static import cycles.
+  const manager = await import("@/tools/manager");
+  const executionContext = toolContextId
+    ? manager.getExecutionContextById(toolContextId)
+    : undefined;
   const client = sdk.createLocalClient(backendMode);
   let spawner: SubagentSpawner;
   try {
@@ -218,9 +225,13 @@ export async function createSdkSpawnerHandle(
       model,
       resolveModel,
       allowedTools: args.allowedTools,
-      parentToolNames: getRuntimeContext()?.clientToolNames,
-      permissionMode:
-        getRuntimeContext()?.permissionMode ?? permissionMode.getMode(),
+      parentToolNames: runtime?.clientToolNames,
+      agentScopedToolNames: Array.from(
+        executionContext?.modTools.values() ?? [],
+      )
+        .filter((tool) => tool.owner?.scope === "agent")
+        .map((tool) => tool.name),
+      permissionMode: runtime?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
       supportsAgentFreeResume: sdk.supportsAgentFreeResume,
       verifyPersistedRuns: backendMode === "api",
@@ -235,10 +246,6 @@ export async function createSdkSpawnerHandle(
   }
   // The run outlives this tool call, so capture the invoking turn's permission
   // inputs now; each direct MCP call is checked against them.
-  const runtime = getRuntimeContext();
-  const toolContextId = runtime?.toolContextId ?? null;
-  // Lazy: tool impls are loaded by the manager, so a static import cycles.
-  const manager = await import("@/tools/manager");
   const permissionModeState = toolContextId
     ? manager.getExecutionContextPermissionModeState(toolContextId)
     : undefined;
