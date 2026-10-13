@@ -353,8 +353,7 @@ function buildQueryOptions(
     ...(!options.model ? config.parentModelSettings : {}),
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
-  const allowedTools =
-    options.allowedTools ?? config.allowedTools ?? config.parentToolNames;
+  const explicitAllowedTools = options.allowedTools ?? config.allowedTools;
   const bundledTools = new Set<string>(Object.keys(TOOL_DEFINITIONS));
   const globalModTools = new Set(
     Array.from(getAvailableModToolsRegistry().entries()).flatMap(
@@ -367,10 +366,13 @@ function buildQueryOptions(
   const agentScopedTools = new Set(
     (config.agentScopedToolNames ?? []).map(getInternalToolName),
   );
-  const unknownTool = allowedTools?.find((name) => {
+  const isWorkerResolvable = (name: string): boolean => {
     const internalName = getInternalToolName(name);
-    return !bundledTools.has(internalName) && !globalModTools.has(internalName);
-  });
+    return bundledTools.has(internalName) || globalModTools.has(internalName);
+  };
+  const unknownTool = explicitAllowedTools?.find(
+    (name) => !isWorkerResolvable(name),
+  );
   if (unknownTool !== undefined) {
     if (agentScopedTools.has(getInternalToolName(unknownTool))) {
       throw new Error(
@@ -381,6 +383,8 @@ function buildQueryOptions(
       `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor a global mod tool available to workflow workers.`,
     );
   }
+  const allowedTools =
+    explicitAllowedTools ?? config.parentToolNames?.filter(isWorkerResolvable);
   return {
     model,
     ...(options.schema

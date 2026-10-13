@@ -204,7 +204,8 @@ describe("createSdkSpawner", () => {
     const spawner = createSdkSpawner(client, {
       ...CONFIG,
       permissionMode: "acceptEdits",
-      parentToolNames: ["Read", "Write", "exec_command", "Agent", "Grep"],
+      parentToolNames: ["Read", "Write", "Grep", "agent_x", "channel_x"],
+      agentScopedToolNames: ["agent_x"],
     });
     for (const options of [
       {},
@@ -214,14 +215,14 @@ describe("createSdkSpawner", () => {
       await spawner(request(options), new AbortController().signal);
     }
     expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
-      ["Read", "Write", "exec_command", "Agent", "Grep"],
+      ["Read", "Write", "Grep"],
       ["Read", "Grep"],
       [],
     ]);
     expect(client.calls.map((call) => call.options.toolset)).toEqual([
       {
         base: "none",
-        include: ["Read", "Write", "exec_command", "Task", "Grep"],
+        include: ["Read", "Write", "Grep"],
       },
       { base: "none", include: ["Read", "Grep"] },
       { base: "none", include: [] },
