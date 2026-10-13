@@ -11,6 +11,7 @@ import {
   LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
   type LocalTranscriptManifest,
+  readJsonlFile,
 } from "./local-transcript";
 import type { StoredMessage } from "./local-types";
 
@@ -59,18 +60,6 @@ function readJsonFile<T>(path: string): T | undefined {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
     return undefined;
-  }
-}
-
-function readJsonlFile(path: string): unknown[] {
-  if (!existsSync(path)) return [];
-  try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as unknown);
-  } catch {
-    return [];
   }
 }
 
@@ -439,7 +428,12 @@ function collectConversationMessages(input: {
     return [];
 
   const messagesPath = join(conversationDir, "messages.jsonl");
-  const rows = readJsonlFile(messagesPath);
+  let rows: unknown[];
+  try {
+    rows = readJsonlFile<unknown>(messagesPath);
+  } catch {
+    rows = [];
+  }
   if (rows.length === 0) return [];
   const manifest = readJsonFile<LocalTranscriptManifest>(
     join(conversationDir, "manifest.json"),
