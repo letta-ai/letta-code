@@ -50,7 +50,7 @@ Directories contain *deferred memory*. Each directory contains a `MEMORY.md` fil
 To enable effective progressive discovery of memory, follow these rules when structuring memory: 
 * If the full contents of a deferred memory topic is <20,000 characters, it can be fully contained in `{topic_name}/MEMORY.md` and no additional files or nested subdirectories are needed
 * If all memory related to a topic can be contained in <10 markdown files, then no additional nested subdirectories are needed.
-* Large amounts of memory about a single topic may use up to 10 markdown files in addition to up to 10 subdirectories for subtopics, where the `{topic_name}/MEMORY.md` indexes the contents of subdirectories.
+* Large amounts of memory about a single topic contain nested subdirectories (recommended <10 total files and subdirectories within a folder), where the `{topic_name}/MEMORY.md` indexes the contents of subdirectories.
 
 **Size limits**: By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
 
