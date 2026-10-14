@@ -39,14 +39,16 @@ Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations 
 The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed to the MemFS git repo.
 
 The filesystem contains:
-- **Root `MEMORY.md`**: Required, has no frontmatter, and indexes core and deferred memory with ordinary relative Markdown links.
+- **Root `MEMORY.md`**: Required and has no frontmatter. It is always in-context and maps what is *not* already loaded: link each child directory with ordinary relative Markdown links and say when to open it. Do not list other root files; they are already in the system prompt.
 - **Core memory** (other root Markdown files): Always in-context. Each file has exactly `name` and `description` frontmatter. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to deferred memory.
-- **Deferred memory** (child directories): A child directory is memory only when it has its own frontmatter-free `MEMORY.md`. Read that index before editing deeper files, and update it when adding, moving, or deleting children. Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
+- **Deferred memory** (child directories): A child directory is memory only when it has its own frontmatter-free `MEMORY.md`; every directory on the path to a memory file needs one. Each directory's `MEMORY.md` describes its immediate children and when to read them. Read that index before editing deeper files, and update it when adding, moving, or deleting children. Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
 - **Skills** (`skills/`): Procedural memory for specialized workflows. Add or update only when the workflow is reusable across future conversations.
 
 You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
 
-**Visibility**: The primary agent always sees root core files, the filesystem tree, and skill/deferred file descriptions. Skill and deferred file *contents* must be retrieved by the primary agent based on name/description.
+**Size limits**: By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
+
+**Visibility**: The primary agent always sees the full root Markdown files (core memory and root `MEMORY.md`) plus the paths of child directories that have a `MEMORY.md`. It does not see the filesystem tree or deeper file descriptions. It discovers deferred memory one level at a time: opening a directory returns that directory's `MEMORY.md` plus its immediate files and subdirectories with their descriptions. Skills are listed by name and description, and their contents load on demand. Root `MEMORY.md` prose, child `MEMORY.md` indexes, and `description` frontmatter are therefore the primary agent's only path to deferred memory — write them so a future request can find the right file.
 
 ## Memory and Skill Reflection
 
@@ -61,11 +63,11 @@ When reviewing multiple transcripts, prefer patterns supported across sessions, 
 
 ### Phase 1 — Investigate
 
-Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree (with descriptions on non-root files) and the full content of every root core file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts.
+Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree of memory file names (no descriptions; `skills/` is omitted) and the full content of every root file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts.
 
-For deferred files, use the tree's descriptions to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow ordinary relative Markdown links from `MEMORY.md` when relevant. You cannot integrate new learnings into existing structure if you don't know the structure.
+For deferred files, read the relevant child `MEMORY.md` indexes and each candidate file's `description` frontmatter (for example with `head`) to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow ordinary relative Markdown links from `MEMORY.md` when relevant. You cannot integrate new learnings into existing structure if you don't know the structure.
 
-For skills, use descriptions from the tree to triage adjacency to the candidate procedure, then read the full `SKILL.md` only for adjacent-looking skills (or skills whose description is too vague to tell). If no description looks adjacent, you don't need to read any SKILL.md. When unsure about adjacency, err on the side of reading.
+For skills, list `$MEMORY_DIR/skills/` and read each `SKILL.md` frontmatter description to triage adjacency to the candidate procedure, then read the full `SKILL.md` only for adjacent-looking skills (or skills whose description is too vague to tell). If no description looks adjacent, you don't need to read any SKILL.md. When unsure about adjacency, err on the side of reading.
 
 ### Phase 2 — Extract
 
@@ -101,7 +103,7 @@ For each learning that survived Phase 2, make surgical, well-placed changes.
 
 **Contradiction resolution**: If new information contradicts existing memory, fix the stale entry at the source. Do not append the new version alongside the old.
 
-**Archiving retired context**: Use the root file `ARCHIVE.md` when content should no longer be load-bearing but may still be useful as historical context — shrink or remove the active source, then append a concise dated entry to `ARCHIVE.md`. Delete (don't archive) content the user asked to forget, sensitive or wrong content, or junk with no future-reference value.
+**Archiving retired context**: Use the deferred `archive/` directory when content should no longer be load-bearing but may still be useful as historical context — shrink or remove the active source, then append a concise dated entry to a topic file under `archive/` (each with `name` and `description` frontmatter). Create `archive/MEMORY.md` and link it from root `MEMORY.md` if they do not exist. Never archive into a root file: root files are always in-context. Delete (don't archive) content the user asked to forget, sensitive or wrong content, or junk with no future-reference value.
 
 **Discovery paths**: When adding or moving content, update ordinary relative Markdown links in `MEMORY.md` and any affected child `MEMORY.md` files so related files stay connected. Keep `name` and `description` frontmatter accurate.
 
@@ -164,6 +166,7 @@ Quick sanity pass before committing.
 - **Stale content**: Did the conversation make anything in existing memory obsolete or superseded? Remove or update it now.
 - **Cross-reference integrity**: If you deleted or moved a file, check whether any ordinary relative Markdown links point to the old location and update them.
 - **Tier check**: Did you add anything to root core memory that's really deferred material? Move it to a child directory. Did you leave something in a child directory that the agent needs on every turn? Promote it to root.
+- **Discoverability**: For each deferred file you added or moved, confirm the primary agent can reach it from root `MEMORY.md` through each intermediate directory's `MEMORY.md`, and that its `description` says when it is useful.
 
 #### Skills (only if you made a skill change)
 
