@@ -413,6 +413,34 @@ corrupted state is a workaround, not a fix.
 4. Boolean terminal outcomes shared across cleanup layers, use a
    discriminated result (`continue | completed | interrupted | error`) instead.
 
+### Managed Workload OOM Handling
+
+External coding-agent subprocesses (Codex, Claude Code) launch into the managed
+workload slice via `wrapManagedWorkloadLauncher`
+(`src/utils/systemd-workload-scope.ts`, `systemd-run --scope ... --slice=letta-workload.slice`)
+when Cloud sets the workload slice env var, so the CLI and its children share the
+workload memory limit instead of the listener's cgroup. The launcher sets
+`--property=OOMPolicy=continue`:
+
+- **`OOMPolicy=continue` keeps the coding agent alive when one of its child
+  commands is OOM-killed** so the agent can react (retry smaller, fewer
+  workers, or report the limit) instead of systemd terminating the scope.
+- **It does NOT relax the memory cap or resume the killed command.** The
+  slice's `MemoryMax` (60%) and listener separation stay intact; scopes must
+  not add their own memory properties. Do not "fix" OOMs by moving the coding
+  agent outside the slice — child processes inherit the agent's placement, so
+  that escapes containment for the expensive commands too.
+- It does NOT guarantee the agent survives (Linux can OOM-kill the agent
+  itself) and does NOT make oversized commands succeed.
+- Exit diagnostics: report the actual exit code or signal; a "possibly out of
+  memory" hint on SIGTERM/SIGKILL or exit code 143 is weak evidence because
+  ordinary termination also produces those signals.
+- Verification gap: existing tests check launcher arguments and exit
+  diagnostics only. End-to-end OOM behavior (memory-heavy child dies while the
+  coding agent stays responsive) is not covered by unit tests; a real sandbox
+  reproduction would be the remaining proof. Do not treat a unit-test pass as
+  end-to-end proof when reviewing such changes.
+
 ### pi-ai Ownership Boundary
 
 Letta Code depends on `@earendil-works/pi-ai` specifically so that pi-ai owns:
