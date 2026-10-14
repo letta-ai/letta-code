@@ -616,11 +616,15 @@ function checkPermissionForEngine(
  * "/project" but is not inside it.
  */
 function isPathWithinDirectory(path: string, dir: string): boolean {
-  const normalizedDir = resolve(dir);
+  // Normalize separators so Windows backslash paths compare correctly;
+  // a bare startsWith() check is not enough either way:
+  // "/project-secrets/x" starts with "/project" but is not inside it.
+  const normalizedPath = resolve(path).replace(/\\/g, "/");
+  const normalizedDir = resolve(dir).replace(/\\/g, "/");
   const prefix = normalizedDir.endsWith("/")
     ? normalizedDir
     : `${normalizedDir}/`;
-  return path === normalizedDir || path.startsWith(prefix);
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(prefix);
 }
 
 /**
