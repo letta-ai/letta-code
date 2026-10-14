@@ -52,11 +52,22 @@ describe("managed workload systemd scope", () => {
       "--quiet",
       "--collect",
       "--property=TimeoutStopSec=5s",
+      "--property=OOMPolicy=continue",
       "--slice=letta-workload.slice",
       "--",
       "bash",
       "-lc",
       "printf ok",
     ]);
+  });
+
+  test("preserves the slice cap without adding scope memory properties", () => {
+    const launcher = wrapManagedWorkloadLauncher(["claude"], {
+      env: { [WORKLOAD_SYSTEMD_SLICE_ENV]: "letta-workload.slice" },
+      platform: "linux",
+    });
+    expect(launcher).toContain("--slice=letta-workload.slice");
+    expect(launcher).toContain("--property=OOMPolicy=continue");
+    expect(launcher.filter((arg) => /memory/i.test(arg))).toEqual([]);
   });
 });

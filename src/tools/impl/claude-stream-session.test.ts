@@ -242,6 +242,40 @@ describe("Claude stream sessions", () => {
     fixture.emit({ type: "result", is_error: false, result: "two" });
   });
 
+  test.each([
+    {
+      exitCode: 143,
+      exitSignal: null,
+      expected: "143; possibly out of memory",
+    },
+    {
+      exitCode: null,
+      exitSignal: "SIGTERM" as const,
+      expected: "SIGTERM; possibly out of memory",
+    },
+    {
+      exitCode: null,
+      exitSignal: "SIGKILL" as const,
+      expected: "SIGKILL; possibly out of memory",
+    },
+    { exitCode: 1, exitSignal: null, expected: "1" },
+  ])(
+    "reports unexpected process exit: $expected",
+    async ({ exitCode, exitSignal, expected }) => {
+      const fixture = transportFixture();
+      const running = runClaudeTurn(
+        { ...base, prompt: "one", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.finish({ exitCode, exitSignal });
+      expect(await running).toMatchObject({
+        success: false,
+        error: `Claude Code exited before a final result with ${expected}`,
+      });
+    },
+  );
+
   test("process close rejects an unacknowledged interrupt and permits one resume", async () => {
     const failed = transportFixture();
     const running = runClaudeTurn(

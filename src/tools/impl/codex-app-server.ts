@@ -24,6 +24,7 @@ export interface CodexAppServerTransport {
   stderr?: Readable;
   stdin: Writable;
   kill?: () => void;
+  exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
 interface PendingRequest {
@@ -123,6 +124,9 @@ function spawnTransport(options: {
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => child.kill(),
+    exited: new Promise((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    }),
   };
 }
 
@@ -169,6 +173,7 @@ class CodexAppServerClient {
     private readonly onClose: (error: Error) => void,
   ) {
     const stdout = createInterface({ input: transport.stdout });
+    stdout.once("error", () => void this.close());
     stdout.on("line", (line) => {
       if (!line.trim()) return;
       let message: JsonRpcMessage;
@@ -196,7 +201,7 @@ class CodexAppServerClient {
     transport.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    const close = () => this.close();
+    const close = () => void this.close();
     transport.stdout.once("close", close);
     transport.stdout.once("error", close);
   }
@@ -240,15 +245,29 @@ class CodexAppServerClient {
 
   dispose(): void {
     this.transport.kill?.();
-    this.close();
+    void this.close();
   }
 
-  private close(): void {
+  private async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    const detail = this.stderr.trim();
+    let exitTimeout: ReturnType<typeof setTimeout> | undefined;
+    const exit = this.transport.exited
+      ? await Promise.race([
+          this.transport.exited,
+          new Promise<undefined>((resolve) => {
+            exitTimeout = setTimeout(() => resolve(undefined), 2_000);
+          }),
+        ]).finally(() => clearTimeout(exitTimeout))
+      : undefined;
+    const detail = this.stderr.trim().slice(-300);
+    const exitDetail = exit?.signal
+      ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" || exit.signal === "SIGTERM" ? "; possibly out of memory" : ""})`
+      : exit?.code != null
+        ? ` (exit code ${exit.code}${exit.code === 143 ? "; possibly out of memory" : ""})`
+        : "";
     const error = new Error(
-      `Codex app-server closed${detail ? `: ${detail}` : ""}`,
+      `Codex app-server closed${exitDetail}${detail ? `: ${detail}` : ""}`,
     );
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();

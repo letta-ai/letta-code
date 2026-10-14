@@ -475,9 +475,13 @@ async function launchSession(
       const protocolDetail = session.protocolError
         ? `; protocol error: ${session.protocolError}`
         : "";
+      const oomDetail =
+        exitCode === 143 || exitSignal === "SIGTERM" || exitSignal === "SIGKILL"
+          ? "; possibly out of memory"
+          : "";
       const error = transport.wasAborted()
         ? (abortController.signal.reason ?? "Claude Code turn cancelled")
-        : `Claude Code exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}${detail ? `: ${detail}` : ""}${protocolDetail}`;
+        : `Claude Code exited before a final result with ${exitCode ?? exitSignal ?? "unknown status"}${oomDetail}${detail ? `: ${detail}` : ""}${protocolDetail}`;
       rejectControls(session, new Error(errorMessage(error)));
       settle(session, failResult(session, error));
     })

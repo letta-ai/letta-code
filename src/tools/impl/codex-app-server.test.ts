@@ -331,6 +331,106 @@ describe("Codex app-server lifecycle", () => {
     );
   });
 
+  test.each([
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "",
+      expected: " (signal SIGKILL; possibly out of memory)",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: "",
+      expected: " (signal SIGTERM; possibly out of memory)",
+    },
+    { code: 137, signal: null, detail: "", expected: " (exit code 137)" },
+    { code: 0, signal: null, detail: "", expected: " (exit code 0)" },
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "boom",
+      expected: " (signal SIGKILL; possibly out of memory): boom",
+    },
+    {
+      code: 143,
+      signal: null,
+      detail: "startup warning",
+      expected: " (exit code 143; possibly out of memory): startup warning",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: `stale startup warning${"tail".repeat(100)}`,
+      expected: ` (signal SIGTERM; possibly out of memory): ${"tail".repeat(75)}`,
+    },
+  ])(
+    "reports transport exit info with stderr tail: $expected",
+    async ({ code, signal, detail, expected }) => {
+      const fake = new FakeCodexTransport();
+      let resolveExit!: (exit: {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }) => void;
+      const exited = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        resolveExit = resolve;
+      });
+      const handle = await startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => ({ ...fake.transport(), exited }) },
+      );
+      fake.close(detail);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      resolveExit({ code, signal });
+      expect(await handle.completion).toMatchObject({
+        success: false,
+        error: `Codex app-server closed${expected}`,
+      });
+    },
+  );
+
+  test("rejects pending requests when stdout errors and the child does not exit", async () => {
+    const stdout = new PassThrough();
+    const startedAt = Date.now();
+    const pending = startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => ({
+          stdin: new PassThrough(),
+          stdout,
+          exited: new Promise(() => {}),
+        }),
+      },
+    );
+    const rejected = pending.catch((error: unknown) => error);
+    stdout.destroy(new Error("stdout failed"));
+    expect(await rejected).toEqual(new Error("Codex app-server closed"));
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
+  test("fails the active turn when stdout errors and the child does not exit", async () => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+      {
+        createTransport: () => ({
+          ...fake.transport(),
+          exited: new Promise(() => {}),
+        }),
+      },
+    );
+    const startedAt = Date.now();
+    fake.stdout.destroy(new Error("stdout failed"));
+    expect(await handle.completion).toMatchObject({
+      success: false,
+      error: "Codex app-server closed",
+    });
+    expect(Date.now() - startedAt).toBeLessThan(3_000);
+  });
+
   test("routes messages to active turns through turn/steer", async () => {
     const fake = new FakeCodexTransport();
     await startCodexTurn(
