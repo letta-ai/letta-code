@@ -270,6 +270,43 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 }
 
 describe("TUI interrupt queue lifecycle", () => {
+  test("notifications arriving while idle after an error drain immediately", async () => {
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const { stdin } = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        if (inputs.length === 1) {
+          return {
+            controller: new AbortController(),
+            async *[Symbol.asyncIterator]() {
+              yield {
+                message_type: "stop_reason",
+                stop_reason: "error",
+              };
+            },
+          } as unknown as Stream<LettaStreamingResponse>;
+        }
+        return createAssistantMessageStream();
+      },
+    });
+
+    await typePrompt(stdin, "start failing turn");
+    await waitFor(() => inputs.length === 1, "the error stop");
+    await sleep(300);
+    addToMessageQueue({
+      kind: "task_notification",
+      text: monitorNotification("arrived after error"),
+    });
+    await waitFor(() => inputs.length === 2, "the notification after error");
+    expect(JSON.stringify(inputs[1]?.body)).toContain("arrived after error");
+
+    await typePrompt(stdin, "typed after error notification");
+    await waitFor(() => inputs.length === 3, "the subsequent typed message");
+    expect(JSON.stringify(inputs[2]?.body)).toContain(
+      "typed after error notification",
+    );
+  }, 15_000);
+
   test("notifications do not submit from an idle requires_approval boundary", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
     const { stdin } = await renderTestApp({

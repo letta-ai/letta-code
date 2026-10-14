@@ -19,11 +19,9 @@ export function canDequeueTuiBatch(
   );
   if (queueMode === "immediate" && !hasTaskNotification) return true;
   if (processingConversation !== 0) return false;
-  return (
-    lastStopReason === "end_turn" ||
-    (queueMode === "immediate" &&
-      (lastStopReason === null || lastStopReason === "cancelled"))
-  );
+  return queueMode === "defer"
+    ? lastStopReason === "end_turn"
+    : lastStopReason !== "requires_approval";
 }
 
 export type TuiQueueGatingConditions = {

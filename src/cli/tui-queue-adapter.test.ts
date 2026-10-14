@@ -109,7 +109,7 @@ describe("canDequeueTuiBatch", () => {
     ).toBe(true);
   });
 
-  test.each([null, "cancelled"])(
+  test.each([null, "cancelled", "error", "llm_api_error", "max_steps"])(
     "notifications can start from settled %s",
     (stopReason) => {
       expect(
