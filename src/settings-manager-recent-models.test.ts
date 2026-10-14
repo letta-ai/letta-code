@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getRecentModels } from "@/recent-models";
 import { settingsManager } from "@/settings-manager";
 
 const originalHome = process.env.HOME;
@@ -20,15 +21,27 @@ afterEach(async () => {
 });
 
 describe("Settings Manager - Recent models", () => {
-  test("deduplicates and caps recent models at ten entries", async () => {
+  test("ignores old handle-only entries", () => {
+    expect(getRecentModels(["provider/model"])).toEqual([]);
+  });
+
+  test("preserves exact presets while deduplicating and capping at ten", async () => {
     await settingsManager.initialize();
 
     for (let index = 1; index <= 12; index += 1) {
-      settingsManager.addRecentModel(`model-${index}`);
+      settingsManager.addRecentModel({
+        handle: "provider/model",
+        modelId: `model-${index}`,
+      });
     }
-    settingsManager.addRecentModel("model-5");
+    settingsManager.addRecentModel({
+      handle: "provider/model",
+      modelId: "model-5",
+    });
 
-    expect(settingsManager.getRecentModels()).toEqual([
+    expect(
+      settingsManager.getRecentModels().map(({ modelId }) => modelId),
+    ).toEqual([
       "model-5",
       "model-12",
       "model-11",

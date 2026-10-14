@@ -1,6 +1,3 @@
-// src/settings-manager.ts
-// In-memory settings manager that loads once and provides sync access
-
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -27,6 +24,11 @@ import type { ExperimentId } from "./experiments/types";
 import type { HooksConfig } from "./hooks/types";
 import type { McpServerConfig } from "./mcp-client";
 import type { PermissionRules } from "./permissions/types";
+import {
+  addRecentModel as addRecentModelToList,
+  getRecentModels as getRecentModelsFromValue,
+  type RecentModel,
+} from "./recent-models";
 import type {
   ReflectionMergeMode,
   ReflectionTrigger,
@@ -74,7 +76,7 @@ export interface Settings {
   includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
-  recentModels: string[]; // Recently used model IDs (most recent first, max 10)
+  recentModels: RecentModel[]; // Recent exact model presets (most recent first, max 10)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: ReflectionTrigger;
   reflectionStepCount: number;
@@ -326,9 +328,6 @@ class SettingsManager {
   private initialized = false;
   private pendingWrites = new Set<Promise<void>>();
   private secretsAvailable: boolean | null = null;
-  // Keys loaded from the file or explicitly set via updateSettings().
-  // persistSettings() only writes these keys, so manual file edits for
-  // keys we never touched are preserved instead of being clobbered by defaults.
   private managedKeys = new Set<string>();
   // Keys explicitly changed by this process. Only these keys are written back,
   // preventing stale in-memory values from clobbering external updates.
@@ -601,9 +600,6 @@ class SettingsManager {
     };
   }
 
-  /**
-   * Get a specific setting value (synchronous)
-   */
   getSetting<K extends keyof Settings>(key: K): Settings[K] {
     return this.getSettings()[key];
   }
@@ -616,14 +612,17 @@ class SettingsManager {
     this.updateSettings({ includeWorktreeTool: enabled });
   }
 
-  getRecentModels(): string[] {
-    return this.getSettings().recentModels ?? [];
+  getRecentModels(): RecentModel[] {
+    return getRecentModelsFromValue(this.getSettings().recentModels);
   }
 
-  addRecentModel(modelId: string): void {
-    const current = this.getRecentModels().filter((id) => id !== modelId);
-    const updated = [modelId, ...current].slice(0, 10);
-    this.updateSettings({ recentModels: updated });
+  addRecentModel(model: RecentModel): void {
+    this.updateSettings({
+      recentModels: addRecentModelToList(
+        this.getSettings().recentModels,
+        model,
+      ),
+    });
   }
 
   getCachedSecureTokens(): SecureTokens {
