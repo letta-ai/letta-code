@@ -30,6 +30,7 @@ export function wrapManagedWorkloadLauncher(
     "--quiet",
     "--collect",
     "--property=TimeoutStopSec=5s",
+    "--property=OOMPolicy=continue",
     `--slice=${slice}`,
     "--",
     ...launcher,
