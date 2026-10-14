@@ -173,6 +173,7 @@ class CodexAppServerClient {
     private readonly onClose: (error: Error) => void,
   ) {
     const stdout = createInterface({ input: transport.stdout });
+    stdout.once("error", () => void this.close());
     stdout.on("line", (line) => {
       if (!line.trim()) return;
       let message: JsonRpcMessage;
@@ -250,8 +251,14 @@ class CodexAppServerClient {
   private async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    let exitTimeout: ReturnType<typeof setTimeout> | undefined;
     const exit = this.transport.exited
-      ? await this.transport.exited
+      ? await Promise.race([
+          this.transport.exited,
+          new Promise<undefined>((resolve) => {
+            exitTimeout = setTimeout(() => resolve(undefined), 2_000);
+          }),
+        ]).finally(() => clearTimeout(exitTimeout))
       : undefined;
     const detail = this.stderr.trim();
     const exitDetail = exit?.signal
