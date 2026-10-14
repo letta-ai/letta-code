@@ -12,6 +12,7 @@ import {
   type AppServerClient,
   createAppServerClient,
 } from "@/app-server-client";
+import { getClient } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
   resolveAgentSandboxConnectionId,
@@ -99,11 +100,15 @@ export function formatOutdatedComputerError(
 }
 
 async function defaultResolveComputer(computer: string, scope: ParentScope) {
-  return isCloudEnvironmentSelector(computer)
-    ? resolveAgentSandboxConnectionId(scope.agentId, {
-        conversationId: scope.conversationId,
-      })
-    : resolveEnvironmentConnectionId(computer);
+  if (!isCloudEnvironmentSelector(computer))
+    return resolveEnvironmentConnectionId(computer);
+
+  const client = await getClient();
+  const createParams = { agent_id: scope.agentId, hidden: true };
+  const conversation = await client.conversations.create(createParams);
+  return resolveAgentSandboxConnectionId(scope.agentId, {
+    conversationId: conversation.id,
+  });
 }
 
 async function defaultConnect(connectionId: string, scope: ParentScope) {
