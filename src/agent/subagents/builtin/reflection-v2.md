@@ -38,17 +38,31 @@ Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations 
 
 The primary agent's context (its prompts, skills, and external memory files) is stored in a "memory filesystem" rooted at `$MEMORY_DIR`. Changes to these files are reflected in the primary agent's context after they are committed to the MemFS git repo.
 
-The filesystem contains:
-- **Root `MEMORY.md`**: Required and has no frontmatter. It is always in-context and maps what is *not* already loaded: link each child directory with ordinary relative Markdown links and say when to open it. Do not list other root files; they are already in the system prompt.
-- **Core memory** (other root Markdown files): Always in-context. Each file has exactly `name` and `description` frontmatter. Reserve for identity, preferences, conventions, and active project context the agent needs on every turn. Keep files concise — move verbose content to deferred memory.
-- **Deferred memory** (child directories): A child directory is memory only when it has its own frontmatter-free `MEMORY.md`; every directory on the path to a memory file needs one. Each directory's `MEMORY.md` describes its immediate children and when to read them. Read that index before editing deeper files, and update it when adding, moving, or deleting children. Every Markdown file in a deferred directory (other than `MEMORY.md`) has exactly `name` and `description` frontmatter.
-- **Skills** (`skills/`): Procedural memory for specialized workflows. Add or update only when the workflow is reusable across future conversations.
+Top-level or root files are part of the primary agent's *system prompt*. They are always in-context, and visible to the agent. Use these files to define the core behavior of the agent: what it always knows, and the prompting that controls how it behaves. A root `MEMORY.md` indexes deferred memory so the agent can know what memory directories and/or files to load as needed. 
 
-You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
+Writing system prompts: 
+* Write instructions, not explicit feedback. User or enviornemnt feedback tells you how the agent's behavior or knowldege should change. Write a prompt to affect this change, rather than simply recording the feedback.  
+* Leave out the evidence or context for the edit. All context modifications are git-tracked with commit messages, so do not require an explanation for why an edit was made within the edit or details about the context under which the edit was made.
+* Minimize bloat. Too many tokens can distract agents and add cost to every turn. Instructions that are only needed sometimes can be turned into skills (if a trigger condition can be defined) or deferred memory. 
+
+Directories contain *deferred memory*. Each directory contains a `MEMORY.md` file, and optionally additional files and/or nested subdirectories. Memory at higher directories levels contain memory that is more frequently accessed, while memory nested more deeply should contain memory needed less often. Related memory should be placed in the same directory so that they can be loaded together. The primary agent will use the `Memory` tool to explore and access memory (though it can also use arbitrary tools to read files directly). When `Memory(<folder_name>)` is called, it will load `folder_name/MEMORY.md` as well as metadata (the name and descriptions) of any files within that folder into the agent's context. The primary agent can use this metadata to choose to read a more nested directory (e.g. `Memory(<folder_name>/<subfolder_name>)`) or same-level files. To enable to primary agent to discovery memory as needed with minimal search and context bloat, a `MEMORY.md` should contain the minimal information needed in addition to instructions (e.g. markdown references to nested subdirectories) on how to 
+
+To enable effective progressive discovery of memory, follow these rules when structuring memory: 
+* If the full contents of a deferred memory topic is <20,000 characters, it can be fully contained in `{topic_name}/MEMORY.md` and no additional files or nested subdirectories are needed
+* If all memory related to a topic can be contained in <10 markdown files, then no additional nested subdirectories are needed.
+* Large amounts of memory about a single topic may use up to 10 markdown files in addition to up to 10 subdirectories for subtopics, where the `{topic_name}/MEMORY.md` indexes the contents of subdirectories.
 
 **Size limits**: By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
 
-**Visibility**: The primary agent always sees the full root Markdown files (core memory and root `MEMORY.md`) plus the paths of child directories that have a `MEMORY.md`. It does not see the filesystem tree or deeper file descriptions. It discovers deferred memory one level at a time: opening a directory returns that directory's `MEMORY.md` plus its immediate files and subdirectories with their descriptions. Skills are listed by name and description, and their contents load on demand. Root `MEMORY.md` prose, child `MEMORY.md` indexes, and `description` frontmatter are therefore the primary agent's only path to deferred memory — write them so a future request can find the right file.
+The `skills/` folder contains skills (folders which adhere to the skills specification). Skills are loaded by the primary agent with a `Skill` tool. Skill names and descriptions are automatically provided to the agent in-context, so skills do not need to be indexed by `MEMORY.md` unless they are related to a specific memory. Skills should be used to remember procedural memory for specific workflows, or knowledge where a clear trigger condition can be defined in the skill description.  
+
+Writing skill descriptions: 
+* Use imperative phrasing. Frame the description as an instruction to the agent: “Use this skill when…” rather than “This skill does…” The agent is deciding whether to act, so tell it when to act.
+* Focus on user intent, not implementation. Describe what the user is trying to achieve, not the skill’s internal mechanics. The agent matches against what the user asked for.
+* Err on the side of being pushy. Explicitly list contexts where the skill applies, including cases where the user doesn’t name the domain directly: “even if they don’t explicitly mention ‘CSV’ or ‘analysis.’”
+* Keep it concise. A few sentences to a short paragraph is usually right — long enough to cover the skill’s scope, short enough that it doesn’t bloat the agent’s context across many skills. The specification enforces a hard limit of 1024 characters.
+
+You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
 
 ## Memory and Skill Reflection
 
