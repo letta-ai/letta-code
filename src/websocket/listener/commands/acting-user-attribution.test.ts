@@ -9,13 +9,13 @@ import {
 /**
  * Attribution contract for listener-created conversations.
  *
- * Cloud-api stamps `acting_user_id` onto relayed `conversation_create`,
- * `conversation_fork`, and `execute_command` frames; the listener must
+ * Cloud-api stamps `acting_user_id` onto relayed `conversation_create` and
+ * `conversation_fork` frames; the listener must
  * echo it back as the `X-Letta-Acting-User-Id` header on the outbound
  * create/fork HTTP calls so cloud attributes the new conversation to
  * the human who actually created it (see tryApplyActingUserOverride in
- * cloud-api). Without the echo, conversations created via `/clear` or
- * the sidebar are stamped as the sandbox/API-key owner.
+ * cloud-api). Without the echo, conversations created via the sidebar
+ * are stamped as the sandbox/API-key owner.
  *
  * Source-level pins are used for the handler wiring (matching the
  * existing `send-message-stream-acting-user.test.ts` convention, and
@@ -45,10 +45,6 @@ describe("listener conversation-create attribution wiring (contract)", () => {
     fileURLToPath(new URL("./agents-conversations.ts", import.meta.url)),
     "utf-8",
   );
-  const commandsSource = readFileSync(
-    fileURLToPath(new URL("../commands.ts", import.meta.url)),
-    "utf-8",
-  );
 
   test("conversation_create echoes the relayed acting user", () => {
     expect(handlerSource).toMatch(
@@ -59,15 +55,6 @@ describe("listener conversation-create attribution wiring (contract)", () => {
   test("conversation_fork echoes the relayed acting user", () => {
     expect(handlerSource).toMatch(
       /backend\.forkConversation\([\s\S]*?actingUserRequestOptions\(parsed\.acting_user_id\)/,
-    );
-  });
-
-  test("/clear passes the frame's acting user into its conversation create", () => {
-    expect(commandsSource).toMatch(
-      /handleClearCommand\(socket, conversationRuntime, \{\s*\.\.\.opts,\s*actingUserId: command\.runtime\.acting_user_id,\s*\}\)/,
-    );
-    expect(commandsSource).toMatch(
-      /backend\.createConversation\(\s*\{\s*agent_id: agentId,\s*\},\s*actingUserRequestOptions\(opts\.actingUserId\),\s*\)/,
     );
   });
 });
