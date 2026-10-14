@@ -1,5 +1,3 @@
-// src/cli/app/useApprovalFlow.ts
-
 import { randomUUID } from "node:crypto";
 import {
   type Dispatch,
@@ -83,6 +81,7 @@ type ApprovalFlowContext = {
   executingToolCallIdsRef: MutableRefObject<string[]>;
   interruptQueuedRef: MutableRefObject<boolean>;
   isExecutingTool: boolean;
+  lastStopReasonRef: MutableRefObject<string | null>;
   loadingState: AppLoadingState;
   openTrajectorySegment: () => void;
   pendingApprovals: ApprovalRequest[];
@@ -147,6 +146,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
+    lastStopReasonRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -370,13 +370,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        // Snapshot current state before clearing dialog
         const approvalResultsSnapshot = [...approvalResults];
         const autoHandledSnapshot = [...autoHandledResults];
         const autoDeniedSnapshot = [...autoDeniedApprovals];
         const pendingSnapshot = [...pendingApprovals];
 
-        // Clear dialog state immediately so UI updates right away
         setPendingApprovals([]);
         setApprovalContexts([]);
         setApprovalResults([]);
@@ -581,6 +579,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           queueApprovalResults(null);
         }
       } catch (error) {
+        lastStopReasonRef.current = "error";
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
@@ -1043,7 +1042,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     markIncompleteToolsAsCancelled(buffersRef.current, true, "approval_cancel");
     refreshDerived();
 
-    // Clear all approval state
+    lastStopReasonRef.current = "cancelled";
     setPendingApprovals([]);
     setApprovalContexts([]);
     setApprovalResults([]);
@@ -1051,6 +1050,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     setAutoDeniedApprovals([]);
   }, [
     pendingApprovals,
+    lastStopReasonRef,
     refreshDerived,
     queueApprovalResults,
     setApprovalContexts,

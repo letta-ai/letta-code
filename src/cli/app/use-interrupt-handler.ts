@@ -45,6 +45,7 @@ type InterruptHandlerContext = {
   interruptQueuedRef: MutableRefObject<boolean>;
   interruptRequested: boolean;
   isExecutingTool: boolean;
+  lastStopReasonRef: MutableRefObject<string | null>;
   pendingApprovals: ApprovalRequest[];
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
   processingConversationRef: MutableRefObject<number>;
@@ -101,6 +102,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     interruptQueuedRef,
     interruptRequested,
     isExecutingTool,
+    lastStopReasonRef,
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
@@ -150,6 +152,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      lastStopReasonRef.current = "cancelled";
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
@@ -241,6 +244,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     if (!streaming || interruptRequested) {
       return;
     }
+
+    // Stale turns return before recording a stream stop; settle the gate here.
+    lastStopReasonRef.current = "cancelled";
 
     // If we're in the middle of queue cancel, set flag to restore instead of auto-send
     if (waitingForQueueCancelRef.current) {
@@ -394,6 +400,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     interruptRequested,
     appendError,
     isExecutingTool,
+    lastStopReasonRef,
     refreshDerived,
     setStreaming,
     pendingApprovals,

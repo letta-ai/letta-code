@@ -512,9 +512,7 @@ export function App({
     }
   }, [streaming]);
 
-  // Guard ref for preventing concurrent processConversation calls
-  // Separate from streaming state which may be set early for UI responsiveness
-  // Tracks depth to allow intentional reentry while blocking parallel calls
+  // Track nested calls separately from transient streaming/UI state.
   const processingConversationRef = useRef(0);
 
   // Generation counter - incremented on each ESC interrupt.
@@ -1642,7 +1640,7 @@ export function App({
   // Ref mirror of queueMode so useConversationLoop can read it without stale closures.
   const queueModeRef = useRef<"immediate" | "defer">("immediate");
   queueModeRef.current = queueMode;
-  // Tracks the stop reason of the last completed turn, set by useConversationLoop.
+  // Includes local cancellation/error exits that never emit a stream stop reason.
   const lastStopReasonRef = useRef<string | null>(null);
 
   // Track last dequeued message for restoration on error
@@ -3795,6 +3793,7 @@ export function App({
     executingToolCallIdsRef,
     interruptQueuedRef,
     isExecutingTool,
+    lastStopReasonRef,
     loadingState,
     openTrajectorySegment,
     pendingApprovals,
@@ -3939,6 +3938,7 @@ export function App({
     interruptQueuedRef,
     interruptRequested,
     isExecutingTool,
+    lastStopReasonRef,
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,

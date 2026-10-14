@@ -1739,6 +1739,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             const approvalsToProcess = approvalsFromStream;
 
             if (approvalsToProcess.length === 0) {
+              lastStopReasonRef.current = "error";
               clearApprovalToolContext();
               recordEmptyApprovalTelemetry(lastRunId, streamSequenceCursor);
               appendError(
@@ -2769,28 +2770,28 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
       } catch (e) {
+        if (myGeneration === conversationGenerationRef.current) {
+          lastStopReasonRef.current = "error";
+        }
         debugWarn(
           "message_stream",
           "Unhandled conversation error: %s",
           e instanceof Error ? (e.stack ?? e.message) : String(e),
         );
 
-        // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
           e instanceof APIUserAbortError ? "user_interrupt" : "stream_error",
         );
 
-        // If using eager cancel and this is an abort error, silently ignore it
-        // The user already got "Stream interrupted by user" feedback from handleInterrupt
+        // Eager cancellation already rendered interrupt feedback.
         if (EAGER_CANCEL && e instanceof APIUserAbortError) {
           setStreaming(false);
           refreshDerived();
           return;
         }
 
-        // Use comprehensive error formatting
         const errorDetails = formatErrorDetails(e, agentIdRef.current);
         appendError(errorDetails, {
           ...extractErrorMeta(e),
@@ -2800,12 +2801,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         });
         appendError(ERROR_FEEDBACK_HINT, true);
 
-        // Restore dequeued message to input on error (Input component will only use if empty)
+        // Restore dequeued input on error.
         if (lastDequeuedMessageRef.current) {
           setRestoredInput(lastDequeuedMessageRef.current);
           lastDequeuedMessageRef.current = null;
         }
-        // Clear any remaining queue on error
         tuiQueueRef.current?.clear("error");
 
         setStreaming(false);

@@ -104,6 +104,7 @@ function monitorNotification(summary: string): string {
  */
 class DelayedInterruptExecutor implements HeadlessTurnExecutor {
   readonly inputs: HeadlessTurnExecutorInput[] = [];
+  constructor(private readonly approvalFirst = false) {}
   private releaseInterruptedTurn: (() => void) | null = null;
   private readonly interruptedTurnReleased = new Promise<void>((resolve) => {
     this.releaseInterruptedTurn = resolve;
@@ -115,7 +116,28 @@ class DelayedInterruptExecutor implements HeadlessTurnExecutor {
 
   async execute(input: HeadlessTurnExecutorInput) {
     this.inputs.push(input);
-    if (this.inputs.length > 1) {
+    if (this.approvalFirst && this.inputs.length === 1) {
+      return {
+        controller: new AbortController(),
+        async *[Symbol.asyncIterator]() {
+          yield {
+            message_type: "approval_request_message",
+            tool_call: {
+              tool_call_id: "interrupt-read",
+              name: "Read",
+              arguments: JSON.stringify({
+                file_path: join(tempHome, "missing"),
+              }),
+            },
+          };
+          yield {
+            message_type: "stop_reason",
+            stop_reason: "requires_approval",
+          };
+        },
+      } as unknown as Stream<LettaStreamingResponse>;
+    }
+    if (this.inputs.length > (this.approvalFirst ? 2 : 1)) {
       return createAssistantMessageStream();
     }
 
@@ -270,6 +292,40 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 }
 
 describe("TUI interrupt queue lifecycle", () => {
+  test("Esc after a real approval boundary releases notifications and typed input", async () => {
+    const executor = new DelayedInterruptExecutor(true);
+    const { stdin } = await renderTestApp(executor);
+    await typePrompt(stdin, "start approval turn");
+    await waitFor(
+      () => executor.inputs.length === 2,
+      "the approval continuation",
+    );
+    expect(JSON.stringify(executor.inputs[1]?.body)).toContain(
+      "interrupt-read",
+    );
+    stdin.push("\u001b");
+    await executor.abortObserved;
+    addToMessageQueue({
+      kind: "task_notification",
+      text: monitorNotification("after approval interrupt"),
+    });
+    await sleep(100);
+    expect(executor.inputs).toHaveLength(2);
+    executor.settleInterruptedTurn();
+    await waitFor(
+      () => executor.inputs.length === 3,
+      "the notification after Esc",
+    );
+    expect(JSON.stringify(executor.inputs[2]?.body)).toContain(
+      "after approval interrupt",
+    );
+    await typePrompt(stdin, "typed after approval interrupt");
+    await waitFor(() => executor.inputs.length === 4, "subsequent typed input");
+    expect(JSON.stringify(executor.inputs[3]?.body)).toContain(
+      "typed after approval interrupt",
+    );
+  }, 15_000);
+
   test("notifications arriving while idle after an error drain immediately", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
     const { stdin } = await renderTestApp({
@@ -307,7 +363,7 @@ describe("TUI interrupt queue lifecycle", () => {
     );
   }, 15_000);
 
-  test("notifications do not submit from an idle requires_approval boundary", async () => {
+  test("notifications drain after an empty-approval error", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
     const { stdin } = await renderTestApp({
       async execute(input) {
@@ -333,10 +389,13 @@ describe("TUI interrupt queue lifecycle", () => {
     await sleep(300);
     addToMessageQueue({
       kind: "task_notification",
-      text: monitorNotification("queued across approval continuation"),
+      text: monitorNotification("after empty approvals"),
     });
-    await sleep(300);
-    expect(inputs).toHaveLength(1);
+    await waitFor(
+      () => inputs.length === 2,
+      "the notification after empty approvals",
+    );
+    expect(JSON.stringify(inputs[1]?.body)).toContain("after empty approvals");
   }, 15_000);
 
   test("a real Monitor survives normal completion and idle Esc", async () => {
