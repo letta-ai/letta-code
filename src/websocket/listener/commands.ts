@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
-import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
@@ -113,16 +112,12 @@ export async function handleExecuteCommand(
 
     switch (command.command_id) {
       case "clear":
-        output = await handleClearCommand(socket, conversationRuntime, {
-          ...opts,
-          actingUserId: command.runtime.acting_user_id,
-        });
+        output = await handleClearCommand(socket, conversationRuntime, opts);
         break;
 
       case "clear-messages":
         output = await handleClearCommand(socket, conversationRuntime, {
           ...opts,
-          actingUserId: command.runtime.acting_user_id,
           resetAllAgentMessages: true,
         });
         break;
@@ -639,12 +634,8 @@ async function handleCompactCommand(
 }
 
 /**
- * /clear — Reset agent messages and create a new conversation.
- *
- * Mirrors the CLI /clear logic:
- * 1. Reset agent messages (only for "default" conversation)
- * 2. Create a new conversation
- * 3. Clear the conversation runtime state
+ * /clear — Reset supported API history and the selected runtime's transient state.
+ * The remote client owns conversation selection; this command does not navigate.
  *
  * Returns a human-readable success message.
  */
@@ -654,8 +645,6 @@ async function handleClearCommand(
   opts: {
     onStatusChange?: StartListenerOptions["onStatusChange"];
     connectionId?: string;
-    /** Cloud user id stamped on the relayed frame; echoed on the create call. */
-    actingUserId?: string;
     /** Whether to reset the API agent's complete message history. */
     resetAllAgentMessages?: boolean;
   },
@@ -677,8 +666,7 @@ async function handleClearCommand(
     beginExternalToolNotificationReset(conversationRuntime);
   try {
     // /clear-messages always resets the API agent's message history.
-    // /clear only resets when leaving the default API conversation.
-    // Local/headless backends model /clear by switching to a fresh conversation.
+    // /clear only resets the default API conversation's history.
     if (
       !backend.capabilities.localModelCatalog &&
       (opts.resetAllAgentMessages ||
@@ -689,18 +677,8 @@ async function handleClearCommand(
       await client.agents.messages.reset(agentId, {
         add_default_initial_messages: false,
       });
-      // The old message history is gone even if creating its replacement fails.
       invalidateExternalToolNotifications(conversationRuntime);
     }
-
-    // Create a new conversation, attributing it to the human who ran
-    // /clear when the frame was relayed by cloud with an acting user.
-    await backend.createConversation(
-      {
-        agent_id: agentId,
-      },
-      actingUserRequestOptions(opts.actingUserId),
-    );
 
     // Clear runtime state for the current conversation
     clearConversationRuntimeState(conversationRuntime);

@@ -7,6 +7,8 @@ import { __testSetBackend } from "@/backend";
 import { LocalBackend, LocalStore } from "@/backend/local";
 import { settingsManager } from "@/settings-manager";
 import { type AppServerHandle, startAppServer } from "./app-server";
+import { getOrCreateScopedRuntime } from "./listener/conversation-runtime";
+import { captureExternalToolNotificationGuard } from "./listener/external-tools";
 import {
   createAcceptedInputDispositionLedger,
   loadDurableQueuedInputs,
@@ -91,11 +93,24 @@ for (const scopeKind of ["default", "conversation"] as const) {
       };
       await send("before-clear");
       if (!client || !server) throw new Error("App-server is missing");
+      const beforeClear = await backend.listConversations({
+        agent_id: agent.id,
+      });
+      getOrCreateScopedRuntime(runtime, agent.id, scope.conversation_id);
+      const notificationGuard = captureExternalToolNotificationGuard(
+        runtime,
+        scope,
+      );
+      expect(notificationGuard?.isCurrent()).toBe(true);
       const response = await client.request("execute_command", {
         runtime: scope,
         command_id: "clear",
       });
       expect(response).toMatchObject({ success: true });
+      expect(notificationGuard?.isCurrent()).toBe(false);
+      expect(await backend.listConversations({ agent_id: agent.id })).toEqual(
+        beforeClear,
+      );
       await send("after-clear");
       await send("second-after-clear");
       client.close();

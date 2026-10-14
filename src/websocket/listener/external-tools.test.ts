@@ -1,14 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
-import { __testSetBackend } from "@/backend";
-import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import {
   clearExternalTools,
   executeTool,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
 import type { ExternalToolCallRequestMessage } from "@/types/protocol_v2";
-import { handleExecuteCommand } from "@/websocket/listener/commands";
 import { openListenerConnection } from "@/websocket/listener/connection";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import {
@@ -26,6 +23,7 @@ import {
   stopRuntime,
 } from "@/websocket/listener/lifecycle";
 import {
+  beginExternalToolNotificationReset,
   clearConversationRuntimeState,
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
@@ -76,27 +74,6 @@ function createMockRuntime(): {
   return { runtime, sent };
 }
 
-function executeClearCommand(
-  runtime: ReturnType<typeof getOrCreateScopedRuntime>,
-  requestId: string,
-): Promise<void> {
-  if (!runtime.agentId) throw new Error("clear test requires an agent");
-  return handleExecuteCommand(
-    {
-      type: "execute_command",
-      command_id: "clear",
-      request_id: requestId,
-      runtime: {
-        agent_id: runtime.agentId,
-        conversation_id: runtime.conversationId,
-      },
-    },
-    { readyState: 1, send() {} } as unknown as WebSocket,
-    runtime,
-    {},
-  );
-}
-
 describe("listener runtime_start external tool bridge", () => {
   beforeEach(() => {
     clearExternalTools();
@@ -105,7 +82,6 @@ describe("listener runtime_start external tool bridge", () => {
   afterEach(() => {
     clearExternalTools();
     setActiveRuntime(null);
-    __testSetBackend(null);
   });
 
   test("keeps completion through turn cancellation but drops it after reset or teardown", () => {
@@ -143,22 +119,8 @@ describe("listener runtime_start external tool bridge", () => {
     expect(teardownGuard?.isCurrent()).toBe(false);
   });
 
-  test("holds completions during /clear and releases them if the clear fails", async () => {
+  test("holds completions during reset and releases them if the reset fails", async () => {
     for (const shouldFail of [false, true]) {
-      const createStarted = Promise.withResolvers<void>();
-      const resumeCreate = Promise.withResolvers<void>();
-      class DeferredClearBackend extends FakeHeadlessBackend {
-        override async createConversation(
-          ...args: Parameters<FakeHeadlessBackend["createConversation"]>
-        ): ReturnType<FakeHeadlessBackend["createConversation"]> {
-          createStarted.resolve();
-          await resumeCreate.promise;
-          if (shouldFail) throw new Error("clear failed");
-          return super.createConversation(...args);
-        }
-      }
-      const backend = new DeferredClearBackend("agent-clear");
-      __testSetBackend(backend);
       const listener = createRuntime();
       listener.processServicesStarted = true;
       listener.processServicesGeneration = 3;
@@ -172,12 +134,7 @@ describe("listener runtime_start external tool bridge", () => {
         conversation_id: "default",
       });
       expect(guard?.isCurrent()).toBe(true);
-      const clear = executeClearCommand(
-        runtime,
-        `clear-external-tool-${shouldFail ? "failure" : "success"}`,
-      );
-
-      await createStarted.promise;
+      const finishReset = beginExternalToolNotificationReset(runtime);
       let guardSettled = false;
       const waitForGuard = guard?.waitUntilCurrent().then((current) => {
         guardSettled = true;
@@ -185,8 +142,8 @@ describe("listener runtime_start external tool bridge", () => {
       });
       await Bun.sleep(0);
       expect(guardSettled).toBe(false);
-      resumeCreate.resolve();
-      await clear;
+      if (!shouldFail) clearConversationRuntimeState(runtime);
+      finishReset();
       expect(await waitForGuard).toBe(shouldFail);
       if (!shouldFail) {
         const replacementGuard = captureExternalToolNotificationGuard(
@@ -203,28 +160,7 @@ describe("listener runtime_start external tool bridge", () => {
     }
   });
 
-  test("waits for the newest overlapping /clear before delivering", async () => {
-    const started = [
-      Promise.withResolvers<void>(),
-      Promise.withResolvers<void>(),
-    ];
-    const resume = [
-      Promise.withResolvers<void>(),
-      Promise.withResolvers<void>(),
-    ];
-    let callIndex = 0;
-    class OverlappingClearBackend extends FakeHeadlessBackend {
-      override async createConversation(
-        ...args: Parameters<FakeHeadlessBackend["createConversation"]>
-      ): ReturnType<FakeHeadlessBackend["createConversation"]> {
-        const index = callIndex++;
-        started[index]?.resolve();
-        await resume[index]?.promise;
-        if (index === 0) throw new Error("first clear failed");
-        return super.createConversation(...args);
-      }
-    }
-    __testSetBackend(new OverlappingClearBackend("agent-overlap"));
+  test("waits for the newest overlapping reset before delivering", async () => {
     const listener = createRuntime();
     listener.processServicesStarted = true;
     const runtime = getOrCreateScopedRuntime(
@@ -237,23 +173,20 @@ describe("listener runtime_start external tool bridge", () => {
       conversation_id: "default",
     });
 
-    const firstClear = executeClearCommand(runtime, "clear-overlap-1");
-    await started[0]?.promise;
-    const secondClear = executeClearCommand(runtime, "clear-overlap-2");
-    await started[1]?.promise;
+    const finishFirstReset = beginExternalToolNotificationReset(runtime);
+    const finishSecondReset = beginExternalToolNotificationReset(runtime);
     let guardSettled = false;
     const waitForGuard = guard?.waitUntilCurrent().then((current) => {
       guardSettled = true;
       return current;
     });
 
-    resume[0]?.resolve();
-    await firstClear;
+    finishFirstReset();
     await Bun.sleep(0);
     expect(guardSettled).toBe(false);
 
-    resume[1]?.resolve();
-    await secondClear;
+    clearConversationRuntimeState(runtime);
+    finishSecondReset();
     expect(await waitForGuard).toBe(false);
   });
 
