@@ -37,6 +37,7 @@ import {
   shouldPersistSubagentHiddenBackfill,
   shouldUseDefaultLocalModel,
 } from "./local-agent-record";
+import { readAgentRecordFiles } from "./local-agent-record-file";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
 import { listLocalConversations } from "./local-conversation-list";
 import {
@@ -2729,11 +2730,7 @@ export class LocalStore {
 
     const agentsDir = join(this.storageDir, "agents");
     if (existsSync(agentsDir)) {
-      for (const file of readdirSync(agentsDir)) {
-        if (!file.endsWith(".json") || file.startsWith("._")) continue;
-        const filePath = join(agentsDir, file);
-        const mtimeMs = statSync(filePath).mtimeMs;
-        const raw = readJsonFile<unknown>(filePath);
+      for (const { mtimeMs, raw } of readAgentRecordFiles(agentsDir)) {
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
