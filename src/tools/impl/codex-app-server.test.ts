@@ -342,7 +342,7 @@ describe("Codex app-server lifecycle", () => {
       code: null,
       signal: "SIGTERM" as const,
       detail: "",
-      expected: " (signal SIGTERM)",
+      expected: " (signal SIGTERM; possibly out of memory)",
     },
     { code: 137, signal: null, detail: "", expected: " (exit code 137)" },
     { code: 0, signal: null, detail: "", expected: " (exit code 0)" },
@@ -350,10 +350,22 @@ describe("Codex app-server lifecycle", () => {
       code: null,
       signal: "SIGKILL" as const,
       detail: "boom",
-      expected: ": boom",
+      expected: " (signal SIGKILL; possibly out of memory): boom",
+    },
+    {
+      code: 143,
+      signal: null,
+      detail: "startup warning",
+      expected: " (exit code 143; possibly out of memory): startup warning",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: `stale startup warning${"tail".repeat(100)}`,
+      expected: ` (signal SIGTERM; possibly out of memory): ${"tail".repeat(75)}`,
     },
   ])(
-    "reports transport exit info without replacing stderr: $expected",
+    "reports transport exit info with stderr tail: $expected",
     async ({ code, signal, detail, expected }) => {
       const fake = new FakeCodexTransport();
       let resolveExit!: (exit: {

@@ -260,14 +260,14 @@ class CodexAppServerClient {
           }),
         ]).finally(() => clearTimeout(exitTimeout))
       : undefined;
-    const detail = this.stderr.trim();
+    const detail = this.stderr.trim().slice(-300);
     const exitDetail = exit?.signal
-      ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" ? "; possibly out of memory" : ""})`
+      ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" || exit.signal === "SIGTERM" ? "; possibly out of memory" : ""})`
       : exit?.code != null
-        ? ` (exit code ${exit.code})`
+        ? ` (exit code ${exit.code}${exit.code === 143 ? "; possibly out of memory" : ""})`
         : "";
     const error = new Error(
-      `Codex app-server closed${detail ? `: ${detail}` : exitDetail}`,
+      `Codex app-server closed${exitDetail}${detail ? `: ${detail}` : ""}`,
     );
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
