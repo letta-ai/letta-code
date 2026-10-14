@@ -394,6 +394,27 @@ one = permanently busy.
 
 - **Review signal:** interrupt handling, ESC key, tool execution cleanup paths.
 
+### Stale Approval Stop Reason vs Outstanding Continuation
+
+A recorded stop reason is historical state. A turn that stops with
+`requires_approval` and is then canceled (Esc) keeps that stop reason even
+though no approval continuation remains, so a notification/TUI queue gate keyed
+on `requires_approval` stays closed — and because ordinary input joins the
+existing queue, subsequent typed messages stay trapped with it.
+
+- Gate dequeueing/notifications on the **outstanding approval continuation**,
+  not the historical stop reason.
+- Clear/settle that state on every interruption and abandoned-approval/error
+  path (same rule as Interrupt Lock / State Cleanup); any missed path leaves the
+  queue permanently blocked.
+- A regression must reach a real approval boundary, press Esc, then verify
+  notification delivery and subsequent typed input. Directly feeding `"cancelled"`
+  as the stop reason — or emitting `requires_approval` with no approval request,
+  which production rejects as "Unexpected empty approvals" — does not exercise
+  the production path.
+- **Review signal:** any PR gating the notification/TUI queue on conversation
+  stop reason, or adding approval-continuation guards.
+
 ### Impossible-State PRs
 
 When a PR addresses a corrupted/impossible state (e.g. `isProcessing=true` but
