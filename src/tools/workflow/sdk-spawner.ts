@@ -6,9 +6,10 @@
  */
 
 import { getBackend } from "@/backend";
+import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
+import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
-import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -28,6 +29,10 @@ export interface SdkSpawnerConfig {
   resolveModel?: (identifier: string) => string | null;
   /** Parent tool pool, or the workflow's explicit allowlist override. */
   allowedTools?: string[];
+  /** Tool names captured from the invoking parent's prepared tool context. */
+  parentToolNames?: string[];
+  /** Parent-only agent mod tools, which agent-free workers cannot load. */
+  agentScopedToolNames?: string[];
   /** Invoking session's permission mode. Omit to use the harness default. */
   permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
@@ -348,10 +353,38 @@ function buildQueryOptions(
     ...(!options.model ? config.parentModelSettings : {}),
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
-  const allowedTools = options.allowedTools ?? config.allowedTools;
-  const bundledTools = new Set<string>(
-    Object.values(TOOLSET_CATALOG).flatMap((preset) => [...preset.tools]),
+  const explicitAllowedTools = options.allowedTools ?? config.allowedTools;
+  const bundledTools = new Set<string>(Object.keys(TOOL_DEFINITIONS));
+  const globalModTools = new Set(
+    Array.from(getAvailableModToolsRegistry().entries()).flatMap(
+      ([name, tool]) =>
+        tool.owner?.scope === "agent"
+          ? []
+          : [getInternalToolName(name), getInternalToolName(tool.name)],
+    ),
   );
+  const agentScopedTools = new Set(
+    (config.agentScopedToolNames ?? []).map(getInternalToolName),
+  );
+  const isWorkerResolvable = (name: string): boolean => {
+    const internalName = getInternalToolName(name);
+    return bundledTools.has(internalName) || globalModTools.has(internalName);
+  };
+  const unknownTool = explicitAllowedTools?.find(
+    (name) => !isWorkerResolvable(name),
+  );
+  if (unknownTool !== undefined) {
+    if (agentScopedTools.has(getInternalToolName(unknownTool))) {
+      throw new Error(
+        `Workflow worker tool "${unknownTool}" is agent-scoped and is not available to workflow workers.`,
+      );
+    }
+    throw new Error(
+      `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor a global mod tool available to workflow workers.`,
+    );
+  }
+  const allowedTools =
+    explicitAllowedTools ?? config.parentToolNames?.filter(isWorkerResolvable);
   return {
     model,
     ...(options.schema

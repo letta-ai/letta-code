@@ -31,6 +31,7 @@ import { consumeInterruptQueue } from "./interrupts";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
+  ensureListenerModAdapter,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
@@ -302,7 +303,7 @@ export async function prepareListenerTurn(params: {
   }
   const modAdapters = agentId
     ? await ensureListenerModAdaptersForAgent(runtime.listener, agentId)
-    : [];
+    : [ensureListenerModAdapter(runtime.listener)];
   runtime.transientChannelRuntimeTools = agentId
     ? await publishChannelRuntimeToolsForTurn(runtime.listener, {
         agent_id: agentId,
