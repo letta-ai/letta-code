@@ -185,3 +185,56 @@ describe("secrets info reminders", () => {
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
   });
 });
+
+describe("subagent secret names", () => {
+  test("a subagent lists the names it can use from its MCP parent's vault", async () => {
+    const { listAvailableSecretNames } = await import("@/reminders/engine");
+    const { runWithRuntimeContext } = await import("@/runtime-context");
+    __testSeedSecretsCache("agent-sub-secrets", { OWN_KEY: "own-value-123" });
+    __testSeedSecretsCache("agent-root-secrets", {
+      GITHUB_TOKEN: "root-value-123",
+      OWN_KEY: "root-own-value",
+    });
+    const parents: Record<string, string> = {
+      "agent-sub-secrets": "agent-root-secrets",
+    };
+    try {
+      const names = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            parent_agent_id: "agent-root-secrets",
+            agent_role: "subagent",
+          },
+        },
+        () =>
+          listAvailableSecretNames(
+            "agent-sub-secrets",
+            async (id) => parents[id],
+          ),
+      );
+      expect(names).toEqual(["GITHUB_TOKEN", "OWN_KEY"]);
+      // Without subagent linkage only the agent's own names are listed.
+      const ownOnly = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+          },
+        },
+        () =>
+          listAvailableSecretNames(
+            "agent-sub-secrets",
+            async (id) => parents[id],
+          ),
+      );
+      expect(ownOnly).toEqual(["OWN_KEY"]);
+    } finally {
+      clearSecretsCache("agent-sub-secrets");
+      clearSecretsCache("agent-root-secrets");
+    }
+  });
+});

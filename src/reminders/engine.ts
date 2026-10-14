@@ -78,12 +78,41 @@ async function buildAgentInfoReminder(
   return reminder || null;
 }
 
+/**
+ * Secret names a session can use: its own vault plus, for a subagent, the vault
+ * of the agent it inherits MCP from. Shell substitution already falls back to
+ * that vault (resolveSecretEnvFromCommand); listing the names keeps the agent
+ * from concluding a secret is missing.
+ */
+export async function listAvailableSecretNames(
+  agentId: string,
+  lookupParent?: ParentAgentLookup,
+): Promise<string[]> {
+  const { ensureSecretsLoaded, listSecretNames } = await import(
+    "@/utils/secrets-store"
+  );
+  const names = new Set(listSecretNames(agentId));
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(
+      agentId,
+      undefined,
+      lookupParent,
+    );
+    if (scopeAgentId !== agentId) {
+      await ensureSecretsLoaded(scopeAgentId);
+      for (const name of listSecretNames(scopeAgentId)) names.add(name);
+    }
+  } catch {
+    // Unresolvable parent linkage never widens access; list own names only.
+  }
+  return [...names].sort();
+}
+
 async function buildSecretsInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   try {
-    const { listSecretNames } = await import("@/utils/secrets-store");
-    const names = listSecretNames(context.agent.id);
+    const names = await listAvailableSecretNames(context.agent.id);
     const namesKey = names.join("\0");
     const isRefresh = context.state.pendingSecretsInfoRefresh;
     const namesChanged =
