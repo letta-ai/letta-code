@@ -1,4 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import {
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { clearAllSubagents } from "@/agent/subagent-state";
 import type {
   AppServerClient,
@@ -6,6 +14,7 @@ import type {
   AppServerMessageHandler,
 } from "@/app-server-client";
 import type { EnvironmentConnection } from "@/backend/api/environments";
+import { settingsManager } from "@/settings-manager";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
 import type {
   LaunchSubagentCommand,
@@ -21,6 +30,8 @@ import {
 import { spawnBackgroundSubagentTask } from "./task";
 
 const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
+const originalApiKey = process.env.LETTA_API_KEY;
+const originalBaseUrl = process.env.LETTA_BASE_URL;
 const runtime = {
   agent_id: scope.agentId,
   conversation_id: scope.conversationId,
@@ -150,6 +161,20 @@ function environment(capable: boolean): EnvironmentConnection {
 }
 
 const queued: QueuedMessage[] = [];
+function mockApiFetch(handler: (request: Request) => Promise<Response>) {
+  const fetch = (async (
+    input: Parameters<typeof globalThis.fetch>[0],
+    init?: Parameters<typeof globalThis.fetch>[1],
+  ) => {
+    const request =
+      input instanceof Request
+        ? new Request(input, init)
+        : new Request(input.toString(), init);
+    return handler(request);
+  }) as typeof globalThis.fetch;
+  return spyOn(globalThis, "fetch").mockImplementation(fetch);
+}
+
 const spawn: SpawnRemoteFollowTask = (args) =>
   spawnBackgroundSubagentTask({
     ...args,
@@ -207,13 +232,142 @@ async function notified(): Promise<QueuedMessage> {
   return message;
 }
 
+beforeAll(() => settingsManager.initialize());
+
 afterEach(() => {
+  mock.restore();
+  if (originalApiKey === undefined) delete process.env.LETTA_API_KEY;
+  else process.env.LETTA_API_KEY = originalApiKey;
+  if (originalBaseUrl === undefined) delete process.env.LETTA_BASE_URL;
+  else process.env.LETTA_BASE_URL = originalBaseUrl;
   queued.length = 0;
   backgroundTasks.clear();
   clearAllSubagents();
 });
 
 describe("launchRemoteExternalCodingAgent", () => {
+  test.each(["codex", "claude-code"] as const)(
+    "%s cloud launches create fresh hidden conversations without changing caller routing",
+    async (type) => {
+      process.env.LETTA_API_KEY = "test-key";
+      process.env.LETTA_BASE_URL = "https://api.example.test";
+      const requests: Array<{ method: string; path: string; body: unknown }> =
+        [];
+      let conversations = 0;
+      mockApiFetch(async (request) => {
+        const path = new URL(request.url).pathname;
+        const text = await request.text();
+        requests.push({
+          method: request.method,
+          path,
+          body: text ? JSON.parse(text) : null,
+        });
+        if (path === "/v1/conversations/") {
+          expect(new URL(request.url).searchParams.get("agent_id")).toBe(
+            scope.agentId,
+          );
+          return Response.json({ id: `conv-worker-${++conversations}` });
+        }
+        if (path === `/v1/agents/${scope.agentId}/sandboxes`)
+          return Response.json({
+            sandboxId: `sandbox-${conversations}`,
+            deviceId: `device-${conversations}`,
+            connectionName: "cloud",
+          });
+        if (path === `/v1/environments/device-${conversations}`)
+          return Response.json({
+            ...environment(true),
+            connectionId: `conn-${conversations}`,
+          });
+        throw new Error(`Unexpected request: ${request.method} ${path}`);
+      });
+
+      for (const worker of [1, 2]) {
+        const computer = new FakeComputer(() => accepted);
+        const connect = spyOn(
+          { connect: async () => computer.asClient() },
+          "connect",
+        );
+        const result = await launchRemoteExternalCodingAgent(
+          {
+            type,
+            computer: "cloud",
+            prompt: "Fix the bug",
+            description: "Fix the bug",
+            parentScope: scope,
+          },
+          { spawn, connect },
+        );
+        if (!result.success) throw new Error(result.error);
+        expect(result.success).toBe(true);
+        expect(connect).toHaveBeenCalledWith(`conn-${worker}`, scope);
+        expect(computer.launches[0]).toMatchObject({
+          runtime,
+          notify: "caller",
+        });
+        expect(requests.slice((worker - 1) * 3, worker * 3)).toEqual([
+          {
+            method: "POST",
+            path: "/v1/conversations/",
+            body: { hidden: true },
+          },
+          {
+            method: "POST",
+            path: `/v1/agents/${scope.agentId}/sandboxes`,
+            body: { conversationId: `conv-worker-${worker}` },
+          },
+          {
+            method: "GET",
+            path: `/v1/environments/device-${worker}`,
+            body: null,
+          },
+        ]);
+        computer.snapshot({ status: "completed", result: "Done" });
+        expect(await notified()).toMatchObject({
+          agentId: scope.agentId,
+          conversationId: scope.conversationId,
+        });
+        queued.length = 0;
+      }
+    },
+  );
+
+  test("named computers use the existing environment resolver without creating conversations", async () => {
+    process.env.LETTA_API_KEY = "test-key";
+    process.env.LETTA_BASE_URL = "https://api.example.test";
+    const fetch = mockApiFetch(async (request) => {
+      expect(request.method).toBe("GET");
+      expect(new URL(request.url).pathname).toBe("/v1/environments");
+      expect(new URL(request.url).searchParams.get("limit")).toBe("100");
+      return Response.json({
+        connections: [environment(true)],
+        hasNextPage: false,
+      });
+    });
+    const computer = new FakeComputer(() => accepted);
+    const connect = spyOn(
+      { connect: async () => computer.asClient() },
+      "connect",
+    );
+    const result = await launchRemoteExternalCodingAgent(
+      {
+        type: "codex",
+        computer: "brad-box",
+        prompt: "Fix the bug",
+        description: "Fix the bug",
+        parentScope: scope,
+      },
+      { spawn, connect },
+    );
+    if (!result.success) throw new Error(result.error);
+    expect(result.success).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(connect).toHaveBeenCalledWith("conn-1", scope);
+    expect(computer.launches[0]).toMatchObject({ runtime, notify: "caller" });
+    computer.snapshot({ status: "completed", result: "Done" });
+    await notified();
+  });
+
   test("launches with notify caller and notifies locally from the remote snapshot result", async () => {
     const computer = new FakeComputer(() => accepted);
     const result = await launch([computer]);
