@@ -24,6 +24,7 @@ export interface CodexAppServerTransport {
   stderr?: Readable;
   stdin: Writable;
   kill?: () => void;
+  exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
 interface PendingRequest {
@@ -123,6 +124,9 @@ function spawnTransport(options: {
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => child.kill(),
+    exited: new Promise((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    }),
   };
 }
 
@@ -196,7 +200,7 @@ class CodexAppServerClient {
     transport.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    const close = () => this.close();
+    const close = () => void this.close();
     transport.stdout.once("close", close);
     transport.stdout.once("error", close);
   }
@@ -240,15 +244,23 @@ class CodexAppServerClient {
 
   dispose(): void {
     this.transport.kill?.();
-    this.close();
+    void this.close();
   }
 
-  private close(): void {
+  private async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
+    const exit = this.transport.exited
+      ? await this.transport.exited
+      : undefined;
     const detail = this.stderr.trim();
+    const exitDetail = exit?.signal
+      ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" ? "; possibly out of memory" : ""})`
+      : exit?.code != null
+        ? ` (exit code ${exit.code})`
+        : "";
     const error = new Error(
-      `Codex app-server closed${detail ? `: ${detail}` : ""}`,
+      `Codex app-server closed${detail ? `: ${detail}` : exitDetail}`,
     );
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();

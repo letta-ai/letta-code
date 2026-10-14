@@ -331,6 +331,55 @@ describe("Codex app-server lifecycle", () => {
     );
   });
 
+  test.each([
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "",
+      expected: " (signal SIGKILL; possibly out of memory)",
+    },
+    {
+      code: null,
+      signal: "SIGTERM" as const,
+      detail: "",
+      expected: " (signal SIGTERM)",
+    },
+    { code: 137, signal: null, detail: "", expected: " (exit code 137)" },
+    { code: 0, signal: null, detail: "", expected: " (exit code 0)" },
+    {
+      code: null,
+      signal: "SIGKILL" as const,
+      detail: "boom",
+      expected: ": boom",
+    },
+  ])(
+    "reports transport exit info without replacing stderr: $expected",
+    async ({ code, signal, detail, expected }) => {
+      const fake = new FakeCodexTransport();
+      let resolveExit!: (exit: {
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }) => void;
+      const exited = new Promise<{
+        code: number | null;
+        signal: NodeJS.Signals | null;
+      }>((resolve) => {
+        resolveExit = resolve;
+      });
+      const handle = await startCodexTurn(
+        { prompt: "Initial", parentAgentId: "parent", cwd: "/repo" },
+        { createTransport: () => ({ ...fake.transport(), exited }) },
+      );
+      fake.close(detail);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      resolveExit({ code, signal });
+      expect(await handle.completion).toMatchObject({
+        success: false,
+        error: `Codex app-server closed${expected}`,
+      });
+    },
+  );
+
   test("routes messages to active turns through turn/steer", async () => {
     const fake = new FakeCodexTransport();
     await startCodexTurn(
