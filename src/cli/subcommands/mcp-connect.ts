@@ -6,6 +6,7 @@ import {
   connectBrowserDeviceMcpOAuth,
   matchBrowserDeviceMcpOAuthServerUrl,
 } from "@/browser-device-mcp-oauth";
+import { resolveMcpOAuthClientName } from "@/mcp-oauth-client-name";
 import { McpCliError, type McpOutput } from "./mcp-io";
 
 export interface McpOAuthHandoff {
@@ -28,7 +29,7 @@ export interface McpConnectDependencies {
 }
 
 const CONNECT_USAGE =
-  "Usage: letta mcp connect <service> [--server-url <url>] [--agent <id>]";
+  "Usage: letta mcp connect <service> [--server-url <url>] [--client-name <name>] [--agent <id>]";
 
 async function defaultMintMcpOAuthHandoff(
   agentId: string,
@@ -88,6 +89,25 @@ function resolveConnectServer(
   return { service, serverUrl: matched };
 }
 
+/**
+ * Validate `--client-name` before the browser flow starts. Undefined keeps the
+ * provider consent screen on the default name.
+ */
+function resolveConnectClientName(
+  clientName: string | undefined,
+): string | undefined {
+  if (clientName === undefined) return undefined;
+  try {
+    return resolveMcpOAuthClientName(clientName);
+  } catch (error) {
+    throw new McpCliError(
+      "invalid_client_name",
+      error instanceof Error ? error.message : String(error),
+      "Pass --client-name with 1 to 64 non-blank characters.",
+    );
+  }
+}
+
 function isTimeout(error: unknown): boolean {
   return (
     error instanceof Error &&
@@ -100,6 +120,7 @@ async function authorizeAndSubmit(
   agentId: string,
   service: string,
   serverUrl: string,
+  clientName: string | undefined,
 ): Promise<void> {
   let handoff: McpOAuthHandoff;
   try {
@@ -135,7 +156,12 @@ async function authorizeAndSubmit(
   const keepAlive = setInterval(() => undefined, 60_000);
   try {
     await (deps.connectMcpOAuth ?? defaultConnectMcpOAuth)(
-      { handoffKey: handoff.handoff_key, service, serverUrl },
+      {
+        handoffKey: handoff.handoff_key,
+        service,
+        serverUrl,
+        ...(clientName === undefined ? {} : { clientName }),
+      },
       () => {
         submitting = true;
       },
@@ -177,9 +203,11 @@ export async function runMcpConnect(
   agentId: string,
   serviceArg: string | undefined,
   serverUrlArg: string | undefined,
+  clientNameArg: string | undefined,
   stdout: McpOutput,
 ): Promise<number> {
   const resolved = resolveConnectServer(serviceArg, serverUrlArg);
+  const clientName = resolveConnectClientName(clientNameArg);
   const { service } = resolved;
   let { serverUrl } = resolved;
   // Datadog may authorize on the org's real site (e.g. us5) rather than the
@@ -187,7 +215,7 @@ export async function runMcpConnect(
   // against the matching allowlisted URL with a handoff bound to it.
   for (let attempt = 0; ; attempt += 1) {
     try {
-      await authorizeAndSubmit(deps, agentId, service, serverUrl);
+      await authorizeAndSubmit(deps, agentId, service, serverUrl, clientName);
       break;
     } catch (error) {
       if (!(error instanceof BrowserDeviceMcpOAuthSiteMismatchError)) {

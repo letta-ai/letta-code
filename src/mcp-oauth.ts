@@ -18,6 +18,7 @@ import {
   SafeUrlSchema,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { callbackPort, startOAuthCallbackServer } from "@/mcp-oauth-callback";
+import { resolveMcpOAuthClientName } from "@/mcp-oauth-client-name";
 import {
   hasMatchingRedirectUri,
   legacyMcpOAuthCredentialKeys,
@@ -99,6 +100,11 @@ export interface McpOAuthSessionOptions {
   interactive: boolean;
   onStatus?: (message: string) => void;
   openBrowser?: (url: string) => Promise<void>;
+  /**
+   * `client_name` shown on the provider's consent screen. Defaults to
+   * "Letta Code"; only sent at dynamic client registration.
+   */
+  clientName?: string;
 }
 
 export interface StorageInjectedMcpOAuthSessionOptions {
@@ -112,6 +118,11 @@ export interface StorageInjectedMcpOAuthSessionOptions {
   onStatus?: (message: string) => void;
   /** Inspect callback params before token exchange; throw to abort the flow. */
   onAuthorizationCallback?: (callback: { domain?: string }) => void;
+  /**
+   * `client_name` shown on the provider's consent screen. Defaults to
+   * "Letta Code"; only sent at dynamic client registration.
+   */
+  clientName?: string;
 }
 
 export async function clearMcpOAuthCredentials(
@@ -160,12 +171,14 @@ export async function createMcpOAuthSession(
     interactive: options.interactive,
     onStatus: options.onStatus,
     openBrowser: options.openBrowser ?? openSystemBrowser,
+    clientName: options.clientName,
   });
 }
 
 export async function createMcpOAuthSessionWithStorage(
   options: StorageInjectedMcpOAuthSessionOptions,
 ): Promise<ExportableMcpOAuthSession | undefined> {
+  const clientName = resolveMcpOAuthClientName(options.clientName);
   const coordinationKey = storageCoordinationKey(
     options.storage,
     options.credentialKey,
@@ -208,6 +221,7 @@ export async function createMcpOAuthSessionWithStorage(
       openBrowser: options.openBrowser ?? openSystemBrowser,
       expectedState: callback?.expectedState,
       generation: loaded.generation,
+      clientName,
     });
     const activeProvider = provider;
     const activeCallback = callback;
@@ -263,6 +277,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
   private readonly onStatus?: (message: string) => void;
   private readonly openBrowser: (url: string) => Promise<void>;
   private readonly expectedState?: { value?: string };
+  private readonly clientName: string;
   private closed = false;
 
   constructor(options: {
@@ -276,6 +291,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     openBrowser: (url: string) => Promise<void>;
     expectedState?: { value?: string };
     generation: number;
+    clientName: string;
   }) {
     this.credentialKey = options.credentialKey;
     this.coordinationKey = options.coordinationKey;
@@ -284,6 +300,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
     this.onStatus = options.onStatus;
     this.openBrowser = options.openBrowser;
     this.expectedState = options.expectedState;
+    this.clientName = options.clientName;
     this.generation = options.generation;
     const coordinator = getCredentialCoordinator(options.coordinationKey);
     this.coordinatorValue = coordinator;
@@ -305,7 +322,7 @@ class PersistentMcpOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: "Letta Code",
+      client_name: this.clientName,
       redirect_uris: [this.redirectUrl],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
