@@ -57,10 +57,28 @@ describe("browser device MCP OAuth", () => {
       /^browser-device-mcp-oauth-/,
     );
     expect(authorization?.fetch).toEqual(expect.any(Function));
+    expect(authorization?.clientName).toBeUndefined();
     expect(opened).toEqual([
       "https://app.datadoghq.com/oauth2/authorize?state=test",
     ]);
     expect(imported).toEqual({ request: REQUEST, credentials: CREDENTIALS });
+  });
+
+  test("forwards the requested consent-screen client name", async () => {
+    let authorization: AuthorizeMcpServerWithStorageOptions | undefined;
+    await connectBrowserDeviceMcpOAuth(
+      { ...REQUEST, clientName: "My Agent" },
+      {
+        authorize: async (options) => {
+          authorization = options;
+          return CREDENTIALS;
+        },
+        importCredentials: async () => undefined,
+        openBrowser: async () => undefined,
+      },
+    );
+
+    expect(authorization?.clientName).toBe("My Agent");
   });
 
   test("clears ephemeral credentials after a successful import", async () => {

@@ -130,6 +130,35 @@ describe("storage-injected MCP OAuth", () => {
     await oauth.close();
   });
 
+  test("registers under the requested consent-screen client name", async () => {
+    const named = await createMcpOAuthSessionWithStorage({
+      credentialKey: "client-name-custom",
+      storage: memoryStorage(),
+      interactive: true,
+      openBrowser: async () => {},
+      clientName: " My Agent ",
+    });
+    const unnamed = await createMcpOAuthSessionWithStorage({
+      credentialKey: "client-name-default",
+      storage: memoryStorage(),
+      interactive: true,
+      openBrowser: async () => {},
+    });
+    expect(named?.authProvider.clientMetadata.client_name).toBe("My Agent");
+    expect(unnamed?.authProvider.clientMetadata.client_name).toBe("Letta Code");
+    await expect(
+      createMcpOAuthSessionWithStorage({
+        credentialKey: "client-name-empty",
+        storage: memoryStorage(),
+        interactive: true,
+        openBrowser: async () => {},
+        clientName: "   ",
+      }),
+    ).rejects.toThrow("must not be empty");
+    await named?.close();
+    await unnamed?.close();
+  });
+
   test("cancels a pending browser callback cleanly", async () => {
     const oauth = await createMcpOAuthSessionWithStorage({
       credentialKey: "cancelled",

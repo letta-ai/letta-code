@@ -13,6 +13,11 @@ export interface BrowserDeviceMcpOAuthRequest {
   handoffKey: string;
   service: string;
   serverUrl: string;
+  /**
+   * `client_name` shown on the provider's consent screen. Defaults to
+   * "Letta Code" when omitted.
+   */
+  clientName?: string;
 }
 
 interface BrowserDeviceMcpOAuthDefinition {
@@ -124,6 +129,7 @@ export async function connectBrowserDeviceMcpOAuth(
   try {
     const credentials = await dependencies.authorize({
       agentId: handoffNamespace(request.handoffKey),
+      clientName: request.clientName,
       openBrowser: async (value) => {
         const url = allowedAuthorizationUrl(
           value,

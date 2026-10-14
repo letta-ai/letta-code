@@ -123,6 +123,66 @@ describe("letta mcp connect", () => {
     ]);
   });
 
+  test("passes --client-name through to the OAuth request", async () => {
+    const h = harness();
+    const code = await runMcpSubcommand(
+      ["connect", "comfy", "--client-name", " My Agent ", "--agent", "agent-1"],
+      h.deps,
+    );
+    expect(code).toBe(0);
+    expect(h.connects).toEqual([
+      {
+        handoffKey: HANDOFF_KEY,
+        service: "comfy",
+        serverUrl: "https://cloud.comfy.org/mcp",
+        clientName: "My Agent",
+      },
+    ]);
+  });
+
+  test("omits the client name when --client-name is not passed", async () => {
+    const h = harness();
+    expect(
+      await runMcpSubcommand(
+        ["connect", "comfy", "--agent", "agent-1"],
+        h.deps,
+      ),
+    ).toBe(0);
+    expect(h.connects).toEqual([
+      {
+        handoffKey: HANDOFF_KEY,
+        service: "comfy",
+        serverUrl: "https://cloud.comfy.org/mcp",
+      },
+    ]);
+  });
+
+  test("rejects an empty or over-long --client-name before authorizing", async () => {
+    const empty = harness();
+    expect(
+      await runMcpSubcommand(
+        ["connect", "comfy", "--client-name", "  ", "--agent", "agent-1"],
+        empty.deps,
+      ),
+    ).toBe(1);
+    expect(parseError(empty.stderr)).toMatchObject({
+      code: "invalid_client_name",
+      message: "MCP OAuth client name must not be empty",
+    });
+    expect(empty.mints).toEqual([]);
+    expect(empty.connects).toEqual([]);
+
+    const long = harness();
+    expect(
+      await runMcpSubcommand(
+        ["connect", "comfy", "--client-name", "n".repeat(65), "--agent", "a-1"],
+        long.deps,
+      ),
+    ).toBe(1);
+    expect(parseError(long.stderr).code).toBe("invalid_client_name");
+    expect(long.mints).toEqual([]);
+  });
+
   test("rejects an unknown service and lists valid ones", async () => {
     const h = harness();
     const code = await runMcpSubcommand(

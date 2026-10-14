@@ -144,6 +144,7 @@ function parseMcpArgs(argv: string[]) {
       args: { type: "string" },
       "args-file": { type: "string" },
       "server-url": { type: "string" },
+      "client-name": { type: "string" },
     },
     strict: true,
     allowPositionals: true,
@@ -951,6 +952,7 @@ export async function runMcpSubcommand(
           agentId,
           parsed.target,
           stringValue(parsed.values["server-url"]),
+          stringValue(parsed.values["client-name"]),
           stdout,
         );
       default:
