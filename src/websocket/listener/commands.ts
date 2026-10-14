@@ -695,7 +695,7 @@ async function handleClearCommand(
 
     // Create a new conversation, attributing it to the human who ran
     // /clear when the frame was relayed by cloud with an acting user.
-    const conversation = await backend.createConversation(
+    await backend.createConversation(
       {
         agent_id: agentId,
       },
@@ -705,10 +705,11 @@ async function handleClearCommand(
     // Clear runtime state for the current conversation
     clearConversationRuntimeState(conversationRuntime);
 
-    // Update the runtime's conversation ID to the new one
-    conversationRuntime.conversationId = conversation.id;
+    // The client still sends this scope. Never change a registered runtime's
+    // identity in place: its map key, subscriptions and durable inputs must
+    // continue to agree. Selecting another conversation creates its own runtime.
 
-    // Emit updated status so the web app picks up the new conversation
+    // Report the cleared runtime without changing the client's selected scope.
     emitListenerStatus(
       conversationRuntime.listener,
       opts.onStatusChange,

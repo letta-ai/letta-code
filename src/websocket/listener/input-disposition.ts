@@ -401,6 +401,7 @@ function prepareStateDirectory(path: string): void {
 }
 
 function writeDurableStore(path: string, store: DurableStore): void {
+  validateDurableStore(store);
   prepareStateDirectory(path);
   const serialized = JSON.stringify(store);
   if (Buffer.byteLength(serialized) > MAX_INPUT_DISPOSITION_STORE_BYTES) {

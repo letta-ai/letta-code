@@ -1973,10 +1973,8 @@ describe("listen-client parseServerMessage", () => {
         {},
       );
 
-      expect(runtime.conversationId).toStartWith("local-conv-");
-      await expect(
-        backend.retrieveConversation(runtime.conversationId),
-      ).resolves.toMatchObject({ agent_id: agent.id });
+      expect(runtime.conversationId).toBe("default");
+      expect(runtime.key).toContain("::conversation:default");
       expect(socket.sentPayloads.join("\n")).toContain(
         "Agent's in-context messages cleared",
       );

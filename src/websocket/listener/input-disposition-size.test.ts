@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -100,6 +100,39 @@ test("oversized queued payload is rejected without a queued tombstone", () => {
     ).toBe(false);
     rollbackInputDisposition(runtime, admission.reservation);
     expect(getInputDisposition(runtime, identity)).toBeUndefined();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("mismatched replay scope cannot replace a readable durable ledger", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-disposition-scope-"));
+  try {
+    const path = join(root, "state.json");
+    const runtime = persistentRuntime(path);
+    const identity = ordinaryInputIdentity("cm-wrong-scope");
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    const before = readFileSync(path, "utf8");
+    const incoming = messageWithContent("cm-wrong-scope", "hello");
+    incoming.conversationId = "another-conversation";
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming,
+      }),
+    ).toBe(false);
+    expect(readFileSync(path, "utf8")).toBe(before);
+    rollbackInputDisposition(runtime, admission.reservation);
+    const retry = reserveInputDisposition(runtime, identity);
+    if (retry.kind !== "reserved")
+      throw new Error("expected retry reservation");
+    expect(
+      commitInputDisposition(runtime, retry.reservation, "queued", {
+        incoming: messageWithContent("cm-wrong-scope", "hello"),
+      }),
+    ).toBe(true);
+    const restarted = persistentRuntime(path);
+    expect(restoreDurableQueuedInputs(restarted.listener)).toBe(1);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
