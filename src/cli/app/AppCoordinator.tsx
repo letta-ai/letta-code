@@ -123,7 +123,10 @@ import {
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
-import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
+import {
+  canDequeueTuiBatch,
+  getTuiBlockedReason,
+} from "@/cli/helpers/tui-queue-adapter";
 import {
   prepareTuiQueueSubmit,
   toTuiQueuedMessage,
@@ -4265,14 +4268,13 @@ export function App({
       !userCancelledRef.current && // Don't dequeue if user just cancelled
       !abortControllerRef.current && // Don't dequeue while processConversation is still active
       !dequeueInFlightRef.current && // Don't dequeue while previous dequeue submit is still in flight
-      // In defer mode, only dequeue when the agent is truly done:
-      // - last stop reason was end_turn (not requires_approval or error)
-      // - processingConversationRef === 0 (no nested processConversation calls outstanding)
-      (queueMode === "immediate" ||
-        (lastStopReasonRef.current === "end_turn" &&
-          processingConversationRef.current === 0))
+      canDequeueTuiBatch(
+        queueMode,
+        tuiQueueRef.current?.peekReady() ?? [],
+        lastStopReasonRef.current,
+        processingConversationRef.current,
+      )
     ) {
-      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
       const batch = tuiQueueRef.current?.consumeItems(queueLen);
       if (!batch) return;
 
@@ -4287,10 +4289,8 @@ export function App({
         `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
       );
 
-      // Store before submit — allows restoration on error (ESC path).
       lastDequeuedMessageRef.current = concatenatedMessage;
 
-      // Submit via normal flow — overrideContentPartsRef carries rich content parts.
       overrideContentPartsRef.current = queuedContentParts;
       // Lock prevents re-entrant dequeue if deps churn before processConversation
       // sets abortControllerRef (which is the normal long-term gate).

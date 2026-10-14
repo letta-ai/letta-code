@@ -5,7 +5,26 @@
  * without importing React or App.tsx.
  */
 
+import type { QueueItem } from "@/queue/queue-runtime";
 import type { QueueBlockedReason } from "@/types/protocol";
+
+export function canDequeueTuiBatch(
+  queueMode: "immediate" | "defer",
+  items: readonly Pick<QueueItem, "kind">[],
+  lastStopReason: string | null,
+  processingConversation: number,
+): boolean {
+  const hasTaskNotification = items.some(
+    (item) => item.kind === "task_notification",
+  );
+  if (queueMode === "immediate" && !hasTaskNotification) return true;
+  if (processingConversation !== 0) return false;
+  return (
+    lastStopReason === "end_turn" ||
+    (queueMode === "immediate" &&
+      (lastStopReason === null || lastStopReason === "cancelled"))
+  );
+}
 
 export type TuiQueueGatingConditions = {
   streaming: boolean;

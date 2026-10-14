@@ -270,6 +270,38 @@ async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
 }
 
 describe("TUI interrupt queue lifecycle", () => {
+  test("notifications do not submit from an idle requires_approval boundary", async () => {
+    const inputs: HeadlessTurnExecutorInput[] = [];
+    const { stdin } = await renderTestApp({
+      async execute(input) {
+        inputs.push(input);
+        if (inputs.length === 1) {
+          return {
+            controller: new AbortController(),
+            async *[Symbol.asyncIterator]() {
+              yield {
+                message_type: "stop_reason",
+                stop_reason: "requires_approval",
+              };
+            },
+          } as unknown as Stream<LettaStreamingResponse>;
+        }
+
+        return createAssistantMessageStream();
+      },
+    });
+
+    await typePrompt(stdin, "start approval turn");
+    await waitFor(() => inputs.length === 1, "the approval stop");
+    await sleep(300);
+    addToMessageQueue({
+      kind: "task_notification",
+      text: monitorNotification("queued across approval continuation"),
+    });
+    await sleep(300);
+    expect(inputs).toHaveLength(1);
+  }, 15_000);
+
   test("a real Monitor survives normal completion and idle Esc", async () => {
     const inputs: HeadlessTurnExecutorInput[] = [];
     const { stdin } = await renderTestApp({

@@ -4,9 +4,12 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+  canDequeueTuiBatch,
   getTuiBlockedReason,
   type TuiQueueGatingConditions,
 } from "@/cli/helpers/tui-queue-adapter";
+import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
+import { QueueRuntime } from "@/queue/queue-runtime";
 
 const allClear: TuiQueueGatingConditions = {
   streaming: false,
@@ -19,6 +22,122 @@ const allClear: TuiQueueGatingConditions = {
   userCancelled: false,
   abortControllerActive: false,
 };
+
+describe("canDequeueTuiBatch", () => {
+  const notifications = [{ kind: "task_notification" as const }];
+  const mixedBatch = [{ kind: "message" as const }, ...notifications];
+
+  test("queued notification waits for end_turn and drains on the completion epoch", () => {
+    const queue = new QueueRuntime();
+    const submitted: string[] = [];
+    const processingConversationRef = { current: 0 };
+    const abortControllerRef = { current: null };
+    let lastStopReason = "requires_approval";
+    let epochBumps = 0;
+    const drain = () => {
+      if (
+        !canDequeueTuiBatch(
+          "immediate",
+          queue.peekReady(),
+          lastStopReason,
+          processingConversationRef.current,
+        )
+      )
+        return;
+      const batch = queue.consumeItems(queue.readyLength);
+      for (const item of batch?.items ?? []) {
+        if (item.kind === "task_notification") submitted.push(item.text);
+      }
+    };
+    const notification = {
+      kind: "task_notification",
+      source: "task_notification",
+      text: "monitor event",
+    } as const;
+    queue.enqueue(notification);
+    drain();
+    expect(submitted).toEqual([]);
+    expect(queue.readyLength).toBe(1);
+
+    processingConversationRef.current = 1;
+    drain();
+    expect(submitted).toEqual([]);
+    lastStopReason = "end_turn";
+    drain();
+    expect(submitted).toEqual([]);
+
+    finishTuiTurn({
+      isStale: false,
+      turnAbortController: null,
+      abortControllerRef,
+      processingConversationRef,
+      userCancelledRef: { current: false },
+      setInterruptRequested: () => {},
+      queueLength: () => queue.length,
+      bumpDequeueEpoch: () => {
+        epochBumps += 1;
+        drain();
+      },
+    });
+    expect(epochBumps).toBe(1);
+    expect(submitted).toEqual(["monitor event"]);
+    expect(queue.readyLength).toBe(0);
+  });
+
+  test.each([{ items: notifications }, { items: mixedBatch }])(
+    "notification batches wait for end_turn and all continuations to settle",
+    ({ items }) => {
+      expect(
+        canDequeueTuiBatch("immediate", items, "requires_approval", 0),
+      ).toBe(false);
+      expect(
+        canDequeueTuiBatch("immediate", items, "requires_approval", 1),
+      ).toBe(false);
+      expect(canDequeueTuiBatch("immediate", items, "end_turn", 1)).toBe(false);
+      expect(canDequeueTuiBatch("immediate", items, "end_turn", 0)).toBe(true);
+    },
+  );
+
+  test("immediate user-only batches retain their existing behavior", () => {
+    expect(
+      canDequeueTuiBatch(
+        "immediate",
+        [{ kind: "message" }],
+        "requires_approval",
+        1,
+      ),
+    ).toBe(true);
+  });
+
+  test.each([null, "cancelled"])(
+    "notifications can start from settled %s",
+    (stopReason) => {
+      expect(
+        canDequeueTuiBatch("immediate", notifications, stopReason, 0),
+      ).toBe(true);
+      expect(
+        canDequeueTuiBatch("immediate", notifications, stopReason, 1),
+      ).toBe(false);
+      expect(canDequeueTuiBatch("defer", notifications, stopReason, 0)).toBe(
+        false,
+      );
+    },
+  );
+
+  test("defer mode still requires end_turn for user-only batches", () => {
+    expect(
+      canDequeueTuiBatch(
+        "defer",
+        [{ kind: "message" }],
+        "requires_approval",
+        0,
+      ),
+    ).toBe(false);
+    expect(
+      canDequeueTuiBatch("defer", [{ kind: "message" }], "end_turn", 0),
+    ).toBe(true);
+  });
+});
 
 describe("getTuiBlockedReason", () => {
   test("returns null when all conditions clear", () => {
