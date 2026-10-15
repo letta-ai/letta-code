@@ -91,7 +91,9 @@ test("root files and both rename endpoints are protected; nested files and reads
     }
     const policy = buildRootMemoryReadonlyPolicy(root);
     expect(policy.readonlyRoots).toEqual([root]);
-    expect(policy.writableRoots).toEqual([join(root, "reference")]);
+    expect(policy.writableRoots).toEqual([
+      canonicalizeRoot(join(root, "reference")),
+    ]);
     expect(policy.restrictWrites).toBe(false);
   } finally {
     rmSync(root, { recursive: true, force: true });
