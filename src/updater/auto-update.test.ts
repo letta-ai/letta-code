@@ -10,6 +10,7 @@ import {
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
+  isHomebrewInstall,
   manualUpdate,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
@@ -40,6 +41,57 @@ test("Python wheels never query npm or self-install updates", async () => {
   } finally {
     if (previous === undefined) delete process.env.LETTA_CODE_DISTRIBUTION;
     else process.env.LETTA_CODE_DISTRIBUTION = previous;
+  }
+});
+
+test("Homebrew installs are detected and never run npm updates", async () => {
+  const originalArgv1 = process.argv[1] || "";
+  const originalFetch = globalThis.fetch;
+  const originalPath = process.env.PATH;
+  const originalDisabled = process.env.DISABLE_AUTOUPDATER;
+  const testDir = fs.mkdtempSync(path.join(os.tmpdir(), "letta-brew-"));
+  const marker = path.join(testDir, "npm-called");
+  fs.writeFileSync(
+    path.join(testDir, "npm"),
+    `#!/bin/sh\necho called > "${marker}"\n`,
+  );
+  fs.chmodSync(path.join(testDir, "npm"), 0o755);
+  const fetchMock = mock(
+    async () => new Response(JSON.stringify({ version: "99.0.0" })),
+  );
+  try {
+    process.env.PATH = testDir;
+    delete process.env.DISABLE_AUTOUPDATER;
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    for (const prefix of [
+      "/opt/homebrew",
+      "/home/linuxbrew/.linuxbrew",
+      "C:\\brew",
+    ]) {
+      const entrypoint = `${prefix}/Cellar/letta-code/0.1.0/libexec/lib/node_modules/@letta-ai/letta-code/letta.js`;
+      process.argv[1] = prefix.startsWith("C:")
+        ? entrypoint.replaceAll("/", "\\")
+        : entrypoint;
+      expect(isHomebrewInstall()).toBe(true);
+      expect(await checkAndAutoUpdate()).toBeUndefined();
+      expect(await manualUpdate()).toEqual({
+        success: false,
+        message: "Installed with Homebrew; run: brew upgrade letta-code",
+      });
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fs.existsSync(marker)).toBe(false);
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/letta.js";
+    expect(isHomebrewInstall()).toBe(false);
+  } finally {
+    process.argv[1] = originalArgv1;
+    globalThis.fetch = originalFetch;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalDisabled === undefined) delete process.env.DISABLE_AUTOUPDATER;
+    else process.env.DISABLE_AUTOUPDATER = originalDisabled;
+    fs.rmSync(testDir, { recursive: true, force: true });
   }
 });
 
