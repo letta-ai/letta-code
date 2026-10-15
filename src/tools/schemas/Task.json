@@ -15,7 +15,7 @@
     },
     "model": {
       "type": "string",
-      "description": "Optional model to use for this agent. If not specified, inherits from parent. Prefer lighter models for quick, straightforward tasks to minimize cost and latency."
+      "description": "Optional; leave unset by default. When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."
     },
     "agent_id": {
       "type": "string",
