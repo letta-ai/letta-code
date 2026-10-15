@@ -2,7 +2,7 @@
 
 /**
  * Build script for Letta Code CLI
- * Bundles TypeScript source into a single JavaScript file
+ * Bundles TypeScript source with lazy CLI chunks beside the executable
  */
 
 import {
@@ -73,15 +73,26 @@ if (useMagick) {
   features.push("USE_MAGICK");
 }
 
-await Bun.build({
+// Old hashed chunks must not accumulate in npm/PyPI packages on repeat builds.
+for (const name of readdirSync(__dirname)) {
+  if (/^letta-chunk-.*\.js(?:\.map)?$/.test(name)) {
+    rmSync(join(__dirname, name));
+  }
+}
+
+const cliBuild = await Bun.build({
   entrypoints: ["./src/standalone-entry.ts"],
   outdir: ".",
   target: "node",
   format: "esm",
+  // One-shot MCP calls must not parse the agent/UI/provider bundle. Keep chunks
+  // at the package root so import.meta.url-relative assets keep their location.
+  splitting: true,
   minify: false, // Keep readable for debugging
   sourcemap: "external",
   naming: {
     entry: "letta.js",
+    chunk: "letta-chunk-[hash].js",
   },
   define: {
     LETTA_VERSION: JSON.stringify(version),
@@ -107,7 +118,7 @@ await Bun.build({
   // through dynamic imports, so this costs no startup time.
   // @shikijs/langs stays external so lazily-imported grammars (LET-13149)
   // resolve from node_modules on demand instead of being inlined eagerly into
-  // the single-file bundle.
+  // the CLI chunks.
   external: [
     "ws",
     "@vscode/ripgrep",
@@ -120,6 +131,8 @@ await Bun.build({
   ],
   features: features,
 });
+if (!cliBuild.success)
+  throw new AggregateError(cliBuild.logs, "CLI build failed");
 
 await Bun.build({
   entrypoints: ["./src/utils/image-resize-worker.ts"],

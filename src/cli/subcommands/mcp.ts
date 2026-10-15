@@ -1,6 +1,5 @@
 import { parseArgs } from "node:util";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
-import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
 import { getServerUrl } from "@/backend/api/server-url";
 import {
@@ -176,11 +175,12 @@ function getLocalServers(
   );
 }
 
-function serverMcpAvailable(deps: McpSubcommandDependencies): boolean {
-  return (
-    deps.isServerMcpAvailable ??
-    (() => getBackend().capabilities.serverSideToolManagement)
-  )();
+async function serverMcpAvailable(
+  deps: McpSubcommandDependencies,
+): Promise<boolean> {
+  if (deps.isServerMcpAvailable) return deps.isServerMcpAvailable();
+  const { getBackend } = await import("@/backend");
+  return getBackend().capabilities.serverSideToolManagement;
 }
 
 async function getServerClient(
@@ -314,7 +314,7 @@ async function listUnifiedServers(
   const local = getLocalServers(deps, agentId).map(
     (config): ServerTarget => ({ kind: "client", config }),
   );
-  if (!serverMcpAvailable(deps)) return local;
+  if (!(await serverMcpAvailable(deps))) return local;
   const client = await getServerClient(deps);
   const connected = await listUnifiedMcpServers(client, agentId);
   return [
@@ -679,7 +679,7 @@ async function runSearch(
   agentId: string,
   stdout: McpOutput,
 ): Promise<number> {
-  const serverSearchAvailable = serverMcpAvailable(deps);
+  const serverSearchAvailable = await serverMcpAvailable(deps);
   const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
   return runMcpSearch({
     query: parsed.target,

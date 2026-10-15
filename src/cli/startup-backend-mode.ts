@@ -1,8 +1,5 @@
 import { isLocalAgentId } from "@/agent/agent-id";
-import {
-  configureBackendMode,
-  isExperimentalLocalBackendEnabled,
-} from "@/backend";
+import { isExperimentalLocalBackendEnabled } from "@/backend/backend-mode";
 
 export type StartupBackendMode = "api" | "local";
 
@@ -23,11 +20,15 @@ export async function switchBackendForSelectedStartupAgent(
     try {
       return await tryConfigureLocal();
     } catch (error) {
+      const { configureBackendMode } = await import("@/backend");
       configureBackendMode("api");
       throw error;
     }
   }
-  if (isExperimentalLocalBackendEnabled()) configureBackendMode("api");
+  if (isExperimentalLocalBackendEnabled()) {
+    const { configureBackendMode } = await import("@/backend");
+    configureBackendMode("api");
+  }
   return true;
 }
 

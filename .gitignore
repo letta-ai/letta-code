@@ -24,6 +24,8 @@ package-lock.json
 bin/
 letta.js
 letta.js.map
+letta-chunk-*.js
+letta-chunk-*.js.map
 image-resize-worker.js
 image-resize-worker.js.map
 /skills/

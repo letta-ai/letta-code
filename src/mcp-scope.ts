@@ -1,5 +1,4 @@
 import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
-import { getBackend } from "@/backend";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 
@@ -10,6 +9,7 @@ export type ParentAgentLookup = (
 export async function lookupParentAgent(
   agentId: string,
 ): Promise<string | undefined> {
+  const { getBackend } = await import("@/backend");
   const agent = await getBackend().retrieveAgent(agentId, {
     include: ["agent.tags"],
   });

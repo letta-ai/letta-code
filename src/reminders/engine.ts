@@ -216,7 +216,7 @@ export function buildMcpServersReminderText(
     return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
   }
   const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\nFor parallel MCP calls, use Workflow's \`tools.mcp__server__tool(args)\` with \`maxConcurrent\` when Workflow is available; it reuses one MCP session instead of starting a CLI process per call. Otherwise, run CLI calls in bounded batches.\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export async function listMcpServersForAgent(
