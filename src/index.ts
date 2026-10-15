@@ -1303,7 +1303,7 @@ async function main(): Promise<void> {
 
   // Interactive: lazy-load React/Ink + App
   markMilestone("REACT_IMPORT_START");
-  const [React, { render }, AppModule] = await Promise.all([
+  const [{ default: React }, { render }, AppModule] = await Promise.all([
     import("react"),
     import("ink"),
     import("@/cli/App"),

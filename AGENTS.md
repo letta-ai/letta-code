@@ -39,6 +39,11 @@ transcript behavior must identify and run the focused tests for every affected
 path. `bun run check` is always required, but it does not replace those behavior
 tests.
 
+For CLI bundling changes, run `bun run test:built-entrypoints`, including its
+interactive PTY startup tests. Help and listener startup do not exercise React
+rendering. Dynamic imports of bundled CommonJS packages must use their default
+export rather than relying on synthetic named exports.
+
 ---
 
 ## Rules and Why They Exist

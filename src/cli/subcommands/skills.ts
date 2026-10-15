@@ -197,7 +197,7 @@ async function promptForAgent(statusMessage: string): Promise<string> {
 
   const { Box, render } = await import("ink");
   const Spinner = (await import("ink-spinner")).default;
-  const React = await import("react");
+  const { default: React } = await import("react");
   const { AgentSelector } = await import("@/cli/components/AgentSelector");
   const { Text } = await import("@/cli/components/Text");
 
