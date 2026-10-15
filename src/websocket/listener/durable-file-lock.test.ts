@@ -104,9 +104,12 @@ test("a dead legacy file lock is reclaimed without replacing a live file", () =>
   const f = fixture();
   try {
     writeFileSync(f.lock, JSON.stringify(deadOwner), { mode: 0o600 });
-    // Legacy recovery adds hard-link quarantine and directory fsyncs; preserve
-    // the tiny timeout only for the live-owner contention assertion below.
-    const release = acquireDurableFileLock(f.path, { waitMs: 500 });
+    // Legacy recovery adds hard-link quarantine and directory fsyncs, and the
+    // dead owner's liveness check spawns a Windows process-identity probe whose
+    // cost depends on which suites share this Bun process. A recovery that
+    // succeeds never consumes this budget, so keep it generous; preserve the
+    // tiny timeout only for the live-owner contention assertion below.
+    const release = acquireDurableFileLock(f.path, { waitMs: 5_000 });
     expect(readdirSync(f.lock)).toHaveLength(1);
     release();
     expect(existsSync(f.lock)).toBe(false);
@@ -416,8 +419,9 @@ test("PID reuse is detected by process-start identity", () => {
     };
     f.install(reused);
     // Windows process-creation identity lookup can take hundreds of
-    // milliseconds; this case verifies recovery, not the timeout threshold.
-    const release = acquireDurableFileLock(f.path, { waitMs: 1_000 });
+    // milliseconds, and how long depends on which suites share this Bun
+    // process; this case verifies recovery, not the timeout threshold.
+    const release = acquireDurableFileLock(f.path, { waitMs: 5_000 });
     expect(readdirSync(f.lock)).not.toContain(f.ownerName(reused));
     release();
   } finally {
