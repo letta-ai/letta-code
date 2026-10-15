@@ -117,8 +117,6 @@ For each learning that survived Phase 2, make surgical, well-placed changes.
 
 **Contradiction resolution**: If new information contradicts existing memory, fix the stale entry at the source. Do not append the new version alongside the old.
 
-**Archiving retired context**: Use the deferred `archive/` directory when content should no longer be load-bearing but may still be useful as historical context — shrink or remove the active source, then append a concise dated entry to a topic file under `archive/` (each with `name` and `description` frontmatter). Create `archive/MEMORY.md` and link it from root `MEMORY.md` if they do not exist. Never archive into a root file: root files are always in-context. Delete (don't archive) content the user asked to forget, sensitive or wrong content, or junk with no future-reference value.
-
 **Discovery paths**: When adding or moving content, update ordinary relative Markdown links in `MEMORY.md` and any affected child `MEMORY.md` files so related files stay connected. Keep `name` and `description` frontmatter accurate.
 
 #### Skills (only when a reusable workflow appears)
