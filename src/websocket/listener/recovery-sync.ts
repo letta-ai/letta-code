@@ -11,6 +11,7 @@ import {
 import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
 import { readInterruptedTurn } from "./interrupted-turn-read";
@@ -191,7 +192,7 @@ export async function recoverApprovalStateForSync(
           return {
             type: "deny" as const,
             approval,
-            reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+            reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
           };
         }
         if (!("tool_return" in saved)) {
