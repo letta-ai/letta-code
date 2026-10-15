@@ -10,7 +10,7 @@ import RawTextInput from "ink-text-input";
 import { useEffect, useRef, useState } from "react";
 import {
   translatePasteForImages,
-  tryImportClipboardImageMac,
+  tryImportClipboardImage,
 } from "@/cli/helpers/clipboard";
 import {
   allocatePaste,
@@ -234,7 +234,7 @@ export function PasteAwareTextInput({
       if (key.ctrl && input === "v") {
         // Fire async handler (can't await in useInput callback)
         (async () => {
-          const result = await tryImportClipboardImageMac();
+          const result = await tryImportClipboardImage();
           if (result) {
             if ("error" in result) {
               // Report the error via callback
@@ -311,7 +311,7 @@ export function PasteAwareTextInput({
         if ((!translated || translated.length === 0) && payload.length === 0) {
           // Fire async handler
           (async () => {
-            const clipResult = await tryImportClipboardImageMac();
+            const clipResult = await tryImportClipboardImage();
             if (clipResult) {
               if ("error" in clipResult) {
                 onPasteErrorRef.current?.(clipResult.error);
@@ -336,7 +336,7 @@ export function PasteAwareTextInput({
       ) {
         // Fire async handler
         (async () => {
-          const result = await tryImportClipboardImageMac();
+          const result = await tryImportClipboardImage();
           if (result) {
             if ("error" in result) {
               onPasteErrorRef.current?.(result.error);
