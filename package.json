@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.14",
+  "version": "0.34.15",
   "lettaStartupLogProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
@@ -275,5 +275,5 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-ttHuf5WcGVfNYOggfqOqLRZnllxSSFje3ETZWA/cYFUEoMLz54/CApUxOjoR7xn7X6PbqVnZEzmUQnv+Ic3xzg=="
+  "lettaRuntimeGraphSha512": "sha512-NGzNq0UmSHPiPqvc6bflUL57U2h5xZSgf9HvpbR98ocuoM1dHLN1hiXv6qNEa3lOlj2paYI/clNKR+U1YW0TiA=="
 }
