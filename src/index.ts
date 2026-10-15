@@ -2527,12 +2527,12 @@ async function main(): Promise<void> {
         fileAutocompleteFdPath,
       });
     }
-
     return React.createElement(App, {
       key: `${agentId}:${conversationId}`,
       agentId,
       agentState,
       conversationId,
+      conversationSummary: resumeData?.conversation?.summary?.trim() || null,
       loadingState: appLoadingState,
       continueSession: isResumingSession,
       startupApproval: resumeData?.pendingApproval ?? null,

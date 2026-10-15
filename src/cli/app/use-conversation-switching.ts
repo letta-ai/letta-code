@@ -59,6 +59,7 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { LLM_API_ERROR_MAX_RETRIES } from "./constants";
 import { uid } from "./ids";
 import { getPreferredAgentModelHandle } from "./model-config";
+import { resolveResumedConversationSummary } from "./resumed-conversation-summary";
 import type {
   ActiveOverlay,
   AppCommandRunner,
@@ -370,16 +371,20 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
           conversationId,
         );
 
+        const resumedSummary = resolveResumedConversationSummary(
+          resumeData.conversation,
+        );
         await maybeCarryOverActiveConversationModel(conversationId);
         setConversationIdAndRef(conversationId);
         setConversationAutoTitleEligibility(false);
-        setConversationSummary(null);
+        setConversationSummary(resumedSummary ?? null);
 
         pendingConversationSwitchRef.current = {
           origin: "fork",
           conversationId,
           isDefault: false,
           messageCount: resumeData.messageHistory.length,
+          summary: resumedSummary,
           messageHistory: resumeData.messageHistory,
         };
 
