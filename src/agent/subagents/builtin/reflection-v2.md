@@ -68,7 +68,7 @@ Decide what goes in a `MEMORY.md` by what the agent should get from opening that
 * **Small topic: put everything in `MEMORY.md`.** If the whole topic fits comfortably (well under 20,000 characters) and most of it is useful whenever the topic comes up, keep it in `MEMORY.md` with no other files. Splitting adds reads without saving context.
 * **Large topic, or one rarely needed in full: `MEMORY.md` holds what is needed every time, plus a map.** Keep only what the agent needs whenever it opens the directory, and defer the rest into files, or into subdirectories when a subtopic is itself large. `MEMORY.md` must then tell the agent where to go next, or that it can stop: say what each deferred file or subdirectory covers and when it is worth opening, using ordinary relative Markdown links. Do not rely on the listing, since it shows only the 10 most recently edited entries and stable files fall out of it.
 * **Either way, start `MEMORY.md` with a short plain-prose paragraph stating the directory's scope.** That paragraph is what the parent directory's listing shows, so do not open with a heading or a list.
-* Aim for fewer than 10 entries (files plus subdirectories) per directory so the listing stays complete; when a directory outgrows that, group related files into subdirectories.
+* Aim for fewer than 10 entries (files plus subdirectories) per directory so the listing stays complete; group related files into subdirectories only within the configured `maxDepth` (see below). At the depth limit, use clearly scoped sibling files and explicit links in `MEMORY.md`, or reorganize topics into shallower directories. The depth limit takes precedence over the fewer-than-10-entries guideline.
 
 Writing deferred memory contents (in `MEMORY.md` and in other files):
 * **Synthesize; don't record.** Write the conclusion that a set of events supports, not the events themselves. "Check new skill guidance against the skills spec before proposing it; the user reviews for spec compliance" is memory; "On 2026-10-14 the user pointed out the description format was wrong" is recall.
@@ -126,12 +126,13 @@ description: Does X and Y for Z. Use when the user wants to ... or mentions ...
 [What can go wrong]
 ```
 
-### Frontmatter and size limits
+### Frontmatter, size, and nesting limits
 
 * `MEMORY.md` files (root and child) have no frontmatter.
 * Every other memory Markdown file has exactly `name` and `description` frontmatter; the memory repo's pre-commit check rejects missing or extra keys.
 * `SKILL.md` files are exempt from that check and follow the skills specification instead: `name` and `description` are required, and the only other allowed keys are `license`, `compatibility`, `metadata`, and `allowed-tools`. Put anything else, such as a deprecation marker, under `metadata`.
 * By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
+* **Nesting is bounded by `maxDepth` in `$MEMORY_DIR/.memfs.config.json`.** The default configuration sets `maxDepth: 2`. Depth counts directories between the repo root and a memory file: `persona.md` is depth 0, `topic/MEMORY.md` is depth 1, and `topic/subtopic/notes.md` is depth 2. With that default, `topic/subtopic/detail/notes.md` is rejected at depth 3. Read the repo's configuration before adding or moving memory; an omitted `maxDepth` imposes no depth limit. This constraint excludes `skills/`. Fit memory to the configured limit rather than changing the configuration to permit deeper nesting.
 
 You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
 
@@ -147,6 +148,8 @@ When reviewing multiple transcripts, prefer patterns supported across sessions, 
 ### Phase 1 — Investigate
 
 Understand the current memory landscape before changing anything. Your user prompt already includes a `<memory_filesystem>` tree of memory file names (no descriptions; `skills/` is omitted) and the full content of every root file inlined in `<memory>` blocks — start there, since those are the parent agent's in-context prompts.
+
+Read `$MEMORY_DIR/.memfs.config.json` if present to identify the repo's nesting and size limits before planning its structure.
 
 For deferred memory, read the relevant child `MEMORY.md` files and each candidate file's `description` frontmatter (for example with `head`) to decide what's worth reading, then fetch contents from `$MEMORY_DIR` on demand. Follow ordinary relative Markdown links from `MEMORY.md` when relevant. You cannot integrate new learnings into existing structure if you don't know the structure.
 
@@ -211,6 +214,7 @@ Quick sanity pass before committing.
 - **Stale content**: Did the conversation make anything in existing memory obsolete or superseded? Remove or update it now.
 - **Cross-reference integrity**: If you deleted or moved a file, check whether any ordinary relative Markdown links point to the old location and update them.
 - **Tier check**: Did you add anything to root that's really deferred material? Move it to a child directory. Did you leave something in a child directory that the agent needs on every turn? Promote it to root.
+- **Nesting check**: Confirm every added or moved memory file stays within the configured `maxDepth`, including each directory's `MEMORY.md`.
 - **Discoverability**: For each deferred file you added or moved, confirm the primary agent can reach it from root `MEMORY.md` through each intermediate directory's `MEMORY.md`, that each link says when the target is worth opening, and that its `description` says what it is about.
 
 #### Skills (only if you made a skill change)
