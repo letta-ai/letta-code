@@ -201,6 +201,7 @@ type ConversationLoopContext = {
   conversationBusyRetriesRef: MutableRefObject<number>;
   conversationGenerationRef: MutableRefObject<number>;
   conversationIdRef: MutableRefObject<string>;
+  currentModelHandle: string | null;
   currentModelId: string | null;
   emptyResponseRetriesRef: MutableRefObject<number>;
   executingToolCallIdsRef: MutableRefObject<string[]>;
@@ -303,6 +304,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     conversationBusyRetriesRef,
     conversationGenerationRef,
     conversationIdRef,
+    currentModelHandle,
     currentModelId,
     emptyResponseRetriesRef,
     executingToolCallIdsRef,
@@ -2624,6 +2626,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             runId: lastRunId ?? undefined,
           };
 
+          const appendErrorHint = () =>
+            appendError(
+              getErrorHintForStopReason(
+                stopReasonToHandle,
+                currentModelId,
+                llmConfigRef.current?.model_endpoint_type,
+                currentModelHandle,
+              ),
+              true,
+            );
+
           // Fetch error details from the run if available (server-side errors)
           if (lastRunId) {
             try {
@@ -2670,14 +2683,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   )
                 ) {
                   // Show appropriate error hint based on stop reason
-                  appendError(
-                    getErrorHintForStopReason(
-                      stopReasonToHandle,
-                      currentModelId,
-                      llmConfigRef.current?.model_endpoint_type,
-                    ),
-                    true,
-                  );
+                  appendErrorHint();
                 }
               } else {
                 // No error metadata, show generic error with run info
@@ -2690,14 +2696,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
 
                 // Show appropriate error hint based on stop reason
-                appendError(
-                  getErrorHintForStopReason(
-                    stopReasonToHandle,
-                    currentModelId,
-                    llmConfigRef.current?.model_endpoint_type,
-                  ),
-                  true,
-                );
+                appendErrorHint();
               }
             } catch (_e) {
               // If we can't fetch error details, show generic error
@@ -2710,14 +2709,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               );
 
               // Show appropriate error hint based on stop reason
-              appendError(
-                getErrorHintForStopReason(
-                  stopReasonToHandle,
-                  currentModelId,
-                  llmConfigRef.current?.model_endpoint_type,
-                ),
-                true,
-              );
+              appendErrorHint();
 
               // Restore dequeued message to input on error
               if (lastDequeuedMessageRef.current) {
@@ -2744,14 +2736,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
 
             // Show appropriate error hint based on stop reason
-            appendError(
-              getErrorHintForStopReason(
-                stopReasonToHandle,
-                currentModelId,
-                llmConfigRef.current?.model_endpoint_type,
-              ),
-              true,
-            );
+            appendErrorHint();
           }
 
           // Restore dequeued message to input on error
