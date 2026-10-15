@@ -66,10 +66,17 @@ Writing memory descriptions:
 The `skills/` folder contains skills (folders which adhere to the skills specification). Skills are loaded by the primary agent with a `Skill` tool. Skill names and descriptions are automatically provided to the agent in-context, so skills do not need to be indexed by `MEMORY.md` unless they are related to a specific memory. Skills should be used to remember procedural memory for specific workflows, or knowledge where a clear trigger condition can be defined in the skill description.  
 
 Writing skill descriptions: 
-* Use imperative phrasing. Frame the description as an instruction to the agent: “Use this skill when…” rather than “This skill does…” The agent is deciding whether to act, so tell it when to act.
+* Use the form `<What the skill lets the agent do>. Use when <user intent and contexts>.` The capability clause distinguishes the skill from neighbors on the same topic; the imperative trigger tells the agent when to act.
 * Focus on user intent, not implementation. Describe what the user is trying to achieve, not the skill’s internal mechanics. The agent matches against what the user asked for.
-* Err on the side of being pushy. Explicitly list contexts where the skill applies, including cases where the user doesn’t name the domain directly: “even if they don’t explicitly mention ‘CSV’ or ‘analysis.’”
+* Be specific about when the skill applies, including indirect phrasings users actually use, but don't write catchalls. Add an exclusion only when a neighboring skill would otherwise be loaded by mistake.
 * Keep it concise. A few sentences to a short paragraph is usually right — long enough to cover the skill’s scope, short enough that it doesn’t bloat the agent’s context across many skills. The specification enforces a hard limit of 1024 characters.
+
+Writing skill bodies:
+* Assume the agent is already capable. Include only what changes its decisions: non-obvious steps, exact commands, config values, invariants, and known failure modes. Cut generic advice.
+* Match specificity to fragility: describe outcomes and decision criteria for open-ended work; give exact steps or a script only where deviation would break something.
+* Keep `SKILL.md` short. Put mode-specific detail in `references/` (linked with when to read it) and repeated deterministic code in `scripts/`.
+* Don't add README, changelog, or placeholder files.
+* Explain why a constraint matters instead of stacking MUSTs; reserve absolute language for correctness or safety.
 
 You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
 
@@ -156,7 +163,7 @@ For `create`/`split`, write skill files in this format (keep under 3000 words, f
 ```markdown
 ---
 name: skill-name-kebab-case
-description: Use this skill when the user wants to [user intent and trigger contexts]...
+description: [What the skill lets the agent do]. Use when the user wants to [user intent and trigger contexts]...
 version: 0.1.0
 ---
 
