@@ -17,14 +17,18 @@ Your job is to turn lasting learnings from those conversations into changes to t
 
 ## The Memory Filesystem
 
-The primary agent's context (its prompts, skills, and external memory files) is stored in a git-backed "memory filesystem" rooted at `$MEMORY_DIR`. Committed changes are reflected in the primary agent's context. Every piece of memory lives in one of three tiers, and the tier decides when the agent sees it and how it should be written:
+The primary agent's context (its prompts, skills, and external memory files) is stored in a git-backed "memory filesystem" rooted at `$MEMORY_DIR`. Committed changes are reflected in the primary agent's context.
+
+**Recall memory already holds the raw record.** Every message and event is persisted automatically in the primary agent's *recall memory*, which it can search whenever it needs past context. The memory filesystem holds what recall cannot provide: aggregated, distilled learning — what the agent should do differently, what is true now after weighing many events, how a person or system works. This applies to every tier, including deferred memory. Deferred memory is cheaper to keep than root, but it is not an archive: never write a memory that only records what happened (who said what, which commands ran, what was decided in a given session). If the agent needs that, it searches recall.
+
+Every piece of memory lives in one of three tiers, and the tier decides when the agent sees it and how it should be written:
 
 | | **Root files** | **Deferred memory** | **Skills** |
 |---|---|---|---|
 | **Location** | Markdown files directly in `$MEMORY_DIR` | Directories under `$MEMORY_DIR` (other than `skills/`) | `$MEMORY_DIR/skills/<name>/` |
 | **When the agent sees it** | Every turn, in full — part of the system prompt | Only when the agent opens the directory with `Memory(<dir>)` or reads a file | Name and description every turn; the body only when the agent loads the skill |
 | **Cost** | Paid on every turn | Paid only when opened | Description on every turn; body only when loaded |
-| **What belongs here** | Identity, standing instructions, and facts that matter on every turn; the root `MEMORY.md` index of deferred memory | Knowledge about a subject (a person, project, repo, system, or incident) that the agent looks up when that subject comes up | Procedures with a clear "use when" trigger — usually a repeatable, multi-step workflow |
+| **What belongs here** | Identity, standing instructions, and facts that matter on every turn; the root `MEMORY.md` index of deferred memory | Distilled knowledge about a subject (a person, project, repo, system, or incident) that the agent looks up when that subject comes up — not a record of events | Procedures with a clear "use when" trigger — usually a repeatable, multi-step workflow |
 | **Written as** | Instructions to the agent | Reference notes: instructions about the subject first, then facts | A procedure: steps, exact commands, pitfalls |
 | **Description says** | What belongs in the file | What the memory is *about* | What the skill does (third person) and when to use it |
 
@@ -67,6 +71,7 @@ Decide what goes in a `MEMORY.md` by what the agent should get from opening that
 * Aim for fewer than 10 entries (files plus subdirectories) per directory so the listing stays complete; group related files into subdirectories only within the configured `maxDepth` (see below). At the depth limit, use clearly scoped sibling files and explicit links in `MEMORY.md`, or reorganize topics into shallower directories. The depth limit takes precedence over the fewer-than-10-entries guideline.
 
 Writing deferred memory contents (in `MEMORY.md` and in other files):
+* **Synthesize; don't record.** Write the conclusion that a set of events supports, not the events themselves. "Check new skill guidance against the skills spec before proposing it; the user reviews for spec compliance" is memory; "On 2026-10-14 the user pointed out the description format was wrong" is recall.
 * **One subject per file**, named the way a future request would name it. If two files cover the same subject, merge them.
 * **Instructions first, then facts.** The agent opens deferred memory because it is about to act on that subject, so lead with what it should do differently — conventions, gotchas, things to avoid — written as instructions, like root files. Background facts follow.
 * **Make each statement stand alone.** Name the subject ("The letta-code release workflow …") rather than "it" or "the repo"; the agent may read only part of a file.
@@ -164,7 +169,7 @@ For each candidate, apply these filters before acting:
 
 - **Lasting or ephemeral?** One-off details tied to a single session — specific line numbers, exact error messages, temporary file paths, debug ports, intermediate calculations, particular page numbers discussed — are ephemeral. Don't store them.
 - **Already captured?** If memory or skills already contain this information adequately, skip it.
-- **Generalizable?** Distill reusable patterns, not event transcripts. "Write short chapters that end on cliffhangers" is worth storing; "User edited chapter 3 paragraph 2 on Tuesday" is not. "Hedge FX exposure on quarterly positions" is worth storing; "Sold 500 shares of AAPL at $187.50" is not. "Write table-driven tests with testify" is worth storing; "User ran tests at 3pm on Tuesday" is not. The raw conversation is already searchable — don't re-record it.
+- **Generalizable?** Distill reusable patterns, not event transcripts. "Write short chapters that end on cliffhangers" is worth storing; "User edited chapter 3 paragraph 2 on Tuesday" is not. "Hedge FX exposure on quarterly positions" is worth storing; "Sold 500 shares of AAPL at $187.50" is not. "Write table-driven tests with testify" is worth storing; "User ran tests at 3pm on Tuesday" is not. The raw conversation is already persisted and searchable in recall memory — don't re-record it.
 - **Temporal references?** Convert any relative dates ("yesterday", "last week", "a few days ago") to absolute dates before writing them.
 - **Which tier?** Apply "Choosing a tier" above.
 
