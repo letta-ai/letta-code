@@ -67,6 +67,7 @@ import {
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
 import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
+import { resolveLaunchComputer } from "./subagent-computer";
 import {
   buildTaskResultHeader,
   writeTaskTranscriptResult,
@@ -718,26 +719,13 @@ export async function launchSubagent(
   ) {
     return { success: false, error: "max_turns must be a positive integer" };
   }
-  if (typeof args.computer === "string" && args.computer.trim()) {
-    if (subagent_type === "memory") {
-      return {
-        success: false,
-        error: "Memory workers must run on the current machine; omit computer.",
-      };
-    }
-    let environmentRouting = false;
-    try {
-      environmentRouting = getBackend().capabilities.environmentRouting;
-    } catch {
-      environmentRouting = false;
-    }
-    if (!environmentRouting) {
-      return {
-        success: false,
-        error:
-          "The computer option requires a Letta Cloud backend. This backend has no connected computers; omit the computer field to run the subagent on the current machine.",
-      };
-    }
+  const resolvedComputer = resolveLaunchComputer({
+    requested: args.computer,
+    subagentType: subagent_type,
+    config,
+  });
+  if (resolvedComputer.error) {
+    return { success: false, error: resolvedComputer.error };
   }
 
   let effectiveAgentId = args.agent_id;
@@ -754,11 +742,11 @@ export async function launchSubagent(
         error: `${subagent_type} requires a parent agent identity`,
       };
     }
-    if (typeof args.computer === "string" && args.computer.trim()) {
+    if (resolvedComputer.computer) {
       return launchRemoteExternalCodingAgent(
         {
           type: externalCodingAgentType,
-          computer: args.computer.trim(),
+          computer: resolvedComputer.computer,
           prompt: inputPrompt,
           description,
           model,
@@ -922,10 +910,7 @@ export async function launchSubagent(
     forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
     ...callerNotification,
-    environment:
-      typeof args.computer === "string" && args.computer.trim()
-        ? args.computer.trim()
-        : undefined,
+    environment: resolvedComputer.computer,
   });
 
   if (subagent_type === "memory") {
