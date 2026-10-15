@@ -1,3 +1,7 @@
+import {
+  buildRootMemoryReadonlyPolicy,
+  resolveReadonlyMemoryRoot,
+} from "@/permissions/root-memory-readonly";
 import { resolveShellSandboxContext } from "@/permissions/sandbox-gate";
 import {
   buildCrossAgentSandboxPolicy,
@@ -12,7 +16,11 @@ import {
   detectSandboxBackend,
   type SandboxAvailability,
 } from "@/sandbox/availability";
-import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
+import {
+  buildFsSandboxPolicy,
+  SANDBOX_ENV_VAR,
+  type SandboxBackend,
+} from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
 
 /**
@@ -55,6 +63,60 @@ export function applyShellSandbox(
   cwd: string,
   env: NodeJS.ProcessEnv,
   /** Injectable for tests; defaults to a real host probe. */
+  availability?: SandboxAvailability,
+): ShellSandboxResult {
+  const base = applyBaseShellSandbox(launcher, cwd, env, availability);
+  // The launcher's process environment owns this policy; a tool's supplied
+  // shell environment cannot switch it off. Workers have a different scope.
+  const readonlyMemoryRoot = resolveReadonlyMemoryRoot();
+  if (!readonlyMemoryRoot) return base;
+  const workspace = getRuntimeContext()?.workspaceSandbox;
+  // A workspace's global write deny already protects memory outside it.
+  if (
+    workspace &&
+    readonlyMemoryRoot !== workspace.root &&
+    !readonlyMemoryRoot.startsWith(`${workspace.root}/`)
+  )
+    return base;
+  const available = availability ?? detectSandboxBackend();
+  if (available.backend !== "bwrap") {
+    throw new Error("Read-only root memory requires Linux bubblewrap");
+  }
+  const wrapped =
+    base.backend === "bwrap"
+      ? [...base.launcher]
+      : wrapLauncher(launcher, buildFsSandboxPolicy({}), {
+          backend: "bwrap",
+          bwrapPath: available.bwrapPath,
+        });
+  if (!wrapped) throw new Error("Could not protect root memory");
+  const policy = buildRootMemoryReadonlyPolicy(readonlyMemoryRoot);
+  const mounts = [
+    "--ro-bind",
+    readonlyMemoryRoot,
+    readonlyMemoryRoot,
+    ...policy.writableRoots.flatMap((path) => ["--bind", path, path]),
+    ...policy.readonlyRoots
+      .slice(1)
+      .flatMap((path) => ["--ro-bind", path, path]),
+  ];
+  // Apply after existing mounts so a broad self-memory carve cannot make
+  // the root writable again. Missing mounts fail closed (no -try flags).
+  wrapped.splice(wrapped.indexOf("--"), 0, ...mounts);
+  // Daytona tools normally run as root. Drop mount capabilities and hide
+  // parent processes, rather than letting the command undo the read-only bind.
+  wrapped.splice(1, 0, "--unshare-user", "--unshare-pid", "--cap-drop", "ALL");
+  return {
+    launcher: wrapped,
+    env: { ...env, [SANDBOX_ENV_VAR]: "bwrap" },
+    backend: "bwrap",
+  };
+}
+
+function applyBaseShellSandbox(
+  launcher: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
   availability?: SandboxAvailability,
 ): ShellSandboxResult {
   const unchanged: ShellSandboxResult = { launcher, env, backend: null };

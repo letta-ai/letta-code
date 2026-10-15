@@ -33,6 +33,7 @@ import {
 import { isOwnMemoryWrite } from "./memory-write-allowance";
 import { permissionMode } from "./mode";
 import { isMemoryDirCommand, isReadOnlyShellCommand } from "./read-only-shell";
+import { evaluateRootMemoryReadonlyGuard } from "./root-memory-readonly";
 import { sessionPermissions } from "./session";
 import type {
   PermissionCheckResult,
@@ -275,12 +276,18 @@ function checkPermissionForEngine(
   const trace = createTrace(engine, toolName, canonicalTool, query);
   const sessionRules = sessionPermissions.getRules();
 
-  const workspaceGuardResult = evaluateWorkspaceSandboxGuard(
-    permissionToolName,
-    toolArgs,
-    workingDirectory,
-    getRuntimeContext()?.workspaceSandbox,
-  );
+  const workspaceGuardResult =
+    evaluateRootMemoryReadonlyGuard(
+      permissionToolName,
+      toolArgs,
+      workingDirectory,
+    ) ??
+    evaluateWorkspaceSandboxGuard(
+      permissionToolName,
+      toolArgs,
+      workingDirectory,
+      getRuntimeContext()?.workspaceSandbox,
+    );
   if (workspaceGuardResult) {
     traceEvent(trace, "workspace-sandbox", workspaceGuardResult.reason);
     return {
