@@ -164,6 +164,8 @@ Pass `computer` to run the subagent's turn on another connected computer instead
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
+Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. `fork`, `recall`, and memory workers ignore the default and always start here, because their inherited context describes this machine's files.
+
 ```typescript
 // Fork this conversation and run the work on a connected computer
 Agent({

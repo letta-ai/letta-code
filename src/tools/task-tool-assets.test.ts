@@ -61,21 +61,30 @@ describe("stripComputerFromTaskDescription", () => {
 });
 
 describe("task() computer guard", () => {
-  test("task.ts rejects computer args before spawning when the backend lacks environmentRouting", async () => {
+  test("task.ts resolves and rejects computer args before spawning", async () => {
     const source = await Bun.file(
       new URL("./impl/task.ts", import.meta.url),
     ).text();
-    const guardIndex = source.indexOf(
-      "The computer option requires a Letta Cloud backend",
-    );
     const launchStart = source.indexOf("export async function launchSubagent(");
+    const guardIndex = source.indexOf("resolveLaunchComputer({", launchStart);
+    const rejectIndex = source.indexOf("resolvedComputer.error", guardIndex);
     const spawnIndex = source.indexOf(
       "spawnBackgroundSubagentTask({",
       launchStart,
     );
     expect(guardIndex).toBeGreaterThan(-1);
+    expect(rejectIndex).toBeGreaterThan(-1);
     expect(spawnIndex).toBeGreaterThan(-1);
-    expect(guardIndex).toBeLessThan(spawnIndex);
+    expect(rejectIndex).toBeLessThan(spawnIndex);
+  });
+
+  test("the routing guard lives in subagent-computer.ts", async () => {
+    const source = await Bun.file(
+      new URL("./impl/subagent-computer.ts", import.meta.url),
+    ).text();
+    expect(source).toContain(
+      "The computer option requires a Letta Cloud backend",
+    );
     expect(source).toContain("capabilities.environmentRouting");
   });
 });

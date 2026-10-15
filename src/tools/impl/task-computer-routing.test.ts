@@ -15,6 +15,7 @@ import { clearAllSubagents, updateSubagent } from "@/agent/subagent-state";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import type { spawnSubagent } from "@/agent/subagents/manager";
 import { __testSetBackend, type Backend } from "@/backend";
+import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
 
 // Replace discovery and the child-process boundary, not task() or its background
@@ -80,6 +81,15 @@ const retrieveAgent = mock(async () => ({ model: "anthropic/test-model" }));
 const capabilities = { environmentRouting: true };
 let scratchpad: string;
 let previousScratchpad: string | undefined;
+let previousDefaultComputer: string | undefined;
+
+function setDefaultComputer(value: string | undefined) {
+  if (value === undefined) {
+    delete process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER;
+  } else {
+    process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER = value;
+  }
+}
 
 beforeEach(() => {
   spawn.mockClear();
@@ -96,6 +106,8 @@ beforeEach(() => {
   previousScratchpad = process.env.LETTA_SCRATCHPAD;
   scratchpad = mkdtempSync(join(tmpdir(), "task-computer-routing-"));
   process.env.LETTA_SCRATCHPAD = scratchpad;
+  previousDefaultComputer = process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER;
+  setDefaultComputer(undefined);
 });
 
 afterEach(() => {
@@ -108,6 +120,7 @@ afterEach(() => {
   } else {
     process.env.LETTA_SCRATCHPAD = previousScratchpad;
   }
+  setDefaultComputer(previousDefaultComputer);
   rmSync(scratchpad, { recursive: true, force: true });
 });
 
@@ -170,6 +183,114 @@ describe("task computer routing", () => {
       expect(backgroundTasks.size).toBe(0);
     },
   );
+
+  describe("LETTA_DEFAULT_SUBAGENT_COMPUTER", () => {
+    test.each([undefined, "", " \t\n "])(
+      "routes an omitted computer (%j) to the configured default",
+      async (computer) => {
+        setDefaultComputer("cloud");
+        const result = await task({
+          ...launchArgs,
+          ...(computer === undefined ? {} : { computer }),
+        });
+
+        expect(result).toContain("Task running in background with task ID:");
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(receivedEnvironment).toBe("cloud");
+      },
+    );
+
+    test("an explicit computer still wins", async () => {
+      setDefaultComputer("cloud");
+      const result = await task({ ...launchArgs, computer: "office-mac" });
+
+      expect(result).toContain("Task running in background with task ID:");
+      expect(receivedEnvironment).toBe("office-mac");
+    });
+
+    test.each(["local", "self", " LOCAL "])(
+      "%j pins the subagent to the current machine",
+      async (computer) => {
+        setDefaultComputer("cloud");
+        const result = await task({ ...launchArgs, computer });
+
+        expect(result).toContain("Task running in background with task ID:");
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(receivedEnvironment).toBeUndefined();
+      },
+    );
+
+    test("a fork ignores the default and does not route", async () => {
+      setDefaultComputer("cloud");
+      // The shared fixture rejects forks so other cases can assert none happen;
+      // this one needs the fork to land so the spawn below is observable.
+      forkConversation.mockImplementationOnce(
+        async () => ({ id: "conv-forked-child" }) as never,
+      );
+      // Only this case reaches the post-fork toolset read, so the settings
+      // singleton is initialized here rather than for the whole file.
+      const originalHome = process.env.HOME;
+      process.env.HOME = scratchpad;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+      try {
+        const result = await task({ ...launchArgs, subagent_type: "fork" });
+
+        expect(result).toContain("Task running in background with task ID:");
+        expect(forkConversation).toHaveBeenCalledTimes(1);
+        expect(spawn).toHaveBeenCalledTimes(1);
+        expect(receivedEnvironment).toBeUndefined();
+      } finally {
+        await settingsManager.reset();
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+      }
+    });
+
+    test("a memory worker ignores the default instead of failing", async () => {
+      setDefaultComputer("cloud");
+      const result = await task({ ...launchArgs, subagent_type: "memory" });
+
+      expect(result).not.toContain("Error:");
+      expect(result).toContain("Memory task running in background");
+      expect(receivedEnvironment).toBeUndefined();
+    });
+
+    test("falls back to this machine when the backend cannot route", async () => {
+      setDefaultComputer("cloud");
+      capabilities.environmentRouting = false;
+      const result = await task({ ...launchArgs });
+
+      expect(result).toContain("Task running in background with task ID:");
+      expect(spawn).toHaveBeenCalledTimes(1);
+      expect(receivedEnvironment).toBeUndefined();
+    });
+
+    test("an explicit computer still errors when the backend cannot route", async () => {
+      setDefaultComputer("cloud");
+      capabilities.environmentRouting = false;
+      const result = await task({ ...launchArgs, computer: "office-mac" });
+
+      expect(result).toContain(
+        "Error: The computer option requires a Letta Cloud backend.",
+      );
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    test.each(["local", "self"])(
+      "a default of %j is a no-op",
+      async (value) => {
+        setDefaultComputer(value);
+        const result = await task({ ...launchArgs });
+
+        expect(result).toContain("Task running in background with task ID:");
+        expect(receivedEnvironment).toBeUndefined();
+      },
+    );
+  });
 
   for (const environmentRouting of [true, false]) {
     test.each([undefined, "", " \t\n "])(
