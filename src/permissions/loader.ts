@@ -1,11 +1,22 @@
 // src/permissions/loader.ts
 // Load and merge permission settings from hierarchical sources
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
+import {
+  chmod,
+  type FileHandle,
+  mkdir,
+  open,
+  rename,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { withFileLock } from "@/utils/file-lock";
 import { exists, readFile, writeFile } from "@/utils/fs.js";
+import { isRecord } from "@/utils/type-guards";
 import { migratePermissionMode } from "./mode";
 import {
   normalizePermissionRule,
@@ -30,10 +41,12 @@ type UserSettingsPathsOptions = {
 type FileSignature =
   | {
       exists: true;
+      readable: true;
       mtimeMs: number;
       size: number;
       hash: string;
     }
+  | { exists: true; readable: false }
   | { exists: false };
 
 type PermissionCacheEntry = {
@@ -44,6 +57,13 @@ type PermissionCacheEntry = {
 
 const permissionCache = new Map<string, PermissionCacheEntry>();
 const watchers = new Map<string, FSWatcher>();
+
+export class PermissionSettingsFileError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "PermissionSettingsFileError";
+  }
+}
 
 export function getUserSettingsPaths(options: UserSettingsPathsOptions = {}): {
   canonical: string;
@@ -73,19 +93,28 @@ function getPermissionSourcePaths(workingDirectory: string): string[] {
 }
 
 function getFileSignature(path: string): FileSignature {
+  let fileStat: ReturnType<typeof statSync>;
   try {
-    const stat = statSync(path);
-    if (!stat.isFile()) {
-      return { exists: false };
-    }
+    fileStat = statSync(path);
+  } catch (error) {
+    return isMissingFileError(error)
+      ? { exists: false }
+      : { exists: true, readable: false };
+  }
+  if (!fileStat.isFile()) {
+    return { exists: true, readable: false };
+  }
+
+  try {
     return {
       exists: true,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
+      readable: true,
+      mtimeMs: fileStat.mtimeMs,
+      size: fileStat.size,
       hash: createHash("sha256").update(readFileSync(path)).digest("hex"),
     };
   } catch {
-    return { exists: false };
+    return { exists: true, readable: false };
   }
 }
 
@@ -103,7 +132,132 @@ function signaturesEqual(
 ): boolean {
   if (!a || !b) return false;
   if (!a.exists || !b.exists) return a.exists === b.exists;
+  if (!a.readable || !b.readable) return false;
   return a.mtimeMs === b.mtimeMs && a.size === b.size && a.hash === b.hash;
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+function validateSettingsFile(
+  value: unknown,
+  settingsPath: string,
+): SettingsFile {
+  if (!isRecord(value)) {
+    throw new PermissionSettingsFileError(
+      `Invalid permission settings at "${settingsPath}": expected a JSON object.`,
+    );
+  }
+
+  const permissions = value.permissions;
+  if (permissions === undefined) {
+    return value as SettingsFile;
+  }
+  if (!isRecord(permissions)) {
+    throw new PermissionSettingsFileError(
+      `Invalid permission settings at "${settingsPath}": "permissions" must be an object.`,
+    );
+  }
+
+  for (const key of [
+    "allow",
+    "deny",
+    "ask",
+    "alwaysAsk",
+    "additionalDirectories",
+  ] as const) {
+    const rules = permissions[key];
+    if (
+      rules !== undefined &&
+      (!Array.isArray(rules) ||
+        !rules.every((rule: unknown) => typeof rule === "string"))
+    ) {
+      throw new PermissionSettingsFileError(
+        `Invalid permission settings at "${settingsPath}": "permissions.${key}" must be an array of strings.`,
+      );
+    }
+  }
+  if (permissions.mode !== undefined && typeof permissions.mode !== "string") {
+    throw new PermissionSettingsFileError(
+      `Invalid permission settings at "${settingsPath}": "permissions.mode" must be a string.`,
+    );
+  }
+
+  return value as SettingsFile;
+}
+
+async function readSettingsFile(
+  settingsPath: string,
+): Promise<SettingsFile | undefined> {
+  let content: string;
+  try {
+    content = await readFile(settingsPath);
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined;
+    throw new PermissionSettingsFileError(
+      `Could not read permission settings at "${settingsPath}"; refusing to ignore configured security rules.`,
+      { cause: error },
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    throw new PermissionSettingsFileError(
+      `Malformed JSON in permission settings at "${settingsPath}"; refusing to overwrite or ignore it.`,
+      { cause: error },
+    );
+  }
+  return validateSettingsFile(parsed, settingsPath);
+}
+
+async function existingFileMode(
+  settingsPath: string,
+): Promise<number | undefined> {
+  try {
+    return (await stat(settingsPath)).mode & 0o777;
+  } catch (error) {
+    if (isMissingFileError(error)) return undefined;
+    throw error;
+  }
+}
+
+async function writeSettingsFileAtomically(
+  settingsPath: string,
+  settings: SettingsFile,
+): Promise<void> {
+  const directoryPath = dirname(settingsPath);
+  const tempPath = join(
+    directoryPath,
+    `.${basename(settingsPath)}.${process.pid}.${randomUUID()}.tmp`,
+  );
+  const mode = await existingFileMode(settingsPath);
+  let handle: FileHandle | undefined;
+
+  try {
+    handle = await open(tempPath, "wx", mode ?? 0o600);
+    await handle.writeFile(JSON.stringify(settings, null, 2), "utf8");
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
+    if (mode !== undefined) {
+      await chmod(tempPath, mode);
+    }
+    await rename(tempPath, settingsPath);
+  } catch (error) {
+    try {
+      await handle?.close();
+    } catch {
+      // Preserve the original write error.
+    }
+    await rm(tempPath, { force: true }).catch(() => undefined);
+    throw new PermissionSettingsFileError(
+      `Could not atomically save permission settings at "${settingsPath}".`,
+      { cause: error },
+    );
+  }
 }
 
 function cachedEntryMatchesSources(
@@ -246,17 +400,9 @@ export async function loadPermissions(
   };
 
   for (const settingsPath of sources) {
-    try {
-      if (exists(settingsPath)) {
-        const content = await readFile(settingsPath);
-        const settings = JSON.parse(content) as SettingsFile;
-        if (settings.permissions) {
-          mergePermissions(merged, settings.permissions);
-        }
-      }
-    } catch (_error) {
-      // Silently skip files that can't be parsed
-      // (user might have invalid JSON)
+    const settings = await readSettingsFile(settingsPath);
+    if (settings?.permissions) {
+      mergePermissions(merged, settings.permissions);
     }
   }
 
@@ -356,39 +502,36 @@ export async function savePermissionRule(
       break;
   }
 
-  // Load existing settings
-  let settings: SettingsFile = {};
-  try {
-    if (exists(settingsPath)) {
-      const content = await readFile(settingsPath);
-      settings = JSON.parse(content) as SettingsFile;
-    }
-  } catch (_error) {
-    // Start with empty settings if file doesn't exist or is invalid
-  }
-
-  // Initialize permissions if needed
-  if (!settings.permissions) {
-    settings.permissions = {};
-  }
-  if (!settings.permissions[ruleType]) {
-    settings.permissions[ruleType] = [];
-  }
-
   const normalizedRule = normalizePermissionRule(rule);
+  try {
+    await mkdir(dirname(settingsPath), { recursive: true });
+    await withFileLock(`${settingsPath}.lock`, async () => {
+      const settings = (await readSettingsFile(settingsPath)) ?? {};
+      const permissions = settings.permissions ?? {};
+      settings.permissions = permissions;
+      const rules = permissions[ruleType] ?? [];
+      permissions[ruleType] = rules;
 
-  // Add rule if not already present (canonicalized comparison for alias/path variants)
-  if (
-    !settings.permissions[ruleType].some((existingRule) =>
-      permissionRulesEquivalent(existingRule, normalizedRule),
-    )
-  ) {
-    settings.permissions[ruleType].push(normalizedRule);
+      // Add rule if not already present (canonicalized comparison for alias/path variants)
+      if (
+        rules.some((existingRule) =>
+          permissionRulesEquivalent(existingRule, normalizedRule),
+        )
+      ) {
+        return;
+      }
+
+      rules.push(normalizedRule);
+      await writeSettingsFileAtomically(settingsPath, settings);
+      invalidatePermissionSource(settingsPath);
+    });
+  } catch (error) {
+    if (error instanceof PermissionSettingsFileError) throw error;
+    throw new PermissionSettingsFileError(
+      `Could not update permission settings at "${settingsPath}".`,
+      { cause: error },
+    );
   }
-
-  // Save settings
-  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
-  invalidatePermissionSource(settingsPath);
 
   // If saving to .letta/settings.local.json, ensure it's gitignored
   if (scope === "local") {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -466,18 +466,150 @@ test("Save permission preserves other settings fields", async () => {
 // Error Handling Tests
 // ============================================================================
 
-test("Load permissions handles invalid JSON gracefully", async () => {
+test("Load permissions rejects invalid JSON instead of dropping rules", async () => {
   const projectDir = join(testDir, "project-invalid-json");
   const settingsPath = join(projectDir, ".letta", "settings.json");
+  const malformed = "{ invalid json ";
 
-  // Write invalid JSON
-  await Bun.write(settingsPath, "{ invalid json ");
+  await Bun.write(settingsPath, malformed);
 
-  const permissions = await loadPermissions(projectDir);
+  await expect(loadPermissions(projectDir)).rejects.toThrow(
+    `Malformed JSON in permission settings at "${settingsPath}"`,
+  );
+  expect(await readFile(settingsPath, "utf8")).toBe(malformed);
 
-  // Should return empty permissions instead of crashing (silently skip invalid file)
-  expect(permissions.allow).toBeDefined();
-  expect(permissions.deny).toBeDefined();
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({ permissions: { deny: ["Read(.env)"] } }),
+  );
+  const repaired = await loadPermissions(projectDir);
+  expect(repaired.deny).toContain("Read(.env)");
+});
+
+test("Load permissions rejects invalid security rule shapes", async () => {
+  const projectDir = join(testDir, "project-invalid-rule-shape");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({ permissions: { deny: "Read(.env)" } }),
+  );
+
+  await expect(loadPermissions(projectDir)).rejects.toThrow(
+    '"permissions.deny" must be an array of strings',
+  );
+});
+
+test("Load permissions does not reuse a cache entry for an unreadable source", async () => {
+  if (process.platform === "win32") return;
+
+  const projectDir = join(testDir, "project-unreadable-settings");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({ permissions: { deny: ["Read(.env)"] } }),
+  );
+  expect((await loadPermissions(projectDir)).deny).toContain("Read(.env)");
+
+  await chmod(settingsPath, 0o000);
+  let filesystemEnforcesMode = false;
+  try {
+    await readFile(settingsPath, "utf8");
+  } catch {
+    filesystemEnforcesMode = true;
+  }
+
+  try {
+    if (filesystemEnforcesMode) {
+      await expect(loadPermissions(projectDir)).rejects.toThrow(
+        /Could not read permission settings/,
+      );
+    }
+  } finally {
+    await chmod(settingsPath, 0o600);
+  }
+});
+
+test("Save permission preserves malformed settings byte-for-byte", async () => {
+  const projectDir = join(testDir, "project-save-malformed");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const malformed =
+    '{"model":"example","permissions":{"deny":["Bash(rm:*)"]},}\n';
+  await Bun.write(settingsPath, malformed);
+
+  await expect(
+    savePermissionRule("Bash(ls:*)", "allow", "project", projectDir),
+  ).rejects.toThrow(/refusing to overwrite or ignore it/);
+  expect(await readFile(settingsPath, "utf8")).toBe(malformed);
+});
+
+test("Concurrent permission saves preserve every rule and unrelated setting", async () => {
+  const projectDir = join(testDir, "project-concurrent-save");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({
+      tokenStreaming: true,
+      permissions: { deny: ["Read(.env)"] },
+    }),
+  );
+
+  const rules = Array.from(
+    { length: 12 },
+    (_, index) => `Bash(concurrent-command-${index}:*)`,
+  );
+  await Promise.all(
+    rules.map((rule) =>
+      savePermissionRule(rule, "allow", "project", projectDir),
+    ),
+  );
+
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  expect(settings.tokenStreaming).toBe(true);
+  expect(settings.permissions.deny).toEqual(["Read(.env)"]);
+  expect(settings.permissions.allow).toHaveLength(rules.length);
+  expect(settings.permissions.allow).toEqual(expect.arrayContaining(rules));
+  expect(
+    (await readdir(join(projectDir, ".letta"))).filter(
+      (name) => name.endsWith(".lock") || name.endsWith(".tmp"),
+    ),
+  ).toEqual([]);
+});
+
+test("Atomic permission save preserves the existing file mode", async () => {
+  if (process.platform === "win32") return;
+
+  const projectDir = join(testDir, "project-preserve-mode");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(settingsPath, JSON.stringify({ permissions: {} }));
+  await chmod(settingsPath, 0o640);
+
+  await savePermissionRule("Bash(ls:*)", "allow", "project", projectDir);
+
+  expect((await stat(settingsPath)).mode & 0o777).toBe(0o640);
+});
+
+test("Failed permission save leaves the existing file unchanged", async () => {
+  if (process.platform === "win32") return;
+
+  const projectDir = join(testDir, "project-write-failure");
+  const settingsDirectory = join(projectDir, ".letta");
+  const settingsPath = join(settingsDirectory, "settings.json");
+  const original = JSON.stringify({
+    tokenStreaming: true,
+    permissions: { deny: ["Read(.env)"] },
+  });
+  await Bun.write(settingsPath, original);
+  await chmod(settingsDirectory, 0o500);
+
+  try {
+    await expect(
+      savePermissionRule("Bash(ls:*)", "allow", "project", projectDir),
+    ).rejects.toThrow(/Could not update permission settings/);
+  } finally {
+    await chmod(settingsDirectory, 0o700);
+  }
+
+  expect(await readFile(settingsPath, "utf8")).toBe(original);
 });
 
 test("Load permissions handles missing permissions field", async () => {
