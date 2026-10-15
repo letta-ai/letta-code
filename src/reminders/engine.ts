@@ -216,7 +216,7 @@ export function buildMcpServersReminderText(
     return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
   }
   const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, or list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one).\nWhen Workflow is available, invoke MCP tools with \`tools.mcp__server__tool(args)\` inside a Workflow script instead of spawning \`letta mcp call\` processes. Calls go directly to the Letta API or local MCP client, reuse one session, and respect \`maxConcurrent\`. Use \`wait: true\` for short scripts. If Workflow is unavailable, use \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export async function listMcpServersForAgent(
