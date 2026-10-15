@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
 import type WebSocket from "ws";
-import { actingUserRequestOptions } from "@/agent/acting-user";
 import { regenerateConversationDescription } from "@/agent/conversation-description";
 import {
   applySetMaxContext,
@@ -49,12 +48,6 @@ import {
 } from "./protocol-outbound";
 import { flushRemoteSettingsWrites } from "./remote-settings";
 import {
-  beginExternalToolNotificationReset,
-  clearConversationRuntimeState,
-  emitListenerStatus,
-  invalidateExternalToolNotifications,
-} from "./runtime";
-import {
   ensureSecretsHydratedForAgent,
   invalidateSecretsCacheForAgent,
 } from "./secrets-sync";
@@ -66,6 +59,14 @@ import {
 import type { ConversationRuntime, StartListenerOptions } from "./types";
 
 export { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
+
+/**
+ * Reply sent to clients that still dispatch the removed remote `/clear` and
+ * `/clear-messages` commands. Kept as a plain unsuccessful command result so an
+ * older web/Desktop build surfaces it like any other command failure.
+ */
+const REMOVED_CLEAR_COMMAND_MESSAGE =
+  "/clear was removed; use /new to start a fresh conversation.";
 
 /**
  * Handle an `execute_command` message from the web app.
@@ -113,19 +114,23 @@ export async function handleExecuteCommand(
 
     switch (command.command_id) {
       case "clear":
-        output = await handleClearCommand(socket, conversationRuntime, {
-          ...opts,
-          actingUserId: command.runtime.acting_user_id,
-        });
-        break;
-
       case "clear-messages":
-        output = await handleClearCommand(socket, conversationRuntime, {
-          ...opts,
-          actingUserId: command.runtime.acting_user_id,
-          resetAllAgentMessages: true,
+        // Removed: the remote clear reassigned `conversationId` on a runtime
+        // whose `key` still addressed the old scope, so the next accepted
+        // input was written to the durable ledger under a mismatched identity
+        // and poisoned the whole store. Clients use /new instead. Answer
+        // old clients without touching any runtime or conversation state.
+        emitSlashCommandEnd(socket, conversationRuntime, scope, {
+          command_id: command.command_id,
+          input,
+          output: REMOVED_CLEAR_COMMAND_MESSAGE,
+          success: false,
         });
-        break;
+        emitExecuteCommandResponse(socket, command, {
+          success: false,
+          output: REMOVED_CLEAR_COMMAND_MESSAGE,
+        });
+        return;
 
       case "doctor": {
         const agentId = conversationRuntime.agentId;
@@ -635,91 +640,6 @@ async function handleCompactCommand(
     }
 
     throw new Error(formatErrorDetails(error, agentId));
-  }
-}
-
-/**
- * /clear — Reset agent messages and create a new conversation.
- *
- * Mirrors the CLI /clear logic:
- * 1. Reset agent messages (only for "default" conversation)
- * 2. Create a new conversation
- * 3. Clear the conversation runtime state
- *
- * Returns a human-readable success message.
- */
-async function handleClearCommand(
-  _socket: WebSocket,
-  conversationRuntime: ConversationRuntime,
-  opts: {
-    onStatusChange?: StartListenerOptions["onStatusChange"];
-    connectionId?: string;
-    /** Cloud user id stamped on the relayed frame; echoed on the create call. */
-    actingUserId?: string;
-    /** Whether to reset the API agent's complete message history. */
-    resetAllAgentMessages?: boolean;
-  },
-): Promise<string> {
-  const backend = getBackend();
-  const agentId = conversationRuntime.agentId;
-
-  if (!agentId) {
-    throw new Error("No agent ID available for /clear command");
-  }
-
-  if (opts.resetAllAgentMessages && backend.capabilities.localModelCatalog) {
-    throw new Error("/clear-messages is not supported by the local backend.");
-  }
-
-  // Hold detached results until this reset either commits or fails. A
-  // successful clear changes their epoch; a failed clear releases them.
-  const finishNotificationReset =
-    beginExternalToolNotificationReset(conversationRuntime);
-  try {
-    // /clear-messages always resets the API agent's message history.
-    // /clear only resets when leaving the default API conversation.
-    // Local/headless backends model /clear by switching to a fresh conversation.
-    if (
-      !backend.capabilities.localModelCatalog &&
-      (opts.resetAllAgentMessages ||
-        conversationRuntime.conversationId === "default")
-    ) {
-      const { getClient } = await import("@/backend/api/client");
-      const client = await getClient();
-      await client.agents.messages.reset(agentId, {
-        add_default_initial_messages: false,
-      });
-      // The old message history is gone even if creating its replacement fails.
-      invalidateExternalToolNotifications(conversationRuntime);
-    }
-
-    // Create a new conversation, attributing it to the human who ran
-    // /clear when the frame was relayed by cloud with an acting user.
-    const conversation = await backend.createConversation(
-      {
-        agent_id: agentId,
-      },
-      actingUserRequestOptions(opts.actingUserId),
-    );
-
-    // Clear runtime state for the current conversation
-    clearConversationRuntimeState(conversationRuntime);
-
-    // Update the runtime's conversation ID to the new one
-    conversationRuntime.conversationId = conversation.id;
-
-    // Emit updated status so the web app picks up the new conversation
-    emitListenerStatus(
-      conversationRuntime.listener,
-      opts.onStatusChange,
-      opts.connectionId,
-    );
-
-    return opts.resetAllAgentMessages
-      ? "All agent messages reset"
-      : "Agent's in-context messages cleared & moved to conversation history";
-  } finally {
-    finishNotificationReset();
   }
 }
 

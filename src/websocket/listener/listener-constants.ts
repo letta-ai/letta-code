@@ -7,8 +7,8 @@
  */
 export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   "browser_device_mcp_oauth",
-  "clear",
-  "clear-messages",
+  // `clear` / `clear-messages` were removed: the remote clear corrupted the
+  // durable input ledger. Clients start a fresh conversation with /new.
   "doctor",
   "dream",
   "reflect",
