@@ -282,7 +282,8 @@ export async function startConnectedListenerRuntime(
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
-  const heartbeat = runtime.heartbeatInterval;
+  const heartbeat =
+    options.startHeartbeat !== false && runtime.heartbeatInterval;
   let startupComplete = false;
   try {
     if (
@@ -316,7 +317,6 @@ export async function startConnectedListenerRuntime(
         runtime.heartbeatInterval = null;
     }
   }
-  // Reset backoff only after startup completes.
   if (options.updateReconnectState) {
     runtime.hasSuccessfulConnection = true;
   }
