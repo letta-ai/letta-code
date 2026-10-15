@@ -41,11 +41,13 @@ The primary agent's context (its prompts, skills, and external memory files) is 
 Top-level or root files are part of the primary agent's *system prompt*. They are always in-context, and visible to the agent. Use these files to define the core behavior of the agent: what it always knows, and the prompting that controls how it behaves. A root `MEMORY.md` indexes deferred memory so the agent can know what memory directories and/or files to load as needed. 
 
 Writing system prompts: 
-* Write instructions, not explicit feedback. User or enviornemnt feedback tells you how the agent's behavior or knowldege should change. Write a prompt to affect this change, rather than simply recording the feedback.  
+* Write instructions, not explicit feedback. User or environment feedback tells you how the agent's behavior or knowledge should change. Write a prompt to affect this change, rather than simply recording the feedback.  
 * Leave out the evidence or context for the edit. All context modifications are git-tracked with commit messages, so do not require an explanation for why an edit was made within the edit or details about the context under which the edit was made.
 * Minimize bloat. Too many tokens can distract agents and add cost to every turn. Instructions that are only needed sometimes can be turned into skills (if a trigger condition can be defined) or deferred memory. 
 
-Directories contain *deferred memory*. Each directory contains a `MEMORY.md` file, and optionally additional files and/or nested subdirectories. Memory at higher directories levels contain memory that is more frequently accessed, while memory nested more deeply should contain memory needed less often. Related memory should be placed in the same directory so that they can be loaded together. The primary agent will use the `Memory` tool to explore and access memory (though it can also use arbitrary tools to read files directly). When `Memory(<folder_name>)` is called, it will load `folder_name/MEMORY.md` as well as metadata (the name and descriptions) of any files within that folder into the agent's context. The primary agent can use this metadata to choose to read a more nested directory (e.g. `Memory(<folder_name>/<subfolder_name>)`) or same-level files. To enable to primary agent to discovery memory as needed with minimal search and context bloat, a `MEMORY.md` should contain the minimal information needed in addition to instructions (e.g. markdown references to nested subdirectories) on how to 
+Directories contain *deferred memory*. Each directory contains a `MEMORY.md` file, and optionally additional files and/or nested subdirectories. Higher directory levels contain memory that is accessed more frequently, while more deeply nested directories contain memory needed less often. Related memory should be placed in the same directory so that it can be loaded together. The primary agent will use the `Memory` tool to explore and access memory (though it can also use arbitrary tools to read files directly). When `Memory(<folder_name>)` is called, it loads `folder_name/MEMORY.md` plus a listing of the folder's files (path and `description`) and subdirectories (path and the first paragraph of their `MEMORY.md`) into the agent's context. The listing shows at most 10 entries, most recently edited first. The primary agent can use this metadata to choose to read a more nested directory (e.g. `Memory(<folder_name>/<subfolder_name>)`) or same-level files. To enable the primary agent to discover memory as needed with minimal search and context bloat, a `MEMORY.md` should contain the minimal information needed, plus instructions (e.g. Markdown links to nested subdirectories) on how to find the rest.
+
+`MEMORY.md` files (root and child) have no frontmatter. Every other memory Markdown file has exactly `name` and `description` frontmatter; the memory repo's pre-commit check rejects missing or extra keys.
 
 To enable effective progressive discovery of memory, follow these rules when structuring memory: 
 * If the full contents of a deferred memory topic is <20,000 characters, it can be fully contained in `{topic_name}/MEMORY.md` and no additional files or nested subdirectories are needed
@@ -53,6 +55,13 @@ To enable effective progressive discovery of memory, follow these rules when str
 * Large amounts of memory about a single topic contain nested subdirectories (recommended <10 total files and subdirectories within a folder), where the `{topic_name}/MEMORY.md` indexes the contents of subdirectories.
 
 **Size limits**: By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
+
+Writing memory descriptions:
+* Describe what the memory is *about*, not when to use it. Lead with the subject (a person, project, repo, system, or incident) using the names a future request would mention, then the subtopics it covers.
+* If you can write a clear "use when the user wants to…" trigger, the content is procedural and belongs in a skill.
+* Make siblings distinguishable by subject; if two files cover the same subject, merge them.
+* Describe scope, not current contents: no entry lists, dates, status, or why the file was created.
+* A child directory's description is the first paragraph of its `MEMORY.md`. Root files are already in context, so their description states what belongs in the file.
 
 The `skills/` folder contains skills (folders which adhere to the skills specification). Skills are loaded by the primary agent with a `Skill` tool. Skill names and descriptions are automatically provided to the agent in-context, so skills do not need to be indexed by `MEMORY.md` unless they are related to a specific memory. Skills should be used to remember procedural memory for specific workflows, or knowledge where a clear trigger condition can be defined in the skill description.  
 
@@ -147,7 +156,7 @@ For `create`/`split`, write skill files in this format (keep under 3000 words, f
 ```markdown
 ---
 name: skill-name-kebab-case
-description: This skill should be used when the user needs to [trigger conditions]...
+description: Use this skill when the user wants to [user intent and trigger contexts]...
 version: 0.1.0
 ---
 
@@ -163,7 +172,7 @@ version: 0.1.0
 [What can go wrong]
 ```
 
-Skill descriptions must start with `This skill should be used when...` — that string is what the primary agent matches to decide whether to load the skill. If the transcript demonstrates reusable scripts, templates, or reference material, create generalized companion files under `skills/<name>/scripts|references|templates/` rather than only describing them. Exclude ephemeral details (timestamps, temporary paths, commit hashes, ports, usernames, session-only values).
+Write the description following "Writing skill descriptions" above — it is what the primary agent matches to decide whether to load the skill. If the transcript demonstrates reusable scripts, templates, or reference material, create generalized companion files under `skills/<name>/scripts|references|templates/` rather than only describing them. Exclude ephemeral details (timestamps, temporary paths, commit hashes, ports, usernames, session-only values).
 
 For `update`/`extend`, preserve the existing frontmatter (name, description, version); you may bump the version patch number. Keep the existing structure and useful content — for `update` make the minimum edit that fixes the wrong step; for `extend` add a new section rather than rewriting existing ones. For `deprecate` marker mode, add `deprecated: true` to the frontmatter, optionally a `replaced_by: <skill-name>` field, and a short note at the top explaining why it's deprecated and what to use instead.
 
@@ -182,7 +191,7 @@ Quick sanity pass before committing.
 
 #### Skills (only if you made a skill change)
 
-- **Description quality**: For `create`/`split`, does the new skill's description start with `This skill should be used when...` and clearly state when to load it? A vague description means the primary agent won't load the skill when it should.
+- **Description quality**: For `create`/`split`, does the new skill's description follow "Writing skill descriptions" and clearly state when to load it? A vague description means the primary agent won't load the skill when it should.
 - **No near-duplicates**: For `create`, scan the tree once more — is there really no existing skill that covers this? If you spot a partial overlap you missed, switch to `extend`.
 - **Companion file completeness**: For `create`/`split`, if `SKILL.md` references files under `scripts/`, `references/`, or `templates/`, verify those paths actually exist.
 - **Stale skill references**: For `deprecate` (delete mode) or `split`, check whether any memory or skill file references the old skill path, and update those references.
@@ -230,7 +239,7 @@ If `git add` or `git commit` fails, stop after one reasonable retry and report t
 Return a report with:
 
 1. **Summary** — What you reviewed and what you concluded (2-3 sentences)
-2. **Memory changes** — Files created/modified/deleted/moved/archived with a brief reason
+2. **Memory changes** — Files created/modified/deleted/moved with a brief reason
 3. **Skill changes** — Operation selected (`update`, `extend`, `deprecate`, `split`, `create`, or `none`) and files changed
 4. **Skipped** — Anything considered but not persisted, and why
 5. **Commit** — Confirm the commit, or "no commit" if nothing was persisted
