@@ -33,19 +33,22 @@ let lastSDKDiagnostic: SDKDiagnostic | null = null;
 let _cachedApiKey: string | undefined;
 let _testClientOverride: (() => Promise<unknown>) | null = null;
 
+type AttributedRequestOptions = Parameters<Letta["buildRequest"]>[0] & {
+  actingUserId?: string | null;
+};
+
 class ActingUserClient extends Letta {
-  protected override async authHeaders(
-    options: Parameters<Letta["buildRequest"]>[0] & {
-      actingUserId?: string | null;
-    },
-  ) {
-    // Resolve at request time: retained clients may serve different turns.
+  protected override async prepareOptions(options: AttributedRequestOptions) {
+    // Capture before the first attempt, not per retained client or retry.
+    // The SDK preserves these options for retries and subsequent pages.
+    if (options.actingUserId === undefined) {
+      options.actingUserId = getRuntimeActingUserAttribution() ?? null;
+    }
+  }
+
+  protected override async authHeaders(options: AttributedRequestOptions) {
     // Explicit request headers (including null) still win in the SDK merge.
-    const actor =
-      options.actingUserId === undefined
-        ? getRuntimeActingUserAttribution()
-        : options.actingUserId;
-    const actingUserId = actor?.trim();
+    const actingUserId = options.actingUserId?.trim();
     const headers = await super.authHeaders(options);
     if (actingUserId) {
       headers?.values.set("X-Letta-Acting-User-Id", actingUserId);
@@ -169,7 +172,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
   };
 }
 
-export async function getClient() {
+export async function getClient(): Promise<Letta> {
   if (_testClientOverride) {
     return (await _testClientOverride()) as Letta;
   }

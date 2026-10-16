@@ -36,9 +36,26 @@ describe("getClientDefaultHeaders", () => {
 });
 
 test("SDK requests inherit the current actor without overriding explicit attribution", async () => {
+  const firstAttempt = Promise.withResolvers<void>();
+  const retryActors: Array<string | null> = [];
   const server = Bun.serve({
     port: 0,
     fetch(request) {
+      if (new URL(request.url).pathname === "/v1/agents/") {
+        return Response.json([
+          { id: request.headers.get("X-Letta-Acting-User-Id") },
+        ]);
+      }
+      if (new URL(request.url).pathname === "/retry") {
+        retryActors.push(request.headers.get("X-Letta-Acting-User-Id"));
+        if (retryActors.length === 1) {
+          firstAttempt.resolve();
+          return new Response("retry", {
+            status: 503,
+            headers: { "retry-after-ms": "10" },
+          });
+        }
+      }
       return Response.json({
         actor: request.headers.get("X-Letta-Acting-User-Id"),
       });
@@ -55,8 +72,10 @@ test("SDK requests inherit the current actor without overriding explicit attribu
     // request, not the turn that happened to construct the client.
     const client = await getClient();
     const read = (options?: Parameters<typeof client.get>[1]) =>
-      client.get<{ actor: string | null }>("/v1/agents/", options);
+      client.get<{ actor: string | null }>("/echo", options);
     expect((await read()).actor).toBe("user-shell");
+    const page = await client.agents.list();
+    expect(page.items[0]?.id).toBe("user-shell");
     await runWithRuntimeContext({ actingUserId: "user-turn" }, async () => {
       expect((await read()).actor).toBe("user-turn");
       expect(
@@ -80,6 +99,15 @@ test("SDK requests inherit the current actor without overriding explicit attribu
       },
     );
     expect((await read()).actor).toBe("user-shell");
+    const retry = client.get<{ actor: string | null }>("/retry", {
+      maxRetries: 1,
+    });
+    await firstAttempt.promise;
+    process.env.LETTA_ACTING_USER_ID = "user-later";
+    expect((await retry).actor).toBe("user-shell");
+    expect(retryActors).toEqual(["user-shell", "user-shell"]);
+    expect((await page.getNextPage()).items[0]?.id).toBe("user-shell");
+    expect((await read()).actor).toBe("user-later");
     delete process.env.LETTA_ACTING_USER_ID;
     expect((await read()).actor).toBeNull();
   } finally {
