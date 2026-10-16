@@ -26,6 +26,11 @@ const ALLOWED_PROPERTIES = new Set([
   "compatibility",
   "metadata",
   "allowed-tools",
+  // Letta Code invocation fields (see src/agent/skills.ts)
+  "when_to_use",
+  "argument-hint",
+  "disable-model-invocation",
+  "user-invocable",
 ]);
 
 export const MAX_SKILL_NAME_LENGTH = 64;
