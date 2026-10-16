@@ -52,6 +52,47 @@ export class LocalSlidingWindowCompactionPlanningError extends Error {
   }
 }
 
+export class LocalIrreducibleContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalIrreducibleContextError";
+  }
+}
+
+export function assertLocalCompactionProgress(
+  stats: LocalCompactionStats,
+  mode: LocalCompactionMode,
+): void {
+  const hasProgress =
+    (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
+      (stats.messages_count_before ?? 0) ||
+    (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
+      (stats.context_tokens_before ?? 0);
+  if (hasProgress) return;
+  if (mode === "all") {
+    throw new LocalIrreducibleContextError(
+      "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
+    );
+  }
+  throw new LocalSlidingWindowCompactionPlanningError(
+    "Sliding-window compaction would not reduce the message count or estimated tokens.",
+  );
+}
+
+export async function runLocalPressureCompaction<T>(
+  compact: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await compact();
+  } catch (error) {
+    // Pressure compaction is opportunistic: it must not fail a turn (or a
+    // completed response). A real overflow still surfaces this error via
+    // the provider overflow path.
+    if (error instanceof LocalIrreducibleContextError) return null;
+    throw error;
+  }
+}
+
 export function isLocalSlidingWindowCompactionPlanningError(
   error: unknown,
 ): error is LocalSlidingWindowCompactionPlanningError {

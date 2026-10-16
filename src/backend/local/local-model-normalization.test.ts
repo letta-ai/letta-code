@@ -112,6 +112,15 @@ describe("local model normalization", () => {
     ).toBe("custom-provider/custom-model");
   });
 
+  test("does not re-prefix provider mod handles", () => {
+    clearRegisteredPiProviders();
+    const handle = "repro/my-model";
+    const modelSettings = { provider_type: "repro" };
+
+    expect(normalizeLocalModelHandle(handle, modelSettings)).toBe(handle);
+    expect(normalizeLocalModelHandle(handle, modelSettings)).toBe(handle);
+  });
+
   test("projects canonical provider metadata for local agents", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-anthropic-llm-config-"),
