@@ -6,6 +6,7 @@ const SEP = "\u0000";
 type ShellLaunchOptions = {
   login?: boolean;
   env?: NodeJS.ProcessEnv;
+  pathPrefixes?: string[];
   powershellEnvAliases?: string[];
   preservePowerShellExitCode?: boolean;
 };
@@ -190,6 +191,31 @@ function shellCommandFlag(shellName: string, login: boolean): string {
   return "-c";
 }
 
+function quotePosixShellLiteral(value: string): string {
+  return `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+export function withLoginShellPathPrefixes(
+  command: string,
+  pathPrefixes: string[],
+): string {
+  if (process.platform === "win32" || pathPrefixes.length === 0) {
+    return command;
+  }
+  if (pathPrefixes.some((prefix) => prefix.includes(":"))) {
+    return command;
+  }
+
+  const setup = [...pathPrefixes]
+    .reverse()
+    .map((prefix) => {
+      const quotedPrefix = quotePosixShellLiteral(prefix);
+      return `case ":\${PATH-}:" in *:${quotedPrefix}:*) export PATH ;; *) if (export PATH=) 2>/dev/null; then export PATH=${quotedPrefix}\${PATH:+:"$PATH"}; fi ;; esac`;
+    })
+    .join("; ");
+  return `${setup}; ${command}`;
+}
+
 function pathEnvValue(env: NodeJS.ProcessEnv): string {
   return env.PATH ?? env.Path ?? env.path ?? "";
 }
@@ -257,31 +283,36 @@ export function selectAvailableShellLauncher(
   return launchers.at(-1);
 }
 
-function unixLaunchers(command: string, login: boolean): string[][] {
+function unixLaunchers(
+  command: string,
+  login: boolean,
+  pathPrefixes: string[],
+): string[][] {
   const trimmed = command.trim();
   if (!trimmed) return [];
   const launchers: string[][] = [];
   const seen = new Set<string>();
+  const commandForShell = (shell: string): string =>
+    shellCommandFlag(shell, login) === "-lc"
+      ? withLoginShellPathPrefixes(trimmed, pathPrefixes)
+      : trimmed;
+  const launcher = (shell: string): string[] => [
+    shell,
+    shellCommandFlag(shell, login),
+    commandForShell(shell),
+  ];
 
   // The preferred shell comes first: /bin/zsh on macOS (bash 3.2's HEREDOC
   // parsing bug with odd numbers of apostrophes), otherwise $SHELL or
   // /bin/bash. Session context names this same shell to the model.
   const preferredShell = getPreferredUnixShell(process.env, process.platform);
-  pushUnique(launchers, seen, [
-    preferredShell,
-    shellCommandFlag(preferredShell, login),
-    trimmed,
-  ]);
+  pushUnique(launchers, seen, launcher(preferredShell));
 
   // Try user's preferred shell from $SHELL environment variable
   // Use login semantics only when explicitly requested.
   const envShell = process.env.SHELL?.trim();
   if (envShell) {
-    pushUnique(launchers, seen, [
-      envShell,
-      shellCommandFlag(envShell, login),
-      trimmed,
-    ]);
+    pushUnique(launchers, seen, launcher(envShell));
   }
 
   // Fallback defaults - prefer simple "bash" PATH lookup first (like original code),
@@ -289,25 +320,25 @@ function unixLaunchers(command: string, login: boolean): string[][] {
   const defaults: string[][] =
     process.platform === "darwin"
       ? [
-          ["/bin/zsh", shellCommandFlag("/bin/zsh", login), trimmed],
-          ["bash", shellCommandFlag("bash", login), trimmed], // PATH lookup, like original
-          ["/bin/bash", shellCommandFlag("/bin/bash", login), trimmed],
-          ["/usr/bin/bash", shellCommandFlag("/usr/bin/bash", login), trimmed],
+          launcher("/bin/zsh"),
+          launcher("bash"), // PATH lookup, like original
+          launcher("/bin/bash"),
+          launcher("/usr/bin/bash"),
           ["/bin/sh", shellCommandFlag("/bin/sh", login), trimmed],
           ["/bin/ash", shellCommandFlag("/bin/ash", login), trimmed],
-          ["/usr/bin/env", "zsh", shellCommandFlag("zsh", login), trimmed],
-          ["/usr/bin/env", "bash", shellCommandFlag("bash", login), trimmed],
+          ["/usr/bin/env", ...launcher("zsh")],
+          ["/usr/bin/env", ...launcher("bash")],
           ["/usr/bin/env", "sh", shellCommandFlag("sh", login), trimmed],
           ["/usr/bin/env", "ash", shellCommandFlag("ash", login), trimmed],
         ]
       : [
-          ["/bin/bash", shellCommandFlag("/bin/bash", login), trimmed],
-          ["/usr/bin/bash", shellCommandFlag("/usr/bin/bash", login), trimmed],
-          ["/bin/zsh", shellCommandFlag("/bin/zsh", login), trimmed],
+          launcher("/bin/bash"),
+          launcher("/usr/bin/bash"),
+          launcher("/bin/zsh"),
           ["/bin/sh", shellCommandFlag("/bin/sh", login), trimmed],
           ["/bin/ash", shellCommandFlag("/bin/ash", login), trimmed],
-          ["/usr/bin/env", "bash", shellCommandFlag("bash", login), trimmed],
-          ["/usr/bin/env", "zsh", shellCommandFlag("zsh", login), trimmed],
+          ["/usr/bin/env", ...launcher("bash")],
+          ["/usr/bin/env", ...launcher("zsh")],
           ["/usr/bin/env", "sh", shellCommandFlag("sh", login), trimmed],
           ["/usr/bin/env", "ash", shellCommandFlag("ash", login), trimmed],
         ];
@@ -329,5 +360,5 @@ export function buildShellLaunchers(
         options?.powershellEnvAliases,
         options?.preservePowerShellExitCode,
       )
-    : unixLaunchers(commandToRun, login);
+    : unixLaunchers(commandToRun, login, options?.pathPrefixes ?? []);
 }
