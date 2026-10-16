@@ -271,29 +271,14 @@ const UTI_TO_MEDIA_TYPE: Record<string, string> = {
 };
 
 /**
- * Import image from macOS clipboard, resize if needed, return placeholder.
- * Uses temp file approach to avoid stdout buffer limits.
- * Resizes large images to fit within API limits (2000x2000).
+ * Resize clipboard image bytes, store them in the registry, and return the
+ * placeholder. Shared by the platform-specific clipboard readers.
  */
-export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
-  if (process.platform !== "darwin") return null;
-
-  const clipboardResult = getClipboardImageToTempFile();
-  if (!clipboardResult) return null;
-
-  const { tempPath, uti } = clipboardResult;
-
+async function importClipboardImageBuffer(
+  buffer: Buffer,
+  mediaType: string,
+): Promise<ClipboardImageResult> {
   try {
-    // Read the temp file
-    const buffer = readFileSync(tempPath);
-
-    // Clean up temp file immediately after reading
-    try {
-      unlinkSync(tempPath);
-    } catch {}
-
-    const mediaType = UTI_TO_MEDIA_TYPE[uti] || "image/png";
-
     // Resize if needed (handles large retina screenshots, HEIC conversion, etc.)
     const resized = await resizeImageIfNeeded(buffer, mediaType);
 
@@ -310,13 +295,6 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
       height: resized.height,
     };
   } catch (err) {
-    // Clean up temp file on error
-    if (existsSync(tempPath)) {
-      try {
-        unlinkSync(tempPath);
-      } catch {}
-    }
-
     if (err instanceof ImageWorkerMissingError) {
       trackBoundaryError({
         errorType: "image_worker_missing",
@@ -327,4 +305,38 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
     const message = err instanceof Error ? err.message : String(err);
     return { error: `Image paste failed: ${message}` };
   }
+}
+
+/**
+ * Import image from macOS clipboard, resize if needed, return placeholder.
+ * Uses temp file approach to avoid stdout buffer limits.
+ * Resizes large images to fit within API limits (2000x2000).
+ */
+export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
+  if (process.platform !== "darwin") return null;
+
+  const clipboardResult = getClipboardImageToTempFile();
+  if (!clipboardResult) return null;
+
+  const { tempPath, uti } = clipboardResult;
+
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(tempPath);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { error: `Image paste failed: ${message}` };
+  } finally {
+    // Clean up temp file immediately after reading
+    if (existsSync(tempPath)) {
+      try {
+        unlinkSync(tempPath);
+      } catch {}
+    }
+  }
+
+  return importClipboardImageBuffer(
+    buffer,
+    UTI_TO_MEDIA_TYPE[uti] || "image/png",
+  );
 }
