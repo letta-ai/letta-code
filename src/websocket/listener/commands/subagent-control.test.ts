@@ -152,6 +152,58 @@ describe("remote external subagent control", () => {
     });
   });
 
+  test("interrupts untracked resumed work and allows the request to retry", async () => {
+    const { parent } = fixture();
+    let interrupts = 0;
+    let sends = 0;
+    let captures = 0;
+    const command = {
+      type: "subagent_message" as const,
+      request_id: "tracking-failure",
+      runtime,
+      agent_id: nativeId,
+      message: "Continue",
+    };
+    const deps: NonNullable<
+      Parameters<typeof handleSubagentMessageCommand>[2]
+    > = {
+      sendClaude: async (options) => {
+        sends += 1;
+        await options.beforeStart?.();
+        return {
+          mode: "resumed" as const,
+          sessionId: nativeId,
+          completion: Promise.resolve({
+            agentId: nativeId,
+            success: false,
+            report: "Interrupted",
+          } satisfies SubagentResult),
+          interrupt: async () => {
+            interrupts += 1;
+          },
+        };
+      },
+      reserveCapture: async () => ({
+        capture: async () => {
+          captures += 1;
+        },
+      }),
+      track: (() => {
+        throw new Error("tracking failed");
+      }) as never,
+    };
+
+    const first = await handleSubagentMessageCommand(command, parent, deps);
+    await Promise.resolve();
+    const second = await handleSubagentMessageCommand(command, parent, deps);
+
+    expect(first).toMatchObject({ success: false, error: "tracking failed" });
+    expect(second).toMatchObject({ success: false, error: "tracking failed" });
+    expect(interrupts).toBe(2);
+    expect(sends).toBe(2);
+    expect(captures).toBe(2);
+  });
+
   test("stops the owning background task", async () => {
     const { parent, abortController } = fixture();
     const response = await handleSubagentStopCommand(

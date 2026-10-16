@@ -42,19 +42,22 @@ export async function handleTaskControlCommand(
     safeSocketSend,
   } = context;
   const execute = async () => {
+    if (command.type === "monitor_stop") {
+      const response = await handleMonitorStopCommand(command, runtime);
+      safeSocketSend(socket, response, response.type, command.type);
+      return;
+    }
     const parent = getOrCreateScopedRuntime(
       runtime,
       command.runtime.agent_id,
       command.runtime.conversation_id,
     );
     const response =
-      command.type === "monitor_stop"
-        ? await handleMonitorStopCommand(command, runtime)
-        : command.type === "launch_subagent"
-          ? await handleLaunchSubagentCommand(command, parent, connectionId)
-          : command.type === "subagent_message"
-            ? await handleSubagentMessageCommand(command, parent)
-            : await handleSubagentStopCommand(command, parent);
+      command.type === "launch_subagent"
+        ? await handleLaunchSubagentCommand(command, parent, connectionId)
+        : command.type === "subagent_message"
+          ? await handleSubagentMessageCommand(command, parent)
+          : await handleSubagentStopCommand(command, parent);
     safeSocketSend(socket, response, response.type, command.type);
   };
   if (

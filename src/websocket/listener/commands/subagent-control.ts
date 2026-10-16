@@ -11,6 +11,11 @@ import {
   parseExternalCodingAgentId,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
+import {
+  type NativeSessionCaptureReservation,
+  reportNativeSessionCaptureFailure,
+  reserveNativeSessionCapture,
+} from "@/tools/impl/native-session-capture";
 import { backgroundTasks } from "@/tools/impl/process_manager";
 import type {
   SubagentMessageCommand,
@@ -26,6 +31,23 @@ const responses = new Map<
   string,
   { expiresAt: number; response: Promise<SubagentMessageResponse> }
 >();
+
+function finishUntrackedNativeCapture(
+  completion: Promise<unknown>,
+  reservation: NativeSessionCaptureReservation | undefined,
+  source: "claude_code" | "codex",
+  sessionId: string,
+): void {
+  if (!reservation) return;
+  void completion
+    .then(
+      () => reservation.capture(),
+      () => reservation.capture(),
+    )
+    .catch((error) =>
+      reportNativeSessionCaptureFailure(source, sessionId, error),
+    );
+}
 
 function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   const subagent = getSubagents().find(
@@ -66,6 +88,7 @@ export async function handleSubagentMessageCommand(
     sendClaude?: typeof sendClaudeMessage;
     sendCodex?: typeof sendCodexMessage;
     track?: typeof trackExternalFollowupCompletion;
+    reserveCapture?: typeof reserveNativeSessionCapture;
     now?: () => number;
   } = {},
 ): Promise<SubagentMessageResponse> {
@@ -93,9 +116,14 @@ export async function handleSubagentMessageCommand(
       const target = parseExternalCodingAgentId(command.agent_id);
       if (!target || target.computer || !isExternalCodingAgentType(target.type))
         throw new Error("Invalid external coding agent ID");
+      if (!target.sessionId)
+        throw new Error("External coding agent ID has no session ID");
+      const sessionId = target.sessionId;
       if (target.type === "opencode")
         throw new Error("Remote OpenCode steering is not supported");
 
+      let captureReservation: NativeSessionCaptureReservation | undefined;
+      const source = target.type === "claude-code" ? "claude_code" : "codex";
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), () =>
           target.type === "claude-code"
@@ -104,12 +132,30 @@ export async function handleSubagentMessageCommand(
                 prompt: command.message,
                 parentAgentId: command.runtime.agent_id,
                 cwd: getCurrentWorkingDirectory(),
+                beforeStart: async () => {
+                  captureReservation = await (
+                    deps.reserveCapture ?? reserveNativeSessionCapture
+                  )(source, sessionId, {
+                    agentId: command.runtime.agent_id,
+                    conversationId: command.runtime.conversation_id,
+                    actingUserId: command.runtime.acting_user_id,
+                  });
+                },
               })
             : (deps.sendCodex ?? sendCodexMessage)({
                 threadId: target.sessionId,
                 prompt: command.message,
                 parentAgentId: command.runtime.agent_id,
                 cwd: getCurrentWorkingDirectory(),
+                beforeStart: async () => {
+                  captureReservation = await (
+                    deps.reserveCapture ?? reserveNativeSessionCapture
+                  )(source, sessionId, {
+                    agentId: command.runtime.agent_id,
+                    conversationId: command.runtime.conversation_id,
+                    actingUserId: command.runtime.acting_user_id,
+                  });
+                },
               }),
         ),
       );
@@ -117,20 +163,32 @@ export async function handleSubagentMessageCommand(
         return { ...base, success: true, delivery: "steered" };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
-      (deps.track ?? trackExternalFollowupCompletion)({
-        type: target.type,
-        agentId: command.agent_id,
-        message: command.message,
-        parentScope: {
-          agentId: parent.agentId,
-          conversationId: parent.conversationId,
-          actingUserId: command.runtime.acting_user_id,
-        },
-        completion: receipt.completion,
-        interrupt: receipt.interrupt,
-        toolCallId: command.tool_call_id,
-        publishResult: true,
-      });
+      try {
+        (deps.track ?? trackExternalFollowupCompletion)({
+          type: target.type,
+          agentId: command.agent_id,
+          message: command.message,
+          parentScope: {
+            agentId: parent.agentId,
+            conversationId: parent.conversationId,
+            actingUserId: command.runtime.acting_user_id,
+          },
+          completion: receipt.completion,
+          interrupt: receipt.interrupt,
+          captureReservation,
+          toolCallId: command.tool_call_id,
+          publishResult: true,
+        });
+      } catch (error) {
+        await receipt.interrupt().catch(() => undefined);
+        finishUntrackedNativeCapture(
+          receipt.completion,
+          captureReservation,
+          source,
+          sessionId,
+        );
+        throw error;
+      }
       return { ...base, success: true, delivery: "resumed" };
     } catch (error) {
       return {
@@ -144,7 +202,13 @@ export async function handleSubagentMessageCommand(
     expiresAt: now + DEDUPE_TTL_MS,
     response,
   });
-  return response;
+  const result = await response;
+  if (
+    !result.success &&
+    responses.get(command.request_id)?.response === response
+  )
+    responses.delete(command.request_id);
+  return result;
 }
 
 export async function handleSubagentStopCommand(
