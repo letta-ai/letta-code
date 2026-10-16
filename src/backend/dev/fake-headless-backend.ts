@@ -549,6 +549,13 @@ export class HeadlessBackend implements Backend {
       typeof resolvedPrompt === "string"
         ? undefined
         : resolvedPrompt.midConversationSystemPrompt;
+    // A cancel that landed during prompt prep found no registered controller
+    // to abort; re-check before starting provider execution so an
+    // already-cancelled run never begins orphaned provider work.
+    if (options?.signal?.aborted) {
+      this.cancelUnobservedRun(run.id);
+      throw new APIUserAbortError();
+    }
     let stream: Stream<LettaStreamingResponse>;
     try {
       stream = await this.executor.execute({
@@ -564,6 +571,14 @@ export class HeadlessBackend implements Backend {
     } catch (error) {
       this.failRun(run.id, error);
       throw error;
+    }
+    // The same race one await later: abort the fresh controller immediately
+    // instead of registering it for an already-cancelled run, and unwind as
+    // a user interrupt rather than returning a stream nobody will consume.
+    if (options?.signal?.aborted) {
+      stream.controller.abort();
+      this.cancelUnobservedRun(run.id);
+      throw new APIUserAbortError();
     }
     this.runControllerByRunId.set(run.id, stream.controller);
     return this.persistExecutorStream(
@@ -675,6 +690,20 @@ export class HeadlessBackend implements Backend {
       this.activeRunByConversation.delete(run.conversation_id);
     }
     this.runControllerByRunId.delete(runId);
+  }
+
+  // Cancel a run whose turn was aborted while no stream controller was
+  // registered (mid prompt/provider prep): cancelConversation's controller
+  // abort is a no-op in that window, so close the run here instead. No-op
+  // when cancelConversation already recorded and completed the run.
+  private cancelUnobservedRun(runId: string): void {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) return;
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
   }
 
   private findActiveRunByAgentId(agentId: string): string | undefined {

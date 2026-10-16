@@ -37,6 +37,42 @@ class RecordingProviderAdapter implements ProviderStreamAdapter {
   }
 }
 
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+// Stalls inside resolveSystemPromptForTurn so a test can cancel while the
+// turn is still in async pre-stream prep (no stream controller registered).
+class PromptGatedBackend extends FakeHeadlessBackend {
+  readonly promptEntered = deferred();
+  readonly promptGate = deferred();
+
+  protected override async resolveSystemPromptForTurn(input: unknown) {
+    this.promptEntered.resolve();
+    await this.promptGate.promise;
+    return super.resolveSystemPromptForTurn(input as never);
+  }
+}
+
+// Stalls inside executor.execute so a test can cancel during provider
+// startup, after the run exists but before its controller is registered.
+class DeferredExecutor {
+  readonly entered = deferred();
+  readonly gate = deferred();
+
+  constructor(private readonly inner: ProviderTurnExecutor) {}
+
+  async execute(input: Parameters<ProviderTurnExecutor["execute"]>[0]) {
+    this.entered.resolve();
+    await this.gate.promise;
+    return this.inner.execute(input);
+  }
+}
+
 describe("FakeHeadlessBackend", () => {
   test("streams deterministic assistant responses", async () => {
     const backend = new FakeHeadlessBackend("agent-fake-headless");
@@ -91,6 +127,93 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
     expect(JSON.stringify(chunks)).toContain("pong");
+  });
+
+  test("a cancel during prompt prep cancels the run and rejects as a user abort", async () => {
+    const backend = new PromptGatedBackend("agent-fake-headless");
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const controller = new AbortController();
+    const send = backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "slow prep" }],
+      } as ConversationMessageCreateBody,
+      { signal: controller.signal },
+    );
+    send.catch(() => {});
+
+    // The turn is parked inside resolveSystemPromptForTurn: the run exists,
+    // but no stream controller is registered for cancelConversation to abort.
+    await backend.promptEntered.promise;
+    controller.abort();
+    await backend.cancelConversation(conversation.id);
+    backend.promptGate.resolve();
+
+    await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
+    const controllers = (
+      backend as unknown as {
+        runControllerByRunId: Map<string, AbortController>;
+      }
+    ).runControllerByRunId;
+    expect(controllers.size).toBe(0);
+
+    // The cancelled run was completed, so a later send starts cleanly.
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(JSON.stringify(chunks)).toContain("pong");
+  });
+
+  test("a cancel during provider startup aborts the late controller and rejects as a user abort", async () => {
+    const executor = new DeferredExecutor(
+      new ProviderTurnExecutor(new RecordingProviderAdapter()),
+    );
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const controller = new AbortController();
+    const send = backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "slow provider" }],
+      } as ConversationMessageCreateBody,
+      { signal: controller.signal },
+    );
+    send.catch(() => {});
+
+    // The turn is parked inside executor.execute: the run was already
+    // cancelled by cancelConversation, but no controller was registered yet.
+    await executor.entered.promise;
+    controller.abort();
+    await backend.cancelConversation(conversation.id);
+    executor.gate.resolve();
+
+    await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
+    // The late controller is aborted immediately, never registered.
+    const controllers = (
+      backend as unknown as {
+        runControllerByRunId: Map<string, AbortController>;
+      }
+    ).runControllerByRunId;
+    expect(controllers.size).toBe(0);
+
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(JSON.stringify(chunks)).toContain("end_turn");
   });
 
   test("persists pi-style local transcripts when storage is enabled", async () => {
