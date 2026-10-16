@@ -8,6 +8,10 @@ import {
   ImageWorkerMissingError,
   resizeImageIfNeeded,
 } from "@/utils/image-resize";
+import {
+  type LinuxClipboardImage,
+  readLinuxClipboardImage,
+} from "./clipboard-linux";
 import { allocateImage } from "./paste-registry";
 
 /**
@@ -339,4 +343,53 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
     buffer,
     UTI_TO_MEDIA_TYPE[uti] || "image/png",
   );
+}
+
+const LINUX_TOOLS_MISSING_MESSAGE =
+  "Image paste needs wl-clipboard (Wayland) or xclip (X11)";
+
+const linuxToolsMissingNotice = { shown: false };
+
+export interface ClipboardImageImportDeps {
+  platform: NodeJS.Platform;
+  importMac: () => Promise<ClipboardImageResult>;
+  readLinux: () => Promise<LinuxClipboardImage>;
+  importBuffer: (
+    buffer: Buffer,
+    mediaType: string,
+  ) => Promise<ClipboardImageResult>;
+  toolsMissingNotice: { shown: boolean };
+}
+
+/**
+ * Import an image from the system clipboard on macOS or Linux. Returns null
+ * when there is no image or the platform is unsupported.
+ */
+export async function tryImportClipboardImage(
+  deps: Partial<ClipboardImageImportDeps> = {},
+): Promise<ClipboardImageResult> {
+  const platform = deps.platform ?? process.platform;
+  if (platform === "darwin") {
+    return (deps.importMac ?? tryImportClipboardImageMac)();
+  }
+  if (platform !== "linux") return null;
+
+  const clipboard = await (deps.readLinux ?? readLinuxClipboardImage)();
+  switch (clipboard.kind) {
+    case "image":
+      return (deps.importBuffer ?? importClipboardImageBuffer)(
+        clipboard.data,
+        clipboard.mediaType,
+      );
+    case "empty":
+      return null;
+    case "tools-missing": {
+      const notice = deps.toolsMissingNotice ?? linuxToolsMissingNotice;
+      if (notice.shown) return null;
+      notice.shown = true;
+      return { error: LINUX_TOOLS_MISSING_MESSAGE };
+    }
+    case "error":
+      return { error: `Image paste failed: ${clipboard.message}` };
+  }
 }
