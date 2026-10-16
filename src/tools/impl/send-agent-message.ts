@@ -36,6 +36,7 @@ import {
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { sendOpenCodeMessage } from "./opencode-session";
+import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -58,6 +59,7 @@ interface SendAgentMessageDeps {
   sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
+  sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
 }
 
 const FULL_CONVERSATION_ID =
@@ -161,6 +163,35 @@ export async function send_agent_message(
       }
       args.signal?.throwIfAborted();
       const parentScope = sender;
+      if (externalTarget.computer) {
+        const receipt = await (
+          deps.sendRemoteExternalMessage ?? sendRemoteExternalCodingAgentMessage
+        )(
+          {
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope: {
+              ...parentScope,
+              actingUserId: getRuntimeActingUserAttribution(),
+            },
+          },
+          {
+            track:
+              deps.trackExternalFollowup ?? trackExternalFollowupCompletion,
+          },
+        );
+        return {
+          content: JSON.stringify({
+            status: "accepted",
+            agent_id: args.agent_id,
+            delivery:
+              receipt.delivery === "steered" ? "remote/steer" : "remote/resume",
+            ...(receipt.taskId ? { task_id: receipt.taskId } : {}),
+            ...(receipt.outputFile ? { output_file: receipt.outputFile } : {}),
+          }),
+          status: "success",
+        };
+      }
       if (externalTarget.type === "opencode") {
         const receipt = await sendOpenCodeMessage({
           sessionId: externalTarget.sessionId,

@@ -8,6 +8,7 @@ import {
   test,
 } from "bun:test";
 import { clearAllSubagents } from "@/agent/subagent-state";
+import type { SubagentResult } from "@/agent/subagents";
 import type {
   AppServerClient,
   AppServerDisconnectHandler,
@@ -19,6 +20,9 @@ import type { SubagentSnapshot } from "@/types/protocol_v2";
 import type {
   LaunchSubagentCommand,
   LaunchSubagentResponse,
+  SubagentMessageCommand,
+  SubagentMessageResponse,
+  SubagentStopCommand,
 } from "@/types/subagent-protocol";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import { backgroundTasks } from "./process_manager";
@@ -26,6 +30,8 @@ import {
   launchRemoteExternalCodingAgent,
   type RemoteExternalCodingAgentLaunch,
   type SpawnRemoteFollowTask,
+  sendRemoteExternalCodingAgentMessage,
+  stopRemoteExternalCodingAgent,
 } from "./remote-external-coding-agent";
 import { spawnBackgroundSubagentTask } from "./task";
 
@@ -40,6 +46,8 @@ const runtime = {
 /** The App Server client surface this module uses, backed by in-memory frames. */
 class FakeComputer {
   readonly launches: LaunchSubagentCommand[] = [];
+  readonly messages: SubagentMessageCommand[] = [];
+  readonly stops: SubagentStopCommand[] = [];
   readonly acks: number[] = [];
   syncs = 0;
   closed = false;
@@ -82,6 +90,31 @@ class FakeComputer {
       runtime,
       ...this.respond(command),
     } as LaunchSubagentResponse;
+  }
+
+  async sendSubagentMessage(
+    command: SubagentMessageCommand,
+  ): Promise<SubagentMessageResponse> {
+    this.messages.push(command);
+    return {
+      type: "subagent_message_response" as const,
+      request_id: command.request_id,
+      runtime,
+      success: true as const,
+      delivery: "steered" as const,
+    };
+  }
+
+  async stopSubagent(command: SubagentStopCommand) {
+    this.stops.push(command);
+    return {
+      type: "subagent_stop_response" as const,
+      request_id: command.request_id,
+      runtime,
+      agent_id: command.agent_id,
+      success: true,
+      stopped: true,
+    };
   }
 
   async sync() {
@@ -144,7 +177,10 @@ const accepted = {
   conversation_id: null,
 };
 
-function environment(capable: boolean): EnvironmentConnection {
+function environment(
+  capable: boolean,
+  steering = false,
+): EnvironmentConnection {
   return {
     id: "env-1",
     connectionId: "conn-1",
@@ -156,7 +192,12 @@ function environment(capable: boolean): EnvironmentConnection {
     lastHeartbeat: Date.now(),
     lastSeenAt: 1,
     firstSeenAt: 1,
-    metadata: capable ? { launch_subagent_notify_caller: true } : {},
+    metadata: capable
+      ? {
+          launch_subagent_notify_caller: true,
+          ...(steering ? { subagent_message: true } : {}),
+        }
+      : {},
   };
 }
 
@@ -195,6 +236,7 @@ function launch(
   computers: FakeComputer[],
   overrides: Partial<RemoteExternalCodingAgentLaunch> = {},
   capable = true,
+  steering = false,
 ) {
   let connects = 0;
   return launchRemoteExternalCodingAgent(
@@ -212,13 +254,14 @@ function launch(
       reconnectDelayMs: 1,
       resolveComputer: async () => ({
         connectionId: "conn-1",
-        environment: environment(capable),
+        environment: environment(capable, steering),
       }),
       connect: async () => {
         const computer = computers[connects++];
         if (!computer) throw new Error("no more computers");
         return computer.asClient();
       },
+      agentIdWaitMs: 20,
     },
   );
 }
@@ -407,6 +450,32 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(message.text).toContain("Fixed it remotely");
   });
 
+  test("returns a computer-qualified native ID when steering is supported", async () => {
+    const computer = new FakeComputer(() => {
+      queueMicrotask(() =>
+        computer.snapshot({
+          agent_id: "claude_11111111-1111-4111-8111-111111111111",
+        }),
+      );
+      return accepted;
+    });
+    const result = await launch([computer], {}, true, true);
+    expect(result).toMatchObject({
+      success: true,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111@device-1",
+    });
+    computer.snapshot({ status: "completed", result: "Done" });
+    await notified();
+  });
+
+  test("an older computer without steering support still returns a null ID", async () => {
+    const computer = new FakeComputer(() => accepted);
+    const result = await launch([computer]);
+    expect(result).toMatchObject({ success: true, agent_id: null });
+    computer.snapshot({ status: "completed", result: "Done" });
+    await notified();
+  });
+
   test("reports a remote failure through the local notification", async () => {
     const computer = new FakeComputer(() => accepted);
     const result = await launch([computer]);
@@ -512,6 +581,133 @@ describe("launchRemoteExternalCodingAgent", () => {
       success: false,
       error:
         "Couldn't launch codex on brad-box: App-server connection closed (1008)",
+    });
+    expect(computer.closed).toBe(true);
+  });
+});
+
+describe("remote external coding agent control", () => {
+  const qualified = "claude_11111111-1111-4111-8111-111111111111@device-1";
+  const controlDeps = (computer: FakeComputer) => ({
+    resolveComputer: async () => ({
+      connectionId: "conn-1",
+      environment: environment(true, true),
+    }),
+    connect: async () => computer.asClient(),
+  });
+
+  test("steer and stop helpers issue scoped commands with the bare ID", async () => {
+    const computer = new FakeComputer(() => accepted);
+    expect(
+      await sendRemoteExternalCodingAgentMessage(
+        { agentId: qualified, message: "Continue", parentScope: scope },
+        controlDeps(computer),
+      ),
+    ).toEqual({ delivery: "steered" });
+    expect(
+      await stopRemoteExternalCodingAgent(
+        { agentId: qualified, parentScope: scope },
+        controlDeps(computer),
+      ),
+    ).toEqual({ stopped: true });
+    expect(computer.messages[0]).toMatchObject({
+      request_id: expect.stringMatching(/^subagent-message-[0-9a-f-]{36}$/),
+      runtime,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111",
+      message: "Continue",
+    });
+    expect(computer.stops[0]).toMatchObject({
+      request_id: expect.stringMatching(/^subagent-stop-[0-9a-f-]{36}$/),
+      runtime,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111",
+    });
+  });
+
+  test("a resumed reply follows the caller tool call ID", async () => {
+    const computer = new FakeComputer(() => accepted);
+    computer.sendSubagentMessage = async (command) => {
+      computer.messages.push(command);
+      return {
+        type: "subagent_message_response",
+        request_id: command.request_id,
+        runtime,
+        success: true,
+        delivery: "resumed",
+      };
+    };
+    let completion: Promise<SubagentResult> | undefined;
+    const result = await sendRemoteExternalCodingAgentMessage(
+      {
+        agentId: qualified,
+        message: "Continue",
+        toolCallId: "follow-call",
+        parentScope: scope,
+      },
+      {
+        ...controlDeps(computer),
+        track: ((input: { completion: Promise<SubagentResult> }) => {
+          completion = input.completion;
+          return {
+            taskId: "task-follow",
+            outputFile: "/tmp/follow",
+            subagentId: "subagent-follow",
+          };
+        }) as never,
+      },
+    );
+    expect(result).toMatchObject({
+      delivery: "resumed",
+      taskId: "task-follow",
+    });
+    expect(computer.messages[0]?.tool_call_id).toBe("follow-call");
+    computer.snapshot(
+      {
+        tool_call_id: "follow-call",
+        status: "completed",
+        result: "Followed up",
+      },
+      2,
+    );
+    expect(await completion).toMatchObject({
+      success: true,
+      report: "Followed up",
+    });
+  });
+
+  test("a tracking failure stops the resumed worker and releases the client", async () => {
+    const computer = new FakeComputer(() => accepted);
+    computer.sendSubagentMessage = async (command) => {
+      computer.messages.push(command);
+      return {
+        type: "subagent_message_response",
+        request_id: command.request_id,
+        runtime,
+        success: true,
+        delivery: "resumed",
+      };
+    };
+
+    await expect(
+      sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: qualified,
+          message: "Continue",
+          toolCallId: "follow-call",
+          parentScope: scope,
+        },
+        {
+          ...controlDeps(computer),
+          track: () => {
+            throw new Error("tracking failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("tracking failed");
+
+    expect(computer.stops).toHaveLength(1);
+    expect(computer.stops[0]).toMatchObject({
+      runtime,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111",
     });
     expect(computer.closed).toBe(true);
   });

@@ -25,6 +25,8 @@ export interface AppServerInfoResponseMessage {
     launch_subagent?: boolean;
     /** `launch_subagent` accepts `notify: "caller"`. */
     launch_subagent_notify_caller?: boolean;
+    /** Supports steering and stopping remote external subagents. */
+    subagent_message?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
@@ -71,6 +73,8 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.launch_subagent === "boolean") &&
     (capabilityRecord.launch_subagent_notify_caller === undefined ||
       typeof capabilityRecord.launch_subagent_notify_caller === "boolean") &&
+    (capabilityRecord.subagent_message === undefined ||
+      typeof capabilityRecord.subagent_message === "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||

@@ -279,7 +279,12 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "launch_subagent" || parsed.type === "monitor_stop") {
+      if (
+        parsed.type === "launch_subagent" ||
+        parsed.type === "monitor_stop" ||
+        parsed.type === "subagent_message" ||
+        parsed.type === "subagent_stop"
+      ) {
         const { handleTaskControlCommand } = await import(
           "./commands/task-control"
         );

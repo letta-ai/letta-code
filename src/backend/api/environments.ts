@@ -11,6 +11,8 @@ export interface EnvironmentMetadata {
   supported_commands?: string[];
   /** Accepts `launch_subagent` with `notify: "caller"`. */
   launch_subagent_notify_caller?: boolean;
+  /** Supports steering and stopping remote external subagents. */
+  subagent_message?: boolean;
   [key: string]: unknown;
 }
 

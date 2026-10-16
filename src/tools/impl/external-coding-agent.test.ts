@@ -85,6 +85,17 @@ describe("external coding agent commands", () => {
       ),
     ).toEqual({ type: "claude-code", sessionId: SESSION_ID });
     expect(parseExternalCodingAgentId("agent-real")).toBeNull();
+    expect(
+      parseExternalCodingAgentId(
+        formatExternalCodingAgentId("claude-code", SESSION_ID, "device-1"),
+      ),
+    ).toEqual({
+      type: "claude-code",
+      sessionId: SESSION_ID,
+      computer: "device-1",
+    });
+    expect(parseExternalCodingAgentId(`claude_not-a-uuid@device-1`)).toBeNull();
+    expect(parseExternalCodingAgentId(`claude_${SESSION_ID}@`)).toBeNull();
   });
 });
 

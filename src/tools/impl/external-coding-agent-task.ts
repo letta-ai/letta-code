@@ -29,6 +29,8 @@ export function trackExternalFollowupCompletion(args: {
   completion: Promise<SubagentResult>;
   interrupt: () => Promise<void>;
   captureReservation?: NativeSessionCaptureReservation;
+  toolCallId?: string;
+  publishResult?: boolean;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
     subagentType: args.type,
@@ -36,6 +38,8 @@ export function trackExternalFollowupCompletion(args: {
     prompt: args.message,
     description: `Continue ${args.type} session`,
     existingAgentId: args.agentId,
+    toolCallId: args.toolCallId,
+    publishResult: args.publishResult,
     parentScope: args.parentScope,
     actingUserId: args.parentScope.actingUserId,
     deps: {
