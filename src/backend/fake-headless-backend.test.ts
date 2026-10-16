@@ -39,10 +39,12 @@ class RecordingProviderAdapter implements ProviderStreamAdapter {
 
 function deferred() {
   let resolve!: () => void;
-  const promise = new Promise<void>((res) => {
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<void>((res, rej) => {
     resolve = res;
+    reject = rej;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 // Stalls inside resolveSystemPromptForTurn so a test can cancel while the
@@ -50,10 +52,14 @@ function deferred() {
 class PromptGatedBackend extends FakeHeadlessBackend {
   readonly promptEntered = deferred();
   readonly promptGate = deferred();
+  private gateArmed = true;
 
   protected override async resolveSystemPromptForTurn(input: unknown) {
-    this.promptEntered.resolve();
-    await this.promptGate.promise;
+    if (this.gateArmed) {
+      this.gateArmed = false;
+      this.promptEntered.resolve();
+      await this.promptGate.promise;
+    }
     return super.resolveSystemPromptForTurn(input as never);
   }
 }
@@ -63,13 +69,20 @@ class PromptGatedBackend extends FakeHeadlessBackend {
 class DeferredExecutor {
   readonly entered = deferred();
   readonly gate = deferred();
+  lastController: AbortController | undefined;
+  private gateArmed = true;
 
   constructor(private readonly inner: ProviderTurnExecutor) {}
 
   async execute(input: Parameters<ProviderTurnExecutor["execute"]>[0]) {
-    this.entered.resolve();
-    await this.gate.promise;
-    return this.inner.execute(input);
+    if (this.gateArmed) {
+      this.gateArmed = false;
+      this.entered.resolve();
+      await this.gate.promise;
+    }
+    const stream = await this.inner.execute(input);
+    this.lastController = stream.controller as AbortController;
+    return stream;
   }
 }
 
@@ -206,6 +219,118 @@ describe("FakeHeadlessBackend", () => {
       }
     ).runControllerByRunId;
     expect(controllers.size).toBe(0);
+
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(JSON.stringify(chunks)).toContain("end_turn");
+  });
+
+  test("a backend-only cancel during provider startup aborts the late controller without any signal abort", async () => {
+    const executor = new DeferredExecutor(
+      new ProviderTurnExecutor(new RecordingProviderAdapter()),
+    );
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    // No caller signal at all: cancelConversation alone (task-stop/control
+    // path) cancels the run while executor.execute is still starting up.
+    const send = backend.createConversationMessageStream(conversation.id, {
+      agent_id: "agent-fake-headless",
+      messages: [{ role: "user", content: "control cancel" }],
+    } as ConversationMessageCreateBody);
+    send.catch(() => {});
+
+    await executor.entered.promise;
+    await backend.cancelConversation(conversation.id);
+    executor.gate.resolve();
+
+    await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
+    // The late controller is genuinely aborted, not just left unregistered.
+    expect(executor.lastController?.signal.aborted).toBe(true);
+    const controllers = (
+      backend as unknown as {
+        runControllerByRunId: Map<string, AbortController>;
+      }
+    ).runControllerByRunId;
+    expect(controllers.size).toBe(0);
+
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(JSON.stringify(chunks)).toContain("end_turn");
+  });
+
+  test("a prompt prep rejection after Esc unwinds as a user abort and closes the run", async () => {
+    const backend = new PromptGatedBackend("agent-fake-headless");
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const controller = new AbortController();
+    const send = backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "prep fails" }],
+      } as ConversationMessageCreateBody,
+      { signal: controller.signal },
+    );
+    send.catch(() => {});
+
+    await backend.promptEntered.promise;
+    controller.abort();
+    // No cancelConversation: even when the backend cancel never lands, a
+    // prep rejection after Esc is a user interrupt and the run must close.
+    backend.promptGate.reject(new Error("prompt prep blew up"));
+
+    await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
+
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
+    expect(JSON.stringify(chunks)).toContain("pong");
+  });
+
+  test("a provider startup rejection after Esc unwinds as a user abort and keeps the run cancelled", async () => {
+    const executor = new DeferredExecutor(
+      new ProviderTurnExecutor(new RecordingProviderAdapter()),
+    );
+    const backend = new FakeHeadlessBackend("agent-fake-headless", executor);
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const controller = new AbortController();
+    const send = backend.createConversationMessageStream(
+      conversation.id,
+      {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "provider fails" }],
+      } as ConversationMessageCreateBody,
+      { signal: controller.signal },
+    );
+    send.catch(() => {});
+
+    await executor.entered.promise;
+    controller.abort();
+    await backend.cancelConversation(conversation.id);
+    executor.gate.reject(new Error("provider startup 500"));
+
+    // The raw provider error must not escape as a stream error, and failRun
+    // must not overwrite the cancelled state.
+    await expect(send).rejects.toBeInstanceOf(APIUserAbortError);
 
     const chunks = await collect(
       await backend.createConversationMessageStream(conversation.id, {
