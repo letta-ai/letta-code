@@ -777,10 +777,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ];
           }
 
-          // Stream one turn - use ref to always get the latest conversationId
-          // Wrap in try-catch to handle pre-stream desync errors (when sendMessageStream
-          // throws before streaming begins, e.g., retry after LLM error when backend
-          // already cleared the approval)
+          // Stream one turn (ref gives the latest conversationId); try-catch
+          // covers sendMessageStream throwing before streaming begins (desync).
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
@@ -801,6 +799,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 allowResponseStateReuse:
                   options?.allowResponseStateReuse === true,
               },
+              // Abort the initial POST with the turn so Esc is immediate.
+              { maxRetries: 0, signal },
             );
             stream = nextStream;
             turnToolContextId = getStreamToolContextId(nextStream);

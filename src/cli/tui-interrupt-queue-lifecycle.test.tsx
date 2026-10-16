@@ -409,6 +409,35 @@ describe("TUI interrupt queue lifecycle", () => {
     );
   }, 15_000);
 
+  test("a second Esc while the interrupt unwinds re-fires the backend cancel", async () => {
+    const executor = new DelayedInterruptExecutor();
+    const { backend, stdin } = await renderTestApp(executor);
+    const cancelCalls: string[] = [];
+    const originalCancel = backend.cancelConversation.bind(backend);
+    backend.cancelConversation = async (conversationId: string) => {
+      cancelCalls.push(conversationId);
+      return originalCancel(conversationId);
+    };
+
+    await typePrompt(stdin, "start turn");
+    await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
+
+    stdin.push("\u001b");
+    await executor.abortObserved;
+    await waitFor(() => cancelCalls.length === 1, "the first backend cancel");
+
+    // The interrupted turn is still unwinding (the executor holds its
+    // stream). A second Esc must escalate: re-fire the backend cancel
+    // instead of silently returning, so a lost first attempt is retried.
+    stdin.push("\u001b");
+    await waitFor(
+      () => cancelCalls.length === 2,
+      "the escalated backend cancel",
+    );
+
+    executor.settleInterruptedTurn();
+  }, 15_000);
+
   test.each(["Enter", "new message", "cron event"])(
     "Esc parks a user message; a notification still drains; %s resumes",
     async (resumeWith) => {
