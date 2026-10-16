@@ -198,9 +198,11 @@ describe("local compaction fallback keeps custom prompt", () => {
       agent_id: agent.id,
     } as never);
 
-    await backend.compactConversationMessages(conversation.id, {
-      agent_id: agent.id,
-    } as never);
+    await expect(
+      backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never),
+    ).rejects.toThrow("Irreducible context");
 
     const messages = await backend.listConversationMessages(conversation.id, {
       agent_id: agent.id,
@@ -250,7 +252,7 @@ describe("local compaction fallback keeps custom prompt", () => {
         source: "usage",
       },
     );
-    expect(compaction).toMatchObject({ uiMessages: [], summary: "" });
+    expect(compaction).toBeNull();
 
     const messages = await backend.listConversationMessages(conversation.id, {
       agent_id: agent.id,
@@ -259,6 +261,79 @@ describe("local compaction fallback keeps custom prompt", () => {
     expect(messages.getPaginatedItems()).toHaveLength(0);
 
     await rm(storageDir, { recursive: true, force: true });
+  });
+
+  test("irreducible pressure compaction preserves old history without warning", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pressure-keep-"));
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executor: turnExecutor(),
+        memfsEnabled: false,
+        complete: async () =>
+          assistantMessage({
+            responseId: "large-pressure-summary",
+            stopReason: "stop",
+            content: [{ type: "text", text: "x".repeat(8000) }],
+          }),
+      });
+      const agent = await backend.createAgent({
+        name: "Local",
+        model_settings: { context_window_limit: 1000 },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+      const local = backend as unknown as {
+        store: LocalStore;
+        compactForContextPressure: (
+          input: unknown,
+          pressure: unknown,
+        ) => Promise<unknown>;
+      };
+      local.store.compactConversationAll({
+        conversationId: conversation.id,
+        agentId: agent.id,
+        summary: "x".repeat(8000),
+        packedSummary: "x".repeat(8000),
+        remainingMessages: [
+          {
+            ...assistantMessage({
+              responseId: "latest-pressure",
+              stopReason: "toolUse",
+              content: [
+                {
+                  type: "toolCall",
+                  id: "call-1",
+                  name: "Shell",
+                  arguments: { command: "pwd" },
+                },
+              ],
+            }),
+            id: "latest-pressure",
+          },
+        ],
+      });
+      const before = local.store.listLocalMessages(conversation.id, agent.id);
+      const result = await local.compactForContextPressure(
+        { conversationId: conversation.id, agentId: agent.id },
+        {
+          contextTokens: 2000,
+          contextWindow: 1000,
+          phase: "post_turn",
+          source: "estimate",
+        },
+      );
+      expect(result).toBeNull();
+      expect(local.store.listLocalMessages(conversation.id, agent.id)).toEqual(
+        before,
+      );
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("provider overflow drops an irreducible full summary and emits one warning", async () => {

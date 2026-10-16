@@ -107,7 +107,11 @@ export function finishLocalFullCompaction(input: {
   try {
     assertLocalCompactionProgress(stats, "all");
   } catch (error) {
-    if (!(error instanceof LocalIrreducibleContextError)) throw error;
+    if (
+      !(error instanceof LocalIrreducibleContextError) ||
+      stats.trigger !== "context_window_overflow"
+    )
+      throw error;
     // Preserve the latest user turn, including its tool calls and results.
     let latestTurn = input.messages.findLastIndex(
       (message) => message.role === "user" && !message.metadata?.compaction,
