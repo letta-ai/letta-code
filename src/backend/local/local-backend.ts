@@ -36,12 +36,15 @@ import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
   estimateLocalMessageTokens,
+  hasLocalCompactionProgress,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   type LocalCompactionMode,
   type LocalCompactionStats,
   type LocalCompleteFunction,
+  LocalIrreducibleContextError,
+  LocalSlidingWindowCompactionPlanningError,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
@@ -571,11 +574,20 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const result = await this.compactLocalConversation(
-      input.conversationId,
-      input.agentId,
-      "context_window_limit",
-    );
+    let result: Awaited<ReturnType<typeof this.compactLocalConversation>>;
+    try {
+      result = await this.compactLocalConversation(
+        input.conversationId,
+        input.agentId,
+        "context_window_limit",
+      );
+    } catch (error) {
+      // Pressure compaction is opportunistic: it must not fail a turn (or a
+      // completed response). A real overflow still surfaces this error via
+      // the provider overflow path.
+      if (error instanceof LocalIrreducibleContextError) return null;
+      throw error;
+    }
     return {
       uiMessages: this.store.listLocalMessages(
         input.conversationId,
@@ -837,6 +849,11 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    if (!hasLocalCompactionProgress(stats)) {
+      throw new LocalIrreducibleContextError(
+        "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
+      );
+    }
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -892,6 +909,11 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    if (!hasLocalCompactionProgress(stats)) {
+      throw new LocalSlidingWindowCompactionPlanningError(
+        "Sliding-window compaction would not reduce the message count or estimated tokens.",
+      );
+    }
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
