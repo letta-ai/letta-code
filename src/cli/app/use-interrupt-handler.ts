@@ -5,6 +5,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
   useCallback,
+  useRef,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { getSubagents, interruptActiveSubagents } from "@/agent/subagent-state";
@@ -138,6 +139,17 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     });
   };
 
+  // Latched interrupt state, written synchronously on the first Esc: the
+  // aborted controller is the escalation witness (a rapid second Esc can
+  // arrive before React commits interruptRequested, and a stuck turn keeps
+  // its controller after force-settle), and the captured target keeps the
+  // escalated cancel aimed at the interrupted conversation even if a queued
+  // conversation switch runs while the turn unwinds.
+  const interruptEscalationRef = useRef<{
+    controller: AbortController | null;
+    target: string | null;
+  } | null>(null);
+
   // Fire the backend cancel. The local interrupt already gave the user
   // feedback, but a failed backend cancel leaves the server-side run
   // executing and the next send hitting CONFLICT, so surface the failure
@@ -145,10 +157,13 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
   const sendBackendCancel = () => {
     Promise.resolve()
       .then(() => {
+        const latched = interruptEscalationRef.current;
         const cancelConversationId =
-          conversationIdRef.current === "default"
-            ? agentIdRef.current
-            : conversationIdRef.current;
+          latched && latched.controller === abortControllerRef.current
+            ? latched.target
+            : conversationIdRef.current === "default"
+              ? agentIdRef.current
+              : conversationIdRef.current;
         if (!cancelConversationId || cancelConversationId === "loading") {
           return;
         }
@@ -168,12 +183,22 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
       autoAllowedExecutionRef.current?.results;
+    const latchInterruptTarget = () => {
+      interruptEscalationRef.current = {
+        controller: abortControllerRef.current,
+        target:
+          conversationIdRef.current === "default"
+            ? agentIdRef.current
+            : conversationIdRef.current,
+      };
+    };
     if (
       isExecutingTool &&
       toolAbortControllerRef.current &&
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
@@ -258,9 +283,15 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Second+ Esc while the first interrupt is still unwinding: escalate.
       // Re-fire the backend cancel (the first attempt may have failed) and
       // settle the interrupt immediately so the UI is never wedged waiting
-      // for a turn that is not observing the abort. Note the first Esc
-      // already flipped streaming off, so interruptRequested is the signal.
-      if (interruptRequested) {
+      // for a turn that is not observing the abort. The first Esc aborts the
+      // controller synchronously, so signal.aborted witnesses an in-flight
+      // interrupt even before React commits interruptRequested (rapid double
+      // Esc) and after a force-settle, when a stuck turn still owns its
+      // controller and Esc must keep routing here as a retry.
+      if (
+        interruptRequested ||
+        (abortControllerRef.current?.signal.aborted ?? false)
+      ) {
         abortControllerRef.current?.abort();
         sendBackendCancel();
         appendError(
@@ -285,6 +316,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
+      latchInterruptTarget();
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 

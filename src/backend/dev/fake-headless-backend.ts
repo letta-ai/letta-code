@@ -1,3 +1,4 @@
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -357,15 +358,17 @@ export class HeadlessBackend implements Backend {
   async createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(conversationId, body, options);
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(conversationId, body, options);
   }
 
   async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
@@ -469,7 +472,14 @@ export class HeadlessBackend implements Backend {
   private async executeConversationTurn(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
+    options?: { signal?: AbortSignal },
   ) {
+    // Honor a pre-aborted turn signal before persisting input or starting a
+    // run: a cancel that landed during pre-stream prep found no run to stop,
+    // so this send must not leave an orphaned active run behind.
+    if (options?.signal?.aborted) {
+      throw new APIUserAbortError();
+    }
     const activeRunId = this.activeRunByConversation.get(conversationId);
     const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
     if (activeRun && !isTerminalRun(activeRun)) {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, readdir, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentCreateBody,
   ConversationCreateBody,
@@ -53,6 +54,42 @@ describe("FakeHeadlessBackend", () => {
     expect(
       chunks.map((chunk) => (chunk as { message_type?: string }).message_type),
     ).toEqual(["assistant_message", "stop_reason"]);
+    expect(JSON.stringify(chunks)).toContain("pong");
+  });
+
+  test("rejects a pre-aborted send before persisting input or starting a run", async () => {
+    const backend = new FakeHeadlessBackend("agent-fake-headless");
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    // Esc landed during pre-stream prep: the cancel found no run to stop,
+    // so this send must fail before it can leave an orphaned active run.
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      backend.createConversationMessageStream(
+        conversation.id,
+        {
+          agent_id: "agent-fake-headless",
+          messages: [{ role: "user", content: "aborted input" }],
+        } as ConversationMessageCreateBody,
+        { signal: controller.signal },
+      ),
+    ).rejects.toBeInstanceOf(APIUserAbortError);
+
+    const page = await backend.listConversationMessages(conversation.id, {
+      agent_id: "agent-fake-headless",
+    });
+    expect(JSON.stringify(page)).not.toContain("aborted input");
+
+    // A later send starts cleanly instead of tripping over an orphaned run.
+    const chunks = await collect(
+      await backend.createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody),
+    );
     expect(JSON.stringify(chunks)).toContain("pong");
   });
 
