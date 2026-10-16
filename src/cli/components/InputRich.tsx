@@ -1307,8 +1307,8 @@ export function Input({
         return;
       }
 
-      // When agent streaming, use Esc to interrupt
-      if (streaming && onInterrupt && !interruptRequested) {
+      // Esc interrupts; a second Esc mid-unwind escalates, so keep forwarding.
+      if ((streaming || interruptRequested) && onInterrupt) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.
