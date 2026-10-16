@@ -33,8 +33,13 @@ test("direct started input activates sources immediately", async () => {
     client_preferences: {},
   });
 
-  // Should emit queued lifecycle for each source
+  // Should emit queued lifecycle for each source with the listener disposition.
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
+  expect(lifecycleEvents[0]).toEqual({
+    type: "queued",
+    source,
+    disposition: "started",
+  });
   // Should emit processing lifecycle
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
     1,
@@ -112,8 +117,13 @@ test("queued input activates when dequeued via update_queue", async () => {
     makeDelivery({ sources: [source], clientMessageId: "cm-queued-1" }),
   );
 
-  // Should have queued but not processing yet
+  // Should have queued but not processing yet.
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
+  expect(lifecycleEvents[0]).toEqual({
+    type: "queued",
+    source,
+    disposition: "queued",
+  });
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
     0,
   );

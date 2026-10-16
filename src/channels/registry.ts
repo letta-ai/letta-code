@@ -344,7 +344,7 @@ export class ChannelRegistry {
             continue;
           }
           await handleTurnLifecycleEvent.call(adapter, {
-            type: "queued",
+            ...event,
             source: firstSource,
           });
           continue;
