@@ -25,6 +25,7 @@ import { loadTargetStore, removeChannelTargetsForAccount } from "./targets";
 import type { ChannelAccount } from "./types";
 import {
   isDiscordChannelAccount,
+  isFeishuChannelAccount,
   isSignalChannelAccount,
   isSlackChannelAccount,
   isTelegramChannelAccount,
@@ -90,10 +91,12 @@ export function updateChannelAccountLive(
   const shouldResetRoutes =
     (isSlackChannelAccount(existing) ||
       isDiscordChannelAccount(existing) ||
-      isSignalChannelAccount(existing)) &&
+      isSignalChannelAccount(existing) ||
+      isFeishuChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
       isDiscordChannelAccount(nextAccount) ||
-      isSignalChannelAccount(nextAccount)) &&
+      isSignalChannelAccount(nextAccount) ||
+      isFeishuChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -147,10 +150,12 @@ export async function updateChannelAccountLiveWithSecrets(
   const shouldResetRoutes =
     (isSlackChannelAccount(existing) ||
       isDiscordChannelAccount(existing) ||
-      isSignalChannelAccount(existing)) &&
+      isSignalChannelAccount(existing) ||
+      isFeishuChannelAccount(existing)) &&
     (isSlackChannelAccount(nextAccount) ||
       isDiscordChannelAccount(nextAccount) ||
-      isSignalChannelAccount(nextAccount)) &&
+      isSignalChannelAccount(nextAccount) ||
+      isFeishuChannelAccount(nextAccount)) &&
     typeof nextAccount.agentId === "string" &&
     nextAccount.agentId !== existing.agentId;
 
@@ -243,9 +248,10 @@ export function bindChannelAccountLive(
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
     isWhatsAppChannelAccount(existing) ||
-    isSignalChannelAccount(existing)
+    isSignalChannelAccount(existing) ||
+    isFeishuChannelAccount(existing)
   ) {
-    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
+    // Slack, Discord, WhatsApp, Signal, and Feishu use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId,
@@ -284,9 +290,10 @@ export function unbindChannelAccountLive(
     isSlackChannelAccount(existing) ||
     isDiscordChannelAccount(existing) ||
     isWhatsAppChannelAccount(existing) ||
-    isSignalChannelAccount(existing)
+    isSignalChannelAccount(existing) ||
+    isFeishuChannelAccount(existing)
   ) {
-    // Slack, Discord, WhatsApp, and Signal use a top-level agentId.
+    // Slack, Discord, WhatsApp, Signal, and Feishu use a top-level agentId.
     updated = upsertChannelAccount(channelId, {
       ...existing,
       agentId: null,
@@ -322,6 +329,11 @@ export async function startChannelAccountLive(
     if (isDiscordChannelAccount(existing)) {
       throw new Error(
         'Channel "discord" account is missing a token. Configure it first.',
+      );
+    }
+    if (isFeishuChannelAccount(existing)) {
+      throw new Error(
+        'Channel "feishu" account is missing an App ID or App Secret. Configure it first.',
       );
     }
     if (!isSlackChannelAccount(existing)) {
