@@ -182,6 +182,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // finally block runs; that block settles the interrupt.
       conversationGenerationRef.current += 1;
 
+      // Mark the interrupt in-flight until the stale turn unwinds, matching
+      // EAGER_CANCEL: a second Esc in this window must reach the escalation
+      // branch below (InputRich only forwards while streaming or requested).
+      setInterruptRequested(true);
+
       const autoAllowedResults = autoAllowedExecutionRef.current?.results;
       const autoAllowedMetadata = autoAllowedExecutionRef.current
         ? {
