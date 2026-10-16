@@ -147,6 +147,25 @@ describe("ChannelControlRequestCoordinator", () => {
     expect(harness.reprompts).toEqual([]);
   });
 
+  test("still tells the user when an explicit approval arrives too late", async () => {
+    const harness = createHarness("expired");
+    await harness.coordinator.register(
+      questionEvent({
+        kind: "generic_tool_approval",
+        toolName: "Bash",
+        source: { ...questionEvent().source, channel: "discord" },
+      }),
+    );
+
+    expect(
+      await harness.coordinator.tryHandleInbound(
+        inbound({ channel: "discord", text: "approve" }),
+      ),
+    ).toBe(true);
+    expect(harness.coordinator.has("request-1")).toBe(false);
+    expect(harness.reprompts[0]).toContain("expired");
+  });
+
   test("does not consume Slack text for generic approvals", async () => {
     const harness = createHarness();
     await harness.coordinator.register(
