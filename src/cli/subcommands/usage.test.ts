@@ -43,12 +43,14 @@ async function cli(args: string[]) {
   return { stdout, stderr, code };
 }
 
+// macOS CI can exceed the 15s unit default on this first CLI subprocess.
+// Allow the same 30s subprocess budget as the neighboring model CLI tests.
 test("usage help exits before account lookup even with local default", async () => {
   const result = await cli(["usage", "--help"]);
   expect(result.code, result.stderr).toBe(0);
   expect(result.stdout).toContain("letta usage");
   expect(result.stdout).toContain("Markdown overview");
-});
+}, 30_000);
 
 test.each([{ prefix: [] }, { prefix: ["--backend", "local"] }])(
   "usage reports BYOK for local backend selection %j without auth",
