@@ -114,7 +114,9 @@ test.each(["rebase", "merge"] as const)(
     expect(repo.git("rev-parse", "HEAD")).toBe(hostedRevision);
     expect(repo.git("symbolic-ref", "--short", "HEAD")).toBe("main");
     expect(repo.git("rev-parse", "@{u}")).toBe(hostedRevision);
-    expect(repo.git("remote", "get-url", "origin")).toBe(remote);
+    expect(resolve(repo.git("remote", "get-url", "origin"))).toBe(
+      resolve(remote),
+    );
     expect(repo.git("status", "--porcelain")).toBe("");
     expect(readFileSync(join(memory, "MEMORY.md"), "utf8")).toBe("# Hosted\n");
     for (const path of [
