@@ -967,3 +967,17 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+### Repository Sync Across Sandboxes
+
+`syncRepoMount()` (`src/agent/memory-git.ts`) distinguishes two cases: an
+existing checkout pulls incrementally (`git pull --ff-only`), while a fresh
+checkout runs a full-history `git clone` of the remote.
+
+Conversation-scoped sandboxes are independent machines with no shared Git
+object store, so a fresh checkout in a new sandbox incurs a cold full-history
+clone even when another conversation already holds the same repository. The
+warm pull path already exists inside a surviving checkout, so a generic
+"clone → fetch" change here adds no transfer savings; reducing repeated cold
+clones requires reusing Git objects across sandboxes at provisioning/cache
+time, outside this repo.
