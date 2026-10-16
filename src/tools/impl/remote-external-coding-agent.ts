@@ -628,14 +628,24 @@ export async function sendRemoteExternalCodingAgentMessage(
     follower.close();
     throw new Error("Remote follow-up tracking is unavailable");
   }
-  const tracked = track({
-    type: target.type,
-    agentId: params.agentId,
-    message: params.message,
-    parentScope: params.parentScope,
-    completion,
-    interrupt,
-  });
+  let tracked: ReturnType<NonNullable<typeof deps.track>>;
+  try {
+    tracked = track({
+      type: target.type,
+      agentId: params.agentId,
+      message: params.message,
+      parentScope: params.parentScope,
+      completion,
+      interrupt,
+    });
+  } catch (error) {
+    try {
+      await interrupt();
+    } catch {}
+    follower.close();
+    void completion.catch(() => undefined);
+    throw error;
+  }
   return {
     delivery: "resumed",
     taskId: tracked.taskId,

@@ -83,7 +83,10 @@ type PartialRuntimeScope = {
   conversation_id?: string | null;
 };
 
-/** Frozen supported commands list, avoiding allocation per status update. */
+/**
+ * Frozen copy of the supported commands list. Avoids allocating it for every
+ * device-status update. (LET-8948)
+ */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
 /**

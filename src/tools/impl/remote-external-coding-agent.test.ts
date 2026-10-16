@@ -671,4 +671,42 @@ describe("remote external coding agent control", () => {
       report: "Followed up",
     });
   });
+
+  test("a tracking failure stops the resumed worker and releases the client", async () => {
+    const computer = new FakeComputer(() => accepted);
+    computer.sendSubagentMessage = async (command) => {
+      computer.messages.push(command);
+      return {
+        type: "subagent_message_response",
+        request_id: command.request_id,
+        runtime,
+        success: true,
+        delivery: "resumed",
+      };
+    };
+
+    await expect(
+      sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: qualified,
+          message: "Continue",
+          toolCallId: "follow-call",
+          parentScope: scope,
+        },
+        {
+          ...controlDeps(computer),
+          track: () => {
+            throw new Error("tracking failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("tracking failed");
+
+    expect(computer.stops).toHaveLength(1);
+    expect(computer.stops[0]).toMatchObject({
+      runtime,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111",
+    });
+    expect(computer.closed).toBe(true);
+  });
 });

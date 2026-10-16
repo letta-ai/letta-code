@@ -7,6 +7,8 @@ import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
   AppServerInfoResponseMessage,
+  AppServerProtocolCommand,
+  AppServerProtocolMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
@@ -29,7 +31,6 @@ import type {
   SubagentStopResponse,
   SyncCommand,
   SyncResponseMessage,
-  WsProtocolCommand,
   WsProtocolMessage,
 } from "./types/app-server-protocol";
 
@@ -45,7 +46,9 @@ export type AppServerRawResponse = Record<string, unknown> & {
   request_id?: string;
 };
 
-export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+export type AppServerSendCommand =
+  | AppServerProtocolCommand
+  | AppServerRawCommand;
 
 /** Receives every parsed protocol frame from the app-server WebSocket. */
 export type AppServerMessageHandler = (
@@ -101,13 +104,15 @@ export interface AppServerClientOptions {
   requestTimeoutMs?: number;
 }
 
-export interface AppServerRequestOptions<TMessage extends WsProtocolMessage> {
+export interface AppServerRequestOptions<
+  TMessage extends AppServerProtocolMessage,
+> {
   timeoutMs?: number;
-  predicate?: (message: WsProtocolMessage) => message is TMessage;
+  predicate?: (message: AppServerProtocolMessage) => message is TMessage;
 }
 
 export type AppServerRequestCommand = Extract<
-  WsProtocolCommand,
+  AppServerProtocolCommand,
   { request_id?: string }
 >;
 
@@ -127,9 +132,9 @@ export interface AppServerRawRequestOptions<
 }
 
 type PendingRequest = {
-  resolve: (message: WsProtocolMessage) => void;
+  resolve: (message: AppServerProtocolMessage) => void;
   reject: (error: Error) => void;
-  predicate?: (message: WsProtocolMessage) => boolean;
+  predicate?: (message: AppServerProtocolMessage) => boolean;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -255,8 +260,8 @@ function messageDataToString(data: unknown): string {
   return String(raw);
 }
 
-function parseProtocolMessage(event: unknown): WsProtocolMessage {
-  return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
+function parseProtocolMessage(event: unknown): AppServerProtocolMessage {
+  return JSON.parse(messageDataToString(event)) as AppServerProtocolMessage;
 }
 
 function appServerSocketOptions(
@@ -344,7 +349,7 @@ export class AppServerClient {
     return `${prefix}-${this.nextRequestNumber}`;
   }
 
-  send(command: WsProtocolCommand): void {
+  send(command: AppServerProtocolCommand): void {
     this.writeCommand(command);
   }
 
@@ -395,21 +400,21 @@ export class AppServerClient {
     });
   }
 
-  request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
+  request<TMessage extends AppServerProtocolMessage = AppServerProtocolMessage>(
     command: AppServerRequestCommandWithId,
     options?: AppServerRequestOptions<TMessage>,
   ): Promise<TMessage>;
 
   request<
     TType extends AppServerRequestCommand["type"],
-    TMessage extends WsProtocolMessage = WsProtocolMessage,
+    TMessage extends AppServerProtocolMessage = AppServerProtocolMessage,
   >(
     type: TType,
     body?: AppServerRequestBody,
     options?: AppServerRequestOptions<TMessage>,
   ): Promise<TMessage>;
 
-  request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
+  request<TMessage extends AppServerProtocolMessage = AppServerProtocolMessage>(
     commandOrType:
       | AppServerRequestCommandWithId
       | AppServerRequestCommand["type"],
@@ -778,7 +783,7 @@ export class AppServerClient {
     const message = parseProtocolMessage(event);
 
     for (const handler of this.messageHandlers) {
-      handler(message, channel);
+      handler(message as WsProtocolMessage, channel);
     }
 
     const requestId =

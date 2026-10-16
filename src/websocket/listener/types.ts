@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { AppServerProtocolCommand } from "@/types/app-server-protocol";
 import type { UsageStatistics } from "@/types/protocol";
 import type {
   ApprovalResponseBody,
@@ -31,7 +32,6 @@ import type {
   RuntimeScope,
   StopReasonType,
   TeleportContinuation,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
   ServiceCommandRequest,
@@ -202,7 +202,7 @@ export type InboundMessagePayload =
   | (MessageCreate & { client_message_id?: string })
   | ApprovalCreate;
 
-export type ServerMessage = WsProtocolCommand;
+export type ServerMessage = AppServerProtocolCommand;
 
 export type InvalidInputCommand = {
   type: "__invalid_input";
@@ -609,7 +609,7 @@ export type ListenerRuntime = {
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;
-  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
+  serviceCommandTypes: Set<AppServerProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
