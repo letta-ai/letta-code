@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import { __testSetBackend, type Backend, getBackend } from "@/backend";
+import type { ProviderResponse } from "@/backend/api/providers";
 import type { LocalOAuthConnectCallbacks } from "@/cli/commands/connect-local-oauth";
 import { runConnectSubcommand } from "@/cli/subcommands/connect";
+import type { ProviderOperationOptions } from "@/providers/byok-providers";
 
 function setProviderTarget(target: "api" | "local") {
   __testSetBackend({
@@ -33,6 +35,13 @@ function createIoDeps() {
       promptSecret: mock(() => Promise.resolve("prompted-key")),
       checkProviderApiKey: mock(() => Promise.resolve()),
       createOrUpdateProvider: mock(() => Promise.resolve({ id: "provider-1" })),
+      getProviderByNameStrict: mock<
+        (
+          providerName: string,
+          options?: ProviderOperationOptions,
+        ) => Promise<ProviderResponse | null>
+      >(() => Promise.resolve(null)),
+      confirmOverwrite: mock(() => Promise.resolve(false)),
       isChatGPTOAuthConnected: mock(() => Promise.resolve(false)),
       runChatGPTOAuthConnectFlow: mock(() =>
         Promise.resolve({ providerName: "chatgpt-plus-pro" }),

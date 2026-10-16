@@ -29,6 +29,21 @@ export async function getProviderByName(
   return providers.find((provider) => provider.name === providerName) ?? null;
 }
 
+/**
+ * Same lookup as getProviderByName, but surfaces request failures instead of
+ * reporting an empty store. Callers that gate destructive writes on the
+ * result must not mistake a failed request for an unoccupied name.
+ */
+export async function getProviderByNameStrict(
+  providerName: string,
+): Promise<ProviderResponse | null> {
+  const providers = await apiRequest<ProviderResponse[]>(
+    "GET",
+    "/v1/providers",
+  );
+  return providers.find((provider) => provider.name === providerName) ?? null;
+}
+
 export async function checkProviderApiKey(
   providerType: string,
   apiKey: string,
