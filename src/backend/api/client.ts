@@ -10,6 +10,7 @@ import {
   bindOrgCredentials,
   getOrgAccessToken,
 } from "@/auth/org-credentials-session";
+import { getRuntimeActingUserAttribution } from "@/runtime-context";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -31,6 +32,27 @@ let lastSDKDiagnostic: SDKDiagnostic | null = null;
 // transient keychain failures don't crash the process mid-session.
 let _cachedApiKey: string | undefined;
 let _testClientOverride: (() => Promise<unknown>) | null = null;
+
+class ActingUserClient extends Letta {
+  protected override async authHeaders(
+    options: Parameters<Letta["buildRequest"]>[0] & {
+      actingUserId?: string | null;
+    },
+  ) {
+    // Resolve at request time: retained clients may serve different turns.
+    // Explicit request headers (including null) still win in the SDK merge.
+    const actor =
+      options.actingUserId === undefined
+        ? getRuntimeActingUserAttribution()
+        : options.actingUserId;
+    const actingUserId = actor?.trim();
+    const headers = await super.authHeaders(options);
+    if (actingUserId) {
+      headers?.values.set("X-Letta-Acting-User-Id", actingUserId);
+    }
+    return headers;
+  }
+}
 
 export function __testOverrideGetClient(
   factory: (() => Promise<unknown>) | null,
@@ -267,7 +289,7 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-  const client = new Letta({
+  const client = new ActingUserClient({
     apiKey,
     baseURL,
     logger: sdkLogger,

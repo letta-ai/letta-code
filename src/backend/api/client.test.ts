@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { getClientDefaultHeaders } from "./client";
+import { actingUserRequestOptions } from "@/agent/acting-user";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
+import { getClient, getClientDefaultHeaders } from "./client";
 import { getLettaCodeHeaders } from "./http-headers";
 
 const RUNTIME_ENVIRONMENT_DEVICE_ID_ENV = "LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID";
@@ -30,6 +33,62 @@ describe("getClientDefaultHeaders", () => {
       "sandbox-agent-test",
     );
   });
+});
+
+test("SDK requests inherit the current actor without overriding explicit attribution", async () => {
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      return Response.json({
+        actor: request.headers.get("X-Letta-Acting-User-Id"),
+      });
+    },
+  });
+  const originalBaseUrl = process.env.LETTA_BASE_URL;
+  const originalApiKey = process.env.LETTA_API_KEY;
+  process.env.LETTA_BASE_URL = server.url.toString();
+  process.env.LETTA_API_KEY = "test-key";
+  process.env.LETTA_ACTING_USER_ID = "  user-shell  ";
+  try {
+    await settingsManager.initialize();
+    // Retain one real SDK client across scopes: attribution belongs to each
+    // request, not the turn that happened to construct the client.
+    const client = await getClient();
+    const read = (options?: Parameters<typeof client.get>[1]) =>
+      client.get<{ actor: string | null }>("/v1/agents/", options);
+    expect((await read()).actor).toBe("user-shell");
+    await runWithRuntimeContext({ actingUserId: "user-turn" }, async () => {
+      expect((await read()).actor).toBe("user-turn");
+      expect(
+        (await read(actingUserRequestOptions("user-explicit"))).actor,
+      ).toBe("user-explicit");
+      expect(
+        (await read({ ...actingUserRequestOptions(null), maxRetries: 0 }))
+          .actor,
+      ).toBeNull();
+      expect(
+        (await read({ headers: { "x-letta-acting-user-id": null } })).actor,
+      ).toBeNull();
+    });
+    await runWithRuntimeContext(
+      { suppressActingUserFallback: true },
+      async () => {
+        expect((await read()).actor).toBeNull();
+        expect(
+          (await read(actingUserRequestOptions("user-explicit"))).actor,
+        ).toBe("user-explicit");
+      },
+    );
+    expect((await read()).actor).toBe("user-shell");
+    delete process.env.LETTA_ACTING_USER_ID;
+    expect((await read()).actor).toBeNull();
+  } finally {
+    server.stop(true);
+    if (originalBaseUrl === undefined) delete process.env.LETTA_BASE_URL;
+    else process.env.LETTA_BASE_URL = originalBaseUrl;
+    if (originalApiKey === undefined) delete process.env.LETTA_API_KEY;
+    else process.env.LETTA_API_KEY = originalApiKey;
+  }
 });
 
 describe("getLettaCodeHeaders", () => {
