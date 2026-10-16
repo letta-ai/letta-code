@@ -49,6 +49,40 @@ describe("Write tool", () => {
     expect(readFileSync(filePath, "utf-8")).toBe(content);
   });
 
+  test.each([
+    ["path", "content"],
+    ["file_path", "file_text"],
+    ["file_path", "file_content"],
+  ] as const)("accepts %s and %s aliases", async (pathKey, contentKey) => {
+    testDir = new TestDirectory();
+    const filePath = testDir.resolve("aliased.txt");
+
+    await write({
+      [pathKey]: filePath,
+      [contentKey]: "Aliased content",
+    });
+
+    expect(readFileSync(filePath, "utf-8")).toBe("Aliased content");
+  });
+
+  test("prefers canonical arguments and ignores description", async () => {
+    testDir = new TestDirectory();
+    const filePath = testDir.resolve("canonical.txt");
+    const aliasPath = testDir.resolve("alias.txt");
+
+    await write({
+      file_path: filePath,
+      path: aliasPath,
+      content: "Canonical content",
+      file_text: "Alias text",
+      file_content: "Alias content",
+      description: "Write a test file",
+    });
+
+    expect(readFileSync(filePath, "utf-8")).toBe("Canonical content");
+    expect(existsSync(aliasPath)).toBe(false);
+  });
+
   test("throws error when file_path is missing", async () => {
     await expect(
       write({
