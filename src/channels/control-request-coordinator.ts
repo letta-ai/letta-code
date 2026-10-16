@@ -183,14 +183,9 @@ export class ChannelControlRequestCoordinator {
       return true;
     }
     await this.clear(requestId);
-    if (result === "expired") {
-      await this.options.deliverReprompt(
-        cloneEvent(pending.event),
-        input,
-        "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
-      );
-    }
-    return true;
+    // An expired request was already resolved elsewhere (or abandoned), so this
+    // text was never a reply to it. Let it reach the agent as a normal message.
+    return result !== "expired";
   }
 
   async clear(requestId: string): Promise<void> {
