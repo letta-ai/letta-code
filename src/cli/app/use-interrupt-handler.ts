@@ -279,19 +279,18 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       return;
     }
 
-    if (!streaming || interruptRequested) {
+    const abortedControllerWitness =
+      abortControllerRef.current?.signal.aborted ?? false;
+    if (!streaming || interruptRequested || abortedControllerWitness) {
       // Second+ Esc while the first interrupt is still unwinding: escalate.
       // Re-fire the backend cancel (the first attempt may have failed) and
       // settle the interrupt immediately so the UI is never wedged waiting
       // for a turn that is not observing the abort. The first Esc aborts the
       // controller synchronously, so signal.aborted witnesses an in-flight
-      // interrupt even before React commits interruptRequested (rapid double
-      // Esc) and after a force-settle, when a stuck turn still owns its
-      // controller and Esc must keep routing here as a retry.
-      if (
-        interruptRequested ||
-        (abortControllerRef.current?.signal.aborted ?? false)
-      ) {
+      // interrupt at the outer gate too: a rapid second Esc before React
+      // commits (stale closure still reads streaming) must reach this branch,
+      // as must a post-force-settle Esc while a stuck turn owns its controller.
+      if (interruptRequested || abortedControllerWitness) {
         abortControllerRef.current?.abort();
         sendBackendCancel();
         appendError(

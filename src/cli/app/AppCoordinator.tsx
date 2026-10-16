@@ -4238,8 +4238,8 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Dequeue when streaming ends (QueueRuntime authoritative). dequeueEpoch is
-  // the sole re-trigger: enqueue, turn completion, interrupt settle.
+  // Process queued messages when streaming ends.
+  // dequeueEpoch re-triggers: enqueue, turn completion, interrupt settle.
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
