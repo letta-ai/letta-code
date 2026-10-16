@@ -775,3 +775,72 @@ test("a subagent that omits the destination messages the conversation that launc
   expect(root.status).toBe("error");
   expect(root.content).toContain("Choose a destination");
 });
+
+const listenerCaller = { ...caller, connectionId: "conn-parent-listener" };
+
+test("a send to this agent's own child pins it to the parent's listener", async () => {
+  const f = fixture(["parent:agent-caller"]);
+  const result = await runWithRuntimeContext(listenerCaller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.submissions[0]?.computer).toBe("conn-parent-listener");
+});
+
+test.each([
+  { tags: [], connectionId: "conn-parent-listener" },
+  {
+    tags: ["parent:agent-someone-else"],
+    connectionId: "conn-parent-listener",
+  },
+  // Only a Cloud listener connection names a computer.
+  { tags: ["parent:agent-caller"], connectionId: "local-session" },
+  { tags: ["parent:agent-caller"], connectionId: undefined },
+])(
+  "a send without a parent listener route keeps the default routing: %j",
+  async ({ tags, connectionId }) => {
+    const f = fixture(tags);
+    const result = await runWithRuntimeContext(
+      { ...caller, connectionId },
+      () => send_agent_message(message, f),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.computer).toBeUndefined();
+  },
+);
+
+test.each(["desktop", "cloud", "conn-other"])(
+  "an explicit computer for a child is respected: %s",
+  async (computer) => {
+    const f = fixture(["parent:agent-caller"]);
+    const result = await runWithRuntimeContext(listenerCaller, () =>
+      send_agent_message({ ...message, computer }, f),
+    );
+    expect(result.status).toBe("success");
+    expect(f.submissions[0]?.computer).toBe(computer);
+  },
+);
+
+test("an offline parent listener is a failed submission, not unknown acceptance", async () => {
+  const f = fixture(["parent:agent-caller"]);
+  const result = await runWithRuntimeContext(listenerCaller, () =>
+    send_agent_message(message, {
+      ...f,
+      enqueue: async (input) => {
+        f.submissions.push(input);
+        throw new ApiRequestError(
+          'API error (503): {"error":"Computer is offline."}',
+          503,
+          JSON.stringify({ error: "Computer is offline." }),
+        );
+      },
+    }),
+  );
+  expect(result.status).toBe("error");
+  expect(f.submissions[0]?.computer).toBe("conn-parent-listener");
+  expect(f.tracked).toHaveLength(0);
+  expect(JSON.parse(result.content)).toMatchObject({
+    status: "submission_failed",
+    http_status: 503,
+  });
+});
