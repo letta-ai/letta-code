@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 1
-      - uses: letta-ai/letta-code-action@v0
+      - uses: letta-ai/letta-code-action@b50e45b91c77d5a7b8a64f4088bedcd8c442bd13 # v0.0.6
         with:
           letta_api_key: ${{ secrets.LETTA_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
