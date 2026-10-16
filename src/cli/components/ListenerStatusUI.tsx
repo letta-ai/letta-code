@@ -9,7 +9,7 @@ interface ListenerStatusUIProps {
    * First registration on this computer. The welcome banner above already
    * named it, and a first `letta server` is always in service of a flow in
    * Letta (onboarding, the computer picker) that detects the listener on its
-   * own, so the footer points back at Letta rather than at the picker.
+   * own, so the footer points back at Letta. Later runs show no footer.
    */
   isFirstRun?: boolean;
   onReady: (callbacks: {
@@ -73,20 +73,14 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
         {!showSpinner && <Text dimColor>{statusText}</Text>}
       </Box>
 
-      <Box>
-        {isFirstRun ? (
+      {isFirstRun && (
+        <Box>
           <Text dimColor>
             Connected. Head back to Letta in your browser — it will detect this
             computer automatically. Keep this window open.
           </Text>
-        ) : (
-          <Text dimColor>
-            Connect to this computer by visiting any agent and clicking the
-            "cloud" button at the bottom left of the messenger input and
-            swapping your computer to {envName}
-          </Text>
-        )}
-      </Box>
+        </Box>
+      )}
     </Box>
   );
 }
