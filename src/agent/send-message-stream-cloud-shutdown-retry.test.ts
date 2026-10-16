@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { InternalServerError } from "@letta-ai/letta-client/core/error";
+import {
+  APIUserAbortError,
+  InternalServerError,
+} from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
@@ -106,7 +109,7 @@ describe("Cloud API shutdown admission retry", () => {
 
     await expect(
       sendWithBackend(backend, controller.signal),
-    ).rejects.toMatchObject({ name: "AbortError" });
+    ).rejects.toBeInstanceOf(APIUserAbortError);
     expect(attempts).toBe(1);
   });
 });

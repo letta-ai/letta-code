@@ -18,6 +18,7 @@ import { Readable, Writable } from "node:stream";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { type Instance, render } from "ink";
+import stripAnsi from "strip-ansi";
 import { WebSocketServer } from "ws";
 import { __testSetBackend } from "@/backend";
 import {
@@ -50,12 +51,14 @@ class TuiOutputStream extends Writable {
   columns = 100;
   rows = 30;
   isTTY = true;
+  readonly chunks: string[] = [];
 
   override _write(
-    _chunk: Buffer | string,
+    chunk: Buffer | string,
     _encoding: BufferEncoding,
     callback: (error?: Error | null) => void,
   ) {
+    this.chunks.push(chunk.toString());
     callback();
   }
 }
@@ -230,6 +233,7 @@ afterEach(async () => {
 async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   backend: FakeHeadlessBackend;
   stdin: NodeJS.ReadStream;
+  frames: string[];
 }> {
   // This fixture is local. A Cloud-shaped ID makes skill discovery query
   // attached repositories over HTTP before each otherwise-fake turn.
@@ -258,7 +262,7 @@ async function renderTestApp(executor: HeadlessTurnExecutor): Promise<{
   );
   renderedInstances.add(instance);
   await waitFor(isQueueBridgeConnected, "the TUI queue bridge to mount");
-  return { backend, stdin };
+  return { backend, stdin, frames: stdout.chunks };
 }
 
 async function typePrompt(stdin: NodeJS.ReadStream, text: string) {
@@ -407,6 +411,77 @@ describe("TUI interrupt queue lifecycle", () => {
     expect(JSON.stringify(executor.inputs[1]?.body)).toContain(
       "arrived after Esc",
     );
+  }, 15_000);
+
+  test("a second Esc while the interrupt unwinds re-fires the backend cancel", async () => {
+    const executor = new DelayedInterruptExecutor();
+    const { backend, stdin } = await renderTestApp(executor);
+    const cancelCalls: string[] = [];
+    const originalCancel = backend.cancelConversation.bind(backend);
+    backend.cancelConversation = async (conversationId: string) => {
+      cancelCalls.push(conversationId);
+      return originalCancel(conversationId);
+    };
+
+    await typePrompt(stdin, "start turn");
+    await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
+
+    stdin.push("\u001b");
+    await executor.abortObserved;
+    await waitFor(() => cancelCalls.length === 1, "the first backend cancel");
+
+    // The interrupted turn is still unwinding (the executor holds its
+    // stream). A second Esc must escalate: re-fire the backend cancel
+    // instead of silently returning, so a lost first attempt is retried.
+    stdin.push("\u001b");
+    await waitFor(
+      () => cancelCalls.length === 2,
+      "the escalated backend cancel",
+    );
+
+    // The escalation force-settles the interrupt, but the executor still
+    // holds the turn. A third Esc must keep routing to the handler (the
+    // aborted controller witnesses the in-flight interrupt) and re-fire
+    // the cancel again, so the retry route survives the settle.
+    stdin.push("\u001b");
+    await waitFor(
+      () => cancelCalls.length === 3,
+      "the post-settle retry cancel",
+    );
+
+    executor.settleInterruptedTurn();
+  }, 15_000);
+
+  test("a failed backend cancel is surfaced and a second Esc retries it", async () => {
+    const executor = new DelayedInterruptExecutor();
+    const { backend, stdin, frames } = await renderTestApp(executor);
+    let cancelAttempts = 0;
+    const originalCancel = backend.cancelConversation.bind(backend);
+    backend.cancelConversation = async (conversationId: string) => {
+      cancelAttempts += 1;
+      if (cancelAttempts === 1) throw new Error("network down");
+      return originalCancel(conversationId);
+    };
+
+    await typePrompt(stdin, "start turn");
+    await waitFor(() => executor.inputs.length === 1, "the typed initial turn");
+
+    stdin.push("\u001b");
+    await executor.abortObserved;
+    await waitFor(() => cancelAttempts === 1, "the failed backend cancel");
+    await waitFor(
+      () =>
+        frames.some((frame) =>
+          stripAnsi(frame).includes("backend cancel request failed"),
+        ),
+      "the surfaced cancel failure",
+    );
+
+    // The interrupt is still unwinding; a second Esc must retry the cancel.
+    stdin.push("\u001b");
+    await waitFor(() => cancelAttempts === 2, "the retried backend cancel");
+
+    executor.settleInterruptedTurn();
   }, 15_000);
 
   test.each(["Enter", "new message", "cron event"])(

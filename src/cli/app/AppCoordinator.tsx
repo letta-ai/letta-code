@@ -1649,8 +1649,7 @@ export function App({
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
-  // Helper to check if agent is busy (streaming, executing tool, or running command)
-  // Uses refs for synchronous access outside React's closure system
+  // Busy = streaming/tool/command; refs allow synchronous access outside renders.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const isAgentBusy = useCallback(() => {
     return (
@@ -4239,9 +4238,8 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends. QueueRuntime is authoritative
-  // (consumeItems fires onDequeued → setQueueDisplay). dequeueEpoch is the sole
-  // re-trigger: enqueue, turn completion, and interrupt settle (cancelling->idle).
+  // Process queued messages when streaming ends.
+  // dequeueEpoch re-triggers: enqueue, turn completion, interrupt settle.
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
@@ -4386,9 +4384,8 @@ export function App({
     withCommandLock,
   });
 
-  // Process queued overlay actions when streaming ends
-  // These are actions from interactive commands (like /agents, /model) that were
-  // used while the agent was busy. The change is applied after end_turn.
+  // Process queued overlay actions when streaming ends: interactive commands
+  // (/agents, /model) used while busy apply after end_turn.
   useEffect(() => {
     if (
       !streaming &&
@@ -5021,7 +5018,10 @@ export function App({
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
         inputEnabled={inputEnabled}
         inputVisible={inputVisible}
-        interruptRequested={interruptRequested}
+        // Aborted-but-unwound turn: keep Esc routed to the interrupt handler.
+        interruptRequested={
+          interruptRequested || !!abortControllerRef.current?.signal.aborted
+        }
         isAgentBusy={isAgentBusy}
         liveItems={liveItems}
         liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}
