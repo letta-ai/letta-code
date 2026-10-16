@@ -53,7 +53,7 @@ ${SYSTEM_REMINDER_CLOSE}`;
 /**
  * Reminders for the primary's own post-turn MemFS sync. Repairable states are
  * normally handed to a background worker. If that worker could not finish,
- * report the failure without assigning repository work to the foreground.
+ * report the failure without interrupting the task, but allow requested repair.
  */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
@@ -65,7 +65,7 @@ MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase tha
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Background repair could not resolve this state. Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+Continue the current task and report the blocked memory update to the user. If the user explicitly requests memory repair, first confirm no background memory worker is active, then repair this repository in the foreground. Preserve both sides of conflicts, stage only the resolved files, and complete the existing merge or rebase without discarding work. Do not force-push; the harness retries sync after the repository is clean and committed.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -76,7 +76,7 @@ MEMORY REPAIR FAILED: A background worker could not produce memory history that 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+Continue the current task and report the blocked memory update to the user. If the user explicitly requests memory repair, first confirm no background memory worker is active, then repair this repository in the foreground. Preserve the information and validation limits, and commit only the repair. Do not rewrite history or force-push; the harness retries sync after the repository is valid, clean and committed.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
