@@ -336,7 +336,7 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
         args.token,
         {
           operation: `clone repository ${args.repositoryName}`,
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
+          timeoutMs: ATTACHED_REPOSITORY_CLONE_TIMEOUT_MS,
         },
       );
     } else if (!existsSync(join(directory, ".git"))) {
@@ -541,10 +541,10 @@ export function buildNonInteractiveGitEnv(
     SSH_ASKPASS: "",
   };
 }
-
 /** Run git in the given directory, passing a token as an auth header when provided. */
 const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
 const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
+export const ATTACHED_REPOSITORY_CLONE_TIMEOUT_MS = 540_000; // 9min — must stay below the checkout lock wait
 
 export async function runGit(
   cwd: string,
