@@ -10,6 +10,7 @@ import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
+  formatMemoryPostTurnSyncReminder,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
 
@@ -346,7 +347,7 @@ test("push failures report automatic retry without assigning foreground repair",
 });
 
 test.each(["conflict", "invalid"] as const)(
-  "%s permits requested foreground recovery only after automatic repair finishes",
+  "%s offers an approved reset only after automatic repair finishes",
   async (status) => {
     const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
     const reminders: string[] = [];
@@ -365,7 +366,7 @@ test.each(["conflict", "invalid"] as const)(
           },
         },
         {
-          syncMemory: async () => ({ ...conflict, status }),
+          syncMemory: async () => ({ ...conflict, status, localOnly: false }),
           syncAttachedRepositories: async () => ({ results: [] }),
           repairMemory: (params) =>
             ensureMemoryRepair(params, spawn, async () => {
@@ -379,28 +380,40 @@ test.each(["conflict", "invalid"] as const)(
     expect(jobs).toHaveLength(1);
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
-    expect(reminders[0]).not.toContain(
-      "user explicitly requests memory repair",
-    );
+    expect(reminders[0]).not.toContain("letta memory reset");
     // The worker is still running, so the primary only sees the checkout guard.
     await run();
     expect(jobs).toHaveLength(1);
     expect(reminders).toHaveLength(2);
     expect(reminders[1]).toContain("MEMORY REPAIR RUNNING");
     expect(reminders[1]).toContain("Do not inspect, edit, or run Git commands");
-    expect(reminders[1]).not.toContain(
-      "user explicitly requests memory repair",
-    );
-    // A failed attempt stays suppressed, but an explicit repair request can proceed.
+    expect(reminders[1]).not.toContain("letta memory reset");
+    // A failed attempt stays suppressed; recovery is an explicit destructive action.
     await run();
     expect(jobs).toHaveLength(1);
     expect(reminders).toHaveLength(3);
     expect(reminders[2]).toContain(
       status === "conflict" ? "MEMORY GIT CONFLICT" : "MEMORY REPAIR FAILED",
     );
-    expect(reminders[2]).toContain("user explicitly requests memory repair");
-    expect(reminders[2]).toContain("no background memory worker is active");
+    expect(reminders[2]).toContain(
+      "user approves discarding local changes and unpushed commits",
+    );
+    expect(reminders[2]).toContain(
+      "letta memory reset --agent agent-memory-repair-test --force",
+    );
     expect(reminders[2]).not.toContain("Leave the repository unchanged");
+  },
+);
+
+test.each(["conflict", "invalid"] as const)(
+  "local-only %s does not offer a hosted reset",
+  (status) => {
+    const reminder = formatMemoryPostTurnSyncReminder(
+      { ...conflict, status },
+      "agent-local",
+    );
+    expect(reminder).toContain("no hosted copy to reset to");
+    expect(reminder).not.toContain("letta memory reset");
   },
 );
 
