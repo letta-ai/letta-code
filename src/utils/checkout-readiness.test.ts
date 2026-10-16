@@ -322,6 +322,8 @@ test("refreshing an existing checkout does not block shell access", async () => 
 test("a pending first clone blocks writes into its path but not unrelated commands", async () => {
   const root = await mkdtemp(join(tmpdir(), "checkout-first-"));
   const repository = join(root, "shared");
+  const previousMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = join(root, "memory");
   let release!: () => void;
   const clone = startCheckout(
     root,
@@ -375,7 +377,59 @@ test("a pending first clone blocks writes into its path but not unrelated comman
   } finally {
     release();
     await Promise.all([clone, ...accesses]);
+    if (previousMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = previousMemoryDir;
     await rm(root, { recursive: true, force: true });
   }
   expect(completed).toBe(4);
+});
+
+test("a pending attached checkout does not block a memory-only command", async () => {
+  const root = await mkdtemp(join(tmpdir(), "checkout-memory-only-"));
+  const memory = join(root, "memory");
+  const repository = join(root, "shared");
+  const previousMemoryDir = process.env.MEMORY_DIR;
+  process.env.MEMORY_DIR = memory;
+  let releaseMemory!: () => void;
+  const memoryClone = startCheckout(
+    root,
+    memory,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseMemory = resolve;
+      }),
+  );
+  let releaseRepository!: () => void;
+  const repositoryClone = startCheckout(
+    root,
+    repository,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseRepository = resolve;
+      }),
+  );
+  try {
+    let completed = false;
+    const access = waitForToolCheckouts(
+      root,
+      "Bash",
+      { command: "cat $MEMORY_DIR/MEMORY.md" },
+      tmpdir(),
+    ).then(() => {
+      completed = true;
+    });
+    await nextTick();
+    expect(completed).toBe(false);
+    releaseMemory();
+    await Promise.all([memoryClone, access]);
+    expect(completed).toBe(true);
+    expect(isCheckoutPending(repository)).toBe(true);
+  } finally {
+    releaseMemory();
+    releaseRepository();
+    await Promise.all([memoryClone, repositoryClone]);
+    if (previousMemoryDir === undefined) delete process.env.MEMORY_DIR;
+    else process.env.MEMORY_DIR = previousMemoryDir;
+    await rm(root, { recursive: true, force: true });
+  }
 });

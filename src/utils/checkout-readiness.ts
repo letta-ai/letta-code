@@ -216,10 +216,6 @@ async function waitForCommandCheckouts(
       Object.values(value).forEach(visit);
   };
   visit(args);
-  if (text.some((value) => /MEMORY_DIR|\.letta\b/.test(value))) {
-    await waitForCheckouts(agentId);
-    return;
-  }
   const paths = text
     .flatMap((value) => value.split(/[\s"'`;|&()<>=,]+/))
     .filter((token) => /[/\\~$]|^\.\.?$/.test(token))
