@@ -568,14 +568,19 @@ export class HeadlessBackend implements Backend {
           midConversationSystemPrompt?: string;
         };
     try {
-      const promptPromise = this.resolveSystemPromptForTurn({
-        conversationId: turnInput.conversationId,
-        agentId: turnInput.agentId,
-        agent,
-        body,
-        history,
-        uiMessages,
-      });
+      // Deferred through Promise.resolve().then: a synchronously throwing
+      // override becomes a rejection the inner catch can failRun on instead
+      // of leaking an active run past the finally.
+      const promptPromise = Promise.resolve().then(() =>
+        this.resolveSystemPromptForTurn({
+          conversationId: turnInput.conversationId,
+          agentId: turnInput.agentId,
+          agent,
+          body,
+          history,
+          uiMessages,
+        }),
+      );
       try {
         resolvedPrompt = await Promise.race([promptPromise, startupPreempted]);
       } catch (error) {
@@ -607,16 +612,19 @@ export class HeadlessBackend implements Backend {
         throw new APIUserAbortError();
       }
       let stream: Stream<LettaStreamingResponse>;
-      const executePromise = this.executor.execute({
-        conversationId: turnInput.conversationId,
-        agentId: turnInput.agentId,
-        agent,
-        systemPrompt,
-        midConversationSystemPrompt,
-        body,
-        history,
-        uiMessages,
-      });
+      // Same sync-throw containment for injected executors.
+      const executePromise = Promise.resolve().then(() =>
+        this.executor.execute({
+          conversationId: turnInput.conversationId,
+          agentId: turnInput.agentId,
+          agent,
+          systemPrompt,
+          midConversationSystemPrompt,
+          body,
+          history,
+          uiMessages,
+        }),
+      );
       try {
         stream = await Promise.race([executePromise, startupPreempted]);
       } catch (error) {

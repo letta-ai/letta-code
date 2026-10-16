@@ -86,6 +86,21 @@ class DeferredExecutor {
   }
 }
 
+// Throws synchronously from execute (validation/setup failure before any
+// Promise exists): the run must fail, never strand as an active-run conflict.
+class SyncThrowExecutor {
+  execute(): never {
+    throw new Error("sync executor setup explosion");
+  }
+}
+
+// Throws synchronously from resolveSystemPromptForTurn: same invariant.
+class SyncThrowPromptBackend extends FakeHeadlessBackend {
+  protected override resolveSystemPromptForTurn(): never {
+    throw new Error("sync prompt setup explosion");
+  }
+}
+
 describe("FakeHeadlessBackend", () => {
   test("streams deterministic assistant responses", async () => {
     const backend = new FakeHeadlessBackend("agent-fake-headless");
@@ -393,6 +408,67 @@ describe("FakeHeadlessBackend", () => {
       } as ConversationMessageCreateBody),
     );
     expect(JSON.stringify(chunks)).toContain("end_turn");
+  });
+
+  test("a synchronous executor throw fails the run and frees the conversation", async () => {
+    const backend = new FakeHeadlessBackend(
+      "agent-fake-headless",
+      new SyncThrowExecutor(),
+    );
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const first = await backend
+      .createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "boom" }],
+      } as ConversationMessageCreateBody)
+      .catch((error: unknown) => error);
+    expect((first as Error).message).toContain("sync executor setup explosion");
+
+    // The run failed instead of leaking active: a later send reaches the
+    // executor again, not an active-run conflict.
+    const second = await backend
+      .createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody)
+      .catch((error: unknown) => error);
+    expect((second as Error).message).toContain(
+      "sync executor setup explosion",
+    );
+    const active = (
+      backend as unknown as { activeRunByConversation: Map<string, string> }
+    ).activeRunByConversation;
+    expect(active.size).toBe(0);
+  });
+
+  test("a synchronous prompt-prep throw fails the run and frees the conversation", async () => {
+    const backend = new SyncThrowPromptBackend("agent-fake-headless");
+    const conversation = await backend.createConversation({
+      agent_id: "agent-fake-headless",
+    });
+
+    const first = await backend
+      .createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "boom" }],
+      } as ConversationMessageCreateBody)
+      .catch((error: unknown) => error);
+    expect((first as Error).message).toContain("sync prompt setup explosion");
+
+    const second = await backend
+      .createConversationMessageStream(conversation.id, {
+        agent_id: "agent-fake-headless",
+        messages: [{ role: "user", content: "after" }],
+      } as ConversationMessageCreateBody)
+      .catch((error: unknown) => error);
+    expect((second as Error).message).toContain("sync prompt setup explosion");
+    const active = (
+      backend as unknown as { activeRunByConversation: Map<string, string> }
+    ).activeRunByConversation;
+    expect(active.size).toBe(0);
   });
 
   test("a provider startup rejection after Esc unwinds as a user abort and keeps the run cancelled", async () => {
