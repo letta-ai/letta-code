@@ -34,6 +34,10 @@ type StructuredLoopErrorInfo =
   | RunErrorInfo
   | LettaStreamingResponse.LettaErrorMessage;
 
+type RuntimeApiError = LettaStreamingResponse.LettaErrorMessage & {
+  status_code?: number;
+};
+
 export interface LoopErrorNoticeDecision {
   visibility: LifecycleNoticeVisibility;
   message: string;
@@ -99,19 +103,32 @@ function toStructuredApiError(
 
 function getStructuredApiErrorFromError(
   error: unknown,
-): LettaStreamingResponse.LettaErrorMessage | undefined {
+): RuntimeApiError | undefined {
   if (!(error instanceof Error)) {
     return undefined;
   }
 
   const errorWithStructuredInfo = error as Error & {
-    apiError?: LettaStreamingResponse.LettaErrorMessage;
+    apiError?: RuntimeApiError;
     runErrorInfo?: RunErrorInfo;
   };
 
   return (
     errorWithStructuredInfo.apiError ??
     toStructuredApiError(errorWithStructuredInfo.runErrorInfo)
+  );
+}
+
+function getStructuredSourcesFromError(
+  error: unknown,
+): Array<ErrorInfo | RunErrorInfo> {
+  if (!(error instanceof Error)) return [];
+  const structuredError = error as Error & {
+    errorInfo?: ErrorInfo;
+    runErrorInfo?: RunErrorInfo;
+  };
+  return [structuredError.errorInfo, structuredError.runErrorInfo].filter(
+    (source): source is ErrorInfo | RunErrorInfo => source !== undefined,
   );
 }
 
@@ -163,21 +180,19 @@ function isTerminatedProcessNoise(message: string): boolean {
 
 function isProxyTransportError(
   detail: string,
-  error: unknown,
   message: string,
+  status?: number,
 ): boolean {
-  if (
-    error instanceof APIError &&
-    error.status >= 500 &&
-    detail.toLowerCase().includes("trying to proxy")
-  ) {
-    return true;
-  }
-
-  return (
+  const hasCanonicalProxyFailureText =
     detail.toLowerCase().includes("error occurred while trying to proxy") ||
-    message.toLowerCase().includes("error occurred while trying to proxy")
-  );
+    message.toLowerCase().includes("error occurred while trying to proxy");
+  const hasProxyMarker =
+    detail.toLowerCase().includes("trying to proxy") ||
+    message.toLowerCase().includes("trying to proxy");
+
+  if (status !== undefined) return status >= 500 && hasProxyMarker;
+
+  return hasCanonicalProxyFailureText;
 }
 
 export function getLoopErrorNoticeDecision(params: {
@@ -194,16 +209,42 @@ export function getLoopErrorNoticeDecision(params: {
   unclassifiedFallback?: FormatErrorDetailsOptions["unclassifiedFallback"];
 }): LoopErrorNoticeDecision {
   const apiError =
-    params.apiError ??
+    (params.apiError as RuntimeApiError | undefined) ??
     toStructuredApiError(params.errorInfo) ??
     toStructuredApiError(params.runErrorInfo) ??
     getStructuredApiErrorFromError(params.error);
+  const nestedStructuredSources = getStructuredSourcesFromError(params.error);
+  const nestedApiError = getStructuredApiErrorFromError(params.error);
   const detail =
     apiError?.detail ??
     params.errorInfo?.detail ??
     params.runErrorInfo?.detail ??
+    nestedStructuredSources[0]?.detail ??
+    nestedStructuredSources[0]?.message ??
     extractConflictDetail(params.error) ??
     "";
+  const statusTextSource = [
+    params.apiError as RuntimeApiError | undefined,
+    params.errorInfo,
+    params.runErrorInfo,
+    nestedApiError,
+    ...nestedStructuredSources,
+  ].find((source) => source?.status_code !== undefined);
+  const apiStatus =
+    params.error instanceof APIError ? params.error.status : undefined;
+  const proxyStatus = apiStatus ?? statusTextSource?.status_code;
+  const proxyDetail =
+    apiStatus !== undefined
+      ? (extractConflictDetail(params.error) ?? "")
+      : statusTextSource
+        ? (statusTextSource.detail ?? statusTextSource.message ?? "")
+        : detail;
+  const proxyMessage =
+    apiStatus !== undefined
+      ? params.message
+      : statusTextSource
+        ? (statusTextSource.message ?? statusTextSource.detail ?? "")
+        : params.message;
 
   if (
     params.cancelRequested ||
@@ -238,7 +279,7 @@ export function getLoopErrorNoticeDecision(params: {
     };
   }
 
-  if (isProxyTransportError(detail, params.error, params.message)) {
+  if (isProxyTransportError(proxyDetail, proxyMessage, proxyStatus)) {
     return {
       visibility: "transcript",
       message: "Connection to Letta service failed. Please retry.",

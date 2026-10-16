@@ -165,6 +165,11 @@ export class StreamProcessor {
       if (chunk.tool_call_id) {
         this.pendingApprovals.delete(chunk.tool_call_id);
       }
+      for (const toolReturn of chunk.tool_returns ?? []) {
+        if (toolReturn.tool_call_id) {
+          this.pendingApprovals.delete(toolReturn.tool_call_id);
+        }
+      }
       // Continue processing this chunk (for UI display)
     }
 
@@ -180,11 +185,12 @@ export class StreamProcessor {
       // );
 
       // Normalize tool calls: support both legacy tool_call and new tool_calls array
-      const toolCalls = Array.isArray(chunk.tool_calls)
-        ? chunk.tool_calls
-        : chunk.tool_call
-          ? [chunk.tool_call]
-          : [];
+      const toolCalls =
+        Array.isArray(chunk.tool_calls) && chunk.tool_calls.length > 0
+          ? chunk.tool_calls
+          : chunk.tool_call
+            ? [chunk.tool_call]
+            : [];
 
       for (const toolCall of toolCalls) {
         const toolCallId = toolCall?.tool_call_id;

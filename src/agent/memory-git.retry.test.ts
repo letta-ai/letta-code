@@ -129,7 +129,12 @@ describe("runGitWithRetry HTTP failures", () => {
       expect(attempts).toBe(scenario.attempts);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      await rm(cwd, { recursive: true, force: true });
+      await rm(cwd, {
+        recursive: true,
+        force: true,
+        maxRetries: 10,
+        retryDelay: 100,
+      });
     }
   });
 });

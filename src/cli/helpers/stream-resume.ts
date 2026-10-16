@@ -1,5 +1,6 @@
 import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StreamRequestContext } from "@/agent/message";
+import type { Backend, RunRetrieveOptions } from "@/backend";
 import { getClient } from "@/backend/api/client";
 import type { ApprovalRequest } from "@/cli/helpers/stream-processor";
 
@@ -28,6 +29,72 @@ export type RunsListClient = {
 };
 
 const FALLBACK_RUN_DISCOVERY_TIMEOUT_MS = 5000;
+const RUN_STATUS_RECONCILIATION_TIMEOUT_MS = 10_000;
+
+export class RunStatusReconciliationError extends Error {
+  constructor(error: unknown) {
+    super(error instanceof Error ? error.message : String(error), {
+      cause: error,
+    });
+    this.name = "RunStatusReconciliationError";
+  }
+}
+
+export function isRunStatusReconciliationError(
+  error: unknown,
+): error is RunStatusReconciliationError {
+  return error instanceof RunStatusReconciliationError;
+}
+
+export async function retrieveRunForResume(
+  backend: Pick<Backend, "retrieveRun">,
+  runId: string,
+  options: RunRetrieveOptions | undefined,
+  parentSignal: AbortSignal,
+  timeoutMs = RUN_STATUS_RECONCILIATION_TIMEOUT_MS,
+): Promise<Run> {
+  if (parentSignal.aborted) {
+    throw new RunStatusReconciliationError(
+      parentSignal.reason ?? new Error("Run status reconciliation aborted"),
+    );
+  }
+
+  const requestAbort = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const bounded = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      const error =
+        parentSignal.reason ?? new Error("Run status reconciliation aborted");
+      reject(new RunStatusReconciliationError(error));
+      requestAbort.abort(error);
+    };
+    parentSignal.addEventListener("abort", onAbort, { once: true });
+    timeout = setTimeout(() => {
+      const error = new Error("Run status reconciliation timed out");
+      reject(new RunStatusReconciliationError(error));
+      requestAbort.abort(error);
+    }, timeoutMs);
+  });
+
+  try {
+    try {
+      return await Promise.race([
+        backend.retrieveRun(runId, {
+          ...(options ?? {}),
+          signal: requestAbort.signal,
+        } as RunRetrieveOptions),
+        bounded,
+      ]);
+    } catch (error) {
+      if (isRunStatusReconciliationError(error)) throw error;
+      throw new RunStatusReconciliationError(error);
+    }
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    if (onAbort) parentSignal.removeEventListener("abort", onAbort);
+  }
+}
 
 function hasPaginatedItems(
   response: RunsListResponse,
@@ -154,6 +221,34 @@ export function isReplayableRun(run: Run): boolean {
     run.stop_reason !== "error" &&
     run.stop_reason !== "llm_api_error"
   );
+}
+
+export function isCompletedApprovalBoundary(run: Run): boolean {
+  return (
+    !run.metadata?.error &&
+    run.status === "completed" &&
+    run.stop_reason === "requires_approval"
+  );
+}
+
+export function recoverApprovalBoundaryAfterResumeFailure(
+  result: {
+    stopReason: string;
+    sawStopReasonChunk?: boolean;
+    approvals?: ApprovalRequest[];
+    fallbackError?: string | null;
+  },
+  authoritativeApprovalBoundary: boolean,
+): boolean {
+  if (
+    !authoritativeApprovalBoundary ||
+    result.stopReason !== "error" ||
+    (result.approvals?.length ?? 0) === 0
+  )
+    return false;
+  result.stopReason = "requires_approval";
+  result.fallbackError = null;
+  return true;
 }
 
 export async function waitForResumeRetry(
