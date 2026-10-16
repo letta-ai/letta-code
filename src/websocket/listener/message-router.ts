@@ -44,6 +44,7 @@ import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
 } from "./external-tools";
+import { recordListenerPong } from "./heartbeat";
 import {
   createIncomingMessage,
   dispatchInboundMessageWhenReady,
@@ -238,7 +239,7 @@ export function createListenerMessageHandler(
     try {
       if (lifecycleMessage) {
         if (lifecycleMessage.type === "pong") {
-          runtime.lastPongAt = Date.now();
+          recordListenerPong(runtime, socket);
         }
         safeEmitWsEvent("recv", "lifecycle", lifecycleMessage);
         return;
