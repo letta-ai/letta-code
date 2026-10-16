@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
-import { clearAllSubagents, registerSubagent } from "@/agent/subagent-state";
+import {
+  clearAllSubagents,
+  registerSubagent,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import {
   backgroundProcesses,
@@ -431,6 +435,9 @@ describe("emitProtocolV2Message connection routing", () => {
         "Finish the task",
         false,
       );
+      updateSubagent("subagent-child-send", {
+        agentId: "claude_11111111-1111-4111-8111-111111111111",
+      });
       const listener = createListenerRuntime();
       const runtime = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
 
@@ -444,6 +451,7 @@ describe("emitProtocolV2Message connection routing", () => {
           subagent_id: "subagent-child-send",
           is_background: true,
           claims_parent_runtime: false,
+          agent_id: "claude_11111111-1111-4111-8111-111111111111",
         }),
       ]);
     } finally {

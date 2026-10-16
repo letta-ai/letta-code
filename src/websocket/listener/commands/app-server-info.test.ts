@@ -49,6 +49,7 @@ describe("app-server info protocol", () => {
         agent_free_conversations: true,
         launch_subagent: true,
         launch_subagent_notify_caller: true,
+        subagent_message: true,
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
         structured_outputs: false,

@@ -166,6 +166,44 @@ test("resumes an external coding-agent session without the Cloud backend", async
   expect(f.submissions).toHaveLength(0);
 });
 
+test("routes a computer-qualified external ID remotely", async () => {
+  const f = fixture();
+  const qualified = `${CLAUDE_AGENT_ID}@device-1`;
+  let received: unknown;
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: qualified, message: "Change course" },
+      {
+        ...f,
+        sendRemoteExternalMessage: async (input) => {
+          received = input;
+          return { delivery: "steered" };
+        },
+      },
+    ),
+  );
+  expect(received).toMatchObject({
+    agentId: qualified,
+    message: "Change course",
+  });
+  expect(JSON.parse(result.content)).toMatchObject({
+    agent_id: qualified,
+    delivery: "remote/steer",
+  });
+});
+
+test("rejects an explicit computer with a qualified external ID", async () => {
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message({
+      agent_id: `${CLAUDE_AGENT_ID}@device-1`,
+      computer: "device-2",
+      message: "Continue",
+    }),
+  );
+  expect(result.status).toBe("error");
+  expect(result.content).toContain("omit computer");
+});
+
 test("aborts an external turn when background tracking cannot be created", async () => {
   const f = fixture();
   let interrupts = 0;

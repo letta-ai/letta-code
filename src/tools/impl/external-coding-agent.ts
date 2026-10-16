@@ -130,25 +130,33 @@ const NATIVE_SESSION_ID_PATTERN =
 export function formatExternalCodingAgentId(
   type: ExternalCodingAgentType,
   sessionId: string,
+  computer?: string,
 ): string {
-  return `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  const id = `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  return computer ? `${id}@${computer}` : id;
 }
 
-export function parseExternalCodingAgentId(
-  agentId: string | undefined,
-): { type: ExternalCodingAgentType; sessionId: string } | null {
+export function parseExternalCodingAgentId(agentId: string | undefined): {
+  type: ExternalCodingAgentType;
+  sessionId: string;
+  computer?: string;
+} | null {
   if (!agentId) return null;
+  const separator = agentId.lastIndexOf("@");
+  const nativeId = separator === -1 ? agentId : agentId.slice(0, separator);
+  const computer = separator === -1 ? undefined : agentId.slice(separator + 1);
+  if (computer !== undefined && !computer.trim()) return null;
   for (const type of EXTERNAL_CODING_AGENT_TYPES) {
     const prefix = EXTERNAL_AGENT_ID_PREFIXES[type];
-    if (agentId.startsWith(prefix)) {
-      const sessionId = agentId.slice(prefix.length);
+    if (nativeId.startsWith(prefix)) {
+      const sessionId = nativeId.slice(prefix.length);
       if (
         (type === "opencode"
           ? /^ses_[a-zA-Z0-9]+$/
           : NATIVE_SESSION_ID_PATTERN
         ).test(sessionId)
       ) {
-        return { type, sessionId };
+        return { type, sessionId, ...(computer ? { computer } : {}) };
       }
     }
   }

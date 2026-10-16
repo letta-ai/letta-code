@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { isAppServerInfoResponseMessage } from "@/types/app-server-info";
 import { buildAppServerInfoResponse } from "./commands/app-server-info";
 import { parseServerMessage } from "./protocol-inbound";
-import { isLaunchSubagentCommand } from "./subagent-protocol-inbound";
+import {
+  isLaunchSubagentCommand,
+  isSubagentMessageCommand,
+  isSubagentStopCommand,
+} from "./subagent-protocol-inbound";
 
 const command = {
   type: "launch_subagent" as const,
@@ -86,6 +90,45 @@ describe("launch_subagent protocol", () => {
       isAppServerInfoResponseMessage({
         ...info,
         capabilities: { ...info.capabilities, launch_subagent: "yes" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("subagent control protocol", () => {
+  const base = {
+    request_id: "request-1",
+    runtime: { agent_id: "agent-parent", conversation_id: "conv-parent" },
+    agent_id: "claude_11111111-1111-4111-8111-111111111111",
+  };
+
+  test("accepts valid message and stop commands", () => {
+    expect(
+      isSubagentMessageCommand({
+        ...base,
+        type: "subagent_message",
+        message: "Continue",
+        tool_call_id: "call-2",
+      }),
+    ).toBe(true);
+    expect(isSubagentStopCommand({ ...base, type: "subagent_stop" })).toBe(
+      true,
+    );
+  });
+
+  test.each([
+    { request_id: "" },
+    { agent_id: "" },
+    { runtime: { agent_id: "", conversation_id: "conv-parent" } },
+    { message: "" },
+    { tool_call_id: 42 },
+  ])("rejects invalid message commands %#", (override) => {
+    expect(
+      isSubagentMessageCommand({
+        ...base,
+        type: "subagent_message",
+        message: "Continue",
+        ...override,
       }),
     ).toBe(false);
   });

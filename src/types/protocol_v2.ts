@@ -1,9 +1,4 @@
-/**
- * Protocol V2 (alpha hard-cut contract)
- * This file defines the runtime-scoped websocket contract for device-mode UIs.
- * It is self-defined rather than importing legacy transport/event shapes.
- */
-
+/** Protocol V2 runtime-scoped websocket contract for device-mode UIs. */
 import type {
   AgentCreateParams,
   AgentListParams,
@@ -553,6 +548,7 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
+  agent_id?: string | null;
   conversation_id?: string | null; // Own conversation; local URLs do not carry it.
   super_run_id?: string; // Exact accepted Super Run for a remote child send.
   model?: string;
@@ -2413,6 +2409,8 @@ export type WsProtocolCommand =
   | TaskControlProtocol.ExecuteCommandCommand
   | TaskControlProtocol.RemoveQueueItemCommand
   | SubagentProtocol.LaunchSubagentCommand
+  | SubagentProtocol.SubagentMessageCommand
+  | SubagentProtocol.SubagentStopCommand
   | TaskControlProtocol.MonitorStopCommand
   | SearchBranchesCommand
   | CheckoutBranchCommand
@@ -2524,7 +2522,9 @@ export type WsProtocolMessage =
   | SecretApplyResponse
   | TaskControlProtocol.RemoveQueueItemResponse
   | TaskControlProtocol.MonitorStopResponse
-  | SubagentProtocol.LaunchSubagentResponse;
+  | SubagentProtocol.LaunchSubagentResponse
+  | SubagentProtocol.SubagentMessageResponse
+  | SubagentProtocol.SubagentStopResponse;
 
 export type WsProtocolMessageType = WsProtocolMessage["type"];
 

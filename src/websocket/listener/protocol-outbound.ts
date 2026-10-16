@@ -83,10 +83,7 @@ type PartialRuntimeScope = {
   conversation_id?: string | null;
 };
 
-/**
- * Frozen copy of the supported commands list. Avoids allocating it for every
- * device-status update. (LET-8948)
- */
+/** Frozen supported commands list, avoiding allocation per status update. */
 const FROZEN_SUPPORTED_COMMANDS: string[] = [...SUPPORTED_REMOTE_COMMANDS];
 
 /**
@@ -845,6 +842,7 @@ export function buildSubagentSnapshot(
       prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
+      agent_id: a.agentId ?? null,
       conversation_id: a.conversationId ?? null,
       super_run_id: a.superRunId,
       model: a.model,

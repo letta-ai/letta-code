@@ -10,6 +10,7 @@ agent IDs backed by their native sessions. A message to active work steers its
 in-flight turn (Claude interrupts through stream-json and sends the replacement
 instruction; Codex uses app-server turn/steer). An idle follow-up starts one tracked local background
 turn. Neither path uses the Cloud messaging backend.
+Computer-qualified IDs returned by remote launches can be steered too.
 
 An agent has a persistent identity and shared memory. It can have multiple
 conversations, each with its own message history.

@@ -137,6 +137,7 @@ export async function registerWithCloud(
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
         // Mirrors app_server_info so callers can check before connecting.
         launch_subagent_notify_caller: true,
+        subagent_message: true,
         self_update: getSelfUpdateStatus(),
       },
     }),

@@ -102,18 +102,15 @@ type SafeSocketSend = (
   errorType: string,
   context: string,
 ) => boolean;
-
 type RunDetachedListenerTask = (
   commandName: string,
   task: () => Promise<void>,
 ) => void;
-
 type TrackListenerError = (
   errorType: string,
   error: unknown,
   context: string,
 ) => void;
-
 type FileCommandSession = {
   handle(parsed: unknown): boolean;
 };
@@ -121,7 +118,6 @@ type RuntimeScope = {
   agent_id: string | null;
   conversation_id: string;
 };
-
 type ParsedRuntimeScope = RuntimeScope | null;
 
 type MessageRouterParams = {
@@ -231,7 +227,6 @@ export function createListenerMessageHandler(
 
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
-    // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
     let parsedScope: ParsedRuntimeScope = null;
 
@@ -279,7 +274,12 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "launch_subagent" || parsed.type === "monitor_stop") {
+      if (
+        parsed.type === "launch_subagent" ||
+        parsed.type === "monitor_stop" ||
+        parsed.type === "subagent_message" ||
+        parsed.type === "subagent_stop"
+      ) {
         const { handleTaskControlCommand } = await import(
           "./commands/task-control"
         );

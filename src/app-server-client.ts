@@ -23,6 +23,10 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
+  SubagentMessageCommand,
+  SubagentMessageResponse,
+  SubagentStopCommand,
+  SubagentStopResponse,
   SyncCommand,
   SyncResponseMessage,
   WsProtocolCommand,
@@ -515,6 +519,54 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is LaunchSubagentResponse =>
           message.type === "launch_subagent_response",
+      },
+    );
+  }
+
+  sendSubagentMessage(
+    command: Omit<SubagentMessageCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<SubagentMessageResponse>,
+      "predicate"
+    > = {},
+  ): Promise<SubagentMessageResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "subagent_message",
+        request_id:
+          command.request_id ?? this.nextRequestId("subagent-message"),
+      },
+      {
+        ...options,
+        predicate: (message): message is SubagentMessageResponse =>
+          message.type === "subagent_message_response",
+      },
+    );
+  }
+
+  stopSubagent(
+    command: Omit<SubagentStopCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<SubagentStopResponse>,
+      "predicate"
+    > = {},
+  ): Promise<SubagentStopResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "subagent_stop",
+        request_id: command.request_id ?? this.nextRequestId("subagent-stop"),
+      },
+      {
+        ...options,
+        predicate: (message): message is SubagentStopResponse =>
+          message.type === "subagent_stop_response" &&
+          message.agent_id === command.agent_id,
       },
     );
   }
