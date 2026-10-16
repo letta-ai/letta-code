@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import * as gitTimeout from "@/agent/memory-git-timeout";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   getMemfsGitProxyRewriteConfig,
@@ -543,7 +544,6 @@ export function buildNonInteractiveGitEnv(
 }
 
 /** Run git in the given directory, passing a token as an auth header when provided. */
-const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
 const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
 
 export async function runGit(
@@ -575,7 +575,7 @@ export async function runGit(
   const loggableCommand = redactGitAuthInText(loggableArgs.join(" "));
   debugLog("memfs-git", `git ${loggableCommand} (in ${cwd})`);
 
-  const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
+  const timeoutMs = options?.timeoutMs ?? gitTimeout.defaultMs(args[0]);
   let result: Awaited<ReturnType<typeof execFile>>;
   try {
     result = await execFile("git", allArgs, {
@@ -585,7 +585,7 @@ export async function runGit(
       timeout: timeoutMs,
     });
   } catch (error) {
-    throw redactGitAuthError(error);
+    throw redactGitAuthError(gitTimeout.describe(error, args[0], timeoutMs));
   }
 
   return {
