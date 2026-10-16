@@ -28,7 +28,9 @@ show_permissions() {
   echo -e "${color}${BOLD}$label${RESET}"
   echo -e "${DIM}$file${RESET}"
 
-  if [ -f "$file" ]; then
+  if [ -f "$file" ] && ! jq empty "$file" >/dev/null 2>&1; then
+    echo -e "  ${RED}(error: not valid JSON)${RESET}"
+  elif [ -f "$file" ]; then
     local allow=$(jq -r '.permissions.allow // [] | .[]' "$file" 2>/dev/null)
     local deny=$(jq -r '.permissions.deny // [] | .[]' "$file" 2>/dev/null)
     local ask=$(jq -r '.permissions.ask // [] | .[]' "$file" 2>/dev/null)
