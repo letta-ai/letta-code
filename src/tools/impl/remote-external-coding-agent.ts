@@ -503,6 +503,7 @@ export async function stopRemoteExternalCodingAgent(
   params: Omit<RemoteExternalCodingAgentControl, "message" | "toolCallId">,
   deps: RemoteExternalCodingAgentControlDeps = {},
 ): Promise<{ stopped: boolean }> {
+  const requestId = `subagent-stop-${randomUUID()}`;
   const { target, client } = await connectQualifiedTarget(
     params.agentId,
     params.parentScope,
@@ -510,6 +511,7 @@ export async function stopRemoteExternalCodingAgent(
   );
   try {
     const response = await client.stopSubagent({
+      request_id: requestId,
       runtime: {
         agent_id: params.parentScope.agentId,
         conversation_id: params.parentScope.conversationId,
@@ -534,6 +536,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   taskId?: string;
   outputFile?: string;
 }> {
+  const requestId = `subagent-message-${randomUUID()}`;
   const { target, client } = await connectQualifiedTarget(
     params.agentId,
     params.parentScope,
@@ -563,6 +566,7 @@ export async function sendRemoteExternalCodingAgentMessage(
   let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
   try {
     response = await client.sendSubagentMessage({
+      request_id: requestId,
       runtime: {
         agent_id: params.parentScope.agentId,
         conversation_id: params.parentScope.conversationId,

@@ -110,6 +110,64 @@ describe("remote external subagent control", () => {
     expect(second).toEqual(first);
   });
 
+  test("delivers the same request ID from different parents", async () => {
+    const { parent: firstParent } = fixture();
+    const secondRuntime = { agent_id: "agent-b", conversation_id: "conv-b" };
+    const secondParent = createConversationRuntime(
+      createRuntime(),
+      secondRuntime.agent_id,
+      secondRuntime.conversation_id,
+    );
+    registerSubagent(
+      "subagent-2",
+      "claude-code",
+      "Other work",
+      "call-2",
+      true,
+      false,
+      {
+        agentId: secondRuntime.agent_id,
+        conversationId: secondRuntime.conversation_id,
+      },
+    );
+    updateSubagent("subagent-2", { agentId: nativeId, status: "running" });
+    backgroundTasks.set("task-2", {
+      description: "Other work",
+      subagentType: "claude-code",
+      subagentId: "subagent-2",
+      status: "running",
+      startTime: new Date(),
+      outputFile: "/tmp/out-2",
+      abortController: new AbortController(),
+    });
+    let calls = 0;
+    const sendClaude = async () => {
+      calls += 1;
+      return { mode: "steered" as const, sessionId: nativeId };
+    };
+    const command = {
+      type: "subagent_message" as const,
+      request_id: "same-request",
+      agent_id: nativeId,
+      message: "Continue",
+    };
+
+    const [first, second] = await Promise.all([
+      handleSubagentMessageCommand({ ...command, runtime }, firstParent, {
+        sendClaude,
+      }),
+      handleSubagentMessageCommand(
+        { ...command, runtime: secondRuntime },
+        secondParent,
+        { sendClaude },
+      ),
+    ]);
+
+    expect(calls).toBe(2);
+    expect(first).toMatchObject({ success: true });
+    expect(second).toMatchObject({ success: true });
+  });
+
   test("tracks resumed work with the caller tool call ID", async () => {
     const { parent } = fixture();
     let tracked: Record<string, unknown> | undefined;

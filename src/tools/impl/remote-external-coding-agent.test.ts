@@ -611,11 +611,13 @@ describe("remote external coding agent control", () => {
       ),
     ).toEqual({ stopped: true });
     expect(computer.messages[0]).toMatchObject({
+      request_id: expect.stringMatching(/^subagent-message-[0-9a-f-]{36}$/),
       runtime,
       agent_id: "claude_11111111-1111-4111-8111-111111111111",
       message: "Continue",
     });
     expect(computer.stops[0]).toMatchObject({
+      request_id: expect.stringMatching(/^subagent-stop-[0-9a-f-]{36}$/),
       runtime,
       agent_id: "claude_11111111-1111-4111-8111-111111111111",
     });

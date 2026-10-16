@@ -32,6 +32,15 @@ const responses = new Map<
   { expiresAt: number; response: Promise<SubagentMessageResponse> }
 >();
 
+function dedupeKey(command: SubagentMessageCommand): string {
+  return JSON.stringify([
+    command.runtime.agent_id,
+    command.runtime.conversation_id,
+    command.agent_id,
+    command.request_id,
+  ]);
+}
+
 function finishUntrackedNativeCapture(
   completion: Promise<unknown>,
   reservation: NativeSessionCaptureReservation | undefined,
@@ -93,10 +102,11 @@ export async function handleSubagentMessageCommand(
   } = {},
 ): Promise<SubagentMessageResponse> {
   const now = (deps.now ?? Date.now)();
+  const key = dedupeKey(command);
   for (const [id, cached] of responses) {
     if (cached.expiresAt <= now) responses.delete(id);
   }
-  const cached = responses.get(command.request_id);
+  const cached = responses.get(key);
   if (cached) return cached.response;
 
   const response = (async (): Promise<SubagentMessageResponse> => {
@@ -198,16 +208,13 @@ export async function handleSubagentMessageCommand(
       };
     }
   })();
-  responses.set(command.request_id, {
+  responses.set(key, {
     expiresAt: now + DEDUPE_TTL_MS,
     response,
   });
   const result = await response;
-  if (
-    !result.success &&
-    responses.get(command.request_id)?.response === response
-  )
-    responses.delete(command.request_id);
+  if (!result.success && responses.get(key)?.response === response)
+    responses.delete(key);
   return result;
 }
 
