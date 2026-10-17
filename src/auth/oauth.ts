@@ -9,10 +9,55 @@ import { trackBoundaryError } from "@/telemetry/error-reporting";
 
 export const LETTA_CLOUD_API_URL = "https://api.letta.com";
 
+const DEFAULT_AUTH_BASE_URL = "https://app.letta.com";
+
+let hasWarnedAboutInvalidAuthBaseUrl = false;
+
+/**
+ * Resolves the base URL for OAuth device-flow endpoints (device code,
+ * token, revoke). Defaults to app.letta.com; branded surfaces (e.g. Dream)
+ * provision LETTA_AUTH_BASE_URL so device login stays on that brand's auth
+ * host. The issued credential is the same Letta Cloud token either way.
+ */
+export function resolveAuthBaseUrl(): string {
+  const override = process.env.LETTA_AUTH_BASE_URL?.trim();
+  if (!override) {
+    return DEFAULT_AUTH_BASE_URL;
+  }
+
+  let warning: string | null = null;
+  try {
+    const url = new URL(override);
+    const isLocalhost =
+      url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (
+      url.protocol === "https:" ||
+      (url.protocol === "http:" && isLocalhost)
+    ) {
+      // Normalize to the origin so paths/query in the override cannot
+      // corrupt endpoint construction.
+      return url.origin;
+    }
+    warning = "must be an https origin (http is allowed for localhost)";
+  } catch {
+    warning = "is not a valid URL";
+  }
+
+  if (!hasWarnedAboutInvalidAuthBaseUrl) {
+    hasWarnedAboutInvalidAuthBaseUrl = true;
+    console.warn(
+      `Ignoring invalid LETTA_AUTH_BASE_URL (${JSON.stringify(override)}): ${warning}. Falling back to ${DEFAULT_AUTH_BASE_URL}.`,
+    );
+  }
+  return DEFAULT_AUTH_BASE_URL;
+}
+
 export const OAUTH_CONFIG = {
   clientId: "ci-let-724dea7e98f4af6f8f370f4b1466200c",
   clientSecret: "", // Not needed for device code flow
-  authBaseUrl: "https://app.letta.com",
+  get authBaseUrl() {
+    return resolveAuthBaseUrl();
+  },
   apiBaseUrl: LETTA_CLOUD_API_URL,
 } as const;
 
