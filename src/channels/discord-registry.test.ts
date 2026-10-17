@@ -593,6 +593,51 @@ describe("discord channel registry", () => {
     expect(deliveries).toHaveLength(1);
   });
 
+  test("passes the account permission mode on every Discord DM delivery", async () => {
+    clearChannelAccountStores();
+    __testOverrideLoadChannelAccounts(() => [
+      {
+        channel: "discord",
+        accountId: "discord-bot",
+        enabled: true,
+        token: "discord-token",
+        agentId: "agent-1",
+        defaultPermissionMode: "unrestricted",
+        dmPolicy: "open",
+        allowedUsers: [],
+        createdAt: "2026-04-11T00:00:00.000Z",
+        updatedAt: "2026-04-11T00:00:00.000Z",
+      },
+    ]);
+
+    const { ChannelRegistry } = await import("@/channels/registry");
+    const registry = new ChannelRegistry();
+    const adapter = createAdapter();
+    registry.registerAdapter(adapter);
+    const deliveries: Array<{ defaultPermissionMode?: string }> = [];
+    registry.setMessageHandler((delivery) => {
+      deliveries.push(delivery);
+    });
+    registry.setReady();
+
+    for (const messageId of ["dm-msg-1", "dm-msg-2"]) {
+      await adapter.onMessage?.(
+        createInboundMessage({
+          chatId: "dm-1",
+          threadId: null,
+          chatType: "direct",
+          isMention: false,
+          messageId,
+        }),
+      );
+    }
+
+    expect(deliveries).toHaveLength(2);
+    for (const delivery of deliveries) {
+      expect(delivery.defaultPermissionMode).toBe("unrestricted");
+    }
+  });
+
   test("emits standard permission mode when Discord creates a conversation", async () => {
     clearChannelAccountStores();
     __testOverrideLoadChannelAccounts(() => [
