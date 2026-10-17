@@ -54,6 +54,45 @@ test("Glob within working directory is auto-allowed", () => {
   expect(result.decision).toBe("allow");
 });
 
+test("Read in sibling directory with shared name prefix is not auto-allowed", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  const result = checkPermission(
+    "Read",
+    { file_path: "/project-secrets/credentials.txt" },
+    { allow: [], deny: [], ask: [] },
+    "/project",
+  );
+
+  // Regression test: a bare startsWith() check treats "/project-secrets/..."
+  // as inside "/project", auto-allowing tools outside the working directory.
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("Read in sibling of additionalDirectories with shared prefix is not auto-allowed", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  const result = checkPermission(
+    "Read",
+    { file_path: "/data-other/secret.txt" },
+    { allow: [], deny: [], ask: [], additionalDirectories: ["/data"] },
+    "/project",
+  );
+
+  expect(result.reason).toBe("Default behavior for tool");
+});
+
+test("Read in a real subdirectory is still auto-allowed", () => {
+  if (process.platform === "win32") return; // Skip on Windows - Unix paths
+  const result = checkPermission(
+    "Read",
+    { file_path: "/project/src/index.ts" },
+    { allow: [], deny: [], ask: [] },
+    "/project",
+  );
+
+  expect(result.decision).toBe("allow");
+  expect(result.reason).toBe("Within working directory");
+});
+
 // ============================================================================
 // Long Command Caching Tests
 // ============================================================================

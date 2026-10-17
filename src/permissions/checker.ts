@@ -611,6 +611,23 @@ function checkPermissionForEngine(
 }
 
 /**
+ * True when `path` is `dir` itself or a path inside it.
+ * A bare startsWith() check is not enough: "/project-secrets/x" starts with
+ * "/project" but is not inside it.
+ */
+function isPathWithinDirectory(path: string, dir: string): boolean {
+  // Normalize separators so Windows backslash paths compare correctly;
+  // a bare startsWith() check is not enough either way:
+  // "/project-secrets/x" starts with "/project" but is not inside it.
+  const normalizedPath = resolve(path).replace(/\\/g, "/");
+  const normalizedDir = resolve(dir).replace(/\\/g, "/");
+  const prefix = normalizedDir.endsWith("/")
+    ? normalizedDir
+    : `${normalizedDir}/`;
+  return normalizedPath === normalizedDir || normalizedPath.startsWith(prefix);
+}
+
+/**
  * Check if file path is within allowed directories
  * (working directory + additionalDirectories)
  */
@@ -622,7 +639,7 @@ function isWithinAllowedDirectories(
   const absolutePath = resolve(workingDirectory, filePath);
 
   // Check if within working directory
-  if (absolutePath.startsWith(workingDirectory)) {
+  if (isPathWithinDirectory(absolutePath, workingDirectory)) {
     return true;
   }
 
@@ -630,7 +647,7 @@ function isWithinAllowedDirectories(
   if (permissions.additionalDirectories) {
     for (const dir of permissions.additionalDirectories) {
       const resolvedDir = resolve(workingDirectory, dir);
-      if (absolutePath.startsWith(resolvedDir)) {
+      if (isPathWithinDirectory(absolutePath, resolvedDir)) {
         return true;
       }
     }
