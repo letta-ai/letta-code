@@ -4,6 +4,7 @@
  */
 import type WebSocket from "ws";
 import { recordMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
+import type { InputCommand } from "@/types/protocol_v2";
 
 type SafeSocketSend = (
   socket: WebSocket,
@@ -12,11 +13,14 @@ type SafeSocketSend = (
   context: string,
 ) => boolean;
 
-type InputAckFrame = {
-  request_id?: string;
+// The originator delivery fields are declared on InputCommand (the wire
+// contract's home in protocol_v2.ts); this view adds the untyped runtime
+// scope the ack path tolerates.
+type InputAckFrame = Pick<
+  InputCommand,
+  "request_id" | "super_run_id" | "mcp_originator_token"
+> & {
   runtime: unknown;
-  super_run_id?: string;
-  mcp_originator_token?: string;
 };
 
 /**
