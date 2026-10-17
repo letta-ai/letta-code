@@ -229,15 +229,29 @@ function deliveryIsAtLeastAsNew(
  *   would otherwise be allowed.
  */
 /**
- * Outcome of recording a delivery (evil-shub round-6 P1). "denied" means
- * the durable admission gate failed closed — the caller MUST NOT ack the
- * frame: Cloud's delivery gate treats an unacked frame as undeliverable
- * and redelivers, retrying the whole admission instead of letting the turn
- * run headerless. "admitted" covers every post-admission outcome (stored,
- * refreshed, create-deferred, tombstoned) — those are idempotent and ack
- * normally. "none" means the frame carried no originator stamp at all.
+ * Outcome of recording a delivery (evil-shub round-6 P1, split in round 8).
+ *
+ * - "denied_retryable": the durable admission gate could not be evaluated
+ *   (degraded authority file, failed transaction). The caller MUST NOT ack
+ *   the frame and MUST NOT commit work for it: Cloud's delivery gate
+ *   treats an unacked frame as undeliverable and redelivers, retrying the
+ *   whole admission once the infrastructure heals.
+ * - "denied_permanent": this exact delivery can never be admitted — a
+ *   stale generation at-or-below the durable floor, a legacy delivery
+ *   beneath a known generation contract, a headerless/terminal run, or a
+ *   malformed generation. Redelivering it would loop forever with zero
+ *   chance of success, so the caller CONSUMES the frame (acks or rejects
+ *   it, per path) without installing a token and without running work
+ *   under it.
+ * - "admitted" covers every post-admission outcome (stored, refreshed,
+ *   create-deferred, tombstoned) — those are idempotent and ack normally.
+ * - "none" means the frame carried no originator stamp at all.
  */
-export type McpOriginatorDeliveryVerdict = "admitted" | "denied" | "none";
+export type McpOriginatorDeliveryVerdict =
+  | "admitted"
+  | "denied_retryable"
+  | "denied_permanent"
+  | "none";
 
 export function recordMcpOriginatorDelivery(
   frame: unknown,
@@ -248,15 +262,22 @@ export function recordMcpOriginatorDelivery(
   if (delivery.malformedGeneration) {
     // The frame carried a generation that failed shape validation. Treating
     // it as a legacy delivery would admit a token beneath the generation
-    // contract, so deny fail-closed: the caller suppresses the ack and the
-    // producer redelivers a well-formed frame.
+    // contract, so deny fail-closed. The denial is PERMANENT for this frame
+    // (the durable floor was never bumped for it, so a later well-formed
+    // delivery still admits normally): redelivering the same malformed
+    // bytes would loop forever. Log only the wire value's TYPE (and string
+    // length), never the raw content — it is untrusted producer data and
+    // could itself carry a bearer-shaped payload (evil-shub round-8 P1).
+    const rawGeneration = (frame as { mcp_originator_generation?: unknown })
+      ?.mcp_originator_generation;
     console.error(
-      `[MCP originator] run ${delivery.superRunId}: denying delivery with malformed generation ${String(
-        (frame as { mcp_originator_generation?: unknown })
-          ?.mcp_originator_generation,
-      )}`,
+      `[MCP originator] run ${delivery.superRunId}: denying delivery with malformed generation (type=${typeof rawGeneration}${
+        typeof rawGeneration === "string"
+          ? ` length=${rawGeneration.length}`
+          : ""
+      })`,
     );
-    return "denied";
+    return "denied_permanent";
   }
   // Atomic durable admission (evil-shub round-5 P1): gate + floor bump in
   // ONE locked transaction, consulted BEFORE the volatile entry check so an
@@ -271,8 +292,12 @@ export function recordMcpOriginatorDelivery(
   // pass the gate and recreate the revoked entry once the proof path
   // recovers. A failed durable write denies admission entirely — the caller
   // must not ACK (redelivery retries the whole admission).
-  if (!admitMcpOriginatorDelivery(delivery.superRunId, delivery.generation)) {
-    return "denied";
+  const admission = admitMcpOriginatorDelivery(
+    delivery.superRunId,
+    delivery.generation,
+  );
+  if (!admission.admitted) {
+    return admission.permanent ? "denied_permanent" : "denied_retryable";
   }
   const existing = entriesBySuperRunId.get(delivery.superRunId);
   if (delivery.token) {
@@ -323,6 +348,43 @@ export function recordMcpOriginatorDelivery(
     stopMcpOriginatorKeepalive(delivery.superRunId);
     return "admitted";
   }
+}
+
+/**
+ * Pre-commit admission gate (evil-shub round-8 P1): evaluates ONLY the
+ * durable admission half of recordMcpOriginatorDelivery — parse, malformed
+ * check, and the atomic durable admit (which bumps the generation floor) —
+ * without touching the volatile token store. The input router runs this
+ * BEFORE the durable input commit/enqueue/start so a denied frame never
+ * commits work it cannot be authorized for; the volatile store install
+ * still happens in recordMcpOriginatorDelivery at ack time (its re-run of
+ * the same admission is idempotent).
+ */
+export function gateMcpOriginatorDeliveryAdmission(
+  frame: unknown,
+): McpOriginatorDeliveryVerdict {
+  const delivery = readMcpOriginatorDelivery(frame);
+  if (!delivery.superRunId) return "none";
+  if (delivery.malformedGeneration) {
+    const rawGeneration = (frame as { mcp_originator_generation?: unknown })
+      ?.mcp_originator_generation;
+    console.error(
+      `[MCP originator] run ${delivery.superRunId}: pre-commit gate denying delivery with malformed generation (type=${typeof rawGeneration}${
+        typeof rawGeneration === "string"
+          ? ` length=${rawGeneration.length}`
+          : ""
+      })`,
+    );
+    return "denied_permanent";
+  }
+  const admission = admitMcpOriginatorDelivery(
+    delivery.superRunId,
+    delivery.generation,
+  );
+  if (!admission.admitted) {
+    return admission.permanent ? "denied_permanent" : "denied_retryable";
+  }
+  return "admitted";
 }
 
 /**

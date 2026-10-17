@@ -53,6 +53,7 @@ const defaultVerify: VerifyFn = async (token, signal) =>
 
 let verifyImpl: VerifyFn = defaultVerify;
 let intervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS;
+let verifyTimeoutMs = VERIFY_TIMEOUT_MS;
 
 type KeepaliveEntry = {
   /** Undefined in tests, where ticks are driven manually and no timer fires. */
@@ -107,25 +108,19 @@ async function runKeepaliveTick(superRunId: string): Promise<void> {
   }
   entry.ticking = true;
   try {
-    const result = await verifyImpl(
-      token,
-      AbortSignal.timeout(VERIFY_TIMEOUT_MS),
-    );
+    const result = await verifyWithHardBound(token, verifyTimeoutMs);
+    // Exact-token gate (evil-shub round-6 P1, extended round-8): the token
+    // was captured BEFORE the await, and a fresh delivery may have
+    // installed a newer token while the request was in flight (the producer
+    // re-mints per delivery and revokes the prior one). A stale verdict —
+    // valid OR invalid — belongs to the superseded token: touch NOTHING.
+    // The replacement was installed with a fresh failure budget and is
+    // verified on its own tick.
+    if (entry.hooks?.getToken() !== token) {
+      return;
+    }
     entry.consecutiveFailures = 0;
     if (!result.valid) {
-      // Stale-verdict guard (evil-shub round-6 P1): the token was captured
-      // BEFORE the await, and a fresh delivery may have installed a newer
-      // token while the request was in flight (the producer re-mints per
-      // delivery and revokes the prior one — so the OLD token's
-      // { valid: false } is expected and must never withdraw the NEW one).
-      // Withdraw only when the store still holds exactly the verified token.
-      const current = entry.hooks?.getToken();
-      if (current !== token) {
-        // Verdict belongs to a superseded token; the fresh token is
-        // verified on its own tick. The failure counter was already reset
-        // by startMcpOriginatorKeepalive at install.
-        return;
-      }
       // The server denies this token (revoked, fenced, or aged past its
       // ceiling): withdraw locally so the turn continues headerless instead
       // of spending a dead header, and stop renewing.
@@ -178,6 +173,49 @@ function nextDelayMs(consecutiveFailures: number): number {
     lastDelay ??
     intervalMs
   );
+}
+
+/**
+ * Hard time bound on one verify call (evil-shub round-8 P1). The verify
+ * path passes an AbortSignal, but apiRequest may perform an OAuth token
+ * refresh pre-fetch that never observes the signal — a hung refresh would
+ * otherwise await forever inside the tick, hold the tick guard
+ * (ticking=true), and silently stop ALL renewal until the token expired.
+ * Any settlement after the deadline is discarded; both handlers are
+ * attached from the start so a late rejection cannot surface as an
+ * unhandled rejection.
+ */
+function verifyWithHardBound(
+  token: string,
+  budgetMs: number,
+): Promise<VerifyResult> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(
+        new Error(
+          `[mcp-originator-keepalive] verify exceeded the ${budgetMs}ms hard bound`,
+        ),
+      );
+    }, budgetMs);
+    timer.unref?.();
+    verifyImpl(token, AbortSignal.timeout(budgetMs)).then(
+      (result) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(result);
+      },
+      (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
 }
 
 /**
@@ -250,11 +288,16 @@ export function stopAllMcpOriginatorKeepalives(): void {
 
 /** Test-only: install a verify stub and/or a shorter interval; pass null to restore. */
 export function configureMcpOriginatorKeepaliveForTests(
-  config: { verify?: VerifyFn; intervalMs?: number } | null,
+  config: {
+    verify?: VerifyFn;
+    intervalMs?: number;
+    verifyTimeoutMs?: number;
+  } | null,
 ): void {
   stopAllMcpOriginatorKeepalives();
   verifyImpl = config?.verify ?? defaultVerify;
   intervalMs = config?.intervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS;
+  verifyTimeoutMs = config?.verifyTimeoutMs ?? VERIFY_TIMEOUT_MS;
   // Only tests call this; never let a configured (or restored) environment
   // grow real timers.
   schedulingEnabled = false;
