@@ -81,6 +81,7 @@ import {
   invalidateProcessServices,
   waitForProcessServicesSlot,
 } from "./process-services";
+import { parseServerLifecycleMessage } from "./protocol-inbound";
 import {
   recoverRecordedTurns,
   scheduleRecordedTurnRecovery,
@@ -258,7 +259,6 @@ export async function startConnectedListenerRuntime(
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
-
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
@@ -274,39 +274,49 @@ export async function startConnectedListenerRuntime(
       ? restoreQueuedInputs(runtime)
       : 0;
   runtime.promotePreparedInputTerminals();
-  if (
-    !(await completeInitialConnectionStartup(
-      runtime,
-      startupConnection,
-      transport,
-      opts,
-      options,
-    ))
-  )
-    return;
   const isExactOpenConnection = (): boolean =>
     runtime === getActiveRuntime() &&
     runtime.connections.get(startupConnection.id) === startupConnection &&
     !startupConnection.cancellation.signal.aborted &&
     isListenerTransportOpen(startupConnection.writer);
-  // Establish durable authority before startup ingress can teleport work.
-  if (options.startProcessServices !== false) {
-    runtime.scheduleRecordedRecovery = () =>
-      scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
-    await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
-    restoreQueuedInputs(runtime);
-    if (!isExactOpenConnection()) return;
-  }
-  if (options.activateIngress && !(await options.activateIngress())) return;
-  if (!isExactOpenConnection()) return;
-  startupConnection.ingressReady = true;
-  await opts.onConnectionReady?.(startupConnection);
-  if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
   if (options.startHeartbeat !== false) {
     startListenerPongHeartbeat(runtime, transport, trackListenerError);
   }
-  // Reset backoff on close only after startup completed; a stalled startup
-  // marked earlier would loop at attempt 0 and never hit the retry deadline.
+  const heartbeat =
+    options.startHeartbeat !== false && runtime.heartbeatInterval;
+  let startupComplete = false;
+  try {
+    if (
+      !(await completeInitialConnectionStartup(
+        runtime,
+        startupConnection,
+        transport,
+        opts,
+        options,
+      ))
+    )
+      return;
+    // Establish durable authority before startup ingress can teleport work.
+    if (options.startProcessServices !== false) {
+      runtime.scheduleRecordedRecovery = () =>
+        scheduleRecordedTurnRecovery(runtime, options.recoverRecordedWork);
+      await (options.recoverRecordedWork ?? recoverRecordedTurns)(runtime);
+      restoreQueuedInputs(runtime);
+      if (!isExactOpenConnection()) return;
+    }
+    if (options.activateIngress && !(await options.activateIngress())) return;
+    if (!isExactOpenConnection()) return;
+    startupConnection.ingressReady = true;
+    await opts.onConnectionReady?.(startupConnection);
+    if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
+    startupComplete = true;
+  } finally {
+    if (!startupComplete && heartbeat) {
+      clearInterval(heartbeat);
+      if (runtime.heartbeatInterval === heartbeat)
+        runtime.heartbeatInterval = null;
+    }
+  }
   if (options.updateReconnectState) {
     runtime.hasSuccessfulConnection = true;
   }
@@ -841,6 +851,10 @@ async function connectWithRetry(
   });
 
   socket.on("message", (data: WebSocket.RawData) => {
+    if (parseServerLifecycleMessage(data)?.type === "pong") {
+      if (runtime.socket === socket) runtime.lastPongAt = Date.now();
+      return;
+    }
     pendingStartupFrames.accept(data, handleMessage);
   });
 
