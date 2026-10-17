@@ -202,7 +202,10 @@ export async function createMcpOAuthSessionWithStorage(
     }
 
     callback = options.interactive
-      ? await startOAuthCallbackServer(callbackPort(persisted?.redirectUrl))
+      ? await startOAuthCallbackServer(
+          callbackPort(persisted?.redirectUrl),
+          clientName,
+        )
       : undefined;
     const redirectUrl = callback?.redirectUrl ?? persisted?.redirectUrl;
     if (!redirectUrl) {
