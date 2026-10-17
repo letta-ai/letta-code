@@ -195,7 +195,7 @@ describe("isResumedConversation", () => {
 });
 
 describe("getResumeData", () => {
-  test("surfaces backend 5xx errors instead of empty pending approvals", async () => {
+  test("surfaces backend 5xx errors to recovery callers only", async () => {
     const error = new APIError(
       503,
       { message: "Service unavailable" },
@@ -211,8 +211,18 @@ describe("getResumeData", () => {
     await expect(
       getResumeDataFromBackend(makeAgent(), "conv-unavailable", {
         includeMessageHistory: false,
+        throwOnReadError: true,
       }),
     ).rejects.toBe(error);
+    await expect(
+      getResumeDataFromBackend(makeAgent(), "conv-unavailable", {
+        includeMessageHistory: false,
+      }),
+    ).resolves.toEqual({
+      pendingApproval: null,
+      pendingApprovals: [],
+      messageHistory: [],
+    });
   });
 
   afterEach(() => {

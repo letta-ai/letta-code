@@ -338,6 +338,7 @@ export async function resolveStaleApprovals(
   try {
     resumeData = await getResumeDataImpl(agent, requestedConversationId, {
       includeMessageHistory: false,
+      throwOnReadError: true,
     });
   } catch (err) {
     assertCurrentTurnLease();

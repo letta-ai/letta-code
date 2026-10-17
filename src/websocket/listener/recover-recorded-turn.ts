@@ -507,7 +507,7 @@ export async function recoverRecordedTurns(
           await (deps.resume ?? getResumeDataFromBackend)(
             agent,
             record.conversationId,
-            { includeMessageHistory: false },
+            { includeMessageHistory: false, throwOnReadError: true },
           )
         ).pendingApprovals;
         if (!unchanged()) {
