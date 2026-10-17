@@ -36,6 +36,10 @@ import {
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
 
+export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
+  "remote external worker stopped",
+);
+
 interface ParentScope {
   agentId: string;
   conversationId: string;
@@ -419,6 +423,8 @@ export async function launchRemoteExternalCodingAgent(
             durationMs: final.duration_ms || Date.now() - startedAt,
           } satisfies SubagentResult;
         } catch (error) {
+          const remoteWorkerStopped =
+            signal?.reason === REMOTE_EXTERNAL_WORKER_STOPPED;
           return {
             agentId: parentScope.agentId,
             model,
@@ -427,8 +433,9 @@ export async function launchRemoteExternalCodingAgent(
             error:
               error instanceof RemoteWorkerLostError && !signal?.aborted
                 ? `The ${type} worker on ${computer} is no longer listed: it may have finished while this session was disconnected (results are kept for 30 minutes), or the listener restarted. Check ${computer} or launch it again if the work is still needed.`
-                : // No remote stop command exists yet; the worker keeps running.
-                  `${signal?.aborted ? "Stopped following this subagent" : errorMessage(error)}. The ${type} worker may still be running on ${computer}.`,
+                : remoteWorkerStopped
+                  ? `Stopped the ${type} worker on ${computer}.`
+                  : `${signal?.aborted ? "Stopped following this subagent" : errorMessage(error)}. The ${type} worker may still be running on ${computer}.`,
             durationMs: Date.now() - startedAt,
           } satisfies SubagentResult;
         } finally {
