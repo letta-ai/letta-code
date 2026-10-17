@@ -34,6 +34,7 @@ import {
   stopRemoteExternalCodingAgent,
 } from "./remote-external-coding-agent";
 import { spawnBackgroundSubagentTask } from "./task";
+import { task_stop } from "./task-stop";
 
 const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const originalApiKey = process.env.LETTA_API_KEY;
@@ -474,6 +475,39 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(result).toMatchObject({ success: true, agent_id: null });
     computer.snapshot({ status: "completed", result: "Done" });
     await notified();
+  });
+
+  test("reports whether TaskStop confirmed that the remote worker stopped", async () => {
+    const stoppedComputer = new FakeComputer(() => {
+      queueMicrotask(() =>
+        stoppedComputer.snapshot({
+          agent_id: "claude_11111111-1111-4111-8111-111111111111",
+        }),
+      );
+      return accepted;
+    });
+    const stopped = await launch([stoppedComputer], {}, true, true);
+    if (!stopped.success) throw new Error(stopped.error);
+    expect(
+      await task_stop(
+        { task_id: stopped.task_id },
+        { stopRemoteExternal: async () => ({ stopped: true }) },
+      ),
+    ).toMatchObject({ killed: true });
+    expect((await notified()).text).toContain(
+      "Stopped the claude-code worker on brad-box.",
+    );
+
+    queued.length = 0;
+    const unsupportedComputer = new FakeComputer(() => accepted);
+    const unsupported = await launch([unsupportedComputer]);
+    if (!unsupported.success) throw new Error(unsupported.error);
+    expect(await task_stop({ task_id: unsupported.task_id })).toEqual({
+      killed: true,
+    });
+    expect((await notified()).text).toContain(
+      "The claude-code worker may still be running on brad-box.",
+    );
   });
 
   test("reports a remote failure through the local notification", async () => {
