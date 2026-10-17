@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
 import {
   clearMcpOriginatorTokens,
+  deleteMcpOriginatorToken,
   getMcpOriginatorToken,
   mcpOriginatorTokenCount,
   setMcpOriginatorToken,
@@ -110,18 +111,37 @@ function buildHandler(
 }
 
 function inputFrame(
-  payload: Record<string, unknown>,
+  fields: Record<string, unknown>,
   requestId = "req-1",
 ): Buffer {
+  // The relay contract (letta-cloud #18881): super_run_id and
+  // mcp_originator_token ride the TOP-LEVEL input frame, never inside the
+  // user-message payload — the payload is persisted and bearer material must
+  // stay off durable records. Other fields (e.g. client_message_id) belong
+  // to the payload.
+  const {
+    super_run_id,
+    mcp_originator_token,
+    client_message_id,
+    ...payloadFields
+  } = fields;
   return Buffer.from(
     JSON.stringify({
       type: "input",
       request_id: requestId,
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      ...(super_run_id !== undefined ? { super_run_id } : {}),
+      ...(mcp_originator_token !== undefined ? { mcp_originator_token } : {}),
       payload: {
         kind: "create_message",
-        messages: [{ role: "user", content: "hello" }],
-        ...payload,
+        messages: [
+          {
+            role: "user",
+            content: "hello",
+            ...(client_message_id !== undefined ? { client_message_id } : {}),
+          },
+        ],
+        ...payloadFields,
       },
     }),
   );
@@ -152,10 +172,119 @@ describe("MCP originator token ingestion", () => {
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
     await waitFor(() => processed.length === 1);
     expect(processed[0]?.mcpOriginatorSuperRunId).toBe("sr-1");
+    expect(processed[0]?.mcpOriginatorTokenPresent).toBe(true);
     // The IncomingMessage rides the durable input ledger: the token value
     // must never appear anywhere on it.
     expect(JSON.stringify(processed[0])).not.toContain("mst_one.secret-a");
     expect("mcpOriginatorToken" in (processed[0] ?? {})).toBe(false);
+  });
+
+  test("payload-carried delivery fields are ignored; only the top-level frame counts", async () => {
+    // The relay contract puts the delivery on the top-level input frame.
+    // Fields smuggled inside the user-message payload (which is persisted)
+    // must be ignored, not honored (letta-cloud #18881 shape).
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const processed: IncomingMessage[] = [];
+    const handleMessage = buildHandler(listener, socket, processed);
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "req-payload-smuggle",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            super_run_id: "sr-smuggle",
+            mcp_originator_token: "mst_smuggle.secret-x",
+            messages: [{ role: "user", content: "hello" }],
+          },
+        }),
+      ),
+    );
+
+    await waitFor(() => processed.length === 1);
+    expect(processed[0]?.mcpOriginatorSuperRunId).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-smuggle")).toBeUndefined();
+    expect(mcpOriginatorTokenCount()).toBe(0);
+  });
+
+  test("a duplicate re-ack refreshes the live run's re-minted token", async () => {
+    // ACK loss makes the relay redeliver the SAME input bearing a freshly
+    // minted token (the prior token is revoked server-side); the refresh
+    // must update the live entry in place or the turn's next tool call
+    // would present a dead token (evil-shub r4300657683).
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const processed: IncomingMessage[] = [];
+    const handleMessage = buildHandler(listener, socket, processed);
+
+    await handleMessage(
+      inputFrame({
+        client_message_id: "m-1",
+        super_run_id: "sr-1",
+        mcp_originator_token: "mst_one.secret-a",
+      }),
+    );
+    await waitFor(() => processed.length === 1);
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+
+    await handleMessage(
+      inputFrame(
+        {
+          client_message_id: "m-1",
+          super_run_id: "sr-1",
+          mcp_originator_token: "mst_one.secret-b",
+        },
+        "req-2",
+      ),
+    );
+    await waitFor(() => getMcpOriginatorToken("sr-1") === "mst_one.secret-b");
+    // The duplicate created no new work.
+    expect(processed.length).toBe(1);
+  });
+
+  test("a duplicate re-ack after finalizer retirement cannot resurrect the token", async () => {
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const processed: IncomingMessage[] = [];
+    const handleMessage = buildHandler(listener, socket, processed);
+
+    await handleMessage(
+      inputFrame({
+        client_message_id: "m-1",
+        super_run_id: "sr-1",
+        mcp_originator_token: "mst_one.secret-a",
+      }),
+    );
+    await waitFor(() => processed.length === 1);
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+
+    // The owning turn reaches a terminal state and its finalizer retires the
+    // token; the late duplicate must not re-insert an orphaned token.
+    deleteMcpOriginatorToken("sr-1");
+    await handleMessage(
+      inputFrame(
+        {
+          client_message_id: "m-1",
+          super_run_id: "sr-1",
+          mcp_originator_token: "mst_one.secret-b",
+        },
+        "req-2",
+      ),
+    );
+    // Give the duplicate path a chance to (wrongly) record.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    expect(mcpOriginatorTokenCount()).toBe(0);
+    expect(processed.length).toBe(1);
   });
 
   test("stays inert when the delivery carries no token", async () => {
@@ -240,12 +369,16 @@ describe("MCP originator batch resolution", () => {
     runtime: ReturnType<typeof getOrCreateScopedRuntime>,
     content: string,
     mcpOriginatorSuperRunId?: string,
+    mcpOriginatorTokenPresent?: boolean,
   ): void {
     enqueueInboundUserMessage(runtime, {
       type: "message",
       agentId: "agent-1",
       conversationId: "conv-1",
       ...(mcpOriginatorSuperRunId ? { mcpOriginatorSuperRunId } : {}),
+      ...(mcpOriginatorSuperRunId
+        ? { mcpOriginatorTokenPresent: Boolean(mcpOriginatorTokenPresent) }
+        : {}),
       messages: [{ role: "user", content }],
     });
   }
@@ -336,6 +469,39 @@ describe("MCP originator batch resolution", () => {
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
     expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
     expect(getMcpOriginatorToken("sr-unrelated")).toBe("mst_three.secret-c");
+  });
+
+  test("token-bearing and tokenless deliveries for the SAME run vote distinct", () => {
+    // The merge vote is on (super run id, token presence), not the id alone:
+    // the tokenless delivery is a stale pre-mint frame whose accept cleared
+    // the run's authority, so merging it with the fresh token-bearing one
+    // would let stale work borrow the fresh token (evil-shub r4300657667).
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    enqueueMessage(runtime, "stale pre-mint frame", "sr-1", false);
+    enqueueMessage(runtime, "fresh token-bearing frame", "sr-1", true);
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    // The mixed batch also retires the constituent run's held token.
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+  });
+
+  test("an id-unanimous batch with uniform token presence stays attributed", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    enqueueMessage(runtime, "first", "sr-1", true);
+    enqueueMessage(runtime, "second", "sr-1", true);
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
   });
 
   test("an originator-unanimous batch keeps its run's held token", () => {

@@ -38,18 +38,4 @@ export interface InputCreateMessagePayload {
   /** Exclude interactive tools even when included by preferences or this input. */
   exclude_interactive_tools?: boolean;
   response_format?: Record<string, unknown>;
-  /**
-   * Cloud super run this input belongs to, when the relay delivers one. The
-   * listener keeps no run-scoped state beyond the MCP originator token keyed
-   * by this id; it is not secret and may ride durable listener records.
-   */
-  super_run_id?: string;
-  /**
-   * Short-lived MCP originator token for attributed super runs (absent when
-   * unattributed). The listener holds it only in memory keyed by
-   * `super_run_id` and echoes it as the `x-letta-mcp-originator-token`
-   * header on MCP tool-run calls; it is never logged, persisted, or copied
-   * into messages/tool args.
-   */
-  mcp_originator_token?: string;
 }

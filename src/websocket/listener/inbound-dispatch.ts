@@ -40,15 +40,22 @@ export function createIncomingMessage(
   scope: ConversationRuntimeScope,
   payload: InputCreateMessagePayload,
   connectionId?: ListenerConnectionId,
-  terminalConsumerId?: string,
+  frame?: {
+    terminal_consumer_id?: string | null;
+    super_run_id?: unknown;
+    mcp_originator_token?: unknown;
+  },
 ): IncomingMessage {
   // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): the IncomingMessage
   // carries just the super run id — it is persisted by the durable input
-  // ledger, and the token must never touch disk. The token itself reaches the
-  // in-memory store only when the input is ACCEPTED (see
+  // ledger, and the token must never touch disk. The delivery rides the
+  // TOP-LEVEL relay frame (never inside the user-message payload, which is
+  // persisted), so it is read from the frame, not the payload. The token
+  // itself reaches the in-memory store only when the input is ACCEPTED (see
   // recordMcpOriginatorDelivery in message-router's acknowledge path), so
   // rejected/dropped inputs never strand credentials.
-  const mcpOriginator = readMcpOriginatorDelivery(payload);
+  const mcpOriginator = readMcpOriginatorDelivery(frame);
+  const terminalConsumerId = frame?.terminal_consumer_id ?? undefined;
   return {
     type: "message",
     connectionId,
@@ -66,6 +73,9 @@ export function createIncomingMessage(
       : {}),
     ...(mcpOriginator.superRunId
       ? { mcpOriginatorSuperRunId: mcpOriginator.superRunId }
+      : {}),
+    ...(mcpOriginator.superRunId
+      ? { mcpOriginatorTokenPresent: Boolean(mcpOriginator.token) }
       : {}),
     messages: payload.messages,
   };
@@ -88,6 +98,8 @@ export function dispatchInboundMessageWhenReady(params: {
   onInputAccepted?: (result: {
     accepted: boolean;
     disposition?: "started" | "queued";
+    /** True when the accept re-acks an already-admitted input (no new owner). */
+    duplicate?: boolean;
   }) => void;
   forgetQueuedInput?: typeof forgetQueuedInputDisposition;
   enqueueInput?: typeof enqueueInboundUserMessage;
@@ -111,6 +123,7 @@ export function dispatchInboundMessageWhenReady(params: {
   const acknowledgeInput = (result: {
     accepted: boolean;
     disposition?: "started" | "queued";
+    duplicate?: boolean;
   }): void => {
     if (inputAcknowledged) return;
     inputAcknowledged = true;
@@ -146,6 +159,7 @@ export function dispatchInboundMessageWhenReady(params: {
         acknowledgeInput({
           accepted: true,
           disposition: admission.disposition,
+          duplicate: true,
         });
         return;
       }

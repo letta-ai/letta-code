@@ -83,6 +83,7 @@ test("completed input replay survives idle runtime eviction", async () => {
   const acknowledgements: Array<{
     accepted: boolean;
     disposition?: "started" | "queued";
+    duplicate?: boolean;
   }> = [];
 
   dispatchInboundMessageWhenReady({
@@ -132,7 +133,7 @@ test("completed input replay survives idle runtime eviction", async () => {
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
   expect(acknowledgements).toEqual([
     { accepted: true, disposition: "started" },
-    { accepted: true, disposition: "started" },
+    { accepted: true, disposition: "started", duplicate: true },
   ]);
 });
 

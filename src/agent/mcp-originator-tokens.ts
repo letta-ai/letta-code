@@ -1,9 +1,10 @@
 /**
  * In-memory store for MCP originator tokens (USER_SCOPED_MCP_CONNECTIONS).
  *
- * The cloud relay delivers a short-lived originator token on the run-input
- * payload (`mcp_originator_token`, alongside `super_run_id`) when the super
- * run is attributed to a principal. The listener forwards that token as the
+ * The cloud relay delivers a short-lived originator token on the top-level
+ * run-input frame (`mcp_originator_token`, alongside `super_run_id` — never
+ * inside the user-message payload) when the super run is attributed to a
+ * principal. The listener forwards that token as the
  * `x-letta-mcp-originator-token` header on MCP tool-run calls so cloud-api can
  * authorize user-scoped MCP connections on behalf of the originating
  * principal.
@@ -55,7 +56,7 @@ export function mcpOriginatorTokenCount(): number {
 }
 
 /**
- * Extract the originator delivery from an inbound run-input payload.
+ * Extract the originator delivery from an inbound top-level run-input frame.
  *
  * This is the single parse site for the relay contract fields. Wire data is
  * untrusted: present-but-malformed values are treated as absent (the turn
@@ -98,11 +99,29 @@ export function readMcpOriginatorDelivery(payload: unknown): {
  * - id without token: clear any stale token held for the run. A tokenless
  *   redelivery must not silently reuse authority minted for an earlier
  *   delivery of the same super run id.
+ *
+ * `allowCreate: false` (duplicate re-acks and accepted approval/teleport
+ * payloads — accepts that create no new owning turn) restricts the delivery
+ * to refreshing an entry that already exists. Without that gate a duplicate
+ * re-ack arriving AFTER the owning turn's finalizer retired its token would
+ * re-insert an orphaned token that no finalizer will ever clean up, and an
+ * origin-swap deletion would stop being a stable boundary: any late
+ * redelivery could repopulate the deleted key while a cross-origin
+ * continuation is running.
  */
-export function recordMcpOriginatorDelivery(payload: unknown): void {
-  const delivery = readMcpOriginatorDelivery(payload);
+export function recordMcpOriginatorDelivery(
+  frame: unknown,
+  options?: { allowCreate?: boolean },
+): void {
+  const delivery = readMcpOriginatorDelivery(frame);
   if (!delivery.superRunId) return;
   if (delivery.token) {
+    if (
+      options?.allowCreate === false &&
+      !tokensBySuperRunId.has(delivery.superRunId)
+    ) {
+      return;
+    }
     setMcpOriginatorToken(delivery.superRunId, delivery.token);
   } else {
     deleteMcpOriginatorToken(delivery.superRunId);

@@ -9,7 +9,6 @@ import {
 } from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { retrieveResumeState } from "@/agent/ephemeral-conversation";
-import { retireMcpOriginatorTokensOnOriginSwap } from "@/agent/mcp-originator-tokens";
 import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
@@ -74,7 +73,7 @@ import {
   checkpointTurnInputOwnership,
   createTurnDurabilityOwnership,
 } from "./turn-durability-ownership";
-import { createTurnFinalizer } from "./turn-finalizer";
+import { applyTurnOriginSwap, createTurnFinalizer } from "./turn-finalizer";
 import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
@@ -789,10 +788,7 @@ async function handleIncomingMessageInner(
         turnLease,
         turnCorrelation,
         onConsumeQueuedTurn: async (queuedTurn) => {
-          retireMcpOriginatorTokensOnOriginSwap(
-            msg.mcpOriginatorSuperRunId,
-            queuedTurn.mcpOriginatorSuperRunId,
-          );
+          applyTurnOriginSwap(msg, queuedTurn, turnToolContextId);
           durabilityOwnership.recordInput(queuedTurn);
           interruptedRevisionRef.current = await checkpointTurnInputOwnership(
             runtime,
