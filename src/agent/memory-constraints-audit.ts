@@ -18,7 +18,10 @@ export interface InvalidPendingMemory {
 
 type MemoryLayoutPolicy = "legacy-only" | "root-marker" | "shared-memory";
 
-function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
+function memoryLayoutPolicy(
+  memoryDir: string,
+  revision: string,
+): MemoryLayoutPolicy {
   try {
     const commonDir = execFileSync("git", ["rev-parse", "--git-common-dir"], {
       cwd: memoryDir,
@@ -32,7 +35,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
     if (policy === "root-marker") {
       const v2Started = execFileSync(
         "git",
-        ["rev-list", "-n", "1", "HEAD", "--", "MEMORY.md"],
+        ["rev-list", "-n", "1", revision, "--", "MEMORY.md"],
         { cwd: memoryDir, encoding: "utf8" },
       ).trim();
       return v2Started ? "root-marker" : "legacy-only";
@@ -40,7 +43,7 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
   } catch {
     /* Repositories created outside the harness have no persistent policy. */
   }
-  return spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
+  return spawnSync("git", ["cat-file", "-e", `${revision}:MEMORY.md`], {
     cwd: memoryDir,
     stdio: "ignore",
   }).status === 0
@@ -52,25 +55,40 @@ function memoryLayoutPolicy(memoryDir: string): MemoryLayoutPolicy {
 export function validateMemoryConstraintsHead(
   memoryDir: string,
 ): MemoryConstraintsValidationResult {
+  return validateMemoryConstraintsRevision(memoryDir, "HEAD");
+}
+
+/** Audit a fetched revision before replacing any local memory. */
+export function validateMemoryConstraintsRevision(
+  memoryDir: string,
+  revision: string,
+): MemoryConstraintsValidationResult {
   const tempDir = mkdtempSync(join(tmpdir(), "letta-memory-audit-"));
   const indexPath = join(tempDir, "index");
   const validatorPath = join(tempDir, "validator.cjs");
   const env = { ...process.env, GIT_INDEX_FILE: indexPath };
 
   try {
-    execFileSync("git", ["read-tree", "HEAD"], {
+    execFileSync("git", ["read-tree", revision], {
       cwd: memoryDir,
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const layoutPolicy = memoryLayoutPolicy(memoryDir);
+    const layoutPolicy = memoryLayoutPolicy(memoryDir, revision);
     writeFileSync(validatorPath, MEMORY_CONSTRAINTS_VALIDATOR_SCRIPT, "utf8");
     // Run the validator with this process's own runtime, like the pre-commit
     // hook does. Desktop installs ship no system `node`, so a PATH lookup fails
     // and every audit would report invalid memory.
     const result = spawnSync(
       process.execPath,
-      [validatorPath, "--layout", layoutPolicy, "--audit"],
+      [
+        validatorPath,
+        "--layout",
+        layoutPolicy,
+        "--audit",
+        "--revision",
+        revision,
+      ],
       {
         cwd: memoryDir,
         encoding: "utf8",

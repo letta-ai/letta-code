@@ -223,13 +223,14 @@ export async function completeMemoryConflictRepair(
  * The attempt never ran (launch failed, cancelled, nothing left to repair);
  * let the next turn retry. Only the record for `token` is removed, so a
  * worker forgetting its attempt after the lease is gone cannot drop a newer
- * claim.
+ * claim. Pass null only for an explicit reset under the checkout lease.
  */
 export async function clearMemoryConflictRepair(
   memoryDir: string,
-  token: string,
+  token: string | null,
 ): Promise<void> {
   await transition(memoryDir, async (path, attempt) => {
-    if (attempt.token === token) await rm(path, { force: true });
+    if (token === null || attempt.token === token)
+      await rm(path, { force: true });
   });
 }

@@ -44,6 +44,8 @@ const DEFAULT_CONFIG = ${JSON.stringify(DEFAULT_MEMORY_CONSTRAINTS_CONFIG)};
 const CONFIG_UPDATE_ENV = ${JSON.stringify(MEMORY_CONSTRAINTS_UPDATE_ENV)};
 const LAYOUT_POLICY_FILE = "letta-memory-layout-policy";
 const AUDIT_MODE = process.argv.includes("--audit");
+const revisionArgument = process.argv.indexOf("--revision");
+const REVISION = AUDIT_MODE && revisionArgument >= 0 ? process.argv[revisionArgument + 1] : "HEAD";
 let activeLayoutPolicy = "legacy-only";
 
 function runGit(args, encoding = "utf8") {
@@ -132,12 +134,13 @@ async function main() {
   const configChanged = !gitSucceeds([
     "diff",
     "--cached",
+    ...(AUDIT_MODE ? [REVISION] : []),
     "--quiet",
     "--",
     CONFIG_PATH,
   ]);
-  const acceptedRevision = gitSucceeds(["rev-parse", "--verify", "HEAD"])
-    ? runGit(["rev-parse", "HEAD"]).trim()
+  const acceptedRevision = gitSucceeds(["rev-parse", "--verify", REVISION])
+    ? runGit(["rev-parse", REVISION]).trim()
     : null;
   if (configChanged && process.env[CONFIG_UPDATE_ENV] !== "1") {
     errors.push(

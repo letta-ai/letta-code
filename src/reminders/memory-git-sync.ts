@@ -53,11 +53,15 @@ ${SYSTEM_REMINDER_CLOSE}`;
 /**
  * Reminders for the primary's own post-turn MemFS sync. Repairable states are
  * normally handed to a background worker. If that worker could not finish,
- * report the failure without assigning repository work to the foreground.
+ * report the failure and offer an explicit reset instead of manual Git repair.
  */
 export function formatMemoryPostTurnSyncReminder(
   result: MemoryPostTurnSyncResult,
+  agentId: string,
 ): string | null {
+  const recovery = result.localOnly
+    ? "Continue the current task and report the blocked memory update. This agent has local-only memory and no hosted copy to reset to."
+    : `Continue the current task and report the blocked memory update. If the user approves discarding local changes and unpushed commits, run \`letta memory reset --agent ${agentId} --force\`. This saves a local backup and restores the latest hosted memory without changing it. Do not reset without the user's approval.`;
   if (result.status === "conflict") {
     return `${SYSTEM_REMINDER_OPEN}
 MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase that automatic repair could not resolve.
@@ -65,7 +69,7 @@ MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase tha
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Background repair could not resolve this state. Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+${recovery}
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -76,7 +80,7 @@ MEMORY REPAIR FAILED: A background worker could not produce memory history that 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+${recovery}
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -204,7 +208,7 @@ export async function runPostTurnMemorySync(
             (await repairMemory({ ...params, result }));
           const reminder = repairInProgress
             ? formatMemoryRepairInProgressReminder(result)
-            : formatMemoryPostTurnSyncReminder(result);
+            : formatMemoryPostTurnSyncReminder(result, params.agentId);
           if (reminder) {
             params.enqueueReminder?.(reminder);
             await params.emitWarning?.(reminder);
