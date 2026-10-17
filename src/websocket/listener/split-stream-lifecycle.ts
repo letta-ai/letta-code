@@ -97,6 +97,21 @@ function terminateSocketIfOpenOrConnecting(socket: WebSocket | null): void {
   }
 }
 
+const MAX_CLOSE_REASON_LENGTH = 120;
+
+export function formatListenerSocketClose(
+  channel: "control" | "stream",
+  code: number,
+  reason: Buffer,
+): string {
+  const text = reason.toString();
+  const truncated =
+    text.length > MAX_CLOSE_REASON_LENGTH
+      ? `${text.slice(0, MAX_CLOSE_REASON_LENGTH)}...`
+      : text;
+  return `${channel} socket closed (code=${code}, reason=${JSON.stringify(truncated)})`;
+}
+
 export function isCurrentSocketPair(
   runtime: ListenerRuntime,
   controlSocket: WebSocket,
@@ -122,7 +137,7 @@ export function shouldHandleControlSocketClose(
   );
 }
 
-function terminateCurrentSocketPair(
+export function terminateCurrentSocketPair(
   runtime: ListenerRuntime,
   controlSocket: WebSocket,
   streamSocket: WebSocket | null,
@@ -357,8 +372,10 @@ export function attachSplitStreamSocketHandlers(params: {
   runtime: ListenerRuntime;
   streamSocket: WebSocket;
   trackListenerError: TrackListenerError;
+  log?: (message: string) => void;
 }): void {
   params.streamSocket.on("error", (error: Error) => {
+    params.log?.(`stream socket error: ${error.message}`);
     params.trackListenerError(
       "listener_stream_socket_error",
       error,
@@ -368,11 +385,7 @@ export function attachSplitStreamSocketHandlers(params: {
       console.error("[Listen] Stream WebSocket error:", error);
   });
   params.streamSocket.on("close", (code: number, reason: Buffer) => {
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
-      );
-    }
+    params.log?.(formatListenerSocketClose("stream", code, reason));
     terminateControlAfterStreamClose(
       params.runtime,
       params.streamSocket,
