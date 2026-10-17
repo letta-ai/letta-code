@@ -255,6 +255,7 @@ export async function startConnectedListenerRuntime(
   if (!startupConnection || startupConnection.writer !== transport) return;
   sealStartupLogs();
   installExternalToolBridge(runtime);
+  // Avoid recurring lease-held messages when another process owns cron.
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
