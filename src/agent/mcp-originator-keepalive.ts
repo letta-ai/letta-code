@@ -210,7 +210,16 @@ function verifyWithHardBound(
         ),
       );
     }, budgetMs);
-    timer.unref?.();
+    // Deliberately NOT unref'd (evil-shub round-9 P1, Windows shard-6): this
+    // deadline is awaited correctness machinery, not background bookkeeping.
+    // Unref'd, the bound only holds while something else keeps the event
+    // loop alive — on a drained loop (observed: exact-head Windows CI) the
+    // timer never fires and a hung underlying verify hangs the suite until
+    // the job timeout. The timer is cleared on settlement, so referencing
+    // it cannot hold the process open unless the underlying op itself is
+    // hung — exactly the case the bound exists to catch. The renewal
+    // scheduler timers below stay unref'd: they are background bookkeeping
+    // and must not hold the process open.
     verifyImpl(token, AbortSignal.timeout(budgetMs)).then(
       (result) => {
         if (settled) return;
