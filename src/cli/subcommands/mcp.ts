@@ -812,9 +812,18 @@ async function callCatalogTool(
   // When this call runs inside a listener turn attributed to a cloud super
   // run, forward that run's originator token (in-memory store lookup only;
   // the value is never logged here). Unattributed callers omit the header.
-  const originatorToken = getMcpOriginatorToken(
-    getRuntimeContext()?.mcpOriginatorSuperRunId,
-  );
+  const originatorSuperRunId = getRuntimeContext()?.mcpOriginatorSuperRunId;
+  const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
+  if (originatorSuperRunId && !originatorToken) {
+    // The turn is attributed to a super run but holds no token — expected
+    // after a listener restart, when the durable ledger replays an
+    // acknowledged input but the memory-only token store was cleared. The
+    // call proceeds without the header; the server fails closed on any
+    // restricted connection. Surface the loss so it is never silent.
+    console.warn(
+      `[mcp-originator] no originator token held for super run ${originatorSuperRunId}; running tool call unattributed (expected after listener restart)`,
+    );
+  }
   return tool.target.kind === "client"
     ? await tool.target.connection.callTool(tool.target.rawName, args, options)
     : mcpToolResultFromServer(
