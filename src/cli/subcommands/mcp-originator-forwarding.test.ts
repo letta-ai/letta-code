@@ -92,21 +92,38 @@ describe("MCP originator token forwarding", () => {
 
   test("omits the header when no token is held for the active super run", async () => {
     const { deps, requests, runPath } = originatorHarness();
+    // A token held for a DIFFERENT run must neither be attached nor leak
+    // into the miss warning (e.g. after a listener restart replays an
+    // acknowledged input with an empty store).
+    setMcpOriginatorToken("sr-other", "mst_other.secret-do-not-leak");
+    const warnings: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (message?: unknown) => {
+      warnings.push(String(message));
+    };
 
-    await runWithRuntimeContext(
-      { mcpOriginatorSuperRunId: "sr-unattributed" },
-      async () =>
-        callAgentMcpTool(
-          "agent-cloud",
-          "mcp__github__create_issue",
-          { title: "Bug" },
-          deps,
-        ),
-    );
+    try {
+      await runWithRuntimeContext(
+        { mcpOriginatorSuperRunId: "sr-unattributed" },
+        async () =>
+          callAgentMcpTool(
+            "agent-cloud",
+            "mcp__github__create_issue",
+            { title: "Bug" },
+            deps,
+          ),
+      );
+    } finally {
+      console.warn = originalWarn;
+    }
 
     expect(requests).toEqual([
       { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
     ]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("sr-unattributed");
+    expect(warnings[0]).not.toContain("secret-do-not-leak");
+    expect(warnings[0]).not.toContain("mst_");
   });
 
   test("omits the header outside any super run context (plain CLI)", async () => {
