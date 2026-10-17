@@ -94,4 +94,47 @@ describe("TaskStop for remote subagents", () => {
     expect(backgroundTasks.get("task_remote_err")?.status).toBe("running");
     cancel.mockRestore();
   });
+
+  test("sends subagent_stop for a remote external task", async () => {
+    const agentId = "claude_11111111-1111-4111-8111-111111111111@device-1";
+    registerSubagent(
+      "sub_external",
+      "claude-code",
+      "remote external",
+      undefined,
+      true,
+      false,
+      { agentId: "agent-parent", conversationId: "conv-parent" },
+    );
+    updateSubagent("sub_external", { agentId, status: "running" });
+    const abortController = new AbortController();
+    backgroundTasks.set("task_external", {
+      description: "remote external",
+      subagentType: "claude-code",
+      subagentId: "sub_external",
+      status: "running",
+      startTime: new Date(),
+      outputFile: createBackgroundOutputFile("task_external"),
+      abortController,
+      completion: Promise.resolve(),
+      runtimeScope: {
+        agentId: "agent-parent",
+        conversationId: "conv-parent",
+      },
+    });
+    let received: unknown;
+    expect(
+      await task_stop(
+        { task_id: "task_external" },
+        {
+          stopRemoteExternal: async (input) => {
+            received = input;
+            return { stopped: true };
+          },
+        },
+      ),
+    ).toMatchObject({ killed: true });
+    expect(received).toMatchObject({ agentId });
+    expect(abortController.signal.aborted).toBe(true);
+  });
 });

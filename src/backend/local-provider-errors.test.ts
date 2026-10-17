@@ -29,6 +29,32 @@ describe("LocalProviderErrors", () => {
     });
   });
 
+  test("classifies Codex WebSocket 60-minute connection limit as retryable", () => {
+    const error = new Error(
+      "Codex error: Responses websocket connection limit reached (60 minutes). Create a new websocket connection to continue.",
+    );
+
+    expect(isRetryableLocalProviderError(error)).toBe(true);
+    expect(normalizeLocalProviderError(error)).toMatchObject({
+      error_type: "llm_error",
+      retryable: true,
+      stop_reason: "llm_api_error",
+    });
+  });
+
+  test("classifies upstream request buffer limit failures as retryable", () => {
+    const error = new Error(
+      "exceeded request buffer limit while retrying upstream",
+    );
+
+    expect(isRetryableLocalProviderError(error)).toBe(true);
+    expect(normalizeLocalProviderError(error)).toMatchObject({
+      error_type: "llm_error",
+      retryable: true,
+      stop_reason: "llm_api_error",
+    });
+  });
+
   test("classifies ChatGPT model-access check failures as retryable", () => {
     const error = new Error(
       "Codex error: Unable to verify model access. Please try again.",

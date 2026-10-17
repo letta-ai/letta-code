@@ -7,7 +7,7 @@ import {
   spawnManagedWorkloadProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
-import { getMcpScopeAgentId } from "@/mcp-scope";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
   listMcpServersForAgent,
@@ -19,6 +19,7 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
@@ -111,6 +112,7 @@ export interface ExternalCodingAgentDependencies {
     signal?: AbortSignal,
   ) => Promise<ExternalCodingAgentProcessResult>;
   env?: NodeJS.ProcessEnv;
+  resolveSecretEnv?: (parentAgentId: string) => Promise<Record<string, string>>;
 }
 
 export function isExternalCodingAgentType(
@@ -130,25 +132,33 @@ const NATIVE_SESSION_ID_PATTERN =
 export function formatExternalCodingAgentId(
   type: ExternalCodingAgentType,
   sessionId: string,
+  computer?: string,
 ): string {
-  return `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  const id = `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  return computer ? `${id}@${computer}` : id;
 }
 
-export function parseExternalCodingAgentId(
-  agentId: string | undefined,
-): { type: ExternalCodingAgentType; sessionId: string } | null {
+export function parseExternalCodingAgentId(agentId: string | undefined): {
+  type: ExternalCodingAgentType;
+  sessionId: string;
+  computer?: string;
+} | null {
   if (!agentId) return null;
+  const separator = agentId.lastIndexOf("@");
+  const nativeId = separator === -1 ? agentId : agentId.slice(0, separator);
+  const computer = separator === -1 ? undefined : agentId.slice(separator + 1);
+  if (computer !== undefined && !computer.trim()) return null;
   for (const type of EXTERNAL_CODING_AGENT_TYPES) {
     const prefix = EXTERNAL_AGENT_ID_PREFIXES[type];
-    if (agentId.startsWith(prefix)) {
-      const sessionId = agentId.slice(prefix.length);
+    if (nativeId.startsWith(prefix)) {
+      const sessionId = nativeId.slice(prefix.length);
       if (
         (type === "opencode"
           ? /^ses_[a-zA-Z0-9]+$/
           : NATIVE_SESSION_ID_PATTERN
         ).test(sessionId)
       ) {
-        return { type, sessionId };
+        return { type, sessionId, ...(computer ? { computer } : {}) };
       }
     }
   }
@@ -424,13 +434,54 @@ export function parseExternalCodingAgentOutput(
   };
 }
 
+/**
+ * Vault secrets an external coding agent receives at launch. Claude Code and
+ * Codex run their own shells, so the harness's per-command `$NAME`
+ * substitution never reaches them; export the vault of the agent the parent
+ * inherits MCP from (same parent linkage and trust boundary), with the
+ * parent's own secrets winning. Unresolvable linkage falls back to the
+ * parent's own vault only.
+ */
+export async function resolveExternalCodingAgentSecretEnv(
+  parentAgentId: string,
+  lookupParent?: ParentAgentLookup,
+): Promise<Record<string, string>> {
+  const { ensureSecretsLoaded, loadSecrets } = await import(
+    "@/utils/secrets-store"
+  );
+  let inherited: Record<string, string> = {};
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(
+      parentAgentId,
+      undefined,
+      lookupParent,
+    );
+    if (scopeAgentId !== parentAgentId) {
+      await ensureSecretsLoaded(scopeAgentId);
+      inherited = loadSecrets(scopeAgentId);
+    }
+  } catch {
+    // Never widen access on unresolvable parent linkage.
+  }
+  try {
+    await ensureSecretsLoaded(parentAgentId);
+  } catch {
+    // Vault unavailable; the worker still runs without secrets.
+  }
+  return { ...inherited, ...loadSecrets(parentAgentId) };
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
+  const secretEnv = await (
+    deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
+  )(options.parentAgentId);
   const env: NodeJS.ProcessEnv = {
     ...(deps.env ?? process.env),
+    ...secretEnv,
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
@@ -471,7 +522,18 @@ export async function runExternalCodingAgent(
     );
     return captureReservation;
   };
-  const capture = async (result: SubagentResult): Promise<SubagentResult> => {
+  const capture = async (
+    rawResult: SubagentResult,
+  ): Promise<SubagentResult> => {
+    // The worker had the vault in its environment; keep exported values out
+    // of the report that returns to the parent's context.
+    const result: SubagentResult = {
+      ...rawResult,
+      report: scrubSecretsFromString(rawResult.report, secretEnv),
+      ...(rawResult.error !== undefined && {
+        error: scrubSecretsFromString(rawResult.error, secretEnv),
+      }),
+    };
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {

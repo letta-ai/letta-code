@@ -28,6 +28,10 @@ For remote subagents, set `computer` and pass source paths and destination conve
 
 If the user wants to connect a new computer, `letta teleport list` has no suitable target, or the requested local machine is missing or unreachable, read [Connect a computer for remote access](references/connect-a-computer-for-remote-access.md).
 
+## Keep active Monitors on their computer
+
+A Monitor belongs to the computer where it started. While this conversation has an active Monitor, use a subagent on the requested computer instead of teleporting the parent conversation. If the user explicitly insists on moving the parent conversation, explain that they must stop the Monitor before teleporting the parent conversation; do not retry teleport while the Monitor remains active.
+
 ## Move this conversation
 
 **Run the teleport handoff alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.

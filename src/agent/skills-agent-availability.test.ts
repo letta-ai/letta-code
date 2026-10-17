@@ -54,7 +54,14 @@ describe("isSkillAvailableForAgent", () => {
         },
       );
       if (available) {
-        expect((await content).content).toContain("letta teleport cloud");
+        const skillContent = (await content).content;
+        expect(skillContent).toContain("letta teleport cloud");
+        expect(skillContent).toContain(
+          "use a subagent on the requested computer instead of teleporting",
+        );
+        expect(skillContent).toContain(
+          "stop the Monitor before teleporting the parent conversation",
+        );
       } else {
         await expect(content).rejects.toThrow("not found");
       }

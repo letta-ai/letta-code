@@ -1,4 +1,8 @@
-import type { LaunchSubagentCommand } from "@/types/subagent-protocol";
+import type {
+  LaunchSubagentCommand,
+  SubagentMessageCommand,
+  SubagentStopCommand,
+} from "@/types/subagent-protocol";
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
@@ -71,4 +75,45 @@ export function isLaunchSubagentCommand(
       Number.isSafeInteger(args.max_turns) &&
       args.max_turns > 0)
   );
+}
+
+function hasValidControlBase(value: unknown): value is Record<
+  string,
+  unknown
+> & {
+  request_id: string;
+  runtime: SubagentMessageCommand["runtime"];
+  agent_id: string;
+} {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Record<string, unknown>;
+  return (
+    typeof c.request_id === "string" &&
+    c.request_id.trim().length > 0 &&
+    isAgentRuntimeScope(c.runtime) &&
+    c.runtime.agent_id.trim().length > 0 &&
+    c.runtime.conversation_id.trim().length > 0 &&
+    typeof c.agent_id === "string" &&
+    c.agent_id.trim().length > 0
+  );
+}
+
+export function isSubagentMessageCommand(
+  value: unknown,
+): value is SubagentMessageCommand {
+  if (!hasValidControlBase(value) || value.type !== "subagent_message")
+    return false;
+  return (
+    typeof value.message === "string" &&
+    value.message.trim().length > 0 &&
+    (value.tool_call_id === undefined ||
+      (typeof value.tool_call_id === "string" &&
+        value.tool_call_id.trim().length > 0))
+  );
+}
+
+export function isSubagentStopCommand(
+  value: unknown,
+): value is SubagentStopCommand {
+  return hasValidControlBase(value) && value.type === "subagent_stop";
 }

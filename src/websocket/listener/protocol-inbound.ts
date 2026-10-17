@@ -94,7 +94,6 @@ import type {
   WatchFileCommand,
   WriteFileCommand,
   WriteMemoryFileCommand,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
@@ -2037,7 +2036,7 @@ export function parseServerMessage(
       isSecretListCommand(parsed) ||
       isSecretApplyCommand(parsed)
     ) {
-      return parsed as WsProtocolCommand;
+      return parsed as ParsedServerMessage;
     }
     const invalidInput = getInvalidInputReason(parsed);
     if (invalidInput) {

@@ -35,6 +35,7 @@ import type {
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
+  assertLocalCompactionProgress,
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
@@ -45,6 +46,7 @@ import {
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
+  runLocalPressureCompaction,
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
@@ -571,11 +573,14 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const result = await this.compactLocalConversation(
-      input.conversationId,
-      input.agentId,
-      "context_window_limit",
+    const result = await runLocalPressureCompaction(() =>
+      this.compactLocalConversation(
+        input.conversationId,
+        input.agentId,
+        "context_window_limit",
+      ),
     );
+    if (!result) return null;
     return {
       uiMessages: this.store.listLocalMessages(
         input.conversationId,
@@ -837,6 +842,7 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    assertLocalCompactionProgress(stats, "all");
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -892,6 +898,7 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    assertLocalCompactionProgress(stats, "sliding_window");
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,

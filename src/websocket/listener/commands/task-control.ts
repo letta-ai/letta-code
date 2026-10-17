@@ -1,8 +1,16 @@
 import type WebSocket from "ws";
-import type { LaunchSubagentCommand } from "@/types/subagent-protocol";
+import type {
+  LaunchSubagentCommand,
+  SubagentMessageCommand,
+  SubagentStopCommand,
+} from "@/types/subagent-protocol";
 import type { MonitorStopCommand } from "@/types/task-control-protocol";
 import type { ListenerRuntime } from "@/websocket/listener/types";
 import { handleMonitorStopCommand } from "./monitors";
+import {
+  handleSubagentMessageCommand,
+  handleSubagentStopCommand,
+} from "./subagent-control";
 import { handleLaunchSubagentCommand } from "./subagents";
 import type {
   GetOrCreateScopedRuntime,
@@ -11,7 +19,11 @@ import type {
 } from "./types";
 
 export async function handleTaskControlCommand(
-  command: LaunchSubagentCommand | MonitorStopCommand,
+  command:
+    | LaunchSubagentCommand
+    | MonitorStopCommand
+    | SubagentMessageCommand
+    | SubagentStopCommand,
   context: {
     runtime: ListenerRuntime;
     socket: WebSocket;
@@ -30,21 +42,28 @@ export async function handleTaskControlCommand(
     safeSocketSend,
   } = context;
   const execute = async () => {
+    if (command.type === "monitor_stop") {
+      const response = await handleMonitorStopCommand(command, runtime);
+      safeSocketSend(socket, response, response.type, command.type);
+      return;
+    }
+    const parent = getOrCreateScopedRuntime(
+      runtime,
+      command.runtime.agent_id,
+      command.runtime.conversation_id,
+    );
     const response =
-      command.type === "monitor_stop"
-        ? await handleMonitorStopCommand(command, runtime)
-        : await handleLaunchSubagentCommand(
-            command,
-            getOrCreateScopedRuntime(
-              runtime,
-              command.runtime.agent_id,
-              command.runtime.conversation_id,
-            ),
-            connectionId,
-          );
+      command.type === "launch_subagent"
+        ? await handleLaunchSubagentCommand(command, parent, connectionId)
+        : command.type === "subagent_message"
+          ? await handleSubagentMessageCommand(command, parent)
+          : await handleSubagentStopCommand(command, parent);
     safeSocketSend(socket, response, response.type, command.type);
   };
-  if (command.type === "launch_subagent") {
+  if (
+    command.type === "launch_subagent" ||
+    command.type === "subagent_message"
+  ) {
     runDetachedListenerTask(command.type, execute);
   } else {
     await execute();

@@ -15,6 +15,8 @@ import {
 import { getClient } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
+  getEnvironmentConnection,
+  isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
 } from "@/backend/api/environments";
@@ -30,6 +32,8 @@ import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
   type ExternalCodingAgentType,
+  formatExternalCodingAgentId,
+  parseExternalCodingAgentId,
 } from "./external-coding-agent";
 
 interface ParentScope {
@@ -73,6 +77,7 @@ export interface RemoteExternalCodingAgentDeps {
     parentScope: ParentScope,
   ) => Promise<AppServerClient>;
   reconnectDelayMs?: number;
+  agentIdWaitMs?: number;
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
@@ -97,6 +102,10 @@ export function formatOutdatedComputerError(
   computer: string,
 ): string {
   return `${computer} is running an older Letta Code that can't run ${DISPLAY_NAMES[type]} subagents remotely. Update Letta Code on ${computer}.`;
+}
+
+function formatOutdatedSteeringError(computer: string): string {
+  return `${computer} is running an older Letta Code that can't steer Claude Code subagents remotely. Update Letta Code on ${computer}.`;
 }
 
 async function defaultResolveComputer(computer: string, scope: ParentScope) {
@@ -127,6 +136,18 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
   } catch (error) {
     client.close();
     throw error;
+  }
+}
+
+async function resolveQualifiedComputer(deviceId: string) {
+  try {
+    const environment = await getEnvironmentConnection(deviceId);
+    if (!isEnvironmentOnline(environment) || !environment.connectionId)
+      throw new Error(`Computer "${deviceId}" is offline`);
+    return { connectionId: environment.connectionId, environment };
+  } catch (error) {
+    if (errorMessage(error).includes("offline")) throw error;
+    return resolveEnvironmentConnectionId(deviceId);
   }
 }
 
@@ -196,6 +217,21 @@ class RemoteSubagentFollower {
     this.launched = true;
   }
 
+  async waitForAgentId(timeoutMs: number): Promise<string | null> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.latest?.agent_id) return this.latest.agent_id;
+      const remaining = deadline - Date.now();
+      if (remaining <= 0 || this.closed || this.lost) break;
+      await Promise.race([
+        this.wake.promise,
+        new Promise<void>((resolve) => setTimeout(resolve, remaining)),
+      ]);
+      this.wake = Promise.withResolvers<void>();
+    }
+    return this.latest?.agent_id ?? null;
+  }
+
   close(): void {
     this.closed = true;
     this.detach?.();
@@ -258,6 +294,8 @@ export async function launchRemoteExternalCodingAgent(
 ): Promise<SubagentLaunchResult> {
   const { type, computer, parentScope } = params;
   let connectionId: string;
+  let deviceId: string;
+  let supportsSteering: boolean;
   try {
     const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
       computer,
@@ -269,6 +307,8 @@ export async function launchRemoteExternalCodingAgent(
         error: formatOutdatedComputerError(type, computer),
       };
     connectionId = resolved.connectionId;
+    deviceId = resolved.environment.deviceId;
+    supportsSteering = resolved.environment.metadata?.subagent_message === true;
   } catch (error) {
     return { success: false, error: errorMessage(error) };
   }
@@ -333,8 +373,22 @@ export async function launchRemoteExternalCodingAgent(
   }
 
   follower.markLaunched();
+  const nativeAgentId = supportsSteering
+    ? await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)
+    : null;
+  const parsedNativeAgentId = nativeAgentId
+    ? parseExternalCodingAgentId(nativeAgentId)
+    : null;
+  const qualifiedAgentId =
+    parsedNativeAgentId && !parsedNativeAgentId.computer
+      ? formatExternalCodingAgentId(
+          parsedNativeAgentId.type,
+          parsedNativeAgentId.sessionId,
+          deviceId,
+        )
+      : null;
 
-  const { taskId, outputFile } = deps.spawn({
+  const { taskId, outputFile, subagentId } = deps.spawn({
     subagentType: type,
     config: createExternalCodingAgentConfig(type),
     prompt: params.prompt,
@@ -354,7 +408,7 @@ export async function launchRemoteExternalCodingAgent(
             }),
           );
           return {
-            agentId: parentScope.agentId,
+            agentId: qualifiedAgentId ?? parentScope.agentId,
             model: final.model ?? model,
             report: final.result ?? "",
             success: final.status === "completed",
@@ -383,12 +437,222 @@ export async function launchRemoteExternalCodingAgent(
       },
     },
   });
+  if (qualifiedAgentId)
+    updateSubagent(subagentId, { agentId: qualifiedAgentId });
   return {
     success: true,
     task_id: taskId,
     output_file: outputFile,
-    // The native session lives on the other computer; local follow-ups can't resume it.
-    agent_id: null,
+    agent_id: qualifiedAgentId,
     conversation_id: null,
+  };
+}
+
+export interface RemoteExternalCodingAgentControl {
+  agentId: string;
+  message?: string;
+  toolCallId?: string;
+  parentScope: ParentScope;
+}
+
+export interface RemoteExternalCodingAgentControlDeps {
+  resolveComputer?: (deviceId: string) => Promise<{
+    connectionId: string;
+    environment: EnvironmentConnection;
+  }>;
+  connect?: (
+    connectionId: string,
+    parentScope: ParentScope,
+  ) => Promise<AppServerClient>;
+  track?: (args: {
+    type: ExternalCodingAgentType;
+    agentId: string;
+    message: string;
+    parentScope: ParentScope;
+    completion: Promise<SubagentResult>;
+    interrupt: () => Promise<void>;
+  }) => { taskId: string; outputFile: string; subagentId: string };
+}
+
+async function connectQualifiedTarget(
+  agentId: string,
+  parentScope: ParentScope,
+  deps: RemoteExternalCodingAgentControlDeps,
+): Promise<{
+  target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
+  client: AppServerClient;
+}> {
+  const target = parseExternalCodingAgentId(agentId);
+  if (!target?.computer || target.type === "opencode")
+    throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
+  const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
+    target.computer,
+  );
+  if (resolved.environment.metadata?.subagent_message !== true)
+    throw new Error(formatOutdatedSteeringError(target.computer));
+  return {
+    target,
+    client: await (deps.connect ?? defaultConnect)(
+      resolved.connectionId,
+      parentScope,
+    ),
+  };
+}
+
+export async function stopRemoteExternalCodingAgent(
+  params: Omit<RemoteExternalCodingAgentControl, "message" | "toolCallId">,
+  deps: RemoteExternalCodingAgentControlDeps = {},
+): Promise<{ stopped: boolean }> {
+  const requestId = `subagent-stop-${randomUUID()}`;
+  const { target, client } = await connectQualifiedTarget(
+    params.agentId,
+    params.parentScope,
+    deps,
+  );
+  try {
+    const response = await client.stopSubagent({
+      request_id: requestId,
+      runtime: {
+        agent_id: params.parentScope.agentId,
+        conversation_id: params.parentScope.conversationId,
+        ...(params.parentScope.actingUserId
+          ? { acting_user_id: params.parentScope.actingUserId }
+          : {}),
+      },
+      agent_id: formatExternalCodingAgentId(target.type, target.sessionId),
+    });
+    if (!response.success) throw new Error(response.error ?? "Stop failed");
+    return { stopped: response.stopped };
+  } finally {
+    client.close();
+  }
+}
+
+export async function sendRemoteExternalCodingAgentMessage(
+  params: RemoteExternalCodingAgentControl & { message: string },
+  deps: RemoteExternalCodingAgentControlDeps = {},
+): Promise<{
+  delivery: "steered" | "resumed";
+  taskId?: string;
+  outputFile?: string;
+}> {
+  const requestId = `subagent-message-${randomUUID()}`;
+  const { target, client } = await connectQualifiedTarget(
+    params.agentId,
+    params.parentScope,
+    deps,
+  );
+  const toolCallId = params.toolCallId ?? `remote-followup-${randomUUID()}`;
+  const connect = async () => {
+    const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
+      target.computer as string,
+    );
+    return (deps.connect ?? defaultConnect)(
+      resolved.connectionId,
+      params.parentScope,
+    );
+  };
+  const follower = new RemoteSubagentFollower(
+    params.parentScope,
+    toolCallId,
+    connect,
+    2_000,
+  );
+  follower.attach(client);
+  const bareAgentId = formatExternalCodingAgentId(
+    target.type,
+    target.sessionId,
+  );
+  let response: Awaited<ReturnType<AppServerClient["sendSubagentMessage"]>>;
+  try {
+    response = await client.sendSubagentMessage({
+      request_id: requestId,
+      runtime: {
+        agent_id: params.parentScope.agentId,
+        conversation_id: params.parentScope.conversationId,
+        ...(params.parentScope.actingUserId
+          ? { acting_user_id: params.parentScope.actingUserId }
+          : {}),
+      },
+      agent_id: bareAgentId,
+      message: params.message,
+      tool_call_id: toolCallId,
+    });
+  } catch (error) {
+    follower.close();
+    throw error;
+  }
+  if (!response.success) {
+    follower.close();
+    throw new Error(response.error);
+  }
+  if (response.delivery === "steered") {
+    follower.close();
+    return { delivery: "steered" };
+  }
+  follower.markLaunched();
+  const completion = follower
+    .waitForTerminal(undefined, () => undefined)
+    .then(
+      (final): SubagentResult => ({
+        agentId: bareAgentId,
+        model: final.model,
+        report: final.result ?? "",
+        success: final.status === "completed",
+        ...(final.status === "error"
+          ? { error: final.error ?? "Remote follow-up failed" }
+          : {}),
+        totalTokens: final.total_tokens,
+        durationMs: final.duration_ms,
+      }),
+    )
+    .finally(() => follower.close());
+  const interrupt = async () => {
+    const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
+      target.computer as string,
+    );
+    const stopClient = await (deps.connect ?? defaultConnect)(
+      resolved.connectionId,
+      params.parentScope,
+    );
+    try {
+      await stopClient.stopSubagent({
+        runtime: {
+          agent_id: params.parentScope.agentId,
+          conversation_id: params.parentScope.conversationId,
+        },
+        agent_id: bareAgentId,
+      });
+    } finally {
+      stopClient.close();
+    }
+  };
+  const track = deps.track;
+  if (!track) {
+    follower.close();
+    throw new Error("Remote follow-up tracking is unavailable");
+  }
+  let tracked: ReturnType<NonNullable<typeof deps.track>>;
+  try {
+    tracked = track({
+      type: target.type,
+      agentId: params.agentId,
+      message: params.message,
+      parentScope: params.parentScope,
+      completion,
+      interrupt,
+    });
+  } catch (error) {
+    try {
+      await interrupt();
+    } catch {}
+    follower.close();
+    void completion.catch(() => undefined);
+    throw error;
+  }
+  return {
+    delivery: "resumed",
+    taskId: tracked.taskId,
+    outputFile: tracked.outputFile,
   };
 }

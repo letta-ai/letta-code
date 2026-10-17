@@ -60,3 +60,38 @@ export type LaunchSubagentResponse = SubagentLaunchResult & {
   /** The launch command's parent runtime, so relays can scope the reply. */
   runtime?: AgentRuntimeScope;
 };
+
+export interface SubagentMessageCommand {
+  type: "subagent_message";
+  request_id: string;
+  runtime: AgentRuntimeScope;
+  agent_id: string;
+  message: string;
+  tool_call_id?: string;
+}
+
+export type SubagentMessageResponse = {
+  type: "subagent_message_response";
+  request_id: string;
+  runtime?: AgentRuntimeScope;
+} & (
+  | { success: true; delivery: "steered" | "resumed" }
+  | { success: false; error: string }
+);
+
+export interface SubagentStopCommand {
+  type: "subagent_stop";
+  request_id: string;
+  runtime: AgentRuntimeScope;
+  agent_id: string;
+}
+
+export interface SubagentStopResponse {
+  type: "subagent_stop_response";
+  request_id: string;
+  runtime: AgentRuntimeScope;
+  agent_id: string;
+  success: boolean;
+  stopped: boolean;
+  error?: string;
+}

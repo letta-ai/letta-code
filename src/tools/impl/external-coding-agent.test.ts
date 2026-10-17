@@ -85,6 +85,17 @@ describe("external coding agent commands", () => {
       ),
     ).toEqual({ type: "claude-code", sessionId: SESSION_ID });
     expect(parseExternalCodingAgentId("agent-real")).toBeNull();
+    expect(
+      parseExternalCodingAgentId(
+        formatExternalCodingAgentId("claude-code", SESSION_ID, "device-1"),
+      ),
+    ).toEqual({
+      type: "claude-code",
+      sessionId: SESSION_ID,
+      computer: "device-1",
+    });
+    expect(parseExternalCodingAgentId(`claude_not-a-uuid@device-1`)).toBeNull();
+    expect(parseExternalCodingAgentId(`claude_${SESSION_ID}@`)).toBeNull();
   });
 });
 
@@ -405,5 +416,103 @@ describe("external coding agent output and preflight", () => {
       },
     );
     expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
+  });
+});
+
+describe("external coding agent vault secrets", () => {
+  test("exports the MCP-scope vault with the parent's own secrets winning", async () => {
+    const { __testSeedSecretsCache, clearSecretsCache } = await import(
+      "@/utils/secrets-store"
+    );
+    const { resolveExternalCodingAgentSecretEnv } = await import(
+      "./external-coding-agent"
+    );
+    __testSeedSecretsCache("agent-ext-child", { SHARED: "child-value" });
+    __testSeedSecretsCache("agent-ext-root", {
+      SHARED: "root-value",
+      GITHUB_TOKEN: "root-token",
+    });
+    const parents: Record<string, string> = {
+      "agent-ext-child": "agent-ext-root",
+    };
+    try {
+      const inherited = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            parent_agent_id: "agent-ext-root",
+            agent_role: "subagent",
+          },
+        },
+        () =>
+          resolveExternalCodingAgentSecretEnv(
+            "agent-ext-child",
+            async (id) => parents[id],
+          ),
+      );
+      expect(inherited).toEqual({
+        SHARED: "child-value",
+        GITHUB_TOKEN: "root-token",
+      });
+      const ownOnly = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+          },
+        },
+        () =>
+          resolveExternalCodingAgentSecretEnv(
+            "agent-ext-child",
+            async (id) => parents[id],
+          ),
+      );
+      expect(ownOnly).toEqual({ SHARED: "child-value" });
+    } finally {
+      clearSecretsCache("agent-ext-child");
+      clearSecretsCache("agent-ext-root");
+    }
+  });
+
+  test("launches the worker with the resolved vault in its environment", async () => {
+    let seenEnv: NodeJS.ProcessEnv | undefined;
+    await runExternalCodingAgent(
+      { type: "claude-code", prompt: "test", parentAgentId: "parent" },
+      {
+        env: {},
+        resolveSecretEnv: async () => ({ GITHUB_TOKEN: "vault-token" }),
+        runPreflight: async (_executable, _args, env) => {
+          seenEnv = env;
+          return { exitCode: 1, stdout: "", stderr: "stop" };
+        },
+      },
+    );
+    expect(seenEnv?.GITHUB_TOKEN).toBe("vault-token");
+    expect(seenEnv?.LETTA_AGENT_ID).toBe("parent");
+  });
+
+  test("scrubs exported vault values from the worker's report", async () => {
+    const token = "ghp_exported_vault_value_123";
+    const result = await runExternalCodingAgent(
+      { type: "codex", prompt: "test", parentAgentId: "parent" },
+      {
+        env: {},
+        resolveSecretEnv: async () => ({ GITHUB_TOKEN: token }),
+        runPreflight: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        runCodexTurn: async () => ({
+          agentId: "codex_thread",
+          runtimeSessionId: "thread",
+          report: `the token is ${token}`,
+          success: true,
+          durationMs: 1,
+        }),
+      },
+    );
+    expect(result.success).toBe(true);
+    expect(result.report).not.toContain(token);
+    expect(result.report).toContain("the token is");
   });
 });

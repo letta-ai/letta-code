@@ -11,6 +11,7 @@ import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
+  isApprovalPendingError,
   isEmptyResponseRetryable,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
@@ -467,9 +468,15 @@ async function handleIncomingMessageInner(
               turnInput,
               existingApprovals ?? [],
               STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+              isApprovalPendingError(errorDetail),
             );
           } catch {
-            turnInput = rebuildTurnInputWithFreshDenials(turnInput, [], "");
+            turnInput = rebuildTurnInputWithFreshDenials(
+              turnInput,
+              [],
+              "",
+              isApprovalPendingError(errorDetail),
+            );
           }
           if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
             break;

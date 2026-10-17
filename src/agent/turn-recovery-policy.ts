@@ -499,10 +499,13 @@ export function rebuildInputWithFreshDenials(
   currentInput: Array<MessageCreate | ApprovalCreate>,
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
+  preserveMessageOtids = false,
 ): Array<MessageCreate | ApprovalCreate> {
-  const stripped = refreshInputOtidsForNewRequest(
-    currentInput.filter((item) => item?.type !== "approval"),
-  );
+  const content = currentInput.filter((item) => item?.type !== "approval");
+  // Only pre-persistence pending-approval rejections can reuse message identity.
+  const stripped = preserveMessageOtids
+    ? content
+    : refreshInputOtidsForNewRequest(content);
 
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {

@@ -121,6 +121,45 @@ describe("app-server client", () => {
     client.close();
   });
 
+  test("sends subagent message and stop commands", async () => {
+    const { client, control } = createFakeClient();
+    const opened = client.connect();
+    control.open();
+    await opened;
+    const runtime = { agent_id: "parent", conversation_id: "parent-conv" };
+    const agentId = "claude_11111111-1111-4111-8111-111111111111";
+
+    const messagePending = client.sendSubagentMessage({
+      runtime,
+      agent_id: agentId,
+      message: "Continue",
+      tool_call_id: "follow-call",
+    });
+    const message = JSON.parse(control.sent.at(-1) ?? "{}");
+    expect(message).toMatchObject({ type: "subagent_message", runtime });
+    control.receive({
+      type: "subagent_message_response",
+      request_id: message.request_id,
+      runtime,
+      success: true,
+      delivery: "steered",
+    });
+    expect(await messagePending).toMatchObject({ delivery: "steered" });
+
+    const stopPending = client.stopSubagent({ runtime, agent_id: agentId });
+    const stop = JSON.parse(control.sent.at(-1) ?? "{}");
+    expect(stop).toMatchObject({ type: "subagent_stop", runtime });
+    control.receive({
+      type: "subagent_stop_response",
+      request_id: stop.request_id,
+      runtime,
+      agent_id: agentId,
+      success: true,
+      stopped: true,
+    });
+    expect(await stopPending).toMatchObject({ stopped: true });
+  });
+
   test("stops a Monitor and waits for the matching scoped reply", async () => {
     const { client, control } = createFakeClient();
     const opened = client.connect();
