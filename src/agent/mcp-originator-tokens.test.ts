@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   deleteMcpOriginatorToken,
@@ -13,6 +14,7 @@ import {
 describe("MCP originator token store", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
   });
 
   test("stores and resolves a token keyed by super run id", () => {
@@ -48,6 +50,7 @@ describe("MCP originator token store", () => {
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     setMcpOriginatorToken("sr-2", "mst_two.secret-b");
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
     expect(mcpOriginatorTokenCount()).toBe(0);
     expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
     expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
@@ -90,6 +93,7 @@ describe("readMcpOriginatorDelivery", () => {
 describe("recordMcpOriginatorDelivery", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
   });
 
   test("an accepted delivery records or refreshes its run's token", () => {
@@ -175,6 +179,7 @@ describe("recordMcpOriginatorDelivery", () => {
 describe("retireMcpOriginatorTokensOnOriginSwap", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
   });
 
   test("a cross-run approval swap retires both runs' tokens", () => {
@@ -211,6 +216,7 @@ describe("retireMcpOriginatorTokensOnOriginSwap", () => {
 describe("MCP originator mint-generation ordering", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
   });
 
   const frame = (superRunId: string, token?: string, generation?: number) => ({

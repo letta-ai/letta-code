@@ -1,4 +1,4 @@
-import { deleteMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
+import { retireMcpOriginatorTokenOnMixedMerge } from "@/agent/mcp-originator-tokens";
 import {
   type AttributedMessageCreate,
   withMessageAttribution,
@@ -194,7 +194,7 @@ function buildQueuedTurnMessage(
     // this merge, so no later turn will use them either. Retire them now
     // rather than leaking them until session teardown.
     for (const id of messageOriginatorIds) {
-      if (id) deleteMcpOriginatorToken(id);
+      retireMcpOriginatorTokenOnMixedMerge(id);
     }
   }
   // A batch with no client message (cron prompts, task notifications, mod

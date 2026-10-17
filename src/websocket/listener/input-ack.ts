@@ -31,7 +31,10 @@ export interface InputAckTransport {
 // scope the ack path tolerates.
 type InputAckFrame = Pick<
   InputCommand,
-  "request_id" | "super_run_id" | "mcp_originator_token"
+  | "request_id"
+  | "super_run_id"
+  | "mcp_originator_token"
+  | "mcp_originator_generation"
 > & {
   runtime: unknown;
 };
