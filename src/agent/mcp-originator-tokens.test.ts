@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
+import {
+  noteMcpOriginatorDelivery,
+  resetMcpOriginatorAuthority,
+} from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   deleteMcpOriginatorToken,
@@ -341,5 +344,50 @@ describe("MCP originator mint-generation ordering", () => {
       allowCreate: false,
     });
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_c.secret");
+  });
+});
+
+describe("round-8 verdict split + sanitized denial logging (evil-shub round-8 P1)", () => {
+  afterEach(() => {
+    clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
+  });
+
+  test("a malformed generation denies PERMANENTLY and the log never contains the raw wire value", () => {
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map((a) => String(a)).join(" "));
+    };
+    try {
+      // A bearer-shaped string in the generation field: untrusted wire
+      // content that must never be echoed into logs.
+      const verdict = recordMcpOriginatorDelivery({
+        mcp_originator_token: "mst_r8tok_malformed",
+        super_run_id: "run-r8tok-malformed",
+        mcp_originator_generation:
+          "mst_SECRET_TOKEN_VALUE" as unknown as number,
+      });
+      expect(verdict).toBe("denied_permanent");
+      expect(getMcpOriginatorToken("run-r8tok-malformed")).toBeUndefined();
+      expect(errors.length).toBeGreaterThan(0);
+      for (const line of errors) {
+        expect(line).not.toContain("mst_SECRET_TOKEN_VALUE");
+      }
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  test("a stale generation at-or-below the durable floor denies PERMANENTLY", () => {
+    noteMcpOriginatorDelivery("run-r8tok-stale", 5);
+    expect(
+      recordMcpOriginatorDelivery({
+        mcp_originator_token: "mst_r8tok_stale",
+        super_run_id: "run-r8tok-stale",
+        mcp_originator_generation: 4,
+      }),
+    ).toBe("denied_permanent");
+    expect(getMcpOriginatorToken("run-r8tok-stale")).toBeUndefined();
   });
 });

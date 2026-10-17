@@ -1,11 +1,33 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type WebSocket from "ws";
-import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
+import {
+  configureMcpOriginatorAuthorityPersistenceForTests,
+  markMcpOriginatorTerminal,
+  resetMcpOriginatorAuthority,
+} from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   getMcpOriginatorToken,
 } from "@/agent/mcp-originator-tokens";
 import { acknowledgeInputFrame } from "./input-ack";
+
+function withDegradedFile(run: (path: string) => void): void {
+  const root = mkdtempSync(join(tmpdir(), "letta-ack-authority-"));
+  try {
+    const path = join(root, "authority.json");
+    writeFileSync(path, "{ not json !!!");
+    configureMcpOriginatorAuthorityPersistenceForTests(path);
+    resetMcpOriginatorAuthority();
+    run(path);
+  } finally {
+    configureMcpOriginatorAuthorityPersistenceForTests(null);
+    resetMcpOriginatorAuthority();
+    rmSync(root, { recursive: true, force: true });
+  }
+}
 
 type SentFrame = { payload: unknown; errorType: string; context: string };
 
@@ -32,29 +54,78 @@ const SOCKET = {} as WebSocket;
 
 afterEach(() => {
   clearMcpOriginatorTokens();
+  configureMcpOriginatorAuthorityPersistenceForTests(null);
   resetMcpOriginatorAuthority();
 });
 
 describe("acknowledgeInputFrame originator delivery gate", () => {
-  test("a denied durable admission suppresses the ack so Cloud redelivers (round-7; evil-shub round-6 P1)", () => {
+  test("a retryable denial (degraded durable store) suppresses the ack so Cloud redelivers (round-8 verdict split)", () => {
+    withDegradedFile(() => {
+      const { send, sent } = makeSend();
+      acknowledgeInputFrame(
+        send,
+        SOCKET,
+        {
+          request_id: "req-1",
+          runtime: undefined,
+          super_run_id: "run-a",
+          mcp_originator_token: "mst_a",
+          mcp_originator_generation: 1,
+        } as never,
+        true,
+        undefined,
+        "started",
+      );
+      // Unacked: the admission could not be evaluated, so redelivery must
+      // retry the whole admission once the store heals.
+      expect(sent).toEqual([]);
+      expect(getMcpOriginatorToken("run-a")).toBeUndefined();
+    });
+  });
+
+  test("a permanently denied delivery is CONSUMED (acked) without the token — no redelivery loop (round-8 verdict split)", () => {
+    // Malformed generation: this frame can never be admitted, so
+    // suppressing the ack would redeliver the same bytes forever. The
+    // listener consumes it with the normal ack and runs without the token.
     const { send, sent } = makeSend();
     acknowledgeInputFrame(
       send,
       SOCKET,
       {
-        request_id: "req-1",
+        request_id: "req-1b",
         runtime: undefined,
         super_run_id: "run-a",
         mcp_originator_token: "mst_a",
-        // Malformed generation: the durable authority gate fails closed.
         mcp_originator_generation: 1.5,
       } as never,
       true,
       undefined,
       "started",
     );
-    expect(sent).toEqual([]);
-    // No token was installed either.
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.payload).toMatchObject({ accepted: true });
+    expect(getMcpOriginatorToken("run-a")).toBeUndefined();
+  });
+
+  test("a delivery for a retired (terminal) run is consumed without the token (round-8 verdict split)", () => {
+    markMcpOriginatorTerminal("run-a");
+    const { send, sent } = makeSend();
+    acknowledgeInputFrame(
+      send,
+      SOCKET,
+      {
+        request_id: "req-1c",
+        runtime: undefined,
+        super_run_id: "run-a",
+        mcp_originator_token: "mst_a",
+        mcp_originator_generation: 2,
+      } as never,
+      true,
+      undefined,
+      "started",
+    );
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.payload).toMatchObject({ accepted: true });
     expect(getMcpOriginatorToken("run-a")).toBeUndefined();
   });
 
@@ -120,41 +191,45 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
   });
 
   test("a redelivered well-formed frame after a suppressed ack admits and acks", () => {
-    // The deny path must not poison later admission: Cloud's redelivery of
-    // the corrected frame succeeds.
-    const first = makeSend();
-    acknowledgeInputFrame(
-      first.send,
-      SOCKET,
-      {
-        request_id: "req-5",
-        runtime: undefined,
-        super_run_id: "run-a",
-        mcp_originator_token: "mst_a",
-        mcp_originator_generation: Number.NaN,
-      } as never,
-      true,
-      undefined,
-      "started",
-    );
-    expect(first.sent).toEqual([]);
+    // The retryable deny path must not poison later admission: once the
+    // durable store heals, Cloud's redelivery of the same frame succeeds.
+    withDegradedFile((path) => {
+      const first = makeSend();
+      acknowledgeInputFrame(
+        first.send,
+        SOCKET,
+        {
+          request_id: "req-5",
+          runtime: undefined,
+          super_run_id: "run-a",
+          mcp_originator_token: "mst_a",
+          mcp_originator_generation: 1,
+        } as never,
+        true,
+        undefined,
+        "started",
+      );
+      expect(first.sent).toEqual([]);
 
-    const second = makeSend();
-    acknowledgeInputFrame(
-      second.send,
-      SOCKET,
-      {
-        request_id: "req-5",
-        runtime: undefined,
-        super_run_id: "run-a",
-        mcp_originator_token: "mst_a",
-        mcp_originator_generation: 1,
-      } as never,
-      true,
-      undefined,
-      "started",
-    );
-    expect(second.sent).toHaveLength(1);
-    expect(second.sent[0]?.payload).toMatchObject({ accepted: true });
+      // Operator restores a valid file: the next read heals.
+      writeFileSync(path, JSON.stringify({ version: 1, records: {} }));
+      const second = makeSend();
+      acknowledgeInputFrame(
+        second.send,
+        SOCKET,
+        {
+          request_id: "req-5",
+          runtime: undefined,
+          super_run_id: "run-a",
+          mcp_originator_token: "mst_a",
+          mcp_originator_generation: 1,
+        } as never,
+        true,
+        undefined,
+        "started",
+      );
+      expect(second.sent).toHaveLength(1);
+      expect(second.sent[0]?.payload).toMatchObject({ accepted: true });
+    });
   });
 });

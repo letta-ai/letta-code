@@ -213,3 +213,78 @@ describe("MCP originator keepalive", () => {
     expect(calls).toBe(5);
   });
 });
+
+describe("round-8: hard bound and stale-error budget guard (evil-shub round-8 P1)", () => {
+  afterEach(() => {
+    configureMcpOriginatorKeepaliveForTests(null);
+    clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
+  });
+
+  test("a hung verify is rejected by the hard bound and counts one strike, with renewal continuing", async () => {
+    // A verify promise that never settles models an OAuth-refresh pre-fetch
+    // stuck beneath the abort signal. The tick must not hang forever: the
+    // hard bound rejects it as one strike and the entry stays registered.
+    configureMcpOriginatorKeepaliveForTests({
+      verifyTimeoutMs: 20,
+      verify: () => new Promise(() => {}), // never settles
+    });
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_a",
+      super_run_id: "run-a",
+      mcp_originator_generation: 1,
+    });
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    await runMcpOriginatorKeepaliveTickForTests("run-a"); // must resolve, not hang
+    // Two more hung ticks reach MAX_CONSECUTIVE_FAILURES and stop renewal…
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(false);
+  });
+
+  test("a stale token's network failure does not consume the replacement's strike budget", async () => {
+    // Install mst_a, start a tick whose verify blocks; while it is in
+    // flight a fresh delivery replaces the held token with mst_b; then the
+    // in-flight verify rejects. Three such stale errors must NOT reach
+    // MAX_CONSECUTIVE_FAILURES against the replacement.
+    let release: ((error: Error) => void) | undefined;
+    const gates: Array<Promise<void>> = [];
+    configureMcpOriginatorKeepaliveForTests({
+      verify: (token) =>
+        token === "mst_a"
+          ? new Promise((_resolve, reject) => {
+              gates.push(
+                new Promise<void>((done) => {
+                  release = (error: Error) => {
+                    reject(error);
+                    done();
+                  };
+                }),
+              );
+            })
+          : Promise.resolve({ valid: true }),
+    });
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_a",
+      super_run_id: "run-a",
+      mcp_originator_generation: 1,
+    });
+    for (let i = 0; i < 3; i += 1) {
+      const tick = runMcpOriginatorKeepaliveTickForTests("run-a");
+      // Replace the held token while the verify is in flight.
+      recordMcpOriginatorDelivery({
+        mcp_originator_token: "mst_b",
+        super_run_id: "run-a",
+        mcp_originator_generation: 2 + i,
+      });
+      release?.(new Error("network down"));
+      await tick;
+    }
+    // The replacement kept its fresh budget: renewal is still registered…
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
+    // …and a clean verify of the replacement resets the (untouched) budget.
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+  });
+});

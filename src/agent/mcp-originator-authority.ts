@@ -82,6 +82,28 @@ function isValidGeneration(generation: unknown): generation is number {
   );
 }
 
+/** Clock skew tolerance for records written by a peer with a fast clock. */
+const UPDATED_AT_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * A record timestamp is meaningful only as a nonnegative safe integer not
+ * impossibly far in the future (evil-shub round-8 P1). A negative or NaN
+ * value flows into pruneExpired as `now - t > TTL` = always true, erasing
+ * live/terminal boundaries on the very next access — a fail-OPEN read of a
+ * corrupt file. A far-future value never prunes, pinning a stale floor.
+ */
+function isValidUpdatedAtMs(
+  updatedAtMs: unknown,
+  nowMs: number,
+): updatedAtMs is number {
+  return (
+    typeof updatedAtMs === "number" &&
+    Number.isSafeInteger(updatedAtMs) &&
+    updatedAtMs >= 0 &&
+    updatedAtMs <= nowMs + UPDATED_AT_FUTURE_SKEW_MS
+  );
+}
+
 type AuthorityFile = {
   version: 1;
   records: Record<string, AuthorityRecord>;
@@ -167,16 +189,36 @@ function readAuthorityRecords(path: string): {
   const records = new Map<string, AuthorityRecord>();
   if (!existsSync(path)) return { records, degraded: false };
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as AuthorityFile;
-    if (parsed?.version !== 1 || typeof parsed.records !== "object")
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    // Strict top-level shape (evil-shub round-8 P1): `records` must be a
+    // plain object — an ARRAY passes `typeof === "object"` and used to read
+    // as a healthy EMPTY file, silently dropping every persisted boundary
+    // (a terminal run would admit a post-terminal duplicate).
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      (parsed as { version?: unknown }).version !== 1 ||
+      typeof (parsed as { records?: unknown }).records !== "object" ||
+      (parsed as { records?: unknown }).records === null ||
+      Array.isArray((parsed as { records?: unknown }).records)
+    )
       return { records, degraded: true };
-    for (const [runId, record] of Object.entries(parsed.records)) {
+    const nowMs = Date.now();
+    for (const [runId, record] of Object.entries(
+      (parsed as AuthorityFile).records,
+    )) {
       if (
         record &&
         (record.state === "live" ||
           record.state === "headerless" ||
           record.state === "terminal") &&
-        typeof record.updatedAtMs === "number" &&
+        // updatedAtMs drives TTL pruning: a negative or far-future value is
+        // not merely odd data — a negative one makes every record look
+        // expired (prune erases a terminal boundary → fail-open), and a
+        // far-future one pins a stale floor against pruning forever.
+        // Either means the file cannot be trusted: degrade the WHOLE file
+        // fail-closed rather than reinterpret it (evil-shub round-8 P1).
+        isValidUpdatedAtMs(record.updatedAtMs, nowMs) &&
         // A structurally invalid floor (string/negative/fractional/NaN) is
         // as untrustworthy as an invalid state: treat the whole file as
         // degraded rather than let a bogus floor silently gate admission
@@ -336,6 +378,97 @@ function mutateDurableFirst(
   return false;
 }
 
+/**
+ * Pending retirement marks whose durable write has not landed yet
+ * (evil-shub round-8 P1 durable retirement). A headerless/terminal mark
+ * is a one-way boundary: the pre-round-8 behavior (three attempts, then
+ * in-memory only) left a resurrection window — if persistence healed
+ * AFTER the process gave up but BEFORE its restart, the durable file
+ * still showed the run live and a duplicate could re-arm authority. The
+ * marks below are retried UNBOUNDEDLY (bounded by the record TTL: the
+ * file itself forgets the run after 2h) until they land, and the
+ * in-memory overlay already denies admission/use for this process, so
+ * the boundary is fail-closed everywhere while the retry is pending.
+ */
+const pendingRetirements = new Map<
+  string,
+  { state: "headerless" | "terminal"; generation?: number }
+>();
+let retirementRetryTimer: ReturnType<typeof setTimeout> | undefined;
+const retirementRetryIntervalMs = 30_000;
+
+function scheduleRetirementRetry(): void {
+  if (pendingRetirements.size === 0) return;
+  if (retirementRetryTimer !== undefined) return;
+  if (process.env.NODE_ENV === "test") return; // Tests drive the driver below.
+  retirementRetryTimer = setTimeout(() => {
+    retirementRetryTimer = undefined;
+    retryPendingMcpOriginatorRetirements();
+  }, retirementRetryIntervalMs);
+  retirementRetryTimer.unref?.();
+}
+
+/**
+ * Re-attempt every pending retirement. Exported for the listener's
+ * teardown hook and driven explicitly by tests; the timer path calls it
+ * on an interval until the map drains.
+ */
+export function retryPendingMcpOriginatorRetirements(): void {
+  for (const [runId, pending] of [...pendingRetirements]) {
+    const durable = mutateDurableFirst(
+      `retirement retry (${pending.state}) for ${runId}`,
+      (records) =>
+        touchRecords(records, runId, pending.generation, pending.state),
+    );
+    if (durable) pendingRetirements.delete(runId);
+  }
+  if (pendingRetirements.size > 0) scheduleRetirementRetry();
+}
+
+/**
+ * Register a retirement that could not be persisted yet, and make sure a
+ * retry is (or stays) scheduled. The in-memory mark is already applied by
+ * mutateDurableFirst's failure path, so this process is fail-closed; the
+ * retry closes the restart-resurrection window as soon as persistence
+ * heals.
+ */
+function registerPendingRetirement(
+  runId: string,
+  state: "headerless" | "terminal",
+  generation: number | undefined,
+  durable: boolean,
+): void {
+  if (durable) {
+    // A landed mark at a HIGHER-or-equal lattice rank subsumes a pending
+    // retry for the same run; a pending terminal must survive a landed
+    // headerless.
+    const pending = pendingRetirements.get(runId);
+    if (pending && STATE_RANK[pending.state] <= STATE_RANK[state]) {
+      pendingRetirements.delete(runId);
+    }
+    return;
+  }
+  const existing = pendingRetirements.get(runId);
+  const merged: { state: "headerless" | "terminal"; generation?: number } = {
+    state:
+      existing && STATE_RANK[existing.state] > STATE_RANK[state]
+        ? existing.state
+        : state,
+  };
+  const mergedGeneration = generation ?? existing?.generation;
+  if (mergedGeneration !== undefined) merged.generation = mergedGeneration;
+  pendingRetirements.set(runId, merged);
+  scheduleRetirementRetry();
+}
+
+/** Test-only: pending retirements, for asserting retry registration. */
+export function readPendingMcpOriginatorRetirementsForTests(): ReadonlyMap<
+  string,
+  { state: "headerless" | "terminal"; generation?: number }
+> {
+  return pendingRetirements;
+}
+
 function touchRecords(
   records: Map<string, AuthorityRecord>,
   runId: string,
@@ -355,11 +488,21 @@ function touchRecords(
     usableGeneration === undefined
       ? existing?.floor
       : Math.max(existing?.floor ?? -1, usableGeneration);
+  // State is monotone: headerless/terminal, once set, are never relaxed by
+  // later deliveries or retirement marks — that monotonicity IS the
+  // fail-closed boundary. A headerless mark landing after a terminal mark
+  // (retries can arrive in any order across processes) must NOT regress the
+  // record: take the lattice maximum instead of overwriting.
+  const nextState =
+    state === undefined
+      ? (existing?.state ?? "live")
+      : existing?.state !== undefined &&
+          STATE_RANK[existing.state] > STATE_RANK[state]
+        ? existing.state
+        : state;
   records.set(runId, {
     ...(floor !== undefined ? { floor } : {}),
-    // State is monotone: headerless/terminal, once set, are never relaxed by
-    // later deliveries — that monotonicity IS the fail-closed boundary.
-    state: state ?? existing?.state ?? "live",
+    state: nextState,
     updatedAtMs: Date.now(),
   });
 }
@@ -392,58 +535,84 @@ export function noteMcpOriginatorDelivery(
  * caller drops the delivery and does not ACK, so redelivery retries).
  * A degraded durable file also denies: the persisted boundary is unknown.
  */
+/**
+ * Admission outcome (evil-shub round-8 P1 verdict split). A PERMANENT
+ * denial means this exact delivery can never be admitted — a stale
+ * generation at-or-below the durable floor, a legacy delivery beneath a
+ * known generation contract, a headerless/terminal run, or a malformed
+ * generation. Redelivering it would loop forever, so the caller must
+ * consume/drop the frame (no work, no redelivery). A RETRYABLE denial
+ * means the durable boundary could not be evaluated at all (degraded
+ * durable file, failed transaction): the caller must not commit work and
+ * must not ACK, so redelivery retries the whole admission once the
+ * infrastructure heals.
+ */
+export type McpOriginatorAdmission =
+  | { admitted: true }
+  | { admitted: false; permanent: boolean };
+
 export function admitMcpOriginatorDelivery(
   runId: string,
   generation: number | undefined,
-): boolean {
+): McpOriginatorAdmission {
   // A malformed generation can never be a healthy admission (evil-shub
-  // round-6 P1): denying is fail-closed — the caller drops the delivery and
-  // does not ACK, so a well-formed redelivery can still be admitted.
+  // round-6 P1): the durable floor was never bumped for it, so consuming
+  // the frame (permanent) does not block a later well-formed delivery.
   if (generation !== undefined && !isValidGeneration(generation)) {
     console.error(
       `[mcp-originator-authority] malformed generation for ${runId}; denying admission (fail-closed)`,
     );
-    return false;
+    return { admitted: false, permanent: true };
   }
   if (!authorityPersistentPath()) {
     const record = recordsBySuperRunId.get(runId);
     if (record) {
-      if (record.state !== "live") return false;
+      if (record.state !== "live") return { admitted: false, permanent: true };
       if (
         record.floor !== undefined &&
         (generation === undefined || generation < record.floor)
       )
-        return false;
+        return { admitted: false, permanent: true };
     }
     touchRecords(recordsBySuperRunId, runId, generation);
-    return true;
+    return { admitted: true };
   }
   try {
-    return authorityTransaction((records, ctx) => {
+    return authorityTransaction<McpOriginatorAdmission>((records, ctx) => {
       if (ctx.degraded) {
         console.error(
-          `[mcp-originator-authority] durable file is degraded; denying admission for ${runId} (fail-closed)`,
+          `[mcp-originator-authority] durable file is degraded; denying admission for ${runId} (fail-closed, retryable)`,
         );
-        return { result: false, changed: false };
+        return {
+          result: { admitted: false, permanent: false },
+          changed: false,
+        };
       }
       const record = records.get(runId);
       if (record) {
-        if (record.state !== "live") return { result: false, changed: false };
+        if (record.state !== "live")
+          return {
+            result: { admitted: false, permanent: true },
+            changed: false,
+          };
         if (
           record.floor !== undefined &&
           (generation === undefined || generation < record.floor)
         )
-          return { result: false, changed: false };
+          return {
+            result: { admitted: false, permanent: true },
+            changed: false,
+          };
       }
       touchRecords(records, runId, generation);
-      return { result: true, changed: true };
+      return { result: { admitted: true }, changed: true };
     });
   } catch (error) {
     console.error(
-      `[mcp-originator-authority] admission transaction failed for ${runId}; denying the delivery (fail-closed)`,
+      `[mcp-originator-authority] admission transaction failed for ${runId}; denying the delivery (fail-closed, retryable)`,
       error,
     );
-    return false;
+    return { admitted: false, permanent: false };
   }
 }
 
@@ -499,9 +668,12 @@ export function markMcpOriginatorHeaderless(
   runId: string,
   deletedGeneration?: number,
 ): boolean {
-  return mutateDurableFirst(`headerless mark for ${runId}`, (records) =>
-    touchRecords(records, runId, deletedGeneration, "headerless"),
+  const durable = mutateDurableFirst(
+    `headerless mark for ${runId}`,
+    (records) => touchRecords(records, runId, deletedGeneration, "headerless"),
   );
+  registerPendingRetirement(runId, "headerless", deletedGeneration, durable);
+  return durable;
 }
 
 /** Mark a run terminal: no later delivery may recreate the entry. */
@@ -509,9 +681,11 @@ export function markMcpOriginatorTerminal(
   runId: string,
   deletedGeneration?: number,
 ): boolean {
-  return mutateDurableFirst(`terminal mark for ${runId}`, (records) =>
+  const durable = mutateDurableFirst(`terminal mark for ${runId}`, (records) =>
     touchRecords(records, runId, deletedGeneration, "terminal"),
   );
+  registerPendingRetirement(runId, "terminal", deletedGeneration, durable);
+  return durable;
 }
 
 /**
@@ -566,6 +740,11 @@ export function configureMcpOriginatorAuthorityPersistenceForTests(
 /** Test-only: drop every record and forget any loaded state. */
 export function resetMcpOriginatorAuthority(): void {
   recordsBySuperRunId.clear();
+  pendingRetirements.clear();
+  if (retirementRetryTimer !== undefined) {
+    clearTimeout(retirementRetryTimer);
+    retirementRetryTimer = undefined;
+  }
 }
 
 /** Test-only diagnostics. */

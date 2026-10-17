@@ -88,17 +88,35 @@ export function acknowledgeInputFrame(
       allowCreate,
       mayRecreateOwner,
     });
-    if (verdict === "denied") {
-      // Durable admission failed closed (degraded authority file, a failed
-      // transaction, a malformed generation, or a retired/stale boundary).
-      // Suppress the ACK entirely (evil-shub round-6 P1): Cloud's delivery
-      // gate treats an unacked frame as undeliverable and redelivers it, so
-      // the admission retries instead of the turn running headerless
-      // forever while Cloud believes the token was accepted.
+    if (verdict === "denied_retryable") {
+      // Durable admission could not be evaluated at all (degraded authority
+      // file or a failed transaction). Suppress the ACK entirely (evil-shub
+      // round-6 P1): Cloud's delivery gate treats an unacked frame as
+      // undeliverable and redelivers it, so the admission retries once the
+      // infrastructure heals instead of the turn running headerless forever
+      // while Cloud believes the token was accepted.
       console.error(
-        "[input-ack] originator delivery denied by the durable authority gate; suppressing the ack so Cloud redelivers",
+        "[input-ack] originator admission is retryable-denied; suppressing the ack so Cloud redelivers",
       );
       return;
+    }
+    if (verdict === "denied_permanent") {
+      // This frame can NEVER be admitted — a stale generation at-or-below
+      // the durable floor, a legacy delivery beneath a known generation
+      // contract, a headerless/terminal run, or a malformed generation
+      // (evil-shub round-8 P1 verdict split). Suppressing the ack would
+      // redeliver the same bytes forever with zero chance of success, so
+      // CONSUME the frame with the normal ack and continue without the
+      // originator token. The pre-commit gate in the router keeps
+      // permanently denied frames out of durable input commits and never
+      // runs work under them; reaching this branch means a refresh-path
+      // frame (duplicate/approval — consuming is correct) or the narrow
+      // race where the authority record retired between the pre-gate and
+      // this record call — and the durable floor the retirement persisted
+      // still fences any redelivery.
+      console.error(
+        "[input-ack] originator delivery is permanently denied (stale or retired authority); consuming the frame without the token",
+      );
     }
   }
   if (!frame.request_id) return;
