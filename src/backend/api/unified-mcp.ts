@@ -3,11 +3,20 @@ import { isRecord } from "@/utils/type-guards";
 /** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
-  post(path: string, options?: { body?: unknown }): Promise<unknown>;
+  post(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<unknown>;
   mcpServers?: {
     list(): Promise<unknown[]>;
   };
 }
+
+/**
+ * Header that carries a super run's MCP originator token on tool-run calls
+ * (USER_SCOPED_MCP_CONNECTIONS). Sent only when a token is held for the run.
+ */
+const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
 
 export interface UnifiedMcpServer {
   id: string;
@@ -290,11 +299,26 @@ export async function runUnifiedMcpTool(params: {
   toolId: string;
   args: Record<string, unknown>;
   timeoutMs?: number;
+  /**
+   * Originator token held for the active super run. Sent verbatim as the
+   * `x-letta-mcp-originator-token` header; when absent the call proceeds
+   * unattributed and the header is omitted entirely. Never logged here.
+   */
+  originatorToken?: string;
 }): Promise<UnifiedMcpRunResult> {
   const value = await withTimeout(
     params.client.post(
       `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/${encodeURIComponent(params.mcpServerId)}/tools/${encodeURIComponent(params.toolId)}/run`,
-      { body: { args: params.args } },
+      {
+        body: { args: params.args },
+        ...(params.originatorToken
+          ? {
+              headers: {
+                [MCP_ORIGINATOR_TOKEN_HEADER]: params.originatorToken,
+              },
+            }
+          : {}),
+      },
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",
