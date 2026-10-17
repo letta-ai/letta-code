@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -206,6 +212,125 @@ describe("durability", () => {
       };
       expect(file.records["run-old"]).toBeUndefined();
       expect(file.records["run-new"]).toBeDefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("cross-process durability (evil-shub round 4)", () => {
+  test("a denied recreation still advances the durable floor, blocking later zombies", () => {
+    // B/gen2 duplicate arrives with no volatile entry and a transiently
+    // failing live-owner proof: recreation is denied, but the delivery is
+    // still accepted/ACKed upstream, so the floor MUST advance to gen2 —
+    // otherwise a later A/gen1 zombie slips beneath it and recreates the
+    // revoked entry.
+    recordMcpOriginatorDelivery(
+      {
+        mcp_originator_token: "token-b",
+        super_run_id: "run-x",
+        mcp_originator_generation: 2,
+      },
+      { allowCreate: false, mayRecreateOwner: () => false },
+    );
+    expect(getMcpOriginatorToken("run-x")).toBeUndefined();
+    expect(readMcpOriginatorAuthorityForTests("run-x")?.floor).toBe(2);
+    // The gen1 zombie is now rejected by the floor even with a live-owner
+    // proof available again.
+    recordMcpOriginatorDelivery(
+      {
+        mcp_originator_token: "token-a",
+        super_run_id: "run-x",
+        mcp_originator_generation: 1,
+      },
+      { allowCreate: false, mayRecreateOwner: () => true },
+    );
+    expect(getMcpOriginatorToken("run-x")).toBeUndefined();
+  });
+
+  test("another process's durable record is merged, never clobbered", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
+    try {
+      const path = join(root, "authority.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          records: {
+            "run-foreign": {
+              floor: 7,
+              state: "terminal",
+              updatedAtMs: Date.now(),
+            },
+          },
+        }),
+        { mode: 0o600 },
+      );
+      configureMcpOriginatorAuthorityPersistenceForTests(path);
+      resetMcpOriginatorAuthority();
+      // A local write must read-merge: the foreign terminal record survives.
+      noteMcpOriginatorDelivery("run-local", 1);
+      const file = JSON.parse(readFileSync(path, "utf8")) as {
+        records: Record<string, { state: string }>;
+      };
+      expect(file.records["run-foreign"]?.state).toBe("terminal");
+      expect(file.records["run-local"]).toBeDefined();
+      expect(mcpOriginatorAuthorityAllows("run-foreign", 99)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an in-memory mark survives a failed durable write and keeps gating", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
+    try {
+      // Point persistence AT A DIRECTORY so every write fails.
+      configureMcpOriginatorAuthorityPersistenceForTests(root);
+      resetMcpOriginatorAuthority();
+      recordMcpOriginatorDelivery(
+        {
+          mcp_originator_token: "token-y",
+          super_run_id: "run-y",
+          mcp_originator_generation: 3,
+        },
+        { allowCreate: true },
+      );
+      retireMcpOriginatorTokenOnTerminal("run-y");
+      // Volatile token is gone (fail-closed) and the terminal boundary still
+      // gates from the in-memory overlay even though nothing persisted.
+      expect(getMcpOriginatorToken("run-y")).toBeUndefined();
+      expect(mcpOriginatorAuthorityAllows("run-y", 4)).toBe(false);
+      recordMcpOriginatorDelivery(
+        {
+          mcp_originator_token: "token-y2",
+          super_run_id: "run-y",
+          mcp_originator_generation: 4,
+        },
+        { allowCreate: false, mayRecreateOwner: () => true },
+      );
+      expect(getMcpOriginatorToken("run-y")).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a failed durable write self-heals on the next successful transaction", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
+    try {
+      const broken = join(root, "blocked");
+      // 'blocked' is a directory: writes fail while it exists.
+      mkdirSync(broken);
+      configureMcpOriginatorAuthorityPersistenceForTests(broken);
+      resetMcpOriginatorAuthority();
+      markMcpOriginatorTerminal("run-z");
+      // Unbreak persistence: the overlay must flow to disk on the next write.
+      const healed = join(root, "authority.json");
+      configureMcpOriginatorAuthorityPersistenceForTests(healed);
+      noteMcpOriginatorDelivery("run-z", 1);
+      const file = JSON.parse(readFileSync(healed, "utf8")) as {
+        records: Record<string, { state: string }>;
+      };
+      expect(file.records["run-z"]?.state).toBe("terminal");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

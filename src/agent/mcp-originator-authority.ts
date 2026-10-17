@@ -29,22 +29,35 @@
  * server-side, so any record older than AUTHORITY_RECORD_TTL_MS (2h, twice
  * the ceiling) can only describe dead tokens and is pruned on access.
  *
- * Persistence is best-effort: the in-memory mirror stays authoritative for
- * the process lifetime; a failed write degrades cross-restart protection
- * only and is logged, never thrown into the input path.
+ * Persistence is serialized read-modify-write under the shared interprocess
+ * durable-file lock: every transaction re-reads and merges the file, so
+ * concurrent listener processes sharing the server-scoped file cannot erase
+ * each other's records (whole-file last-writer-wins would). Mutations are
+ * durable-first — callers retire volatile token state only after the mark
+ * lands. A failed write still applies the boundary in-memory (fail-closed
+ * for the live process) and logs every failure, never throwing into the
+ * input path.
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import {
+  acquireDurableFileLock,
+  fsyncDirectory,
+} from "@/websocket/listener/durable-file-lock";
 
 export type McpOriginatorAuthorityState = "live" | "headerless" | "terminal";
 
@@ -66,8 +79,6 @@ const AUTHORITY_RECORD_TTL_MS = 2 * 60 * 60 * 1000;
 const recordsBySuperRunId = new Map<string, AuthorityRecord>();
 
 let persistencePathOverride: string | null | undefined;
-let loadedFromDisk = false;
-let writeFailureLogged = false;
 
 function authorityPersistentPath(): string | null {
   if (persistencePathOverride !== undefined) return persistencePathOverride;
@@ -102,14 +113,37 @@ function pruneExpired(nowMs: number): boolean {
   return pruned;
 }
 
-function loadFromDiskOnce(): void {
-  if (loadedFromDisk) return;
-  loadedFromDisk = true;
-  const path = authorityPersistentPath();
-  if (!path || !existsSync(path)) return;
+/** Monotone state lattice rank: live < headerless < terminal. */
+const STATE_RANK: Record<McpOriginatorAuthorityState, number> = {
+  live: 0,
+  headerless: 1,
+  terminal: 2,
+};
+
+/**
+ * Merge two records for the same run under the monotone lattice: max floor,
+ * max state, max timestamp. Never relaxes either side.
+ */
+function mergeRecords(
+  a: AuthorityRecord,
+  b: AuthorityRecord | undefined,
+): AuthorityRecord {
+  if (!b) return a;
+  const floor = Math.max(a.floor ?? -1, b.floor ?? -1);
+  return {
+    ...(floor >= 0 ? { floor } : {}),
+    state: STATE_RANK[a.state] >= STATE_RANK[b.state] ? a.state : b.state,
+    updatedAtMs: Math.max(a.updatedAtMs, b.updatedAtMs),
+  };
+}
+
+function readAuthorityRecords(path: string): Map<string, AuthorityRecord> {
+  const records = new Map<string, AuthorityRecord>();
+  if (!existsSync(path)) return records;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf8")) as AuthorityFile;
-    if (parsed?.version !== 1 || typeof parsed.records !== "object") return;
+    if (parsed?.version !== 1 || typeof parsed.records !== "object")
+      return records;
     for (const [runId, record] of Object.entries(parsed.records)) {
       if (
         record &&
@@ -118,58 +152,137 @@ function loadFromDiskOnce(): void {
           record.state === "terminal") &&
         typeof record.updatedAtMs === "number"
       ) {
-        recordsBySuperRunId.set(runId, record);
+        records.set(runId, record);
       }
     }
-    pruneExpired(Date.now());
   } catch {
-    // Corrupt or unreadable file: start empty rather than blocking input.
+    // Corrupt or unreadable file: treat as empty rather than blocking input.
+  }
+  return records;
+}
+
+/**
+ * Write with the same discipline as the disposition ledger: unique tmp file,
+ * fsync before rename, fsync the directory after. Throws on failure — the
+ * caller decides whether the mutation must degrade to in-memory only.
+ */
+function writeAuthorityRecords(
+  path: string,
+  records: Map<string, AuthorityRecord>,
+): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const file: AuthorityFile = {
+    version: 1,
+    records: Object.fromEntries(records),
+  };
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tmp, JSON.stringify(file), { mode: 0o600, flag: "wx" });
+    const fd = openSync(tmp, "r+");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(tmp, path);
+    fsyncDirectory(dirname(path));
+  } catch (error) {
+    try {
+      unlinkSync(tmp);
+    } catch {}
+    throw error;
   }
 }
 
-function persist(): void {
+/**
+ * Serialized read-modify-write against the durable file. Every transaction
+ * re-reads under an interprocess lock and merges, so concurrent listener
+ * processes (CLI + desktop + teleport peers share the server-scoped file)
+ * compose their records instead of last-writer-wins whole-file clobbers.
+ * The in-memory map is a cache refreshed by each transaction — never the
+ * source of a durable write.
+ */
+function authorityTransaction<T>(
+  mutate: (records: Map<string, AuthorityRecord>) => {
+    result: T;
+    changed: boolean;
+  },
+): T {
   const path = authorityPersistentPath();
-  if (!path) return;
+  if (!path) {
+    // Persistence disabled (tests / unconfigured): in-memory only.
+    return mutate(recordsBySuperRunId).result;
+  }
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  const release = acquireDurableFileLock(path, { waitMs: 2_000 });
   try {
-    mkdirSync(dirname(path), { recursive: true });
-    const file: AuthorityFile = {
-      version: 1,
-      records: Object.fromEntries(recordsBySuperRunId),
-    };
-    const tmp = `${path}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(file), { mode: 0o600 });
-    renameSync(tmp, path);
-  } catch (error) {
-    if (!writeFailureLogged) {
-      writeFailureLogged = true;
-      console.warn(
-        "[mcp-originator-authority] durable write failed; in-memory records remain authoritative for this process",
-        error,
+    const disk = readAuthorityRecords(path);
+    // Merge disk with the in-memory overlay instead of replacing it. The
+    // state lattice (live < headerless < terminal) and floor are monotone,
+    // so merging is well-defined — and an in-memory mark whose durable
+    // write failed is never silently regressed by a later disk read.
+    const memory = new Map(recordsBySuperRunId);
+    recordsBySuperRunId.clear();
+    for (const [runId, record] of disk) {
+      recordsBySuperRunId.set(
+        runId,
+        mergeRecords(record, memory.get(runId)) ?? record,
       );
     }
+    for (const [runId, record] of memory) {
+      if (!disk.has(runId)) recordsBySuperRunId.set(runId, record);
+    }
+    pruneExpired(Date.now());
+    const { result, changed } = mutate(recordsBySuperRunId);
+    if (changed) writeAuthorityRecords(path, recordsBySuperRunId);
+    return result;
+  } finally {
+    release();
   }
 }
 
-function touch(
+/**
+ * Apply a mutation durable-first; on any persistence failure, still apply it
+ * to the in-memory map (fail-closed for the live process) and log EVERY
+ * failure — a silently swallowed persist error re-opens the boundary after
+ * restart, so each one must be visible.
+ */
+function mutateDurableFirst(
+  label: string,
+  mutate: (records: Map<string, AuthorityRecord>) => void,
+): void {
+  try {
+    authorityTransaction((records) => {
+      mutate(records);
+      return { result: undefined, changed: true };
+    });
+  } catch (error) {
+    console.error(
+      `[mcp-originator-authority] durable write failed for ${label}; the boundary still holds in this process but is NOT durable across restart`,
+      error,
+    );
+    mutate(recordsBySuperRunId);
+  }
+}
+
+function touchRecords(
+  records: Map<string, AuthorityRecord>,
   runId: string,
   generation: number | undefined,
   state?: McpOriginatorAuthorityState,
 ): void {
-  loadFromDiskOnce();
-  const existing = recordsBySuperRunId.get(runId);
+  const existing = records.get(runId);
   const floor =
     generation === undefined
       ? existing?.floor
       : Math.max(existing?.floor ?? -1, generation);
-  recordsBySuperRunId.set(runId, {
+  records.set(runId, {
     ...(floor !== undefined ? { floor } : {}),
     // State is monotone: headerless/terminal, once set, are never relaxed by
     // later deliveries — that monotonicity IS the fail-closed boundary.
     state: state ?? existing?.state ?? "live",
     updatedAtMs: Date.now(),
   });
-  pruneExpired(Date.now());
-  persist();
 }
 
 /**
@@ -180,7 +293,9 @@ export function noteMcpOriginatorDelivery(
   runId: string,
   generation: number | undefined,
 ): void {
-  touch(runId, generation);
+  mutateDurableFirst(`floor bump for ${runId}`, (records) =>
+    touchRecords(records, runId, generation),
+  );
 }
 
 /**
@@ -192,7 +307,9 @@ export function markMcpOriginatorHeaderless(
   runId: string,
   deletedGeneration?: number,
 ): void {
-  touch(runId, deletedGeneration, "headerless");
+  mutateDurableFirst(`headerless mark for ${runId}`, (records) =>
+    touchRecords(records, runId, deletedGeneration, "headerless"),
+  );
 }
 
 /** Mark a run terminal: no later delivery may recreate the entry. */
@@ -200,7 +317,9 @@ export function markMcpOriginatorTerminal(
   runId: string,
   deletedGeneration?: number,
 ): void {
-  touch(runId, deletedGeneration, "terminal");
+  mutateDurableFirst(`terminal mark for ${runId}`, (records) =>
+    touchRecords(records, runId, deletedGeneration, "terminal"),
+  );
 }
 
 /**
@@ -212,16 +331,29 @@ export function mcpOriginatorAuthorityAllows(
   runId: string,
   generation: number | undefined,
 ): boolean {
-  loadFromDiskOnce();
-  pruneExpired(Date.now());
-  const record = recordsBySuperRunId.get(runId);
-  if (!record) return true;
-  if (record.state !== "live") return false;
-  if (record.floor !== undefined) {
-    if (generation === undefined) return false;
-    if (generation < record.floor) return false;
+  try {
+    return authorityTransaction((records) => {
+      const record = records.get(runId);
+      let allows = true;
+      if (record) {
+        if (record.state !== "live") {
+          allows = false;
+        } else if (record.floor !== undefined) {
+          if (generation === undefined || generation < record.floor)
+            allows = false;
+        }
+      }
+      return { result: allows, changed: false };
+    });
+  } catch (error) {
+    // Fail closed: without the durable record we cannot prove the boundary,
+    // so the delivery is dropped and the turn runs headerless.
+    console.error(
+      `[mcp-originator-authority] authority read failed for ${runId}; denying the delivery (fail-closed)`,
+      error,
+    );
+    return false;
   }
-  return true;
 }
 
 /** Test-only: point persistence at a fixture path (null = in-memory only). */
@@ -229,22 +361,21 @@ export function configureMcpOriginatorAuthorityPersistenceForTests(
   path: string | null,
 ): void {
   persistencePathOverride = path;
-  loadedFromDisk = false;
 }
 
 /** Test-only: drop every record and forget any loaded state. */
 export function resetMcpOriginatorAuthority(): void {
   recordsBySuperRunId.clear();
-  loadedFromDisk = false;
-  writeFailureLogged = false;
 }
 
 /** Test-only diagnostics. */
 export function readMcpOriginatorAuthorityForTests(
   runId: string,
 ): { floor?: number; state: McpOriginatorAuthorityState } | undefined {
-  loadFromDiskOnce();
-  const record = recordsBySuperRunId.get(runId);
+  const record = authorityTransaction((records) => ({
+    result: records.get(runId),
+    changed: false,
+  }));
   return record
     ? {
         ...(record.floor !== undefined ? { floor: record.floor } : {}),

@@ -470,6 +470,7 @@ export function createListenerMessageHandler(
             agentId: teleportAgentId,
             conversationId: parsed.runtime.conversation_id,
             payload: parsed.payload,
+            originatorSuperRunId: parsed.super_run_id,
             onStatusChange: opts.onStatusChange,
             acknowledgeInput,
             runDetachedListenerTask,

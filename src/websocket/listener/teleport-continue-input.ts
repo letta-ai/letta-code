@@ -44,6 +44,14 @@ export function admitTeleportContinueInput(params: {
   agentId: string;
   conversationId: string;
   payload: InputTeleportContinuePayload;
+  /**
+   * Originator super run id from the top-level frame (when present). Threaded
+   * onto the continuation so the turn finalizer can retire the run's token
+   * entry — including an entry a duplicate-branch ACK recreated from the live
+   * teleport disposition (evil-shub round 4: a recreated entry whose
+   * continuation carries no originator id is orphaned until TTL).
+   */
+  originatorSuperRunId?: string;
   onStatusChange: StartListenerOptions["onStatusChange"];
   acknowledgeInput: AcknowledgeInput;
   runDetachedListenerTask: (
@@ -114,6 +122,9 @@ export function admitTeleportContinueInput(params: {
       agentId,
       conversationId,
       clientPreferences: payload.client_preferences,
+      ...(params.originatorSuperRunId
+        ? { mcpOriginatorSuperRunId: params.originatorSuperRunId }
+        : {}),
       messages: buildTeleportContinuationMessages({
         teleportId,
         approvals: payload.continuation?.approvals,
@@ -139,14 +150,14 @@ export function admitTeleportContinueInput(params: {
     }
     clearExpectedInboundTeleport(scopedRuntime);
     // MCP originator delivery: refresh-only, and NO recreate predicate. A
-    // teleport continuation creates no new token owner (its continuationInput
-    // carries no mcpOriginatorSuperRunId and no finalizer retires by it), so
-    // a token riding this frame may re-assert an existing entry but must
-    // never create one — the disposition committed above would make a
-    // live-owner predicate vacuously true and orphan the entry until
-    // teardown. Crash recovery does not need a hatch here: a post-crash
+    // teleport continuation creates no new token owner here: the disposition
+    // committed above would make a live-owner predicate vacuously true, so a
+    // token riding this frame may re-assert an existing entry but must never
+    // create one. Crash recovery does not need a hatch here: a post-crash
     // redelivery finds the durable disposition and takes the duplicate
-    // branch, which gates recreation correctly.
+    // branch, which gates recreation correctly — and the continuation's
+    // threaded mcpOriginatorSuperRunId lets its finalizer retire that
+    // recreated entry instead of orphaning it.
     acknowledgeInput(true, undefined, "started", "refresh");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
