@@ -24,6 +24,7 @@ export type AcknowledgeInput = (
   accepted: boolean,
   error?: string,
   disposition?: "started" | "queued",
+  deliveryHandling?: "create" | "refresh",
 ) => void;
 
 /**
@@ -75,7 +76,9 @@ export function admitTeleportContinueInput(params: {
     teleportInputIdentity(teleportId),
   );
   if (admission.kind === "duplicate") {
-    acknowledgeInput(true, undefined, admission.disposition);
+    // Duplicate re-ack: refresh-only, never create a store entry (see the
+    // accept below).
+    acknowledgeInput(true, undefined, admission.disposition, "refresh");
     return;
   }
   if (admission.kind === "full") {
@@ -127,7 +130,12 @@ export function admitTeleportContinueInput(params: {
       return;
     }
     clearExpectedInboundTeleport(scopedRuntime);
-    acknowledgeInput(true, undefined, "started");
+    // MCP originator delivery: refresh-only. A teleport continuation creates
+    // no new token owner (its continuationInput carries no
+    // mcpOriginatorSuperRunId and no finalizer retires by it), so a token
+    // riding this frame may re-assert an existing entry but must never
+    // create one.
+    acknowledgeInput(true, undefined, "started", "refresh");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
         continuationInput,

@@ -507,3 +507,62 @@ test("expected teleport id survives mismatches and failed durable admission", ()
   });
   expect(tasks).toHaveLength(1);
 });
+
+test("teleport accepts re-assert but never create originator token entries (refresh-only)", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-refresh",
+  );
+  expectInboundTeleport(runtime, "teleport-refresh");
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+    deliveryHandling?: "create" | "refresh";
+  }> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-refresh",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+      deliveryHandling?: "create" | "refresh",
+    ) =>
+      acknowledgements.push({ accepted, error, disposition, deliveryHandling }),
+    runDetachedListenerTask: (_name: string, _task: () => Promise<void>) => {},
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = () => ({
+    kind: "teleport_continue" as const,
+    teleport_id: "teleport-refresh",
+    source: { device_id: "source-device", connection_name: "Source" },
+  });
+
+  // Fresh accept: creates a turn but no token owner — refresh-only.
+  admitTeleportContinueInput({ ...base, payload: payload() });
+  expect(acknowledgements.at(-1)).toMatchObject({
+    accepted: true,
+    deliveryHandling: "refresh",
+  });
+
+  // Duplicate re-ack of the same teleport id: also refresh-only.
+  admitTeleportContinueInput({ ...base, payload: payload() });
+  expect(acknowledgements.at(-1)).toMatchObject({
+    accepted: true,
+    deliveryHandling: "refresh",
+  });
+
+  // No accepted teleport ack may request create semantics.
+  expect(
+    acknowledgements
+      .filter((ack) => ack.accepted)
+      .map((ack) => ack.deliveryHandling),
+  ).toEqual(["refresh", "refresh"]);
+});

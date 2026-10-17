@@ -51,7 +51,7 @@ import type {
   WriteFileCommand,
   WriteFileResponseMessage,
 } from "./file-write-protocol";
-import type { InputCreateMessagePayload } from "./input-create-message";
+import type { InputCommand } from "./input-command";
 import type {
   LoopErrorMessage,
   LoopState,
@@ -571,32 +571,6 @@ export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
   subagents: SubagentSnapshot[];
 }
 
-export interface ApprovalResponseAllowDecision {
-  behavior: "allow";
-  message?: string;
-  updated_input?: Record<string, unknown> | null;
-  selected_permission_suggestion_ids?: string[];
-}
-
-export interface ApprovalResponseDenyDecision {
-  behavior: "deny";
-  message: string;
-}
-
-export type ApprovalResponseDecision =
-  | ApprovalResponseAllowDecision
-  | ApprovalResponseDenyDecision;
-
-export type ApprovalResponseBody =
-  | {
-      request_id: string;
-      decision: ApprovalResponseDecision;
-    }
-  | {
-      request_id: string;
-      error: string;
-    };
-
 /**
  * Controller -> execution-environment commands.
  * In v2, the WS server accepts runtime-scoped chat/device commands plus
@@ -604,26 +578,18 @@ export type ApprovalResponseBody =
  */
 export type { ClientPreferences } from "./client-preferences";
 export type {
+  ApprovalResponseAllowDecision,
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
+  ApprovalResponseDenyDecision,
+  InputApprovalResponsePayload,
+  InputCommand,
+  InputPayload,
+} from "./input-command";
+export type {
   ClientToolsetConfig,
   InputCreateMessagePayload,
 } from "./input-create-message";
-
-export type InputApprovalResponsePayload = {
-  kind: "approval_response";
-} & ApprovalResponseBody;
-export type InputPayload =
-  | InputCreateMessagePayload
-  | InputApprovalResponsePayload
-  | TeleportProtocol.InputTeleportContinuePayload;
-
-export interface InputCommand {
-  type: "input";
-  /** Correlates acknowledgement without waiting for the turn to finish. */
-  request_id?: string;
-  terminal_consumer_id?: string;
-  runtime: ConversationRuntimeScope;
-  payload: InputPayload;
-}
 
 export interface InputAcceptedResponseMessage {
   type: "input_accepted";

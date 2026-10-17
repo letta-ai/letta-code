@@ -40,6 +40,9 @@ export function createIncomingMessage(
   scope: ConversationRuntimeScope,
   payload: InputCreateMessagePayload,
   connectionId?: ListenerConnectionId,
+  // The delivery fields' declared types live on InputCommand
+  // (protocol_v2.ts); they are unknown here because the raw wire frame is
+  // validated by readMcpOriginatorDelivery before either is trusted.
   frame?: {
     terminal_consumer_id?: string | null;
     super_run_id?: unknown;
