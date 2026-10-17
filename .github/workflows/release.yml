@@ -34,19 +34,19 @@ jobs:
           set -euo pipefail
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "should_publish=true" >> $GITHUB_OUTPUT
-            echo "subject=manual publish dispatch" >> $GITHUB_OUTPUT
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            echo "subject=manual publish dispatch" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           SUBJECT=$(git log --format=%s "${{ github.event.before }}..${{ github.sha }}" | grep -E '^chore: bump version to ' | tail -n 1 || true)
           if [ -z "$SUBJECT" ]; then
-            echo "should_publish=false" >> $GITHUB_OUTPUT
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "should_publish=true" >> $GITHUB_OUTPUT
-          echo "subject=$SUBJECT" >> $GITHUB_OUTPUT
+          echo "should_publish=true" >> "$GITHUB_OUTPUT"
+          echo "subject=$SUBJECT" >> "$GITHUB_OUTPUT"
 
       - name: Configure Git
         if: steps.detect.outputs.should_publish == 'true'
@@ -79,15 +79,15 @@ jobs:
           PACKAGE_NAME=$(jq -r '.name' package.json)
           TAG="v$VERSION"
 
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "package_name=$PACKAGE_NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE_LABEL=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-([^.]+)(\..*)?$/\1/')
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-            echo "npm_tag=$PRERELEASE_LABEL" >> $GITHUB_OUTPUT
-            echo "previous_tag=" >> $GITHUB_OUTPUT
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=$PRERELEASE_LABEL" >> "$GITHUB_OUTPUT"
+            echo "previous_tag=" >> "$GITHUB_OUTPUT"
           else
             PREVIOUS_TAG=$(
               curl -fsSL \
@@ -111,27 +111,27 @@ jobs:
               )
             fi
 
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-            echo "npm_tag=latest" >> $GITHUB_OUTPUT
-            echo "previous_tag=$PREVIOUS_TAG" >> $GITHUB_OUTPUT
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+            echo "npm_tag=latest" >> "$GITHUB_OUTPUT"
+            echo "previous_tag=$PREVIOUS_TAG" >> "$GITHUB_OUTPUT"
           fi
 
           if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "tag_exists=true" >> $GITHUB_OUTPUT
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
           else
-            echo "tag_exists=false" >> $GITHUB_OUTPUT
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
           fi
 
           if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
-            echo "npm_published=true" >> $GITHUB_OUTPUT
+            echo "npm_published=true" >> "$GITHUB_OUTPUT"
           else
-            echo "npm_published=false" >> $GITHUB_OUTPUT
+            echo "npm_published=false" >> "$GITHUB_OUTPUT"
           fi
 
           if curl -fsSL "https://pypi.org/pypi/letta/$VERSION/json" >/dev/null 2>&1; then
-            echo "pypi_published=true" >> $GITHUB_OUTPUT
+            echo "pypi_published=true" >> "$GITHUB_OUTPUT"
           else
-            echo "pypi_published=false" >> $GITHUB_OUTPUT
+            echo "pypi_published=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install dependencies
