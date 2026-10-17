@@ -4,13 +4,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  commitInputDisposition,
   createAcceptedInputDispositionLedger,
+  dispositionKey,
   getInputDisposition,
   inputDispositionPersistentPath,
   loadDurableQueuedInputs,
   ordinaryInputIdentity,
   rememberInputDisposition,
+  reserveInputDisposition,
 } from "./input-disposition";
+import { hasLiveAcceptedInputOwner } from "./input-disposition-ownership";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
@@ -90,5 +94,92 @@ test("terminal completion cannot retire another queued input through correlation
     expect(getInputDisposition(runtime, queued)).toBe("queued");
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal tombstones do not", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+  const startedId = ordinaryInputIdentity("live-started");
+  const queuedId = ordinaryInputIdentity("live-queued");
+
+  // Unknown identity: no owner at all.
+  expect(
+    hasLiveAcceptedInputOwner(runtime, ordinaryInputIdentity("unknown")),
+  ).toBe(false);
+  expect(hasLiveAcceptedInputOwner(runtime, undefined)).toBe(false);
+
+  // Started owner: live.
+  const startedAdmission = reserveInputDisposition(runtime, startedId);
+  expect(startedAdmission.kind).toBe("reserved");
+  if (startedAdmission.kind !== "reserved") return;
+  commitInputDisposition(runtime, startedAdmission.reservation, "started", {
+    incoming: {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [],
+    },
+  });
+  expect(hasLiveAcceptedInputOwner(runtime, startedId)).toBe(true);
+
+  // Queued owner: live.
+  const queuedAdmission = reserveInputDisposition(runtime, queuedId);
+  expect(queuedAdmission.kind).toBe("reserved");
+  if (queuedAdmission.kind !== "reserved") return;
+  commitInputDisposition(runtime, queuedAdmission.reservation, "queued", {
+    incoming: {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [],
+    },
+  });
+  expect(hasLiveAcceptedInputOwner(runtime, queuedId)).toBe(true);
+
+  // Replay-completed (terminal-retired) disposition: NOT live, even though
+  // the entry itself persists as a tombstone.
+  completeInputReplay(runtime, startedId ? [startedId] : []);
+  expect(getInputDisposition(runtime, startedId)).toBeDefined();
+  expect(hasLiveAcceptedInputOwner(runtime, startedId)).toBe(false);
+
+  // Terminal-prepared disposition: NOT live.
+  if (!queuedId) return;
+  const preparedKey = dispositionKey(runtime.key, queuedId);
+  const preparedEntry =
+    listener.acceptedInputDispositionLedger.entries.get(preparedKey);
+  expect(preparedEntry).toBeDefined();
+  if (preparedEntry) {
+    preparedEntry.preparedTerminal = {
+      stopReason: "end_turn",
+    } as never;
+    expect(hasLiveAcceptedInputOwner(runtime, queuedId)).toBe(false);
+  }
+
+  // Expired entry: NOT live.
+  const expiredId = ordinaryInputIdentity("expired");
+  const expiredAdmission = reserveInputDisposition(runtime, expiredId);
+  expect(expiredAdmission.kind).toBe("reserved");
+  if (expiredAdmission.kind !== "reserved") return;
+  commitInputDisposition(runtime, expiredAdmission.reservation, "started", {
+    incoming: {
+      type: "message",
+      agentId: "agent-1",
+      conversationId: "conversation-1",
+      messages: [],
+    },
+  });
+  if (!expiredId) return;
+  const expiredKey = dispositionKey(runtime.key, expiredId);
+  const expiredEntry =
+    listener.acceptedInputDispositionLedger.entries.get(expiredKey);
+  expect(expiredEntry).toBeDefined();
+  if (expiredEntry) {
+    expiredEntry.expiresAt = Date.now() - 1;
+    expect(hasLiveAcceptedInputOwner(runtime, expiredId)).toBe(false);
   }
 });

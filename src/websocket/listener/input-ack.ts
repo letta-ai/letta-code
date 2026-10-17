@@ -5,13 +5,26 @@
 import type WebSocket from "ws";
 import { recordMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";
+import { getInputDisposition } from "./input-disposition";
+import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
+import type { ConversationRuntime, InputIdentity } from "./types";
 
-type SafeSocketSend = (
+export type SafeSocketSend = (
   socket: WebSocket,
   payload: unknown,
   errorType: string,
   context: string,
 ) => boolean;
+
+/**
+ * The three values every ack for one inbound frame needs; bound once per
+ * message by the listener so duplicate-ack call sites stay compact.
+ */
+export interface InputAckTransport {
+  safeSocketSend: SafeSocketSend;
+  socket: WebSocket;
+  frame: Parameters<typeof acknowledgeInputFrame>[2];
+}
 
 // The originator delivery fields are declared on InputCommand (the wire
 // contract's home in protocol_v2.ts); this view adds the untyped runtime
@@ -47,6 +60,13 @@ type InputAckFrame = Pick<
  * Defaults to "create" when the ack carries a disposition (fresh admissions
  * do) and "refresh" otherwise; duplicate call sites pass "refresh"
  * explicitly because their disposition comes from the ledger.
+ *
+ * `mayRecreateOwner` is the narrow refresh-path escape hatch: when the token
+ * store lost its entry (process crash) but the DURABLE input ledger still
+ * shows a live accepted owner for this input, the refreshed delivery may
+ * recreate the entry. Terminal disposition tombstones must not qualify —
+ * they are exactly the post-terminal duplicates the refresh restriction
+ * exists to reject.
  */
 export function acknowledgeInputFrame(
   send: SafeSocketSend,
@@ -56,11 +76,12 @@ export function acknowledgeInputFrame(
   error?: string,
   disposition?: "started" | "queued",
   deliveryHandling?: "create" | "refresh",
+  mayRecreateOwner?: () => boolean,
 ): void {
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
-    recordMcpOriginatorDelivery(frame, { allowCreate });
+    recordMcpOriginatorDelivery(frame, { allowCreate, mayRecreateOwner });
   }
   if (!frame.request_id) return;
   send(
@@ -75,5 +96,56 @@ export function acknowledgeInputFrame(
     },
     "input_accepted_response",
     "input",
+  );
+}
+
+/**
+ * The acknowledgeInputFrame arguments after (send, socket, frame) — the
+ * tuple the listener's per-message ack closure passes through verbatim.
+ */
+export type InputAckArgs = [
+  accepted: boolean,
+  error?: string,
+  disposition?: "started" | "queued",
+  deliveryHandling?: "create" | "refresh",
+  mayRecreateOwner?: () => boolean,
+];
+
+/**
+ * Refresh-only re-ack for an input the durable ledger already shows as
+ * admitted, carrying the live-owner proof the originator token store needs
+ * before recreating a lost entry. Terminal tombstones fail the proof, so
+ * post-terminal duplicates stay rejected. Returns true when the ack fired.
+ */
+export function acknowledgeIfAlreadyAdmitted(
+  transport: InputAckTransport,
+  runtime: ConversationRuntime,
+  identity: InputIdentity | undefined,
+): boolean {
+  const disposition = getInputDisposition(runtime, identity);
+  if (!disposition) return false;
+  acknowledgeAdmissionDuplicate(transport, runtime, identity, disposition);
+  return true;
+}
+
+/**
+ * Refresh-only re-ack for a disposition the admission ledger just reported
+ * as duplicate. Same live-owner proof rules as acknowledgeIfAlreadyAdmitted.
+ */
+export function acknowledgeAdmissionDuplicate(
+  transport: InputAckTransport,
+  runtime: ConversationRuntime,
+  identity: InputIdentity | undefined,
+  disposition: "started" | "queued",
+): void {
+  acknowledgeInputFrame(
+    transport.safeSocketSend,
+    transport.socket,
+    transport.frame,
+    true,
+    undefined,
+    disposition,
+    "refresh",
+    liveAcceptedInputOwnerProof(runtime, identity),
   );
 }

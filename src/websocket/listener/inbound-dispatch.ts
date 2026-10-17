@@ -13,6 +13,7 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
+import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   scheduleQueuePump,
@@ -103,6 +104,8 @@ export function dispatchInboundMessageWhenReady(params: {
     disposition?: "started" | "queued";
     /** True when the accept re-acks an already-admitted input (no new owner). */
     duplicate?: boolean;
+    /** Proof the durable ledger still shows a live owner for the input. */
+    mayRecreateOwner?: () => boolean;
   }) => void;
   forgetQueuedInput?: typeof forgetQueuedInputDisposition;
   enqueueInput?: typeof enqueueInboundUserMessage;
@@ -127,6 +130,7 @@ export function dispatchInboundMessageWhenReady(params: {
     accepted: boolean;
     disposition?: "started" | "queued";
     duplicate?: boolean;
+    mayRecreateOwner?: () => boolean;
   }): void => {
     if (inputAcknowledged) return;
     inputAcknowledged = true;
@@ -159,10 +163,14 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
+        // Refresh-only re-ack: the originator token store may recreate a
+        // lost entry only while the durable ledger shows a live owner for
+        // this input; terminal tombstones fail the proof and stay rejected.
         acknowledgeInput({
           accepted: true,
           disposition: admission.disposition,
           duplicate: true,
+          mayRecreateOwner: liveAcceptedInputOwnerProof(runtime, identity),
         });
         return;
       }

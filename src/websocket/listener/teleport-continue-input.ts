@@ -5,6 +5,7 @@ import {
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { hasLiveAcceptedInputOwner } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   buildTeleportContinuationMessages,
@@ -25,6 +26,7 @@ export type AcknowledgeInput = (
   error?: string,
   disposition?: "started" | "queued",
   deliveryHandling?: "create" | "refresh",
+  mayRecreateOwner?: () => boolean,
 ) => void;
 
 /**
@@ -76,9 +78,15 @@ export function admitTeleportContinueInput(params: {
     teleportInputIdentity(teleportId),
   );
   if (admission.kind === "duplicate") {
-    // Duplicate re-ack: refresh-only, never create a store entry (see the
-    // accept below).
-    acknowledgeInput(true, undefined, admission.disposition, "refresh");
+    // Duplicate re-ack: refresh-only. The durable ledger is the authority on
+    // whether this input still has a live owner whose token entry may be
+    // recreated after a crash (a terminal tombstone must not qualify).
+    acknowledgeInput(true, undefined, admission.disposition, "refresh", () =>
+      hasLiveAcceptedInputOwner(
+        scopedRuntime,
+        teleportInputIdentity(teleportId),
+      ),
+    );
     return;
   }
   if (admission.kind === "full") {
@@ -134,8 +142,14 @@ export function admitTeleportContinueInput(params: {
     // no new token owner (its continuationInput carries no
     // mcpOriginatorSuperRunId and no finalizer retires by it), so a token
     // riding this frame may re-assert an existing entry but must never
-    // create one.
-    acknowledgeInput(true, undefined, "started", "refresh");
+    // create one — unless the durable ledger still shows the live owner this
+    // continuation just started (crash recovery re-asserts authority).
+    acknowledgeInput(true, undefined, "started", "refresh", () =>
+      hasLiveAcceptedInputOwner(
+        scopedRuntime,
+        teleportInputIdentity(teleportId),
+      ),
+    );
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
         continuationInput,
