@@ -14,6 +14,7 @@ import {
 import { clampRawToolReturn } from "@/tools/impl/tool-return-clamp";
 import { debugLog } from "@/utils/debug";
 import { isRecord } from "@/utils/type-guards";
+import { ensureAssistantStreamLine } from "./assistant-continuation";
 import { extractCompactionSummary } from "./compaction-utils";
 import type { ContextTracker } from "./context-tracker";
 import { MAX_CONTEXT_HISTORY } from "./context-tracker";
@@ -987,22 +988,20 @@ export function onChunk(
       };
       // Resolve to a stable line id across mixed streams where some chunks
       // have only id, only otid, or both.
-      const id = resolveAssistantLineId(b, chunkWithIds);
-      if (!id) break;
+      const lineId = resolveAssistantLineId(b, chunkWithIds);
+      if (!lineId) break;
 
       // Handle otid transition (mark previous line as finished)
-      handleOtidTransition(b, id);
+      handleOtidTransition(b, lineId);
 
       const delta = extractTextPart(chunk.content); // NOTE: may be list of parts
       const messageId =
         typeof chunkWithIds.id === "string" ? chunkWithIds.id : undefined;
-      const line = ensure(b, id, () => ({
-        kind: "assistant",
-        id,
-        text: "",
-        phase: "streaming",
-        messageId,
-      }));
+      const { id, line } = ensureAssistantStreamLine(
+        b,
+        { id: lineId, otid: chunkWithIds.otid, messageId },
+        Boolean(delta),
+      );
       if (delta) {
         const newText = line.text + delta;
         b.tokenCount += Buffer.byteLength(delta, "utf8");
