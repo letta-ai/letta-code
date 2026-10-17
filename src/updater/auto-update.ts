@@ -280,6 +280,10 @@ function isAutoUpdateEnabled(): boolean {
   return process.env.DISABLE_AUTOUPDATER !== "1";
 }
 
+export function isHomebrewInstall(): boolean {
+  return /[/\\]Cellar[/\\]letta-code[/\\]/.test(getResolvedEntrypoint());
+}
+
 function isRunningLocally(): boolean {
   const argv = process.argv[1] || "";
   const resolvedPath = getResolvedEntrypoint();
@@ -538,6 +542,13 @@ export async function checkAndAutoUpdate(): Promise<
 
   const result = await checkForUpdate();
 
+  if (isHomebrewInstall()) {
+    if (result.updateAvailable) {
+      debugLog("Installed with Homebrew; run: brew upgrade letta-code");
+    }
+    return;
+  }
+
   if (result.updateAvailable) {
     const updateResult = await performUpdate();
     if (updateResult.enotemptyFailed) {
@@ -562,6 +573,12 @@ export async function manualUpdate(options?: {
 }> {
   if (isPythonDistribution()) {
     return { success: false, message: PYTHON_UPDATE_COMMAND };
+  }
+  if (isHomebrewInstall()) {
+    return {
+      success: false,
+      message: "Installed with Homebrew; run: brew upgrade letta-code",
+    };
   }
   if (isRunningLocally()) {
     return {
