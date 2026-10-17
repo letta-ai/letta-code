@@ -631,12 +631,11 @@ export async function getResumeDataFromBackend(
       messageHistory: prepareMessageHistory(messages),
     };
   } catch (error) {
-    // Re-throw "not found" errors (404/422) so callers can handle appropriately
-    // (e.g., /resume command should fail for non-existent conversations)
+    // Let callers distinguish a failed read from genuinely empty approval state.
     if (error instanceof APIError && isNotFoundError(error)) {
       throw error;
     }
     console.error("Error getting resume data:", error);
-    return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
+    throw error;
   }
 }
