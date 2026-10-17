@@ -189,7 +189,37 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
     expect(frames).toHaveLength(1);
     expect(frames[0]?.type).toBe("input_accepted");
     expect(frames[0]?.accepted).toBe(false);
+    // The non-retryable marker rides the wire so Cloud short-circuits its
+    // retryable remint/retry loop instead of churning the same bytes
+    // (evil-shub round-9 P2; Cloud reads it once the pairing lands).
+    expect(frames[0]).toMatchObject({
+      abortReason: "mcp_originator_denied_permanent",
+    });
     expect(processed).toBe(0);
     expect(getMcpOriginatorToken("run-r8-2")).toBeUndefined();
+  });
+
+  test("an admitted delivery acks WITHOUT an abortReason", async () => {
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    let processed = 0;
+    const handleMessage = makeHandlerHarness(listener, socket, () => {
+      processed += 1;
+    });
+    await handleMessage(makeOriginatorInputFrame("req-r9-1", "run-r9-1"));
+
+    const frames = socket.sentPayloads.map(
+      (p) =>
+        JSON.parse(p) as {
+          type?: string;
+          accepted?: boolean;
+          abortReason?: string;
+        },
+    );
+    expect(frames).toHaveLength(1);
+    expect(frames[0]?.accepted).toBe(true);
+    expect(frames[0]?.abortReason).toBeUndefined();
+    expect(processed).toBe(1);
+    expect(getMcpOriginatorToken("run-r9-1")).toBe(`mst_run-r9-1`);
   });
 });

@@ -132,6 +132,16 @@ async function runKeepaliveTick(superRunId: string): Promise<void> {
       return;
     }
   } catch (error) {
+    // Exact-token gate on the failure path too (evil-shub round-9 P1): the
+    // captured token may have been replaced while the request was in
+    // flight, and the replacement was installed with a fresh failure
+    // budget. A stale transport error belongs to the superseded token —
+    // charging it here would burn the replacement's budget and could stop
+    // renewal for a healthy token. The finally below still reschedules, so
+    // the replacement's chain (and any verifyAsap it requested) survives.
+    if (entry.hooks?.getToken() !== token) {
+      return;
+    }
     entry.consecutiveFailures += 1;
     if (entry.consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
       console.error(

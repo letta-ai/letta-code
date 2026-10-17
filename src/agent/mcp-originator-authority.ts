@@ -17,13 +17,18 @@
  *
  * This module keeps a small durable record per super run id:
  *
- *   { floor?: number; state: "live" | "headerless" | "terminal"; updatedAtMs }
+ *   { floor?: number; state: "live" | "headerless" | "terminal";
+ *     retiringTo?: "headerless" | "terminal"; updatedAtMs }
  *
  * floor is the maximum observed mint generation; state transitions only ever
  * move live → headerless|terminal (never back), mirroring the fail-closed
- * intent of the boundaries that set them. Records survive process restarts
- * in the same ~/.letta/state/<server-namespace>/ directory as the accepted
- * input disposition ledger.
+ * intent of the boundaries that set them. retiringTo is a durable retirement
+ * INTENT (evil-shub round-9 P1): when a headerless/terminal mark cannot be
+ * persisted, the intent is written instead so peers treat the record as NOT
+ * live (fail closed for admission and token use) and a restarted process
+ * reloads the pending retirement and resumes the retry. Records survive
+ * process restarts in the same ~/.letta/state/<server-namespace>/ directory
+ * as the accepted input disposition ledger.
  *
  * Bounded by design: originator tokens carry a 1-hour absolute TTL ceiling
  * server-side, so any record older than AUTHORITY_RECORD_TTL_MS (2h, twice
@@ -39,109 +44,44 @@
  * input path.
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { acquireDurableFileLock } from "@/websocket/listener/durable-file-lock";
 import {
-  closeSync,
-  existsSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { getServerUrl } from "@/backend/api/server-url";
-import {
-  acquireDurableFileLock,
-  fsyncDirectory,
-} from "@/websocket/listener/durable-file-lock";
+  type AuthorityRecord,
+  authorityPersistentPath,
+  configureAuthorityPersistencePathForTests,
+  isValidGeneration,
+  type McpOriginatorAuthorityState,
+  type McpOriginatorRetirementState,
+  mergeRecords,
+  mergeRetirementIntents,
+  readAuthorityRecords,
+  STATE_RANK,
+  writeAuthorityRecords,
+} from "./mcp-originator-authority-file";
 
-export type McpOriginatorAuthorityState = "live" | "headerless" | "terminal";
-
-type AuthorityRecord = {
-  /** Highest mint generation observed for this run (any delivery kind). */
-  floor?: number;
-  state: McpOriginatorAuthorityState;
-  updatedAtMs: number;
-};
-
-/**
- * A wire or disk generation is meaningful only as a nonnegative safe
- * integer (evil-shub round-6 P1): a string, negative, fractional, or NaN
- * value used to flow straight into Math.max, producing a NaN floor that
- * silently disabled every later floor comparison (NaN < x is false).
- */
-function isValidGeneration(generation: unknown): generation is number {
-  return (
-    typeof generation === "number" &&
-    Number.isSafeInteger(generation) &&
-    generation >= 0
-  );
-}
-
-/** Clock skew tolerance for records written by a peer with a fast clock. */
-const UPDATED_AT_FUTURE_SKEW_MS = 24 * 60 * 60 * 1000;
-
-/**
- * A record timestamp is meaningful only as a nonnegative safe integer not
- * impossibly far in the future (evil-shub round-8 P1). A negative or NaN
- * value flows into pruneExpired as `now - t > TTL` = always true, erasing
- * live/terminal boundaries on the very next access — a fail-OPEN read of a
- * corrupt file. A far-future value never prunes, pinning a stale floor.
- */
-function isValidUpdatedAtMs(
-  updatedAtMs: unknown,
-  nowMs: number,
-): updatedAtMs is number {
-  return (
-    typeof updatedAtMs === "number" &&
-    Number.isSafeInteger(updatedAtMs) &&
-    updatedAtMs >= 0 &&
-    updatedAtMs <= nowMs + UPDATED_AT_FUTURE_SKEW_MS
-  );
-}
-
-type AuthorityFile = {
-  version: 1;
-  records: Record<string, AuthorityRecord>;
-};
+export type {
+  McpOriginatorAuthorityState,
+  McpOriginatorRetirementState,
+} from "./mcp-originator-authority-file";
 
 /** Twice the server-side 1h absolute token ceiling. */
 const AUTHORITY_RECORD_TTL_MS = 2 * 60 * 60 * 1000;
 
+/**
+ * Effective record TTL; tests may shorten it (never in production — the
+ * setter below is test-only) so the pending-retirement drop and pruning can
+ * be exercised without a two-hour wait.
+ */
+let recordTtlMs = AUTHORITY_RECORD_TTL_MS;
+
 const recordsBySuperRunId = new Map<string, AuthorityRecord>();
-
-let persistencePathOverride: string | null | undefined;
-
-function authorityPersistentPath(): string | null {
-  if (persistencePathOverride !== undefined) return persistencePathOverride;
-  if (process.env.NODE_ENV === "test") return null;
-  let serverUrl: string;
-  try {
-    serverUrl = getServerUrl();
-  } catch {
-    serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
-  }
-  const namespace = createHash("sha256")
-    .update(serverUrl)
-    .digest("hex")
-    .slice(0, 24);
-  return join(
-    homedir(),
-    ".letta",
-    "state",
-    namespace,
-    "mcp-originator-authority-v1.json",
-  );
-}
 
 function pruneExpired(nowMs: number): boolean {
   let pruned = false;
   for (const [runId, record] of recordsBySuperRunId) {
-    if (nowMs - record.updatedAtMs > AUTHORITY_RECORD_TTL_MS) {
+    if (nowMs - record.updatedAtMs > recordTtlMs) {
       recordsBySuperRunId.delete(runId);
       pruned = true;
     }
@@ -150,126 +90,6 @@ function pruneExpired(nowMs: number): boolean {
 }
 
 /** Monotone state lattice rank: live < headerless < terminal. */
-const STATE_RANK: Record<McpOriginatorAuthorityState, number> = {
-  live: 0,
-  headerless: 1,
-  terminal: 2,
-};
-
-/**
- * Merge two records for the same run under the monotone lattice: max floor,
- * max state, max timestamp. Never relaxes either side.
- */
-function mergeRecords(
-  a: AuthorityRecord,
-  b: AuthorityRecord | undefined,
-): AuthorityRecord {
-  if (!b) return a;
-  const floor = Math.max(a.floor ?? -1, b.floor ?? -1);
-  return {
-    ...(floor >= 0 ? { floor } : {}),
-    state: STATE_RANK[a.state] >= STATE_RANK[b.state] ? a.state : b.state,
-    updatedAtMs: Math.max(a.updatedAtMs, b.updatedAtMs),
-  };
-}
-
-/**
- * Read the durable file. `degraded: true` means the file EXISTS but could
- * not be read, parsed, or fully validated: the durable floor/retirement
- * state is unknown, so callers must fail CLOSED (deny admission, deny token
- * use) and must never overwrite the damaged file — writing a fresh file
- * over it would erase a persisted headerless/terminal boundary and let a
- * duplicate re-arm authority the operator already revoked (evil-shub
- * round-5 P1). A missing file is NOT degraded: nothing was ever persisted.
- */
-function readAuthorityRecords(path: string): {
-  records: Map<string, AuthorityRecord>;
-  degraded: boolean;
-} {
-  const records = new Map<string, AuthorityRecord>();
-  if (!existsSync(path)) return { records, degraded: false };
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-    // Strict top-level shape (evil-shub round-8 P1): `records` must be a
-    // plain object — an ARRAY passes `typeof === "object"` and used to read
-    // as a healthy EMPTY file, silently dropping every persisted boundary
-    // (a terminal run would admit a post-terminal duplicate).
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      (parsed as { version?: unknown }).version !== 1 ||
-      typeof (parsed as { records?: unknown }).records !== "object" ||
-      (parsed as { records?: unknown }).records === null ||
-      Array.isArray((parsed as { records?: unknown }).records)
-    )
-      return { records, degraded: true };
-    const nowMs = Date.now();
-    for (const [runId, record] of Object.entries(
-      (parsed as AuthorityFile).records,
-    )) {
-      if (
-        record &&
-        (record.state === "live" ||
-          record.state === "headerless" ||
-          record.state === "terminal") &&
-        // updatedAtMs drives TTL pruning: a negative or far-future value is
-        // not merely odd data — a negative one makes every record look
-        // expired (prune erases a terminal boundary → fail-open), and a
-        // far-future one pins a stale floor against pruning forever.
-        // Either means the file cannot be trusted: degrade the WHOLE file
-        // fail-closed rather than reinterpret it (evil-shub round-8 P1).
-        isValidUpdatedAtMs(record.updatedAtMs, nowMs) &&
-        // A structurally invalid floor (string/negative/fractional/NaN) is
-        // as untrustworthy as an invalid state: treat the whole file as
-        // degraded rather than let a bogus floor silently gate admission
-        // (evil-shub round-6 P1).
-        (record.floor === undefined || isValidGeneration(record.floor))
-      ) {
-        records.set(runId, record);
-      } else {
-        // Any structurally invalid entry means the file's floors and states
-        // cannot be trusted as complete.
-        return { records, degraded: true };
-      }
-    }
-    return { records, degraded: false };
-  } catch {
-    return { records, degraded: true };
-  }
-}
-
-/**
- * Write with the same discipline as the disposition ledger: unique tmp file,
- * fsync before rename, fsync the directory after. Throws on failure — the
- * caller decides whether the mutation must degrade to in-memory only.
- */
-function writeAuthorityRecords(
-  path: string,
-  records: Map<string, AuthorityRecord>,
-): void {
-  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const file: AuthorityFile = {
-    version: 1,
-    records: Object.fromEntries(records),
-  };
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  try {
-    writeFileSync(tmp, JSON.stringify(file), { mode: 0o600, flag: "wx" });
-    const fd = openSync(tmp, "r+");
-    try {
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    renameSync(tmp, path);
-    fsyncDirectory(dirname(path));
-  } catch (error) {
-    try {
-      unlinkSync(tmp);
-    } catch {}
-    throw error;
-  }
-}
 
 /**
  * Serialized read-modify-write against the durable file. Every transaction
@@ -321,6 +141,11 @@ function authorityTransaction<T>(
         if (!disk.has(runId)) recordsBySuperRunId.set(runId, record);
       }
       pruneExpired(Date.now());
+      // A peer (or a dead earlier incarnation of this process) may have
+      // persisted a retirement INTENT whose mark never landed: reload it so
+      // this process resumes the retry instead of treating the run as
+      // ordinarily live (evil-shub round-9 P1).
+      resumeDurableRetirementIntents();
     }
     const { result, changed } = mutate(recordsBySuperRunId, { degraded });
     if (changed && !degraded) writeAuthorityRecords(path, recordsBySuperRunId);
@@ -385,17 +210,40 @@ function mutateDurableFirst(
  * in-memory only) left a resurrection window — if persistence healed
  * AFTER the process gave up but BEFORE its restart, the durable file
  * still showed the run live and a duplicate could re-arm authority. The
- * marks below are retried UNBOUNDEDLY (bounded by the record TTL: the
- * file itself forgets the run after 2h) until they land, and the
- * in-memory overlay already denies admission/use for this process, so
- * the boundary is fail-closed everywhere while the retry is pending.
+ * marks below are retried until they land or outlive the record TTL (evil-
+ * shub round-9 P1: past twice the server-side 1h token ceiling, every
+ * token the boundary could fence is dead, so the retry is dropped loudly
+ * instead of storming forever). The retry also PERSISTS THE INTENT
+ * (`retiringTo`) the moment a mark fails: peers reading the file treat an
+ * intent-carrying record as NOT live (fail closed for admission and token
+ * use), and a restarted process reloads the intent and resumes the retry
+ * instead of losing the boundary at process death. The in-memory overlay
+ * already denies admission/use for this process, so the boundary is
+ * fail-closed everywhere while the retry is pending.
  */
 const pendingRetirements = new Map<
   string,
-  { state: "headerless" | "terminal"; generation?: number }
+  {
+    state: McpOriginatorRetirementState;
+    generation?: number;
+    /**
+     * First registration time; drives the TTL drop. Never refreshed by
+     * retries — the bound is measured from when the retirement was first
+     * needed, not from the last failed attempt.
+     */
+    createdAtMs: number;
+  }
 >();
 let retirementRetryTimer: ReturnType<typeof setTimeout> | undefined;
 const retirementRetryIntervalMs = 30_000;
+/**
+ * Per-tick work bound (evil-shub round-9 P1): each entry performs up to
+ * three synchronous interprocess lock/write attempts, so iterating the
+ * whole map in one tick could stall the listener event loop without bound
+ * on persistent storage failure. Process at most this many entries per
+ * tick and requeue the rest for the next tick.
+ */
+const MAX_RETIREMENT_RETRIES_PER_TICK = 25;
 
 function scheduleRetirementRetry(): void {
   if (pendingRetirements.size === 0) return;
@@ -414,15 +262,124 @@ function scheduleRetirementRetry(): void {
  * on an interval until the map drains.
  */
 export function retryPendingMcpOriginatorRetirements(): void {
-  for (const [runId, pending] of [...pendingRetirements]) {
+  const nowMs = Date.now();
+  let processed = 0;
+  // Direct iteration: this loop only deletes entries (never re-adds), which
+  // a live Map iterator tolerates.
+  for (const [runId, pending] of pendingRetirements) {
+    // TTL drop (evil-shub round-9 P1): past twice the 1h token ceiling the
+    // record itself is prunable and every token the boundary could fence is
+    // dead server-side — retirement is moot. Drop loudly, never silently.
+    if (nowMs - pending.createdAtMs > recordTtlMs) {
+      console.error(
+        `[mcp-originator-authority] pending ${pending.state} retirement for ${runId} outlived the ${Math.round(recordTtlMs / 60_000)}-minute record TTL; dropping the retry (any token it fenced is dead at the server-side ceiling)`,
+      );
+      pendingRetirements.delete(runId);
+      continue;
+    }
+    if (processed >= MAX_RETIREMENT_RETRIES_PER_TICK) {
+      // Bound per-tick synchronous work; the remainder is retried on the
+      // next scheduled tick (scheduled below since the map is non-empty).
+      continue;
+    }
+    processed += 1;
     const durable = mutateDurableFirst(
       `retirement retry (${pending.state}) for ${runId}`,
       (records) =>
-        touchRecords(records, runId, pending.generation, pending.state),
+        touchRecords(records, runId, pending.generation, pending.state, {
+          preserveUpdatedAt: true,
+        }),
     );
     if (durable) pendingRetirements.delete(runId);
   }
   if (pendingRetirements.size > 0) scheduleRetirementRetry();
+}
+
+/**
+ * Persist ONLY the retirement intent (`retiringTo`) for a mark that just
+ * failed to land (evil-shub round-9 P1). The full mark keeps retrying via
+ * the pending map; the intent is the cheap durable signal that lets peers
+ * fail closed in the gap and lets a restarted process resume the retry.
+ *
+ * This is deliberately a DISK-ONLY transaction that bypasses the in-memory
+ * overlay: the overlay already carries the failed mark at its final state,
+ * so an overlay-merged write would persist the whole mark instead of the
+ * intent — and whenever the intent cannot outlive the mark, a restart has
+ * nothing to resume from. Writing the intent alone gives the file a
+ * durable "live but being retired" boundary even when the mark itself
+ * never landed before process death. Best-effort like every mark here: a
+ * failed intent write logs loudly and the in-memory overlay stays
+ * fail-closed for this process.
+ */
+function persistRetirementIntent(
+  runId: string,
+  state: McpOriginatorRetirementState,
+  generation: number | undefined,
+): void {
+  const path = authorityPersistentPath();
+  if (!path) return; // Persistence disabled (tests): the overlay is all.
+  try {
+    const release = acquireDurableFileLock(path, { waitMs: 2_000 });
+    try {
+      const { records: disk, degraded } = readAuthorityRecords(path);
+      if (degraded) {
+        console.error(
+          `[mcp-originator-authority] durable file is degraded for the retirement intent (${state}) for ${runId}; the boundary holds in this process only`,
+        );
+        return;
+      }
+      const existing = disk.get(runId);
+      // A landed headerless/terminal mark is the stronger boundary; never
+      // regress it to an intent.
+      if (existing && existing.state !== "live") return;
+      const floor =
+        generation !== undefined && isValidGeneration(generation)
+          ? Math.max(existing?.floor ?? -1, generation)
+          : existing?.floor;
+      disk.set(runId, {
+        ...(floor !== undefined && floor >= 0 ? { floor } : {}),
+        state: "live",
+        retiringTo:
+          mergeRetirementIntents(existing?.retiringTo, state) ?? state,
+        // Keep the record's original age: the TTL drop measures from the
+        // retirement's first need, and refreshing here would pin a stale
+        // boundary past the token ceiling.
+        updatedAtMs: existing?.updatedAtMs ?? Date.now(),
+      });
+      writeAuthorityRecords(path, disk);
+    } finally {
+      release();
+    }
+  } catch (error) {
+    console.error(
+      `[mcp-originator-authority] durable retirement intent (${state}) write failed for ${runId}; peers cannot see the boundary until a retry lands the mark`,
+      error,
+    );
+  }
+}
+
+/**
+ * Resume durable retirement intents after a restart (evil-shub round-9 P1):
+ * a record read from disk as live-with-`retiringTo` is a retirement a dead
+ * process never landed. Re-register it so the retry driver keeps attempting
+ * the mark; createdAtMs is the record's persisted age, so the TTL drop
+ * still measures from the retirement's first need, not the restart.
+ */
+function resumeDurableRetirementIntents(): void {
+  for (const [runId, record] of recordsBySuperRunId) {
+    if (record.state !== "live" || record.retiringTo === undefined) continue;
+    const existing = pendingRetirements.get(runId);
+    if (existing && existing.createdAtMs <= record.updatedAtMs) continue;
+    pendingRetirements.set(runId, {
+      state: record.retiringTo,
+      ...(record.floor !== undefined ? { generation: record.floor } : {}),
+      createdAtMs: Math.min(
+        existing?.createdAtMs ?? record.updatedAtMs,
+        record.updatedAtMs,
+      ),
+    });
+  }
+  scheduleRetirementRetry();
 }
 
 /**
@@ -434,7 +391,7 @@ export function retryPendingMcpOriginatorRetirements(): void {
  */
 function registerPendingRetirement(
   runId: string,
-  state: "headerless" | "terminal",
+  state: McpOriginatorRetirementState,
   generation: number | undefined,
   durable: boolean,
 ): void {
@@ -448,12 +405,21 @@ function registerPendingRetirement(
     }
     return;
   }
+  // The mark is not durable: persist the INTENT before anything else so
+  // peers and future restarts fail closed even if this process dies before
+  // the first retry (evil-shub round-9 P1).
+  persistRetirementIntent(runId, state, generation);
   const existing = pendingRetirements.get(runId);
-  const merged: { state: "headerless" | "terminal"; generation?: number } = {
+  const merged: {
+    state: McpOriginatorRetirementState;
+    generation?: number;
+    createdAtMs: number;
+  } = {
     state:
       existing && STATE_RANK[existing.state] > STATE_RANK[state]
         ? existing.state
         : state,
+    createdAtMs: existing?.createdAtMs ?? Date.now(),
   };
   const mergedGeneration = generation ?? existing?.generation;
   if (mergedGeneration !== undefined) merged.generation = mergedGeneration;
@@ -464,7 +430,11 @@ function registerPendingRetirement(
 /** Test-only: pending retirements, for asserting retry registration. */
 export function readPendingMcpOriginatorRetirementsForTests(): ReadonlyMap<
   string,
-  { state: "headerless" | "terminal"; generation?: number }
+  {
+    state: McpOriginatorRetirementState;
+    generation?: number;
+    createdAtMs: number;
+  }
 > {
   return pendingRetirements;
 }
@@ -474,6 +444,17 @@ function touchRecords(
   runId: string,
   generation: number | undefined,
   state?: McpOriginatorAuthorityState,
+  options?: {
+    /**
+     * Retry driver only (evil-shub round-9 P1): a FAILED retirement retry
+     * must not refresh updatedAtMs — that kept the in-memory record young
+     * forever, so pruneExpired never collected it and the in-memory overlay
+     * diverged from the disk record a peer could prune. The record's own
+     * TTL bounds how long a retirement matters: past it, every token the
+     * floor could fence is dead at the server-side 1h ceiling anyway.
+     */
+    preserveUpdatedAt?: boolean;
+  },
 ): void {
   const existing = records.get(runId);
   // Defense in depth (evil-shub round-6 P1): never let a malformed
@@ -503,7 +484,16 @@ function touchRecords(
   records.set(runId, {
     ...(floor !== undefined ? { floor } : {}),
     state: nextState,
-    updatedAtMs: Date.now(),
+    // A landed non-live mark is the retirement the intent announced: clear
+    // it. While the record stays live the intent survives floor bumps so
+    // gates keep failing closed until the mark lands.
+    ...(nextState === "live" && existing?.retiringTo !== undefined
+      ? { retiringTo: existing.retiringTo }
+      : {}),
+    updatedAtMs:
+      options?.preserveUpdatedAt === true && existing !== undefined
+        ? existing.updatedAtMs
+        : Date.now(),
   });
 }
 
@@ -567,7 +557,12 @@ export function admitMcpOriginatorDelivery(
   if (!authorityPersistentPath()) {
     const record = recordsBySuperRunId.get(runId);
     if (record) {
-      if (record.state !== "live") return { admitted: false, permanent: true };
+      // A live record carrying a durable retirement INTENT is not live for
+      // admission (evil-shub round-9 P1): the retirement is already
+      // announced and will land via retry or outlive the token ceiling, so
+      // no delivery may arm authority in the gap.
+      if (record.state !== "live" || record.retiringTo !== undefined)
+        return { admitted: false, permanent: true };
       if (
         record.floor !== undefined &&
         (generation === undefined || generation < record.floor)
@@ -590,7 +585,7 @@ export function admitMcpOriginatorDelivery(
       }
       const record = records.get(runId);
       if (record) {
-        if (record.state !== "live")
+        if (record.state !== "live" || record.retiringTo !== undefined)
           return {
             result: { admitted: false, permanent: true },
             changed: false,
@@ -641,7 +636,11 @@ export function mcpOriginatorAuthorityPermitsUse(
       if (ctx.degraded) return { result: false, changed: false };
       const record = records.get(runId);
       if (!record) return { result: true, changed: false };
-      if (record.state !== "live") return { result: false, changed: false };
+      // A pending retirement intent withdraws the token too (evil-shub
+      // round-9 P1): the run is being retired, so its calls proceed
+      // unattributed even before the mark lands.
+      if (record.state !== "live" || record.retiringTo !== undefined)
+        return { result: false, changed: false };
       if (
         record.floor !== undefined &&
         generation !== undefined &&
@@ -710,7 +709,7 @@ export function mcpOriginatorAuthorityAllows(
       const record = records.get(runId);
       let allows = true;
       if (record) {
-        if (record.state !== "live") {
+        if (record.state !== "live" || record.retiringTo !== undefined) {
           allows = false;
         } else if (record.floor !== undefined) {
           if (generation === undefined || generation < record.floor)
@@ -734,13 +733,21 @@ export function mcpOriginatorAuthorityAllows(
 export function configureMcpOriginatorAuthorityPersistenceForTests(
   path: string | null,
 ): void {
-  persistencePathOverride = path;
+  configureAuthorityPersistencePathForTests(path);
+}
+
+/** Test-only: shorten the record TTL (null restores the 2h default). */
+export function configureMcpOriginatorAuthorityTtlForTests(
+  ttlMs: number | null,
+): void {
+  recordTtlMs = ttlMs ?? AUTHORITY_RECORD_TTL_MS;
 }
 
 /** Test-only: drop every record and forget any loaded state. */
 export function resetMcpOriginatorAuthority(): void {
   recordsBySuperRunId.clear();
   pendingRetirements.clear();
+  recordTtlMs = AUTHORITY_RECORD_TTL_MS;
   if (retirementRetryTimer !== undefined) {
     clearTimeout(retirementRetryTimer);
     retirementRetryTimer = undefined;
@@ -748,9 +755,13 @@ export function resetMcpOriginatorAuthority(): void {
 }
 
 /** Test-only diagnostics. */
-export function readMcpOriginatorAuthorityForTests(
-  runId: string,
-): { floor?: number; state: McpOriginatorAuthorityState } | undefined {
+export function readMcpOriginatorAuthorityForTests(runId: string):
+  | {
+      floor?: number;
+      state: McpOriginatorAuthorityState;
+      retiringTo?: McpOriginatorRetirementState;
+    }
+  | undefined {
   const record = authorityTransaction((records) => ({
     result: records.get(runId),
     changed: false,
@@ -759,6 +770,9 @@ export function readMcpOriginatorAuthorityForTests(
     ? {
         ...(record.floor !== undefined ? { floor: record.floor } : {}),
         state: record.state,
+        ...(record.retiringTo !== undefined
+          ? { retiringTo: record.retiringTo }
+          : {}),
       }
     : undefined;
 }

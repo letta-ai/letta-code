@@ -288,3 +288,46 @@ describe("round-8: hard bound and stale-error budget guard (evil-shub round-8 P1
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
   });
 });
+
+describe("stale in-flight rejection (evil-shub round-9 P1)", () => {
+  test("a transport error from a superseded token never charges the replacement's failure budget", async () => {
+    const pendingRejects = new Map<string, (error: Error) => void>();
+    const seen: string[] = [];
+    configureMcpOriginatorKeepaliveForTests({
+      verify: (token) => {
+        seen.push(token);
+        if (token === "mst_4") return Promise.resolve({ valid: true });
+        return new Promise((_resolve, reject) => {
+          pendingRejects.set(token, reject);
+        });
+      },
+    });
+    // Three swap cycles: the tick captures token i and blocks on it; a
+    // fresh delivery installs token i+1 mid-flight; then token i's verify
+    // rejects with a transport error. Each stale rejection would charge
+    // the REPLACEMENT's budget under the old code — three strikes stops
+    // renewal for a healthy token.
+    for (let i = 1; i <= 3; i += 1) {
+      recordMcpOriginatorDelivery({
+        mcp_originator_token: `mst_${i}`,
+        super_run_id: "run-a",
+        mcp_originator_generation: i,
+      });
+      const tick = runMcpOriginatorKeepaliveTickForTests("run-a");
+      recordMcpOriginatorDelivery({
+        mcp_originator_token: `mst_${i + 1}`,
+        super_run_id: "run-a",
+        mcp_originator_generation: i + 1,
+      });
+      pendingRejects.get(`mst_${i}`)?.(new Error("stale transport boom"));
+      await tick;
+      expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    }
+    // The final token's budget was never charged: it verifies cleanly and
+    // renewal continues (three charged strikes would have stopped it).
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(seen).toContain("mst_4");
+    expect(getMcpOriginatorToken("run-a")).toBe("mst_4");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+  });
+});
