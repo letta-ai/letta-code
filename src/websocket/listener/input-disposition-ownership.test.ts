@@ -14,7 +14,10 @@ import {
   rememberInputDisposition,
   reserveInputDisposition,
 } from "./input-disposition";
-import { hasLiveAcceptedInputOwner } from "./input-disposition-ownership";
+import {
+  hasLiveAcceptedInputOwner,
+  hasLiveAcceptedInputOwnerWithOriginatorRetirement,
+} from "./input-disposition-ownership";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
@@ -182,4 +185,49 @@ test("hasLiveAcceptedInputOwner: live started/queued owners qualify, terminal to
     expiredEntry.expiresAt = Date.now() - 1;
     expect(hasLiveAcceptedInputOwner(runtime, expiredId)).toBe(false);
   }
+});
+
+test("originator retirement proof: pre-owner-id records fail closed (evil-shub round 5 P2)", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-1",
+  );
+
+  // New-format record: the persisted continuation carries the owner id, so
+  // its replayed finalizer can retire a recreated token entry.
+  const newFormatId = ordinaryInputIdentity("new-format");
+  expect(
+    rememberInputDisposition(runtime, newFormatId, "started", {
+      incoming: {
+        ...durableIncoming("new-format"),
+        mcpOriginatorSuperRunId: "run-new",
+      },
+    }),
+  ).toBe(true);
+  expect(hasLiveAcceptedInputOwner(runtime, newFormatId)).toBe(true);
+  expect(
+    hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, newFormatId),
+  ).toBe(true);
+
+  // Old-format record (650eb75f): live owner, but no durable owner id —
+  // replaying it could never retire a recreated token, so recreation must
+  // fail closed (the continuation runs headerless instead).
+  const oldFormatId = ordinaryInputIdentity("old-format");
+  expect(
+    rememberInputDisposition(runtime, oldFormatId, "started", {
+      incoming: durableIncoming("old-format"),
+    }),
+  ).toBe(true);
+  expect(hasLiveAcceptedInputOwner(runtime, oldFormatId)).toBe(true);
+  expect(
+    hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, oldFormatId),
+  ).toBe(false);
+
+  // Unknown identity: neither proof qualifies.
+  const unknownId = ordinaryInputIdentity("unknown");
+  expect(
+    hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, unknownId),
+  ).toBe(false);
 });

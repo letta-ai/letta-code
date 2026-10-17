@@ -86,3 +86,28 @@ export function liveAcceptedInputOwnerProof(
     ? () => hasLiveAcceptedInputOwner(runtime, identity)
     : undefined;
 }
+
+/**
+ * Stricter recreation proof for teleport continuation duplicates
+ * (evil-shub round-5 P2): recreating a token entry is only safe when the
+ * persisted continuation can also RETIRE it. A continuation persisted by a
+ * pre-owner-id build (650eb75f) carries no `mcpOriginatorSuperRunId` in its
+ * durable record; after an upgrade, replaying that old-format record's
+ * finalizer still cannot retire a recreated entry — the token would be
+ * orphaned for the rest of its TTL. Such records fail closed here: the
+ * re-delivered token is dropped and the continuation runs headerless,
+ * which is exactly the pre-upgrade behavior for that record.
+ */
+export function hasLiveAcceptedInputOwnerWithOriginatorRetirement(
+  runtime: ConversationRuntime,
+  identity: InputIdentity | undefined,
+): boolean {
+  if (!hasLiveAcceptedInputOwner(runtime, identity)) return false;
+  const entry = readInputDispositionEntry(runtime, identity);
+  const owner = (
+    entry?.queuedInput?.incoming as
+      | { mcpOriginatorSuperRunId?: unknown }
+      | undefined
+  )?.mcpOriginatorSuperRunId;
+  return typeof owner === "string" && owner.length > 0;
+}

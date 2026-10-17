@@ -5,7 +5,7 @@ import {
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
-import { hasLiveAcceptedInputOwner } from "./input-disposition-ownership";
+import { hasLiveAcceptedInputOwnerWithOriginatorRetirement } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   buildTeleportContinuationMessages,
@@ -88,9 +88,13 @@ export function admitTeleportContinueInput(params: {
   if (admission.kind === "duplicate") {
     // Duplicate re-ack: refresh-only. The durable ledger is the authority on
     // whether this input still has a live owner whose token entry may be
-    // recreated after a crash (a terminal tombstone must not qualify).
+    // recreated after a crash (a terminal tombstone must not qualify), AND
+    // the persisted continuation must carry the owner id needed to retire a
+    // recreated entry — a pre-owner-id (650eb75f) record cannot, so its
+    // duplicate fails closed and the continuation runs headerless rather
+    // than orphaning a recreated token (evil-shub round-5 P2).
     acknowledgeInput(true, undefined, admission.disposition, "refresh", () =>
-      hasLiveAcceptedInputOwner(
+      hasLiveAcceptedInputOwnerWithOriginatorRetirement(
         scopedRuntime,
         teleportInputIdentity(teleportId),
       ),
