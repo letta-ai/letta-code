@@ -24,6 +24,7 @@ import type {
   RunWorkflowOptions,
   SubagentSpawner,
   WorkflowExecutionResult,
+  WorkflowMeta,
   WorkflowProgressEvent,
   WorkflowToolInfo,
   WorkflowToolResult,
@@ -95,6 +96,34 @@ export async function executeWorkflow(
   options: RunWorkflowOptions,
 ): Promise<WorkflowExecutionResult> {
   const meta = parseWorkflowMeta(options.script);
+  return executeScript(spawner, options, meta);
+}
+
+/** The same tool bindings and call limits, without metadata or orchestration globals. */
+export async function executeToolScript(
+  options: Pick<
+    RunWorkflowOptions,
+    | "script"
+    | "args"
+    | "signal"
+    | "callTool"
+    | "builtinToolNames"
+    | "listTools"
+    | "onProgress"
+  >,
+): Promise<unknown> {
+  const run = await executeScript(undefined, options, {
+    name: "code-mode",
+    description: "Combine tools with JavaScript",
+  });
+  return run.result;
+}
+
+async function executeScript(
+  spawner: SubagentSpawner | undefined,
+  options: RunWorkflowOptions,
+  meta: WorkflowMeta,
+): Promise<WorkflowExecutionResult> {
   const signal = options.signal ?? new AbortController().signal;
   // Progress stops once the run has settled, not at abort: an interrupted
   // subagent still reports its outcome (and tokens) while the run drains.
@@ -326,6 +355,8 @@ export async function executeWorkflow(
       if (signal.aborted) throw new Error("Workflow aborted.");
       emit({ kind: "agent", callIndex, label, phase, status: "running" });
       agentsSpawned++;
+      if (!spawner)
+        throw new Error("Subagents are unavailable in tool scripts.");
       const outcome = await spawner(
         { prompt, options: opts, callIndex },
         signal,
@@ -467,22 +498,17 @@ export async function executeWorkflow(
   }
 
   const context = vm.createContext({
-    agent,
-    decide,
     tools,
     listTools,
     describeTool,
-    parallel,
-    pipeline,
-    phase,
-    log,
+    ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
   });
-  const wrapped = `(async () => { "use strict";\n${stripMetaExport(options.script)}\n})()`;
+  const wrapped = `(async () => { "use strict";\n${spawner ? stripMetaExport(options.script) : options.script}\n})()`;
   const parseError = (error: unknown) =>
     new Error(
-      `Workflow script failed to parse (scripts are plain JavaScript, not TypeScript): ${String(error)}`,
+      `${spawner ? "Workflow" : "CodeMode"} script failed to parse (scripts are plain JavaScript, not TypeScript): ${String(error)}`,
     );
   let script: vm.Script;
   try {

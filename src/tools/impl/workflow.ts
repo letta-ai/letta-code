@@ -17,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { getConversationId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
@@ -27,6 +27,10 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import {
+  createScriptToolScope,
+  resolveScriptParentAgentId,
+} from "@/tools/script-tool-scope";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -107,52 +111,15 @@ type SpawnerFactory = (
 ) => Promise<WorkflowSpawnerHandle>;
 
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
-const SCRIPT_EXCLUDED_TOOLS = new Set([
-  "Agent",
-  "AskUserQuestion",
-  "SendAgentMessage",
-  "Workflow",
-]);
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
-
-function isOwningAgentId(value: string | null | undefined): value is string {
-  return (
-    value?.startsWith("agent-") === true && !value.startsWith("agent-free:")
-  );
-}
-
-async function resolveParentAgentId(
-  args: WorkflowArgs,
-): Promise<string | null> {
-  let parentAgentId: string | null | undefined = args.parentScope?.agentId;
-  const conversationId =
-    args.parentScope?.conversationId ?? getConversationId();
-  if (!isOwningAgentId(parentAgentId)) {
-    if (conversationId && conversationId !== "default") {
-      // The invoking conversation may itself be agent-free (a worker of an
-      // outer workflow); its parent supplies the lineage then.
-      const conversation = (await getBackend().retrieveConversation(
-        conversationId,
-      )) as unknown as {
-        agent_id: string | null;
-        parent_agent_id?: string | null;
-      };
-      parentAgentId =
-        conversation.agent_id ?? conversation.parent_agent_id ?? null;
-    } else {
-      parentAgentId = getCurrentAgentId();
-    }
-  }
-  return isOwningAgentId(parentAgentId) ? parentAgentId : null;
-}
 
 export async function createSdkSpawnerHandle(
   args: WorkflowArgs,
   setStage: (stage: string) => void = () => {},
 ): Promise<WorkflowSpawnerHandle> {
   setStage("resolving parent agent");
-  const parentAgentId = await resolveParentAgentId(args);
+  const parentAgentId = await resolveScriptParentAgentId(args);
   if (!parentAgentId) {
     throw new Error("Workflow requires an invoking parent agent.");
   }
@@ -244,97 +211,12 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
-  // The run outlives this tool call, so capture the invoking turn's permission
-  // inputs now; each direct MCP call is checked against them.
-  const permissionModeState = toolContextId
-    ? manager.getExecutionContextPermissionModeState(toolContextId)
-    : undefined;
-  const permissionCwd = getCurrentWorkingDirectory();
-  // Memoize the promise, not the session: concurrent first calls must share
-  // one session so cleanup closes every connection that was opened.
-  let mcpSession:
-    | Promise<
-        ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
-      >
-    | undefined;
-  // Built-ins registered for the invoking turn. Orchestration and interactive
-  // tools stay out: scripts already have agent(), and nobody can answer a
-  // question or approval prompt from inside a script.
-  const builtinSchemas = [
-    ...(toolContextId
-      ? (manager
-          .getExecutionContextById(toolContextId)
-          ?.toolRegistry.values() ?? [])
-      : []),
-  ]
-    .map((tool) => ({
-      ...tool.schema,
-      name: manager.getServerToolName(tool.schema.name),
-    }))
-    .filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
-  const builtinToolNames = builtinSchemas.map((schema) => schema.name);
-  const builtins = new Set(builtinToolNames);
-  const mcp = () => {
-    mcpSession ??= import("@/cli/subcommands/mcp").then((module) =>
-      module.createAgentMcpSession(parentAgentId),
-    );
-    return mcpSession;
-  };
+  const toolScope = await createScriptToolScope(parentAgentId);
   return {
     spawner,
-    builtinToolNames,
-    listTools: async () => {
-      const mcpTools = await (await mcp()).listTools().catch(() => []);
-      return [
-        ...builtinSchemas.map((schema) => ({
-          name: schema.name,
-          description: schema.description,
-          inputSchema: schema.input_schema as Record<string, unknown>,
-        })),
-        ...mcpTools.map((tool) => ({
-          name: tool.name,
-          description: tool.description ?? "",
-          inputSchema: tool.inputSchema,
-        })),
-      ];
-    },
-    callTool: async (toolName, toolArgs) => {
-      const { decision } = await manager.checkToolPermission(
-        toolName,
-        toolArgs,
-        permissionCwd,
-        permissionModeState && { ...permissionModeState },
-        // Same agent whose MCP scope runs the call; a nested agent-free
-        // worker's runtime agent would not match it.
-        parentAgentId,
-      );
-      if (decision !== "allow") {
-        throw new Error(
-          decision === "deny"
-            ? `${toolName} is denied by permission rules.`
-            : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
-        );
-      }
-      if (builtins.has(toolName)) {
-        // executeTool owns hooks, mod events, and secret redaction.
-        const result = await manager.executeTool(toolName, toolArgs, {
-          ...(toolContextId ? { toolContextId } : {}),
-        });
-        const text =
-          typeof result.toolReturn === "string"
-            ? result.toolReturn
-            : JSON.stringify(result.toolReturn);
-        return {
-          content: [{ type: "text", text }],
-          isError: result.status === "error",
-        };
-      }
-      return (await mcp()).callTool(toolName, toolArgs);
-    },
+    ...toolScope,
     cleanup: async () => {
-      await mcpSession
-        ?.then((session) => session.close())
-        .catch(() => undefined);
+      await toolScope.cleanup();
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
   };

@@ -121,11 +121,11 @@ const STREAMING_SHELL_TOOLS = new Set([
   "exec_command",
   "write_stdin",
   "Monitor",
+  "CodeMode",
   "Workflow",
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
-
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
