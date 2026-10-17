@@ -88,6 +88,7 @@ describe("resolveSubagentLauncher", () => {
         argv: ["bun", "/tmp/custom-runner.ts"],
         execPath: "/opt/homebrew/bin/bun",
         platform: "darwin",
+        fileExists: () => true,
       },
     );
 
@@ -142,6 +143,7 @@ describe("resolveSubagentLauncher", () => {
       argv: ["node", "C:\\Program Files\\Letta\\letta.js"],
       execPath: "C:\\Program Files\\nodejs\\node.exe",
       platform: "win32",
+      fileExists: () => true,
     });
 
     expect(launcher).toEqual({
@@ -156,6 +158,7 @@ describe("resolveSubagentLauncher", () => {
       argv: ["node", "/usr/local/lib/letta.js"],
       execPath: "/usr/local/bin/node",
       platform: "linux",
+      fileExists: () => true,
     });
 
     expect(launcher).toEqual({
