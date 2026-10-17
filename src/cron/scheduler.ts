@@ -1,15 +1,6 @@
 /**
- * In-process cron scheduler for the WS listener.
- *
- * On start:
- * 1. Claims the scheduler lease in crons.json
- * 2. Starts a setInterval that fires every 60s
- * 3. On each tick: reads active tasks, checks cron match against current time,
- *    enqueues matching tasks into their ConversationRuntime's queueRuntime,
- *    and kicks the queue pump
- * 4. Runs GC every 60 minutes
- *
- * On stop: clears interval, releases lease.
+ * In-process cron scheduler: claims a lease, handles due or missed occurrences
+ * every 60s, and garbage-collects hourly. Stop releases the lease and timers.
  */
 
 import { isLocalAgentId } from "@/agent/agent-id";
@@ -46,7 +37,7 @@ import {
   releaseSchedulerLease,
   updateTask,
 } from "./cron-file";
-import { cronMatchesTime, isValidCron } from "./parse-interval";
+import { isValidCron } from "./parse-interval";
 import {
   type CronPromptTiming,
   formatCronPrompt,
@@ -82,10 +73,8 @@ interface SchedulerState {
   lastMtime: number;
   /** Cached active tasks (refreshed on file change). */
   cachedTasks: CronTask[];
-  /** Set of task IDs that fired this minute (prevent double-fire). */
-  firedThisMinute: Set<string>;
-  /** Minute key for the current tick (e.g. "2026-03-26T00:15"). */
-  lastMinuteKey: string;
+  /** Latest occurrence claimed per task, including pending jitter fires. */
+  firedOccurrences: Map<string, number>;
   /** Pending jitter-delayed timers — cleared on stop/lease loss. */
   pendingTimers: Set<NodeJS.Timeout>;
   /** Last live `scheduler_owner` token, used to recognize a sibling tombstone. */
@@ -177,10 +166,6 @@ function clearPendingFireTimers(state: SchedulerState): void {
     clearTimeout(handle);
   }
   state.pendingTimers.clear();
-}
-
-export function minuteKey(date: Date): string {
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}T${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
 export function wrapCronPrompt(
@@ -279,9 +264,13 @@ export function shouldFireTask(task: CronTask, now: Date): boolean {
     return scheduledMs <= now.getTime();
   }
 
-  // Recurring: check if the cron expression matches this minute.
-  // Jitter is applied as a setTimeout delay at the call site, not here.
-  return cronMatchesTime(task.cron, now, task.timezone);
+  const occurrence = getIntendedCronOccurrence(task, now).getTime();
+  const handled = Math.max(
+    ...[task.created_at, task.last_fired_at, task.last_missed_at].map(
+      (value) => (value ? new Date(value).getTime() : 0),
+    ),
+  );
+  return occurrence > handled;
 }
 
 function getInvalidCronError(cron: string): string {
@@ -492,9 +481,28 @@ export function handleMissedOneShot(task: CronTask, now: Date): boolean {
 
 /** Apply scheduler lifecycle checks shared by the WS and TUI tick loops. */
 export function handleTaskPreflight(task: CronTask, now: Date): boolean {
-  return (
-    handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)
-  );
+  if (handleInvalidRecurringTask(task, now) || handleMissedOneShot(task, now)) {
+    return true;
+  }
+  if (!task.recurring || !shouldFireTask(task, now)) return false;
+  const occurrence = getIntendedCronOccurrence(task, now);
+  if (now.getTime() - occurrence.getTime() <= 5 * 60_000) return false;
+  setLastRunOutcome(task.id, {
+    outcome: "missed",
+    reason: "scheduler_inactive",
+    runAt: now,
+    missedAt: occurrence,
+  });
+  safeAppendCronRunLogForTask(task, {
+    status: "skipped",
+    outcome: "missed",
+    reason: "scheduler_inactive",
+    summary: "missed",
+    runAtMs: now.getTime(),
+    scheduledFor: occurrence.toISOString(),
+    missedCount: 1,
+  });
+  return true;
 }
 
 export async function runCronTaskNow(taskId: string): Promise<{
@@ -577,14 +585,6 @@ function tick(
   }
 
   const matchedAt = new Date();
-  const currentMinuteKey = minuteKey(matchedAt);
-
-  // Reset per-minute dedup when minute changes
-  if (currentMinuteKey !== state.lastMinuteKey) {
-    state.firedThisMinute.clear();
-    state.lastMinuteKey = currentMinuteKey;
-  }
-
   refreshTaskCache(state);
 
   for (const task of state.cachedTasks) {
@@ -602,12 +602,11 @@ function tick(
       continue;
     }
 
-    // Per-minute dedup
-    if (state.firedThisMinute.has(task.id)) continue;
-
     if (shouldFireTask(task, matchedAt)) {
-      state.firedThisMinute.add(task.id);
       const intendedOccurrence = getIntendedCronOccurrence(task, matchedAt);
+      const occurrenceMs = intendedOccurrence.getTime();
+      if (state.firedOccurrences.get(task.id) === occurrenceMs) continue;
+      state.firedOccurrences.set(task.id, occurrenceMs);
 
       // Apply jitter as a real delay for recurring tasks so that tasks with
       // different jitter values actually fire at different times.
@@ -738,7 +737,6 @@ export function startScheduler(
     return;
   }
 
-  const now = new Date();
   const state: SchedulerState = {
     token,
     scope,
@@ -749,8 +747,7 @@ export function startScheduler(
     processQueuedTurn,
     lastMtime: 0,
     cachedTasks: [],
-    firedThisMinute: new Set(),
-    lastMinuteKey: minuteKey(now),
+    firedOccurrences: new Map(),
     pendingTimers: new Set(),
     tombstoneToken: readCronFile().scheduler_owner?.token,
     tombstoneInterval: null,
