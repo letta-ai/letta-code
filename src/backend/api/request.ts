@@ -34,7 +34,9 @@ export class ApiRequestError extends Error {
   }
 }
 
-export async function getApiRequestConfig(): Promise<ApiRequestConfig> {
+export async function getApiRequestConfig(options?: {
+  signal?: AbortSignal;
+}): Promise<ApiRequestConfig> {
   const settings = await settingsManager.getSettingsWithSecureTokens();
   return {
     baseUrl:
@@ -42,7 +44,11 @@ export async function getApiRequestConfig(): Promise<ApiRequestConfig> {
       settings.env?.LETTA_BASE_URL ||
       LETTA_CLOUD_API_URL,
     apiKey:
-      (await getSessionAccessToken()) ||
+      // The caller's abort budget reaches the OAuth refresh beneath the
+      // session token lookup (evil-shub round-9 P1): apiFetch observes
+      // options.signal on its own fetch but the refresh PRE-fetch used to
+      // run unbounded, hanging the caller past its deadline.
+      (await getSessionAccessToken(options)) ||
       process.env.LETTA_API_KEY ||
       settings.env?.LETTA_API_KEY ||
       "",
@@ -83,7 +89,9 @@ export async function apiFetch(
 ): Promise<Response> {
   const config =
     options.baseUrl === undefined || options.apiKey === undefined
-      ? await getApiRequestConfig()
+      ? await getApiRequestConfig(
+          options.signal !== undefined ? { signal: options.signal } : undefined,
+        )
       : null;
   const baseUrl = options.baseUrl ?? config?.baseUrl;
   const apiKey = options.apiKey ?? config?.apiKey ?? "";

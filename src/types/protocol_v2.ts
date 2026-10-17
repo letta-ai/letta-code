@@ -51,6 +51,7 @@ import type {
   WriteFileCommand,
   WriteFileResponseMessage,
 } from "./file-write-protocol";
+import type { InputCommand } from "./input-command";
 import type {
   LoopErrorMessage,
   LoopState,
@@ -125,13 +126,6 @@ export interface RuntimeEnvelope {
   event_seq: number;
   emitted_at: string;
   idempotency_key: string;
-}
-
-export interface ClientToolsetConfig {
-  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
-  base?: ToolsetPreference;
-  /** Additional bundled client tools to load before applying the allowlist. */
-  include?: string[];
 }
 
 export interface AvailableSkillSummary {
@@ -577,81 +571,25 @@ export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
   subagents: SubagentSnapshot[];
 }
 
-export interface ApprovalResponseAllowDecision {
-  behavior: "allow";
-  message?: string;
-  updated_input?: Record<string, unknown> | null;
-  selected_permission_suggestion_ids?: string[];
-}
-
-export interface ApprovalResponseDenyDecision {
-  behavior: "deny";
-  message: string;
-}
-
-export type ApprovalResponseDecision =
-  | ApprovalResponseAllowDecision
-  | ApprovalResponseDenyDecision;
-
-export type ApprovalResponseBody =
-  | {
-      request_id: string;
-      decision: ApprovalResponseDecision;
-    }
-  | {
-      request_id: string;
-      error: string;
-    };
-
 /**
  * Controller -> execution-environment commands.
  * In v2, the WS server accepts runtime-scoped chat/device commands plus
  * device capability commands (filesystem, memory, cron, terminals).
  */
 export type { ClientPreferences } from "./client-preferences";
-
-export interface InputCreateMessagePayload {
-  kind: "create_message";
-  /** Omitted inherits; supplied replaces the conversation snapshot; {} clears. */
-  client_preferences?: import("./client-preferences").ClientPreferences;
-  messages: Array<MessageCreate & { client_message_id?: string }>;
-  /** Handling policy for unsupported or failed image inputs. */
-  image_failure_mode?: "strict" | "drop";
-  /**
-   * Optional request-scoped allowlist for locally executed client tools.
-   * Undefined preserves the listener's normal toolset; an empty array means no
-   * client tools for this turn.
-   */
-  client_tool_allowlist?: string[];
-  /**
-   * Optional request-scoped built-in toolset selection. The base chooses the
-   * harness preset without changing persisted settings; include adds bundled
-   * client tools before the allowlist is applied.
-   */
-  client_toolset?: ClientToolsetConfig;
-  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
-  external_tool_scope_ids?: string[];
-  /** Exclude interactive tools even when included by preferences or this input. */
-  exclude_interactive_tools?: boolean;
-  response_format?: Record<string, unknown>;
-}
-
-export type InputApprovalResponsePayload = {
-  kind: "approval_response";
-} & ApprovalResponseBody;
-export type InputPayload =
-  | InputCreateMessagePayload
-  | InputApprovalResponsePayload
-  | TeleportProtocol.InputTeleportContinuePayload;
-
-export interface InputCommand {
-  type: "input";
-  /** Correlates acknowledgement without waiting for the turn to finish. */
-  request_id?: string;
-  terminal_consumer_id?: string;
-  runtime: ConversationRuntimeScope;
-  payload: InputPayload;
-}
+export type {
+  ApprovalResponseAllowDecision,
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
+  ApprovalResponseDenyDecision,
+  InputApprovalResponsePayload,
+  InputCommand,
+  InputPayload,
+} from "./input-command";
+export type {
+  ClientToolsetConfig,
+  InputCreateMessagePayload,
+} from "./input-create-message";
 
 export interface InputAcceptedResponseMessage {
   type: "input_accepted";

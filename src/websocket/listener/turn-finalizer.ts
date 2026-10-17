@@ -1,16 +1,87 @@
+import {
+  retireMcpOriginatorTokenOnTerminal,
+  retireMcpOriginatorTokensOnOriginSwap,
+} from "@/agent/mcp-originator-tokens";
 import type { createBuffers } from "@/cli/helpers/accumulator";
+import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
-import type { RecoveryAuthorityStore } from "./recovery-evidence";
+import type {
+  RecoveryAuthorityStore,
+  RecoveryEvidenceWriter,
+} from "./recovery-evidence";
 import {
   claimPendingTeleportAtBoundary,
   finishClaimedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
-import type { createTurnDurabilityOwnership } from "./turn-durability-ownership";
+import {
+  checkpointTurnInputOwnership,
+  type createTurnDurabilityOwnership,
+} from "./turn-durability-ownership";
 import type { TurnLease } from "./turn-lifecycle";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, IncomingMessage } from "./types";
+
+type OriginCarrying = { mcpOriginatorSuperRunId?: string };
+
+/**
+ * Apply an origin swap when a parked turn consumes a queued turn from
+ * another super run (or an unattributed one): retire both runs' held
+ * originator tokens, then rebind the continuation's live (park-frozen) tool
+ * context to the consumed turn's origin. The rebind is what makes the swap
+ * a stable boundary — without it a late redelivery repopulating the parked
+ * run's deleted key would be picked up by the very next tool call, since
+ * per-call token lookups read the frozen context (evil-shub r4300657672).
+ */
+export function applyTurnOriginSwap(
+  parkedInput: OriginCarrying,
+  consumedTurn: OriginCarrying,
+  turnToolContextId: string | null,
+): void {
+  retireMcpOriginatorTokensOnOriginSwap(
+    parkedInput.mcpOriginatorSuperRunId,
+    consumedTurn.mcpOriginatorSuperRunId,
+  );
+  rebindTurnToolContextMcpOriginator(
+    turnToolContextId,
+    consumedTurn.mcpOriginatorSuperRunId,
+  );
+}
+
+/**
+ * Build the onConsumeQueuedTurn callback for a parked turn: apply the origin
+ * swap first, then record the consumed input and checkpoint ownership. The
+ * factory lives here (not inline in turn.ts) so the swap cannot drift from
+ * the durability checkpoint it must precede — and so turn.ts stays under
+ * the source-size cap.
+ */
+export function createQueuedTurnConsumer(params: {
+  parkedInput: OriginCarrying;
+  turnToolContextId: string | null;
+  runtime: ConversationRuntime;
+  ownership: ReturnType<typeof createTurnDurabilityOwnership>;
+  interruptedRevisionRef: { current: string | undefined };
+  recoveryLineageId?: string;
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter;
+}): (queuedTurn: IncomingMessage) => Promise<void> {
+  return async (queuedTurn) => {
+    applyTurnOriginSwap(
+      params.parkedInput,
+      queuedTurn,
+      params.turnToolContextId,
+    );
+    params.ownership.recordInput(queuedTurn);
+    params.interruptedRevisionRef.current = await checkpointTurnInputOwnership(
+      params.runtime,
+      params.ownership,
+      params.interruptedRevisionRef.current,
+      queuedTurn.actingUserId,
+      params.recoveryLineageId,
+      params.recoveryEvidenceWriter,
+    );
+  };
+}
 
 export function createTurnFinalizer(params: {
   runtime: ConversationRuntime;
@@ -28,6 +99,11 @@ export function createTurnFinalizer(params: {
   recoveryLineageId?: string;
   recoveryTerminalRevision?: string;
   recoveryAuthorityStore?: RecoveryAuthorityStore;
+  /**
+   * Super run owning this turn, when the relay delivered one. Its held MCP
+   * originator token is dropped the moment the turn reaches a terminal state.
+   */
+  mcpOriginatorSuperRunId?: string;
 }) {
   const recoveryLineageId = params.recoveryLineageId;
   if (recoveryLineageId && !params.recoveryAuthorityStore) {
@@ -44,8 +120,8 @@ export function createTurnFinalizer(params: {
     finalized ||= transition.finished;
     return transition;
   };
-  const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(
+  const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
+    const transition = noteFinalization(
       finishListenerTurn(params.runtime, params.turnLease, {
         ...options,
         socket: options.socket ?? params.socket,
@@ -97,6 +173,13 @@ export function createTurnFinalizer(params: {
           : {}),
       }),
     );
+    // Terminal run states (success/error/cancel) retire the run's held MCP
+    // originator token. Rejected/duplicate commits leave the store alone.
+    if (transition.finished && params.mcpOriginatorSuperRunId) {
+      retireMcpOriginatorTokenOnTerminal(params.mcpOriginatorSuperRunId);
+    }
+    return transition;
+  };
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
     const pending = params.agentId
       ? (claimPendingTeleportAtBoundary({

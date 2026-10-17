@@ -438,6 +438,71 @@ test.each([
   runtime.turnLifecycle.finish(lease, "end_turn");
 });
 
+test("fresh teleport accept is refresh-only with no recreate hatch; duplicate carries the live-owner gate", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-refresh-only",
+  );
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+    deliveryHandling?: "create" | "refresh";
+    mayRecreateOwner?: () => boolean;
+  }> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-refresh-only",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+      deliveryHandling?: "create" | "refresh",
+      mayRecreateOwner?: () => boolean,
+    ) =>
+      acknowledgements.push({
+        accepted,
+        error,
+        disposition,
+        deliveryHandling,
+        mayRecreateOwner,
+      }),
+    runDetachedListenerTask: (_name: string, _task: () => Promise<void>) => {},
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = {
+    kind: "teleport_continue" as const,
+    teleport_id: "teleport-fresh",
+    source: { device_id: "source-device", connection_name: "Source" },
+  };
+
+  // Fresh accept: the disposition commit lands before the ack, so any
+  // live-owner predicate would be vacuously true — the fresh accept must
+  // carry no recreate hatch at all (refresh-only, never creates).
+  admitTeleportContinueInput({ ...base, payload });
+  expect(acknowledgements.at(-1)).toEqual({
+    accepted: true,
+    error: undefined,
+    disposition: "started",
+    deliveryHandling: "refresh",
+    mayRecreateOwner: undefined,
+  });
+
+  // Duplicate re-ack (the crash-recovery path): keeps the durable live-owner
+  // gate so a lost entry may be recreated only while the owner is live.
+  admitTeleportContinueInput({ ...base, payload });
+  const duplicate = acknowledgements.at(-1);
+  expect(duplicate?.accepted).toBe(true);
+  expect(duplicate?.deliveryHandling).toBe("refresh");
+  expect(duplicate?.mayRecreateOwner).toEqual(expect.any(Function));
+});
+
 test("expected teleport id survives mismatches and failed durable admission", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
@@ -506,4 +571,104 @@ test("expected teleport id survives mismatches and failed durable admission", ()
     disposition: "started",
   });
   expect(tasks).toHaveLength(1);
+});
+
+test("teleport accepts re-assert but never create originator token entries (refresh-only)", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-refresh",
+  );
+  expectInboundTeleport(runtime, "teleport-refresh");
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+    deliveryHandling?: "create" | "refresh";
+  }> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-refresh",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+      deliveryHandling?: "create" | "refresh",
+    ) =>
+      acknowledgements.push({ accepted, error, disposition, deliveryHandling }),
+    runDetachedListenerTask: (_name: string, _task: () => Promise<void>) => {},
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = () => ({
+    kind: "teleport_continue" as const,
+    teleport_id: "teleport-refresh",
+    source: { device_id: "source-device", connection_name: "Source" },
+  });
+
+  // Fresh accept: creates a turn but no token owner — refresh-only.
+  admitTeleportContinueInput({ ...base, payload: payload() });
+  expect(acknowledgements.at(-1)).toMatchObject({
+    accepted: true,
+    deliveryHandling: "refresh",
+  });
+
+  // Duplicate re-ack of the same teleport id: also refresh-only.
+  admitTeleportContinueInput({ ...base, payload: payload() });
+  expect(acknowledgements.at(-1)).toMatchObject({
+    accepted: true,
+    deliveryHandling: "refresh",
+  });
+
+  // No accepted teleport ack may request create semantics.
+  expect(
+    acknowledgements
+      .filter((ack) => ack.accepted)
+      .map((ack) => ack.deliveryHandling),
+  ).toEqual(["refresh", "refresh"]);
+});
+
+test("the continuation carries the frame's originator super run id so its finalizer can retire a recreated entry", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-origin-id",
+  );
+  const seen: Array<{ mcpOriginatorSuperRunId?: string }> = [];
+  const tasks: Array<() => Promise<void>> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-origin-id",
+    originatorSuperRunId: "run-teleported",
+    onStatusChange: undefined,
+    acknowledgeInput: () => {},
+    runDetachedListenerTask: (_name: string, task: () => Promise<void>) => {
+      tasks.push(task);
+    },
+    processIncomingMessage: mock(
+      async (input: { mcpOriginatorSuperRunId?: string }) => {
+        seen.push(input);
+      },
+    ),
+  };
+  admitTeleportContinueInput({
+    ...base,
+    payload: {
+      kind: "teleport_continue" as const,
+      teleport_id: "teleport-origin-id",
+      source: { device_id: "source-device", connection_name: "Source" },
+    },
+  });
+  expect(tasks).toHaveLength(1);
+  return tasks[0]!().then(() => {
+    expect(seen.at(-1)?.mcpOriginatorSuperRunId).toBe("run-teleported");
+  });
 });
