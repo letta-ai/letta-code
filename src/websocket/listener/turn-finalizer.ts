@@ -5,17 +5,23 @@ import {
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
-import type { RecoveryAuthorityStore } from "./recovery-evidence";
+import type {
+  RecoveryAuthorityStore,
+  RecoveryEvidenceWriter,
+} from "./recovery-evidence";
 import {
   claimPendingTeleportAtBoundary,
   finishClaimedTeleport,
 } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
-import type { createTurnDurabilityOwnership } from "./turn-durability-ownership";
+import {
+  checkpointTurnInputOwnership,
+  type createTurnDurabilityOwnership,
+} from "./turn-durability-ownership";
 import type { TurnLease } from "./turn-lifecycle";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, IncomingMessage } from "./types";
 
 type OriginCarrying = { mcpOriginatorSuperRunId?: string };
 
@@ -41,6 +47,40 @@ export function applyTurnOriginSwap(
     turnToolContextId,
     consumedTurn.mcpOriginatorSuperRunId,
   );
+}
+
+/**
+ * Build the onConsumeQueuedTurn callback for a parked turn: apply the origin
+ * swap first, then record the consumed input and checkpoint ownership. The
+ * factory lives here (not inline in turn.ts) so the swap cannot drift from
+ * the durability checkpoint it must precede — and so turn.ts stays under
+ * the source-size cap.
+ */
+export function createQueuedTurnConsumer(params: {
+  parkedInput: OriginCarrying;
+  turnToolContextId: string | null;
+  runtime: ConversationRuntime;
+  ownership: ReturnType<typeof createTurnDurabilityOwnership>;
+  interruptedRevisionRef: { current: string | undefined };
+  recoveryLineageId?: string;
+  recoveryEvidenceWriter?: RecoveryEvidenceWriter;
+}): (queuedTurn: IncomingMessage) => Promise<void> {
+  return async (queuedTurn) => {
+    applyTurnOriginSwap(
+      params.parkedInput,
+      queuedTurn,
+      params.turnToolContextId,
+    );
+    params.ownership.recordInput(queuedTurn);
+    params.interruptedRevisionRef.current = await checkpointTurnInputOwnership(
+      params.runtime,
+      params.ownership,
+      params.interruptedRevisionRef.current,
+      queuedTurn.actingUserId,
+      params.recoveryLineageId,
+      params.recoveryEvidenceWriter,
+    );
+  };
 }
 
 export function createTurnFinalizer(params: {
