@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { configureBackendMode } from "@/backend";
+import { configureBackendMode, getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -60,6 +60,7 @@ async function run(
   code: string,
   mode: "unrestricted" | "strict" = "unrestricted",
   signal?: AbortSignal,
+  conversationId = "default",
 ) {
   const { preparedToolContext } =
     await prepareToolExecutionContextForResolvedTarget({
@@ -69,14 +70,14 @@ async function run(
       permissionModeState: { mode },
       runtimeContext: {
         agentId,
-        conversationId: "default",
+        conversationId,
         workingDirectory: home,
       },
     });
   return runWithRuntimeContext(
     {
       agentId,
-      conversationId: "default",
+      conversationId,
       workingDirectory: home,
       toolContextId: preparedToolContext.contextId,
     },
@@ -133,6 +134,24 @@ return {
     output: ["combined"],
   });
 }, 15000);
+
+test("a scoped owning agent runs built-ins without a conversation lookup", async () => {
+  const conversationId = "conv-not-stored";
+  await expect(
+    getBackend().retrieveConversation(conversationId),
+  ).rejects.toThrow();
+  writeFileSync(join(home, "input.txt"), "offline read");
+  const result = await run(
+    "return await tools.Read({ file_path: args.path });",
+    "unrestricted",
+    undefined,
+    conversationId,
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.toolReturn as string).result).toContain(
+    "offline read",
+  );
+});
 
 test("strict-mode nested calls need approval and do not write", async () => {
   const result = await run(

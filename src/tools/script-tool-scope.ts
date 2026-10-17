@@ -39,6 +39,9 @@ export async function resolveScriptParentAgentId(
   args: ScriptScopeArgs,
 ): Promise<string | null> {
   let parentAgentId: string | null | undefined = args.parentScope?.agentId;
+  if (!isOwningAgentId(parentAgentId)) {
+    parentAgentId = getRuntimeContext()?.agentId;
+  }
   const conversationId =
     args.parentScope?.conversationId ?? getConversationId();
   if (!isOwningAgentId(parentAgentId)) {
