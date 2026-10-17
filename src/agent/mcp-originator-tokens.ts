@@ -47,11 +47,16 @@
  */
 
 import {
+  admitMcpOriginatorDelivery,
   markMcpOriginatorHeaderless,
   markMcpOriginatorTerminal,
-  mcpOriginatorAuthorityAllows,
-  noteMcpOriginatorDelivery,
+  mcpOriginatorAuthorityPermitsUse,
 } from "./mcp-originator-authority";
+import {
+  startMcpOriginatorKeepalive,
+  stopAllMcpOriginatorKeepalives,
+  stopMcpOriginatorKeepalive,
+} from "./mcp-originator-keepalive";
 
 type McpOriginatorTokenEntry = {
   /** Null marks a tombstone left by a tokenless delivery. */
@@ -71,7 +76,19 @@ export function getMcpOriginatorToken(
   superRunId: string | null | undefined,
 ): string | undefined {
   if (!superRunId) return undefined;
-  return entriesBySuperRunId.get(superRunId)?.token ?? undefined;
+  const entry = entriesBySuperRunId.get(superRunId);
+  if (!entry || entry.token === null) return undefined;
+  // Use-time durable recheck (evil-shub round-5 P1): admission alone is not
+  // authority for the token's whole lifetime. A revoked or deliberately
+  // retired run (headerless/terminal, or a floor advanced past the held
+  // generation by a newer delivery) must not keep spending the held token
+  // — withdraw it here so the scoped call proceeds unattributed. The check
+  // is a locked durable read and fails closed (degraded file → no header).
+  if (!mcpOriginatorAuthorityPermitsUse(superRunId, entry.generation)) {
+    deleteMcpOriginatorToken(superRunId);
+    return undefined;
+  }
+  return entry.token;
 }
 
 /**
@@ -81,16 +98,34 @@ export function getMcpOriginatorToken(
  */
 export function setMcpOriginatorToken(superRunId: string, token: string): void {
   entriesBySuperRunId.set(superRunId, { token });
+  startMcpOriginatorKeepalive(superRunId, keepaliveHooks(superRunId));
 }
 
 /** Drop the token for a super run that reached a terminal state. */
 export function deleteMcpOriginatorToken(superRunId: string): void {
   entriesBySuperRunId.delete(superRunId);
+  stopMcpOriginatorKeepalive(superRunId);
+}
+
+/**
+ * Hook bundle handed to the keepalive so the renewal loop can read and
+ * withdraw this run's entry without importing the store — the dependency
+ * stays one-way (store → keepalive) and the import graph acyclic.
+ */
+function keepaliveHooks(superRunId: string): {
+  getToken: () => string | undefined;
+  withdraw: () => void;
+} {
+  return {
+    getToken: () => getMcpOriginatorToken(superRunId),
+    withdraw: () => deleteMcpOriginatorToken(superRunId),
+  };
 }
 
 /** Drop every held token (listener session teardown, tests). */
 export function clearMcpOriginatorTokens(): void {
   entriesBySuperRunId.clear();
+  stopAllMcpOriginatorKeepalives();
 }
 
 /** Presence-only diagnostic: how many runs currently hold a token. */
@@ -187,23 +222,24 @@ export function recordMcpOriginatorDelivery(
 ): void {
   const delivery = readMcpOriginatorDelivery(frame);
   if (!delivery.superRunId) return;
-  // Durable authority gate, consulted BEFORE the volatile entry check so an
-  // empty Map inherits the floor: rejects zombies below the max observed
+  // Atomic durable admission (evil-shub round-5 P1): gate + floor bump in
+  // ONE locked transaction, consulted BEFORE the volatile entry check so an
+  // empty Map inherits the floor. Rejects zombies below the max observed
   // generation, legacy deliveries beneath a known generation contract, and
   // any delivery for a headerless/terminal run (origin swap, mixed merge,
-  // terminal retirement are never re-armed by duplicates).
-  if (!mcpOriginatorAuthorityAllows(delivery.superRunId, delivery.generation)) {
+  // terminal retirement are never re-armed by duplicates). The floor is
+  // advanced for EVERY admitted delivery before any create/refresh decision
+  // below: if recreation is denied (transient live-owner proof failure),
+  // the caller still ACKs the delivery; without the durable floor bump the
+  // denied generation would be forgotten, and a later older zombie could
+  // pass the gate and recreate the revoked entry once the proof path
+  // recovers. A failed durable write denies admission entirely — the caller
+  // must not ACK (redelivery retries the whole admission).
+  if (!admitMcpOriginatorDelivery(delivery.superRunId, delivery.generation)) {
     return;
   }
   const existing = entriesBySuperRunId.get(delivery.superRunId);
   if (delivery.token) {
-    // Advance the durable floor for EVERY accepted token-bearing delivery
-    // BEFORE any create/refresh decision. If recreation is denied below
-    // (transient live-owner proof failure), the caller still ACKs the
-    // delivery; without the floor bump the denied generation would be
-    // forgotten, and a later older zombie could pass the gate and recreate
-    // the revoked entry once the proof path recovers. (evil-shub round 4)
-    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
     if (existing) {
       if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
     } else if (
@@ -220,13 +256,20 @@ export function recordMcpOriginatorDelivery(
           ? { generation: existing.generation }
           : {}),
     });
+    // A live token entry is held: renew it against the server for exactly
+    // as long as it stays held (the keepalive stops on tombstone, delete,
+    // withdraw, or store clear).
+    startMcpOriginatorKeepalive(
+      delivery.superRunId,
+      keepaliveHooks(delivery.superRunId),
+    );
   } else {
     // Tokenless frame: clear stale authority, but never erase a generated
     // entry from beneath a known-newer contract (stale legacy/zombie clear),
     // and keep a tombstone so a later stale create cannot resurrect the key.
-    // Even when no entry exists, a generation on the frame still bumps the
-    // durable floor so a later zombie create cannot slip beneath it.
-    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
+    // The atomic admission above already bumped the durable floor — even
+    // when no entry exists — so a later zombie create cannot slip beneath
+    // this generation.
     if (!existing) return;
     if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
     entriesBySuperRunId.set(delivery.superRunId, {
@@ -237,6 +280,8 @@ export function recordMcpOriginatorDelivery(
           ? { generation: existing.generation }
           : {}),
     });
+    // Tombstoned: nothing live to renew anymore.
+    stopMcpOriginatorKeepalive(delivery.superRunId);
   }
 }
 
@@ -267,7 +312,7 @@ export function retireMcpOriginatorTokensOnOriginSwap(
     // and mark would leave no durable headerless record, letting a duplicate
     // recreate the token after restart. (evil-shub round 4)
     markMcpOriginatorHeaderless(runId, generation);
-    entriesBySuperRunId.delete(runId);
+    deleteMcpOriginatorToken(runId);
   }
 }
 
@@ -284,7 +329,7 @@ export function retireMcpOriginatorTokenOnTerminal(
   // Durable-first: terminal mark lands before the volatile delete (see the
   // origin-swap retire above).
   markMcpOriginatorTerminal(superRunId, generation);
-  entriesBySuperRunId.delete(superRunId);
+  deleteMcpOriginatorToken(superRunId);
 }
 
 /**
@@ -300,5 +345,5 @@ export function retireMcpOriginatorTokenOnMixedMerge(
   const generation = entriesBySuperRunId.get(superRunId)?.generation;
   // Durable-first: headerless mark lands before the volatile delete.
   markMcpOriginatorHeaderless(superRunId, generation);
-  entriesBySuperRunId.delete(superRunId);
+  deleteMcpOriginatorToken(superRunId);
 }
