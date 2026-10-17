@@ -115,6 +115,7 @@ export async function recoverApprovalStateForSync(
       scope.conversation_id,
       {
         includeMessageHistory: false,
+        throwOnReadError: true,
       },
     );
   } catch (error) {
