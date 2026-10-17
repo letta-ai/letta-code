@@ -5,10 +5,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  ATTACHED_REPOSITORY_CLONE_TIMEOUT_MS,
   isMissingCwdGitError,
   isRetryableGitTransientError,
   runGitWithRetry,
 } from "@/agent/memory-git";
+
+test("attached repository clones allow enough time for large checkouts", () => {
+  expect(ATTACHED_REPOSITORY_CLONE_TIMEOUT_MS).toBe(540_000);
+  expect(ATTACHED_REPOSITORY_CLONE_TIMEOUT_MS).toBeLessThan(600_000);
+});
 
 describe("isRetryableGitTransientError", () => {
   test.each([
