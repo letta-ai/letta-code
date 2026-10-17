@@ -113,11 +113,26 @@ function buildQueuedTurnMessage(
   // A mixed batch (or one with an unattributed member) runs unattributed
   // rather than borrowing another run's originator — the same fail-safe as
   // a mixed acting-user batch.
+  //
+  // The vote is on (super run id, token presence) together, not the id
+  // alone: a token-bearing and a tokenless delivery for the SAME run are
+  // different authority states (the tokenless one is a stale pre-mint frame
+  // whose accept cleared the run's held token). Merging them as "same id"
+  // would let the stale member's work borrow the fresh member's token, so
+  // they vote distinct and the batch runs unattributed.
   const messageOriginatorIds: Array<string | undefined> = [];
+  const originatorVotes: Array<string | null> = [];
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
       messageOriginatorIds.push(incoming.mcpOriginatorSuperRunId);
+      originatorVotes.push(
+        incoming.mcpOriginatorSuperRunId
+          ? `${incoming.mcpOriginatorSuperRunId}${
+              incoming.mcpOriginatorTokenPresent ? "|token" : "|tokenless"
+            }`
+          : null,
+      );
       template ??= {
         ...incoming,
         actingUserId: incoming.actingUserId ?? item.actingUserId ?? undefined,
@@ -140,6 +155,7 @@ function buildQueuedTurnMessage(
       // No stored inbound payload: this message has no originator delivery,
       // so it votes unattributed in the batch's originator resolution.
       messageOriginatorIds.push(undefined);
+      originatorVotes.push(null);
       messages.push(
         withMessageAttribution(
           { role: "user", content: item.content },
@@ -149,6 +165,7 @@ function buildQueuedTurnMessage(
     } else if (isCoalescable(item.kind) && "text" in item) {
       // Not a client message: no originator delivery, votes unattributed.
       messageOriginatorIds.push(undefined);
+      originatorVotes.push(null);
       messages.push({
         role: "user",
         content:
@@ -166,14 +183,12 @@ function buildQueuedTurnMessage(
   const batchActingUserId = batch.items.some((item) => item.kind === "message")
     ? getBatchActingUserId(batch.items)
     : (template?.actingUserId ?? getBatchActingUserId(batch.items));
-  const distinctOriginatorIds = new Set(
-    messageOriginatorIds.map((id) => id ?? null),
-  );
+  const distinctOriginatorVotes = new Set(originatorVotes);
   const mcpOriginatorSuperRunId =
-    distinctOriginatorIds.size === 1
-      ? ([...distinctOriginatorIds][0] ?? undefined)
+    distinctOriginatorVotes.size === 1
+      ? ([...distinctOriginatorVotes][0]?.split("|")[0] ?? undefined)
       : undefined;
-  if (distinctOriginatorIds.size > 1) {
+  if (distinctOriginatorVotes.size > 1) {
     // The merged turn is unattributed, so constituent runs' held tokens can
     // never be legitimately used here — and their inputs are consumed by
     // this merge, so no later turn will use them either. Retire them now

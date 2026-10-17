@@ -1,5 +1,9 @@
-import { deleteMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
+import {
+  deleteMcpOriginatorToken,
+  retireMcpOriginatorTokensOnOriginSwap,
+} from "@/agent/mcp-originator-tokens";
 import type { createBuffers } from "@/cli/helpers/accumulator";
+import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import type { RecoveryAuthorityStore } from "./recovery-evidence";
 import {
@@ -12,6 +16,32 @@ import type { createTurnDurabilityOwnership } from "./turn-durability-ownership"
 import type { TurnLease } from "./turn-lifecycle";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime } from "./types";
+
+type OriginCarrying = { mcpOriginatorSuperRunId?: string };
+
+/**
+ * Apply an origin swap when a parked turn consumes a queued turn from
+ * another super run (or an unattributed one): retire both runs' held
+ * originator tokens, then rebind the continuation's live (park-frozen) tool
+ * context to the consumed turn's origin. The rebind is what makes the swap
+ * a stable boundary — without it a late redelivery repopulating the parked
+ * run's deleted key would be picked up by the very next tool call, since
+ * per-call token lookups read the frozen context (evil-shub r4300657672).
+ */
+export function applyTurnOriginSwap(
+  parkedInput: OriginCarrying,
+  consumedTurn: OriginCarrying,
+  turnToolContextId: string | null,
+): void {
+  retireMcpOriginatorTokensOnOriginSwap(
+    parkedInput.mcpOriginatorSuperRunId,
+    consumedTurn.mcpOriginatorSuperRunId,
+  );
+  rebindTurnToolContextMcpOriginator(
+    turnToolContextId,
+    consumedTurn.mcpOriginatorSuperRunId,
+  );
+}
 
 export function createTurnFinalizer(params: {
   runtime: ConversationRuntime;

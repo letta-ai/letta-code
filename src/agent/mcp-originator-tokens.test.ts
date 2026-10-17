@@ -125,6 +125,51 @@ describe("recordMcpOriginatorDelivery", () => {
     recordMcpOriginatorDelivery({});
     expect(mcpOriginatorTokenCount()).toBe(0);
   });
+
+  test("refresh-only deliveries update live entries but never create new ones", () => {
+    // Duplicate re-acks and accepted approval/teleport payloads create no
+    // new owning turn, so they may refresh a live run's re-minted token but
+    // must not create an entry of their own (evil-shub r4300657683).
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    recordMcpOriginatorDelivery(
+      { super_run_id: "sr-1", mcp_originator_token: "mst_one.secret-b" },
+      { allowCreate: false },
+    );
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-b");
+
+    recordMcpOriginatorDelivery(
+      { super_run_id: "sr-2", mcp_originator_token: "mst_two.secret-c" },
+      { allowCreate: false },
+    );
+    expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
+    expect(mcpOriginatorTokenCount()).toBe(1);
+  });
+
+  test("a post-terminal duplicate cannot resurrect its run's retired token", () => {
+    // The owning turn's finalizer retires the token at terminal state; a
+    // duplicate re-ack arriving afterwards must not re-insert an orphaned
+    // token no finalizer will ever clean up — and an origin-swap deletion
+    // stays a stable boundary against late redeliveries.
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    deleteMcpOriginatorToken("sr-1"); // finalizer retirement
+    recordMcpOriginatorDelivery(
+      { super_run_id: "sr-1", mcp_originator_token: "mst_one.secret-b" },
+      { allowCreate: false },
+    );
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    expect(mcpOriginatorTokenCount()).toBe(0);
+  });
+
+  test("refresh-only still honors the tokenless clear for a live run", () => {
+    // A duplicate of a tokenless frame is authoritative about the run now
+    // having no listener-side authority, same as a fresh tokenless accept.
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    recordMcpOriginatorDelivery(
+      { super_run_id: "sr-1" },
+      { allowCreate: false },
+    );
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+  });
 });
 
 describe("retireMcpOriginatorTokensOnOriginSwap", () => {
