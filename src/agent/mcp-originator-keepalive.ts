@@ -26,20 +26,37 @@ import { apiRequest } from "@/backend/api/request";
 /** 120s: below the 300s sliding TTL with a full missed tick of slack. */
 const DEFAULT_KEEPALIVE_INTERVAL_MS = 120_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
+/**
+ * Failure retry delays (evil-shub round-6 P1): a failed tick must retry
+ * WITHIN the remaining 300s lease — under the old full-interval spacing
+ * three strikes at 120/240/360s meant the token expired before the third
+ * attempt. 15s/30s keeps every retry well inside the window.
+ */
+const FAILURE_RETRY_DELAYS_MS = [15_000, 30_000] as const;
+/**
+ * Bounded verify fetch (evil-shub round-6 P1): an unbounded request holds
+ * the tick guard forever, so one hung connection silently stopped renewal
+ * until the token expired. 30s is far above any healthy verify RTT.
+ */
+const VERIFY_TIMEOUT_MS = 30_000;
 
 type VerifyResult = { valid: boolean };
-type VerifyFn = (token: string) => Promise<VerifyResult>;
+type VerifyFn = (token: string, signal: AbortSignal) => Promise<VerifyResult>;
 
-const defaultVerify: VerifyFn = async (token) =>
-  apiRequest<VerifyResult>("POST", "/v1/mcp-originator-tokens/verify", {
-    token,
-  });
+const defaultVerify: VerifyFn = async (token, signal) =>
+  apiRequest<VerifyResult>(
+    "POST",
+    "/v1/mcp-originator-tokens/verify",
+    { token },
+    { signal },
+  );
 
 let verifyImpl: VerifyFn = defaultVerify;
 let intervalMs = DEFAULT_KEEPALIVE_INTERVAL_MS;
 
 type KeepaliveEntry = {
-  timer: ReturnType<typeof setInterval>;
+  /** Undefined in tests, where ticks are driven manually and no timer fires. */
+  timer: ReturnType<typeof setTimeout> | undefined;
   consecutiveFailures: number;
   /** Guards against overlapping ticks (a slow verify outliving the interval). */
   ticking: boolean;
@@ -65,6 +82,14 @@ export type KeepaliveHooks = {
 
 const keepalives = new Map<string, KeepaliveEntry>();
 
+/**
+ * Real timers exist only outside tests: test environments register
+ * timer-less entries and drive ticks explicitly, so no verify ever fires
+ * from the event loop. configureMcpOriginatorKeepaliveForTests disables
+ * scheduling as a side effect — production never calls it.
+ */
+let schedulingEnabled = process.env.NODE_ENV !== "test";
+
 async function runKeepaliveTick(superRunId: string): Promise<void> {
   const entry = keepalives.get(superRunId);
   if (!entry || entry.ticking) return;
@@ -76,9 +101,25 @@ async function runKeepaliveTick(superRunId: string): Promise<void> {
   }
   entry.ticking = true;
   try {
-    const result = await verifyImpl(token);
+    const result = await verifyImpl(
+      token,
+      AbortSignal.timeout(VERIFY_TIMEOUT_MS),
+    );
     entry.consecutiveFailures = 0;
     if (!result.valid) {
+      // Stale-verdict guard (evil-shub round-6 P1): the token was captured
+      // BEFORE the await, and a fresh delivery may have installed a newer
+      // token while the request was in flight (the producer re-mints per
+      // delivery and revokes the prior one — so the OLD token's
+      // { valid: false } is expected and must never withdraw the NEW one).
+      // Withdraw only when the store still holds exactly the verified token.
+      const current = entry.hooks?.getToken();
+      if (current !== token) {
+        // Verdict belongs to a superseded token; the fresh token is
+        // verified on its own tick. The failure counter was already reset
+        // by startMcpOriginatorKeepalive at install.
+        return;
+      }
       // The server denies this token (revoked, fenced, or aged past its
       // ceiling): withdraw locally so the turn continues headerless instead
       // of spending a dead header, and stop renewing.
@@ -102,40 +143,71 @@ async function runKeepaliveTick(superRunId: string): Promise<void> {
   } finally {
     entry.ticking = false;
   }
+  // Schedule the next tick only while this keepalive is still registered
+  // (a stop during the await removed it): success keeps the healthy
+  // cadence; a failure retries within the remaining lease instead of
+  // waiting out a full interval (evil-shub round-6 P1).
+  if (schedulingEnabled && keepalives.get(superRunId) === entry) {
+    entry.timer = setTimeout(() => {
+      void runKeepaliveTick(superRunId);
+    }, nextDelayMs(entry.consecutiveFailures));
+    entry.timer?.unref();
+  }
+}
+
+function nextDelayMs(consecutiveFailures: number): number {
+  if (consecutiveFailures <= 0) return intervalMs;
+  const lastDelay = FAILURE_RETRY_DELAYS_MS[FAILURE_RETRY_DELAYS_MS.length - 1];
+  return (
+    FAILURE_RETRY_DELAYS_MS[
+      Math.min(consecutiveFailures, FAILURE_RETRY_DELAYS_MS.length) - 1
+    ] ??
+    lastDelay ??
+    intervalMs
+  );
 }
 
 /**
  * Ensure a keepalive is running for a run holding a live token entry.
  * Idempotent per run; called by the token store on every entry install.
+ * A RE-install (a fresh delivery replacing the held token) refreshes the
+ * hooks and resets the failure counter (evil-shub round-6 P1): strikes
+ * against the old token must not bleed into the new one's renewal budget.
  */
 export function startMcpOriginatorKeepalive(
   superRunId: string,
   hooks: KeepaliveHooks,
 ): void {
-  if (keepalives.has(superRunId)) return;
-  if (process.env.NODE_ENV === "test" && verifyImpl === defaultVerify) {
-    // Tests drive ticks explicitly through runMcpOriginatorKeepaliveTickForTests
-    // or install a verify stub via configureMcpOriginatorKeepaliveForTests;
-    // never let a default-configured interval fire real HTTP from a test.
+  const existing = keepalives.get(superRunId);
+  if (existing) {
+    existing.hooks = hooks;
+    existing.consecutiveFailures = 0;
     return;
   }
-  const timer = setInterval(() => {
-    void runKeepaliveTick(superRunId);
-  }, intervalMs);
-  timer.unref();
-  keepalives.set(superRunId, {
-    timer,
+  const entry: KeepaliveEntry = {
+    // First tick is IMMEDIATE (evil-shub round-6 P1): the publish gate
+    // admits pairs with only a minimum lease left, and a first verify 120s
+    // later could find the token already dead. Verifying at install also
+    // surfaces a revoked pair before the first tool call needs it. Tests
+    // register the entry with NO timer and drive ticks manually.
+    timer: schedulingEnabled
+      ? setTimeout(() => {
+          void runKeepaliveTick(superRunId);
+        }, 0)
+      : undefined,
     consecutiveFailures: 0,
     ticking: false,
     hooks,
-  });
+  };
+  entry.timer?.unref();
+  keepalives.set(superRunId, entry);
 }
 
 /** Stop renewing a run's token (entry removal, tombstone, store clear). */
 export function stopMcpOriginatorKeepalive(superRunId: string): void {
   const entry = keepalives.get(superRunId);
   if (!entry) return;
-  clearInterval(entry.timer);
+  clearTimeout(entry.timer);
   keepalives.delete(superRunId);
 }
 
@@ -153,6 +225,9 @@ export function configureMcpOriginatorKeepaliveForTests(
   stopAllMcpOriginatorKeepalives();
   verifyImpl = config?.verify ?? defaultVerify;
   intervalMs = config?.intervalMs ?? DEFAULT_KEEPALIVE_INTERVAL_MS;
+  // Only tests call this; never let a configured (or restored) environment
+  // grow real timers.
+  schedulingEnabled = false;
 }
 
 /** Test-only: synchronously drive one tick for a run. */
@@ -163,11 +238,10 @@ export async function runMcpOriginatorKeepaliveTickForTests(
   // timer-less stub, mirroring production guard behavior.
   if (!keepalives.has(superRunId)) {
     keepalives.set(superRunId, {
-      timer: setInterval(() => {}, Number.MAX_SAFE_INTEGER),
+      timer: undefined,
       consecutiveFailures: 0,
       ticking: false,
     });
-    clearInterval(keepalives.get(superRunId)?.timer);
   }
   await runKeepaliveTick(superRunId);
 }

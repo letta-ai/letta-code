@@ -115,4 +115,92 @@ describe("MCP originator keepalive", () => {
     expect(calls).toBe(0);
     expect(hasMcpOriginatorKeepaliveForTests("run-ghost")).toBe(false);
   });
+
+  test("a stale verdict for a superseded token cannot withdraw the fresh one", async () => {
+    // evil-shub round-6 P1: verify(A) is in flight when a re-mint installs
+    // B; A's { valid: false } (expected — the producer revoked A) must not
+    // withdraw B. Withdrawal is gated on the store still holding the exact
+    // verified token.
+    let releaseA: (result: { valid: boolean }) => void = () => {};
+    configureMcpOriginatorKeepaliveForTests({
+      verify: (token) => {
+        if (token === "mst_a") {
+          return new Promise((resolve) => {
+            releaseA = resolve;
+          });
+        }
+        return Promise.resolve({ valid: true });
+      },
+    });
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_a",
+      super_run_id: "run-a",
+      mcp_originator_generation: 1,
+    });
+    const inflightTick = runMcpOriginatorKeepaliveTickForTests("run-a");
+    // The tick for A is now parked inside verify. A fresh delivery installs
+    // B (the producer re-minted and revoked A).
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_b",
+      super_run_id: "run-a",
+      mcp_originator_generation: 2,
+    });
+    releaseA({ valid: false });
+    await inflightTick;
+    expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+  });
+
+  test("a stale verdict CAN still withdraw when the verified token is still held", async () => {
+    let releaseA: (result: { valid: boolean }) => void = () => {};
+    configureMcpOriginatorKeepaliveForTests({
+      verify: () =>
+        new Promise((resolve) => {
+          releaseA = resolve;
+        }),
+    });
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_a",
+      super_run_id: "run-a",
+      mcp_originator_generation: 1,
+    });
+    const inflightTick = runMcpOriginatorKeepaliveTickForTests("run-a");
+    releaseA({ valid: false });
+    await inflightTick;
+    expect(getMcpOriginatorToken("run-a")).toBeUndefined();
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(false);
+  });
+
+  test("re-installing a token resets the failure budget", async () => {
+    // evil-shub round-6 P1: strikes against the old token must not bleed
+    // into the replacement's renewal budget.
+    let calls = 0;
+    configureMcpOriginatorKeepaliveForTests({
+      verify: async () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    });
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_a",
+      super_run_id: "run-a",
+      mcp_originator_generation: 1,
+    });
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    // Fresh delivery: the failure counter resets.
+    recordMcpOriginatorDelivery({
+      mcp_originator_token: "mst_b",
+      super_run_id: "run-a",
+      mcp_originator_generation: 2,
+    });
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    // Two strikes against B: renewal must still be armed.
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(false);
+    expect(calls).toBe(5);
+  });
 });

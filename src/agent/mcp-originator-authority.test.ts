@@ -457,4 +457,64 @@ describe("atomic admit and use-time recheck (evil-shub round 5 P2)", () => {
     noteMcpOriginatorDelivery("run-a", 2);
     expect(getMcpOriginatorToken("run-a")).toBeUndefined();
   });
+
+  test("malformed wire generations are denied fail-closed (round-7; evil-shub round-6 P1)", () => {
+    for (const bad of [1.5, -1, Number.NaN, "2" as unknown as number]) {
+      expect(admitMcpOriginatorDelivery("run-bad", bad)).toBe(false);
+      expect(
+        recordMcpOriginatorDelivery({
+          mcp_originator_token: "mst_bad",
+          super_run_id: "run-bad",
+          mcp_originator_generation: bad,
+        }),
+      ).toBe("denied");
+    }
+    // No poisoned floor, no entry, and a well-formed delivery still admits.
+    expect(readMcpOriginatorAuthorityForTests("run-bad")).toBeUndefined();
+    expect(getMcpOriginatorToken("run-bad")).toBeUndefined();
+    expect(admitMcpOriginatorDelivery("run-bad", 2)).toBe(true);
+    expect(readMcpOriginatorAuthorityForTests("run-bad")?.floor).toBe(2);
+  });
+
+  test("a malformed generation cannot poison the floor through note/touch", () => {
+    noteMcpOriginatorDelivery("run-c", Number.NaN);
+    expect(readMcpOriginatorAuthorityForTests("run-c")?.floor).toBeUndefined();
+    noteMcpOriginatorDelivery("run-c", 3);
+    expect(readMcpOriginatorAuthorityForTests("run-c")?.floor).toBe(3);
+    expect(mcpOriginatorAuthorityPermitsUse("run-c", Number.NaN)).toBe(false);
+    expect(mcpOriginatorAuthorityPermitsUse("run-c", 3)).toBe(true);
+  });
+
+  test("a structurally invalid floor on disk degrades the file fail-closed", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-"));
+    try {
+      const path = join(root, "authority.json");
+      for (const badFloor of ["3", 1.5, -2]) {
+        writeFileSync(
+          path,
+          JSON.stringify({
+            version: 1,
+            records: {
+              "run-d": {
+                floor: badFloor,
+                state: "live",
+                updatedAtMs: Date.now(),
+              },
+            },
+          }),
+        );
+        configureMcpOriginatorAuthorityPersistenceForTests(path);
+        resetMcpOriginatorAuthority();
+        // Degraded durable state denies admission and use (fail-closed) and
+        // must NOT be clobbered by a fresh write.
+        expect(admitMcpOriginatorDelivery("run-d", 4)).toBe(false);
+        expect(mcpOriginatorAuthorityPermitsUse("run-d", 4)).toBe(false);
+        expect(readFileSync(path, "utf8")).toContain('"live"');
+        configureMcpOriginatorAuthorityPersistenceForTests(null);
+        resetMcpOriginatorAuthority();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

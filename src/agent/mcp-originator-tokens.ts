@@ -141,14 +141,23 @@ export function mcpOriginatorTokenCount(): number {
  * Extract the originator delivery from an inbound top-level run-input frame.
  *
  * This is the single parse site for the relay contract fields. Wire data is
- * untrusted: present-but-malformed values are treated as absent (the turn
- * then runs unattributed) rather than rejecting the whole input. A malformed
- * generation degrades to "legacy", which generated entries reject.
+ * untrusted: present-but-malformed tokens/ids are treated as absent (the
+ * turn then runs unattributed) rather than rejecting the whole input. A
+ * present-but-malformed GENERATION is different (evil-shub round-6 P1 #1):
+ * degrading it to "legacy" would let a first malformed delivery install a
+ * token beneath the generation contract entirely (no floor exists yet to
+ * reject it), so the parse surfaces `malformedGeneration` and admission
+ * denies the delivery fail-closed.
  */
 export function readMcpOriginatorDelivery(payload: unknown): {
   superRunId?: string;
   token?: string;
   generation?: number;
+  /**
+   * True when the frame CARRIED a generation that failed shape validation —
+   * distinguishable from a legacy frame carrying no generation at all.
+   */
+  malformedGeneration?: boolean;
 } {
   const wire =
     typeof payload === "object" && payload !== null
@@ -178,6 +187,9 @@ export function readMcpOriginatorDelivery(payload: unknown): {
     ...(superRunId ? { superRunId } : {}),
     ...(token ? { token } : {}),
     ...(generation !== undefined ? { generation } : {}),
+    ...(wire.mcp_originator_generation !== undefined && generation === undefined
+      ? { malformedGeneration: true as const }
+      : {}),
   };
 }
 
@@ -216,12 +228,36 @@ function deliveryIsAtLeastAsNew(
  *   create below the tombstone generation is dropped even when recreation
  *   would otherwise be allowed.
  */
+/**
+ * Outcome of recording a delivery (evil-shub round-6 P1). "denied" means
+ * the durable admission gate failed closed — the caller MUST NOT ack the
+ * frame: Cloud's delivery gate treats an unacked frame as undeliverable
+ * and redelivers, retrying the whole admission instead of letting the turn
+ * run headerless. "admitted" covers every post-admission outcome (stored,
+ * refreshed, create-deferred, tombstoned) — those are idempotent and ack
+ * normally. "none" means the frame carried no originator stamp at all.
+ */
+export type McpOriginatorDeliveryVerdict = "admitted" | "denied" | "none";
+
 export function recordMcpOriginatorDelivery(
   frame: unknown,
   options?: { allowCreate?: boolean; mayRecreateOwner?: () => boolean },
-): void {
+): McpOriginatorDeliveryVerdict {
   const delivery = readMcpOriginatorDelivery(frame);
-  if (!delivery.superRunId) return;
+  if (!delivery.superRunId) return "none";
+  if (delivery.malformedGeneration) {
+    // The frame carried a generation that failed shape validation. Treating
+    // it as a legacy delivery would admit a token beneath the generation
+    // contract, so deny fail-closed: the caller suppresses the ack and the
+    // producer redelivers a well-formed frame.
+    console.error(
+      `[MCP originator] run ${delivery.superRunId}: denying delivery with malformed generation ${String(
+        (frame as { mcp_originator_generation?: unknown })
+          ?.mcp_originator_generation,
+      )}`,
+    );
+    return "denied";
+  }
   // Atomic durable admission (evil-shub round-5 P1): gate + floor bump in
   // ONE locked transaction, consulted BEFORE the volatile entry check so an
   // empty Map inherits the floor. Rejects zombies below the max observed
@@ -236,17 +272,18 @@ export function recordMcpOriginatorDelivery(
   // recovers. A failed durable write denies admission entirely — the caller
   // must not ACK (redelivery retries the whole admission).
   if (!admitMcpOriginatorDelivery(delivery.superRunId, delivery.generation)) {
-    return;
+    return "denied";
   }
   const existing = entriesBySuperRunId.get(delivery.superRunId);
   if (delivery.token) {
     if (existing) {
-      if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
+      if (!deliveryIsAtLeastAsNew(existing, delivery.generation))
+        return "admitted";
     } else if (
       options?.allowCreate === false &&
       options?.mayRecreateOwner?.() !== true
     ) {
-      return;
+      return "admitted";
     }
     entriesBySuperRunId.set(delivery.superRunId, {
       token: delivery.token,
@@ -263,6 +300,7 @@ export function recordMcpOriginatorDelivery(
       delivery.superRunId,
       keepaliveHooks(delivery.superRunId),
     );
+    return "admitted";
   } else {
     // Tokenless frame: clear stale authority, but never erase a generated
     // entry from beneath a known-newer contract (stale legacy/zombie clear),
@@ -270,8 +308,9 @@ export function recordMcpOriginatorDelivery(
     // The atomic admission above already bumped the durable floor — even
     // when no entry exists — so a later zombie create cannot slip beneath
     // this generation.
-    if (!existing) return;
-    if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
+    if (!existing) return "admitted";
+    if (!deliveryIsAtLeastAsNew(existing, delivery.generation))
+      return "admitted";
     entriesBySuperRunId.set(delivery.superRunId, {
       token: null,
       ...(delivery.generation !== undefined
@@ -282,6 +321,7 @@ export function recordMcpOriginatorDelivery(
     });
     // Tombstoned: nothing live to renew anymore.
     stopMcpOriginatorKeepalive(delivery.superRunId);
+    return "admitted";
   }
 }
 
@@ -311,8 +351,19 @@ export function retireMcpOriginatorTokensOnOriginSwap(
     // volatile entry is dropped. A process death in the gap between delete
     // and mark would leave no durable headerless record, letting a duplicate
     // recreate the token after restart. (evil-shub round 4)
-    markMcpOriginatorHeaderless(runId, generation);
-    deleteMcpOriginatorToken(runId);
+    // Honor the durability boolean (evil-shub round-6 P1): when the mark
+    // could not be persisted, deleting the volatile entry would pretend a
+    // retirement the durable file does not know — after a restart the file
+    // still shows the run live and a duplicate could recreate the token.
+    // Keeping the entry is fail-safe: the in-memory mark already withdraws
+    // it from use, and its keepalive renews a token no caller can obtain.
+    if (markMcpOriginatorHeaderless(runId, generation)) {
+      deleteMcpOriginatorToken(runId);
+    } else {
+      console.error(
+        `[mcp-originator-tokens] headerless mark for ${runId} is NOT durable; keeping the volatile entry (unusable in this process) so restart cannot resurrect authority`,
+      );
+    }
   }
 }
 
@@ -328,8 +379,15 @@ export function retireMcpOriginatorTokenOnTerminal(
   const generation = entriesBySuperRunId.get(superRunId)?.generation;
   // Durable-first: terminal mark lands before the volatile delete (see the
   // origin-swap retire above).
-  markMcpOriginatorTerminal(superRunId, generation);
-  deleteMcpOriginatorToken(superRunId);
+  // Same durability contract as the origin-swap retire (evil-shub round-6
+  // P1): no volatile delete without a durable terminal mark.
+  if (markMcpOriginatorTerminal(superRunId, generation)) {
+    deleteMcpOriginatorToken(superRunId);
+  } else {
+    console.error(
+      `[mcp-originator-tokens] terminal mark for ${superRunId} is NOT durable; keeping the volatile entry (unusable in this process) so restart cannot resurrect authority`,
+    );
+  }
 }
 
 /**
@@ -344,6 +402,11 @@ export function retireMcpOriginatorTokenOnMixedMerge(
   if (!superRunId) return;
   const generation = entriesBySuperRunId.get(superRunId)?.generation;
   // Durable-first: headerless mark lands before the volatile delete.
-  markMcpOriginatorHeaderless(superRunId, generation);
-  deleteMcpOriginatorToken(superRunId);
+  if (markMcpOriginatorHeaderless(superRunId, generation)) {
+    deleteMcpOriginatorToken(superRunId);
+  } else {
+    console.error(
+      `[mcp-originator-tokens] mixed-merge headerless mark for ${superRunId} is NOT durable; keeping the volatile entry (unusable in this process) so restart cannot resurrect authority`,
+    );
+  }
 }
