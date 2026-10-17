@@ -16,6 +16,8 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import { ordinaryInputIdentity } from "./input-disposition";
+import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { consumeQueuedTurn } from "./queue";
@@ -249,7 +251,7 @@ describe("MCP originator token ingestion", () => {
     expect(processed.length).toBe(1);
   });
 
-  test("a duplicate re-ack after finalizer retirement cannot resurrect the token", async () => {
+  test("a duplicate re-ack with a LIVE durable owner may recreate the token (crash recovery)", async () => {
     const listener = createRuntime();
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
@@ -267,8 +269,50 @@ describe("MCP originator token ingestion", () => {
     await waitFor(() => processed.length === 1);
     expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
 
-    // The owning turn reaches a terminal state and its finalizer retires the
-    // token; the late duplicate must not re-insert an orphaned token.
+    // Process crash: the volatile token entry is lost but the durable ledger
+    // still shows the live accepted owner. The re-delivered (re-minted)
+    // duplicate MAY recreate the entry — otherwise recovered work runs
+    // headerless on the unrestricted MCP path.
+    deleteMcpOriginatorToken("sr-1");
+    await handleMessage(
+      inputFrame(
+        {
+          client_message_id: "m-1",
+          super_run_id: "sr-1",
+          mcp_originator_token: "mst_one.secret-b",
+        },
+        "req-2",
+      ),
+    );
+    await waitFor(() => getMcpOriginatorToken("sr-1") === "mst_one.secret-b");
+    expect(processed.length).toBe(1);
+  });
+
+  test("a duplicate re-ack after a TERMINAL disposition cannot resurrect the token", async () => {
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const processed: IncomingMessage[] = [];
+    const handleMessage = buildHandler(listener, socket, processed);
+
+    await handleMessage(
+      inputFrame({
+        client_message_id: "m-1",
+        super_run_id: "sr-1",
+        mcp_originator_token: "mst_one.secret-a",
+      }),
+    );
+    await waitFor(() => processed.length === 1);
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+
+    // The owning turn finishes: the durable disposition is retired and the
+    // finalizer drops the token. A late duplicate re-delivery must not
+    // re-insert an orphaned token — the terminal tombstone is not a live
+    // owner even though the disposition entry itself persists.
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const identity = ordinaryInputIdentity("m-1");
+    completeInputReplay(runtime, identity ? [identity] : []);
     deleteMcpOriginatorToken("sr-1");
     await handleMessage(
       inputFrame(

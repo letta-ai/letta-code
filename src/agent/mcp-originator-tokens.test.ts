@@ -207,3 +207,133 @@ describe("retireMcpOriginatorTokensOnOriginSwap", () => {
     expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
   });
 });
+
+describe("MCP originator mint-generation ordering", () => {
+  afterEach(() => {
+    clearMcpOriginatorTokens();
+  });
+
+  const frame = (superRunId: string, token?: string, generation?: number) => ({
+    type: "input",
+    super_run_id: superRunId,
+    ...(token ? { mcp_originator_token: token } : {}),
+    ...(generation !== undefined
+      ? { mcp_originator_generation: generation }
+      : {}),
+  });
+
+  test("a newer generation supersedes; an older zombie is dropped", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
+    // Zombie from a superseded delivery attempt: dropped.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 2));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
+  });
+
+  test("an equal generation is an idempotent re-delivery (last write wins)", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 3));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
+  });
+
+  test("a generated entry rejects legacy (generation-less) deliveries", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_legacy.secret"));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+  });
+
+  test("a legacy entry accepts any delivery, including generated upgrades", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_legacy.secret"));
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_older.secret", 1));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_older.secret");
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_newer.secret", 2));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_newer.secret");
+    // ...and once upgraded, legacy deliveries are rejected.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_legacy2.secret"));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_newer.secret");
+  });
+
+  test("a stale tokenless frame cannot clear a generated entry", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 5));
+    // Legacy tokenless clear: rejected.
+    recordMcpOriginatorDelivery(frame("sr-1"));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+    // Older-generated clear: rejected.
+    recordMcpOriginatorDelivery(frame("sr-1", undefined, 4));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+    // Same-generation tokenless frame clears into a tombstone.
+    recordMcpOriginatorDelivery(frame("sr-1", undefined, 5));
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    expect(mcpOriginatorTokenCount()).toBe(0);
+  });
+
+  test("a tombstone blocks a stale re-create below its generation", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 5));
+    recordMcpOriginatorDelivery(frame("sr-1", undefined, 6));
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    // Stale create below the tombstone generation: dropped.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 5));
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    // Newer create revives (last-write-wins across the tombstone).
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_live.secret", 7));
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_live.secret");
+  });
+
+  test("a malformed generation degrades to legacy", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
+    recordMcpOriginatorDelivery({
+      type: "input",
+      super_run_id: "sr-1",
+      mcp_originator_token: "mst_bad.secret",
+      mcp_originator_generation: Number.NaN,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+    recordMcpOriginatorDelivery({
+      type: "input",
+      super_run_id: "sr-1",
+      mcp_originator_token: "mst_bad2.secret",
+      mcp_originator_generation: -1,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+    recordMcpOriginatorDelivery({
+      type: "input",
+      super_run_id: "sr-1",
+      mcp_originator_token: "mst_bad3.secret",
+      mcp_originator_generation: 2.5,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_a.secret");
+  });
+
+  test("refresh-only deliveries need a live durable owner to recreate", () => {
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_a.secret", 3));
+    deleteMcpOriginatorToken("sr-1");
+    // No predicate: refresh cannot create.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
+      allowCreate: false,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    // Predicate proving a terminal tombstone (false): still cannot create.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
+      allowCreate: false,
+      mayRecreateOwner: () => false,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    // Predicate proving a live owner (crash recovery): recreate allowed.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_b.secret", 4), {
+      allowCreate: false,
+      mayRecreateOwner: () => true,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
+    // Refresh of an EXISTING entry needs no predicate but keeps ordering.
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_zombie.secret", 2), {
+      allowCreate: false,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_b.secret");
+    recordMcpOriginatorDelivery(frame("sr-1", "mst_c.secret", 5), {
+      allowCreate: false,
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_c.secret");
+  });
+});

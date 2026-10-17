@@ -52,11 +52,15 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
-import { acknowledgeInputFrame } from "./input-ack";
+import type { InputAckArgs } from "./input-ack";
+import {
+  acknowledgeAdmissionDuplicate,
+  acknowledgeIfAlreadyAdmitted,
+  acknowledgeInputFrame,
+} from "./input-ack";
 import {
   commitInputDisposition,
   forgetQueuedInputDisposition,
-  getInputDisposition,
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
@@ -438,15 +442,9 @@ export function createListenerMessageHandler(
 
       if (parsed.type === "input") {
         // Binds the socket and frame; ack arguments pass through verbatim.
-        const acknowledgeInput = (
-          ...args: [
-            accepted: boolean,
-            error?: string,
-            disposition?: "started" | "queued",
-            deliveryHandling?: "create" | "refresh",
-          ]
-        ): void =>
+        const acknowledgeInput = (...args: InputAckArgs): void =>
           acknowledgeInputFrame(safeSocketSend, socket, parsed, ...args);
+        const ackTransport = { safeSocketSend, socket, frame: parsed };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
@@ -559,12 +557,13 @@ export function createListenerMessageHandler(
             processIncomingMessage,
             actingUserId: parsed.runtime.acting_user_id,
             trackListenerError,
-            onInputAccepted: ({ accepted, disposition, duplicate }) =>
+            onInputAccepted: (result) =>
               acknowledgeInput(
-                accepted,
-                accepted ? undefined : "Input was rejected by the queue",
-                disposition,
-                duplicate ? "refresh" : undefined,
+                result.accepted,
+                result.accepted ? undefined : "Input was rejected by the queue",
+                result.disposition,
+                result.duplicate ? "refresh" : undefined,
+                result.mayRecreateOwner,
               ),
           });
         };
@@ -574,12 +573,9 @@ export function createListenerMessageHandler(
           const identity = ordinaryInputIdentity(
             getInboundClientMessageId(stampedIncoming),
           );
-          const acceptedDisposition = getInputDisposition(
-            scopedRuntime,
-            identity,
-          );
-          if (acceptedDisposition) {
-            acknowledgeInput(true, undefined, acceptedDisposition, "refresh");
+          if (
+            acknowledgeIfAlreadyAdmitted(ackTransport, scopedRuntime, identity)
+          ) {
             return;
           }
           if (
@@ -601,7 +597,12 @@ export function createListenerMessageHandler(
 
           const admission = reserveInputDisposition(scopedRuntime, identity);
           if (admission.kind === "duplicate") {
-            acknowledgeInput(true, undefined, admission.disposition, "refresh");
+            acknowledgeAdmissionDuplicate(
+              ackTransport,
+              scopedRuntime,
+              identity,
+              admission.disposition,
+            );
             return;
           }
           if (admission.kind === "full") {

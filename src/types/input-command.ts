@@ -60,5 +60,13 @@ export interface InputCommand {
    */
   super_run_id?: string;
   mcp_originator_token?: string;
+  /**
+   * Strictly-increasing per-run mint generation for `mcp_originator_token`.
+   * Re-mints (delivery retries) carry newer generations; the listener drops
+   * deliveries older than the stored entry so a zombie retry can never
+   * downgrade authority. Absent means a legacy (pre-generation) producer;
+   * generation-tagged entries reject generation-less deliveries.
+   */
+  mcp_originator_generation?: number;
   payload: InputPayload;
 }

@@ -84,6 +84,7 @@ test("completed input replay survives idle runtime eviction", async () => {
     accepted: boolean;
     disposition?: "started" | "queued";
     duplicate?: boolean;
+    mayRecreateOwner?: () => boolean;
   }> = [];
 
   dispatchInboundMessageWhenReady({
@@ -133,7 +134,14 @@ test("completed input replay survives idle runtime eviction", async () => {
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
   expect(acknowledgements).toEqual([
     { accepted: true, disposition: "started" },
-    { accepted: true, disposition: "started", duplicate: true },
+    // The duplicate re-ack carries the live-owner proof the originator
+    // token store needs before recreating a lost entry.
+    {
+      accepted: true,
+      disposition: "started",
+      duplicate: true,
+      mayRecreateOwner: expect.any(Function),
+    },
   ]);
 });
 
