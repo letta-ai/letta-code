@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
+import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   deleteMcpOriginatorToken,
@@ -151,6 +152,7 @@ function inputFrame(
 
 afterEach(() => {
   clearMcpOriginatorTokens();
+  resetMcpOriginatorAuthority();
   clearExternalTools();
   setActiveRuntime(null);
 });

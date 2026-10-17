@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   setMcpOriginatorToken,
@@ -15,6 +16,7 @@ import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
 describe("MCP originator token forwarding", () => {
   afterEach(() => {
     clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
   });
 
   function originatorHarness() {

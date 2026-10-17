@@ -1,5 +1,5 @@
 import {
-  deleteMcpOriginatorToken,
+  retireMcpOriginatorTokenOnTerminal,
   retireMcpOriginatorTokensOnOriginSwap,
 } from "@/agent/mcp-originator-tokens";
 import type { createBuffers } from "@/cli/helpers/accumulator";
@@ -136,7 +136,7 @@ export function createTurnFinalizer(params: {
     // Terminal run states (success/error/cancel) retire the run's held MCP
     // originator token. Rejected/duplicate commits leave the store alone.
     if (transition.finished && params.mcpOriginatorSuperRunId) {
-      deleteMcpOriginatorToken(params.mcpOriginatorSuperRunId);
+      retireMcpOriginatorTokenOnTerminal(params.mcpOriginatorSuperRunId);
     }
     return transition;
   };

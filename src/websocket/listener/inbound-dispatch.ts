@@ -48,6 +48,7 @@ export function createIncomingMessage(
     terminal_consumer_id?: string | null;
     super_run_id?: unknown;
     mcp_originator_token?: unknown;
+    mcp_originator_generation?: unknown;
   },
 ): IncomingMessage {
   // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): the IncomingMessage

@@ -36,7 +36,23 @@
  * Consumer side only: this module does not verify tokens, enforce ACLs, or
  * decide attribution. When no token is held for a run, callers simply omit
  * the header and the call proceeds unattributed.
+ *
+ * Authority floor (durable, mcp-originator-authority.ts): generation
+ * comparison alone only protects against generations this volatile Map still
+ * remembers. A durable per-run record carries the max observed generation
+ * (the floor) plus a monotone live → headerless|terminal state across
+ * restarts, so a zombie from a superseded mint is rejected even on an empty
+ * Map, and a run whose authority was deliberately retired (origin swap,
+ * mixed-batch merge, terminal) can never be re-armed by a duplicate frame.
  */
+
+import {
+  markMcpOriginatorHeaderless,
+  markMcpOriginatorTerminal,
+  mcpOriginatorAuthorityAllows,
+  noteMcpOriginatorDelivery,
+} from "./mcp-originator-authority";
+
 type McpOriginatorTokenEntry = {
   /** Null marks a tombstone left by a tokenless delivery. */
   token: string | null;
@@ -171,6 +187,14 @@ export function recordMcpOriginatorDelivery(
 ): void {
   const delivery = readMcpOriginatorDelivery(frame);
   if (!delivery.superRunId) return;
+  // Durable authority gate, consulted BEFORE the volatile entry check so an
+  // empty Map inherits the floor: rejects zombies below the max observed
+  // generation, legacy deliveries beneath a known generation contract, and
+  // any delivery for a headerless/terminal run (origin swap, mixed merge,
+  // terminal retirement are never re-armed by duplicates).
+  if (!mcpOriginatorAuthorityAllows(delivery.superRunId, delivery.generation)) {
+    return;
+  }
   const existing = entriesBySuperRunId.get(delivery.superRunId);
   if (delivery.token) {
     if (existing) {
@@ -189,10 +213,14 @@ export function recordMcpOriginatorDelivery(
           ? { generation: existing.generation }
           : {}),
     });
+    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
   } else {
     // Tokenless frame: clear stale authority, but never erase a generated
     // entry from beneath a known-newer contract (stale legacy/zombie clear),
     // and keep a tombstone so a later stale create cannot resurrect the key.
+    // Even when no entry exists, a generation on the frame still bumps the
+    // durable floor so a later zombie create cannot slip beneath it.
+    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
     if (!existing) return;
     if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
     entriesBySuperRunId.set(delivery.superRunId, {
@@ -221,6 +249,43 @@ export function retireMcpOriginatorTokensOnOriginSwap(
   queuedSuperRunId: string | null | undefined,
 ): void {
   if (queuedSuperRunId === turnSuperRunId) return;
-  if (turnSuperRunId) deleteMcpOriginatorToken(turnSuperRunId);
-  if (queuedSuperRunId) deleteMcpOriginatorToken(queuedSuperRunId);
+  // The swap is a deliberate fail-closed boundary: the continuation must stay
+  // headerless for the rest of the turn, so both runs are marked headerless
+  // durably — a duplicate frame (even with a live durable input owner) must
+  // never recreate the deleted key and re-arm the header mid-turn.
+  for (const runId of [turnSuperRunId, queuedSuperRunId]) {
+    if (!runId) continue;
+    const generation = entriesBySuperRunId.get(runId)?.generation;
+    entriesBySuperRunId.delete(runId);
+    markMcpOriginatorHeaderless(runId, generation);
+  }
+}
+
+/**
+ * Terminal retirement for the finalizer: drop the held token and mark the
+ * run terminal durably, so a post-terminal duplicate can never re-insert an
+ * orphaned token even after a restart forgot the deletion.
+ */
+export function retireMcpOriginatorTokenOnTerminal(
+  superRunId: string | null | undefined,
+): void {
+  if (!superRunId) return;
+  const generation = entriesBySuperRunId.get(superRunId)?.generation;
+  entriesBySuperRunId.delete(superRunId);
+  markMcpOriginatorTerminal(superRunId, generation);
+}
+
+/**
+ * Mixed-batch merge retirement: constituents' tokens can never be
+ * legitimately used by the unattributed merged turn, so they are retired and
+ * durably marked headerless — the merged finalizer cannot delete them later,
+ * and constituent duplicates must never recreate them.
+ */
+export function retireMcpOriginatorTokenOnMixedMerge(
+  superRunId: string | null | undefined,
+): void {
+  if (!superRunId) return;
+  const generation = entriesBySuperRunId.get(superRunId)?.generation;
+  entriesBySuperRunId.delete(superRunId);
+  markMcpOriginatorHeaderless(superRunId, generation);
 }
