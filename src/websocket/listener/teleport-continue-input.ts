@@ -138,18 +138,16 @@ export function admitTeleportContinueInput(params: {
       return;
     }
     clearExpectedInboundTeleport(scopedRuntime);
-    // MCP originator delivery: refresh-only. A teleport continuation creates
-    // no new token owner (its continuationInput carries no
-    // mcpOriginatorSuperRunId and no finalizer retires by it), so a token
-    // riding this frame may re-assert an existing entry but must never
-    // create one — unless the durable ledger still shows the live owner this
-    // continuation just started (crash recovery re-asserts authority).
-    acknowledgeInput(true, undefined, "started", "refresh", () =>
-      hasLiveAcceptedInputOwner(
-        scopedRuntime,
-        teleportInputIdentity(teleportId),
-      ),
-    );
+    // MCP originator delivery: refresh-only, and NO recreate predicate. A
+    // teleport continuation creates no new token owner (its continuationInput
+    // carries no mcpOriginatorSuperRunId and no finalizer retires by it), so
+    // a token riding this frame may re-assert an existing entry but must
+    // never create one — the disposition committed above would make a
+    // live-owner predicate vacuously true and orphan the entry until
+    // teardown. Crash recovery does not need a hatch here: a post-crash
+    // redelivery finds the durable disposition and takes the duplicate
+    // branch, which gates recreation correctly.
+    acknowledgeInput(true, undefined, "started", "refresh");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
         continuationInput,

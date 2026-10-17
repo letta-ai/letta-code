@@ -438,6 +438,71 @@ test.each([
   runtime.turnLifecycle.finish(lease, "end_turn");
 });
 
+test("fresh teleport accept is refresh-only with no recreate hatch; duplicate carries the live-owner gate", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-refresh-only",
+  );
+  const acknowledgements: Array<{
+    accepted: boolean;
+    error?: string;
+    disposition?: "started" | "queued";
+    deliveryHandling?: "create" | "refresh";
+    mayRecreateOwner?: () => boolean;
+  }> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-refresh-only",
+    onStatusChange: undefined,
+    acknowledgeInput: (
+      accepted: boolean,
+      error?: string,
+      disposition?: "started" | "queued",
+      deliveryHandling?: "create" | "refresh",
+      mayRecreateOwner?: () => boolean,
+    ) =>
+      acknowledgements.push({
+        accepted,
+        error,
+        disposition,
+        deliveryHandling,
+        mayRecreateOwner,
+      }),
+    runDetachedListenerTask: (_name: string, _task: () => Promise<void>) => {},
+    processIncomingMessage: mock(async () => {}),
+  };
+  const payload = {
+    kind: "teleport_continue" as const,
+    teleport_id: "teleport-fresh",
+    source: { device_id: "source-device", connection_name: "Source" },
+  };
+
+  // Fresh accept: the disposition commit lands before the ack, so any
+  // live-owner predicate would be vacuously true — the fresh accept must
+  // carry no recreate hatch at all (refresh-only, never creates).
+  admitTeleportContinueInput({ ...base, payload });
+  expect(acknowledgements.at(-1)).toEqual({
+    accepted: true,
+    error: undefined,
+    disposition: "started",
+    deliveryHandling: "refresh",
+    mayRecreateOwner: undefined,
+  });
+
+  // Duplicate re-ack (the crash-recovery path): keeps the durable live-owner
+  // gate so a lost entry may be recreated only while the owner is live.
+  admitTeleportContinueInput({ ...base, payload });
+  const duplicate = acknowledgements.at(-1);
+  expect(duplicate?.accepted).toBe(true);
+  expect(duplicate?.deliveryHandling).toBe("refresh");
+  expect(duplicate?.mayRecreateOwner).toEqual(expect.any(Function));
+});
+
 test("expected teleport id survives mismatches and failed durable admission", () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(
