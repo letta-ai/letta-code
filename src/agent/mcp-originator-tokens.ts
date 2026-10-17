@@ -197,6 +197,13 @@ export function recordMcpOriginatorDelivery(
   }
   const existing = entriesBySuperRunId.get(delivery.superRunId);
   if (delivery.token) {
+    // Advance the durable floor for EVERY accepted token-bearing delivery
+    // BEFORE any create/refresh decision. If recreation is denied below
+    // (transient live-owner proof failure), the caller still ACKs the
+    // delivery; without the floor bump the denied generation would be
+    // forgotten, and a later older zombie could pass the gate and recreate
+    // the revoked entry once the proof path recovers. (evil-shub round 4)
+    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
     if (existing) {
       if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
     } else if (
@@ -213,7 +220,6 @@ export function recordMcpOriginatorDelivery(
           ? { generation: existing.generation }
           : {}),
     });
-    noteMcpOriginatorDelivery(delivery.superRunId, delivery.generation);
   } else {
     // Tokenless frame: clear stale authority, but never erase a generated
     // entry from beneath a known-newer contract (stale legacy/zombie clear),
@@ -256,8 +262,12 @@ export function retireMcpOriginatorTokensOnOriginSwap(
   for (const runId of [turnSuperRunId, queuedSuperRunId]) {
     if (!runId) continue;
     const generation = entriesBySuperRunId.get(runId)?.generation;
-    entriesBySuperRunId.delete(runId);
+    // Durable-first: the fail-closed boundary must be persisted BEFORE the
+    // volatile entry is dropped. A process death in the gap between delete
+    // and mark would leave no durable headerless record, letting a duplicate
+    // recreate the token after restart. (evil-shub round 4)
     markMcpOriginatorHeaderless(runId, generation);
+    entriesBySuperRunId.delete(runId);
   }
 }
 
@@ -271,8 +281,10 @@ export function retireMcpOriginatorTokenOnTerminal(
 ): void {
   if (!superRunId) return;
   const generation = entriesBySuperRunId.get(superRunId)?.generation;
-  entriesBySuperRunId.delete(superRunId);
+  // Durable-first: terminal mark lands before the volatile delete (see the
+  // origin-swap retire above).
   markMcpOriginatorTerminal(superRunId, generation);
+  entriesBySuperRunId.delete(superRunId);
 }
 
 /**
@@ -286,6 +298,7 @@ export function retireMcpOriginatorTokenOnMixedMerge(
 ): void {
   if (!superRunId) return;
   const generation = entriesBySuperRunId.get(superRunId)?.generation;
-  entriesBySuperRunId.delete(superRunId);
+  // Durable-first: headerless mark lands before the volatile delete.
   markMcpOriginatorHeaderless(superRunId, generation);
+  entriesBySuperRunId.delete(superRunId);
 }

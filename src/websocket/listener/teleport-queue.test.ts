@@ -631,3 +631,44 @@ test("teleport accepts re-assert but never create originator token entries (refr
       .map((ack) => ack.deliveryHandling),
   ).toEqual(["refresh", "refresh"]);
 });
+
+test("the continuation carries the frame's originator super run id so its finalizer can retire a recreated entry", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-1",
+    "conversation-origin-id",
+  );
+  const seen: Array<{ mcpOriginatorSuperRunId?: string }> = [];
+  const tasks: Array<() => Promise<void>> = [];
+  const base = {
+    listener,
+    scopedRuntime: runtime,
+    connectionId: "source",
+    agentId: "agent-1",
+    conversationId: "conversation-origin-id",
+    originatorSuperRunId: "run-teleported",
+    onStatusChange: undefined,
+    acknowledgeInput: () => {},
+    runDetachedListenerTask: (_name: string, task: () => Promise<void>) => {
+      tasks.push(task);
+    },
+    processIncomingMessage: mock(
+      async (input: { mcpOriginatorSuperRunId?: string }) => {
+        seen.push(input);
+      },
+    ),
+  };
+  admitTeleportContinueInput({
+    ...base,
+    payload: {
+      kind: "teleport_continue" as const,
+      teleport_id: "teleport-origin-id",
+      source: { device_id: "source-device", connection_name: "Source" },
+    },
+  });
+  expect(tasks).toHaveLength(1);
+  return tasks[0]!().then(() => {
+    expect(seen.at(-1)?.mcpOriginatorSuperRunId).toBe("run-teleported");
+  });
+});
