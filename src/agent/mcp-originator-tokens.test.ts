@@ -5,6 +5,8 @@ import {
   getMcpOriginatorToken,
   mcpOriginatorTokenCount,
   readMcpOriginatorDelivery,
+  recordMcpOriginatorDelivery,
+  retireMcpOriginatorTokensOnOriginSwap,
   setMcpOriginatorToken,
 } from "./mcp-originator-tokens";
 
@@ -82,5 +84,81 @@ describe("readMcpOriginatorDelivery", () => {
         mcp_originator_token: "",
       }),
     ).toEqual({ superRunId: "sr-1" });
+  });
+});
+
+describe("recordMcpOriginatorDelivery", () => {
+  afterEach(() => {
+    clearMcpOriginatorTokens();
+  });
+
+  test("an accepted delivery records or refreshes its run's token", () => {
+    recordMcpOriginatorDelivery({
+      super_run_id: "sr-1",
+      mcp_originator_token: "mst_one.secret-a",
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+    recordMcpOriginatorDelivery({
+      super_run_id: "sr-1",
+      mcp_originator_token: "mst_one.secret-c",
+    });
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-c");
+  });
+
+  test("a tokenless redelivery clears stale authority for its run", () => {
+    // The producer re-mints per delivery and revokes the prior token, so a
+    // frame carrying the id but no token is authoritative: the run currently
+    // has no listener-side authority, and an older token must not be reused.
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    recordMcpOriginatorDelivery({ super_run_id: "sr-1" });
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    // Other runs are untouched, and a tokenless id on an empty store is a
+    // no-op.
+    setMcpOriginatorToken("sr-2", "mst_two.secret-b");
+    recordMcpOriginatorDelivery({ super_run_id: "sr-3" });
+    expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
+    expect(mcpOriginatorTokenCount()).toBe(1);
+  });
+
+  test("a delivery without a super run id records nothing", () => {
+    recordMcpOriginatorDelivery({ mcp_originator_token: "mst_one.secret-a" });
+    recordMcpOriginatorDelivery({});
+    expect(mcpOriginatorTokenCount()).toBe(0);
+  });
+});
+
+describe("retireMcpOriginatorTokensOnOriginSwap", () => {
+  afterEach(() => {
+    clearMcpOriginatorTokens();
+  });
+
+  test("a cross-run approval swap retires both runs' tokens", () => {
+    // The original turn (sr-1) consumed a queued input from sr-2: neither
+    // run's authority may carry into the continuation (evil-shub r4300499685).
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    setMcpOriginatorToken("sr-2", "mst_two.secret-b");
+    setMcpOriginatorToken("sr-unrelated", "mst_three.secret-c");
+    retireMcpOriginatorTokensOnOriginSwap("sr-1", "sr-2");
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-unrelated")).toBe("mst_three.secret-c");
+  });
+
+  test("a same-run follow-up keeps its held token", () => {
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    retireMcpOriginatorTokensOnOriginSwap("sr-1", "sr-1");
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+  });
+
+  test("an unattributed queued input still drops the turn's token", () => {
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    retireMcpOriginatorTokensOnOriginSwap("sr-1", undefined);
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+  });
+
+  test("an unattributed turn does not mint authority from the queued run", () => {
+    setMcpOriginatorToken("sr-2", "mst_two.secret-b");
+    retireMcpOriginatorTokensOnOriginSwap(undefined, "sr-2");
+    expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
   });
 });

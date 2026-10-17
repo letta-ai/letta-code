@@ -21,8 +21,6 @@
  * decide attribution. When no token is held for a run, callers simply omit
  * the header and the call proceeds unattributed.
  */
-import type { InputCreateMessagePayload } from "@/types/protocol_v2";
-
 const tokensBySuperRunId = new Map<string, string>();
 
 /** Record (or refresh) the originator token for a super run. */
@@ -63,23 +61,69 @@ export function mcpOriginatorTokenCount(): number {
  * untrusted: present-but-malformed values are treated as absent (the turn
  * then runs unattributed) rather than rejecting the whole input.
  */
-export function readMcpOriginatorDelivery(
-  payload: Pick<
-    InputCreateMessagePayload,
-    "mcp_originator_token" | "super_run_id"
-  >,
-): { superRunId?: string; token?: string } {
+export function readMcpOriginatorDelivery(payload: unknown): {
+  superRunId?: string;
+  token?: string;
+} {
+  const wire =
+    typeof payload === "object" && payload !== null
+      ? (payload as {
+          super_run_id?: unknown;
+          mcp_originator_token?: unknown;
+        })
+      : {};
   const superRunId =
-    typeof payload.super_run_id === "string" && payload.super_run_id.length > 0
-      ? payload.super_run_id
+    typeof wire.super_run_id === "string" && wire.super_run_id.length > 0
+      ? wire.super_run_id
       : undefined;
   const token =
-    typeof payload.mcp_originator_token === "string" &&
-    payload.mcp_originator_token.length > 0
-      ? payload.mcp_originator_token
+    typeof wire.mcp_originator_token === "string" &&
+    wire.mcp_originator_token.length > 0
+      ? wire.mcp_originator_token
       : undefined;
   return {
     ...(superRunId ? { superRunId } : {}),
     ...(token ? { token } : {}),
   };
+}
+
+/**
+ * Apply an accepted input's originator delivery to the store.
+ *
+ * Call only once the input has been ACCEPTED (queued or started); tokens
+ * belonging to rejected or dropped inputs must never reach the store. The
+ * frame is authoritative about the run's current token state:
+ * - id + token: record/refresh (the producer re-mints per delivery and
+ *   revokes the prior token, so last-write-wins keeps the live one).
+ * - id without token: clear any stale token held for the run. A tokenless
+ *   redelivery must not silently reuse authority minted for an earlier
+ *   delivery of the same super run id.
+ */
+export function recordMcpOriginatorDelivery(payload: unknown): void {
+  const delivery = readMcpOriginatorDelivery(payload);
+  if (!delivery.superRunId) return;
+  if (delivery.token) {
+    setMcpOriginatorToken(delivery.superRunId, delivery.token);
+  } else {
+    deleteMcpOriginatorToken(delivery.superRunId);
+  }
+}
+
+/**
+ * Fail closed when a turn's originator authority changes mid-run.
+ *
+ * An approval continuation that consumes a queued input from a DIFFERENT
+ * super run must not keep running under the original run's token, and the
+ * queued run's own token is consumed by this very merge. Retire both runs'
+ * held tokens so subsequent MCP calls omit the header (unattributed) instead
+ * of borrowing either run's authority. Same-run follow-ups are a no-op and
+ * keep their token (their run is still the one executing).
+ */
+export function retireMcpOriginatorTokensOnOriginSwap(
+  turnSuperRunId: string | null | undefined,
+  queuedSuperRunId: string | null | undefined,
+): void {
+  if (queuedSuperRunId === turnSuperRunId) return;
+  if (turnSuperRunId) deleteMcpOriginatorToken(turnSuperRunId);
+  if (queuedSuperRunId) deleteMcpOriginatorToken(queuedSuperRunId);
 }

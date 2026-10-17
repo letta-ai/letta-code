@@ -1,3 +1,4 @@
+import { deleteMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import {
   type AttributedMessageCreate,
   withMessageAttribution,
@@ -105,10 +106,13 @@ function buildQueuedTurnMessage(
   const messages: IncomingMessage["messages"] = [];
   const durableInputIdentities: InputIdentity[] = [];
   const terminalConsumerIds = new Set<string>();
-  // Every ordinary message in the batch must agree on the originator super
-  // run for the merged turn to stay attributed. A mixed batch (or one with
-  // an unattributed member) runs unattributed rather than borrowing another
-  // run's originator — the same fail-safe as a mixed acting-user batch.
+  // Every item in the batch must agree on the originator super run for the
+  // merged turn to stay attributed — including cron prompts, task
+  // notifications, and mod continuations, which vote unattributed so
+  // process-owned work can never ride a client message's originator token.
+  // A mixed batch (or one with an unattributed member) runs unattributed
+  // rather than borrowing another run's originator — the same fail-safe as
+  // a mixed acting-user batch.
   const messageOriginatorIds: Array<string | undefined> = [];
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
@@ -143,6 +147,8 @@ function buildQueuedTurnMessage(
         ),
       );
     } else if (isCoalescable(item.kind) && "text" in item) {
+      // Not a client message: no originator delivery, votes unattributed.
+      messageOriginatorIds.push(undefined);
       messages.push({
         role: "user",
         content:
@@ -167,6 +173,15 @@ function buildQueuedTurnMessage(
     distinctOriginatorIds.size === 1
       ? ([...distinctOriginatorIds][0] ?? undefined)
       : undefined;
+  if (distinctOriginatorIds.size > 1) {
+    // The merged turn is unattributed, so constituent runs' held tokens can
+    // never be legitimately used here — and their inputs are consumed by
+    // this merge, so no later turn will use them either. Retire them now
+    // rather than leaking them until session teardown.
+    for (const id of messageOriginatorIds) {
+      if (id) deleteMcpOriginatorToken(id);
+    }
+  }
   // A batch with no client message (cron prompts, task notifications, mod
   // continuations) has no client waiting on its output, so its turn must not
   // block on a subscribed delivery owner after tool execution (see #4925).
