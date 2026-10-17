@@ -109,11 +109,14 @@ function buildHandler(
   });
 }
 
-function inputFrame(payload: Record<string, unknown>): Buffer {
+function inputFrame(
+  payload: Record<string, unknown>,
+  requestId = "req-1",
+): Buffer {
   return Buffer.from(
     JSON.stringify({
       type: "input",
-      request_id: "req-1",
+      request_id: requestId,
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       payload: {
         kind: "create_message",
@@ -201,6 +204,35 @@ describe("MCP originator token ingestion", () => {
     expect(processed[0]?.mcpOriginatorSuperRunId).toBe("sr-2");
     expect(mcpOriginatorTokenCount()).toBe(0);
   });
+
+  test("a tokenless redelivery clears the run's previously held token", async () => {
+    // The relay re-mints per delivery and revokes the prior token, so a
+    // tokenless frame for the same run is authoritative about the run now
+    // having no listener-side authority (evil-shub r4300499673).
+    const listener = createRuntime();
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const processed: IncomingMessage[] = [];
+    const handleMessage = buildHandler(listener, socket, processed);
+
+    await handleMessage(
+      inputFrame({
+        client_message_id: "m-1",
+        super_run_id: "sr-1",
+        mcp_originator_token: "mst_one.secret-a",
+      }),
+    );
+    await waitFor(() => processed.length === 1);
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+
+    await handleMessage(
+      inputFrame({ client_message_id: "m-2", super_run_id: "sr-1" }, "req-2"),
+    );
+    await waitFor(() => processed.length === 2);
+    expect(processed[1]?.mcpOriginatorSuperRunId).toBe("sr-1");
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+  });
 });
 
 describe("MCP originator batch resolution", () => {
@@ -257,6 +289,68 @@ describe("MCP originator batch resolution", () => {
 
     const consumed = consumeQueuedTurn(runtime);
     expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+  });
+
+  test("a non-message batch member votes unattributed", () => {
+    // Cron prompts, task notifications, and mod continuations carry no
+    // originator delivery; merging one with an attributed message must not
+    // let process-owned work ride the user's token (evil-shub r4300499679).
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    enqueueMessage(runtime, "user follow-up", "sr-1");
+    runtime.queueRuntime.enqueue({
+      kind: "task_notification",
+      source: "task_notification",
+      text: "subagent finished",
+      content: [{ type: "text", text: "subagent finished" }],
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    expect(consumed?.queuedTurn.messages.length).toBe(2);
+  });
+
+  test("a mixed batch retires its constituents' held tokens", () => {
+    // The merged turn is unattributed and consumes every constituent input,
+    // so no later turn can legitimately use their tokens; they are dropped
+    // at merge time instead of leaking until session teardown (evil-shub
+    // r4300499690).
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    setMcpOriginatorToken("sr-2", "mst_two.secret-b");
+    setMcpOriginatorToken("sr-unrelated", "mst_three.secret-c");
+    enqueueMessage(runtime, "first", "sr-1");
+    enqueueMessage(runtime, "second", "sr-2");
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
+    expect(getMcpOriginatorToken("sr-unrelated")).toBe("mst_three.secret-c");
+  });
+
+  test("an originator-unanimous batch keeps its run's held token", () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    enqueueMessage(runtime, "first", "sr-1");
+    enqueueMessage(runtime, "second", "sr-1");
+
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
+    expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
   });
 });
 

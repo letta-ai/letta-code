@@ -1,7 +1,4 @@
-import {
-  readMcpOriginatorDelivery,
-  setMcpOriginatorToken,
-} from "@/agent/mcp-originator-tokens";
+import { readMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { isDebugEnabled } from "@/utils/debug";
@@ -45,14 +42,13 @@ export function createIncomingMessage(
   connectionId?: ListenerConnectionId,
   terminalConsumerId?: string,
 ): IncomingMessage {
-  // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): hold the token
-  // only in the in-memory store keyed by super run id. The IncomingMessage
-  // carries just the id — it is persisted by the durable input ledger, and
-  // the token must never touch disk. Re-delivery last-write-wins the token.
+  // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): the IncomingMessage
+  // carries just the super run id — it is persisted by the durable input
+  // ledger, and the token must never touch disk. The token itself reaches the
+  // in-memory store only when the input is ACCEPTED (see
+  // recordMcpOriginatorDelivery in message-router's acknowledge path), so
+  // rejected/dropped inputs never strand credentials.
   const mcpOriginator = readMcpOriginatorDelivery(payload);
-  if (mcpOriginator.superRunId && mcpOriginator.token) {
-    setMcpOriginatorToken(mcpOriginator.superRunId, mcpOriginator.token);
-  }
   return {
     type: "message",
     connectionId,

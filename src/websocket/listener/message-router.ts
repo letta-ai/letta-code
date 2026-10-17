@@ -52,6 +52,7 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
+import { acknowledgeInputFrame } from "./input-ack";
 import {
   commitInputDisposition,
   forgetQueuedInputDisposition,
@@ -440,22 +441,15 @@ export function createListenerMessageHandler(
           accepted: boolean,
           error?: string,
           disposition?: "started" | "queued",
-        ): void => {
-          if (!parsed.request_id) return;
-          safeSocketSend(
+        ): void =>
+          acknowledgeInputFrame(
+            safeSocketSend,
             socket,
-            {
-              type: "input_accepted",
-              request_id: parsed.request_id,
-              runtime: parsed.runtime,
-              accepted,
-              ...(disposition ? { disposition } : {}),
-              ...(error ? { error } : {}),
-            },
-            "input_accepted_response",
-            "input",
+            parsed,
+            accepted,
+            error,
+            disposition,
           );
-        };
         if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
           logV2Command(opts, "Dropping input: runtime mismatch or closed");
           acknowledgeInput(false, "Runtime is no longer active");
