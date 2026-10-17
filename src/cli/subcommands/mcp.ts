@@ -1,4 +1,5 @@
 import { parseArgs } from "node:util";
+import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
@@ -23,6 +24,7 @@ import {
 import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
+import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
@@ -807,6 +809,12 @@ async function callCatalogTool(
       `MCP tool '${toolName}' is not available`,
     );
   }
+  // When this call runs inside a listener turn attributed to a cloud super
+  // run, forward that run's originator token (in-memory store lookup only;
+  // the value is never logged here). Unattributed callers omit the header.
+  const originatorToken = getMcpOriginatorToken(
+    getRuntimeContext()?.mcpOriginatorSuperRunId,
+  );
   return tool.target.kind === "client"
     ? await tool.target.connection.callTool(tool.target.rawName, args, options)
     : mcpToolResultFromServer(
@@ -816,6 +824,7 @@ async function callCatalogTool(
           mcpServerId: tool.target.serverId,
           toolId: tool.target.toolId,
           args,
+          ...(originatorToken ? { originatorToken } : {}),
         }),
       );
 }

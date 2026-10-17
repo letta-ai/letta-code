@@ -143,6 +143,13 @@ export interface IncomingMessage {
   durableInputIdentities?: readonly InputIdentity[];
   /** External applications which must acknowledge this turn's terminal. */
   terminalConsumerIds?: readonly string[];
+  /**
+   * Cloud super run this input belongs to, when the relay delivered one. The
+   * MCP originator token for this run is never carried here (this message is
+   * persisted by the durable input ledger); it lives only in the in-memory
+   * token store keyed by this id. Undefined on mixed-originator batches.
+   */
+  mcpOriginatorSuperRunId?: string;
 }
 
 export type ProcessQueuedTurn = (

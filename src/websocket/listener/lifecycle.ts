@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { clearMcpOriginatorTokens } from "@/agent/mcp-originator-tokens";
 import {
   setExplicitOrganizationId,
   warmOrganizationId,
@@ -195,6 +196,8 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  // Session teardown drops every held MCP originator token (memory-only).
+  clearMcpOriginatorTokens();
   disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);

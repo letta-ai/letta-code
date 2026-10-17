@@ -1,3 +1,4 @@
+import { deleteMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import type { RecoveryAuthorityStore } from "./recovery-evidence";
@@ -28,6 +29,11 @@ export function createTurnFinalizer(params: {
   recoveryLineageId?: string;
   recoveryTerminalRevision?: string;
   recoveryAuthorityStore?: RecoveryAuthorityStore;
+  /**
+   * Super run owning this turn, when the relay delivered one. Its held MCP
+   * originator token is dropped the moment the turn reaches a terminal state.
+   */
+  mcpOriginatorSuperRunId?: string;
 }) {
   const recoveryLineageId = params.recoveryLineageId;
   if (recoveryLineageId && !params.recoveryAuthorityStore) {
@@ -44,8 +50,8 @@ export function createTurnFinalizer(params: {
     finalized ||= transition.finished;
     return transition;
   };
-  const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) =>
-    noteFinalization(
+  const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
+    const transition = noteFinalization(
       finishListenerTurn(params.runtime, params.turnLease, {
         ...options,
         socket: options.socket ?? params.socket,
@@ -97,6 +103,13 @@ export function createTurnFinalizer(params: {
           : {}),
       }),
     );
+    // Terminal run states (success/error/cancel) retire the run's held MCP
+    // originator token. Rejected/duplicate commits leave the store alone.
+    if (transition.finished && params.mcpOriginatorSuperRunId) {
+      deleteMcpOriginatorToken(params.mcpOriginatorSuperRunId);
+    }
+    return transition;
+  };
   const finishTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
     const pending = params.agentId
       ? (claimPendingTeleportAtBoundary({

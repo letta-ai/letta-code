@@ -184,6 +184,7 @@ async function handleIncomingMessageInner(
     recoveryLineageId,
     recoveryTerminalRevision,
     recoveryAuthorityStore,
+    mcpOriginatorSuperRunId: msg.mcpOriginatorSuperRunId,
   });
   const {
     finishClaimedTurn,

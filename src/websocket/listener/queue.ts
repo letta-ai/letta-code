@@ -105,9 +105,15 @@ function buildQueuedTurnMessage(
   const messages: IncomingMessage["messages"] = [];
   const durableInputIdentities: InputIdentity[] = [];
   const terminalConsumerIds = new Set<string>();
+  // Every ordinary message in the batch must agree on the originator super
+  // run for the merged turn to stay attributed. A mixed batch (or one with
+  // an unattributed member) runs unattributed rather than borrowing another
+  // run's originator — the same fail-safe as a mixed acting-user batch.
+  const messageOriginatorIds: Array<string | undefined> = [];
   for (const item of batch.items) {
     const incoming = runtime.queuedMessagesByItemId.get(item.id);
     if (item.kind === "message" && incoming) {
+      messageOriginatorIds.push(incoming.mcpOriginatorSuperRunId);
       template ??= {
         ...incoming,
         actingUserId: incoming.actingUserId ?? item.actingUserId ?? undefined,
@@ -127,6 +133,9 @@ function buildQueuedTurnMessage(
         ),
       );
     } else if (item.kind === "message") {
+      // No stored inbound payload: this message has no originator delivery,
+      // so it votes unattributed in the batch's originator resolution.
+      messageOriginatorIds.push(undefined);
       messages.push(
         withMessageAttribution(
           { role: "user", content: item.content },
@@ -151,6 +160,13 @@ function buildQueuedTurnMessage(
   const batchActingUserId = batch.items.some((item) => item.kind === "message")
     ? getBatchActingUserId(batch.items)
     : (template?.actingUserId ?? getBatchActingUserId(batch.items));
+  const distinctOriginatorIds = new Set(
+    messageOriginatorIds.map((id) => id ?? null),
+  );
+  const mcpOriginatorSuperRunId =
+    distinctOriginatorIds.size === 1
+      ? ([...distinctOriginatorIds][0] ?? undefined)
+      : undefined;
   // A batch with no client message (cron prompts, task notifications, mod
   // continuations) has no client waiting on its output, so its turn must not
   // block on a subscribed delivery owner after tool execution (see #4925).
@@ -160,6 +176,9 @@ function buildQueuedTurnMessage(
     agentId: scopeItem?.agentId ?? runtime.agentId ?? undefined,
     conversationId: scopeItem?.conversationId ?? runtime.conversationId,
     ...template,
+    // Overrides any id the template carried in: only an originator-unanimous
+    // batch keeps one; mixed or unknown batches are explicitly unattributed.
+    mcpOriginatorSuperRunId,
     ...(processOwnedTurn ? { processOwnedTurn: true } : {}),
     actingUserId: batchActingUserId ?? undefined,
     suppressActingUserFallback:

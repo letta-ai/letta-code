@@ -1,3 +1,7 @@
+import {
+  readMcpOriginatorDelivery,
+  setMcpOriginatorToken,
+} from "@/agent/mcp-originator-tokens";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { isDebugEnabled } from "@/utils/debug";
@@ -41,6 +45,14 @@ export function createIncomingMessage(
   connectionId?: ListenerConnectionId,
   terminalConsumerId?: string,
 ): IncomingMessage {
+  // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): hold the token
+  // only in the in-memory store keyed by super run id. The IncomingMessage
+  // carries just the id — it is persisted by the durable input ledger, and
+  // the token must never touch disk. Re-delivery last-write-wins the token.
+  const mcpOriginator = readMcpOriginatorDelivery(payload);
+  if (mcpOriginator.superRunId && mcpOriginator.token) {
+    setMcpOriginatorToken(mcpOriginator.superRunId, mcpOriginator.token);
+  }
   return {
     type: "message",
     connectionId,
@@ -55,6 +67,9 @@ export function createIncomingMessage(
     imageFailureMode: payload.image_failure_mode,
     ...(terminalConsumerId
       ? { terminalConsumerIds: [terminalConsumerId] }
+      : {}),
+    ...(mcpOriginator.superRunId
+      ? { mcpOriginatorSuperRunId: mcpOriginator.superRunId }
       : {}),
     messages: payload.messages,
   };
