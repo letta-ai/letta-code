@@ -259,7 +259,6 @@ export async function startConnectedListenerRuntime(
   const shouldStartCronScheduler =
     options.startCronScheduler !== false &&
     process.env.LETTA_DISABLE_CRON_SCHEDULER !== "1";
-
   safeEmitWsEvent("recv", "lifecycle", {
     type:
       getListenerTransportKind(transport) === "websocket"
