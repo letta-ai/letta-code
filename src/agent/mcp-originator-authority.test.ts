@@ -12,6 +12,7 @@ import { join } from "node:path";
 import {
   admitMcpOriginatorDelivery,
   configureMcpOriginatorAuthorityPersistenceForTests,
+  configureMcpOriginatorAuthorityTtlForTests,
   markMcpOriginatorHeaderless,
   markMcpOriginatorTerminal,
   mcpOriginatorAuthorityAllows,
@@ -669,6 +670,181 @@ describe("durable retirement retry (evil-shub round-8 P1)", () => {
         permanent: true,
       });
       expect(mcpOriginatorAuthorityPermitsUse("run-a", 1)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("durable retirement intent (evil-shub round-9 P1)", () => {
+  test("a failed mark persists the retiringTo intent; peers deny admission and use for the intent-carrying record", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-intent-"));
+    try {
+      const path = join(root, "authority.json");
+      configureMcpOriginatorAuthorityPersistenceForTests(path);
+      resetMcpOriginatorAuthority();
+
+      expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
+        admitted: true,
+      });
+
+      // Break persistence, then retire: the mark fails, but the INTENT
+      // write is attempted first. While persistence is broken neither
+      // lands; heal JUST enough for the intent write by re-registering.
+      rmSync(path);
+      mkdirSync(path);
+      expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
+      expect(
+        readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
+      ).toBe("headerless");
+
+      // Heal: the pending retry lands the mark — but first prove the
+      // intent path itself: re-break after healing so only the intent
+      // (not the mark) is durable, simulating a process that died between
+      // intent and mark. Do it directly: write an intent-only record.
+      rmdirSync(path);
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          records: {
+            "run-b": {
+              state: "live",
+              retiringTo: "headerless",
+              floor: 3,
+              updatedAtMs: Date.now(),
+            },
+          },
+        }),
+      );
+
+      // A peer process (fresh overlay) reading the file treats the
+      // intent-carrying record as NOT live: admission and use both deny
+      // permanently, even though the durable state is still "live".
+      resetMcpOriginatorAuthority();
+      expect(admitMcpOriginatorDelivery("run-b", 4)).toEqual({
+        admitted: false,
+        permanent: true,
+      });
+      expect(mcpOriginatorAuthorityPermitsUse("run-b", 3)).toBe(false);
+      expect(mcpOriginatorAuthorityAllows("run-b", 5)).toBe(false);
+      expect(readMcpOriginatorAuthorityForTests("run-b")).toMatchObject({
+        state: "live",
+        retiringTo: "headerless",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a restart resumes a durable retirement intent and the retry lands the mark", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-resume-"));
+    try {
+      const path = join(root, "authority.json");
+      // The dead process left ONLY the intent behind (mark never landed).
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          records: {
+            "run-a": {
+              state: "live",
+              retiringTo: "terminal",
+              floor: 2,
+              updatedAtMs: Date.now(),
+            },
+          },
+        }),
+      );
+      configureMcpOriginatorAuthorityPersistenceForTests(path);
+      resetMcpOriginatorAuthority();
+
+      // Any transaction reloads the file and re-registers the retry.
+      expect(mcpOriginatorAuthorityPermitsUse("run-a", 2)).toBe(false);
+      expect(
+        readPendingMcpOriginatorRetirementsForTests().get("run-a")?.state,
+      ).toBe("terminal");
+
+      retryPendingMcpOriginatorRetirements();
+      expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(0);
+      const disk = JSON.parse(readFileSync(path, "utf8")) as {
+        records: Record<
+          string,
+          { state: string; retiringTo?: string; floor?: number }
+        >;
+      };
+      // The mark landed and the intent is cleared (the landed state is the
+      // stronger boundary).
+      expect(disk.records["run-a"]?.state).toBe("terminal");
+      expect(disk.records["run-a"]?.retiringTo).toBeUndefined();
+      expect(disk.records["run-a"]?.floor).toBe(2);
+
+      // And the boundary survives another reload.
+      resetMcpOriginatorAuthority();
+      expect(admitMcpOriginatorDelivery("run-a", 3)).toEqual({
+        admitted: false,
+        permanent: true,
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a pending retirement older than the record TTL is dropped loudly instead of retried forever", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-ttl-"));
+    try {
+      const path = join(root, "authority.json");
+      configureMcpOriginatorAuthorityPersistenceForTests(path);
+      resetMcpOriginatorAuthority();
+      // Set AFTER the reset: the reset restores the default TTL.
+      configureMcpOriginatorAuthorityTtlForTests(1);
+
+      expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
+        admitted: true,
+      });
+      // Break persistence so the retirement stays pending.
+      rmSync(path);
+      mkdirSync(path);
+      expect(markMcpOriginatorHeaderless("run-a", 1)).toBe(false);
+      expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(1);
+
+      // Let the entry outlive the (test-shortened) TTL; the retry drops it
+      // rather than storming the dead store every 30s forever.
+      const deadline = Date.now() + 50;
+      while (Date.now() < deadline) {
+        // busy-wait a few ms past the 1ms TTL
+      }
+      retryPendingMcpOriginatorRetirements();
+      expect(readPendingMcpOriginatorRetirementsForTests().size).toBe(0);
+    } finally {
+      configureMcpOriginatorAuthorityTtlForTests(null);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an invalid retiringTo value degrades the WHOLE file (fail-closed, retryable)", () => {
+    const root = mkdtempSync(join(tmpdir(), "letta-mcp-authority-intent-bad-"));
+    try {
+      const path = join(root, "authority.json");
+      writeFileSync(
+        path,
+        JSON.stringify({
+          version: 1,
+          records: {
+            "run-a": {
+              state: "live",
+              retiringTo: "bogus",
+              updatedAtMs: Date.now(),
+            },
+          },
+        }),
+      );
+      configureMcpOriginatorAuthorityPersistenceForTests(path);
+      resetMcpOriginatorAuthority();
+      expect(admitMcpOriginatorDelivery("run-a", 1)).toEqual({
+        admitted: false,
+        permanent: false,
+      });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

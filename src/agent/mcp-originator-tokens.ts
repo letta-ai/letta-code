@@ -138,6 +138,22 @@ export function mcpOriginatorTokenCount(): number {
 }
 
 /**
+ * The parsed originator delivery from an inbound frame — the single shape
+ * the pre-commit gate hands to the ack path so the ack installs EXACTLY
+ * what was admitted (evil-shub round-9 P1).
+ */
+export type McpOriginatorParsedDelivery = {
+  superRunId?: string;
+  token?: string;
+  generation?: number;
+  /**
+   * True when the frame CARRIED a generation that failed shape validation —
+   * distinguishable from a legacy frame carrying no generation at all.
+   */
+  malformedGeneration?: boolean;
+};
+
+/**
  * Extract the originator delivery from an inbound top-level run-input frame.
  *
  * This is the single parse site for the relay contract fields. Wire data is
@@ -149,16 +165,9 @@ export function mcpOriginatorTokenCount(): number {
  * reject it), so the parse surfaces `malformedGeneration` and admission
  * denies the delivery fail-closed.
  */
-export function readMcpOriginatorDelivery(payload: unknown): {
-  superRunId?: string;
-  token?: string;
-  generation?: number;
-  /**
-   * True when the frame CARRIED a generation that failed shape validation —
-   * distinguishable from a legacy frame carrying no generation at all.
-   */
-  malformedGeneration?: boolean;
-} {
+export function readMcpOriginatorDelivery(
+  payload: unknown,
+): McpOriginatorParsedDelivery {
   const wire =
     typeof payload === "object" && payload !== null
       ? (payload as {
@@ -210,6 +219,11 @@ function deliveryIsAtLeastAsNew(
 /**
  * Apply an accepted input's originator delivery to the store.
  *
+ * Used only by ack paths that did NOT pass through the router's pre-commit
+ * gate (duplicate re-acks and accepted approval payloads): it evaluates
+ * admission itself. Gated frames use installPreGatedMcpOriginatorDelivery
+ * instead — the gate's verdict is their single admission decision.
+ *
  * Call only once the input has been ACCEPTED (queued or started); tokens
  * belonging to rejected or dropped inputs must never reach the store.
  *
@@ -253,6 +267,96 @@ export type McpOriginatorDeliveryVerdict =
   | "denied_permanent"
   | "none";
 
+/**
+ * Shared malformed-generation denial. The frame carried a generation that
+ * failed shape validation; treating it as a legacy delivery would admit a
+ * token beneath the generation contract, so deny fail-closed. The denial is
+ * PERMANENT for this frame (the durable floor was never bumped for it, so a
+ * later well-formed delivery still admits normally): redelivering the same
+ * malformed bytes would loop forever. Log only the wire value's TYPE (and
+ * string length), never the raw content — it is untrusted producer data and
+ * could itself carry a bearer-shaped payload (evil-shub round-8 P1).
+ */
+function denyMalformedGeneration(
+  frame: unknown,
+  delivery: McpOriginatorParsedDelivery,
+  context: string,
+): "denied_permanent" {
+  const rawGeneration = (frame as { mcp_originator_generation?: unknown })
+    ?.mcp_originator_generation;
+  console.error(
+    `[MCP originator] run ${delivery.superRunId}: ${context}denying delivery with malformed generation (type=${typeof rawGeneration}${
+      typeof rawGeneration === "string" ? ` length=${rawGeneration.length}` : ""
+    })`,
+  );
+  return "denied_permanent";
+}
+
+/**
+ * Volatile install half for a delivery the pre-commit gate ALREADY admitted
+ * (evil-shub round-9 P1). Runs NO durable transaction and makes NO admission
+ * decision: the gate's atomic admit (floor bump included) is the single
+ * admission verdict for this frame, so the ack path can never flip committed
+ * work to denied after the fact. A retirement racing the gap between gate
+ * and install is fenced at use time by mcpOriginatorAuthorityPermitsUse,
+ * which re-consults the durable authority on every token use.
+ *
+ * `allowCreate: false` restricts the delivery to refreshing an entry that
+ * already exists; `mayRecreateOwner` is the narrow escape hatch (see
+ * recordMcpOriginatorDelivery).
+ */
+export function installPreGatedMcpOriginatorDelivery(
+  delivery: McpOriginatorParsedDelivery,
+  options?: { allowCreate?: boolean; mayRecreateOwner?: () => boolean },
+): void {
+  if (!delivery.superRunId || delivery.malformedGeneration) return;
+  const existing = entriesBySuperRunId.get(delivery.superRunId);
+  if (delivery.token) {
+    if (existing) {
+      if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
+    } else if (
+      options?.allowCreate === false &&
+      options?.mayRecreateOwner?.() !== true
+    ) {
+      return;
+    }
+    entriesBySuperRunId.set(delivery.superRunId, {
+      token: delivery.token,
+      ...(delivery.generation !== undefined
+        ? { generation: delivery.generation }
+        : existing?.generation !== undefined
+          ? { generation: existing.generation }
+          : {}),
+    });
+    // A live token entry is held: renew it against the server for exactly
+    // as long as it stays held (the keepalive stops on tombstone, delete,
+    // withdraw, or store clear).
+    startMcpOriginatorKeepalive(
+      delivery.superRunId,
+      keepaliveHooks(delivery.superRunId),
+    );
+    return;
+  }
+  // Tokenless frame: clear stale authority, but never erase a generated
+  // entry from beneath a known-newer contract (stale legacy/zombie clear),
+  // and keep a tombstone so a later stale create cannot resurrect the key.
+  // The gate's atomic admission already bumped the durable floor — even
+  // when no entry exists — so a later zombie create cannot slip beneath
+  // this generation.
+  if (!existing) return;
+  if (!deliveryIsAtLeastAsNew(existing, delivery.generation)) return;
+  entriesBySuperRunId.set(delivery.superRunId, {
+    token: null,
+    ...(delivery.generation !== undefined
+      ? { generation: delivery.generation }
+      : existing.generation !== undefined
+        ? { generation: existing.generation }
+        : {}),
+  });
+  // Tombstoned: nothing live to renew anymore.
+  stopMcpOriginatorKeepalive(delivery.superRunId);
+}
+
 export function recordMcpOriginatorDelivery(
   frame: unknown,
   options?: { allowCreate?: boolean; mayRecreateOwner?: () => boolean },
@@ -260,24 +364,7 @@ export function recordMcpOriginatorDelivery(
   const delivery = readMcpOriginatorDelivery(frame);
   if (!delivery.superRunId) return "none";
   if (delivery.malformedGeneration) {
-    // The frame carried a generation that failed shape validation. Treating
-    // it as a legacy delivery would admit a token beneath the generation
-    // contract, so deny fail-closed. The denial is PERMANENT for this frame
-    // (the durable floor was never bumped for it, so a later well-formed
-    // delivery still admits normally): redelivering the same malformed
-    // bytes would loop forever. Log only the wire value's TYPE (and string
-    // length), never the raw content — it is untrusted producer data and
-    // could itself carry a bearer-shaped payload (evil-shub round-8 P1).
-    const rawGeneration = (frame as { mcp_originator_generation?: unknown })
-      ?.mcp_originator_generation;
-    console.error(
-      `[MCP originator] run ${delivery.superRunId}: denying delivery with malformed generation (type=${typeof rawGeneration}${
-        typeof rawGeneration === "string"
-          ? ` length=${rawGeneration.length}`
-          : ""
-      })`,
-    );
-    return "denied_permanent";
+    return denyMalformedGeneration(frame, delivery, "");
   }
   // Atomic durable admission (evil-shub round-5 P1): gate + floor bump in
   // ONE locked transaction, consulted BEFORE the volatile entry check so an
@@ -299,92 +386,49 @@ export function recordMcpOriginatorDelivery(
   if (!admission.admitted) {
     return admission.permanent ? "denied_permanent" : "denied_retryable";
   }
-  const existing = entriesBySuperRunId.get(delivery.superRunId);
-  if (delivery.token) {
-    if (existing) {
-      if (!deliveryIsAtLeastAsNew(existing, delivery.generation))
-        return "admitted";
-    } else if (
-      options?.allowCreate === false &&
-      options?.mayRecreateOwner?.() !== true
-    ) {
-      return "admitted";
-    }
-    entriesBySuperRunId.set(delivery.superRunId, {
-      token: delivery.token,
-      ...(delivery.generation !== undefined
-        ? { generation: delivery.generation }
-        : existing?.generation !== undefined
-          ? { generation: existing.generation }
-          : {}),
-    });
-    // A live token entry is held: renew it against the server for exactly
-    // as long as it stays held (the keepalive stops on tombstone, delete,
-    // withdraw, or store clear).
-    startMcpOriginatorKeepalive(
-      delivery.superRunId,
-      keepaliveHooks(delivery.superRunId),
-    );
-    return "admitted";
-  } else {
-    // Tokenless frame: clear stale authority, but never erase a generated
-    // entry from beneath a known-newer contract (stale legacy/zombie clear),
-    // and keep a tombstone so a later stale create cannot resurrect the key.
-    // The atomic admission above already bumped the durable floor — even
-    // when no entry exists — so a later zombie create cannot slip beneath
-    // this generation.
-    if (!existing) return "admitted";
-    if (!deliveryIsAtLeastAsNew(existing, delivery.generation))
-      return "admitted";
-    entriesBySuperRunId.set(delivery.superRunId, {
-      token: null,
-      ...(delivery.generation !== undefined
-        ? { generation: delivery.generation }
-        : existing.generation !== undefined
-          ? { generation: existing.generation }
-          : {}),
-    });
-    // Tombstoned: nothing live to renew anymore.
-    stopMcpOriginatorKeepalive(delivery.superRunId);
-    return "admitted";
-  }
+  installPreGatedMcpOriginatorDelivery(delivery, options);
+  return "admitted";
 }
 
 /**
- * Pre-commit admission gate (evil-shub round-8 P1): evaluates ONLY the
- * durable admission half of recordMcpOriginatorDelivery — parse, malformed
- * check, and the atomic durable admit (which bumps the generation floor) —
- * without touching the volatile token store. The input router runs this
- * BEFORE the durable input commit/enqueue/start so a denied frame never
- * commits work it cannot be authorized for; the volatile store install
- * still happens in recordMcpOriginatorDelivery at ack time (its re-run of
- * the same admission is idempotent).
+ * Pre-commit admission gate (evil-shub round-8 P1; sole admission decision
+ * as of round-9 P1): evaluates ONLY the durable admission half of the
+ * delivery path — parse, malformed check, and the atomic durable admit
+ * (which bumps the generation floor) — without touching the volatile token
+ * store. The input router runs this BEFORE the durable input
+ * commit/enqueue/start so a denied frame never commits work it cannot be
+ * authorized for, and hands the returned `delivery` to the ack path, which
+ * installs it via installPreGatedMcpOriginatorDelivery with NO second
+ * admission transaction — a re-admission at ack time could flip committed
+ * work to denied when a retirement lands in the gate→ack gap (TOCTOU).
+ * Retirement in that gap is instead fenced at use time by
+ * mcpOriginatorAuthorityPermitsUse.
  */
-export function gateMcpOriginatorDeliveryAdmission(
-  frame: unknown,
-): McpOriginatorDeliveryVerdict {
+export function gateMcpOriginatorDeliveryAdmission(frame: unknown): {
+  verdict: McpOriginatorDeliveryVerdict;
+  /**
+   * The parsed delivery, present when (and only when) the verdict is
+   * "admitted": exactly what the ack path must install.
+   */
+  delivery?: McpOriginatorParsedDelivery;
+} {
   const delivery = readMcpOriginatorDelivery(frame);
-  if (!delivery.superRunId) return "none";
+  if (!delivery.superRunId) return { verdict: "none" };
   if (delivery.malformedGeneration) {
-    const rawGeneration = (frame as { mcp_originator_generation?: unknown })
-      ?.mcp_originator_generation;
-    console.error(
-      `[MCP originator] run ${delivery.superRunId}: pre-commit gate denying delivery with malformed generation (type=${typeof rawGeneration}${
-        typeof rawGeneration === "string"
-          ? ` length=${rawGeneration.length}`
-          : ""
-      })`,
-    );
-    return "denied_permanent";
+    return {
+      verdict: denyMalformedGeneration(frame, delivery, "pre-commit gate "),
+    };
   }
   const admission = admitMcpOriginatorDelivery(
     delivery.superRunId,
     delivery.generation,
   );
   if (!admission.admitted) {
-    return admission.permanent ? "denied_permanent" : "denied_retryable";
+    return {
+      verdict: admission.permanent ? "denied_permanent" : "denied_retryable",
+    };
   }
-  return "admitted";
+  return { verdict: "admitted", delivery };
 }
 
 /**

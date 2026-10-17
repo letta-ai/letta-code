@@ -16,11 +16,13 @@ import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
-import type { InputAckArgs } from "./input-ack";
 import {
   acknowledgeAdmissionDuplicate,
   acknowledgeIfAlreadyAdmitted,
   acknowledgeInputFrame,
+  type InputAckArgs,
+  type InputAckExtras,
+  MCP_ORIGINATOR_DENIED_PERMANENT_ABORT_REASON,
 } from "./input-ack";
 import {
   commitInputDisposition,
@@ -82,33 +84,58 @@ export async function routeInputFrame(
     trackListenerError,
     processIncomingMessage,
   } = deps;
-  // Binds the socket and frame; ack arguments pass through verbatim.
+  // Frame-scoped gate extras: set by gateInputOriginatorAdmission below so
+  // every later ack for this frame inherits the gate's verdict (pre-gated
+  // install or the non-retryable abort reason) instead of re-deciding.
+  let ackExtras: InputAckExtras | undefined;
+  // Binds the socket and frame; ack arguments pass through verbatim, with
+  // the gate extras appended positionally (never spread: optional tuple
+  // holes would shift the trailing extras into the wrong slot).
   const acknowledgeInput = (...args: InputAckArgs): void =>
-    acknowledgeInputFrame(safeSocketSend, socket, parsed, ...args);
+    acknowledgeInputFrame(
+      safeSocketSend,
+      socket,
+      parsed,
+      args[0],
+      args[1],
+      args[2],
+      args[3],
+      args[4],
+      ackExtras,
+    );
   const ackTransport = { safeSocketSend, socket, frame: parsed };
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
     logV2Command(opts, "Dropping input: runtime mismatch or closed");
     acknowledgeInput(false, "Runtime is no longer active");
     return;
   }
-  // Pre-commit originator admission gate (evil-shub round-8 P1): a
-  // delivery denied by the durable authority must never commit,
-  // enqueue, or start work — the ack-time recordMcpOriginatorDelivery
-  // used to be the ONLY gate, and it ran after the durable commit.
-  // "denied_retryable" (degraded store / failed transaction) returns
-  // with NO ack so Cloud redelivers and retries the whole admission;
-  // "denied_permanent" (stale/retired/malformed) rejects the frame —
-  // redelivering identical bytes would loop forever. The ack-time
-  // admission remains as defense-in-depth (idempotent re-bump).
+  // Pre-commit originator admission gate (evil-shub round-8 P1; the SINGLE
+  // admission decision as of round-9 P1): a delivery denied by the durable
+  // authority must never commit, enqueue, or start work — the ack-time
+  // recordMcpOriginatorDelivery used to be the ONLY gate, and it ran after
+  // the durable commit. "denied_retryable" (degraded store / failed
+  // transaction) returns with NO ack so Cloud redelivers and retries the
+  // whole admission; "denied_permanent" (stale/retired/malformed) rejects
+  // the frame — redelivering identical bytes would loop forever. On admit,
+  // the parsed delivery is captured for the ack path, which installs the
+  // volatile half only: no second admission transaction after commit, so a
+  // retirement landing in the gate→ack gap cannot flip committed work to
+  // denied (it is fenced at use time by the authority recheck instead).
   const gateInputOriginatorAdmission = (): boolean => {
     const gate = gateMcpOriginatorDeliveryAdmission(parsed);
-    if (gate === "denied_retryable") {
+    if (gate.verdict === "denied_retryable") {
       console.error(
         "[message-router] originator admission is retryable-denied; leaving the input uncommitted and unacked so Cloud redelivers",
       );
       return false;
     }
-    if (gate === "denied_permanent") {
+    if (gate.verdict === "denied_permanent") {
+      // Mark the rejection non-retryable on the wire (evil-shub round-9 P2):
+      // without an abortReason, Cloud treats an accepted:false ack as
+      // retryable and remint/redelivers bytes that can never be admitted.
+      ackExtras = {
+        abortReason: MCP_ORIGINATOR_DENIED_PERMANENT_ABORT_REASON,
+      };
       console.error(
         "[message-router] originator admission is permanently denied; rejecting the input without committing work",
       );
@@ -118,6 +145,10 @@ export async function routeInputFrame(
       );
       return false;
     }
+    // Admitted (or unstamped): the ack installs exactly this delivery with
+    // no re-admission; `null` records that the gate ran for an unstamped
+    // frame so the ack skips the legacy record path too.
+    ackExtras = { preGated: gate.delivery ?? null };
     return true;
   };
   if (parsed.payload.kind === "teleport_continue") {

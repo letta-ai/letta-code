@@ -3,7 +3,11 @@
  * delivery gate.
  */
 import type WebSocket from "ws";
-import { recordMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
+import {
+  installPreGatedMcpOriginatorDelivery,
+  type McpOriginatorParsedDelivery,
+  recordMcpOriginatorDelivery,
+} from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";
 import { getInputDisposition } from "./input-disposition";
 import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
@@ -37,6 +41,40 @@ type InputAckFrame = Pick<
   | "mcp_originator_generation"
 > & {
   runtime: unknown;
+};
+
+/**
+ * Abort-reason wire value for a pre-commit gate denial (evil-shub round-9
+ * P2): attached to the rejected input_accepted frame so Cloud maps the
+ * rejection to a NON-retryable terminal failure instead of redelivering
+ * permanently-denied bytes (an accepted:false ack with no abortReason is
+ * retryable and would remint/redeliver up to the retry ceiling for a
+ * delivery that can never be admitted). camelCase to match the frame's
+ * existing `disposition`/`error` fields.
+ */
+export const MCP_ORIGINATOR_DENIED_PERMANENT_ABORT_REASON =
+  "mcp_originator_denied_permanent";
+
+/**
+ * Frame-scoped extras for acknowledgeInputFrame, supplied by the router
+ * when (and only when) the frame passed through its pre-commit gate.
+ */
+export type InputAckExtras = {
+  /**
+   * Delivery already admitted by the pre-commit gate: the ack installs the
+   * volatile half only and makes NO second admission decision (evil-shub
+   * round-9 P1 — a re-admission here could flip already-committed work to
+   * denied when a retirement lands in the gate→ack gap). `null` means the
+   * gate ran and the frame carried no originator stamp, so nothing is
+   * recorded. Undefined means this ack never passed the gate (duplicate /
+   * refresh re-acks) and the legacy record path evaluates admission itself.
+   */
+  preGated?: McpOriginatorParsedDelivery | null;
+  /**
+   * Non-retryable terminal reason attached to the input_accepted frame;
+   * emitted only for a pre-commit gate denial, never for accepted frames.
+   */
+  abortReason?: string;
 };
 
 /**
@@ -80,43 +118,54 @@ export function acknowledgeInputFrame(
   disposition?: "started" | "queued",
   deliveryHandling?: "create" | "refresh",
   mayRecreateOwner?: () => boolean,
+  extras?: InputAckExtras,
 ): void {
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
-    const verdict = recordMcpOriginatorDelivery(frame, {
-      allowCreate,
-      mayRecreateOwner,
-    });
-    if (verdict === "denied_retryable") {
-      // Durable admission could not be evaluated at all (degraded authority
-      // file or a failed transaction). Suppress the ACK entirely (evil-shub
-      // round-6 P1): Cloud's delivery gate treats an unacked frame as
-      // undeliverable and redelivers it, so the admission retries once the
-      // infrastructure heals instead of the turn running headerless forever
-      // while Cloud believes the token was accepted.
-      console.error(
-        "[input-ack] originator admission is retryable-denied; suppressing the ack so Cloud redelivers",
-      );
-      return;
-    }
-    if (verdict === "denied_permanent") {
-      // This frame can NEVER be admitted — a stale generation at-or-below
-      // the durable floor, a legacy delivery beneath a known generation
-      // contract, a headerless/terminal run, or a malformed generation
-      // (evil-shub round-8 P1 verdict split). Suppressing the ack would
-      // redeliver the same bytes forever with zero chance of success, so
-      // CONSUME the frame with the normal ack and continue without the
-      // originator token. The pre-commit gate in the router keeps
-      // permanently denied frames out of durable input commits and never
-      // runs work under them; reaching this branch means a refresh-path
-      // frame (duplicate/approval — consuming is correct) or the narrow
-      // race where the authority record retired between the pre-gate and
-      // this record call — and the durable floor the retirement persisted
-      // still fences any redelivery.
-      console.error(
-        "[input-ack] originator delivery is permanently denied (stale or retired authority); consuming the frame without the token",
-      );
+    if (extras?.preGated === null) {
+      // The gate ran and the frame carried no originator stamp: nothing to
+      // record, no second admission (evil-shub round-9 P1).
+    } else if (extras?.preGated !== undefined) {
+      // The pre-commit gate's verdict is this frame's single admission
+      // decision: install the volatile half with NO re-admission. A
+      // retirement racing the gate→ack gap is fenced at use time by the
+      // authority recheck on every token use.
+      installPreGatedMcpOriginatorDelivery(extras.preGated, {
+        allowCreate,
+        mayRecreateOwner,
+      });
+    } else {
+      const verdict = recordMcpOriginatorDelivery(frame, {
+        allowCreate,
+        mayRecreateOwner,
+      });
+      if (verdict === "denied_retryable") {
+        // Durable admission could not be evaluated at all (degraded authority
+        // file or a failed transaction). Suppress the ACK entirely (evil-shub
+        // round-6 P1): Cloud's delivery gate treats an unacked frame as
+        // undeliverable and redelivers it, so the admission retries once the
+        // infrastructure heals instead of the turn running headerless forever
+        // while Cloud believes the token was accepted.
+        console.error(
+          "[input-ack] originator admission is retryable-denied; suppressing the ack so Cloud redelivers",
+        );
+        return;
+      }
+      if (verdict === "denied_permanent") {
+        // This frame can NEVER be admitted — a stale generation at-or-below
+        // the durable floor, a legacy delivery beneath a known generation
+        // contract, a headerless/terminal run, or a malformed generation
+        // (evil-shub round-8 P1 verdict split). Suppressing the ack would
+        // redeliver the same bytes forever with zero chance of success, so
+        // CONSUME the frame with the normal ack and continue without the
+        // originator token. Reaching this branch means a refresh-path frame
+        // (duplicate/approval — consuming is correct; gated frames never
+        // reach this branch because their gate verdict was final).
+        console.error(
+          "[input-ack] originator delivery is permanently denied (stale or retired authority); consuming the frame without the token",
+        );
+      }
     }
   }
   if (!frame.request_id) return;
@@ -129,6 +178,9 @@ export function acknowledgeInputFrame(
       accepted,
       ...(disposition ? { disposition } : {}),
       ...(error ? { error } : {}),
+      ...(extras?.abortReason !== undefined && !accepted
+        ? { abortReason: extras.abortReason }
+        : {}),
     },
     "input_accepted_response",
     "input",
