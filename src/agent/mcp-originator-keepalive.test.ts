@@ -121,6 +121,7 @@ describe("MCP originator keepalive", () => {
     // B; A's { valid: false } (expected — the producer revoked A) must not
     // withdraw B. Withdrawal is gated on the store still holding the exact
     // verified token.
+    const seen: string[] = [];
     let releaseA: (result: { valid: boolean }) => void = () => {};
     configureMcpOriginatorKeepaliveForTests({
       verify: (token) => {
@@ -129,6 +130,7 @@ describe("MCP originator keepalive", () => {
             releaseA = resolve;
           });
         }
+        seen.push(token);
         return Promise.resolve({ valid: true });
       },
     });
@@ -147,6 +149,13 @@ describe("MCP originator keepalive", () => {
     });
     releaseA({ valid: false });
     await inflightTick;
+    expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
+    expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
+    // The renewal chain must NOT be stranded by the stale verdict's early
+    // return (Amelia round-7 P1 r4301745098): a subsequent tick verifies
+    // the FRESH token and the chain continues.
+    await runMcpOriginatorKeepaliveTickForTests("run-a");
+    expect(seen).toEqual(["mst_b"]);
     expect(getMcpOriginatorToken("run-a")).toBe("mst_b");
     expect(hasMcpOriginatorKeepaliveForTests("run-a")).toBe(true);
   });

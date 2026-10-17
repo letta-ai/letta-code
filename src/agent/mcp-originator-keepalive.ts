@@ -61,6 +61,12 @@ type KeepaliveEntry = {
   /** Guards against overlapping ticks (a slow verify outliving the interval). */
   ticking: boolean;
   /**
+   * Set when a fresh token is installed mid-flight: the next scheduled tick
+   * fires immediately so a re-minted pair is verified promptly rather than
+   * after a full healthy-cadence interval.
+   */
+  verifyAsap: boolean;
+  /**
    * Store access injected at start. Optional: the test-only tick driver
    * registers a timer-less stub without store access, which the tick
    * treats exactly like a vanished entry (stop, never verify).
@@ -142,16 +148,23 @@ async function runKeepaliveTick(superRunId: string): Promise<void> {
     }
   } finally {
     entry.ticking = false;
-  }
-  // Schedule the next tick only while this keepalive is still registered
-  // (a stop during the await removed it): success keeps the healthy
-  // cadence; a failure retries within the remaining lease instead of
-  // waiting out a full interval (evil-shub round-6 P1).
-  if (schedulingEnabled && keepalives.get(superRunId) === entry) {
-    entry.timer = setTimeout(() => {
-      void runKeepaliveTick(superRunId);
-    }, nextDelayMs(entry.consecutiveFailures));
-    entry.timer?.unref();
+    // Reschedule INSIDE the finally so every exit path — including the
+    // stale-verdict early return — keeps the renewal chain alive (Amelia
+    // round-7 P1 r4301745098: an early return above this block otherwise
+    // strands the freshly installed token with no next tick). A stop during
+    // the await removed the entry, which the identity check below catches.
+    // verifyAsap makes a mid-flight re-install verify promptly instead of
+    // waiting out the healthy cadence.
+    if (schedulingEnabled && keepalives.get(superRunId) === entry) {
+      const delay = entry.verifyAsap
+        ? 0
+        : nextDelayMs(entry.consecutiveFailures);
+      entry.verifyAsap = false;
+      entry.timer = setTimeout(() => {
+        void runKeepaliveTick(superRunId);
+      }, delay);
+      entry.timer?.unref();
+    }
   }
 }
 
@@ -182,6 +195,22 @@ export function startMcpOriginatorKeepalive(
   if (existing) {
     existing.hooks = hooks;
     existing.consecutiveFailures = 0;
+    // A re-minted pair deserves prompt verification (the producer re-mints
+    // per delivery, often because something changed): if a tick is in
+    // flight its finally honors verifyAsap; otherwise replace whatever
+    // healthy-cadence timer is pending with an immediate one.
+    existing.verifyAsap = true;
+    if (schedulingEnabled && !existing.ticking) {
+      clearTimeout(existing.timer);
+      // The immediate timer IS the prompt verification; leave verifyAsap
+      // set only for the in-flight case, where the tick's finally
+      // consumes it.
+      existing.verifyAsap = false;
+      existing.timer = setTimeout(() => {
+        void runKeepaliveTick(superRunId);
+      }, 0);
+      existing.timer?.unref();
+    }
     return;
   }
   const entry: KeepaliveEntry = {
@@ -197,6 +226,7 @@ export function startMcpOriginatorKeepalive(
       : undefined,
     consecutiveFailures: 0,
     ticking: false,
+    verifyAsap: false,
     hooks,
   };
   entry.timer?.unref();
@@ -241,6 +271,7 @@ export async function runMcpOriginatorKeepaliveTickForTests(
       timer: undefined,
       consecutiveFailures: 0,
       ticking: false,
+      verifyAsap: false,
     });
   }
   await runKeepaliveTick(superRunId);
