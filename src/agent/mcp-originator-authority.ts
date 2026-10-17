@@ -68,6 +68,20 @@ type AuthorityRecord = {
   updatedAtMs: number;
 };
 
+/**
+ * A wire or disk generation is meaningful only as a nonnegative safe
+ * integer (evil-shub round-6 P1): a string, negative, fractional, or NaN
+ * value used to flow straight into Math.max, producing a NaN floor that
+ * silently disabled every later floor comparison (NaN < x is false).
+ */
+function isValidGeneration(generation: unknown): generation is number {
+  return (
+    typeof generation === "number" &&
+    Number.isSafeInteger(generation) &&
+    generation >= 0
+  );
+}
+
 type AuthorityFile = {
   version: 1;
   records: Record<string, AuthorityRecord>;
@@ -162,7 +176,12 @@ function readAuthorityRecords(path: string): {
         (record.state === "live" ||
           record.state === "headerless" ||
           record.state === "terminal") &&
-        typeof record.updatedAtMs === "number"
+        typeof record.updatedAtMs === "number" &&
+        // A structurally invalid floor (string/negative/fractional/NaN) is
+        // as untrustworthy as an invalid state: treat the whole file as
+        // degraded rather than let a bogus floor silently gate admission
+        // (evil-shub round-6 P1).
+        (record.floor === undefined || isValidGeneration(record.floor))
       ) {
         records.set(runId, record);
       } else {
@@ -324,10 +343,18 @@ function touchRecords(
   state?: McpOriginatorAuthorityState,
 ): void {
   const existing = records.get(runId);
+  // Defense in depth (evil-shub round-6 P1): never let a malformed
+  // generation write a NaN/garbage floor into the monotone lattice; the
+  // public entry points already reject such values fail-closed, so
+  // reaching this branch means the caller kept only the state transition.
+  const usableGeneration =
+    generation !== undefined && isValidGeneration(generation)
+      ? generation
+      : undefined;
   const floor =
-    generation === undefined
+    usableGeneration === undefined
       ? existing?.floor
-      : Math.max(existing?.floor ?? -1, generation);
+      : Math.max(existing?.floor ?? -1, usableGeneration);
   records.set(runId, {
     ...(floor !== undefined ? { floor } : {}),
     // State is monotone: headerless/terminal, once set, are never relaxed by
@@ -369,6 +396,15 @@ export function admitMcpOriginatorDelivery(
   runId: string,
   generation: number | undefined,
 ): boolean {
+  // A malformed generation can never be a healthy admission (evil-shub
+  // round-6 P1): denying is fail-closed — the caller drops the delivery and
+  // does not ACK, so a well-formed redelivery can still be admitted.
+  if (generation !== undefined && !isValidGeneration(generation)) {
+    console.error(
+      `[mcp-originator-authority] malformed generation for ${runId}; denying admission (fail-closed)`,
+    );
+    return false;
+  }
   if (!authorityPersistentPath()) {
     const record = recordsBySuperRunId.get(runId);
     if (record) {
@@ -423,6 +459,14 @@ export function mcpOriginatorAuthorityPermitsUse(
   runId: string,
   generation: number | undefined,
 ): boolean {
+  // A malformed held generation cannot be compared against the floor:
+  // withdraw the token rather than guess (fail-closed; evil-shub round-6 P1).
+  if (generation !== undefined && !isValidGeneration(generation)) {
+    console.error(
+      `[mcp-originator-authority] malformed generation for ${runId}; withdrawing the token (fail-closed)`,
+    );
+    return false;
+  }
   try {
     return authorityTransaction((records, ctx) => {
       if (ctx.degraded) return { result: false, changed: false };

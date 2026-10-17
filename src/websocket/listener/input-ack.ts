@@ -84,7 +84,22 @@ export function acknowledgeInputFrame(
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
-    recordMcpOriginatorDelivery(frame, { allowCreate, mayRecreateOwner });
+    const verdict = recordMcpOriginatorDelivery(frame, {
+      allowCreate,
+      mayRecreateOwner,
+    });
+    if (verdict === "denied") {
+      // Durable admission failed closed (degraded authority file, a failed
+      // transaction, a malformed generation, or a retired/stale boundary).
+      // Suppress the ACK entirely (evil-shub round-6 P1): Cloud's delivery
+      // gate treats an unacked frame as undeliverable and redelivers it, so
+      // the admission retries instead of the turn running headerless
+      // forever while Cloud believes the token was accepted.
+      console.error(
+        "[input-ack] originator delivery denied by the durable authority gate; suppressing the ack so Cloud redelivers",
+      );
+      return;
+    }
   }
   if (!frame.request_id) return;
   send(
