@@ -76,7 +76,9 @@ describe("MCP OAuth callback server", () => {
 
     const named = await page("Acme Agent");
     expect(named).toContain("return to Acme Agent.");
-    expect(named).toContain("<title>Authorization complete - Acme Agent</title>");
+    expect(named).toContain(
+      "<title>Authorization complete - Acme Agent</title>",
+    );
     expect(named).not.toContain("Letta Code");
 
     expect(await page()).toContain("return to Letta Code.");
