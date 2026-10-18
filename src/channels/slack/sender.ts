@@ -2,6 +2,7 @@ import type { OutboundChannelMessage } from "@/channels/types";
 import {
   buildSlackChatFootnote,
   buildSlackReplyBlocksWithFootnote,
+  formatSlackReplyTextFallback,
 } from "./presentation";
 import {
   normalizeSlackReactionName,
@@ -94,17 +95,13 @@ async function sendSlackReaction(
 function buildSlackOutboundBlocks(
   message: OutboundChannelMessage,
 ): unknown[] | undefined {
-  if (!message.agentId || !message.conversationId) {
-    return undefined;
-  }
-
-  const footnote = buildSlackChatFootnote({
-    agentId: message.agentId,
-    conversationId: message.conversationId,
-  });
-  if (!footnote) {
-    return undefined;
-  }
+  const footnote =
+    message.agentId && message.conversationId
+      ? buildSlackChatFootnote({
+          agentId: message.agentId,
+          conversationId: message.conversationId,
+        })
+      : "";
 
   return buildSlackReplyBlocksWithFootnote(message.text, footnote);
 }
@@ -126,9 +123,12 @@ export function createSlackChannelSender(
         replyToMessageId: message.replyToMessageId,
       });
       const blocks = buildSlackOutboundBlocks(message);
+      const text = blocks
+        ? formatSlackReplyTextFallback(message.text)
+        : message.text;
       return await client.postMessage({
         channel: message.chatId,
-        text: message.text,
+        text,
         ...(blocks ? { blocks } : {}),
         ...(threadTs ? { threadTs } : {}),
       });
