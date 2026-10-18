@@ -264,15 +264,18 @@ describe("local compaction fallback keeps custom prompt", () => {
 
   test("pressure compaction requires the full request to fit the threshold", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-pressure-budget-"));
+    let summaryCalls = 0;
     const backend = new LocalBackend({
       storageDir,
       executor: turnExecutor(),
-      complete: async () =>
-        assistantMessage({
+      complete: async () => {
+        summaryCalls++;
+        return assistantMessage({
           responseId: "pressure-summary",
           stopReason: "stop",
           content: [{ type: "text", text: "Compacted summary." }],
-        }),
+        });
+      },
       memfsEnabled: false,
     });
     try {
@@ -280,12 +283,14 @@ describe("local compaction fallback keeps custom prompt", () => {
       const conversation = await backend.createConversation({
         agent_id: agent.id,
       } as never);
-      await drain(
-        await backend.createConversationMessageStream(conversation.id, {
-          agent_id: agent.id,
-          messages: [{ role: "user", content: "remember this ".repeat(100) }],
-        } as ConversationMessageCreateBody),
-      );
+      for (let turn = 0; turn < 2; turn++) {
+        await drain(
+          await backend.createConversationMessageStream(conversation.id, {
+            agent_id: agent.id,
+            messages: [{ role: "user", content: "remember this ".repeat(100) }],
+          } as ConversationMessageCreateBody),
+        );
+      }
       const compact = (contextTokens: number) =>
         (
           backend as unknown as {
@@ -306,12 +311,14 @@ describe("local compaction fallback keeps custom prompt", () => {
       const before = await backend.listConversationMessages(conversation.id, {
         agent_id: agent.id,
       } as never);
-      expect(await compact(1200)).toBeNull();
+      expect(await compact(2000)).toBeNull();
+      expect(summaryCalls).toBe(0);
       const after = await backend.listConversationMessages(conversation.id, {
         agent_id: agent.id,
       } as never);
       expect(after.getPaginatedItems()).toEqual(before.getPaginatedItems());
-      expect(await compact(1000)).not.toBeNull();
+      expect(await compact(1300)).not.toBeNull();
+      expect(summaryCalls).toBe(1);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

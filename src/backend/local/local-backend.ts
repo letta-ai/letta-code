@@ -37,11 +37,13 @@ import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
   assertLocalCompactionProgress,
+  assertLocalPressureBudget,
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   type LocalCompactionMode,
+  type LocalCompactionResult,
   type LocalCompactionStats,
   type LocalCompleteFunction,
   packageLocalSummaryMessage,
@@ -575,23 +577,17 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
+    const messageTokens = estimateLocalMessageTokens(
+      this.store.listLocalMessages(input.conversationId, input.agentId),
+    );
+    const fixedTokens = Math.max(0, pressure.contextTokens - messageTokens);
     const result = await runLocalPressureCompaction(() =>
       this.compactLocalConversation(
         input.conversationId,
         input.agentId,
         "context_window_limit",
         undefined,
-        (contextCompactionThreshold(pressure.contextWindow) ?? 0) -
-          Math.max(
-            0,
-            pressure.contextTokens -
-              estimateLocalMessageTokens(
-                this.store.listLocalMessages(
-                  input.conversationId,
-                  input.agentId,
-                ),
-              ),
-          ),
+        (contextCompactionThreshold(pressure.contextWindow) ?? 0) - fixedTokens,
       ),
     );
     if (!result) return null;
@@ -742,7 +738,7 @@ export class LocalBackend extends HeadlessBackend {
     trigger: string,
     body?: ConversationMessageCompactBody,
     maxMessageTokens?: number,
-  ) {
+  ): Promise<LocalCompactionResult> {
     await this.emitCompactStart(conversationId, agentId, trigger);
     const result = await this.compactLocalConversationInner(
       conversationId,
@@ -761,7 +757,7 @@ export class LocalBackend extends HeadlessBackend {
     trigger: string,
     body?: ConversationMessageCompactBody,
     maxMessageTokens?: number,
-  ) {
+  ): Promise<LocalCompactionResult> {
     const agent = this.effectiveAgentForConversation(conversationId, agentId);
     const settings = {
       ...this.resolveCompactionSettings(agent, body),
@@ -817,10 +813,12 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-  ) {
+  ): Promise<LocalCompactionResult> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
+    const keptTokens = estimateLocalMessageTokens(plan.messagesToKeep);
+    assertLocalPressureBudget(keptTokens, "all", settings.maxMessageTokens);
     const summary = await summarizeLocalMessagesAll({
       conversationId,
       agent,
@@ -834,9 +832,7 @@ export class LocalBackend extends HeadlessBackend {
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: contextTokensBefore,
-      context_tokens_after:
-        Math.ceil(summary.length / 4) +
-        estimateLocalMessageTokens(plan.messagesToKeep),
+      context_tokens_after: Math.ceil(summary.length / 4) + keptTokens,
       context_window: this.effectiveContextWindow(conversationId, agentId),
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
@@ -864,13 +860,18 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-  ) {
+  ): Promise<LocalCompactionResult> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextWindow = this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
       slidingWindowPercentage: settings.slidingWindowPercentage,
       contextWindow,
     });
+    assertLocalPressureBudget(
+      estimateLocalMessageTokens(plan.messagesToKeep),
+      "sliding_window",
+      settings.maxMessageTokens,
+    );
     const summary = await summarizeLocalMessagesSlidingWindow({
       conversationId,
       agent,
