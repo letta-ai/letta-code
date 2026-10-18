@@ -1,6 +1,6 @@
 /**
  * The workflow engine: parses the meta block, builds the script-facing hooks
- * (agent / parallel / pipeline / phase / log / args), executes the script
+ * (agent / decide / tools / parallel / pipeline / phase / log / args), executes the script
  * body inside a node:vm context, and appends every subagent outcome to the
  * run's journal.
  *
@@ -16,6 +16,7 @@
  */
 
 import vm from "node:vm";
+import { submitWorkflowDecision } from "./decide.ts";
 import { appendJournalEntry } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
 import type {
@@ -24,10 +25,14 @@ import type {
   SubagentSpawner,
   WorkflowExecutionResult,
   WorkflowProgressEvent,
+  WorkflowToolInfo,
+  WorkflowToolResult,
 } from "./types.ts";
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
+const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
+const DEFAULT_MAX_TOTAL_TOOL_CALLS = 1000;
 const MAX_ITEMS_PER_HELPER = 4096;
 
 class Semaphore {
@@ -53,6 +58,33 @@ class Semaphore {
   }
 }
 
+function mcpText(content: unknown[]): string[] {
+  return content.flatMap((part) =>
+    part &&
+    typeof part === "object" &&
+    (part as { type?: unknown }).type === "text" &&
+    typeof (part as { text?: unknown }).text === "string"
+      ? [(part as { text: string }).text]
+      : [],
+  );
+}
+
+/** Text results resolve to a string (parsed when JSON); others stay raw. */
+function mcpContentValue(content: unknown[]): unknown {
+  const text = mcpText(content);
+  if (text.length !== content.length || text.length === 0) return content;
+  const joined = text.join("\n");
+  try {
+    return JSON.parse(joined);
+  } catch {
+    return joined;
+  }
+}
+
+function mcpErrorText(result: { content: unknown[] }): string {
+  return mcpText(result.content).join("\n").slice(0, 2000) || "MCP tool error";
+}
+
 function defaultLabel(prompt: string): string {
   const oneLine = prompt.replace(/\s+/g, " ").trim();
   return oneLine.length <= 48 ? oneLine : `${oneLine.slice(0, 45)}...`;
@@ -74,23 +106,179 @@ export async function executeWorkflow(
   // settle until all of them have, so a completion never precedes a worker.
   const inFlight = new Set<Promise<unknown>>();
   const maxTotalAgents = options.maxTotalAgents ?? DEFAULT_MAX_TOTAL_AGENTS;
+  const maxTotalDecisions =
+    options.maxTotalDecisions ?? DEFAULT_MAX_TOTAL_DECISIONS;
+  const maxTotalToolCalls =
+    options.maxTotalToolCalls ?? DEFAULT_MAX_TOTAL_TOOL_CALLS;
   const semaphore = new Semaphore(
     options.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
   );
 
   let currentPhase: string | null = null;
   let callCounter = 0;
+  let decisionCounter = 0;
+  let toolCallCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
-  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
-    const pending = callAgent(prompt, callOptions);
+  function trackCall<T>(pending: Promise<T>): Promise<T> {
     // Scripts can forget to await a call; that must not surface as an
     // unhandled rejection. Awaiting it still observes the original error.
     void pending.catch(() => {});
     inFlight.add(pending);
     void pending.finally(() => inFlight.delete(pending)).catch(() => {});
     return pending;
+  }
+
+  function agent(prompt: unknown, callOptions?: unknown): Promise<unknown> {
+    return trackCall(callAgent(prompt, callOptions));
+  }
+
+  function decide(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    return trackCall(callDecision(state, questions, callOptions));
+  }
+
+  // Codex-style `tools` global: `await tools.Read(args)` or
+  // `await tools.mcp__server__tool(args)`. Only the invoking turn's built-ins
+  // and agent MCP tools are exposed; any other name is undefined.
+  const builtinToolNames = new Set(options.builtinToolNames ?? []);
+  const isCallable = (name: string) =>
+    builtinToolNames.has(name) || name.startsWith("mcp__");
+  const tools = new Proxy(Object.freeze({}), {
+    get: (_target, name) =>
+      typeof name === "string" && isCallable(name)
+        ? (args?: unknown) => trackCall(callTool(name, args))
+        : undefined,
+  });
+
+  let toolInfo: Promise<WorkflowToolInfo[]> | undefined;
+  function loadToolInfo(): Promise<WorkflowToolInfo[]> {
+    if (!options.listTools) return Promise.resolve([]);
+    toolInfo ??= options.listTools().catch((error: unknown) => {
+      toolInfo = undefined;
+      throw error;
+    });
+    return toolInfo;
+  }
+
+  /** `[{ name, description }]` for every tool callable through `tools`. */
+  async function listTools(): Promise<
+    Array<{ name: string; description: string }>
+  > {
+    return (await loadToolInfo()).map(({ name, description }) => ({
+      name,
+      description,
+    }));
+  }
+
+  /** `{ name, description, inputSchema }`, or undefined for an unknown tool. */
+  async function describeTool(
+    name: unknown,
+  ): Promise<WorkflowToolInfo | undefined> {
+    if (typeof name !== "string" || !name) {
+      throw new Error("describeTool() requires a tool name string.");
+    }
+    return (await loadToolInfo()).find((tool) => tool.name === name);
+  }
+
+  async function callTool(toolName: string, args?: unknown): Promise<unknown> {
+    const call = options.callTool;
+    if (!call) {
+      throw new Error("tools are unavailable: no invoking tool scope.");
+    }
+    if (
+      args !== undefined &&
+      (!args || typeof args !== "object" || Array.isArray(args))
+    ) {
+      throw new Error(`tools.${toolName}() arguments must be an object.`);
+    }
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (toolCallCounter >= maxTotalToolCalls) {
+      throw new Error(
+        `Lifetime tool call cap of ${maxTotalToolCalls} reached.`,
+      );
+    }
+    toolCallCounter++;
+    await semaphore.acquire();
+    const startedAt = Date.now();
+    const journal = (isError: boolean, error?: string) => {
+      if (!options.journalPath) return;
+      appendJournalEntry(options.journalPath, {
+        kind: "tool_call",
+        toolName,
+        isError,
+        durationMs: Date.now() - startedAt,
+        ...(error ? { error } : {}),
+      });
+    };
+    let result: WorkflowToolResult;
+    try {
+      if (signal.aborted) throw new Error("Workflow aborted.");
+      result = await call(toolName, (args ?? {}) as Record<string, unknown>);
+    } catch (error) {
+      journal(true, error instanceof Error ? error.message : String(error));
+      throw error;
+    } finally {
+      semaphore.release();
+    }
+    if (result.isError) {
+      const message = mcpErrorText(result);
+      journal(true, message);
+      throw new Error(`${toolName} failed: ${message}`);
+    }
+    journal(false);
+    // Built-ins resolve to their text output verbatim; MCP results normalize.
+    if (builtinToolNames.has(toolName))
+      return mcpText(result.content).join("\n");
+    return result.structuredContent ?? mcpContentValue(result.content);
+  }
+
+  async function callDecision(
+    state: unknown,
+    questions: unknown,
+    callOptions?: unknown,
+  ): Promise<unknown> {
+    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (decisionCounter >= maxTotalDecisions) {
+      throw new Error(`Lifetime decision cap of ${maxTotalDecisions} reached.`);
+    }
+    if (
+      callOptions !== undefined &&
+      (!callOptions ||
+        typeof callOptions !== "object" ||
+        Array.isArray(callOptions))
+    ) {
+      throw new Error("decide() options must be an object.");
+    }
+    decisionCounter++;
+    await semaphore.acquire();
+    try {
+      if (signal.aborted) throw new Error("Workflow aborted.");
+      return await submitWorkflowDecision(
+        {
+          ...(callOptions as Record<string, unknown> | undefined),
+          state,
+          questions,
+        },
+        signal,
+        (result) => {
+          totalTokens += result.totalTokens;
+          emit({ kind: "decision_usage", totalTokens: result.totalTokens });
+          if (options.journalPath) {
+            appendJournalEntry(options.journalPath, {
+              kind: "decision",
+              ...result,
+            });
+          }
+        },
+      );
+    } finally {
+      semaphore.release();
+    }
   }
 
   async function callAgent(
@@ -114,6 +302,15 @@ export async function executeWorkflow(
     }
     const opts: AgentCallOptions = { ...(callOptions as AgentCallOptions) };
     if (
+      opts.conversationId !== undefined &&
+      (typeof opts.conversationId !== "string" ||
+        !/^(?:conv-|local-conv-)[A-Za-z0-9_-]+$/.test(opts.conversationId))
+    ) {
+      throw new Error(
+        "agent() conversationId must be a conv-... or local-conv-... ID.",
+      );
+    }
+    if (
       opts.maxToolCalls !== undefined &&
       (!Number.isSafeInteger(opts.maxToolCalls) || opts.maxToolCalls <= 0)
     ) {
@@ -132,6 +329,27 @@ export async function executeWorkflow(
       const outcome = await spawner(
         { prompt, options: opts, callIndex },
         signal,
+        {
+          onStarted: (conversationId) => {
+            if (options.journalPath) {
+              appendJournalEntry(options.journalPath, {
+                kind: "agent_started",
+                callIndex,
+                conversationId,
+              });
+            }
+          },
+          // Live usage so status rows can show tokens before the agent ends.
+          onUsage: (totalTokens) =>
+            emit({
+              kind: "agent",
+              callIndex,
+              label,
+              phase,
+              status: "running",
+              totalTokens,
+            }),
+        },
       );
       // Account for the outcome even when the run was aborted meanwhile: the
       // spawner returns what the interrupted subagent had already consumed.
@@ -141,6 +359,9 @@ export async function executeWorkflow(
           callIndex,
           label,
           prompt,
+          ...(opts.conversationId
+            ? { resumedConversationId: opts.conversationId }
+            : {}),
           outcome,
         });
       }
@@ -155,10 +376,32 @@ export async function executeWorkflow(
         totalTokens: outcome.totalTokens,
       });
       if (signal.aborted) throw new Error("Workflow aborted.");
-      return outcome.failed ? null : outcome.value;
+      if (outcome.failed) {
+        const worker = outcome.conversationId
+          ? ` (${outcome.conversationId})`
+          : "";
+        throw Object.assign(
+          new Error(
+            `Workflow agent "${label}"${worker} failed: ${outcome.error ?? "unknown error"}`,
+          ),
+          { callIndex, conversationId: outcome.conversationId },
+        );
+      }
+      return outcome.value;
     } finally {
       semaphore.release();
     }
+  }
+
+  async function collectResults(tasks: Promise<unknown>[]): Promise<unknown[]> {
+    // Preserve sibling completion, but never turn an unhandled failure into
+    // a successful null result. Scripts can catch inside each callback for
+    // best-effort processing.
+    const outcomes = await Promise.allSettled(tasks);
+    return outcomes.map((outcome) => {
+      if (outcome.status === "rejected") throw outcome.reason;
+      return outcome.value;
+    });
   }
 
   async function parallel(thunks: unknown): Promise<unknown[]> {
@@ -170,14 +413,12 @@ export async function executeWorkflow(
         `parallel() accepts at most ${MAX_ITEMS_PER_HELPER} items, got ${thunks.length}.`,
       );
     }
-    return Promise.all(
+    return collectResults(
       thunks.map(async (thunk) => {
-        if (typeof thunk !== "function") return null;
-        try {
-          return await thunk();
-        } catch {
-          return null;
+        if (typeof thunk !== "function") {
+          throw new Error("parallel() takes an array of zero-arg functions.");
         }
+        return await thunk();
       }),
     );
   }
@@ -202,15 +443,11 @@ export async function executeWorkflow(
     );
     // No barrier between stages: each item flows through its whole chain
     // independently, so item A can be in stage 3 while item B is in stage 1.
-    return Promise.all(
+    return collectResults(
       items.map(async (item, index) => {
         let value: unknown = item;
         for (const stage of stageFns) {
-          try {
-            value = await stage(value, item, index);
-          } catch {
-            return null;
-          }
+          value = await stage(value, item, index);
         }
         return value;
       }),
@@ -231,6 +468,10 @@ export async function executeWorkflow(
 
   const context = vm.createContext({
     agent,
+    decide,
+    tools,
+    listTools,
+    describeTool,
     parallel,
     pipeline,
     phase,

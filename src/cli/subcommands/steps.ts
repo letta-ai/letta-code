@@ -72,7 +72,10 @@ export async function runStepsSubcommand(
     )(values.step);
     if (
       trace &&
-      (trace.agent_id !== values.agent || trace.step_id !== step.id)
+      // Trace identifiers are nullable in the API; only reject identifiers
+      // that are present and disagree.
+      ((trace.agent_id != null && trace.agent_id !== values.agent) ||
+        (trace.step_id != null && trace.step_id !== step.id))
     ) {
       throw new Error(
         "Provider trace does not match the requested agent and step.",

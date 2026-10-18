@@ -146,7 +146,7 @@ describe("letta memory tokens", () => {
     }
   });
 
-  test("keeps local MemFS on the v1 system directory layout", async () => {
+  test("uses root MEMORY.md to select v2 for local MemFS", async () => {
     process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = "1";
     writeRootFile("MEMORY.md", "a".repeat(100));
     writeSystemFile("persona.md", "abcd");
@@ -161,8 +161,8 @@ describe("letta memory tokens", () => {
       ]);
       expect(code).toBe(0);
       expect(JSON.parse(capture.stdout.join("\n"))).toEqual({
-        total_tokens: 1,
-        files: [{ path: "system/persona.md", tokens: 1 }],
+        total_tokens: 25,
+        files: [{ path: "MEMORY.md", tokens: 25 }],
       });
     } finally {
       restore();

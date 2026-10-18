@@ -96,7 +96,7 @@ async function awaitMemoryPushBounded(
   });
 
   const warnOnFailure = (result: { status: string; summary: string }): void => {
-    if (result.status === "push_failed" || result.status === "conflict") {
+    if (["push_failed", "conflict", "invalid"].includes(result.status)) {
       warnMemoryCommand(
         `[${commandName}] push failed for ${agentId}: ${result.summary}`,
       );

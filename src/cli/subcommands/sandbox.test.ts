@@ -236,6 +236,71 @@ describe("sandbox subcommand", () => {
     }
   });
 
+  test("prints a chat desktop viewer link for the conversation sandbox", async () => {
+    const calls: string[] = [];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      const exitCode = await withEnvironment(CLOUD_ENV, () =>
+        runSandboxSubcommand(["desktop-link"], {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          getLastSession: () => null,
+          ensureSandbox: async (agentId, conversationId) => {
+            calls.push(`ensure:${agentId}:${conversationId}`);
+            return {
+              sandboxId: "sandbox-1",
+              deviceId: "device-1",
+              connectionName: "Cloud",
+            };
+          },
+          createDesktopSession: async (sandboxId) => {
+            calls.push(`desktop:${sandboxId}`);
+            return {
+              url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+              expiresAt: "2026-09-28T23:00:00.000Z",
+            };
+          },
+        }),
+      );
+
+      expect(exitCode).toBe(0);
+      expect(calls).toEqual(["ensure:agent-1:conv-1", "desktop:sandbox-1"]);
+      const result = JSON.parse(output[0] ?? "{}");
+      expect(result.expiresAt).toBe("2026-09-28T23:00:00.000Z");
+      const viewer = new URL(result.url);
+      expect(viewer.origin + viewer.pathname).toBe(
+        "https://chat.letta.com/desktop",
+      );
+      expect(new URLSearchParams(viewer.hash.slice(1)).get("path")).toBe(
+        "/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+      );
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("rejects a path argument for desktop-link", async () => {
+    const originalError = console.error;
+    const originalLog = console.log;
+    console.error = () => {};
+    console.log = () => {};
+    try {
+      expect(
+        await withEnvironment(CLOUD_ENV, () =>
+          runSandboxSubcommand(["desktop-link", "extra"], {
+            initializeSettings: async () => {},
+            isCloud: async () => true,
+          }),
+        ),
+      ).toBe(1);
+    } finally {
+      console.error = originalError;
+      console.log = originalLog;
+    }
+  });
+
   test("downloads a sandbox file to the requested path", async () => {
     const writes: Array<{ path: string; data: number[] }> = [];
     const originalLog = console.log;

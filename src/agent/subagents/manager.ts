@@ -9,7 +9,6 @@
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import { resolveActingUserId } from "@/agent/acting-user";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
@@ -17,7 +16,7 @@ import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
 import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
-import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { getSessionAccessToken } from "@/auth/org-credentials-session";
 import {
   type BackendMode,
   getBackend,
@@ -34,6 +33,7 @@ import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
 import {
   getCurrentWorkingDirectory,
+  getRuntimeActingUserId,
   getRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
@@ -53,6 +53,7 @@ import {
 import { buildSubagentPrompt } from "./context-budget";
 import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
+import { resolveSubagentHarnessTools } from "./subagent-depth";
 import {
   composeSubagentChildEnv,
   resolveSubagentInheritedPrimaryRoot,
@@ -87,12 +88,7 @@ import {
  * fork/recall are excluded because they deploy the parent agent and
  * never trigger fresh agent creation, so base tools are out of scope.
  */
-const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
-  "reflection",
-  "memory",
-  "history-analyzer",
-  "init",
-]);
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
 
 // ============================================================================
 // Helper Functions
@@ -131,11 +127,11 @@ interface BuildSubagentArgsOptions {
    * ambiguous, or does not support environment-routed messaging.
    */
   environment?: string;
+  /** Identity for the child's initial assignment, never inherited. */
+  clientMessageId?: string;
 }
 
-/**
- * Build CLI arguments for spawning a subagent
- */
+/** Build CLI arguments for spawning a subagent. */
 export function buildSubagentArgs(
   type: string,
   config: SubagentConfig,
@@ -155,6 +151,9 @@ export function buildSubagentArgs(
   if (options.backendMode) {
     args.push("--backend", options.backendMode);
   }
+
+  if (options.clientMessageId !== undefined)
+    args.push("--client-message-id", options.clientMessageId);
 
   if (options.environment) {
     // The child only submits the send and exits with the enqueue receipt;
@@ -288,9 +287,10 @@ async function executeSubagent(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
-  actingUserIdOverride?: string,
+  actingUserIdOverride?: string | null,
   parentAgentName?: string | null,
   parentConversationId?: string,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
@@ -337,9 +337,11 @@ async function executeSubagent(
       {
         backendMode,
         promptTransport: "stdin",
+        extraTools: resolveSubagentHarnessTools(type, config),
         parentAgentId,
         systemPromptOverride,
         environment,
+        clientMessageId,
       },
     );
 
@@ -349,7 +351,7 @@ async function executeSubagent(
     // keychain lookups under high parallel fan-out.
     const settings = await settingsManager.getSettingsWithSecureTokens();
     const inheritedApiKey =
-      getDesktopAccessToken() ||
+      (await getSessionAccessToken()) ||
       process.env.LETTA_API_KEY ||
       settings.env?.LETTA_API_KEY;
     const inheritedBaseUrl =
@@ -422,6 +424,7 @@ async function executeSubagent(
       inheritedPrimaryRoot,
       memoryScope,
       localBackendStorageDir,
+      scratchpadDir: childEnv.LETTA_SCRATCHPAD,
     });
     const spawnLauncher = sandbox
       ? { command: sandbox.command, args: sandbox.args }
@@ -444,6 +447,7 @@ async function executeSubagent(
     if (!managedCommand) {
       throw new Error("Subagent executable is required");
     }
+    signal?.throwIfAborted();
     const runningProcess = spawnSubagentProcess(managedCommand, managedArgs, {
       cwd: subagentWorkingDirectory,
       env: spawnEnv,
@@ -534,8 +538,12 @@ async function executeSubagent(
 
     // Handle non-zero exit code
     if (exitCode !== 0) {
-      // Check if this is a provider-not-supported error and we haven't retried yet
-      if (!isRetry && isProviderNotSupportedError(stderr)) {
+      // A prepared conversation must fail rather than switch models and agents.
+      if (
+        !isRetry &&
+        (type !== "custom" || !existingConversationId) &&
+        isProviderNotSupportedError(stderr)
+      ) {
         const { handle: primaryModel } = await getPrimaryAgentModelHandle({
           agentId: parentAgentIdOverride,
         });
@@ -563,6 +571,7 @@ async function executeSubagent(
             actingUserIdOverride,
             parentAgentName,
             parentConversationId,
+            clientMessageId,
           );
         }
       }
@@ -594,6 +603,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
 
@@ -712,6 +722,7 @@ async function executeSubagent(
           actingUserIdOverride,
           parentAgentName,
           parentConversationId,
+          clientMessageId,
         );
       }
     }
@@ -766,7 +777,7 @@ You have been forked from the primary conversational thread to run as an indepen
 
 **Your sole task is now to search previous conversation history and provide a report. Ignore any existing ongoing tasks.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
 
-Your toolset is limited to Bash, Read, and TaskOutput. You cannot edit files, run skills, dispatch further tasks, or take any action beyond searching messages and returning a report.
+Your toolset is limited to Bash and Read. You cannot edit files, run skills, dispatch further tasks, or take any action beyond searching messages and returning a report.
 
 You CANNOT ask questions mid-execution — all instructions are provided upfront.
 Your final message will be returned to the caller.
@@ -822,12 +833,17 @@ async function spawnSubagentInContext(
   memoryScope?: SubagentMemoryScope,
   systemPromptOverride?: string,
   environment?: string,
-  actingUserId?: string,
+  actingUserId?: string | null,
+  resolvedConfig?: SubagentConfig,
+  clientMessageId?: string,
 ): Promise<SubagentResult> {
-  const launchActingUserId = resolveActingUserId(actingUserId);
-  const allConfigs = await getAllSubagentConfigs();
-  let config = allConfigs[type];
-
+  const launchActingUserId =
+    actingUserId !== undefined
+      ? actingUserId
+      : getRuntimeContext()?.suppressActingUserFallback
+        ? null
+        : getRuntimeActingUserId();
+  let config = resolvedConfig ?? (await getAllSubagentConfigs())[type];
   if (!config) {
     return {
       agentId: "",
@@ -900,7 +916,11 @@ async function spawnSubagentInContext(
       });
   // Build the prompt with system reminder for deployed agents
   let finalPrompt = prompt;
-  if (isDeployingExisting && resolvedParentAgentId) {
+  if (
+    (type !== "custom" || forkedContext) &&
+    isDeployingExisting &&
+    resolvedParentAgentId
+  ) {
     try {
       const cachedParent =
         parentAgent ??
@@ -931,10 +951,12 @@ async function spawnSubagentInContext(
   // the card would have no link and any fallback would route to the parent's
   // main conversation. Set the link eagerly to the forked conversation so it
   // opens the subagent's own thread instead.
-  if (forkedContext && existingAgentId && existingConversationId) {
-    const forkAgentURL = buildAgentReference(existingAgentId, {
-      conversationId: existingConversationId,
-    });
+  if ((forkedContext || type === "custom") && existingConversationId) {
+    const forkAgentURL = existingAgentId
+      ? buildAgentReference(existingAgentId, {
+          conversationId: existingConversationId,
+        })
+      : undefined;
     updateSubagent(subagentId, {
       agentId: existingAgentId,
       agentURL: forkAgentURL,
@@ -943,7 +965,7 @@ async function spawnSubagentInContext(
   }
 
   // Execute subagent - state updates are handled via the state store
-  const result = await executeSubagent(
+  return executeSubagent(
     type,
     config,
     model,
@@ -962,9 +984,8 @@ async function spawnSubagentInContext(
     launchActingUserId,
     parentAgent?.name,
     resolvedParentConversationId,
+    clientMessageId,
   );
-
-  return result;
 }
 
 export function spawnSubagent(

@@ -13,6 +13,7 @@ export interface WatcherPullRequest {
 interface Args {
   expectedLogin: string;
   marker: string;
+  pullRequestState: "draft" | "ready";
   repo: string;
 }
 
@@ -30,7 +31,7 @@ export function enforceWatcherPrIdentity(
   const invalid = matches.filter(
     (pullRequest) =>
       pullRequest.author?.login !== options.expectedLogin ||
-      !pullRequest.isDraft,
+      pullRequest.isDraft !== (options.pullRequestState === "draft"),
   );
 
   for (const pullRequest of invalid) options.closePullRequest(pullRequest);
@@ -43,7 +44,7 @@ export function enforceWatcherPrIdentity(
       )
       .join(", ");
     throw new Error(
-      `Closed watcher PRs that did not match author=${options.expectedLogin} and draft=true: ${details}`,
+      `Closed watcher PRs that did not match author=${options.expectedLogin} and state=${options.pullRequestState}: ${details}`,
     );
   }
   if (matches.length > 1) {
@@ -58,12 +59,19 @@ export function parseArgs(argv: string[]): Args {
   let repo = "";
   let marker = "";
   let expectedLogin = "";
+  let pullRequestState: "draft" | "ready" | undefined;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--repo") repo = argv[++index] ?? "";
     else if (argument === "--marker") marker = argv[++index] ?? "";
     else if (argument === "--expected-login") {
       expectedLogin = argv[++index] ?? "";
+    } else if (argument === "--pull-request-state") {
+      const state = argv[++index];
+      if (state !== "draft" && state !== "ready") {
+        throw new Error("--pull-request-state must be draft or ready");
+      }
+      pullRequestState = state;
     } else {
       throw new Error(`Unknown argument: ${argument}`);
     }
@@ -71,7 +79,8 @@ export function parseArgs(argv: string[]): Args {
   if (!/^[^/]+\/[^/]+$/.test(repo)) throw new Error("--repo is required");
   if (!marker) throw new Error("--marker is required");
   if (!expectedLogin) throw new Error("--expected-login is required");
-  return { repo, marker, expectedLogin };
+  if (!pullRequestState) throw new Error("--pull-request-state is required");
+  return { repo, marker, expectedLogin, pullRequestState };
 }
 
 function runGh(args: string[]): string {
@@ -111,7 +120,7 @@ function main(): void {
   });
   console.log(
     verified
-      ? `Verified Amelia draft PR: ${verified.url}`
+      ? `Verified Amelia ${args.pullRequestState} PR: ${verified.url}`
       : `No open PR contains marker ${JSON.stringify(args.marker)}`,
   );
 }

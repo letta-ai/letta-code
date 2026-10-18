@@ -39,10 +39,18 @@ export function buildAgentSendReminder(
   const address = sender.conversationId
     ? `, conversation ${sender.conversationId}`
     : "";
+  // `--agent` with a conv-... ID is rejected by startup validation.
+  const isDefault = sender.conversationId === "default";
+  const cliTarget = isDefault
+    ? `--agent ${sender.agentId} --conversation default`
+    : `--conversation ${sender.conversationId}`;
+  const toolTarget = isDefault
+    ? `agent_id ${sender.agentId} and conversation_id default`
+    : `conversation_id ${sender.conversationId}`;
   const instruction = !noWait
     ? "The sender will only see the final message you generate (not tool calls or reasoning). Include your answer in your final response."
     : sender.conversationId
-      ? `To reply to agent ${sender.agentId}${address}, use SendAgentMessage if available. Otherwise run letta -p --agent ${sender.agentId} --conversation ${sender.conversationId} --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.`
+      ? `To reply, call SendAgentMessage with ${toolTarget}. Only if that tool is unavailable, run letta -p ${cliTarget} --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.`
       : "Ordinary assistant output is not forwarded to the sender. No return conversation was supplied.";
   return `<system-reminder>\nThis message is from agent ${sender.agentId}${address}.\n${instruction}\n</system-reminder>\n\n`;
 }
@@ -66,7 +74,7 @@ export async function resolveAgentMessageDestination(
     agentId?: string;
     conversationId?: string;
     senderAgentId?: string;
-    actingUserId?: string;
+    actingUserId?: string | null;
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
@@ -104,7 +112,7 @@ export async function resolveAgentMessageDestination(
     conversationId === input.currentConversation?.conversationId
   ) {
     throw new Error(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
   }
   return { agentId, conversationId };

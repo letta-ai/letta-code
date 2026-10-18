@@ -1,0 +1,211 @@
+import { createServer, type Server } from "node:http";
+import { DEFAULT_MCP_OAUTH_CLIENT_NAME } from "@/mcp-oauth-client-name";
+
+const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Accepted OAuth callback parameters. */
+export interface OAuthCallbackResult {
+  code: string;
+  /**
+   * Provider-reported site. Datadog appends `domain` (e.g. `us5.datadoghq.com`)
+   * naming the region that issued the code. Untrusted; callers must allowlist.
+   */
+  domain?: string;
+}
+
+export interface OAuthCallbackServer {
+  redirectUrl: string;
+  expectedState: { value?: string };
+  waitForCallback(): Promise<OAuthCallbackResult>;
+  close(): void;
+}
+
+/**
+ * @param appName Name shown on the success page ("return to <appName>"),
+ *   normally the consent-screen client name. Defaults to "Letta Code".
+ */
+export async function startOAuthCallbackServer(
+  preferredPort?: number,
+  appName: string = DEFAULT_MCP_OAUTH_CLIENT_NAME,
+): Promise<OAuthCallbackServer> {
+  try {
+    return await startOAuthCallbackServerOnPort(preferredPort ?? 0, appName);
+  } catch (error) {
+    if (!preferredPort) throw error;
+    return startOAuthCallbackServerOnPort(0, appName);
+  }
+}
+
+export function callbackPort(redirectUrl?: string): number | undefined {
+  if (!redirectUrl) return undefined;
+  try {
+    const parsed = new URL(redirectUrl);
+    return parsed.hostname === "127.0.0.1" && parsed.port
+      ? Number(parsed.port)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function startOAuthCallbackServerOnPort(
+  port: number,
+  appName: string,
+): Promise<OAuthCallbackServer> {
+  const expectedState: { value?: string } = {};
+  let server: Server;
+  let completed = false;
+  let settle: ((result: OAuthCallbackResult) => void) | undefined;
+  let reject: ((error: Error) => void) | undefined;
+  const callbackPromise = new Promise<OAuthCallbackResult>(
+    (resolve, rejectPromise) => {
+      settle = (result) => {
+        completed = true;
+        resolve(result);
+      };
+      reject = (error) => {
+        completed = true;
+        rejectPromise(error);
+      };
+    },
+  );
+  void callbackPromise.catch(() => undefined);
+
+  server = createServer((request, response) => {
+    if (
+      request.method !== "GET" ||
+      !request.url?.startsWith("/") ||
+      request.url.startsWith("//") ||
+      request.url.includes("\\")
+    ) {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid request target");
+      return;
+    }
+    const address = server.address();
+    const expectedHost =
+      address && typeof address !== "string"
+        ? `127.0.0.1:${address.port}`
+        : undefined;
+    if (!expectedHost || request.headers.host !== expectedHost) {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid callback host");
+      return;
+    }
+    let url: URL;
+    try {
+      url = new URL(request.url, `http://${expectedHost}`);
+    } catch {
+      response.writeHead(400, { "Content-Type": "text/plain" });
+      response.end("Invalid request target");
+      return;
+    }
+    if (
+      url.origin !== `http://${expectedHost}` ||
+      url.pathname !== "/callback"
+    ) {
+      response.writeHead(404).end("Not found");
+      return;
+    }
+    const error = url.searchParams.get("error");
+    const code = url.searchParams.get("code");
+    const state = url.searchParams.get("state");
+    const domain = url.searchParams.get("domain");
+    if (!state || state !== expectedState.value) {
+      response.writeHead(400, { "Content-Type": "text/html" });
+      response.end(
+        callbackPage(appName, "Authorization failed", "Invalid OAuth callback"),
+      );
+      return;
+    }
+    if (error) {
+      response.writeHead(400, { "Content-Type": "text/html" });
+      reject?.(new Error(`MCP OAuth authorization failed: ${error}`));
+      response.end(callbackPage(appName, "Authorization failed", error), () => {
+        void closeServer(true);
+      });
+      return;
+    }
+    if (!code) {
+      response.writeHead(400, { "Content-Type": "text/html" });
+      response.end(
+        callbackPage(
+          appName,
+          "Authorization failed",
+          "Missing authorization code",
+        ),
+      );
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "text/html" });
+    settle?.(domain ? { code, domain } : { code });
+    response.end(
+      callbackPage(
+        appName,
+        "Authorization complete",
+        `You can close this tab and return to ${appName}.`,
+      ),
+      () => {
+        void closeServer(true);
+      },
+    );
+  });
+  server.on("clientError", (_error, socket) => {
+    if (!socket.writable) return;
+    socket.end(
+      "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+    );
+  });
+
+  let serverClosing = false;
+  const closeServer = (force = false): void => {
+    if (serverClosing) return;
+    serverClosing = true;
+    server.close();
+    if (force) server.closeAllConnections();
+  };
+
+  await new Promise<void>((resolve, rejectListen) => {
+    server.once("error", rejectListen);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  server.unref();
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    server.close();
+    throw new Error("Could not start MCP OAuth callback server");
+  }
+  const timeout = setTimeout(() => {
+    reject?.(new Error("Timed out waiting for MCP OAuth authorization"));
+    void closeServer(true);
+  }, CALLBACK_TIMEOUT_MS);
+  timeout.unref();
+
+  return {
+    redirectUrl: `http://127.0.0.1:${address.port}/callback`,
+    expectedState,
+    waitForCallback: () => callbackPromise.finally(() => clearTimeout(timeout)),
+    close: () => {
+      clearTimeout(timeout);
+      if (!completed) reject?.(new Error("MCP OAuth flow was cancelled"));
+      closeServer(true);
+    },
+  };
+}
+
+function callbackPage(appName: string, title: string, message: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(`${title} - ${appName}`)}</title></head><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;",
+    };
+    return entities[character] ?? character;
+  });
+}

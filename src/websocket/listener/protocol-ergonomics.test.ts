@@ -9,6 +9,10 @@ import {
 } from "@/backend/backend-mode";
 import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "@/websocket/listener/connection";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
@@ -35,10 +39,21 @@ function makeHandler(
   sent: unknown[],
   overrides: Partial<Parameters<typeof createListenerMessageHandler>[0]> = {},
 ) {
+  const opts = overrides.opts ?? makeListenerOptions();
+  const socket =
+    overrides.socket ??
+    ({ readyState: 1, bufferedAmount: 0, send() {} } as unknown as WebSocket);
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: opts.connectionId,
+    writer: socket,
+    options: opts,
+  });
+  markListenerConnectionInitialized(runtime, opts.connectionId, connection);
   return createListenerMessageHandler({
     runtime,
-    socket: {} as WebSocket,
-    opts: makeListenerOptions(),
+    socket,
+    opts,
     processQueuedTurn: async () => {},
     fileCommandSession: { handle: () => false },
     getParsedRuntimeScope: () => null,

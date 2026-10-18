@@ -28,6 +28,10 @@ For remote subagents, set `computer` and pass source paths and destination conve
 
 If the user wants to connect a new computer, `letta teleport list` has no suitable target, or the requested local machine is missing or unreachable, read [Connect a computer for remote access](references/connect-a-computer-for-remote-access.md).
 
+## Keep active Monitors on their computer
+
+A Monitor belongs to the computer where it started. While this conversation has an active Monitor, use a subagent on the requested computer instead of teleporting the parent conversation. If the user explicitly insists on moving the parent conversation, explain that they must stop the Monitor before teleporting the parent conversation; do not retry teleport while the Monitor remains active.
+
 ## Move this conversation
 
 **Run the teleport handoff alone as the final tool call.** After success, do not poll or run more source-side tools; the same conversation resumes at the destination automatically. Set the working directory and check required setup there. If teleport fails, stay on the source and resolve the error before retrying. The Cloud sandbox remains available while you work elsewhere.
@@ -92,3 +96,14 @@ letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 - Download sources must be under `/root/downloads`; `--to` selects the destination path on the receiving computer. Without `--to`, download saves under the source file's basename.
 - Transfer files directly, not as base64 or file contents through model messages. Return the path and destination IDs; verify received contents or checksums.
 - These commands transfer files to/from Cloud sandboxes, not arbitrary remote filesystems. No sandbox ID or separate wake command is needed.
+
+## Share a live view of a Cloud sandbox desktop
+
+When someone outside chat (Slack, email, a teammate) needs to watch or drive the sandbox desktop, mint a viewer link:
+
+```bash
+letta sandbox desktop-link                          # this conversation's sandbox
+letta sandbox desktop-link --conversation <conv-id> # another Cloud conversation
+```
+
+It prints `{ url, expiresAt }`. The URL opens the desktop in a browser tab with no sign-in. Anyone holding it can view and control the desktop until `expiresAt` (about one hour), so hand it to the person who asked, in a private message or thread, and say when it expires. Mint a new one if it lapses. The sandbox must be a ready Linux VM with desktop support; the command reports the server's error otherwise.

@@ -2,6 +2,49 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import {
+  filterStructuredOutputRows,
+  structuredOutputSupport,
+} from "@/cli/subcommands/model";
+
+test("a BYOK model's capability overrides a matching hosted preset", () => {
+  const preset = {
+    id: "preset",
+    handle: "openai/example",
+    label: "Example",
+    description: "",
+    supportsStructuredOutputs: true,
+  };
+  expect(structuredOutputSupport(preset, new Map())).toBe(true);
+  expect(
+    structuredOutputSupport(preset, new Map([[preset.handle, false]])),
+  ).toBe(false);
+  expect(
+    structuredOutputSupport(preset, new Map([[preset.handle, undefined]])),
+  ).toBeNull();
+  expect(
+    structuredOutputSupport(
+      { ...preset, supportsStructuredOutputs: false },
+      new Map([[preset.handle, true]]),
+    ),
+  ).toBe(true);
+});
+
+test("the structured-output filter keeps only explicit support", () => {
+  const supported = {
+    handle: "supported",
+    supports_structured_outputs: true,
+  };
+  const rows = [
+    supported,
+    { handle: "unsupported", supports_structured_outputs: false },
+    { handle: "not-reported", supports_structured_outputs: null },
+  ];
+  expect(filterStructuredOutputRows(rows)).toEqual({
+    supported: [supported],
+    unknownCount: 1,
+  });
+});
 
 // Real CLI subprocesses and disk-backed local backend; no inference or mocks.
 describe("model CLI", () => {
@@ -200,9 +243,33 @@ describe("model CLI", () => {
       ["list", "--byok", "--hosted"],
       ["get", "--byok"],
       ["set", nextModel, "--hosted"],
+      ["get", "--structured-outputs"],
+      ["set", nextModel, "--structured-outputs"],
     ]) {
       const result = await cli(args);
       expect(result.code, result.stderr).toBe(1);
+    }
+  }, 30000);
+
+  test("does not silently hide local models without capability metadata", async () => {
+    const listed = await cli(["list"]);
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(JSON.parse(listed.stdout)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ supports_structured_outputs: null }),
+      ]),
+    );
+
+    for (const flags of [
+      ["--structured-outputs"],
+      ["--byok", "--structured-outputs"],
+    ]) {
+      const result = await cli(["list", ...flags]);
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "Structured-output support is unavailable",
+      );
     }
   }, 30000);
 
@@ -526,6 +593,119 @@ describe("model CLI", () => {
     const result = await cli(["set-model", nextModel], {}, "agents");
     expect(result.code).toBe(1);
     expect(await config()).toEqual(before);
+  }, 30000);
+
+  test.each(["agent", "conversation"])(
+    "--model-settings merges into the %s without changing the model",
+    async (scope) => {
+      const target =
+        scope === "agent"
+          ? ["--agent", otherAgentId]
+          : ["--conversation", conversationId];
+      const seeded = await run([
+        "-e",
+        `
+      import { configureBackendMode, getBackend } from "./src/backend/backend";
+      configureBackendMode("local");
+      const backend = getBackend();
+      const agent = ${JSON.stringify(scope)} === "agent";
+      const id = agent ? ${JSON.stringify(otherAgentId)} : ${JSON.stringify(conversationId)};
+      const entity = agent ? await backend.retrieveAgent(id) : await backend.retrieveConversation(id);
+      const patch = { model_settings: { ...entity.model_settings,
+        temperature: 0.42, max_output_tokens: 1000, api_key: "merge-test-only" } };
+      if (agent) await backend.updateAgent(id, patch); else await backend.updateConversation(id, patch);
+    `,
+      ]);
+      expect(seeded.code, seeded.stderr).toBe(0);
+      const before = await config(target);
+      const otherScope = await config(
+        scope === "agent" ? ["--agent", agentId] : ["--agent", otherAgentId],
+      );
+      // No handle: only the given fields change, from a separate CLI process.
+      const result = await cli([
+        "set",
+        "--model-settings",
+        '{"max_output_tokens":16384,"parallel_tool_calls":false}',
+        ...target,
+      ]);
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stdout).not.toContain("merge-test-only");
+      const after = await config(target);
+      expect(after.effective.scope).toBe(scope);
+      expect(after.effective.model).toBe(before.effective.model);
+      expect(after.effective.context_window_limit).toBe(
+        before.effective.context_window_limit,
+      );
+      expect(after.effective.model_settings).toEqual({
+        ...before.effective.model_settings,
+        max_output_tokens: 16384,
+        parallel_tool_calls: false,
+      });
+      expect(after.effective.model_settings.temperature).toBe(0.42);
+      // The other scope is untouched.
+      expect(
+        await config(
+          scope === "agent" ? ["--agent", agentId] : ["--agent", otherAgentId],
+        ),
+      ).toEqual(otherScope);
+      const got = await cli(["get", ...target]);
+      expect(got.code, got.stderr).toBe(0);
+      expect(JSON.parse(got.stdout).model_settings.max_output_tokens).toBe(
+        16384,
+      );
+      // Unredacted secret survives the merge on disk.
+      const secret = await run([
+        "-e",
+        `
+      import { configureBackendMode, getBackend } from "./src/backend/backend";
+      configureBackendMode("local");
+      const backend = getBackend();
+      const entity = ${JSON.stringify(scope)} === "agent"
+        ? await backend.retrieveAgent(${JSON.stringify(otherAgentId)})
+        : await backend.retrieveConversation(${JSON.stringify(conversationId)});
+      console.log(entity.model_settings.api_key === "merge-test-only");
+    `,
+      ]);
+      expect(secret.code, secret.stderr).toBe(0);
+      expect(secret.stdout.trim()).toBe("true");
+    },
+    30000,
+  );
+
+  test("--model-settings applies after a model selection", async () => {
+    const target = ["--agent", otherAgentId];
+    const result = await cli([
+      "set",
+      initialModel,
+      "--model-settings",
+      '{"max_output_tokens":2048}',
+      ...target,
+    ]);
+    expect(result.code, result.stderr).toBe(0);
+    const after = await config(target);
+    expect(after.effective.model).toBe(initialModel);
+    expect(after.effective.model_settings.max_output_tokens).toBe(2048);
+    expect(after.effective.model_settings.provider_type).toBe("openai");
+  }, 30000);
+
+  test.each([["not json"], ["[1,2]"], ["null"], ["42"], ['"text"']])(
+    "rejects non-object --model-settings without writing: %s",
+    async (raw) => {
+      const before = await config();
+      const beforeAgent = await config(["--agent", otherAgentId]);
+      const result = await cli(["set", "--model-settings", raw]);
+      expect(result.code).toBe(1);
+      expect(result.stderr).toContain("--model-settings must be a JSON object");
+      expect(await config()).toEqual(before);
+      expect(await config(["--agent", otherAgentId])).toEqual(beforeAgent);
+    },
+    30000,
+  );
+
+  test("--model-settings is rejected outside model set", async () => {
+    const result = await cli(["get", "--model-settings", "{}"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("only supported by model set");
   }, 30000);
 
   test("requires a target when session identifiers are absent", async () => {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { settingsManager } from "@/settings-manager";
 import { type TelemetrySurface, telemetry } from "@/telemetry";
+import { MAX_QUEUED_EVENTS } from "./event-queue";
 
 type TelemetryTestState = {
   events: unknown[];
@@ -138,6 +139,127 @@ describe("telemetry flush batching", () => {
 
     // 500 → submitTelemetryMetadata throws → performFlush re-queues.
     expect(telemetryState.events).toHaveLength(1);
+  });
+
+  test("permanent 4xx rejection drops the failed group instead of re-queueing it", async () => {
+    // Letta Cloud's schema rejects channel_gateway_lifecycle with HTTP 400; a
+    // re-queued copy would fail every later batch for the same acting user.
+    const sentTypes: string[][] = [];
+    const fetchMock = mock(
+      async (_url: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          events: { type: string }[];
+        };
+        const types = body.events.map((event) => event.type);
+        sentTypes.push(types);
+        return new Response(null, {
+          status: types.includes("channel_gateway_lifecycle") ? 400 : 200,
+        });
+      },
+    );
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    telemetry.trackChannelGatewayLifecycle({
+      lifecycle_event: "exit",
+      restart_attempt: 0,
+      max_restart_attempts: 5,
+      restore_mode: "enabled_accounts",
+      channel_types: ["telegram"],
+      exit_code: 1,
+    });
+    await telemetry.flush();
+    expect(telemetryState.events).toHaveLength(0);
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+    await telemetry.flush();
+
+    // The rejected event is never re-sent, so the next batch is delivered.
+    expect(sentTypes).toEqual([["channel_gateway_lifecycle"], ["user_input"]]);
+    expect(telemetryState.events).toHaveLength(0);
+  });
+
+  test.each([
+    [
+      "network error",
+      async (): Promise<Response> => {
+        throw new TypeError("fetch failed");
+      },
+    ],
+    [
+      "timeout",
+      async (): Promise<Response> => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    ],
+    ["HTTP 408", async () => new Response(null, { status: 408 })],
+    ["HTTP 429", async () => new Response(null, { status: 429 })],
+    ["HTTP 503", async () => new Response(null, { status: 503 })],
+  ])(
+    "transient failure (%s) still re-queues the group",
+    async (_label, respond) => {
+      const fetchMock = mock(respond);
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      telemetry.trackUserInput("hello", "user", "model-1");
+      const queued = [...telemetryState.events];
+
+      await telemetry.flush();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(telemetryState.events).toEqual(queued);
+    },
+  );
+
+  test("failed flush re-queue is capped at MAX_QUEUED_EVENTS, oldest dropped", async () => {
+    const fetchMock = mock(async () => new Response(null, { status: 500 }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    // Simulate a long-unreachable endpoint: the queue has grown past the cap
+    // by the time the next failed batch is re-queued.
+    const overflow = 10;
+    telemetryState.events = Array.from(
+      { length: MAX_QUEUED_EVENTS + overflow },
+      (_, i) => ({
+        type: "tool_usage",
+        timestamp: new Date().toISOString(),
+        data: { seq: i },
+      }),
+    );
+
+    await telemetry.flush();
+
+    const events = telemetryState.events as { data: { seq: number } }[];
+    expect(events).toHaveLength(MAX_QUEUED_EVENTS);
+    // The oldest events were dropped; re-queued order is otherwise preserved.
+    expect(events[0]?.data.seq).toBe(overflow);
+    expect(events[events.length - 1]?.data.seq).toBe(
+      MAX_QUEUED_EVENTS + overflow - 1,
+    );
+  });
+
+  test("track drops the oldest event when the queue is already at the cap", () => {
+    // Park a never-resolving flush so track()'s batch-size trigger returns
+    // the in-flight promise instead of draining the queue mid-assertion.
+    telemetryState.inflightFlush = new Promise<void>(() => {});
+
+    telemetryState.events = Array.from(
+      { length: MAX_QUEUED_EVENTS },
+      (_, i) => ({
+        type: "tool_usage",
+        timestamp: new Date().toISOString(),
+        data: { seq: i },
+      }),
+    );
+
+    telemetry.trackUserInput("hello", "user", "model-1");
+
+    const events = telemetryState.events as {
+      type: string;
+      data: { seq?: number };
+    }[];
+    expect(events).toHaveLength(MAX_QUEUED_EVENTS);
+    expect(events[0]?.data.seq).toBe(1); // oldest dropped
+    expect(events[events.length - 1]?.type).toBe("user_input"); // newest kept
   });
 });
 

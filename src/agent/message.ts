@@ -3,6 +3,7 @@
  **/
 
 import { Buffer } from "node:buffer";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -13,7 +14,9 @@ import type { MessageCreateParams as ConversationMessageCreateParams } from "@le
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -22,8 +25,10 @@ import {
   waitForToolsetReady,
 } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { scrubOutgoingMessageContent } from "@/tools/secret-substitution";
 import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { ImageWorkerMissingError } from "@/utils/image-resize";
 import {
   assertSupportedBase64ImageMediaTypes,
   type ImageFailureModesByMessageOtid,
@@ -275,8 +280,10 @@ export type SendMessageStreamOptions = {
    * Set by the listener after reading
    * `runtime.acting_user_id` from cloud's status WS frame; absent
    * for self-hosted / single-user / pre-channel-split flows.
+   * Pass `null` when a queued system/unattributed input must explicitly suppress
+   * an actor inherited from the execution context or process environment.
    */
-  actingUserId?: string;
+  actingUserId?: string | null;
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -379,12 +386,34 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
-  const normalizedMessages = await normalizeMessageImageParts(
-    canonicalMessages,
-    {
+  // Scrub vault and ambient secret values from outgoing message text before
+  // they enter the conversation transcript. ApprovalCreate carries tool-call
+  // payloads, not user text, and has no `role` field — so `role` presence
+  // discriminates the union.
+  const scrubbedMessages = canonicalMessages.map((message) => {
+    if (!("role" in message) || message.role !== "user") {
+      return message;
+    }
+    return {
+      ...message,
+      content: scrubOutgoingMessageContent(message.content, opts.agentId),
+    };
+  });
+  let normalizedMessages: Array<MessageCreate | ApprovalCreate>;
+  try {
+    normalizedMessages = await normalizeMessageImageParts(scrubbedMessages, {
       failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
-    },
-  );
+    });
+  } catch (error) {
+    if (error instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error,
+        context: "send_message_image_normalization",
+      });
+    }
+    throw error;
+  }
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
@@ -434,16 +463,20 @@ export async function sendMessageStreamWithBackend(
   // Deliver at the next model boundary (including tool continuations), not by
   // launching an unsolicited run from a filesystem watcher. Keep approvals and
   // the original input/otid in place, then append the runtime reminder.
-  const requestMessages = skillReminder
-    ? [
-        ...normalizedMessages,
-        {
-          type: "message" as const,
-          role: "user" as const,
-          content: skillReminder,
-        },
-      ]
-    : normalizedMessages;
+  // A low-disk alert held for a loop with no queue (e.g. a subagent) rides
+  // this same boundary.
+  const diskReminder = takePendingDiskSpaceReminder();
+  const runtimeReminders = [skillReminder, diskReminder].filter(
+    (text): text is string => Boolean(text),
+  );
+  const requestMessages = [
+    ...normalizedMessages,
+    ...runtimeReminders.map((content) => ({
+      type: "message" as const,
+      role: "user" as const,
+      content,
+    })),
+  ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
@@ -453,7 +486,7 @@ export async function sendMessageStreamWithBackend(
   const canUsePreviousResponseState =
     isApprovalContinuation &&
     opts.allowResponseStateReuse === true &&
-    !skillReminder;
+    runtimeReminders.length === 0;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
@@ -496,10 +529,12 @@ export async function sendMessageStreamWithBackend(
   }
 
   const actingUserId =
-    opts.actingUserId ??
-    executionRuntimeContext?.actingUserId ??
-    getRuntimeContext()?.actingUserId ??
-    process.env[ACTING_USER_ID_ENV];
+    opts.actingUserId === null
+      ? undefined
+      : (opts.actingUserId ??
+        executionRuntimeContext?.actingUserId ??
+        getRuntimeContext()?.actingUserId ??
+        process.env[ACTING_USER_ID_ENV]);
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
@@ -603,7 +638,11 @@ export async function sendMessageStreamWithBackend(
           );
         } catch (abortError) {
           abortRelay?.cleanup();
-          throw abortError;
+          // Classify the interrupt as a user abort so callers unwind silently
+          // instead of reporting a stream error and clearing queued work.
+          throw abortError instanceof APIUserAbortError
+            ? abortError
+            : new APIUserAbortError();
         }
         continue;
       }

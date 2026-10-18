@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { clearModTools, registerModTool } from "@/mods/tool-registry";
 import {
   createSdkSpawner,
-  DEFAULT_ALLOWED_TOOLS,
   DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
   parseJsonReply,
   type SdkSpawnerConfig,
@@ -111,6 +111,21 @@ describe("parseJsonReply", () => {
 });
 
 describe("createSdkSpawner", () => {
+  test("records the worker ID from the SDK's first loop_status event", async () => {
+    const started: string[] = [];
+    const client = fakeClient([
+      { type: "loop_status" },
+      { type: "queue_update" },
+      { type: "result", success: true, result: "done" },
+    ]);
+    await createSdkSpawner(client, CONFIG)(
+      request(),
+      new AbortController().signal,
+      { onStarted: (id) => started.push(id) },
+    );
+    expect(started).toEqual(["conv-worker"]);
+  });
+
   test("passes parent lineage, defaults, and per-call options to query()", async () => {
     const client = fakeClient([
       { type: "result", success: true, result: "done" },
@@ -118,6 +133,9 @@ describe("createSdkSpawner", () => {
     const outcome = await createSdkSpawner(client, {
       ...CONFIG,
       cwd: "/repo",
+      permissionMode: "strict",
+      parentModelSettings: { temperature: 0.2, reasoning_effort: "medium" },
+      parentContextWindowLimit: 64_000,
     })(
       request({
         label: "review:a",
@@ -138,29 +156,158 @@ describe("createSdkSpawner", () => {
       parentAgentId: "agent-parent",
       isSubagent: true,
       name: "review:a",
-      permissionMode: "unrestricted",
+      permissionMode: "strict",
       allowedTools: ["Read"],
+      toolset: { base: "none", include: ["Read"] },
       skillSources: [],
       cwd: "/repo",
-      modelSettings: { reasoning_effort: "low" },
+      modelSettings: { temperature: 0.2, reasoning_effort: "low" },
+      contextWindowLimit: 64_000,
+      disableMemoryGuard: true,
     });
     expect(String(client.calls[0]?.options.system)).toContain(
       "Only look at src/.",
     );
   });
 
-  test("defaults to read-only tools and a numbered worker name", async () => {
+  test("requests guard bypass for every SDK worker without changing parent settings", async () => {
+    const client = fakeClient([{ type: "result", success: true, result: "" }]);
+    const spawner = createSdkSpawner(client, CONFIG);
+    await spawner(request(), new AbortController().signal);
+    await spawner(
+      request({ label: "second worker" }),
+      new AbortController().signal,
+    );
+    expect(client.calls.map((call) => call.options.disableMemoryGuard)).toEqual(
+      [true, true],
+    );
+    expect(client.calls[0]?.options.env).toBeUndefined();
+  });
+
+  test("leaves tools and permission mode to the harness when no parent snapshot exists", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     await createSdkSpawner(client, CONFIG)(
       { ...request(), callIndex: 4 },
       new AbortController().signal,
     );
     expect(client.calls[0]?.options).toMatchObject({
-      allowedTools: DEFAULT_ALLOWED_TOOLS,
       name: "Workflow worker 5",
     });
+    expect(client.calls[0]?.options.allowedTools).toBeUndefined();
+    expect(client.calls[0]?.options.permissionMode).toBeUndefined();
   });
 
+  test("inherits parent write tools and honors workflow, per-call, and empty allowlists", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "done" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      permissionMode: "acceptEdits",
+      parentToolNames: ["Read", "Write", "Grep", "agent_x", "channel_x"],
+      agentScopedToolNames: ["agent_x"],
+    });
+    for (const options of [
+      {},
+      { allowedTools: ["Read", "Grep"] },
+      { allowedTools: [] },
+    ]) {
+      await spawner(request(options), new AbortController().signal);
+    }
+    expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
+      ["Read", "Write", "Grep"],
+      ["Read", "Grep"],
+      [],
+    ]);
+    expect(client.calls.map((call) => call.options.toolset)).toEqual([
+      {
+        base: "none",
+        include: ["Read", "Write", "Grep"],
+      },
+      { base: "none", include: ["Read", "Grep"] },
+      { base: "none", include: [] },
+    ]);
+    expect(
+      client.calls.every(
+        (call) => call.options.permissionMode === "acceptEdits",
+      ),
+    ).toBe(true);
+  });
+
+  test("passes a mod-tool-only allowlist to the worker client-tool filter", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "done" },
+    ]);
+    const activation = new AbortController();
+    registerModTool({
+      activationSignal: activation.signal,
+      approvalPolicy: "auto",
+      description: "Issue 4960 reproduction tool",
+      name: "council_web_search",
+      parallelSafe: true,
+      parameters: { type: "object", properties: {} },
+      path: "/tmp/council-web-search.ts",
+      requiresApproval: false,
+      run: () => "result",
+    });
+    try {
+      const spawner = createSdkSpawner(client, {
+        ...CONFIG,
+        parentToolNames: ["Read", "Grep", "council_web_search"],
+      });
+      await spawner(
+        request({ allowedTools: ["council_web_search"] }),
+        new AbortController().signal,
+      );
+      expect(client.calls[0]?.options.allowedTools).toEqual([
+        "council_web_search",
+      ]);
+      expect(client.calls[0]?.options.toolset).toEqual({
+        base: "none",
+        include: [],
+      });
+    } finally {
+      activation.abort();
+      clearModTools();
+    }
+  });
+
+  test("rejects an agent-scoped parent tool unavailable to workers", async () => {
+    const client = fakeClient([]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      parentToolNames: ["Read", "agent_lookup"],
+      agentScopedToolNames: ["agent_lookup"],
+    });
+    await expect(
+      spawner(
+        request({ allowedTools: ["agent_lookup"] }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      'Workflow worker tool "agent_lookup" is agent-scoped and is not available to workflow workers.',
+    );
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("rejects an allowlisted tool absent from bundled and global mods", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      parentToolNames: ["Read", "council_web_search"],
+    });
+    await expect(
+      spawner(
+        request({ allowedTools: ["missing_tool"] }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      'Unknown workflow worker tool "missing_tool": it is neither a bundled tool nor a global mod tool available to workflow workers.',
+    );
+    expect(client.calls).toHaveLength(0);
+  });
   test("resolves per-call model aliases and fails unknown ones before querying", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     const spawner = createSdkSpawner(client, CONFIG);
@@ -173,6 +320,242 @@ describe("createSdkSpawner", () => {
     expect(unknown.failed).toBe(true);
     expect(unknown.error).toContain("letta model list");
     expect(client.calls).toHaveLength(1);
+  });
+
+  test("continuation is gated before SDK query on an unverified release", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    await expect(
+      createSdkSpawner(client, CONFIG)(
+        request({ conversationId: "conv-worker" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("requires an Agent SDK release");
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("continues only an authorized agent-free worker on its persisted model", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "continued" },
+    ]);
+    const lookup = async () => ({
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      model: "anthropic/claude-sonnet-5",
+    });
+    const config = {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: lookup,
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    };
+    const outcome = await createSdkSpawner(client, config)(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: "continued",
+      failed: false,
+      conversationId: "conv-worker",
+    });
+    expect(client.calls[0]?.options).toMatchObject({
+      conversationId: "conv-worker",
+      model: "anthropic/claude-sonnet-5",
+      parentAgentId: "agent-parent",
+    });
+    for (const conversation of [
+      { agent_id: "agent-child", parent_agent_id: "agent-parent", model: "x" },
+      { agent_id: null, parent_agent_id: "agent-other", model: "x" },
+      { agent_id: null, parent_agent_id: "agent-parent", model: null },
+    ]) {
+      await expect(
+        createSdkSpawner(client, {
+          ...config,
+          retrieveConversation: async () => conversation,
+        })(
+          request({ conversationId: "conv-worker" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+    }
+    expect(client.calls).toHaveLength(1);
+  });
+
+  test("rejects creation-only system and mismatched model overrides", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: "anthropic/claude-sonnet-5",
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    });
+    for (const options of [{ model: "nope" }, { systemPrompt: "replace" }]) {
+      await expect(
+        spawner(
+          request({ conversationId: "conv-worker", ...options }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow();
+    }
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("fails closed on a nonterminal or unknown latest run", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    for (const status of ["RUN", "QUE", "UNKNOWN"]) {
+      const spawner = createSdkSpawner(client, {
+        ...CONFIG,
+        supportsAgentFreeResume: true,
+        retrieveConversation: async () => ({
+          agent_id: null,
+          parent_agent_id: "agent-parent",
+          model: CONFIG.model,
+        }),
+        latestRun: async () => ({
+          id: "run-one",
+          conversation_id: "conv-worker",
+          status,
+          completed_at: null,
+        }),
+      });
+      await expect(
+        spawner(
+          request({ conversationId: "conv-worker" }),
+          new AbortController().signal,
+        ),
+      ).rejects.toThrow("Cannot confirm");
+    }
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("continues a timed-out worker from a new spawner once its persisted run is terminal", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "duplicate" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      allowedTools: ["Read", "Write"],
+      permissionMode: "standard",
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "completed",
+        completed_at: "now",
+      }),
+    });
+    const outcome = await spawner(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      value: "duplicate",
+      conversationId: "conv-worker",
+    });
+    expect(client.calls[0]?.options.allowedTools).toEqual(["Read", "Write"]);
+    expect(client.calls[0]?.options.permissionMode).toBe("standard");
+  });
+
+  test("applies explicit per-turn schema and no-tools configuration on continuation", async () => {
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+    const client = fakeClient([
+      { type: "result", success: true, structuredOutput: { ok: true } },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      supportsAgentFreeResume: true,
+      retrieveConversation: async () => ({
+        agent_id: null,
+        parent_agent_id: "agent-parent",
+        model: CONFIG.model,
+      }),
+      latestRun: async () => ({
+        id: "run-one",
+        conversation_id: "conv-worker",
+        status: "failed",
+        completed_at: "now",
+      }),
+    });
+    const outcome = await spawner(
+      request({ conversationId: "conv-worker", schema, allowedTools: [] }),
+      new AbortController().signal,
+    );
+    expect(outcome.value).toEqual({ ok: true });
+    expect(client.calls[0]?.options).toMatchObject({
+      allowedTools: [],
+      outputFormat: { type: "json_schema", schema },
+    });
+  });
+
+  test("schema returns the validated SDK value and takes precedence over json", async () => {
+    const schema = {
+      type: "object",
+      required: ["findings"],
+      properties: {
+        findings: { type: "array", items: { type: "string" } },
+      },
+    };
+    const client = fakeClient([
+      {
+        type: "result",
+        success: true,
+        result: '{"bugs":["wrong shape"]}',
+        structuredOutput: { findings: ["real"] },
+      },
+    ]);
+    const result = await createSdkSpawner(client, CONFIG)(
+      request({ schema, json: true }),
+      new AbortController().signal,
+    );
+    expect(result.value).toEqual({ findings: ["real"] });
+    expect(client.calls[0]?.options).toMatchObject({
+      outputFormat: { type: "json_schema", schema },
+    });
+    expect(client.calls[0]?.options.system).not.toContain("single JSON value");
+  });
+
+  test("schema exhaustion records validation detail as a failed outcome", async () => {
+    const client = fakeClient([
+      {
+        type: "result",
+        success: false,
+        errorCode: "structured_output_error",
+        errorDetail: "missing required property findings",
+      },
+    ]);
+    const result = await createSdkSpawner(client, CONFIG)(
+      request({ schema: { type: "object", required: ["findings"] } }),
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({
+      value: null,
+      failed: true,
+      error: "missing required property findings",
+    });
   });
 
   test("json option parses the reply and fails on non-JSON", async () => {
@@ -223,6 +606,76 @@ describe("createSdkSpawner", () => {
     );
     expect(stopped.failed).toBe(true);
     expect(stopped.totalTokens).toBe(700);
+  });
+
+  test("reports cumulative usage live through the onUsage hook", async () => {
+    const usage = (total: number) => ({
+      type: "stream_event",
+      event: { message_type: "usage_statistics", total_tokens: total },
+    });
+    const seen: number[] = [];
+    const outcome = await createSdkSpawner(
+      fakeClient([
+        usage(1_000),
+        usage(2_500),
+        { type: "result", success: true, result: "ok" },
+      ]),
+      CONFIG,
+    )(request(), new AbortController().signal, {
+      onUsage: (total) => seen.push(total),
+    });
+    expect(seen).toEqual([1_000, 3_500]);
+    expect(outcome.totalTokens).toBe(3_500);
+  });
+
+  test("ignores usage arriving after an interrupted agent has settled", async () => {
+    let releaseLate!: () => void;
+    const late = new Promise<void>((resolve) => {
+      releaseLate = resolve;
+    });
+    let firstUsage!: () => void;
+    const first = new Promise<void>((resolve) => {
+      firstUsage = resolve;
+    });
+    let drained!: () => void;
+    const drainFinished = new Promise<void>((resolve) => {
+      drained = resolve;
+    });
+    const usage = (tokens: number): SdkStreamMessage => ({
+      type: "stream_event",
+      event: { message_type: "usage_statistics", total_tokens: tokens },
+    });
+    const query: SdkQuery = {
+      conversationId: "conv-worker",
+      agentId: null,
+      async *[Symbol.asyncIterator]() {
+        yield usage(100);
+        await late;
+        yield usage(200);
+        drained();
+      },
+      async interrupt() {},
+      close() {},
+    };
+    const controller = new AbortController();
+    const seen: number[] = [];
+    const pending = createSdkSpawner({ query: () => query }, CONFIG)(
+      request(),
+      controller.signal,
+      {
+        onUsage(tokens) {
+          seen.push(tokens);
+          firstUsage();
+        },
+      },
+    );
+    await first;
+    controller.abort();
+    const outcome = await pending;
+    expect(outcome).toMatchObject({ failed: true, totalTokens: 100 });
+    releaseLate();
+    await drainFinished;
+    expect(seen).toEqual([100]);
   });
 
   test("falls back to streamed assistant text and reports turn failures", async () => {

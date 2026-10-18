@@ -6,9 +6,13 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugLog } from "@/utils/debug.js";
 import { expandFilePath } from "@/utils/file-path";
-import { resizeImageIfNeeded } from "@/utils/image-resize.js";
+import {
+  ImageWorkerMissingError,
+  resizeImageIfNeeded,
+} from "@/utils/image-resize.js";
 import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
@@ -70,6 +74,13 @@ async function readImageFile(
   try {
     result = await resizeImageIfNeeded(buffer, mediaType);
   } catch (error) {
+    if (error instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error,
+        context: "read_tool_image",
+      });
+    }
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read image file: ${filePath} (${detail})`);
   }

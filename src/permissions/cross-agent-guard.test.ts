@@ -233,16 +233,6 @@ describe("extractTargetAgentPaths", () => {
     expect(result.anyAgentScoped).toBe(true);
   });
 
-  test("memory_apply_patch behaves like ApplyPatch", () => {
-    const patch = `*** Begin Patch\n*** Update File: ${otherMemory("system/x.md")}\n*** End Patch`;
-    const result = extractTargetAgentPaths(
-      "memory_apply_patch",
-      { input: patch },
-      "/tmp",
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
-  });
-
   test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
     // Shell command analysis was removed: spawned shells run inside the kernel
     // filesystem sandbox, so the guard no longer tokenizes shell commands.
@@ -615,9 +605,9 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("ListDir on the agents tree is denied (ListDir is recursive-like for our purposes)", () => {
+  test("LS cannot enumerate the agents tree", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
+      "LS",
       { path: agentsTreeRoot },
       "/tmp",
     );
@@ -828,8 +818,11 @@ describe("local-backend memfs tree", () => {
 
   test("enumerating the local memfs tree root is denied", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
-      { path: join(HOME, ".letta", "lc-local-backend", "memfs") },
+      "Glob",
+      {
+        pattern: "**/*",
+        path: join(HOME, ".letta", "lc-local-backend", "memfs"),
+      },
       "/tmp",
     );
     expect(result).not.toBeNull();

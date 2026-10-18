@@ -19,7 +19,7 @@ import { createRuntime } from "./lifecycle";
 import { setActiveRuntime } from "./runtime";
 import {
   claimPendingTeleportAtBoundary,
-  finishPendingTeleport,
+  finishDrainedTeleport,
   handleTeleportRequest,
   isRuntimeTeleportPending,
 } from "./teleport";
@@ -267,19 +267,22 @@ for (const boundary of ["idle", "active", "drained"] as const) {
           expect(store.read(agentId, conversationId)).toEqual(saved);
           if (boundary === "drained") {
             expect(runtime.queueRuntime.length).toBe(1);
-            runtime.turnLifecycle.finish(lease, "end_turn");
-            finishPendingTeleport(runtime);
+            finishDrainedTeleport(runtime, () =>
+              runtime.turnLifecycle.finish(lease, "end_turn"),
+            );
             expect(runtime.queueRuntime.length).toBe(1);
             runtime.queueRuntime.consumeItems(1);
             const queuedLease = runtime.turnLifecycle.begin({
               origin: "message",
               workingDirectory: process.cwd(),
             });
-            runtime.turnLifecycle.finish(queuedLease, "end_turn");
-            finishPendingTeleport(runtime);
+            finishDrainedTeleport(runtime, () =>
+              runtime.turnLifecycle.finish(queuedLease, "end_turn"),
+            );
           } else {
-            runtime.turnLifecycle.finish(lease, "end_turn");
-            finishPendingTeleport(runtime);
+            finishDrainedTeleport(runtime, () =>
+              runtime.turnLifecycle.finish(lease, "end_turn"),
+            );
           }
         }
         expect(store.read(agentId, conversationId)).toEqual(saved);

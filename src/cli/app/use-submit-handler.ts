@@ -73,7 +73,6 @@ import {
   buildReflectionArenaChoiceQuestions,
   finalizeReflectionArenaChoice,
   formatReflectionArenaAwaitingChoice,
-  launchReflectionArena,
   loadReflectionArenaRun,
   REFLECTION_ARENA_MODEL_A_DEFAULT,
   type ReflectionArenaChoice,
@@ -81,6 +80,7 @@ import {
   sampleReflectionArenaComparisonModel,
   startReflectionArenaRun,
 } from "@/cli/helpers/reflection-arena";
+import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import { finalizeMultiReflectionCompletion } from "@/cli/helpers/reflection-completion";
 import {
   AUTO_REFLECTION_DESCRIPTION,
@@ -99,12 +99,14 @@ import {
   buildReflectionSelectorPrompt,
   readReflectionAutoSelection,
 } from "@/cli/helpers/reflection-transcript";
+import { renameConvo } from "@/cli/helpers/rename-conversation-target";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import {
   estimateSystemTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning.ts";
 import { getRandomThinkingVerb } from "@/cli/helpers/thinking-messages";
+import { tuiSubmitClientPreferences } from "@/cli/helpers/tui-client-preferences";
 import {
   buildModCommandPrompt,
   parseModCommandArgv,
@@ -154,11 +156,12 @@ import {
 } from "./command-routing";
 import { buildTextParts } from "./content-parts";
 import { appendOptimisticUserLine, createClientOtid, uid } from "./ids";
-import { saveLastSessionBeforeExit } from "./session";
+import { prepareSessionExit } from "./session";
 import { handleConnectionCommand } from "./submit-connection-commands";
 import { handleDiagnosticsCommand } from "./submit-diagnostics-commands";
 import { handleNavigationCommand } from "./submit-navigation-commands";
 import { handleProfileCommand } from "./submit-profile-commands";
+import { bindTuiClientPreferences, buildTuiTurnInput } from "./turn-input";
 import type {
   ActiveOverlay,
   AppCommandRunner,
@@ -519,7 +522,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
     pendingConversationSwitchRef,
     pendingGitReminderRef,
     processConversation,
-    processConversationWithQueuedApprovals,
     profileConfirmPending,
     projectDirectory,
     queuedApprovalResults,
@@ -582,7 +584,10 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: moved from AppCoordinator; dependencies are preserved from the original callback.
   const onSubmit = useCallback(
-    async (message?: string): Promise<{ submitted: boolean }> => {
+    async (
+      message?: string,
+      submitOptions?: { userInitiated: boolean },
+    ): Promise<{ submitted: boolean }> => {
       const commandScope = {
         agentId: agentIdRef.current,
         conversationId: conversationIdRef.current,
@@ -599,6 +604,14 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       const routedUserText = aliasBareExitCommand(userTextForInput);
       const isSystemOnly =
         taskNotifications.length > 0 && userTextForInput.length === 0;
+      const clientPreferences = tuiSubmitClientPreferences(
+        isSystemOnly,
+        submitOptions,
+      );
+      const processConversationWithQueuedApprovals = bindTuiClientPreferences(
+        ctx.processConversationWithQueuedApprovals,
+        clientPreferences,
+      );
 
       // Handle profile load confirmation (Enter to continue)
       if (profileConfirmPending && !msg && !hasOverrideContent) {
@@ -1584,7 +1597,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
               await revokeToken(currentSettings.refreshToken);
             }
 
-            // Clear all credentials including secrets
+            (await import("@/agent/organization-id")).clearOrganizationId();
             await settingsManager.logout();
 
             // Logged out while already using a local agent → stay in place.
@@ -1603,7 +1616,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
 
             cmd.finish(buildLogoutSuccessMessage(hasEnvApiKey), true);
 
-            saveLastSessionBeforeExit(currentConversationId);
+            await prepareSessionExit(currentConversationId);
 
             // Track session end explicitly (before exit) with stats
             const stats = sessionStatsRef.current.getSnapshot();
@@ -2283,7 +2296,6 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
             setCommandRunning(true);
 
             try {
-              const backend = getBackend();
               if (shouldAutoGenerate) {
                 const conversationTitle = await generateConversationTitle();
                 if (!conversationTitle) {
@@ -2292,9 +2304,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   );
                   return { submitted: true };
                 }
-                await backend.updateConversation(conversationId, {
-                  summary: conversationTitle,
-                });
+                await renameConvo(conversationIdRef.current, conversationTitle);
                 setConversationSummary(conversationTitle);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(
@@ -2302,9 +2312,7 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
                   true,
                 );
               } else {
-                await backend.updateConversation(conversationId, {
-                  summary: newValue,
-                });
+                await renameConvo(conversationIdRef.current, newValue);
                 setConversationSummary(newValue);
                 setConversationAutoTitleEligibility(false);
                 cmd.finish(`Conversation renamed to "${newValue}"`, true);
@@ -3718,38 +3726,23 @@ ${SYSTEM_REMINDER_CLOSE}
 
       // Start the conversation loop. If we have queued approval results from an interrupted
       // client-side execution, send them first before the new user message.
-      const initialInput: Array<MessageCreate | ApprovalCreate> = [];
-
-      if (eagerRecoveryDenials && eagerRecoveryDenials.length > 0) {
-        initialInput.push({
-          type: "approval",
-          approvals: eagerRecoveryDenials,
-          otid: randomUUID(),
-        });
-      }
-
-      const queuedApprovalInput =
-        consumeQueuedApprovalInputForCurrentConversation();
-      if (queuedApprovalInput) {
-        initialInput.push(queuedApprovalInput);
-      }
-
-      initialInput.push({
-        type: "message",
-        role: "user",
+      const initialInput = buildTuiTurnInput({
+        approvals: eagerRecoveryDenials,
+        queuedApproval: consumeQueuedApprovalInputForCurrentConversation(),
         content: messageContent as unknown as MessageCreate["content"],
         otid: userOtid,
       });
 
       await processConversation(initialInput, {
+        clientPreferences,
         submissionGeneration,
         transcriptStartLineIndex,
       });
 
       await runPostTurnMemorySync({
+        conversationId,
         agentId,
         isEnabled: isActiveMemfsEnabled,
-        debugLabel: "Post-turn memory sync",
         enqueueReminder: (text) => {
           enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
             text,

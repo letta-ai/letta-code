@@ -6,7 +6,7 @@
  *
  * The run happens in the background: the tool validates the script, registers
  * a background task, and returns at once with the task id. Progress lines go
- * to the task's output file (for TaskOutput). Completion queues a task
+ * to the task's output file. Completion queues a task
  * notification through the message-queue bridge, exactly like background
  * Bash, Monitor, and background subagents, so all three host paths (TUI,
  * headless, listener) wake the model the same way.
@@ -20,9 +20,13 @@ import { join, resolve } from "node:path";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
-import { apiRequest } from "@/backend/api/request";
+import { getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { permissionMode } from "@/permissions/mode";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeContext,
+} from "@/runtime-context";
 import {
   finishWorkflowExecution,
   recordWorkflowProgress,
@@ -39,15 +43,14 @@ import {
 } from "@/tools/workflow/journal";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
-import {
-  createSdkSpawner,
-  DEFAULT_ALLOWED_TOOLS,
-} from "@/tools/workflow/sdk-spawner";
+import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
   WorkflowMeta,
   WorkflowProgressEvent,
+  WorkflowToolCaller,
+  WorkflowToolInfo,
 } from "@/tools/workflow/types";
 import {
   DEFAULT_MAX_CONCURRENT,
@@ -59,7 +62,6 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications";
 import {
-  appendBackgroundProcessOutput,
   appendToOutputFile,
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -77,6 +79,7 @@ interface WorkflowArgs {
   maxConcurrent?: number;
   model?: string;
   allowedTools?: string[];
+  wait?: boolean;
   // Injected by the tool manager; not in the JSON schema.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
@@ -91,12 +94,33 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
+  /** Backs the script's `tools.*()` calls with the invoking turn's built-ins and agent MCP tools. */
+  callTool?: WorkflowToolCaller;
+  builtinToolNames?: readonly string[];
+  listTools?: () => Promise<WorkflowToolInfo[]>;
   cleanup(): Promise<void>;
 }
 
-type SpawnerFactory = (args: WorkflowArgs) => Promise<WorkflowSpawnerHandle>;
+type SpawnerFactory = (
+  args: WorkflowArgs,
+  setStage: (stage: string) => void,
+) => Promise<WorkflowSpawnerHandle>;
 
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
+const SCRIPT_EXCLUDED_TOOLS = new Set([
+  "Agent",
+  "AskUserQuestion",
+  "SendAgentMessage",
+  "Workflow",
+]);
+const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
+let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
+
+function isOwningAgentId(value: string | null | undefined): value is string {
+  return (
+    value?.startsWith("agent-") === true && !value.startsWith("agent-free:")
+  );
+}
 
 async function resolveParentAgentId(
   args: WorkflowArgs,
@@ -104,30 +128,35 @@ async function resolveParentAgentId(
   let parentAgentId: string | null | undefined = args.parentScope?.agentId;
   const conversationId =
     args.parentScope?.conversationId ?? getConversationId();
-  if (!parentAgentId?.startsWith("agent-")) {
+  if (!isOwningAgentId(parentAgentId)) {
     if (conversationId && conversationId !== "default") {
       // The invoking conversation may itself be agent-free (a worker of an
       // outer workflow); its parent supplies the lineage then.
-      const conversation = await apiRequest<{
+      const conversation = (await getBackend().retrieveConversation(
+        conversationId,
+      )) as unknown as {
         agent_id: string | null;
         parent_agent_id?: string | null;
-      }>("GET", `/v1/conversations/${encodeURIComponent(conversationId)}`);
+      };
       parentAgentId =
         conversation.agent_id ?? conversation.parent_agent_id ?? null;
     } else {
       parentAgentId = getCurrentAgentId();
     }
   }
-  return parentAgentId?.startsWith("agent-") ? parentAgentId : null;
+  return isOwningAgentId(parentAgentId) ? parentAgentId : null;
 }
 
 export async function createSdkSpawnerHandle(
   args: WorkflowArgs,
+  setStage: (stage: string) => void = () => {},
 ): Promise<WorkflowSpawnerHandle> {
+  setStage("resolving parent agent");
   const parentAgentId = await resolveParentAgentId(args);
   if (!parentAgentId) {
     throw new Error("Workflow requires an invoking parent agent.");
   }
+  setStage("resolving model");
   let model: string | null;
   if (args.model) {
     model = resolveModel(args.model);
@@ -149,19 +178,175 @@ export async function createSdkSpawnerHandle(
       );
     }
   }
+  const backendMode = resolveBackendMode();
+  let parentModelSettings: Record<string, unknown> | undefined;
+  let parentContextWindowLimit: number | null | undefined;
+  if (backendMode === "local") {
+    setStage("snapshotting local parent settings");
+    const conversationId =
+      args.parentScope?.conversationId ?? getConversationId();
+    const source =
+      conversationId && conversationId !== "default"
+        ? await getBackend().retrieveConversation(conversationId)
+        : await getBackend().retrieveAgent(parentAgentId);
+    const record = source as unknown as Record<string, unknown>;
+    if (
+      record.model_settings &&
+      typeof record.model_settings === "object" &&
+      !Array.isArray(record.model_settings)
+    ) {
+      parentModelSettings = { ...record.model_settings } as Record<
+        string,
+        unknown
+      >;
+    }
+    if (
+      typeof record.context_window_limit === "number" ||
+      record.context_window_limit === null
+    ) {
+      parentContextWindowLimit = record.context_window_limit;
+    }
+  }
+  setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
-  const client = sdk.createLocalClient();
-  return {
-    spawner: createSdkSpawner(client, {
+  setStage("creating SDK client and spawner");
+  const runtime = getRuntimeContext();
+  const toolContextId = runtime?.toolContextId ?? null;
+  // Lazy: tool impls are loaded by the manager, so a static import cycles.
+  const manager = await import("@/tools/manager");
+  const executionContext = toolContextId
+    ? manager.getExecutionContextById(toolContextId)
+    : undefined;
+  const client = sdk.createLocalClient(backendMode);
+  let spawner: SubagentSpawner;
+  try {
+    spawner = createSdkSpawner(client, {
       parentAgentId,
       model,
       resolveModel,
-      allowedTools: args.allowedTools ?? [...DEFAULT_ALLOWED_TOOLS],
+      allowedTools: args.allowedTools,
+      parentToolNames: runtime?.clientToolNames,
+      agentScopedToolNames: Array.from(
+        executionContext?.modTools.values() ?? [],
+      )
+        .filter((tool) => tool.owner?.scope === "agent")
+        .map((tool) => tool.name),
+      permissionMode: runtime?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
-    }),
+      supportsAgentFreeResume: sdk.supportsAgentFreeResume,
+      verifyPersistedRuns: backendMode === "api",
+      ...(parentModelSettings ? { parentModelSettings } : {}),
+      ...(parentContextWindowLimit !== undefined
+        ? { parentContextWindowLimit }
+        : {}),
+    });
+  } catch (error) {
+    void client[Symbol.asyncDispose]?.().catch(() => undefined);
+    throw error;
+  }
+  // The run outlives this tool call, so capture the invoking turn's permission
+  // inputs now; each direct MCP call is checked against them.
+  const permissionModeState = toolContextId
+    ? manager.getExecutionContextPermissionModeState(toolContextId)
+    : undefined;
+  const permissionCwd = getCurrentWorkingDirectory();
+  // Memoize the promise, not the session: concurrent first calls must share
+  // one session so cleanup closes every connection that was opened.
+  let mcpSession:
+    | Promise<
+        ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
+      >
+    | undefined;
+  // Built-ins registered for the invoking turn. Orchestration and interactive
+  // tools stay out: scripts already have agent(), and nobody can answer a
+  // question or approval prompt from inside a script.
+  const builtinSchemas = [
+    ...(toolContextId
+      ? (manager
+          .getExecutionContextById(toolContextId)
+          ?.toolRegistry.values() ?? [])
+      : []),
+  ]
+    .map((tool) => ({
+      ...tool.schema,
+      name: manager.getServerToolName(tool.schema.name),
+    }))
+    .filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
+  const builtinToolNames = builtinSchemas.map((schema) => schema.name);
+  const builtins = new Set(builtinToolNames);
+  const mcp = () => {
+    mcpSession ??= import("@/cli/subcommands/mcp").then((module) =>
+      module.createAgentMcpSession(parentAgentId),
+    );
+    return mcpSession;
+  };
+  return {
+    spawner,
+    builtinToolNames,
+    listTools: async () => {
+      const mcpTools = await (await mcp()).listTools().catch(() => []);
+      return [
+        ...builtinSchemas.map((schema) => ({
+          name: schema.name,
+          description: schema.description,
+          inputSchema: schema.input_schema as Record<string, unknown>,
+        })),
+        ...mcpTools.map((tool) => ({
+          name: tool.name,
+          description: tool.description ?? "",
+          inputSchema: tool.inputSchema,
+        })),
+      ];
+    },
+    callTool: async (toolName, toolArgs) => {
+      const { decision } = await manager.checkToolPermission(
+        toolName,
+        toolArgs,
+        permissionCwd,
+        permissionModeState && { ...permissionModeState },
+        // Same agent whose MCP scope runs the call; a nested agent-free
+        // worker's runtime agent would not match it.
+        parentAgentId,
+      );
+      if (decision !== "allow") {
+        throw new Error(
+          decision === "deny"
+            ? `${toolName} is denied by permission rules.`
+            : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
+        );
+      }
+      if (builtins.has(toolName)) {
+        // executeTool owns hooks, mod events, and secret redaction.
+        const result = await manager.executeTool(toolName, toolArgs, {
+          ...(toolContextId ? { toolContextId } : {}),
+        });
+        const text =
+          typeof result.toolReturn === "string"
+            ? result.toolReturn
+            : JSON.stringify(result.toolReturn);
+        return {
+          content: [{ type: "text", text }],
+          isError: result.status === "error",
+        };
+      }
+      return (await mcp()).callTool(toolName, toolArgs);
+    },
     cleanup: async () => {
+      await mcpSession
+        ?.then((session) => session.close())
+        .catch(() => undefined);
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
+  };
+}
+
+function toolOptions(handle: WorkflowSpawnerHandle) {
+  return {
+    ...(handle.callTool ? { callTool: handle.callTool } : {}),
+    ...(handle.builtinToolNames
+      ? { builtinToolNames: handle.builtinToolNames }
+      : {}),
+    ...(handle.listTools ? { listTools: handle.listTools } : {}),
   };
 }
 
@@ -174,6 +359,12 @@ export function __setWorkflowSpawnerFactoryForTests(
   spawnerFactory = factory ?? createSdkSpawnerHandle;
 }
 
+export function __setWorkflowStartupTimeoutForTests(
+  timeoutMs: number | null,
+): void {
+  startupTimeoutMs = timeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
+}
+
 export function formatWorkflowProgressLine(
   event: WorkflowProgressEvent,
 ): string | null {
@@ -182,6 +373,8 @@ export function formatWorkflowProgressLine(
       return `── ${event.title} ──`;
     case "log":
       return `» ${event.message}`;
+    case "decision_usage":
+      return null;
     case "agent": {
       // Only status transitions worth a line; "queued" would be noise.
       if (event.status === "queued") return null;
@@ -245,7 +438,7 @@ function formatCompletionResult(
   return [
     payload,
     "",
-    `Per-agent results: ${join(executionDir, "journal.jsonl")} — one line per completed agent with its full return value.`,
+    `Per-call results: ${join(executionDir, "journal.jsonl")} — one line per completed agent call with its full return value, plus one per decide() API attempt (retries included) with its model, cost, calibration, and tokens.`,
     "If the result above is empty or unexpected, read that file BEFORE diagnosing — do not assume agents returned non-empty results.",
   ].join("\n");
 }
@@ -271,13 +464,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       status: "error",
     };
   }
-  if (resolveBackendMode() !== "api") {
-    return {
-      toolReturn:
-        "Workflow agent() calls require the API backend because agent-free conversations are not supported by the local store.",
-      status: "error",
-    };
-  }
   if (
     args.maxConcurrent !== undefined &&
     (!Number.isInteger(args.maxConcurrent) || args.maxConcurrent < 1)
@@ -291,11 +477,9 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   // Validate up front so authoring mistakes surface in the tool result
   // instead of as a failed background task.
   let meta: WorkflowMeta;
-  let handle: WorkflowSpawnerHandle;
   try {
     meta = parseWorkflowMeta(script);
     assertBackgroundProcessCapacity();
-    handle = await spawnerFactory(args);
   } catch (error) {
     return {
       toolReturn: error instanceof Error ? error.message : String(error),
@@ -303,7 +487,75 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     };
   }
 
-  const taskId = getNextWorkflowId();
+  // Only the foreground setup is bounded. Once registered, a workflow can run
+  // for as long as its script needs. A timed-out factory may still finish later;
+  // it must never cross the registration/worker-spawn boundary.
+  let stage = "setting up spawner";
+  let abandoned = false;
+  let stopReason: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  let disposalStarted = false;
+  const disposeAbandonedHandle = (lateHandle: WorkflowSpawnerHandle) => {
+    if (disposalStarted) return;
+    disposalStarted = true;
+    void Promise.resolve()
+      .then(() => lateHandle.cleanup())
+      .catch(() => undefined);
+  };
+  const startup = Promise.resolve().then(() => {
+    if (abandoned) throw new Error("startup cancelled");
+    return spawnerFactory(args, (currentStage) => {
+      stage = currentStage;
+    });
+  });
+  void startup.then(
+    (lateHandle) => {
+      if (abandoned) disposeAbandonedHandle(lateHandle);
+    },
+    () => undefined,
+  );
+  let handle: WorkflowSpawnerHandle;
+  try {
+    handle = await Promise.race([
+      startup,
+      new Promise<never>((_, reject) => {
+        const timeoutMs = startupTimeoutMs;
+        timer = setTimeout(() => {
+          abandoned = true;
+          stopReason = `timed out after ${timeoutMs}ms`;
+          reject(new Error(stopReason));
+        }, timeoutMs);
+        onAbort = () => {
+          abandoned = true;
+          stopReason = "cancelled by caller";
+          reject(new Error(stopReason));
+        };
+        if (args.signal?.aborted) onAbort();
+        else args.signal?.addEventListener("abort", onAbort, { once: true });
+      }),
+    ]);
+    // The race may have fulfilled before an abort was delivered, while this
+    // continuation was still queued. Do not transfer that handle to a run.
+    if (abandoned || args.signal?.aborted) {
+      abandoned = true;
+      disposeAbandonedHandle(handle);
+      return {
+        toolReturn: `Workflow startup failed during ${stage}: ${stopReason ?? "cancelled by caller"}`,
+        status: "error",
+      };
+    }
+  } catch (error) {
+    abandoned = true;
+    return {
+      toolReturn: `Workflow startup failed during ${stage}: ${error instanceof Error ? error.message : String(error)}`,
+      status: "error",
+    };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) args.signal?.removeEventListener("abort", onAbort);
+  }
+
   const scriptArgs = normalizeWorkflowArgs(args.args);
   const { executionDir, scriptPath, journalPath } = createExecutionDir(
     defaultExecutionsDir(),
@@ -311,6 +563,33 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     script,
     scriptArgs,
   );
+
+  if (args.wait) {
+    // Foreground: the call's signal aborts the run, and the value is the result.
+    try {
+      const run = await executeWorkflow(handle.spawner, {
+        script,
+        args: scriptArgs,
+        maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+        journalPath,
+        ...(args.signal ? { signal: args.signal } : {}),
+        ...toolOptions(handle),
+      });
+      return {
+        toolReturn: truncateResult(formatCompletionResult(run, executionDir)),
+        status: "success",
+      };
+    } catch (error) {
+      return {
+        toolReturn: `Workflow failed: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+      };
+    } finally {
+      await handle.cleanup().catch(() => {});
+    }
+  }
+
+  const taskId = getNextWorkflowId();
   const outputFile = createBackgroundOutputFile(taskId);
   const scope = resolveNotificationScope(args.parentScope);
   const abortController = new AbortController();
@@ -322,15 +601,10 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       },
     },
     command: `workflow ${meta.name}`,
-    stdout: [],
-    stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: scope,
     kind: "workflow",
     description: meta.description,
@@ -345,10 +619,29 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   });
   notifyBackgroundProcessStateChanged(scope);
 
+  // Coalesce bursts of queued workers and usage updates; publish even when
+  // the parent turn is idle. Launch and finish remain immediate.
+  let progressTimer: ReturnType<typeof setTimeout> | undefined;
+  const publishProgress = () => {
+    if (progressTimer || processState.status !== "running") return;
+    progressTimer = setTimeout(() => {
+      progressTimer = undefined;
+      if (
+        backgroundProcesses.get(taskId) === processState &&
+        processState.status === "running"
+      ) {
+        notifyBackgroundProcessStateChanged(scope);
+      }
+    }, 100);
+    progressTimer.unref();
+  };
+
   const finish = (outcome: {
     run?: WorkflowExecutionResult;
     error?: string;
   }) => {
+    clearTimeout(progressTimer);
+    progressTimer = undefined;
     if (backgroundProcesses.get(taskId) !== processState) return;
     // A TaskStop already marked the entry failed and suppressed notification.
     if (processState.status === "running") {
@@ -408,11 +701,20 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     journalPath,
     signal: abortController.signal,
+    ...toolOptions(handle),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
+      if (event.kind !== "log") publishProgress();
+      // Usage callbacks update the registry, but only the initial transition
+      // to running belongs in the append-only TaskOutput progress log.
+      if (
+        event.kind === "agent" &&
+        event.status === "running" &&
+        event.totalTokens !== undefined
+      )
+        return;
       const line = formatWorkflowProgressLine(event);
       if (!line) return;
-      appendBackgroundProcessOutput(processState, "stdout", line);
       appendToOutputFile(outputFile, `${line}\n`);
     },
   })
@@ -439,9 +741,10 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       `Workflow launched in background. Task ID: ${taskId}`,
       `Summary: ${meta.description}`,
       `Script file: ${scriptPath}`,
-      `Journal: ${journalPath} (one line per completed agent)`,
+      `Journal: ${journalPath} (one line per completed agent, and per decide() API attempt including retries)`,
+      `Output file: ${outputFile}`,
       "",
-      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. TaskOutput reads the progress log; TaskStop aborts the run; the user can watch live status with /workflows.",
+      "You will be notified when it completes. Do not poll or sleep — keep working or end your turn. Read the output file only when you need interim progress; TaskStop aborts the run; the user can watch live status with /workflows.",
     ].join("\n"),
     status: "success",
   };

@@ -11,12 +11,13 @@ describe("memory format detection", () => {
     if (memoryDir) rmSync(memoryDir, { recursive: true, force: true });
   });
 
-  test("uses a root MEMORY.md marker only for the API backend", () => {
+  test("uses a root MEMORY.md marker on API and local backends", () => {
     memoryDir = mkdtempSync(join(tmpdir(), "memory-format-"));
     expect(detectMemoryFormat(memoryDir, false)).toBe("memfs-v1");
+    expect(detectMemoryFormat(memoryDir, true)).toBe("memfs-v1");
 
     writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
     expect(detectMemoryFormat(memoryDir, false)).toBe("memfs-v2");
-    expect(detectMemoryFormat(memoryDir, true)).toBe("memfs-v1");
+    expect(detectMemoryFormat(memoryDir, true)).toBe("memfs-v2");
   });
 });

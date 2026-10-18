@@ -148,6 +148,8 @@ export type QueueApprovalResults = (
 ) => void;
 
 export type ProcessConversationOptions = {
+  clientPreferences?: import("@/types/client-preferences").ClientPreferences;
+  allowResponseStateReuse?: boolean;
   allowReentry?: boolean;
   submissionGeneration?: number;
   transcriptStartLineIndex?: number | null;

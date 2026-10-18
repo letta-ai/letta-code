@@ -16,9 +16,10 @@ function expectManagedPromptUpdatesViaBackend(source: string): void {
   );
 
   expect(source).toContain("scheduleManagedSystemPromptUpdate(");
-  expect(systemPromptVersioningSource).toMatch(
-    /getBackend\(\)\s*\.\s*updateAgent\(/,
+  expect(systemPromptVersioningSource).toContain(
+    "const backend = getBackend();",
   );
+  expect(systemPromptVersioningSource).toMatch(/backend\s*\.\s*updateAgent\(/);
   expect(systemPromptVersioningSource).not.toContain("client.agents.");
 }
 

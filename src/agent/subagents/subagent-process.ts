@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 
 const DEFAULT_FORCE_KILL_GRACE_MS = 2_000;
 const FORCE_KILL_SETTLE_MS = 500;
@@ -165,4 +166,20 @@ export function spawnSubagentProcess(
     completion,
     wasAborted: () => aborted,
   };
+}
+
+/**
+ * Spawns an external coding-agent CLI in the managed workload slice when Cloud
+ * configures one, so the CLI and everything it runs share the workload memory
+ * limit instead of the listener's cgroup. `systemd-run --scope` execs the CLI
+ * in place, keeping its PID, process group, and stdio pipes intact.
+ */
+export function spawnManagedWorkloadProcess(
+  command: string,
+  args: string[],
+  options: SpawnSubagentProcessOptions,
+): RunningSubagentProcess {
+  const [managedCommand = command, ...managedArgs] =
+    wrapManagedWorkloadLauncher([command, ...args], { env: options.env });
+  return spawnSubagentProcess(managedCommand, managedArgs, options);
 }

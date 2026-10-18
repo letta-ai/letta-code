@@ -1,3 +1,4 @@
+import { debugLog } from "@/utils/debug";
 import {
   buildChannelAccessDeniedMessage,
   evaluateChannelSenderAccess,
@@ -81,8 +82,9 @@ export function createChannelInboundRouter(deps: {
           buildDirectReplyOptions(msg),
         );
       } else {
-        console.log(
-          `[channels] Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
+        debugLog(
+          "channels",
+          `Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
         );
       }
       return;
@@ -234,8 +236,9 @@ export function createChannelInboundRouter(deps: {
         if (!isAllowed) {
           const resolvedParentId = msg.parentChannelId ?? null;
           const isThread = !!(msg.threadId && msg.threadId === msg.chatId);
-          console.log(
-            "[Discord] Delivery blocked by allowed_channels policy:",
+          debugLog(
+            "Discord",
+            "Delivery blocked by allowed_channels policy:",
             JSON.stringify({
               accountId: msg.accountId ?? config.accountId,
               chatId: msg.chatId,

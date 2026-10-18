@@ -39,7 +39,6 @@ import type {
   ChannelTargetsListCommand,
   ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
-  ClientToolsetConfig,
   ConversationCompactCommand,
   ConversationCreateCommand,
   ConversationListCommand,
@@ -59,7 +58,6 @@ import type {
   DisconnectProviderCommand,
   EditFileCommand,
   EnableMemfsCommand,
-  ExecuteCommandCommand,
   FileOpsCommand,
   GetExperimentsCommand,
   GetReflectionSettingsCommand,
@@ -96,12 +94,12 @@ import type {
   WatchFileCommand,
   WriteFileCommand,
   WriteMemoryFileCommand,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
   "desktop_conversation_bootstrap",
+  "memory_palace",
   "tui_cron",
 ]);
 
@@ -119,10 +117,15 @@ import {
   isGetCwdMapCommand,
   isSetBootWorkingDirectoryCommand,
 } from "./cwd-protocol-inbound";
+import {
+  getInputToolSelectionError,
+  isClientToolsetConfig,
+} from "./input-tool-selection";
 import { isResumeQueueCommand } from "./queue-pause-protocol-inbound";
 
 export { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 
+import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
 import { isConnectProviderCommand } from "./connect-provider-protocol-inbound";
 import {
   isExternalToolCallResponseCommand,
@@ -143,19 +146,10 @@ import {
   isTeleportContinuePayload,
   parseTeleportCommand,
 } from "./teleport-protocol-inbound";
+import { isTurnFinishedAckCommand } from "./turn-finished-protocol-inbound";
 import type { InvalidInputCommand, ParsedServerMessage } from "./types";
 
-export type ServerLifecycleMessage = {
-  type: "pong";
-};
-
-function isClientToolsetConfig(value: unknown): value is ClientToolsetConfig {
-  if (!isObjectRecord(value)) return false;
-  return (
-    (value.base === undefined || isToolsetPreference(value.base)) &&
-    (value.include === undefined || isStringArray(value.include))
-  );
-}
+export type ServerLifecycleMessage = { type: "pong" };
 
 function isInputCommand(value: unknown): value is InputCommand {
   if (!value || typeof value !== "object") {
@@ -164,10 +158,16 @@ function isInputCommand(value: unknown): value is InputCommand {
   const candidate = value as {
     type?: unknown;
     request_id?: unknown;
+    terminal_consumer_id?: unknown;
     runtime?: unknown;
     payload?: unknown;
   };
-  if (candidate.type !== "input" || !isRuntimeScope(candidate.runtime)) {
+  if (
+    candidate.type !== "input" ||
+    !isRuntimeScope(candidate.runtime) ||
+    (candidate.terminal_consumer_id !== undefined &&
+      !isTerminalConsumerId(candidate.terminal_consumer_id))
+  ) {
     return false;
   }
   if (
@@ -180,13 +180,13 @@ function isInputCommand(value: unknown): value is InputCommand {
   if (!candidate.payload || typeof candidate.payload !== "object") {
     return false;
   }
-
   const payload = candidate.payload as {
     kind?: unknown;
     messages?: unknown;
     image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
+    client_preferences?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -199,14 +199,7 @@ function isInputCommand(value: unknown): value is InputCommand {
       (payload.image_failure_mode === undefined ||
         payload.image_failure_mode === "strict" ||
         payload.image_failure_mode === "drop") &&
-      (payload.client_tool_allowlist === undefined ||
-        isStringArray(payload.client_tool_allowlist)) &&
-      (payload.client_toolset === undefined ||
-        isClientToolsetConfig(payload.client_toolset)) &&
-      (payload.external_tool_scope_ids === undefined ||
-        isStringArray(payload.external_tool_scope_ids)) &&
-      (payload.exclude_interactive_tools === undefined ||
-        typeof payload.exclude_interactive_tools === "boolean")
+      getInputToolSelectionError(payload) === null
     );
   }
   if (payload.kind === "approval_response") {
@@ -300,6 +293,7 @@ function getInvalidInputReason(value: unknown): {
     image_failure_mode?: unknown;
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
+    client_preferences?: unknown;
     external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
@@ -325,47 +319,8 @@ function getInvalidInputReason(value: unknown): {
           "Protocol violation: input.payload.image_failure_mode must be strict or drop",
       };
     }
-    if (
-      payload.client_tool_allowlist !== undefined &&
-      !isStringArray(payload.client_tool_allowlist)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_tool_allowlist must be string[]",
-      };
-    }
-    if (
-      payload.client_toolset !== undefined &&
-      !isClientToolsetConfig(payload.client_toolset)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.client_toolset must contain an optional valid base and string[] include",
-      };
-    }
-    if (
-      payload.exclude_interactive_tools !== undefined &&
-      typeof payload.exclude_interactive_tools !== "boolean"
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.exclude_interactive_tools must be boolean",
-      };
-    }
-    if (
-      payload.external_tool_scope_ids !== undefined &&
-      !isStringArray(payload.external_tool_scope_ids)
-    ) {
-      return {
-        runtime: candidate.runtime,
-        reason:
-          "Protocol violation: input.payload.external_tool_scope_ids must be string[]",
-      };
-    }
-    return null;
+    const reason = getInputToolSelectionError(payload);
+    return reason ? { runtime: candidate.runtime, reason } : null;
   }
   if (payload.kind === "approval_response") {
     if (!isValidApprovalResponseBody(payload)) {
@@ -593,17 +548,17 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
 
 export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    path?: unknown;
-    content?: unknown;
-    request_id?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "write_file" &&
     typeof c.path === "string" &&
     typeof c.content === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64") &&
+    (c.append === undefined || typeof c.append === "boolean") &&
+    (c.move_to === undefined || typeof c.move_to === "string")
   );
 }
 
@@ -1153,11 +1108,6 @@ export function isCreateAgentCommand(
   value: unknown,
 ): value is CreateAgentCommand {
   if (!value || typeof value !== "object") return false;
-  /**
-   * Treat inbound values as untrusted protocol data.
-   * Each supported field is validated before narrowing the command type.
-   * Optional tags must contain only strings.
-   */
   const c = value as Record<string, unknown>;
   return (
     c.type === "create_agent" &&
@@ -1950,33 +1900,14 @@ export function isSecretApplyCommand(
   }
   return true;
 }
-export function isExecuteCommandCommand(
-  value: unknown,
-): value is ExecuteCommandCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    command_id?: unknown;
-    request_id?: unknown;
-    runtime?: unknown;
-    args?: unknown;
-  };
-  const hasValidArgs = c.args === undefined || typeof c.args === "string";
-  return (
-    c.type === "execute_command" &&
-    typeof c.command_id === "string" &&
-    typeof c.request_id === "string" &&
-    isAgentRuntimeScope(c.runtime) &&
-    hasValidArgs
-  );
-}
 
-import {
-  isMonitorStopCommand,
+import { isLaunchSubagentCommand } from "./subagent-protocol-inbound";
+import { isTaskControlProtocolCommand } from "./task-control-protocol-inbound";
+
+export {
+  isExecuteCommandCommand,
   isRemoveQueueItemCommand,
 } from "./task-control-protocol-inbound";
-
-export { isRemoveQueueItemCommand } from "./task-control-protocol-inbound";
 
 export function parseServerLifecycleMessage(
   data: WebSocket.RawData,
@@ -1991,12 +1922,9 @@ export function parseServerLifecycleMessage(
     ) {
       return { type: "pong" };
     }
-  } catch {
-    // Non-JSON frames are handled by the regular unparseable-frame path.
-  }
+  } catch {}
   return null;
 }
-
 export function parseServerMessage(
   data: WebSocket.RawData,
 ): ParsedServerMessage | null {
@@ -2010,6 +1938,7 @@ export function parseServerMessage(
     const teleportCommand = parseTeleportCommand(parsed);
     if (teleportCommand) return teleportCommand;
     if (
+      isTurnFinishedAckCommand(parsed) ||
       isInputCommand(parsed) ||
       isChangeDeviceStateCommand(parsed) ||
       isAbortMessageCommand(parsed) ||
@@ -2100,15 +2029,14 @@ export function parseServerMessage(
       isChannelTargetBindCommand(parsed) ||
       isChannelRouteUpdateCommand(parsed) ||
       isChannelRouteRemoveCommand(parsed) ||
-      isExecuteCommandCommand(parsed) ||
-      isRemoveQueueItemCommand(parsed) ||
-      isMonitorStopCommand(parsed) ||
+      isTaskControlProtocolCommand(parsed) ||
+      isLaunchSubagentCommand(parsed) ||
       isSearchBranchesCommand(parsed) ||
       isCheckoutBranchCommand(parsed) ||
       isSecretListCommand(parsed) ||
       isSecretApplyCommand(parsed)
     ) {
-      return parsed as WsProtocolCommand;
+      return parsed as ParsedServerMessage;
     }
     const invalidInput = getInvalidInputReason(parsed);
     if (invalidInput) {

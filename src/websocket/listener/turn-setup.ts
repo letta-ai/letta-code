@@ -19,16 +19,19 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
+  ensureListenerModAdapter,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
@@ -128,7 +131,12 @@ export async function prepareListenerTurn(params: {
       conversationId,
     });
   }
-  trackListenerUserInput(msg.messages, "unknown", msg.actingUserId);
+  trackListenerUserInput(
+    msg.messages,
+    "unknown",
+    msg.actingUserId,
+    msg.suppressActingUserFallback,
+  );
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
@@ -136,9 +144,7 @@ export async function prepareListenerTurn(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-  const consumed = agentId
-    ? consumeInterruptQueue(runtime, agentId, conversationId)
-    : null;
+  const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
@@ -297,7 +303,7 @@ export async function prepareListenerTurn(params: {
   }
   const modAdapters = agentId
     ? await ensureListenerModAdaptersForAgent(runtime.listener, agentId)
-    : [];
+    : [ensureListenerModAdapter(runtime.listener)];
   runtime.transientChannelRuntimeTools = agentId
     ? await publishChannelRuntimeToolsForTurn(runtime.listener, {
         agent_id: agentId,
@@ -307,21 +313,28 @@ export async function prepareListenerTurn(params: {
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
-  const listenerOptions = connectionId
-    ? runtime.listener.connections.get(connectionId)?.options
+  const executionConnectionId = resolveTurnExecutionConnectionId(
+    runtime.listener,
+    { agent_id: agentId, conversation_id: conversationId },
+    connectionId,
+  );
+  const listenerOptions = executionConnectionId
+    ? runtime.listener.connections.get(executionConnectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
+  if (msg.clientPreferences !== undefined)
+    replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
   const preparedToolContext = await prepareToolExecutionContextForScope({
-    connectionId,
+    connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
     conversationId,
     actingUserId: msg.actingUserId,
+    suppressActingUserFallback: msg.suppressActingUserFallback,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
-    ...(msg.excludeInteractiveTools || runtime.executionSettings !== undefined
+    // Honor explicit client exclusions; headless execution does not block questions.
+    ...(msg.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
     externalToolScopeIds: msg.externalToolScopeIds,

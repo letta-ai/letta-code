@@ -6,6 +6,10 @@ import {
 } from "@/auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { refreshAccessTokenSingleFlight } from "@/auth/oauth-refresh";
+import {
+  bindOrgCredentials,
+  getOrgAccessToken,
+} from "@/auth/org-credentials-session";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -165,13 +169,20 @@ export async function getClient() {
       ? cachedSettings
       : await settingsManager.getSettingsWithSecureTokens();
 
-  const desktopAccessToken = getDesktopAccessToken();
+  // An organization listener (`letta server --org`) signs in on its own and
+  // refreshes on its own; the global sign-in below belongs to another
+  // organization and must not be read or written here.
+  const orgAccessToken = await getOrgAccessToken();
+  const desktopAccessToken = orgAccessToken
+    ? undefined
+    : getDesktopAccessToken();
   let apiKey =
+    orgAccessToken ||
     desktopAccessToken ||
     process.env.LETTA_API_KEY ||
     settings.env?.LETTA_API_KEY;
 
-  if (!process.env.LETTA_API_KEY) {
+  if (!orgAccessToken && !process.env.LETTA_API_KEY) {
     if (apiKey) {
       // Keep the in-process cache current on every successful keychain read.
       _cachedApiKey = apiKey;
@@ -185,6 +196,7 @@ export async function getClient() {
 
   // Check if token is expired and refresh if needed
   if (
+    !orgAccessToken &&
     !desktopAccessToken &&
     !process.env.LETTA_API_KEY &&
     settings.tokenExpiresAt &&
@@ -295,5 +307,6 @@ export async function getClient() {
     return promise;
   }) as typeof client.messages.retrieve;
 
+  if (orgAccessToken) return bindOrgCredentials(client);
   return bindDesktopCredentials(client);
 }

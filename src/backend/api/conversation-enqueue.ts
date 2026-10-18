@@ -5,6 +5,57 @@ import { actingUserRequestOptions } from "@/agent/acting-user";
 import { getClient } from "./client";
 import { ApiRequestError, apiFetch, apiRequest } from "./request";
 
+const SHUTDOWN_MAX_RETRIES = 3;
+const SHUTDOWN_DEFAULT_DELAY_MS = 1000;
+
+/** Only the server's explicit pre-admission rejection proves a POST was not accepted. */
+export function isProvenCloudApiShutdownRejection(
+  error: unknown,
+): error is ApiRequestError {
+  if (!(error instanceof ApiRequestError) || error.status !== 503) return false;
+  try {
+    const body: unknown = JSON.parse(error.responseText);
+    if (typeof body !== "object" || body === null) return false;
+    const payload = body as Record<string, unknown>;
+    return (
+      payload.errorCode === "cloud_api_shutting_down" &&
+      payload.admitted === false &&
+      payload.retryable === true
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shutdownRetryDelayMs(error: ApiRequestError): number {
+  const retryAfter = error.headers?.get("Retry-After");
+  const seconds =
+    retryAfter === null || retryAfter === undefined ? NaN : Number(retryAfter);
+  return Number.isFinite(seconds) && seconds >= 0
+    ? Math.min(seconds * 1000, 30_000)
+    : SHUTDOWN_DEFAULT_DELAY_MS;
+}
+
+async function waitForShutdownRetry(
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  signal?.throwIfAborted();
+  await new Promise<void>((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", onAbort);
+      reject(signal?.reason);
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+}
+
 export interface EnqueueReceipt {
   status: "queued";
   agent_id: string;
@@ -14,6 +65,8 @@ export interface EnqueueReceipt {
   super_run_id: string;
   /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
+  /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
+  acting_user_id?: string | null;
 }
 
 export interface EnqueueConversationInput {
@@ -22,7 +75,7 @@ export interface EnqueueConversationInput {
   clientMessageId: string;
   content: MessageCreate["content"];
   computer?: string;
-  actingUserId?: string;
+  actingUserId?: string | null;
 }
 
 /** Cloud owns delivery after this request returns 202. Never retry by executing locally. */
@@ -31,25 +84,43 @@ export async function enqueueConversationMessage(
   signal?: AbortSignal,
   request = apiRequest,
 ): Promise<EnqueueReceipt> {
-  const accepted = await request<
-    Pick<EnqueueReceipt, "client_message_id" | "workflow_id" | "super_run_id">
-  >(
-    "POST",
-    `/v1/conversations/${encodeURIComponent(input.conversationId)}/messages/enqueue`,
-    {
-      agent_id: input.agentId,
-      client_message_id: input.clientMessageId,
-      ...(input.computer !== undefined ? { computer: input.computer } : {}),
-      messages: [
-        {
-          role: "user",
-          content: input.content,
-          client_message_id: input.clientMessageId,
-        },
-      ],
-    },
-    { signal, ...actingUserRequestOptions(input.actingUserId) },
-  );
+  const body = {
+    agent_id: input.agentId,
+    client_message_id: input.clientMessageId,
+    ...(input.computer !== undefined ? { computer: input.computer } : {}),
+    messages: [
+      {
+        role: "user",
+        content: input.content,
+        client_message_id: input.clientMessageId,
+      },
+    ],
+  };
+  let accepted: Pick<
+    EnqueueReceipt,
+    "client_message_id" | "workflow_id" | "super_run_id"
+  >;
+  let retries = 0;
+  while (true) {
+    try {
+      accepted = await request(
+        "POST",
+        `/v1/conversations/${encodeURIComponent(input.conversationId)}/messages/enqueue`,
+        body,
+        { signal, ...actingUserRequestOptions(input.actingUserId) },
+      );
+      break;
+    } catch (error) {
+      if (
+        !isProvenCloudApiShutdownRejection(error) ||
+        retries >= SHUTDOWN_MAX_RETRIES
+      ) {
+        throw error;
+      }
+      retries++;
+      await waitForShutdownRetry(shutdownRetryDelayMs(error), signal);
+    }
+  }
   if (
     accepted.client_message_id !== input.clientMessageId ||
     !accepted.workflow_id ||
@@ -64,6 +135,7 @@ export async function enqueueConversationMessage(
     status: "queued",
     agent_id: input.agentId,
     conversation_id: input.conversationId,
+    acting_user_id: input.actingUserId,
   };
 }
 
@@ -71,7 +143,7 @@ export async function enqueueConversationMessage(
 export async function dequeueConversationMessage(
   input: Pick<
     EnqueueConversationInput,
-    "agentId" | "conversationId" | "clientMessageId"
+    "agentId" | "conversationId" | "clientMessageId" | "actingUserId"
   >,
   signal?: AbortSignal,
   request = apiRequest,
@@ -88,6 +160,7 @@ export async function dequeueConversationMessage(
       ...(input.conversationId === "default"
         ? { query: { agent_id: input.agentId } }
         : {}),
+      ...actingUserRequestOptions(input.actingUserId),
     },
   );
 }
@@ -156,6 +229,30 @@ export interface LatestConversationSuperRun {
   completed_at: string | null;
   cancelled_at: string | null;
   errored_at: string | null;
+}
+
+export interface ExactSuperRun extends LatestConversationSuperRun {
+  error: {
+    code: string;
+    message: string;
+  } | null;
+  /** Associated child runs, newest first. */
+  run_ids: string[];
+}
+
+/** Read the accepted Super Run and its server-owned result correlation. */
+export async function getExactSuperRun(
+  agentId: string,
+  superRunId: string,
+  signal?: AbortSignal,
+  request = apiRequest,
+): Promise<ExactSuperRun> {
+  return request(
+    "GET",
+    `/v1/agents/${encodeURIComponent(agentId)}/super-runs/${encodeURIComponent(superRunId)}`,
+    undefined,
+    { signal },
+  );
 }
 
 export async function getLatestConversationSuperRun(

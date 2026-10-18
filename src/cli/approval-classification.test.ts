@@ -147,6 +147,31 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
+  test("lets Agent resume an existing conversation without subagent_type", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_agent_resume",
+          toolName: "Agent",
+          toolArgs: JSON.stringify({
+            agent_id: "agent-abc123",
+            conversation_id: "conv-xyz789",
+            description: "Continue implementation",
+            prompt: "Now implement the fix we discussed",
+          }),
+        },
+      ],
+      { requireArgsForAutoApprove: true },
+    );
+
+    expect(result.autoDenied).toHaveLength(0);
+    const [classified] = [...result.autoAllowed, ...result.needsUserInput];
+    expect(classified?.missingRequiredArgs ?? []).toEqual([]);
+  });
+
   test("flags empty arguments as dropped in transit, not omitted by the model", async () => {
     await loadTools();
     permissionMode.setMode("unrestricted");

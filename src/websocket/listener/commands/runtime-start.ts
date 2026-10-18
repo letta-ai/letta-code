@@ -7,6 +7,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildCreatedAgentTags, MEMFS_DISABLED_TAG } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
@@ -19,7 +20,10 @@ import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -27,6 +31,7 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
 import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
 import { expectInboundTeleport } from "@/websocket/listener/teleport";
@@ -34,6 +39,8 @@ import type {
   ConversationRuntime,
   ListenerConnectionId,
   ListenerRuntime,
+  ProcessQueuedTurn,
+  StartListenerOptions,
 } from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
@@ -62,6 +69,8 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  queuePumpOptions?: StartListenerOptions;
+  processQueuedTurn?: ProcessQueuedTurn;
   createEphemeralConversation?: typeof createEphemeralConversation;
   retrieveConversation?: (conversationId: string) => Promise<Conversation>;
 };
@@ -200,11 +209,23 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const createBody = withMemfs
+      ? requestedBody
+      : {
+          ...requestedBody,
+          tags: buildCreatedAgentTags({
+            enableMemfs: false,
+            tags: [
+              ...(Array.isArray(requestedBody.tags) ? requestedBody.tags : []),
+              MEMFS_DISABLED_TAG,
+            ],
+          }),
+        };
     const appliedHarnessToolDefaults =
       requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
-      : requestedBody;
+      ? await prepareRawCreateAgentBodyForMemfs(createBody)
+      : createBody;
     const agent = appliedHarnessToolDefaults
       ? await createAgentWithBaseToolsRecovery(
           (tools) => backend.createAgent({ ...body, tools }),
@@ -235,7 +256,11 @@ async function resolveRuntimeStartConversation(
   parsed: RuntimeStartCommand,
   agent: AgentState | null,
   created: CreatedResources,
-  createEphemeral: typeof createEphemeralConversation,
+  createEphemeral: (
+    body: EphemeralConversationCreateBody,
+  ) => Promise<
+    Conversation | Awaited<ReturnType<typeof createEphemeralConversation>>
+  >,
   retrieveConversation: (conversationId: string) => Promise<Conversation>,
 ): Promise<Conversation> {
   const backend = getBackend();
@@ -428,18 +453,25 @@ export async function handleRuntimeStartCommand(
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeStartScope | null = null;
+  let scopedRuntime: ConversationRuntime | null = null;
   let shouldReplayState = false;
+  let startResponseSent = false;
 
   try {
     validateRuntimeStartShape(parsed);
     agent = await resolveRuntimeStartAgent(parsed, created);
+    const backend = getBackend();
+    const createEphemeral =
+      context.createEphemeralConversation ??
+      backend.createEphemeralConversation?.bind(backend) ??
+      createEphemeralConversation;
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
       created,
-      context.createEphemeralConversation ?? createEphemeralConversation,
+      createEphemeral,
       context.retrieveConversation ??
-        ((id) => getBackend().retrieveConversation(id)),
+        ((id) => backend.retrieveConversation(id)),
     );
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
@@ -458,7 +490,7 @@ export async function handleRuntimeStartCommand(
       }
     };
     assertConnectionOpen();
-    const scopedRuntime = context.getOrCreateScopedRuntime(
+    scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
@@ -488,14 +520,14 @@ export async function handleRuntimeStartCommand(
         },
       );
     }
-    const sent = sendRuntimeStartResponse(context, parsed, {
+    startResponseSent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
       agent,
       conversation,
       created,
     });
-    shouldReplayState = sent && !parsed.wait_for_replay;
+    shouldReplayState = startResponseSent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,
@@ -517,6 +549,23 @@ export async function handleRuntimeStartCommand(
         forceDeviceStatus: parsed.force_device_status !== false,
         connectionId: context.connectionId,
       },
+    );
+  }
+
+  // Startup can attempt the queue before a new connection has subscribed.
+  // Retry after this scope's initial replay so accepted work cannot interleave
+  // with approval recovery or execute after a failed runtime_start.
+  if (
+    startResponseSent &&
+    scopedRuntime?.queueRuntime?.isEmpty === false &&
+    context.queuePumpOptions &&
+    context.processQueuedTurn
+  ) {
+    scheduleQueuePump(
+      scopedRuntime,
+      getOrCreateProcessTransport(context.runtime),
+      context.queuePumpOptions,
+      context.processQueuedTurn,
     );
   }
 

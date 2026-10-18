@@ -40,6 +40,13 @@ describe("stripComputerFromTaskDescription", () => {
     expect(stripped).not.toContain("`computer`");
   });
 
+  test("keeps external coding agent docs but drops their computer routing", () => {
+    const stripped = stripComputerFromTaskDescription(taskDescription);
+    expect(stripped).toContain("## External Coding Agents");
+    expect(stripped).toContain('subagent_type: "claude-code"');
+    expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
+  });
+
   test("keeps the surrounding sections intact", () => {
     const stripped = stripComputerFromTaskDescription(taskDescription);
     expect(stripped).toContain("## Forking Parent Context");
@@ -54,18 +61,44 @@ describe("stripComputerFromTaskDescription", () => {
 });
 
 describe("task() computer guard", () => {
-  test("task.ts rejects computer args before spawning when the backend lacks environmentRouting", async () => {
+  test("task.ts resolves and rejects computer args before spawning", async () => {
     const source = await Bun.file(
       new URL("./impl/task.ts", import.meta.url),
     ).text();
-    const guardIndex = source.indexOf(
+    const launchStart = source.indexOf("export async function launchSubagent(");
+    const guardIndex = source.indexOf("resolveLaunchComputer({", launchStart);
+    const rejectIndex = source.indexOf("resolvedComputer.error", guardIndex);
+    const spawnIndex = source.indexOf(
+      "spawnBackgroundSubagentTask({",
+      launchStart,
+    );
+    expect(guardIndex).toBeGreaterThan(-1);
+    expect(rejectIndex).toBeGreaterThan(-1);
+    expect(spawnIndex).toBeGreaterThan(-1);
+    expect(rejectIndex).toBeLessThan(spawnIndex);
+  });
+
+  test("the routing guard lives in subagent-computer.ts", async () => {
+    const source = await Bun.file(
+      new URL("./impl/subagent-computer.ts", import.meta.url),
+    ).text();
+    expect(source).toContain(
       "The computer option requires a Letta Cloud backend",
     );
-    const spawnIndex = source.indexOf("spawnBackgroundSubagentTask({");
-    expect(guardIndex).toBeGreaterThan(-1);
-    expect(spawnIndex).toBeGreaterThan(-1);
-    expect(guardIndex).toBeLessThan(spawnIndex);
     expect(source).toContain("capabilities.environmentRouting");
+  });
+});
+
+describe("Task subagent_type requirement", () => {
+  test("the schema leaves subagent_type optional so resumes can omit it", () => {
+    expect(taskSchema.required).not.toContain("subagent_type");
+  });
+
+  test("launching a new subagent without subagent_type is still rejected", async () => {
+    const { launchSubagent } = await import("./impl/task");
+    await expect(
+      launchSubagent({ prompt: "Work", description: "New task" } as never),
+    ).rejects.toThrow("missing required parameter: subagent_type");
   });
 });
 
@@ -83,7 +116,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
   test("strips computer for a non-cloud server", async () => {
     process.env.LETTA_BASE_URL = "http://localhost:8283";
     const { resolveBackendSpecificToolAssets } = await import(
-      "./memory-tool-assets"
+      "./task-tool-assets"
     );
     const resolved = await resolveBackendSpecificToolAssets(
       "Task",
@@ -99,7 +132,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
   test("keeps computer for the Cloud server", async () => {
     process.env.LETTA_BASE_URL = "https://api.letta.com";
     const { resolveBackendSpecificToolAssets } = await import(
-      "./memory-tool-assets"
+      "./task-tool-assets"
     );
     const resolved = await resolveBackendSpecificToolAssets(
       "Task",

@@ -245,6 +245,21 @@ export interface Backend {
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
+  /**
+   * Optional agent-free conversation creation used by SDK query() runtimes.
+   * Backends that implement this must preserve `agent_id: null` rather than
+   * materializing a hidden worker agent.
+   */
+  createEphemeralConversation?(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string | null;
+    name?: string;
+    is_subagent?: boolean;
+  }): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
+
   /** Optional: not all backends support deleting conversations. */
   deleteConversation?(
     conversationId: string,
@@ -327,6 +342,11 @@ export interface Backend {
   cancelRun(
     agentId: string,
     runId: string,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
+
+  cancelConversationRun(
+    conversationId: string,
+    runId?: string | null,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
   retrieveRun(
@@ -644,6 +664,19 @@ export class APIBackend implements Backend {
   async cancelRun(agentId: string, runId: string) {
     const client = await this.getClient();
     return client.agents.messages.cancel(agentId, { run_ids: [runId] });
+  }
+
+  async cancelConversationRun(
+    _conversationId: string,
+    _runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>> {
+    // The public conversations cancellation route cannot scope by run ID. Do
+    // not add a retrieve round-trip here: a run with agent_id:null still has no
+    // agent cancellation route, and waiting on that request would hold the
+    // listener's cancellation fence without making cancellation safer.
+    throw new Error(
+      "API backend does not support exact cancellation for conversations with agent_id:null",
+    );
   }
 
   async retrieveRun(runId: string, options?: RunRetrieveOptions) {

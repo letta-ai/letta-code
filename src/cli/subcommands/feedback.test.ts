@@ -53,8 +53,54 @@ describe("feedback subcommand", () => {
 
     expect(await runFeedbackSubcommand([], deps)).toBe(1);
     expect(stderr).toEqual([
-      "Feedback message required: pass --message <text>.",
+      "Feedback message required: pass --message <text> or --message-file <path>.",
     ]);
+  });
+
+  test("reads a multi-line message from --message-file intact", async () => {
+    const { submissions, deps } = createDeps();
+    const body =
+      "Agent-submitted feedback on behalf of the user.\n\nSecond paragraph.\nThird line.\n";
+    const reads: string[] = [];
+    deps.readMessageFile = async (path) => {
+      reads.push(path);
+      return body;
+    };
+
+    expect(
+      await runFeedbackSubcommand(
+        ["--message-file", "C:\\Temp\\feedback.md"],
+        deps,
+      ),
+    ).toBe(0);
+    expect(reads).toEqual(["C:\\Temp\\feedback.md"]);
+    expect(submissions[0]?.payload.message).toBe(body.trim());
+  });
+
+  test("rejects --message together with --message-file", async () => {
+    const { stderr, submissions, deps } = createDeps();
+
+    expect(
+      await runFeedbackSubcommand(
+        ["--message", "a", "--message-file", "b.md"],
+        deps,
+      ),
+    ).toBe(1);
+    expect(stderr.join("\n")).toContain("not both");
+    expect(submissions).toHaveLength(0);
+  });
+
+  test("reports an unreadable --message-file without submitting", async () => {
+    const { stderr, submissions, deps } = createDeps();
+    deps.readMessageFile = async () => {
+      throw new Error("ENOENT");
+    };
+
+    expect(
+      await runFeedbackSubcommand(["--message-file", "missing.md"], deps),
+    ).toBe(1);
+    expect(stderr.join("\n")).toBe("Could not read feedback file: missing.md");
+    expect(submissions).toHaveLength(0);
   });
 
   test("submits only the message and current route identifiers", async () => {

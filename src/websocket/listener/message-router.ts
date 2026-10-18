@@ -10,7 +10,7 @@ import type {
   ApprovalResponseBody,
   ChangeDeviceStateCommand,
 } from "@/types/protocol_v2";
-import { debugLog, isDebugEnabled } from "@/utils/debug";
+import { isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
 import {
@@ -23,6 +23,7 @@ import { handleExecuteCommand } from "./commands";
 import { handleAgentConversationManagementProtocolCommand } from "./commands/agents-conversations";
 import { handleAppServerInfoCommand } from "./commands/app-server-info";
 import { handleCwdProtocolCommand } from "./commands/boot-working-directory";
+import { handleBrowserDeviceMcpOAuthProtocolCommand } from "./commands/browser-device-mcp-oauth";
 import { handleChatGPTUsageCommand } from "./commands/chatgpt-usage";
 import { handleConnectProvidersCommand } from "./commands/connect-providers";
 import { handleCronProtocolCommand } from "./commands/cron";
@@ -35,8 +36,8 @@ import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
 import {
-  getOrCreateProcessTransport,
   subscribeListenerConnection,
+  waitForListenerConnectionStartup,
 } from "./connection";
 import { getBootWorkingDirectory } from "./cwd";
 import {
@@ -44,20 +45,27 @@ import {
   updateRuntimeExternalTools,
 } from "./external-tools";
 import {
+  createIncomingMessage,
   dispatchInboundMessageWhenReady,
-  getAcceptedInputDisposition,
-  rememberAcceptedInputDisposition,
 } from "./inbound-dispatch";
 import {
   enqueueInboundUserMessage,
   getInboundClientMessageId,
 } from "./inbound-queue";
 import {
+  commitInputDisposition,
+  forgetQueuedInputDisposition,
+  getInputDisposition,
+  ordinaryInputIdentity,
+  reserveInputDisposition,
+} from "./input-disposition";
+import { rollbackInputDisposition } from "./input-disposition-rollback";
+import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
   parseServerMessage,
 } from "./protocol-inbound";
-import { summarizeV2Command } from "./protocol-logging";
+import { logV2Command, summarizeV2Command } from "./protocol-logging";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
 import {
   scheduleQueuePump,
@@ -69,16 +77,15 @@ import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
 import { validateResponseFormat } from "./structured-output";
 import {
-  buildTeleportContinuationMessages,
-  clearExpectedInboundTeleport,
-  clearPriorReadyTeleports,
   handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
   isRuntimeTeleportPending,
 } from "./teleport";
+import { admitTeleportContinueInput } from "./teleport-continue-input";
 import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
+import { handleTurnFinishedAck } from "./turn-finished-ack";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -121,6 +128,7 @@ type MessageRouterParams = {
   runtime: ListenerRuntime;
   socket: WebSocket;
   connectionId?: ListenerConnectionId;
+  lineageId?: string;
   opts: StartListenerOptions;
   processQueuedTurn: ProcessQueuedTurn;
   fileCommandSession: FileCommandSession;
@@ -186,14 +194,6 @@ type MessageRouterParams = {
   processIncomingMessage?: typeof handleIncomingMessage;
 };
 
-function logV2Command(opts: StartListenerOptions, message: string): void {
-  if (opts.onLog) {
-    opts.onLog(`[Listen V2] ${message}`);
-    return;
-  }
-  debugLog("Listen V2", message);
-}
-
 export function createListenerMessageHandler(
   params: MessageRouterParams,
 ): (data: WebSocket.RawData) => Promise<void> {
@@ -201,6 +201,7 @@ export function createListenerMessageHandler(
     runtime,
     socket,
     connectionId: explicitConnectionId,
+    lineageId: explicitLineageId,
     opts,
     processQueuedTurn,
     fileCommandSession,
@@ -217,21 +218,25 @@ export function createListenerMessageHandler(
     processIncomingMessage = handleIncomingMessage,
   } = params;
   const connectionId = explicitConnectionId ?? opts.connectionId;
-
+  const lineageId =
+    explicitLineageId ??
+    runtime.connections.get(connectionId)?.startupOwner.lineageId ??
+    connectionId ??
+    runtime.sessionId;
   return async (data: WebSocket.RawData): Promise<void> => {
+    if (
+      !(await waitForListenerConnectionStartup(runtime, connectionId, socket))
+    )
+      return;
+
     const lifecycleMessage =
       parseListenerReadyMessage(data) ?? parseServerLifecycleMessage(data);
-    // Legacy relays can deliver input before onConnected. Fail outside the
-    // handler catch so no parsing, logging, or dispatch follows a failed seal.
-    // Only projected pongs are content-free; ready frames retain extra fields.
+    // Seal before parsing; only projected pongs are content-free.
     if (lifecycleMessage?.type !== "pong") sealStartupLogs();
-    const raw = data.toString();
     let parsedScope: ParsedRuntimeScope = null;
 
     try {
       if (lifecycleMessage) {
-        // Record relay pongs so the heartbeat watchdog can detect a half-open
-        // socket (no pong within the timeout) and force a reconnect.
         if (lifecycleMessage.type === "pong") {
           runtime.lastPongAt = Date.now();
         }
@@ -244,18 +249,10 @@ export function createListenerMessageHandler(
       if (parsed) {
         safeEmitWsEvent("recv", "client", parsed);
       } else {
-        // Log unparseable frames so protocol drift is visible in debug mode
         safeEmitWsEvent("recv", "lifecycle", {
           type: "_ws_unparseable",
-          raw,
         });
       }
-      if (isDebugEnabled()) {
-        console.log(
-          `[Listen] Received message: ${JSON.stringify(parsed, null, 2)}`,
-        );
-      }
-
       if (!parsed) {
         return;
       }
@@ -277,17 +274,28 @@ export function createListenerMessageHandler(
         return;
       }
 
-      if (parsed.type === "monitor_stop") {
-        const { handleMonitorStopCommand } = await import(
-          "./commands/monitors"
+      if (parsed.type === "turn_finished_ack") {
+        handleTurnFinishedAck(runtime, socket, connectionId, parsed);
+        return;
+      }
+
+      if (
+        parsed.type === "launch_subagent" ||
+        parsed.type === "monitor_stop" ||
+        parsed.type === "subagent_message" ||
+        parsed.type === "subagent_stop"
+      ) {
+        const { handleTaskControlCommand } = await import(
+          "./commands/task-control"
         );
-        const response = await handleMonitorStopCommand(parsed, runtime);
-        safeSocketSend(
+        await handleTaskControlCommand(parsed, {
+          runtime,
           socket,
-          response,
-          "monitor_stop_response",
-          "monitor_stop",
-        );
+          connectionId,
+          getOrCreateScopedRuntime,
+          runDetachedListenerTask,
+          safeSocketSend,
+        });
         return;
       }
 
@@ -295,7 +303,6 @@ export function createListenerMessageHandler(
         handleAppServerInfoCommand(parsed, { socket, safeSocketSend });
         return;
       }
-
       if (
         handleRuntimeStartProtocolCommand(parsed, {
           socket,
@@ -305,11 +312,12 @@ export function createListenerMessageHandler(
           runDetachedListenerTask,
           getOrCreateScopedRuntime,
           replaySyncStateForRuntime,
+          queuePumpOptions: opts,
+          processQueuedTurn,
         })
       ) {
         return;
       }
-
       if (parsed.type === "teleport_probe") {
         handleTeleportProbe(parsed, socket, safeSocketSend);
         return;
@@ -329,6 +337,7 @@ export function createListenerMessageHandler(
           listener: runtime,
           command: parsed,
           socket,
+          connectionId,
           onStatusChange: opts.onStatusChange,
           getOrCreateScopedRuntime,
           runDetachedListenerTask,
@@ -461,55 +470,21 @@ export function createListenerMessageHandler(
             );
             return;
           }
-          const teleportId = parsed.payload.teleport_id;
-          clearPriorReadyTeleports({
+          admitTeleportContinueInput({
             listener: runtime,
+            scopedRuntime: getOrCreateScopedRuntime(
+              runtime,
+              parsed.runtime.agent_id,
+              parsed.runtime.conversation_id,
+            ),
+            connectionId,
             agentId: teleportAgentId,
             conversationId: parsed.runtime.conversation_id,
-            currentTeleportId: teleportId,
-          });
-          const scopedRuntime = getOrCreateScopedRuntime(
-            runtime,
-            parsed.runtime.agent_id,
-            parsed.runtime.conversation_id,
-          );
-          // The continuation this scope's runtime_start announced has arrived;
-          // sync recovery may act on its own again from here.
-          clearExpectedInboundTeleport(scopedRuntime);
-          const acceptedKey = `teleport:${teleportId}`;
-          const previousDisposition =
-            scopedRuntime.acceptedInputDispositions.get(acceptedKey);
-          if (previousDisposition) {
-            acknowledgeInput(true, undefined, previousDisposition);
-            return;
-          }
-          const approvals = parsed.payload.continuation?.approvals;
-          if (scopedRuntime.isProcessing) {
-            acknowledgeInput(
-              false,
-              "Destination runtime is already processing",
-            );
-            return;
-          }
-          scopedRuntime.acceptedInputDispositions.set(acceptedKey, "started");
-          acknowledgeInput(true, undefined, "started");
-          runDetachedListenerTask("teleport_continue", async () => {
-            await processIncomingMessage(
-              {
-                type: "message",
-                connectionId,
-                agentId: teleportAgentId,
-                conversationId: parsed.runtime.conversation_id,
-                messages: buildTeleportContinuationMessages({
-                  teleportId,
-                  approvals,
-                }),
-              },
-              getOrCreateProcessTransport(runtime),
-              scopedRuntime,
-              opts.onStatusChange,
-              connectionId,
-            );
+            payload: parsed.payload,
+            onStatusChange: opts.onStatusChange,
+            acknowledgeInput,
+            runDetachedListenerTask,
+            processIncomingMessage,
           });
           return;
         }
@@ -548,21 +523,12 @@ export function createListenerMessageHandler(
           acknowledgeInput(false, error);
           return;
         }
-        const incoming: IncomingMessage = {
-          type: "message",
+        const incoming = createIncomingMessage(
+          parsed.runtime,
+          inputPayload,
           connectionId,
-          ...(parsed.runtime.agent_id
-            ? { agentId: parsed.runtime.agent_id }
-            : {}),
-          conversationId: parsed.runtime.conversation_id,
-          clientToolAllowlist: inputPayload.client_tool_allowlist,
-          clientToolset: inputPayload.client_toolset,
-          externalToolScopeIds: inputPayload.external_tool_scope_ids,
-          excludeInteractiveTools: inputPayload.exclude_interactive_tools,
-          responseFormat: inputPayload.response_format,
-          imageFailureMode: inputPayload.image_failure_mode,
-          messages: inputPayload.messages,
-        };
+          parsed.terminal_consumer_id,
+        );
         const hasApprovalPayload = incoming.messages.some(
           (payload): payload is ApprovalCreate =>
             "type" in payload && payload.type === "approval",
@@ -613,10 +579,12 @@ export function createListenerMessageHandler(
 
         if (shouldQueueInboundMessage(incoming)) {
           const stampedIncoming = stampInboundUserMessageOtids(incoming);
-          const clientMessageId = getInboundClientMessageId(stampedIncoming);
-          const acceptedDisposition = getAcceptedInputDisposition(
+          const identity = ordinaryInputIdentity(
+            getInboundClientMessageId(stampedIncoming),
+          );
+          const acceptedDisposition = getInputDisposition(
             scopedRuntime,
-            clientMessageId,
+            identity,
           );
           if (acceptedDisposition) {
             acknowledgeInput(true, undefined, acceptedDisposition);
@@ -639,24 +607,63 @@ export function createListenerMessageHandler(
             return;
           }
 
-          const enqueued = enqueueInboundUserMessage(
-            scopedRuntime,
-            stampedIncoming,
-            parsed.runtime.acting_user_id,
-          );
-          if (enqueued) {
-            rememberAcceptedInputDisposition(
-              scopedRuntime,
-              clientMessageId,
-              "queued",
-            );
-            scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+          const admission = reserveInputDisposition(scopedRuntime, identity);
+          if (admission.kind === "duplicate") {
+            acknowledgeInput(true, undefined, admission.disposition);
+            return;
           }
-          acknowledgeInput(
-            enqueued,
-            enqueued ? undefined : "Input was rejected by the queue",
-            enqueued ? "queued" : undefined,
-          );
+          if (admission.kind === "full") {
+            acknowledgeInput(false, "Stable input ledger is at capacity");
+            return;
+          }
+          const reservation =
+            admission.kind === "reserved" ? admission.reservation : undefined;
+          const durableIncoming = identity
+            ? { ...stampedIncoming, durableInputIdentities: [identity] }
+            : stampedIncoming;
+          try {
+            const committed = commitInputDisposition(
+              scopedRuntime,
+              reservation,
+              "queued",
+              {
+                incoming: durableIncoming,
+                actingUserId: parsed.runtime.acting_user_id,
+              },
+            );
+            let enqueued = false;
+            try {
+              enqueued =
+                committed &&
+                enqueueInboundUserMessage(
+                  scopedRuntime,
+                  durableIncoming,
+                  parsed.runtime.acting_user_id,
+                );
+            } catch (error) {
+              if (committed)
+                forgetQueuedInputDisposition(scopedRuntime, identity);
+              throw error;
+            }
+            const durablyAccepted = committed && enqueued;
+            if (durablyAccepted) {
+              scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
+            } else if (committed) {
+              forgetQueuedInputDisposition(scopedRuntime, identity);
+            } else {
+              rollbackInputDisposition(scopedRuntime, reservation);
+            }
+            acknowledgeInput(
+              durablyAccepted,
+              durablyAccepted
+                ? undefined
+                : "Input was rejected by the queue or durable ledger",
+              durablyAccepted ? "queued" : undefined,
+            );
+          } catch (error) {
+            rollbackInputDisposition(scopedRuntime, reservation);
+            throw error;
+          }
           return;
         }
 
@@ -811,11 +818,17 @@ export function createListenerMessageHandler(
           socket,
           safeSocketSend,
           runDetachedListenerTask,
+        }) ||
+        handleBrowserDeviceMcpOAuthProtocolCommand(parsed, {
+          socket,
+          owner: runtime,
+          lineageId,
+          safeSocketSend,
+          runDetachedListenerTask,
         })
       ) {
         return;
       }
-
       if (
         handleAgentConversationManagementProtocolCommand(parsed, {
           socket,
@@ -826,7 +839,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Channels management commands (device/live management)
       if (runtime.serviceCommandTypes.has(parsed.type)) {
         runDetachedListenerTask("service_command", async () => {
           const serviceCommandHandler = runtime.serviceCommandHandler;
@@ -885,9 +897,7 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Slash commands (execute_command)
       if (isExecuteCommandCommand(parsed)) {
-        // Internal-only: refresh doctor state after recompile (no chat output)
         if (parsed.command_id === "refresh_doctor_state") {
           const agentId = parsed.runtime.agent_id;
           if (agentId && settingsManager.isMemfsEnabled(agentId)) {
@@ -898,15 +908,12 @@ export function createListenerMessageHandler(
               const memoryDir = getScopedMemoryFilesystemRoot(agentId);
               const tokens = estimateActiveMemorySystemPromptTokens(memoryDir);
               setSystemPromptDoctorState(agentId, tokens);
-            } catch {
-              // best-effort
-            }
+            } catch {}
           }
           emitDeviceStatusUpdate(socket, runtime, parsed.runtime);
           return;
         }
 
-        // Slash commands need a scoped runtime for the conversation context
         const scopedRuntime = getOrCreateScopedRuntime(
           runtime,
           parsed.runtime.agent_id,
@@ -945,7 +952,6 @@ export function createListenerMessageHandler(
         return;
       }
 
-      // Terminal commands (no runtime scope required)
       if (parsed.type === "terminal_spawn") {
         handleTerminalSpawn(
           parsed,

@@ -28,16 +28,22 @@ export interface SubagentState {
   // desktop dual-view routing: local agents have a bare-id agentURL with no
   // ?conversation= param to parse, so this is the only conversation source.
   conversationId?: string | null;
+  /** Exact accepted Super Run for a remotely executing child send. */
+  superRunId?: string;
   toolCalls: ToolCall[];
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
   totalTokens: number;
   durationMs: number;
   error?: string;
+  /** Final report published for a caller-notified launch. */
+  result?: string;
   model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
+  /** False when the entry is presentation-only and must not retain the parent runtime. */
+  claimsParentRuntime?: boolean;
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
   parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
   parentConversationId?: string; // Parent runtime scope conversation id
@@ -89,6 +95,10 @@ let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
+// A published result is how a caller on another computer receives the outcome,
+// and it may reconnect after an outage to read it, so keep those entries longer.
+const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
+let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 
 // ============================================================================
@@ -142,20 +152,25 @@ function scheduleCompletedSubagentCleanup(id: string): void {
   }
 
   clearCompletedSubagentCleanup(id);
-  const timer = setTimeout(() => {
-    const current = store.agents.get(id);
-    if (
-      !current ||
-      (current.status !== "completed" && current.status !== "error")
-    ) {
-      completedSubagentCleanupTimers.delete(id);
-      return;
-    }
+  const timer = setTimeout(
+    () => {
+      const current = store.agents.get(id);
+      if (
+        !current ||
+        (current.status !== "completed" && current.status !== "error")
+      ) {
+        completedSubagentCleanupTimers.delete(id);
+        return;
+      }
 
-    store.agents.delete(id);
-    completedSubagentCleanupTimers.delete(id);
-    notifyListeners();
-  }, completedSubagentRetentionMs);
+      store.agents.delete(id);
+      completedSubagentCleanupTimers.delete(id);
+      notifyListeners();
+    },
+    agent.result !== undefined
+      ? publishedResultRetentionMs
+      : completedSubagentRetentionMs,
+  );
   unrefTimer(timer);
   completedSubagentCleanupTimers.set(id, timer);
 }
@@ -202,6 +217,7 @@ export function registerSubagent(
     conversationId?: string | null;
   },
   prompt?: string,
+  claimsParentRuntime?: boolean,
 ): void {
   // Capitalize type for display (recall -> Recall)
   const displayType = type.charAt(0).toUpperCase() + type.slice(1);
@@ -221,6 +237,7 @@ export function registerSubagent(
     startTime: Date.now(),
     toolCallId,
     isBackground,
+    claimsParentRuntime,
     silent,
     parentAgentId: parentScope?.agentId ?? undefined,
     parentConversationId:
@@ -310,7 +327,12 @@ export function addToolCall(
  */
 export function completeSubagent(
   id: string,
-  result: { success: boolean; error?: string; totalTokens?: number },
+  result: {
+    success: boolean;
+    error?: string;
+    totalTokens?: number;
+    result?: string;
+  },
 ): void {
   const agent = store.agents.get(id);
   if (!agent) return;
@@ -320,6 +342,7 @@ export function completeSubagent(
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
+    ...(result.result !== undefined ? { result: result.result } : {}),
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
@@ -335,6 +358,11 @@ export function __setCompletedSubagentRetentionMsForTests(ms: number): void {
 
 export function __resetCompletedSubagentRetentionMsForTests(): void {
   completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
+  publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
+}
+
+export function __setPublishedResultRetentionMsForTests(ms: number): void {
+  publishedResultRetentionMs = ms;
 }
 
 export function getSubagentToolCount(
@@ -436,6 +464,8 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
+    // A published result waits for its remote caller; its own timer removes it.
+    if (agent.result !== undefined) continue;
     if (agent.status === "completed" || agent.status === "error") {
       clearCompletedSubagentCleanup(id);
       store.agents.delete(id);
@@ -537,19 +567,14 @@ export function getSnapshot(): {
 // Stream Event Forwarding
 // ============================================================================
 
-/**
- * A raw message-type event from the subagent's stdout (headless format).
- * Shape: { type: "message", message_type: string, ...LettaStreamingResponse fields }
- */
-export interface SubagentStreamEvent {
-  type: "message";
-  message_type: string;
-  [key: string]: unknown;
-}
+/** Worker output or a harness notification after its memory push completes. */
+export type SubagentStreamEvent =
+  | { type: "message"; message_type: string; [key: string]: unknown }
+  | { type: "memory_updated"; affected_paths: string[]; timestamp: number };
 
 /**
  * Callback for forwarding raw subagent stream events to the WS layer.
- * The event is the parsed JSON line from the subagent's stdout.
+ * Events include streamed output and harness-owned memory push notifications.
  */
 export type SubagentStreamEventListener = (
   subagentId: string,

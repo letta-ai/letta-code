@@ -264,6 +264,7 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
 | `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `~/.letta/lc-local-backend`) |
+| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by forks and memory-profile subagents. Unset = no change |
 
 When manually smoke-testing the local backend (`letta --backend local` or
 `bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary
@@ -380,11 +381,11 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 
 ### Shell Tool Parity Gap
 
-Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `exec_command`) identically, but the implementation
-layer differs. Features added to one tool may be missing from others.
+Policy/UI layer treats both shell tools (`Bash`, `exec_command`) identically,
+but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
+Features added to one may be missing from the other.
 
-- **Review signal:** any shell tool change, check ALL variants have parity.
+- **Review signal:** any shell tool change, check both tools have parity.
 
 ### Interrupt Lock / State Cleanup
 
@@ -673,7 +674,7 @@ or writing each other's memory.
 1. **Shell commands:** wrapped per invocation with cross-agent policy (deny
    active agent-memory tree, carve current agent's own memory back out, leave
    repo/home/tmp writable, network open).
-2. **Memory-mode subagents** (reflection, memory, init, history-analyzer):
+2. **Memory-mode subagents** (reflection, memory, init):
    entire process wrapped. Reads broadly, writes restricted.
 3. **In-process file tools** (Read/Edit/Write): cannot fork, so kernel sandbox
    can't see them. Old static cross-agent guard remains: resolves both lexical

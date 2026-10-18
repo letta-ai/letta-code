@@ -7,6 +7,8 @@ description: Submits user-approved product feedback and bug reports about Letta 
 
 Use this skill for product and developer feedback about Letta Code: reproducible bugs, broken features, confusing product behavior, and requested changes to the software or its developer-facing behavior.
 
+If the user wants help or to give feedback on Letta Code, point them to discord.gg/letta or https://github.com/letta-ai/letta-code/issues.
+
 Do **not** use this skill when the user corrects how the current agent should behave, communicate, remember, or work with them. Treat that as learning: make the appropriate memory edit so the correction changes the agent's future behavior. A user's frustration with the agent is not by itself product feedback and is not a reason to offer feedback submission.
 
 If the user says yes, or directly asks you to submit feedback:
@@ -22,11 +24,13 @@ If the user says yes, or directly asks you to submit feedback:
    - Concrete evidence already available, such as exact error text, the failed command or action, relevant paths or links, and reliable reproduction steps. Distinguish what the user reported from what you observed or inferred.
 
    Prefer specific nouns and observable behavior over generic judgments. Do not submit context-free summaries such as “the feature is broken,” “the UX should be improved,” or polished product-language filler. Keep unknowns explicit rather than guessing.
-3. Submit it with:
+3. Write the report to a temporary text file, then submit it with:
 
 ```bash
-letta feedback --message '<feedback>'
+letta feedback --message-file <path-to-report>
 ```
+
+   Pass the report as a file rather than inline with `--message`: multi-line command arguments can be cut off at the first line on some platforms (Windows routes `letta` through a `.cmd` shim).
 
 4. Tell the user whether submission succeeded. If it failed, report the safe CLI error and do not claim the team received it.
 

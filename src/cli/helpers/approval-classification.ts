@@ -28,7 +28,6 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
     parsedArgs: Record<string, unknown>,
     workingDirectory?: string,
   ) => Promise<TContext>;
-  alwaysRequiresUserInput?: (toolName: string) => boolean;
   treatAskAsDeny?: boolean;
   denyReasonForAsk?: string;
   missingNameReason?: string;
@@ -196,11 +195,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
     const context = opts.getContext
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)
       : null;
-    let decision = permission.decision;
-
-    if (opts.alwaysRequiresUserInput?.(toolName) && decision === "allow") {
-      decision = "ask";
-    }
+    const decision = permission.decision;
 
     const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";
 

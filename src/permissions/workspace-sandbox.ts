@@ -64,7 +64,7 @@ function targetPaths(
 ): string[] {
   if (isShellToolName(toolName)) return [];
   const rawPaths: string[] = [];
-  if (toolName === "ApplyPatch" || toolName === "memory_apply_patch") {
+  if (toolName === "ApplyPatch") {
     if (typeof toolArgs.input === "string") {
       rawPaths.push(...extractApplyPatchPaths(toolArgs.input));
     }
@@ -72,7 +72,7 @@ function targetPaths(
     const filePath = extractFilePath(toolArgs);
     if (filePath) rawPaths.push(filePath);
     if (
-      ["Glob", "Grep", "ListDir"].includes(canonicalToolName(toolName)) &&
+      ["Glob", "Grep"].includes(canonicalToolName(toolName)) &&
       typeof toolArgs.pattern === "string" &&
       isAbsolute(toolArgs.pattern)
     ) {
@@ -95,8 +95,7 @@ function isRecursiveTool(toolName: string): boolean {
 function isWriteTool(toolName: string): boolean {
   return (
     ["Write", "Edit"].includes(canonicalToolName(toolName)) ||
-    toolName === "ApplyPatch" ||
-    toolName === "memory_apply_patch"
+    toolName === "ApplyPatch"
   );
 }
 

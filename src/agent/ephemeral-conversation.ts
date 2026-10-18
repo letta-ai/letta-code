@@ -42,7 +42,7 @@ export async function buildEphemeralConversationCreateBody(
     (await getModelContextWindow(request.model));
   return {
     model: request.model,
-    system: request.system,
+    system: request.system ?? system,
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
   };

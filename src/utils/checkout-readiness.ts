@@ -74,9 +74,11 @@ export function startCheckout(
     checkout = { path: key, start, ready: false };
     agent.set(key, checkout);
   }
-  if (checkout.pending) return checkout.pending;
+  // An existing checkout stays usable while it refreshes; only an unpublished
+  // clone is not ready, since access could create its mount path first.
   if (checkout.ready && !refresh) return Promise.resolve();
-  checkout.ready = false;
+  if (checkout.pending) return checkout.pending;
+  checkout.ready = refresh && existsSync(join(key, ".git"));
   checkout.start = start;
   const entry = checkout;
   entry.pending = Promise.resolve()
@@ -113,6 +115,7 @@ export function isCheckoutPending(path: string): boolean {
 export async function waitForCheckouts(
   agentId: string | undefined,
   paths?: string[],
+  within?: string,
 ): Promise<void> {
   if (!agentId) return;
   const discovery = discoveries.get(agentId);
@@ -124,11 +127,14 @@ export async function waitForCheckouts(
       // unavailable repository-list endpoint must not disable local tools.
     });
   const entries = [...(checkouts.get(agentId)?.values() ?? [])];
+  const cwd = within === undefined ? undefined : resolveCheckoutPath(within);
   await Promise.all(
     entries
       .filter(
         (entry) =>
           !paths ||
+          (cwd !== undefined &&
+            (cwd === entry.path || cwd.startsWith(entry.path + sep))) ||
           paths.some((path) => {
             const absolute = resolveCheckoutPath(path);
             return (
@@ -155,13 +161,16 @@ export async function waitForToolCheckouts(
 ): Promise<void> {
   // Provider toolsets expose both PascalCase and snake_case spellings.
   const tool = name.replaceAll("_", "").toLowerCase();
+  if (arbitraryCode) {
+    await waitForCheckouts(agentId);
+    return;
+  }
   if (
-    arbitraryCode ||
     /^(bash|execcommand|writestdin|shellcommand|shell|monitor|skill)$/.test(
       tool,
     )
   ) {
-    await waitForCheckouts(agentId);
+    await waitForCommandCheckouts(agentId, args, cwd);
     return;
   }
   if (
@@ -192,4 +201,29 @@ export async function waitForToolCheckouts(
   // Search tools with no explicit root search the cwd.
   if (!explicitRoot && /grep|glob|search|list|^ls$/.test(tool)) paths.push(cwd);
   await waitForCheckouts(agentId, paths);
+}
+
+/** Commands wait only for pending clones they could reach by path or $MEMORY_DIR. */
+async function waitForCommandCheckouts(
+  agentId: string | undefined,
+  args: unknown,
+  cwd: string,
+): Promise<void> {
+  const text: string[] = [];
+  const visit = (value: unknown): void => {
+    if (typeof value === "string") text.push(value);
+    else if (value && typeof value === "object")
+      Object.values(value).forEach(visit);
+  };
+  visit(args);
+  if (text.some((value) => /MEMORY_DIR|\.letta\b/.test(value))) {
+    await waitForCheckouts(agentId);
+    return;
+  }
+  const paths = text
+    .flatMap((value) => value.split(/[\s"'`;|&()<>=,]+/))
+    .filter((token) => /[/\\~$]|^\.\.?$/.test(token))
+    .map((token) => expandFilePath(token, cwd));
+  // A command running inside a pending checkout can write into it directly.
+  await waitForCheckouts(agentId, paths, cwd);
 }

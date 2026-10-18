@@ -10,6 +10,10 @@ import {
 import { bash, spawnCommand } from "@/tools/impl/bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import { LIMITS } from "@/tools/impl/truncation";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 
 async function runBashInTemp(
   command: string,
@@ -183,16 +187,79 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("timed out");
   }, 5000);
 
-  test("automatically yields a foreground sleep", async () => {
+  test("blocks foreground sleep with guidance toward background waits", async () => {
     const result = await bash({
-      command: "sleep 10",
-      description: "Test automatic yield",
+      command: "sleep 5",
+      description: "Test foreground sleep block",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("Foreground `sleep` is blocked");
+    expect(result.content[0]?.text).toContain("completion notification");
+    expect(result.content[0]?.text).toContain("run_in_background");
+    expect(result.content[0]?.text).toContain("Monitor");
+  });
+
+  test("blocks a foreground until/sleep polling loop", async () => {
+    const result = await bash({
+      command: "until test -f /nonexistent-ready-file; do sleep 1; done",
+      description: "Test foreground loop block",
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("Foreground `sleep` is blocked");
+  });
+
+  test("allows a sleep polling loop with run_in_background", async () => {
+    const result = await bash({
+      command: "until true; do sleep 1; done",
+      description: "Test background loop",
+      run_in_background: true,
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain("running in background");
+  });
+
+  test("does not block sleep in argument or quoted position", async () => {
+    const result = await bash({
+      command: "echo sleep 5 'then; sleep well'",
+      description: "Test sleep as argument",
+    });
+
+    expect(result.status).toBe("success");
+    expect(result.content[0]?.text).toContain("then; sleep well");
+  });
+
+  test("automatically yields a slow foreground command", async () => {
+    setMessageQueueAdder(() => {});
+    try {
+      const result = await bash({
+        command: `node -e "setTimeout(() => {}, 10000)"`,
+        description: "Test automatic yield",
+        foregroundYieldMs: 50,
+      });
+
+      expect(result.status).toBe("success");
+      expect(result.content[0]?.text).toContain("still running with task ID:");
+      expect(result.content[0]?.text).toContain("You will be notified");
+    } finally {
+      setMessageQueueAdder(null);
+      clearPendingMessages();
+    }
+  });
+
+  test("keeps a slow command in the foreground without a notification consumer", async () => {
+    setMessageQueueAdder(null);
+    const result = await bash({
+      command: `node -e "setTimeout(() => console.log('finished'), 300)"`,
+      description: "Test one-shot foreground",
       foregroundYieldMs: 50,
     });
 
     expect(result.status).toBe("success");
-    expect(result.content[0]?.text).toContain("still running with task ID:");
-    expect(result.content[0]?.text).toContain("You will be notified");
+    expect(result.content[0]?.text).toContain("finished");
+    expect(result.content[0]?.text).not.toContain("still running");
   });
 
   test("runs command in background mode", async () => {
@@ -248,7 +315,9 @@ describe("Bash tool", () => {
         const processEntry = backgroundProcesses.get(bashId);
         if (
           processEntry?.status !== "running" ||
-          processEntry?.stdout.join("\n").includes("fake-background-powershell")
+          processEntry?.stdout
+            ?.join("\n")
+            .includes("fake-background-powershell")
         ) {
           break;
         }
@@ -256,7 +325,7 @@ describe("Bash tool", () => {
       }
 
       const processEntry = backgroundProcesses.get(bashId);
-      expect(processEntry?.stdout.join("\n")).toContain(
+      expect(processEntry?.stdout?.join("\n")).toContain(
         "fake-background-powershell",
       );
       expect(processEntry?.exitCode).toBe(0);

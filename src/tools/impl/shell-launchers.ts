@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { getPreferredUnixShell } from "@/utils/shell-context";
 
 const SEP = "\u0000";
 type ShellLaunchOptions = {
@@ -262,15 +263,15 @@ function unixLaunchers(command: string, login: boolean): string[][] {
   const launchers: string[][] = [];
   const seen = new Set<string>();
 
-  // On macOS, ALWAYS prefer zsh first due to bash 3.2's HEREDOC parsing bug
-  // with odd numbers of apostrophes. This takes precedence over $SHELL.
-  if (process.platform === "darwin") {
-    pushUnique(launchers, seen, [
-      "/bin/zsh",
-      shellCommandFlag("/bin/zsh", login),
-      trimmed,
-    ]);
-  }
+  // The preferred shell comes first: /bin/zsh on macOS (bash 3.2's HEREDOC
+  // parsing bug with odd numbers of apostrophes), otherwise $SHELL or
+  // /bin/bash. Session context names this same shell to the model.
+  const preferredShell = getPreferredUnixShell(process.env, process.platform);
+  pushUnique(launchers, seen, [
+    preferredShell,
+    shellCommandFlag(preferredShell, login),
+    trimmed,
+  ]);
 
   // Try user's preferred shell from $SHELL environment variable
   // Use login semantics only when explicitly requested.

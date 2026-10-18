@@ -78,10 +78,6 @@ function getFileEditHeader(toolName: string, toolArgs: string): string {
     ) {
       return `Update ${displayPath}?`;
     }
-
-    if (t === "multi_edit" || t === "multiedit") {
-      return `Apply edits to ${displayPath}?`;
-    }
   } catch {
     // Fall through
   }
@@ -124,13 +120,9 @@ export const ApprovalPreview = memo(
               ? "Write input to running shell session"
               : "Poll running shell session";
         } else {
-          command =
-            typeof args.command === "string"
-              ? args.command
-              : Array.isArray(args.command)
-                ? args.command.join(" ")
-                : "";
-          description = args.description || args.justification || "";
+          command = typeof args.command === "string" ? args.command : "";
+          description =
+            typeof args.description === "string" ? args.description : "";
         }
 
         return (
@@ -146,23 +138,18 @@ export const ApprovalPreview = memo(
     // File Edit tools: Render diff preview
     if (
       toolName === "Edit" ||
-      toolName === "MultiEdit" ||
       toolName === "Write" ||
       toolName === "str_replace_editor" ||
       toolName === "str_replace_based_edit_tool" ||
-      toolName === "ApplyPatch" ||
-      toolName === "memory_apply_patch"
+      toolName === "ApplyPatch"
     ) {
       const headerText = getFileEditHeader(toolName, toolArgs);
 
       try {
         const args = JSON.parse(toolArgs);
 
-        // Handle patch tools (can have multiple files)
-        if (
-          args.input &&
-          (toolName === "ApplyPatch" || toolName === "memory_apply_patch")
-        ) {
+        // Handle ApplyPatch (can have multiple files)
+        if (args.input && toolName === "ApplyPatch") {
           const operations = parsePatchOperations(args.input);
 
           return (
@@ -262,23 +249,8 @@ export const ApprovalPreview = memo(
               />
             )}
 
-            {/* Multi-edit */}
-            {args.edits && Array.isArray(args.edits) && (
-              <AdvancedDiffRenderer
-                precomputed={precomputedDiff}
-                kind="multi_edit"
-                filePath={filePath}
-                edits={args.edits.map(
-                  (e: { old_string?: string; new_string?: string }) => ({
-                    old_string: e.old_string || "",
-                    new_string: e.new_string || "",
-                  }),
-                )}
-              />
-            )}
-
             {/* Single edit */}
-            {args.old_string !== undefined && !args.edits && (
+            {args.old_string !== undefined && (
               <AdvancedDiffRenderer
                 precomputed={precomputedDiff}
                 kind="edit"

@@ -62,6 +62,40 @@ describe("sendMessageStream acting-user propagation", () => {
     ]);
   });
 
+  test("explicit null suppresses inherited and ambient attribution", async () => {
+    const preparedToolContext =
+      await prepareToolExecutionContextForSpecificTools([], {
+        runtimeContext: { actingUserId: "runtime-user" },
+      });
+    const previousActingUserId = process.env[ACTING_USER_ID_ENV];
+    process.env[ACTING_USER_ID_ENV] = "ambient-user";
+    const recordedHeaders: Array<Record<string, string>> = [];
+
+    try {
+      await sendMessageStreamWithBackend(
+        makeRecordingBackend(recordedHeaders),
+        "conv-acting-user",
+        [{ role: "user", content: "Unattributed system input." }],
+        {
+          streamTokens: true,
+          background: true,
+          skillSources: [],
+          preparedToolContext,
+          actingUserId: null,
+        },
+      );
+    } finally {
+      if (previousActingUserId === undefined) {
+        delete process.env[ACTING_USER_ID_ENV];
+      } else {
+        process.env[ACTING_USER_ID_ENV] = previousActingUserId;
+      }
+    }
+
+    expect(recordedHeaders).toHaveLength(1);
+    expect(recordedHeaders[0]?.[ACTING_USER_ID_HEADER]).toBeUndefined();
+  });
+
   test("nested subagent child environments keep attribution on every request", async () => {
     const firstChildEnv = composeSubagentChildEnv({
       parentProcessEnv: {},

@@ -6,7 +6,6 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import { type BackendCapabilities, getBackend } from "@/backend";
 import { apiRequest, getApiRequestConfig } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
-import { debugWarn } from "@/utils/debug";
 import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 import { getModelContextWindow } from "./available-models";
 import { buildCreateAgentRequest } from "./create-agent-request";
@@ -59,28 +58,12 @@ function isToolsNotFoundError(err: unknown): boolean {
   );
 }
 
-export interface AddBaseToolsOptions {
-  quiet?: boolean;
-}
-
-function reportBaseToolsFailure(message: string, quiet: boolean): void {
-  if (quiet) {
-    debugWarn("bootstrap", message);
-  } else {
-    console.warn(message);
-  }
-}
-
-export async function addBaseToolsToServer(
-  options: AddBaseToolsOptions = {},
-): Promise<boolean> {
+export async function addBaseToolsToServer(): Promise<boolean> {
   const { apiKey } = await getApiRequestConfig();
-  const quiet = options.quiet === true;
 
   if (!apiKey) {
-    reportBaseToolsFailure(
+    console.warn(
       "Cannot auto-populate base tools: missing LETTA_API_KEY for manual endpoint call.",
-      quiet,
     );
     return false;
   }
@@ -89,9 +72,8 @@ export async function addBaseToolsToServer(
     await apiRequest<void>("POST", "/v1/tools/add-base-tools");
     return true;
   } catch (err) {
-    reportBaseToolsFailure(
+    console.warn(
       `Failed to call /v1/tools/add-base-tools: ${err instanceof Error ? err.message : String(err)}`,
-      quiet,
     );
     return false;
   }
@@ -155,6 +137,31 @@ export interface CreatedAgentMemfsConfig {
   memoryPromptMode: MemoryPromptMode;
 }
 
+export interface CreatedAgentSystemPromptOptions {
+  isLettaCloud: boolean;
+  systemPromptPreset?: string;
+  systemPromptCustom?: string;
+  memoryPromptMode: MemoryPromptMode;
+}
+
+export async function resolveCreatedAgentSystemPrompt(
+  options: CreatedAgentSystemPromptOptions,
+): Promise<string | null> {
+  if (options.systemPromptCustom !== undefined) {
+    return options.systemPromptCustom;
+  }
+  if (
+    options.isLettaCloud &&
+    (!options.systemPromptPreset || options.systemPromptPreset === "default")
+  ) {
+    return null;
+  }
+  return resolveAndBuildSystemPrompt(
+    options.systemPromptPreset,
+    options.memoryPromptMode,
+  );
+}
+
 export function resolveCreatedAgentMemfsConfig(
   options: CreatedAgentMemfsConfigOptions,
 ): CreatedAgentMemfsConfig {
@@ -164,17 +171,26 @@ export function resolveCreatedAgentMemfsConfig(
     options.capabilities.localMemfs ||
     (options.capabilities.remoteMemfs && options.isLettaCloud) ||
     options.requestedMemoryPromptMode === "memfs" ||
+    options.requestedMemoryPromptMode === "root-memfs" ||
     options.requestedMemoryPromptMode === "local-memfs";
   const enableMemfs = options.isSubagent ? false : supported;
-  const memoryPromptMode =
-    (options.requestedMemoryPromptMode !== "standard"
+  const requestedMemoryPromptMode =
+    options.requestedMemoryPromptMode !== "standard"
       ? options.requestedMemoryPromptMode
-      : undefined) ??
-    (enableMemfs
-      ? options.capabilities.localMemfs
-        ? "local-memfs"
-        : "memfs"
-      : "standard");
+      : undefined;
+  // New Letta Cloud and embedded-local agents are born on the MemFS v2 root
+  // layout. An explicit legacy memory mode still means "use git-backed
+  // memory" at creation, not "create another legacy-layout agent".
+  // Self-hosted API servers keep the caller's explicit mode.
+  const memoryPromptMode = !enableMemfs
+    ? "standard"
+    : options.capabilities.localMemfs
+      ? "root-memfs"
+      : options.isLettaCloud
+        ? requestedMemoryPromptMode === "local-memfs"
+          ? "local-memfs"
+          : "root-memfs"
+        : (requestedMemoryPromptMode ?? "memfs");
 
   return { enableMemfs, memoryPromptMode };
 }
@@ -350,11 +366,15 @@ export async function createAgent(
     (modelUpdateArgs?.context_window as number | undefined) ??
     (await getModelContextWindow(modelHandle));
 
-  // Resolve system prompt content
+  // Letta Cloud owns its default prompt. Local and self-hosted backends still
+  // receive the bundled default so their existing behavior remains unchanged.
   const memMode: MemoryPromptMode = memfsConfig.memoryPromptMode;
-  const systemPromptContent = options.systemPromptCustom
-    ? options.systemPromptCustom
-    : await resolveAndBuildSystemPrompt(options.systemPromptPreset, memMode);
+  const systemPromptContent = await resolveCreatedAgentSystemPrompt({
+    isLettaCloud,
+    systemPromptPreset: options.systemPromptPreset,
+    systemPromptCustom: options.systemPromptCustom,
+    memoryPromptMode: memMode,
+  });
 
   // Create agent with inline memory blocks (LET-7101: single API call instead of N+1)
   // - memory_blocks: new blocks to create inline
@@ -367,6 +387,7 @@ export async function createAgent(
     description: agentDescription,
     model: modelHandle,
     system: systemPromptContent,
+    isLettaCloud,
     memoryPromptMode: memMode,
     memoryBlocks:
       filteredMemoryBlocks.length > 0 ? filteredMemoryBlocks : undefined,
@@ -428,9 +449,12 @@ export async function createAgent(
   // Persist system prompt preset — only for non-subagents and known presets or custom.
   // Guarded by isReady since settings may not be initialized in direct/test callers.
   if (!isSubagent && settingsManager.isReady) {
-    if (options.systemPromptCustom) {
+    if (options.systemPromptCustom !== undefined) {
       settingsManager.setSystemPromptCustom(fullAgent.id);
-    } else if (isKnownPreset(options.systemPromptPreset ?? "default")) {
+    } else if (
+      systemPromptContent !== null &&
+      isKnownPreset(options.systemPromptPreset ?? "default")
+    ) {
       recordManagedSystemPrompt(
         fullAgent.id,
         options.systemPromptPreset ?? "default",

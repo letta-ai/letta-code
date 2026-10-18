@@ -46,3 +46,19 @@ describe("spawnBackgroundSubagentTask environment threading", () => {
     expect(receivedEnvironment).toBe("office-mac");
   });
 });
+
+test("direct helper rejects remote memory workers before registration", () => {
+  expect(() =>
+    spawnBackgroundSubagentTask({
+      subagentType: "memory",
+      prompt: "Remember the correction",
+      description: "memory",
+      environment: "cloud",
+      deps: {
+        registerSubagentImpl: () => {
+          throw new Error("Must not register");
+        },
+      },
+    }),
+  ).toThrow("Memory workers must run on the current machine");
+});

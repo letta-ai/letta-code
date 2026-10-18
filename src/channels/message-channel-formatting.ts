@@ -405,9 +405,13 @@ function replaceSlackMarkdownLinks(
       continue;
     }
 
+    const label = restoreSlackPlaceholders(
+      formatSlackLinkLabel(link.label),
+      placeholders,
+    );
     result += createSlackPlaceholder(
       placeholders,
-      `<${escapeSlackMrkdwnSegment(link.url)}|${formatSlackLinkLabel(link.label)}>`,
+      `<${escapeSlackMrkdwnSegment(link.url)}|${label}>`,
     );
     index = link.endIndex;
   }

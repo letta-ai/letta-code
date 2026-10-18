@@ -147,12 +147,14 @@ export function terminateControlAfterStreamClose(
   if (code === 1000 && reason.toString() === "Replaced by new connection") {
     runtime.intentionallyClosed = true;
   }
-  runtime.streamSocket = null;
   runtime.streamTransport = null;
 
   // The stream channel has no independent replay or reconnect path. Closing
   // control tears down the paired session so its normal reconnect/bootstrap
   // flow restores one coherent connection instead of silently losing frames.
+  // Keep the exact stream identity installed until control's close handler
+  // revokes this pair's generation; clearing it here would make that handler
+  // misclassify the ordinary recycle as stale and leave recovery claims live.
   terminateSocketIfOpenOrConnecting(runtime.socket);
 }
 

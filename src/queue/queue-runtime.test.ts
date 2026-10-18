@@ -183,6 +183,23 @@ describe("bounded buffer — hard ceiling", () => {
     expect(dropped).toEqual(["buffer_limit"]);
     expect(q.length).toBe(1); // unchanged
   });
+
+  test("durability refusal never reports a phantom as durably dropped", () => {
+    const dropped: QueueItem[] = [];
+    const q = new QueueRuntime({
+      maxItems: 1,
+      hardMaxItems: 1,
+      callbacks: {
+        beforeDropped: () => false,
+        onDropped: (item) => dropped.push(item),
+      },
+    });
+    q.enqueue(makeApproval());
+
+    expect(q.enqueue(makeApproval())).toBeNull();
+    expect(dropped).toEqual([]);
+    expect(q.length).toBe(1);
+  });
 });
 
 // ── Dequeue — coalescable ─────────────────────────────────────────
@@ -242,12 +259,14 @@ describe("dequeue coalescable items", () => {
     );
 
     const first = q.tryDequeue(null);
-    expect(first?.items).toHaveLength(1);
-    expect((first?.items[0] as MessageQueueItem).content).toBe("a");
+    expect((first?.items.at(0) as MessageQueueItem | undefined)?.content).toBe(
+      "a",
+    );
 
     const second = q.tryDequeue(null);
-    expect(second?.items).toHaveLength(1);
-    expect((second?.items[0] as MessageQueueItem).content).toBe("b");
+    expect((second?.items.at(0) as MessageQueueItem | undefined)?.content).toBe(
+      "b",
+    );
   });
 
   test("coalesces task notifications for the same acting user", () => {
@@ -666,9 +685,38 @@ describe("removeItem", () => {
 
     // Verify order is preserved
     const batch = q.consumeItems(2);
-    expect(batch?.items).toHaveLength(2);
-    expect((batch?.items[0] as MessageQueueItem).content).toBe("first");
-    expect((batch?.items[1] as MessageQueueItem).content).toBe("third");
+    expect((batch?.items.at(0) as MessageQueueItem | undefined)?.content).toBe(
+      "first",
+    );
+    expect((batch?.items.at(1) as MessageQueueItem | undefined)?.content).toBe(
+      "third",
+    );
+  });
+
+  test("rehydration rejection preserves accepted items without drop callbacks", () => {
+    const dropped: string[] = [];
+    const q = new QueueRuntime({
+      maxItems: 2,
+      hardMaxItems: 3,
+      callbacks: { onDropped: (item) => dropped.push(item.id) },
+    });
+    q.enqueue(makeMsg("first"));
+    q.enqueue(makeMsg("second"));
+
+    expect(
+      q.enqueue(makeMsg("rehydrated"), { preserveExisting: true }),
+    ).toBeNull();
+    expect(q.length).toBe(2);
+    expect(dropped).toEqual([]);
+    q.enqueue(makeApproval());
+    expect(q.enqueue(makeApproval(), { preserveExisting: true })).toBeNull();
+    expect(q.length).toBe(3);
+    expect(dropped).toEqual([]);
+    expect(
+      q
+        .consumeItems(3)
+        ?.items.map((item) => ("content" in item ? item.content : undefined)),
+    ).toEqual(["first", "second", undefined]);
   });
 
   test("resets blockedEmittedForNonEmpty when queue becomes empty", () => {

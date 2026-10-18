@@ -210,6 +210,19 @@ export async function resolveSubagentModel(options: {
     ? "inherit"
     : recommendedModel;
 
+  // When the recommended pin is a catalog ID (e.g. gpt-5.6-sol-plus-pro-high),
+  // return the identifier itself rather than the bare handle: the spawned
+  // child's createAgent re-resolves the ID and applies the catalog entry's
+  // updateArgs (reasoning_effort, verbosity, ...). Returning the bare handle
+  // would silently spawn the base effort tier instead.
+  const recommendedSelection = (handle: string): string => {
+    if (!effectiveRecommendedModel) return handle;
+    const entry = resolveCatalogModel(effectiveRecommendedModel);
+    return entry && entry.handle === handle
+      ? effectiveRecommendedModel
+      : handle;
+  };
+
   if (userModel && !userRequestedInheritance) return userModel;
 
   if (
@@ -219,7 +232,7 @@ export async function resolveSubagentModel(options: {
   ) {
     const recommendedHandle = resolveModel(effectiveRecommendedModel);
     if (recommendedHandle) {
-      return recommendedHandle;
+      return recommendedSelection(recommendedHandle);
     }
   }
 
@@ -238,7 +251,7 @@ export async function resolveSubagentModel(options: {
     ) {
       const recommendedHandle = resolveModel(effectiveRecommendedModel);
       if (recommendedHandle) {
-        return recommendedHandle;
+        return recommendedSelection(recommendedHandle);
       }
     }
 
@@ -297,7 +310,7 @@ export async function resolveSubagentModel(options: {
       if (parentIsByok) {
         if (recommendedProvider === parentProvider) {
           if (await isAvailable(recommendedHandle)) {
-            return recommendedHandle;
+            return recommendedSelection(recommendedHandle);
           }
         } else {
           const swapped = swapProviderPrefix(
@@ -313,7 +326,7 @@ export async function resolveSubagentModel(options: {
       }
 
       if (await isAvailable(recommendedHandle)) {
-        return recommendedHandle;
+        return recommendedSelection(recommendedHandle);
       }
     }
 
@@ -321,7 +334,7 @@ export async function resolveSubagentModel(options: {
   }
 
   if (recommendedHandle && (await isAvailable(recommendedHandle))) {
-    return recommendedHandle;
+    return recommendedSelection(recommendedHandle);
   }
 
   // Non-free fallback default: auto, when available.
@@ -330,5 +343,5 @@ export async function resolveSubagentModel(options: {
     return defaultHandle;
   }
 
-  return recommendedHandle;
+  return recommendedHandle ? recommendedSelection(recommendedHandle) : null;
 }

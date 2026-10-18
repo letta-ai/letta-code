@@ -22,14 +22,19 @@ import {
 } from "@/mcp-client";
 import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
+import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
 import {
   loadMcpToolArgs,
   McpCliError,
+  type McpOutput,
   printMcpError,
   printMcpUsage,
   resolveMcpAgentId,
+  writeMcpStderr,
+  writeMcpStdout,
 } from "./mcp-io";
 import {
   mergeMcpSearchResults,
@@ -104,8 +109,9 @@ function defaultIsHostedLettaCloud(): boolean {
   }
 }
 
-export interface McpSubcommandDependencies {
+export interface McpSubcommandDependencies extends McpConnectDependencies {
   initializeSettings?: () => Promise<void>;
+  lookupParentAgent?: ParentAgentLookup;
   getLocalServers?: (agentId: string) => McpServerConfig[];
   connectLocalServer?: typeof connectMcpServer;
   createOAuthSession?: typeof createMcpOAuthSession;
@@ -115,8 +121,8 @@ export interface McpSubcommandDependencies {
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
   env?: NodeJS.ProcessEnv;
-  stdout?: (message: string) => void;
-  stderr?: (message: string) => void;
+  stdout?: McpOutput;
+  stderr?: McpOutput;
 }
 
 interface ParsedMcpArgs {
@@ -137,6 +143,8 @@ function parseMcpArgs(argv: string[]) {
       full: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
+      "server-url": { type: "string" },
+      "client-name": { type: "string" },
     },
     strict: true,
     allowPositionals: true,
@@ -575,17 +583,17 @@ function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
   };
 }
 
-function printJson(stdout: (message: string) => void, value: unknown): void {
-  stdout(JSON.stringify(value, null, 2));
+async function printJson(stdout: McpOutput, value: unknown): Promise<void> {
+  await stdout(JSON.stringify(value, null, 2));
 }
 
 async function runList(
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const servers = await listUnifiedServers(deps, agentId);
-  printJson(stdout, servers.map(serverSummary));
+  await printJson(stdout, servers.map(serverSummary));
   return 0;
 }
 
@@ -593,7 +601,7 @@ async function runGet(
   deps: McpSubcommandDependencies,
   agentId: string,
   selector: string | undefined,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   if (!selector) {
     throw new McpCliError("invalid_arguments", "Usage: letta mcp get <server>");
@@ -602,7 +610,7 @@ async function runGet(
     await listUnifiedServers(deps, agentId),
     selector,
   );
-  printJson(stdout, serverDetails(server));
+  await printJson(stdout, serverDetails(server));
   return 0;
 }
 
@@ -611,11 +619,11 @@ async function runTools(
   agentId: string,
   serverSelector: string | undefined,
   full: boolean,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
-    printJson(
+    await printJson(
       stdout,
       catalog.tools.map((tool) =>
         full
@@ -639,7 +647,7 @@ async function runSchema(
   deps: McpSubcommandDependencies,
   agentId: string,
   toolName: string | undefined,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   if (!toolName) {
     throw new McpCliError(
@@ -658,7 +666,7 @@ async function runSchema(
         `MCP tool '${toolName}' is not available`,
       );
     }
-    printJson(stdout, tool.schema);
+    await printJson(stdout, tool.schema);
     return 0;
   } finally {
     await catalog.close();
@@ -669,7 +677,7 @@ async function runSearch(
   parsed: ParsedMcpArgs,
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const serverSearchAvailable = serverMcpAvailable(deps);
   const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
@@ -763,7 +771,7 @@ async function runCall(
   parsed: ParsedMcpArgs,
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const toolName = parsed.target;
   if (!toolName) {
@@ -777,62 +785,124 @@ async function runCall(
     stringValue(parsed.values["args-file"]),
     deps,
   );
+  const result = await callAgentMcpTool(agentId, toolName, args, deps);
+  await printJson(stdout, result);
+  return result.isError === true ? 2 : 0;
+}
+
+async function callCatalogTool(
+  catalog: ToolCatalog,
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+): Promise<McpToolResult> {
+  const tool = catalog.tools.find(
+    (candidate) => candidate.schema.name === toolName,
+  );
+  if (!tool) {
+    throw new McpCliError(
+      "tool_not_found",
+      `MCP tool '${toolName}' is not available`,
+    );
+  }
+  return tool.target.kind === "client"
+    ? await tool.target.connection.callTool(tool.target.rawName, args)
+    : mcpToolResultFromServer(
+        await runUnifiedMcpTool({
+          client: await getServerClient(deps),
+          agentId,
+          mcpServerId: tool.target.serverId,
+          toolId: tool.target.toolId,
+          args,
+        }),
+      );
+}
+
+/**
+ * Call one agent-scoped MCP tool by its `mcp__server__tool` name, resolving it
+ * through the same catalog as `letta mcp call`.
+ */
+export async function callAgentMcpTool(
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  deps: McpSubcommandDependencies = {},
+): Promise<McpToolResult> {
   const catalog = await buildToolCatalog(deps, agentId, { toolName });
   try {
-    const tool = catalog.tools.find(
-      (candidate) => candidate.schema.name === toolName,
-    );
-    if (!tool) {
-      throw new McpCliError(
-        "tool_not_found",
-        `MCP tool '${toolName}' is not available`,
-      );
-    }
-    const result =
-      tool.target.kind === "client"
-        ? await tool.target.connection.callTool(tool.target.rawName, args)
-        : mcpToolResultFromServer(
-            await runUnifiedMcpTool({
-              client: await getServerClient(deps),
-              agentId,
-              mcpServerId: tool.target.serverId,
-              toolId: tool.target.toolId,
-              args,
-            }),
-          );
-    printJson(stdout, result);
-    return result.isError === true ? 2 : 0;
+    return await callCatalogTool(catalog, deps, agentId, toolName, args);
   } finally {
     await catalog.close();
   }
+}
+
+export interface AgentMcpSession {
+  callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<McpToolResult>;
+  listTools(): Promise<McpToolDefinition[]>;
+  close(): Promise<void>;
+}
+
+/**
+ * Like callAgentMcpTool, but builds the agent's catalog (and any local server
+ * connections) once on first use and reuses it until close().
+ */
+export function createAgentMcpSession(
+  agentId: string,
+  deps: McpSubcommandDependencies = {},
+): AgentMcpSession {
+  let catalog: Promise<ToolCatalog> | undefined;
+  let closed = false;
+  const load = () => {
+    if (closed) throw new Error("MCP session is closed");
+    catalog ??= buildToolCatalog(deps, agentId).catch((error: unknown) => {
+      catalog = undefined;
+      throw error;
+    });
+    return catalog;
+  };
+  return {
+    callTool: async (toolName, args) =>
+      callCatalogTool(await load(), deps, agentId, toolName, args),
+    listTools: async () => (await load()).tools.map((tool) => tool.schema),
+    close: async () => {
+      closed = true;
+      const pending = catalog;
+      catalog = undefined;
+      await (await pending?.catch(() => undefined))?.close();
+    },
+  };
 }
 
 export async function runMcpSubcommand(
   argv: string[],
   deps: McpSubcommandDependencies = {},
 ): Promise<number> {
-  const stdout = deps.stdout ?? console.log;
-  const stderr = deps.stderr ?? console.error;
+  const stdout = deps.stdout ?? writeMcpStdout;
+  const stderr = deps.stderr ?? writeMcpStderr;
   let parsed: ParsedMcpArgs;
   try {
     parsed = parseCommandLine(argv);
   } catch (error) {
-    printMcpError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 
   if (parsed.values.help || !parsed.action || parsed.action === "help") {
-    printMcpUsage(stdout);
+    await printMcpUsage(stdout);
     return 0;
   }
 
-  const agentId = resolveMcpAgentId(
+  let agentId = resolveMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
     deps.env ?? process.env,
   );
   if (!agentId) {
-    printMcpError(
+    await printMcpError(
       stderr,
       new McpCliError(
         "agent_id_required",
@@ -845,6 +915,13 @@ export async function runMcpSubcommand(
 
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+    if (!parsed.values.agent && !parsed.values["agent-id"]) {
+      agentId = await getMcpScopeAgentId(
+        agentId,
+        deps.env ?? process.env,
+        deps.lookupParentAgent,
+      );
+    }
     switch (parsed.action) {
       case "list":
         return await runList(deps, agentId, stdout);
@@ -869,6 +946,15 @@ export async function runMcpSubcommand(
       case "run-tool":
       case "run_tool":
         return await runCall(parsed, deps, agentId, stdout);
+      case "connect":
+        return await runMcpConnect(
+          { ...deps, stderr },
+          agentId,
+          parsed.target,
+          stringValue(parsed.values["server-url"]),
+          stringValue(parsed.values["client-name"]),
+          stdout,
+        );
       default:
         throw new McpCliError(
           "unknown_command",
@@ -876,7 +962,7 @@ export async function runMcpSubcommand(
         );
     }
   } catch (error) {
-    printMcpError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 }

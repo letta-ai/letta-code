@@ -29,9 +29,7 @@ export function formatSlackToolNameForDisplay(toolName: string): string {
   if (
     toolName === "Bash" ||
     toolName === "bash" ||
-    toolName === "exec_command" ||
-    toolName === "shell_command" ||
-    toolName === "ShellCommand"
+    toolName === "exec_command"
   ) {
     return "Bash";
   }

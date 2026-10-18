@@ -34,11 +34,11 @@ import { LocalBackend } from "@/backend/local/local-backend";
 import { emptyLocalUsage } from "@/backend/local/local-message";
 import { LOCAL_REPAIRED_TOOL_RESULT_TEXT_MAX_CHARS } from "@/backend/local/local-message-projection";
 import { listLocalModels } from "@/backend/local/local-model-config";
+import { LocalStore } from "@/backend/local/local-store";
 import {
-  LocalStore,
   LocalTranscriptMigrationRequiredError,
   LocalTranscriptRepairRequiredError,
-} from "@/backend/local/local-store";
+} from "@/backend/local/local-transcript";
 import { LOCAL_BACKEND_DIR_ENV } from "@/backend/local/paths";
 import { migrateLocalBackendTranscripts } from "@/backend/local/transcript-migration";
 import { listLocalAgentsFromDisk } from "@/cli/helpers/local-agent-listing";
@@ -704,13 +704,12 @@ describe("local backend pi transcript", () => {
       agent_id: agent.id,
     } as never);
     const memoryDir = join(storageDir, "memfs", agent.id, "memory");
-    await mkdir(join(memoryDir, "system"), { recursive: true });
     await writeFile(
-      join(memoryDir, "system", "persona.md"),
-      "---\ndescription: Persona\n---\nChanged but not explicitly recompiled.\n",
+      join(memoryDir, "persona.md"),
+      '---\nname: "Persona"\ndescription: "Who the agent is"\n---\nChanged but not explicitly recompiled.\n',
       "utf8",
     );
-    execFileSync("git", ["add", "system/persona.md"], { cwd: memoryDir });
+    execFileSync("git", ["add", "persona.md"], { cwd: memoryDir });
     execFileSync("git", ["commit", "-m", "test memory change"], {
       cwd: memoryDir,
     });

@@ -180,6 +180,13 @@ describe("listener auth lifecycle", () => {
       onDisconnected?: () => void;
       onNeedsReregister?: () => void;
       onError?: (error: Error) => void;
+      onRetrying?: (
+        attempt: number,
+        maxAttempts: number,
+        nextRetryIn: number,
+        connectionId?: string,
+      ) => void;
+      onConnectionReady?: () => Promise<void>;
       supportsSplitStatusChannels?: boolean;
     } = {},
   ) {
@@ -193,6 +200,8 @@ describe("listener auth lifecycle", () => {
       onDisconnected: overrides.onDisconnected ?? mock(() => {}),
       onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
       onError: overrides.onError ?? mock(() => {}),
+      onRetrying: overrides.onRetrying,
+      onConnectionReady: overrides.onConnectionReady,
     });
   }
 
@@ -312,6 +321,78 @@ describe("listener auth lifecycle", () => {
     expect(authorizations[1]).toBe("Bearer refreshed-access-token");
     expect(settings.refreshToken).toBe("rotated-refresh-token");
   });
+
+  test("reports the attempt-zero reconnect as soon as a connected socket closes", async () => {
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({ onRetrying });
+    await waitFor(
+      () => connections.length === 1 && isClientInitialized(),
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(1000, "reconnect");
+    await waitFor(
+      () => onRetrying.mock.calls.length > 0,
+      "listener did not report reconnecting",
+    );
+
+    expect(onRetrying).toHaveBeenCalledWith(
+      0,
+      expect.any(Number),
+      0,
+      "connection-id",
+    );
+  });
+
+  test("grows reconnect backoff while connected startup never completes", async () => {
+    const releaseStalledStartups: Array<() => void> = [];
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({
+      onRetrying,
+      // Startup reaches an initialized connection, then stalls before the
+      // pong heartbeat starts (as a hung recovery or ready hook would).
+      onConnectionReady: () =>
+        new Promise<void>((resolve) => releaseStalledStartups.push(resolve)),
+    });
+
+    try {
+      for (let socketIndex = 0; socketIndex < 3; socketIndex += 1) {
+        await waitFor(
+          () =>
+            connections.length === socketIndex + 1 &&
+            releaseStalledStartups.length === socketIndex + 1 &&
+            isClientInitialized(),
+          `socket ${socketIndex + 1} did not reach stalled startup`,
+        );
+        expect(getActiveRuntime()?.hasSuccessfulConnection).toBe(false);
+        connections[socketIndex]?.close(1001, "idle timeout");
+        await waitFor(
+          () => onRetrying.mock.calls.length === socketIndex + 1,
+          `socket ${socketIndex + 1} close did not schedule a retry`,
+        );
+      }
+
+      expect(onRetrying.mock.calls.map(([attempt]) => attempt)).toEqual([
+        1, 2, 3,
+      ]);
+    } finally {
+      for (const release of releaseStalledStartups) release();
+    }
+  }, 20_000);
 
   test("transient relay closes preserve turn state queues and approval resolvers", async () => {
     const onDisconnected = mock(() => {});

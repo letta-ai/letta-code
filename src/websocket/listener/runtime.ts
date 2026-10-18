@@ -1,7 +1,9 @@
 import { createContextTracker } from "@/cli/helpers/context-tracker";
 import { createSharedReminderState } from "@/reminders/state";
 import type { PendingControlRequest } from "@/types/protocol_v2";
+import { redactWsEventForLogging } from "@/websocket/ws-event-redaction";
 import { getWorkingDirectoryScopeKey } from "./cwd";
+import { cancelFailedTeleportCleanup } from "./failed-teleport-cleanup";
 import {
   normalizeConversationId,
   normalizeCwdAgentId,
@@ -18,12 +20,34 @@ import type {
 } from "./types";
 
 let activeRuntime: ListenerRuntime | null = null;
+/**
+ * Process-wide authority history. Clearing the active pointer deliberately does
+ * not reset this epoch: a stopped predecessor remains current only until a new
+ * non-null runtime takes ownership.
+ */
+let activeRuntimeAuthorityEpoch = 0;
+const authorityEpochByRuntime = new WeakMap<ListenerRuntime, number>();
 
 export function getActiveRuntime(): ListenerRuntime | null {
   return activeRuntime;
 }
 
+export function getLatestRuntimeAuthorityEpoch(): number {
+  return activeRuntimeAuthorityEpoch;
+}
+
+export function getRuntimeAuthorityEpoch(
+  runtime: ListenerRuntime,
+): number | null {
+  return authorityEpochByRuntime.get(runtime) ?? null;
+}
+
 export function setActiveRuntime(runtime: ListenerRuntime | null): void {
+  if (runtime !== null && runtime !== activeRuntime) {
+    if (activeRuntime) clearListenerRetryTimers(activeRuntime);
+    activeRuntimeAuthorityEpoch += 1;
+    authorityEpochByRuntime.set(runtime, activeRuntimeAuthorityEpoch);
+  }
   activeRuntime = runtime;
 }
 
@@ -33,7 +57,11 @@ export function safeEmitWsEvent(
   event: unknown,
 ): void {
   try {
-    activeRuntime?.onWsEvent?.(direction, label, event);
+    activeRuntime?.onWsEvent?.(
+      direction,
+      label,
+      redactWsEventForLogging(event),
+    );
   } catch {
     // Debug hook must never break transport flow.
   }
@@ -47,7 +75,20 @@ export function nextEventSeq(runtime: ListenerRuntime | null): number | null {
   return runtime.eventSeqCounter;
 }
 
+function clearListenerRetryTimers(runtime: ListenerRuntime): void {
+  if (runtime.durableQueueRestoreTimer) {
+    clearTimeout(runtime.durableQueueRestoreTimer);
+    runtime.durableQueueRestoreTimer = undefined;
+  }
+  runtime.durableQueueRestoreScheduled = false;
+  runtime.durableQueueRestoreRerunRequested = false;
+  runtime.durableQueueRestoreFailures = 0;
+  runtime.scheduleRestoredQueuePumps = undefined;
+  cancelFailedTeleportCleanup(runtime);
+}
+
 export function clearRuntimeTimers(runtime: ListenerRuntime): void {
+  clearListenerRetryTimers(runtime);
   if (runtime.reconnectTimeout) {
     clearTimeout(runtime.reconnectTimeout);
     runtime.reconnectTimeout = null;
@@ -163,6 +204,7 @@ export function evictConversationRuntimeIfIdle(
         runtime.expectedTeleportExpiresAt > Date.now())) ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||
+    runtime.pendingInboundDispatches > 0 ||
     runtime.pendingTurns > 0 ||
     runtime.pendingApprovalResolvers.size > 0 ||
     runtime.pendingApprovalBatchByToolCallId.size > 0 ||
@@ -263,7 +305,6 @@ export function createConversationRuntime(
     activeConnectionId: null,
     turnLifecycle,
     messageQueue: Promise.resolve(),
-    acceptedInputDispositions: new Map(),
     pendingApprovalResolvers: new Map(),
     recoveredApprovalState: null,
     expectedTeleportId: null,
@@ -290,8 +331,10 @@ export function createConversationRuntime(
     queueRuntime: null as unknown as ConversationRuntime["queueRuntime"],
     queuedMessagesByItemId: new Map(),
     dequeuedClientMessageIdsByBatchId: new Map(),
+    dequeuedInputIdentitiesByBatchId: new Map(),
     queuePumpActive: false,
     queuePumpScheduled: false,
+    pendingInboundDispatches: 0,
     pendingTurns: 0,
     get loopStatus() {
       return turnLifecycle.loopStatus;
@@ -307,6 +350,7 @@ export function createConversationRuntime(
     pendingInterruptedContext: null,
     continuationEpoch: 0,
     pendingInterruptedToolCallIds: null,
+    pendingTerminalDeliveryCount: 0,
     reminderState:
       listener.reminderStateByConversation.get(runtimeKey) ??
       (() => {
@@ -359,9 +403,25 @@ export function clearRecoveredApprovalState(
   evictConversationRuntimeIfIdle(runtime);
 }
 
+export function invalidateExternalToolNotifications(
+  runtime: ConversationRuntime,
+): void {
+  const notificationEpochs =
+    runtime.listener.externalToolNotificationEpochByConversation;
+  const runtimeKey = getConversationRuntimeKey(
+    runtime.agentId,
+    runtime.conversationId,
+  );
+  notificationEpochs.set(
+    runtimeKey,
+    (notificationEpochs.get(runtimeKey) ?? 0) + 1,
+  );
+}
+
 export function clearConversationRuntimeState(
   runtime: ConversationRuntime,
 ): void {
+  invalidateExternalToolNotifications(runtime);
   runtime.turnLifecycle.reset("cancelled");
   releaseListenerTurnContext({
     runtime,
@@ -373,9 +433,11 @@ export function clearConversationRuntimeState(
   runtime.pendingInterruptedResults = null;
   runtime.pendingInterruptedContext = null;
   runtime.pendingInterruptedToolCallIds = null;
+  runtime.pendingTerminalDeliveryCount = 0;
   runtime.expectedTeleportId = null;
   runtime.expectedTeleportExpiresAt = null;
   runtime.dequeuedClientMessageIdsByBatchId.clear();
+  runtime.dequeuedInputIdentitiesByBatchId.clear();
   runtime.continuationEpoch += 1;
   runtime.pendingTurns = 0;
   runtime.queuePumpActive = false;
@@ -431,6 +493,17 @@ export function clearRecoveredApprovalStateForScope(
   }
 }
 
+export function clearRecoveredApprovalStateUnlessRetained(
+  runtime: ConversationRuntime,
+  retain: boolean,
+): void {
+  if (retain) return;
+  clearRecoveredApprovalStateForScope(runtime.listener, {
+    agent_id: runtime.agentId,
+    conversation_id: runtime.conversationId,
+  });
+}
+
 export function getPendingControlRequests(
   runtime: ListenerRuntime,
   params?: {
@@ -462,18 +535,6 @@ export function getPendingControlRequests(
     });
   }
 
-  const recovered = conversationRuntime.recoveredApprovalState;
-  if (recovered) {
-    for (const requestId of recovered.pendingRequestIds) {
-      const entry = recovered.approvalsByRequestId.get(requestId);
-      if (!entry) continue;
-      requests.push({
-        request_id: entry.controlRequest.request_id,
-        request: entry.controlRequest.request,
-      });
-    }
-  }
-
   return requests;
 }
 
@@ -498,7 +559,7 @@ export function hasInterruptedCacheForScope(
   const context = conversationRuntime.pendingInterruptedContext;
   if (
     context &&
-    context.agentId === (scopedAgentId ?? "") &&
+    context.agentId === scopedAgentId &&
     context.conversationId === scopedConversationId &&
     context.continuationEpoch === conversationRuntime.continuationEpoch
   ) {

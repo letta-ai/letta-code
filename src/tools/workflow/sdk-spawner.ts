@@ -5,6 +5,11 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
+import { getBackend } from "@/backend";
+import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
+import type { RuntimePermissionMode } from "@/runtime-context";
+import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
+import { getInternalToolName } from "@/tools/tool-name-mapping";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -12,6 +17,7 @@ import type {
   SubagentOutcome,
   SubagentRequest,
   SubagentSpawner,
+  SubagentSpawnHooks,
 } from "./types.ts";
 
 export interface SdkSpawnerConfig {
@@ -21,13 +27,66 @@ export interface SdkSpawnerConfig {
   model: string;
   /** Resolves a handle or alias from agent() opts; null when unknown. */
   resolveModel?: (identifier: string) => string | null;
-  /** Default tool allowlist for subagents. Keep it read-only by default. */
+  /** Parent tool pool, or the workflow's explicit allowlist override. */
   allowedTools?: string[];
+  /** Tool names captured from the invoking parent's prepared tool context. */
+  parentToolNames?: string[];
+  /** Parent-only agent mod tools, which agent-free workers cannot load. */
+  agentScopedToolNames?: string[];
+  /** Invoking session's permission mode. Omit to use the harness default. */
+  permissionMode?: RuntimePermissionMode;
   /** Working directory for subagent sessions. */
   cwd?: string;
+  /** Local parent provider settings snapshotted when the workflow starts. */
+  parentModelSettings?: Record<string, unknown>;
+  /** Local parent context limit snapshotted when the workflow starts. */
+  parentContextWindowLimit?: number | null;
+  /** Resume is gated on a verified SDK release; 0.8.17 silently creates a new child. */
+  supportsAgentFreeResume?: boolean;
+  /** Cloud exposes durable Runs; local completion is owned by this spawner. */
+  verifyPersistedRuns?: boolean;
+  /** Persisted conversation lookup (injected for focused tests). */
+  retrieveConversation?: (id: string) => Promise<WorkerConversation>;
+  /** Latest persisted conversation run (injected for focused tests). */
+  latestRun?: (id: string) => Promise<WorkerRun | null>;
 }
 
-export const DEFAULT_ALLOWED_TOOLS = ["Read", "Grep", "Glob"];
+export interface WorkerConversation {
+  agent_id: string | null;
+  parent_agent_id?: string | null;
+  model?: string | null;
+}
+
+export interface WorkerRun {
+  id: string;
+  conversation_id?: string | null;
+  status?: string;
+  completed_at?: string | null;
+}
+
+async function latestWorkerRun(
+  conversationId: string,
+): Promise<WorkerRun | null> {
+  const backend = getBackend();
+  const messages = await backend.listConversationMessages(conversationId, {
+    limit: 100,
+    order: "desc",
+  });
+  const runId = messages
+    .getPaginatedItems()
+    .map((message) => message.run_id)
+    .find(
+      (id): id is string => typeof id === "string" && id.startsWith("run-"),
+    );
+  if (!runId) return null;
+  return backend.retrieveRun(runId);
+}
+
+async function retrieveWorkerConversation(
+  id: string,
+): Promise<WorkerConversation> {
+  return getBackend().retrieveConversation(id) as Promise<WorkerConversation>;
+}
 
 /**
  * Runaway guards. Live runs showed models re-issuing the identical tool call
@@ -191,6 +250,7 @@ interface DrainedTurn {
   finalText: string;
   success: boolean;
   error?: string;
+  structuredOutput?: unknown;
   totalTokens?: number;
 }
 
@@ -221,18 +281,30 @@ async function drainTurn(
   usage: RunningUsage,
   stop: (reason: string) => void,
   maxToolCalls: number,
+  onUsage?: (totalTokens: number) => void,
+  onStarted?: (conversationId: string) => void,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
   let success = false;
   let error: string | undefined;
+  let structuredOutput: unknown;
+  let startedNotified = false;
   const guard = createToolCallGuard(maxToolCalls);
   for await (const message of query) {
+    // The SDK sends loop_status before inference, not an init message.
+    // Capture the conversation as soon as any stream event exposes it.
+    const id = query.conversationId ?? message.conversationId;
+    if (!startedNotified && id) {
+      startedNotified = true;
+      onStarted?.(id);
+    }
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
+        onUsage?.(usage.totalTokens);
       }
     }
     if (message.type === "tool_call") {
@@ -251,13 +323,15 @@ async function drainTurn(
     if (message.type === "result") {
       success = message.success === true;
       resultText = message.result;
-      error = message.error ?? message.errorCode;
+      error = message.errorDetail ?? message.error ?? message.errorCode;
+      structuredOutput = message.structuredOutput;
     }
   }
   return {
     finalText: (resultText ?? assistantText).trim(),
     success,
     error,
+    structuredOutput,
     totalTokens: usage.totalTokens,
   };
 }
@@ -270,24 +344,74 @@ function buildQueryOptions(
 ): Record<string, unknown> {
   const system = [
     SUBAGENT_PREAMBLE,
-    options.json ? JSON_PREAMBLE : undefined,
+    options.json && !options.schema ? JSON_PREAMBLE : undefined,
     options.systemPrompt,
   ]
     .filter(Boolean)
     .join("\n\n");
+  const modelSettings = {
+    ...(!options.model ? config.parentModelSettings : {}),
+    ...(options.effort ? { reasoning_effort: options.effort } : {}),
+  };
+  const explicitAllowedTools = options.allowedTools ?? config.allowedTools;
+  const bundledTools = new Set<string>(Object.keys(TOOL_DEFINITIONS));
+  const globalModTools = new Set(
+    Array.from(getAvailableModToolsRegistry().entries()).flatMap(
+      ([name, tool]) =>
+        tool.owner?.scope === "agent"
+          ? []
+          : [getInternalToolName(name), getInternalToolName(tool.name)],
+    ),
+  );
+  const agentScopedTools = new Set(
+    (config.agentScopedToolNames ?? []).map(getInternalToolName),
+  );
+  const isWorkerResolvable = (name: string): boolean => {
+    const internalName = getInternalToolName(name);
+    return bundledTools.has(internalName) || globalModTools.has(internalName);
+  };
+  const unknownTool = explicitAllowedTools?.find(
+    (name) => !isWorkerResolvable(name),
+  );
+  if (unknownTool !== undefined) {
+    if (agentScopedTools.has(getInternalToolName(unknownTool))) {
+      throw new Error(
+        `Workflow worker tool "${unknownTool}" is agent-scoped and is not available to workflow workers.`,
+      );
+    }
+    throw new Error(
+      `Unknown workflow worker tool "${unknownTool}": it is neither a bundled tool nor a global mod tool available to workflow workers.`,
+    );
+  }
+  const allowedTools =
+    explicitAllowedTools ?? config.parentToolNames?.filter(isWorkerResolvable);
   return {
     model,
+    ...(options.schema
+      ? { outputFormat: { type: "json_schema", schema: options.schema } }
+      : {}),
     parentAgentId: config.parentAgentId,
     isSubagent: true,
     name: options.label ?? `Workflow worker ${callIndex + 1}`,
     system,
-    permissionMode: "unrestricted",
-    allowedTools:
-      options.allowedTools ?? config.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
+    ...(config.permissionMode ? { permissionMode: config.permissionMode } : {}),
+    ...(allowedTools !== undefined
+      ? {
+          allowedTools: [...allowedTools],
+          toolset: {
+            base: "none",
+            include: allowedTools
+              .map(getInternalToolName)
+              .filter((name) => bundledTools.has(name)),
+          },
+        }
+      : {}),
     skillSources: [],
     ...(config.cwd ? { cwd: config.cwd } : {}),
-    ...(options.effort
-      ? { modelSettings: { reasoning_effort: options.effort } }
+    disableMemoryGuard: true,
+    ...(Object.keys(modelSettings).length > 0 ? { modelSettings } : {}),
+    ...(!options.model && config.parentContextWindowLimit !== undefined
+      ? { contextWindowLimit: config.parentContextWindowLimit }
       : {}),
   };
 }
@@ -296,14 +420,94 @@ export function createSdkSpawner(
   client: SdkClient,
   config: SdkSpawnerConfig,
 ): SubagentSpawner {
+  const activeResumeIds = new Set<string>();
+  const locallyCompletedIds = new Set<string>();
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
+    hooks?: SubagentSpawnHooks,
   ): Promise<SubagentOutcome> => {
     const { prompt, options } = request;
-    const model = options.model
+    const resumeId = options.conversationId;
+    if (
+      resumeId !== undefined &&
+      !/^(?:conv-|local-conv-)[A-Za-z0-9_-]+$/.test(resumeId)
+    ) {
+      throw new Error(
+        "agent() conversationId must be a conv-... or local-conv-... ID.",
+      );
+    }
+    // Never hand conversationId to an older SDK: it ignores the option and
+    // creates a fresh worker, silently losing the conversation history.
+    if (resumeId && !config.supportsAgentFreeResume) {
+      throw new Error(
+        "Workflow worker continuation requires an Agent SDK release with agent-free query() resume support.",
+      );
+    }
+    const persisted = resumeId
+      ? await (config.retrieveConversation ?? retrieveWorkerConversation)(
+          resumeId,
+        )
+      : null;
+    if (
+      persisted &&
+      (persisted.agent_id !== null ||
+        persisted.parent_agent_id !== config.parentAgentId)
+    ) {
+      throw new Error(
+        "Worker conversation is not agent-free or belongs to another parent agent.",
+      );
+    }
+    if (
+      persisted &&
+      resumeId &&
+      config.verifyPersistedRuns === false &&
+      !locallyCompletedIds.has(resumeId) &&
+      !activeResumeIds.has(resumeId)
+    ) {
+      throw new Error(
+        "Local worker continuation is only safe within the workflow execution that completed it.",
+      );
+    }
+    if (persisted && resumeId && config.verifyPersistedRuns !== false) {
+      // SDK App Server turns have Runs, not Super Runs. If the latest
+      // persisted message has no run ID or the run is not terminal, do not
+      // risk sending a second prompt into an active conversation.
+      const latest = await (config.latestRun ?? latestWorkerRun)(resumeId);
+      if (
+        !latest ||
+        latest.conversation_id !== resumeId ||
+        !["completed", "failed", "cancelled"].includes(latest.status ?? "")
+      ) {
+        throw new Error(
+          "Cannot confirm worker's latest run is terminal; reconcile it before continuing.",
+        );
+      }
+    }
+    if (
+      persisted &&
+      (!persisted.model || typeof persisted.model !== "string")
+    ) {
+      throw new Error(
+        "Worker conversation has no persisted model; cannot continue safely.",
+      );
+    }
+    const selectedModel = options.model
       ? (config.resolveModel?.(options.model) ?? null)
       : config.model;
+    // System prompt is a creation-time setting; do not imply it changes on
+    // resume. Tool and output choices are explicit per turn, not inherited.
+    if (persisted && options.systemPrompt !== undefined) {
+      throw new Error(
+        "agent() continuation cannot override the worker system prompt.",
+      );
+    }
+    if (persisted && options.model && selectedModel !== persisted.model) {
+      throw new Error(
+        "agent() continuation model must match the persisted worker model.",
+      );
+    }
+    const model = persisted ? persisted.model : selectedModel;
     if (!model) {
       return {
         value: null,
@@ -319,12 +523,35 @@ export function createSdkSpawner(
       };
     }
 
+    if (resumeId && activeResumeIds.has(resumeId)) {
+      throw new Error(
+        "Worker conversation already has an active workflow turn.",
+      );
+    }
+    if (resumeId) activeResumeIds.add(resumeId);
+    let activeId = resumeId;
     const startedAt = Date.now();
     const usage: RunningUsage = {};
-    const query = client.query({
-      prompt,
-      options: buildQueryOptions(options, model, config, request.callIndex),
-    });
+    let query: SdkQuery;
+    try {
+      query = client.query({
+        prompt,
+        options: {
+          ...buildQueryOptions(options, model, config, request.callIndex),
+          ...(resumeId ? { conversationId: resumeId } : {}),
+        },
+      });
+    } catch (error) {
+      if (activeId) activeResumeIds.delete(activeId);
+      throw error;
+    }
+    if (resumeId && query.conversationId && query.conversationId !== resumeId) {
+      query.close();
+      activeResumeIds.delete(resumeId);
+      throw new Error(
+        "SDK resumed an unexpected worker conversation; refusing continuation.",
+      );
+    }
     // Stopping early (abort, timeout, runaway) interrupts the turn and
     // settles the outcome; the stream drain then ends on its own.
     let settleStopped!: (turn: DrainedTurn) => void;
@@ -359,9 +586,31 @@ export function createSdkSpawner(
           usage,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
+          (totalTokens) => {
+            if (!finished) hooks?.onUsage?.(totalTokens);
+          },
+          (id) => {
+            if (resumeId && id !== resumeId) {
+              stop("SDK resumed an unexpected worker conversation");
+            } else if (!finished) {
+              if (!activeId) {
+                activeId = id;
+                activeResumeIds.add(id);
+              }
+              hooks?.onStarted?.(id);
+            }
+          },
         ),
         stopped,
       ]);
+      if (!finished && query.conversationId) {
+        locallyCompletedIds.add(query.conversationId);
+      }
+      if (resumeId && query.conversationId !== resumeId) {
+        throw new Error(
+          "SDK did not resume the requested worker conversation.",
+        );
+      }
       const stats = {
         durationMs: Date.now() - startedAt,
         ...(turn.totalTokens !== undefined
@@ -372,37 +621,58 @@ export function createSdkSpawner(
           : {}),
       };
       if (!turn.success) {
-        return {
+        const outcome = {
           value: null,
           failed: true,
           error: turn.error ?? "subagent turn failed",
           ...stats,
         };
+        return outcome;
+      }
+      if (options.schema) {
+        const outcome = {
+          value: turn.structuredOutput,
+          failed: false,
+          ...stats,
+        };
+        return outcome;
       }
       if (options.json) {
         try {
-          return {
+          const outcome = {
             value: parseJsonReply(turn.finalText),
             failed: false,
             ...stats,
           };
+          return outcome;
         } catch {
-          return {
+          const outcome = {
             value: null,
             failed: true,
             error: `Subagent reply was not valid JSON: ${turn.finalText.slice(0, 200)}`,
             ...stats,
           };
+          return outcome;
         }
       }
-      return { value: turn.finalText, failed: false, ...stats };
+      const outcome = { value: turn.finalText, failed: false, ...stats };
+      return outcome;
     } catch (error) {
-      return { value: null, failed: true, error: String(error) };
+      const outcome = {
+        value: null,
+        failed: true,
+        error: String(error),
+        ...(query.conversationId || resumeId
+          ? { conversationId: query.conversationId ?? resumeId }
+          : {}),
+      };
+      return outcome;
     } finally {
       finished = true;
       clearTimeout(timeout);
       signal.removeEventListener("abort", abort);
       query.close();
+      if (activeId) activeResumeIds.delete(activeId);
     }
   };
 }

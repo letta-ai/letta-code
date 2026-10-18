@@ -166,7 +166,7 @@ describe("local pi provider catalog", () => {
     }
   });
 
-  test("local Anthropic catalog includes upstream Opus 5", async () => {
+  test("local Anthropic catalog includes upstream Opus 5.5", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-anthropic-opus-"));
     try {
       await createOrUpdateLocalProvider({
@@ -178,7 +178,7 @@ describe("local pi provider catalog", () => {
 
       const models = await listLocalModels(storageDir);
       expect(
-        models.some((model) => model.handle === "anthropic/claude-opus-5"),
+        models.some((model) => model.handle === "anthropic/claude-opus-5-5"),
       ).toBe(true);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
@@ -260,6 +260,8 @@ describe("local pi provider catalog", () => {
 
     expect(localApiKeyProviderIds.has("anthropic")).toBe(true);
     expect(localOAuthProviderIds.has("anthropic-oauth")).toBe(true);
+    expect(localApiKeyProviderIds.has("openai")).toBe(true);
+    expect(localOAuthProviderIds.has("openai-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openrouter")).toBe(true);
     expect(localOAuthProviderIds.has("openrouter-oauth")).toBe(true);
     expect(localApiKeyProviderIds.has("openai-codex")).toBe(false);

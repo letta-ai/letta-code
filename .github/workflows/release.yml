@@ -179,13 +179,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          for _ in {1..30}; do
-            if npm view "$PACKAGE_NAME@$VERSION" version >/dev/null 2>&1; then
+          for _ in {1..90}; do
+            if OUTPUT=$(npm view "$PACKAGE_NAME@$VERSION" version 2>&1); then
               exit 0
             fi
             sleep 10
           done
-          echo "Package $PACKAGE_NAME@$VERSION did not become available within five minutes."
+          echo "Package $PACKAGE_NAME@$VERSION did not become available within fifteen minutes."
+          printf '%s\n' "$OUTPUT"
           exit 1
 
       - name: Set up QEMU

@@ -57,6 +57,8 @@ describe("public memory constraints contract", () => {
 
   test.each([
     ["null", "expected a JSON object"],
+    ['{"version":1,"readOnlyFiles":["../secret"]}', "repo-relative glob"],
+    ['{"version":1,"readOnlyFiles":["a**"]}', "complete path segment"],
     ['{"version":2}', "version must be 1"],
     ['{"version":1,"unknown":1}', "unknown field 'unknown'"],
     ['{"version":1,"maxDepth":-1}', "maxDepth must be a non-negative integer"],

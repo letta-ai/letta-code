@@ -12,6 +12,7 @@ import { runMemorySubcommand } from "./memory";
 import { runMessagesSubcommand } from "./messages";
 import { runModelSubcommand } from "./model";
 import { runModsSubcommand } from "./mods";
+import { runPermissionsSubcommand } from "./permissions";
 import { runSandboxSubcommand } from "./sandbox";
 import { runSecretSubcommand } from "./secret";
 import { asLegacyAppServerCommand, runServerSubcommand } from "./server";
@@ -57,6 +58,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "model":
     case "models":
     case "mods":
+    case "permissions":
     case "remote":
     case "sandbox":
     case "secret":
@@ -94,6 +96,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runModelSubcommand(rest);
     case "usage":
       return runUsageSubcommand(rest);
+    case "permissions":
+      return runPermissionsSubcommand(rest);
     case "app-server":
       console.error(
         "Warning: `letta app-server` is deprecated. Use `letta server --listen` instead.",

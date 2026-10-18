@@ -464,6 +464,9 @@ export interface PendingApprovalInfo {
 export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
   "The agent harness automatically closed this stale pending tool call to recover from a client/server state desync: the server was still waiting on a result for it, but the harness had no matching tool execution in flight and no result was ever recorded. It was not denied by the user or a permissions policy. Re-issue the tool call if you still need it.";
 
+export const STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON =
+  "The agent harness closed this pending tool call while recovering from an interrupted turn. The call had started, but its result was not recorded, so it may or may not have run. Check whether its effect already happened before running it again.";
+
 export function buildFreshDenialApprovals(
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
@@ -496,10 +499,13 @@ export function rebuildInputWithFreshDenials(
   currentInput: Array<MessageCreate | ApprovalCreate>,
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
+  preserveMessageOtids = false,
 ): Array<MessageCreate | ApprovalCreate> {
-  const stripped = refreshInputOtidsForNewRequest(
-    currentInput.filter((item) => item?.type !== "approval"),
-  );
+  const content = currentInput.filter((item) => item?.type !== "approval");
+  // Only pre-persistence pending-approval rejections can reuse message identity.
+  const stripped = preserveMessageOtids
+    ? content
+    : refreshInputOtidsForNewRequest(content);
 
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {

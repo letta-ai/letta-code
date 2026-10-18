@@ -5,6 +5,9 @@ const NONE_REASONING_MODEL_PREFIXES = [
   "gpt-5.4",
   "gpt-5.5",
   "gpt-5.6",
+  // GPT-6 Sol and Luna accept `none`; GPT-6 Astra rejects it.
+  "gpt-6-sol",
+  "gpt-6-luna",
 ] as const;
 
 function openaiModelNameFromHandle(

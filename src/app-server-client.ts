@@ -7,12 +7,16 @@ import type {
   AbortMessageCommand,
   AbortMessageResponseMessage,
   AppServerInfoResponseMessage,
+  AppServerProtocolCommand,
+  AppServerProtocolMessage,
   ConversationListCommand,
   ConversationListResponseMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResult,
   InputAcceptedResponseMessage,
   InputCommand,
+  LaunchSubagentCommand,
+  LaunchSubagentResponse,
   MonitorStopCommand,
   MonitorStopResponse,
   ResumeQueueCommand,
@@ -21,9 +25,12 @@ import type {
   RuntimeExternalToolsUpdateResponseMessage,
   RuntimeStartCommand,
   RuntimeStartResponseMessage,
+  SubagentMessageCommand,
+  SubagentMessageResponse,
+  SubagentStopCommand,
+  SubagentStopResponse,
   SyncCommand,
   SyncResponseMessage,
-  WsProtocolCommand,
   WsProtocolMessage,
 } from "./types/app-server-protocol";
 
@@ -39,7 +46,9 @@ export type AppServerRawResponse = Record<string, unknown> & {
   request_id?: string;
 };
 
-export type AppServerSendCommand = WsProtocolCommand | AppServerRawCommand;
+export type AppServerSendCommand =
+  | AppServerProtocolCommand
+  | AppServerRawCommand;
 
 /** Receives every parsed protocol frame from the app-server WebSocket. */
 export type AppServerMessageHandler = (
@@ -95,13 +104,15 @@ export interface AppServerClientOptions {
   requestTimeoutMs?: number;
 }
 
-export interface AppServerRequestOptions<TMessage extends WsProtocolMessage> {
+export interface AppServerRequestOptions<
+  TMessage extends AppServerProtocolMessage,
+> {
   timeoutMs?: number;
-  predicate?: (message: WsProtocolMessage) => message is TMessage;
+  predicate?: (message: AppServerProtocolMessage) => message is TMessage;
 }
 
 export type AppServerRequestCommand = Extract<
-  WsProtocolCommand,
+  AppServerProtocolCommand,
   { request_id?: string }
 >;
 
@@ -121,9 +132,9 @@ export interface AppServerRawRequestOptions<
 }
 
 type PendingRequest = {
-  resolve: (message: WsProtocolMessage) => void;
+  resolve: (message: AppServerProtocolMessage) => void;
   reject: (error: Error) => void;
-  predicate?: (message: WsProtocolMessage) => boolean;
+  predicate?: (message: AppServerProtocolMessage) => boolean;
   timeout: ReturnType<typeof setTimeout>;
 };
 
@@ -249,8 +260,8 @@ function messageDataToString(data: unknown): string {
   return String(raw);
 }
 
-function parseProtocolMessage(event: unknown): WsProtocolMessage {
-  return JSON.parse(messageDataToString(event)) as WsProtocolMessage;
+function parseProtocolMessage(event: unknown): AppServerProtocolMessage {
+  return JSON.parse(messageDataToString(event)) as AppServerProtocolMessage;
 }
 
 function appServerSocketOptions(
@@ -338,7 +349,7 @@ export class AppServerClient {
     return `${prefix}-${this.nextRequestNumber}`;
   }
 
-  send(command: WsProtocolCommand): void {
+  send(command: AppServerProtocolCommand): void {
     this.writeCommand(command);
   }
 
@@ -389,21 +400,21 @@ export class AppServerClient {
     });
   }
 
-  request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
+  request<TMessage extends AppServerProtocolMessage = AppServerProtocolMessage>(
     command: AppServerRequestCommandWithId,
     options?: AppServerRequestOptions<TMessage>,
   ): Promise<TMessage>;
 
   request<
     TType extends AppServerRequestCommand["type"],
-    TMessage extends WsProtocolMessage = WsProtocolMessage,
+    TMessage extends AppServerProtocolMessage = AppServerProtocolMessage,
   >(
     type: TType,
     body?: AppServerRequestBody,
     options?: AppServerRequestOptions<TMessage>,
   ): Promise<TMessage>;
 
-  request<TMessage extends WsProtocolMessage = WsProtocolMessage>(
+  request<TMessage extends AppServerProtocolMessage = AppServerProtocolMessage>(
     commandOrType:
       | AppServerRequestCommandWithId
       | AppServerRequestCommand["type"],
@@ -490,6 +501,77 @@ export class AppServerClient {
           message.process_id === command.process_id &&
           message.runtime.agent_id === command.runtime.agent_id &&
           message.runtime.conversation_id === command.runtime.conversation_id,
+      },
+    );
+  }
+
+  launchSubagent(
+    command: Omit<LaunchSubagentCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<LaunchSubagentResponse>,
+      "predicate"
+    > = {},
+  ): Promise<LaunchSubagentResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "launch_subagent",
+        request_id: command.request_id ?? this.nextRequestId("launch-subagent"),
+      },
+      {
+        ...options,
+        predicate: (message): message is LaunchSubagentResponse =>
+          message.type === "launch_subagent_response",
+      },
+    );
+  }
+
+  sendSubagentMessage(
+    command: Omit<SubagentMessageCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<SubagentMessageResponse>,
+      "predicate"
+    > = {},
+  ): Promise<SubagentMessageResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "subagent_message",
+        request_id:
+          command.request_id ?? this.nextRequestId("subagent-message"),
+      },
+      {
+        ...options,
+        predicate: (message): message is SubagentMessageResponse =>
+          message.type === "subagent_message_response",
+      },
+    );
+  }
+
+  stopSubagent(
+    command: Omit<SubagentStopCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<SubagentStopResponse>,
+      "predicate"
+    > = {},
+  ): Promise<SubagentStopResponse> {
+    return this.request(
+      {
+        ...command,
+        type: "subagent_stop",
+        request_id: command.request_id ?? this.nextRequestId("subagent-stop"),
+      },
+      {
+        ...options,
+        predicate: (message): message is SubagentStopResponse =>
+          message.type === "subagent_stop_response" &&
+          message.agent_id === command.agent_id,
       },
     );
   }
@@ -701,7 +783,7 @@ export class AppServerClient {
     const message = parseProtocolMessage(event);
 
     for (const handler of this.messageHandlers) {
-      handler(message, channel);
+      handler(message as WsProtocolMessage, channel);
     }
 
     const requestId =

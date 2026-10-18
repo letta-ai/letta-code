@@ -57,8 +57,17 @@ describe("server subcommand routing", () => {
       resolveServerCommand(["--listen", "--env-name", "work-laptop"]),
     ).toThrow("--env-name cannot be used with --listen");
     expect(() =>
+      resolveServerCommand(["--listen", "--org", "org-123"]),
+    ).toThrow("--org cannot be used with --listen");
+    expect(() =>
+      resolveServerCommand(["--listen", "--token", "dc_abc"]),
+    ).toThrow("--token cannot be used with --listen");
+    expect(() =>
       resolveServerCommand(["--channels=slack", "--listen"]),
     ).toThrow("--channels cannot be used with --listen");
+    expect(() =>
+      resolveServerCommand(["--listen", "--lifecycle-output=jsonl"]),
+    ).toThrow("--lifecycle-output cannot be used with --listen");
   });
 
   test("maps the legacy command to App Server mode", () => {

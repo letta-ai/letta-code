@@ -402,6 +402,11 @@ export function loadSecrets(agentId?: string): Record<string, string> {
   return { ...(getCache().get(resolvedAgentId) ?? {}) };
 }
 
+/** Populate an agent's cache entry from its vault only if it is not cached yet. */
+export async function ensureSecretsLoaded(agentId: string): Promise<void> {
+  if (!getCache().has(agentId)) await initSecretsFromServer(agentId);
+}
+
 /**
  * List all secret names (not values).
  */

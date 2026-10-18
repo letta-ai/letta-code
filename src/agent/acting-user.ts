@@ -27,7 +27,25 @@ export function resolveActingUserId(
  */
 export function actingUserRequestOptions(
   actingUserId: string | undefined,
-): { headers: Record<string, string> } | undefined {
+): { headers: Record<string, string> } | undefined;
+export function actingUserRequestOptions(actingUserId: null): {
+  actingUserId: null;
+};
+export function actingUserRequestOptions(
+  actingUserId: string | null | undefined,
+):
+  | { headers: Record<string, string>; actingUserId?: never }
+  | { actingUserId: null; headers?: never }
+  | undefined;
+export function actingUserRequestOptions(
+  actingUserId: string | null | undefined,
+):
+  | { headers: Record<string, string>; actingUserId?: never }
+  | { actingUserId: null; headers?: never }
+  | undefined {
+  if (actingUserId === null) {
+    return { actingUserId: null };
+  }
   if (!actingUserId) {
     return undefined;
   }

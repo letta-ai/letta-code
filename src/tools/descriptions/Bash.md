@@ -1,8 +1,8 @@
 # Bash
 
-Executes a given bash command from the conversation's current working directory with optional timeout, ensuring proper handling and security measures.
+Executes a given shell command from the conversation's current working directory with optional timeout, ensuring proper handling and security measures.
 
-IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead.
+IMPORTANT: This tool is for terminal operations like git, npm, docker, etc. DO NOT use it for file operations (reading, writing, editing, searching, finding files) - use the specialized tools for this instead. When Glob or Grep is available, prefer those tools over shell commands for repository searches.
 
 Before executing the command, please follow these steps:
 
@@ -27,11 +27,9 @@ Usage notes:
   - If the output exceeds 30000 characters, you receive only the first 2000 characters plus the path of a file containing the full output. A failed command whose output exceeds 10000 characters returns a head-and-tail excerpt plus that file path. Read or search that file when you need the rest instead of re-running the command.
   - Ordinary commands wait briefly for a result, then automatically continue in the background if they are still running. You will receive a task ID and one completion notification, so do not predict command duration, set `run_in_background` merely because a command may be slow, or poll for completion.
   - Set `run_in_background` only when you want the command to return a task ID immediately. You do not need to use '&' at the end of the command.
-  - Pick between Bash and the Monitor tool by how many notifications you need. **One** ("tell me when the server is ready / the build finishes") → Bash with a command that exits when the condition is true, e.g. `until grep -q "Ready in" dev.log; do sleep 0.5; done`. Bash automatically yields and sends one completion notification. **One per occurrence** ("tell me every time an ERROR line appears") → use Monitor: each stdout line is an event while you keep working.
+  - Pick between Bash and the Monitor tool by how many notifications you need. **One** ("tell me when the server is ready / the build finishes") → Bash with `run_in_background` and a command that exits when the condition is true, e.g. `until grep -q "Ready in" dev.log; do sleep 0.5; done`. You get one completion notification when it exits. Foreground `sleep` is blocked. **One per occurrence** ("tell me every time an ERROR line appears") → use Monitor: each stdout line is an event while you keep working.
   
-  - Avoid using Bash with the `find`, `grep`, `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
-    - File search: Use Glob (NOT find or ls)
-    - Content search: Use Grep (NOT grep or rg)
+  - Avoid using Bash with the `cat`, `head`, `tail`, `sed`, `awk`, or `echo` commands, unless explicitly instructed or when these commands are truly necessary for the task. Instead, always prefer using the dedicated tools for these commands:
     - Read files: Use Read (NOT cat/head/tail)
     - Edit files: Use Edit (NOT sed/awk)
     - Write files: Use Write (NOT echo >/cat <<EOF)
@@ -78,7 +76,7 @@ Git Safety Protocol:
 
 Important notes:
 - NEVER run additional commands to read or explore code, besides git bash commands
-- NEVER use the TodoWrite or Task tools
+- NEVER use the TaskCreate or Task tools
 - DO NOT push to the remote repository unless the user explicitly asks you to do so
 - IMPORTANT: Never use git commands with the -i flag (like git rebase -i or git add -i) since they require interactive input which is not supported.
 - IMPORTANT: Do not use --no-edit with git rebase commands, as the --no-edit flag is not a valid option for git rebase.
@@ -119,8 +117,10 @@ gh pr create --title "the pr title" --body '## Summary
 👾 Generated with [Letta Code](https://letta.com)'
 </example>
 
+4. Passing `gh pr checks` does not mean GitHub will merge the PR — unresolved review threads and still-pending required checks leave the merge state BLOCKED. If WatchPR is available and you will follow the PR toward merge, start it on the PR URL, and call the PR ready, green, or mergeable only once WatchPR reports it merge-ready.
+
 Important:
-- DO NOT use the TodoWrite or Task tools
+- DO NOT use the TaskCreate or Task tools
 - Return the PR URL when you're done, so the user can see it
 
 # Other common operations

@@ -1,15 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import {
-  __resetBackgroundRetentionConfigForTests,
-  __setBackgroundRetentionConfigForTests,
   appendToOutputFile,
   type BackgroundTask,
   backgroundTasks,
   createBackgroundOutputFile,
   getNextTaskId,
 } from "@/tools/impl/process_manager";
-import { task_output } from "@/tools/impl/task-output";
 import { task_stop } from "@/tools/impl/task-stop";
 
 /**
@@ -17,7 +14,7 @@ import { task_stop } from "@/tools/impl/task-stop";
  *
  * Since the full task() function requires subagent infrastructure,
  * these tests verify the background task tracking, output file handling,
- * and integration with TaskOutput/TaskStop tools.
+ * and integration with the TaskStop tool.
  */
 
 describe("Task background infrastructure", () => {
@@ -80,7 +77,6 @@ describe("Task background infrastructure", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_1",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       abortController: new AbortController(),
@@ -93,225 +89,6 @@ describe("Task background infrastructure", () => {
     expect(backgroundTasks.get(taskId)?.status).toBe("running");
 
     // Clean up
-    fs.unlinkSync(outputFile);
-  });
-});
-
-describe("TaskOutput with background tasks", () => {
-  afterEach(() => {
-    __resetBackgroundRetentionConfigForTests();
-    backgroundTasks.clear();
-  });
-
-  test("TaskOutput retrieves output from background task", async () => {
-    const taskId = "task_output_test_1";
-    const outputFile = createBackgroundOutputFile(taskId);
-
-    const bgTask: BackgroundTask = {
-      description: "Test retrieval",
-      subagentType: "general-purpose",
-      subagentId: "subagent_2",
-      status: "completed",
-      output: ["Task completed successfully", "Found 5 files"],
-      startTime: new Date(),
-      outputFile,
-    };
-
-    backgroundTasks.set(taskId, bgTask);
-
-    const result = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 1000,
-    });
-
-    expect(result.message).toContain("Task completed successfully");
-    expect(result.message).toContain("Found 5 files");
-    expect(result.status).toBe("completed");
-
-    // Clean up
-    fs.unlinkSync(outputFile);
-  });
-
-  test("TaskOutput includes error in output", async () => {
-    const taskId = "task_error_test";
-    const outputFile = createBackgroundOutputFile(taskId);
-
-    const bgTask: BackgroundTask = {
-      description: "Test error",
-      subagentType: "general-purpose",
-      subagentId: "subagent_3",
-      status: "failed",
-      output: ["Started processing"],
-      error: "Connection timeout",
-      startTime: new Date(),
-      outputFile,
-    };
-
-    backgroundTasks.set(taskId, bgTask);
-
-    const result = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 1000,
-    });
-
-    expect(result.message).toContain("Started processing");
-    expect(result.message).toContain("Connection timeout");
-    expect(result.status).toBe("failed");
-
-    // Clean up
-    fs.unlinkSync(outputFile);
-  });
-
-  test("TaskOutput with block=true waits for task completion", async () => {
-    const taskId = "task_block_test";
-    const outputFile = createBackgroundOutputFile(taskId);
-
-    const bgTask: BackgroundTask = {
-      description: "Test blocking",
-      subagentType: "general-purpose",
-      subagentId: "subagent_4",
-      status: "running",
-      output: [],
-      startTime: new Date(),
-      outputFile,
-    };
-
-    backgroundTasks.set(taskId, bgTask);
-
-    // Simulate task completing after 200ms
-    setTimeout(() => {
-      bgTask.status = "completed";
-      bgTask.output.push("Task finished");
-    }, 200);
-
-    const startTime = Date.now();
-    const result = await task_output({
-      task_id: taskId,
-      block: true,
-      timeout: 5000,
-    });
-    const elapsed = Date.now() - startTime;
-
-    // Should have waited for the task to complete
-    expect(elapsed).toBeGreaterThanOrEqual(150);
-    expect(result.status).toBe("completed");
-    expect(result.message).toContain("Task finished");
-
-    // Clean up
-    fs.unlinkSync(outputFile);
-  });
-
-  test("TaskOutput respects timeout when blocking", async () => {
-    const taskId = "task_timeout_test";
-    const outputFile = createBackgroundOutputFile(taskId);
-
-    const bgTask: BackgroundTask = {
-      description: "Test timeout",
-      subagentType: "general-purpose",
-      subagentId: "subagent_5",
-      status: "running",
-      output: ["Still running..."],
-      startTime: new Date(),
-      outputFile,
-    };
-
-    backgroundTasks.set(taskId, bgTask);
-
-    const startTime = Date.now();
-    const result = await task_output({
-      task_id: taskId,
-      block: true,
-      timeout: 300, // Short timeout
-    });
-    const elapsed = Date.now() - startTime;
-
-    // Should have timed out around 300ms
-    expect(elapsed).toBeGreaterThanOrEqual(250);
-    expect(elapsed).toBeLessThan(1000);
-    expect(result.status).toBe("running"); // Still running after timeout
-
-    // Clean up
-    fs.unlinkSync(outputFile);
-  });
-
-  test("interrupting TaskOutput stops the wait but leaves the task running", async () => {
-    const taskId = "task_interrupt_wait_test";
-    const outputFile = createBackgroundOutputFile(taskId);
-    const bgTask: BackgroundTask = {
-      description: "Interrupt wait test",
-      subagentType: "general-purpose",
-      subagentId: "subagent_interrupt_wait",
-      status: "running",
-      output: [],
-      startTime: new Date(),
-      outputFile,
-      abortController: new AbortController(),
-    };
-    backgroundTasks.set(taskId, bgTask);
-    const waitAbortController = new AbortController();
-    setTimeout(() => waitAbortController.abort(), 50);
-
-    const startTime = Date.now();
-    await expect(
-      task_output({
-        task_id: taskId,
-        block: true,
-        timeout: 600000,
-        signal: waitAbortController.signal,
-      }),
-    ).rejects.toMatchObject({ name: "AbortError" });
-
-    expect(Date.now() - startTime).toBeLessThan(1000);
-    expect(backgroundTasks.get(taskId)?.status).toBe("running");
-    expect(bgTask.abortController?.signal.aborted).toBe(false);
-    fs.unlinkSync(outputFile);
-  });
-
-  test("TaskOutput handles non-existent task_id", async () => {
-    const result = await task_output({
-      task_id: "nonexistent_task",
-      block: false,
-      timeout: 1000,
-    });
-
-    expect(result.message).toContain("No background process found");
-  });
-
-  test("TaskOutput falls back to bounded in-memory output when the transcript file is too large", async () => {
-    __setBackgroundRetentionConfigForTests({ maxOutputFileReadBytes: 32 });
-
-    const taskId = "task_large_output_file";
-    const outputFile = createBackgroundOutputFile(taskId);
-    appendToOutputFile(
-      outputFile,
-      "This output file is intentionally much larger than the configured read limit.\n",
-    );
-
-    const bgTask: BackgroundTask = {
-      description: "Large file fallback",
-      subagentType: "general-purpose",
-      subagentId: "subagent_large_file",
-      status: "completed",
-      output: ["recent buffered line"],
-      startTime: new Date(),
-      outputFile,
-    };
-
-    backgroundTasks.set(taskId, bgTask);
-
-    const result = await task_output({
-      task_id: taskId,
-      block: false,
-      timeout: 1000,
-    });
-
-    expect(result.message).toContain(
-      "Output file too large to load fully here",
-    );
-    expect(result.message).toContain("recent buffered line");
-
     fs.unlinkSync(outputFile);
   });
 });
@@ -335,7 +112,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_6",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       abortController,
@@ -380,7 +156,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_7",
       status: "completed",
-      output: ["Done"],
       startTime: new Date(),
       outputFile,
     };
@@ -406,7 +181,6 @@ describe("TaskStop with background tasks", () => {
       subagentType: "general-purpose",
       subagentId: "subagent_8",
       status: "running",
-      output: [],
       startTime: new Date(),
       outputFile,
       // No abortController

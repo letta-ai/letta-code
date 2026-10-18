@@ -20,9 +20,18 @@ export interface AppServerInfoResponseMessage {
     conversation_management: boolean;
     memory_management: boolean;
     runtime_start: boolean;
+    /** Agent-free conversation creation/resume, including the local backend. */
+    agent_free_conversations?: boolean;
+    launch_subagent?: boolean;
+    /** `launch_subagent` accepts `notify: "caller"`. */
+    launch_subagent_notify_caller?: boolean;
+    /** Supports steering and stopping remote external subagents. */
+    subagent_message?: boolean;
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
+    /** `write_file` accepts `encoding: "base64"`, `append`, and `move_to`. */
+    write_file_base64?: boolean;
     split_channels: boolean;
   };
 }
@@ -58,12 +67,22 @@ export function isAppServerInfoResponseMessage(
     typeof capabilityRecord.conversation_management === "boolean" &&
     typeof capabilityRecord.memory_management === "boolean" &&
     typeof capabilityRecord.runtime_start === "boolean" &&
+    (capabilityRecord.agent_free_conversations === undefined ||
+      typeof capabilityRecord.agent_free_conversations === "boolean") &&
+    (capabilityRecord.launch_subagent === undefined ||
+      typeof capabilityRecord.launch_subagent === "boolean") &&
+    (capabilityRecord.launch_subagent_notify_caller === undefined ||
+      typeof capabilityRecord.launch_subagent_notify_caller === "boolean") &&
+    (capabilityRecord.subagent_message === undefined ||
+      typeof capabilityRecord.subagent_message === "boolean") &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||
       typeof capabilityRecord.runtime_external_tools_update === "boolean") &&
     (capabilityRecord.structured_outputs === undefined ||
       typeof capabilityRecord.structured_outputs === "boolean") &&
+    (capabilityRecord.write_file_base64 === undefined ||
+      typeof capabilityRecord.write_file_base64 === "boolean") &&
     typeof capabilityRecord.split_channels === "boolean"
   );
 }

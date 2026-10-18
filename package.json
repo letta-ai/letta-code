@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.32.15",
+  "version": "0.34.16",
   "lettaStartupLogProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
   "type": "module",
@@ -13,6 +13,7 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
     "scripts",
     "skills",
@@ -27,10 +28,16 @@
     "dist/memory-constraints.js.map",
     "dist/mcp-client.js",
     "dist/mcp-client.js.map",
+    "dist/mcp-oauth.js",
+    "dist/mcp-oauth.js.map",
     "dist/agent-presets.js",
     "dist/agent-presets.js.map",
     "dist/schedules.js",
     "dist/schedules.js.map",
+    "dist/ask-user-question.js",
+    "dist/ask-user-question.js.map",
+    "dist/ask-user-question.cjs",
+    "dist/ask-user-question.cjs.map",
     "dist/channels-public.js",
     "dist/channels-public.js.map",
     "dist/gateway-core.js",
@@ -46,6 +53,13 @@
   ],
   "exports": {
     ".": "./letta.js",
+    "./ask-user-question": {
+      "types": "./dist/types/ask-user-question.d.ts",
+      "browser": "./dist/ask-user-question.js",
+      "import": "./dist/ask-user-question.js",
+      "require": "./dist/ask-user-question.cjs",
+      "default": "./dist/ask-user-question.js"
+    },
     "./app-server-protocol": {
       "types": "./dist/types/types/app-server-protocol.d.ts"
     },
@@ -70,6 +84,11 @@
       "types": "./dist/types/mcp-client.d.ts",
       "import": "./dist/mcp-client.js",
       "default": "./dist/mcp-client.js"
+    },
+    "./mcp-oauth": {
+      "types": "./dist/types/mcp-oauth-public.d.ts",
+      "import": "./dist/mcp-oauth.js",
+      "default": "./dist/mcp-oauth.js"
     },
     "./protocol": {
       "types": "./dist/types/types/protocol.d.ts"
@@ -130,18 +149,20 @@
     "access": "public"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^0.86.0",
+    "@earendil-works/pi-ai": "^0.99.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
-    "@letta-ai/letta-agent-sdk": "^0.8.11",
+    "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
+    "@shikijs/langs": "4.0.2",
     "cron-parser": "^5.6.1",
     "cross-spawn": "^7.0.6",
     "glob": "^13.0.0",
-    "ink-link": "^5.0.0",
+    "ink": "5.2.1",
+    "ink-link": "^4.1.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "react": "18.2.0",
@@ -165,7 +186,6 @@
     "diff": "^8.0.2",
     "grammy": "^1.42.0",
     "husky": "9.1.7",
-    "ink": "^5.0.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^5.0.0",
     "lint-staged": "16.2.4",
@@ -176,7 +196,7 @@
     "typescript": "^5.0.0"
   },
   "scripts": {
-    "prepare": "node .husky/install.mjs",
+    "prepare": "node scripts/install-husky.mjs",
     "lint": "bunx --bun @biomejs/biome@2.2.5 check src",
     "fix": "bunx --bun @biomejs/biome@2.2.5 check --write src",
     "typecheck": "tsc --noEmit",
@@ -190,14 +210,17 @@
     "check:test-coverage": "node scripts/check-test-coverage.cjs",
     "check:skill-frontmatter": "node scripts/check-skill-frontmatter.js",
     "check:bundled-skill-scripts": "node scripts/check-bundled-skill-scripts.js",
+    "runtime-graph:generate": "bun run scripts/runtime-graph.ts generate",
+    "runtime-graph:verify": "bun run scripts/runtime-graph.ts verify",
     "check": "bun run scripts/check.js",
     "dev": "node scripts/dev.cjs",
     "build": "node scripts/postinstall-patches.js && bun run build.js",
     "test:update-chain:manual": "bun run src/test-utils/update-chain-smoke.ts --mode manual",
     "test:update-chain:startup": "bun run src/test-utils/update-chain-smoke.ts --mode startup",
-    "prepublishOnly": "bun run build",
+    "prepublishOnly": "bun run runtime-graph:verify && bun run build",
     "postinstall": "node scripts/postinstall-patches.js || echo letta: vendor patches skipped && node -e \"try{require('fs').chmodSync(require('path').join(require.resolve('node-pty/package.json'),'../prebuilds/darwin-arm64/spawn-helper'),0o755)}catch(e){}\" || true",
-    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json"
+    "mod-learning:memory-citations": "bun scripts/mod-learning/learn-mod.ts --env docs/examples/mods/learning/memory-citations.env.json",
+    "test:built-entrypoints": "LETTA_TEST_CLI_BUNDLE=\"$PWD/letta.js\" LETTA_TEST_BUILT_ARTIFACT=1 bun test src/cli/subcommands/lifecycle-output.test.ts src/websocket/app-server-dream.test.ts --timeout 60000"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json}": [
@@ -206,6 +229,9 @@
   },
   "typesVersions": {
     "*": {
+      "ask-user-question": [
+        "./dist/types/ask-user-question.d.ts"
+      ],
       "agent-presets": [
         "./dist/types/agent-presets.d.ts"
       ],
@@ -227,6 +253,9 @@
       "mcp-client": [
         "./dist/types/mcp-client.d.ts"
       ],
+      "mcp-oauth": [
+        "./dist/types/mcp-oauth-public.d.ts"
+      ],
       "channels": [
         "./dist/types/channels-public.d.ts"
       ],
@@ -243,5 +272,8 @@
         "./dist/types/types/protocol.d.ts"
       ]
     }
-  }
+  },
+  "lettaLifecycleProtocol": 1,
+  "lettaRuntimeGraphProtocol": 1,
+  "lettaRuntimeGraphSha512": "sha512-NGzNq0UmSHPiPqvc6bflUL57U2h5xZSgf9HvpbR98ocuoM1dHLN1hiXv6qNEa3lOlj2paYI/clNKR+U1YW0TiA=="
 }

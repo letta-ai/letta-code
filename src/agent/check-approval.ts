@@ -68,6 +68,11 @@ export interface GetResumeDataOptions {
    * Defaults to true to preserve existing /resume behavior.
    */
   includeMessageHistory?: boolean;
+  /**
+   * Recovery decides from pending approvals, so it must see a failed read
+   * rather than an empty one. Interactive resume keeps the empty fallback.
+   */
+  throwOnReadError?: boolean;
 }
 
 type ApprovalMessage = Message & {
@@ -631,11 +636,11 @@ export async function getResumeDataFromBackend(
       messageHistory: prepareMessageHistory(messages),
     };
   } catch (error) {
-    // Re-throw "not found" errors (404/422) so callers can handle appropriately
-    // (e.g., /resume command should fail for non-existent conversations)
+    // Let callers distinguish a failed read from genuinely empty approval state.
     if (error instanceof APIError && isNotFoundError(error)) {
       throw error;
     }
+    if (options.throwOnReadError) throw error;
     console.error("Error getting resume data:", error);
     return { pendingApproval: null, pendingApprovals: [], messageHistory: [] };
   }

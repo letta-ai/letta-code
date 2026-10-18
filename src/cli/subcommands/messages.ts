@@ -61,7 +61,7 @@ Usage:
 
 Search options:
   --query <text>        Search query (required)
-  --mode <mode>         Search mode: vector, fts, hybrid (default: hybrid)
+  --mode <mode>         Search mode: vector, fts, hybrid (default: fts locally, hybrid on Cloud)
   --start-date <date>   Filter messages after this date (ISO format)
   --end-date <date>     Filter messages before this date (ISO format)
   --limit <n>           Max results (default: 10)
@@ -424,7 +424,9 @@ export async function runMessagesSubcommand(
 
       const searchBody = {
         query,
-        search_mode: parseMode(parsed.values.mode) ?? "hybrid",
+        search_mode:
+          parseMode(parsed.values.mode) ??
+          (backend.capabilities?.localModelCatalog ? "fts" : "hybrid"),
         start_date: parsed.values["start-date"],
         end_date: parsed.values["end-date"],
         limit: parseLimit(parsed.values.limit, 10),

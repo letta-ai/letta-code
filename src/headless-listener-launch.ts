@@ -73,6 +73,7 @@ export async function cancelListenerInput(params: {
       agentId: params.scope.agent_id,
       conversationId: params.scope.conversation_id,
       clientMessageId: params.clientMessageId,
+      actingUserId: params.scope.acting_user_id,
     },
     AbortSignal.timeout(30_000),
   );
@@ -103,6 +104,7 @@ export async function cancelAcceptedListenerInput(
       agentId: receipt.agent_id,
       conversationId: receipt.conversation_id,
       clientMessageId: receipt.client_message_id,
+      actingUserId: receipt.acting_user_id,
     },
     AbortSignal.timeout(10_000),
   );
@@ -144,6 +146,8 @@ export async function launchListenerConversation(
     connectionId: string;
     scope: AgentRuntimeScope;
     content: MessageCreate["content"];
+    /** Initial assignment identity, not a control-command request_id. */
+    clientMessageId?: string;
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
     cwd?: string;
@@ -171,7 +175,7 @@ export async function launchListenerConversation(
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
-  const clientMessageId = randomUUID();
+  const clientMessageId = params.clientMessageId ?? randomUUID();
   const runIds = new Set<string>();
   let loop: LoopState | undefined;
   let cancelled = false;
@@ -289,6 +293,8 @@ export async function launchListenerConversation(
       },
       AbortSignal.timeout(30_000),
     );
+    // Tracked callers follow this receipt until the Super Run completes. The
+    // child's first end_turn may only be waiting for its own background work.
     if (params.noWait)
       return {
         status: "queued",

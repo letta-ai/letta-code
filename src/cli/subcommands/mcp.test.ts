@@ -383,41 +383,79 @@ describe("mcp subcommand", () => {
     expect(closes.count).toBe(1);
   });
 
-  test("calls a real stdio MCP server through the generated tool name", async () => {
-    const stdout: string[] = [];
-    const stderr: string[] = [];
-    const deps: McpSubcommandDependencies = {
-      env: { AGENT_ID: "agent-1" },
-      initializeSettings: async () => {},
-      isServerMcpAvailable: () => false,
-      getLocalServers: () => [
-        {
-          name: "everything",
-          transport: "stdio",
-          command: process.execPath,
-          args: [EVERYTHING_SERVER],
-        },
-      ],
-      stdout: (message) => stdout.push(message),
-      stderr: (message) => stderr.push(message),
+  test("returns a CLI error when stdout cannot accept the result", async () => {
+    const closes = { count: 0 };
+    const harness = localHarness({
+      servers: [localServer],
+      connection: fakeConnection({ closes }),
+    });
+    harness.deps.stdout = async () => {
+      throw new Error("stdout unavailable");
     };
 
     expect(
       await runMcpSubcommand(
-        [
-          "call",
-          "mcp__everything__echo",
-          "--args",
-          '{"message":"hello from CLI"}',
-        ],
-        deps,
+        ["call", "mcp__Mixed_Server__search_exact-name"],
+        harness.deps,
       ),
-    ).toBe(0);
-    expect(stderr).toEqual([]);
-    expect(JSON.parse(stdout[0] ?? "{}")).toEqual({
-      content: [{ type: "text", text: "Echo: hello from CLI" }],
+    ).toBe(1);
+    expect(JSON.parse(harness.stderr[0] ?? "{}")).toEqual({
+      error: { code: "mcp_error", message: "stdout unavailable" },
     });
-  }, 20_000);
+    expect(closes.count).toBe(1);
+  });
+
+  test.each([undefined, "--agent", "--agent-id"] as const)(
+    "calls a real stdio MCP server with exact override=%s",
+    async (override) => {
+      const stdout: string[] = [];
+      const stderr: string[] = [];
+      const deps: McpSubcommandDependencies = {
+        env: {
+          AGENT_ID: "agent-1",
+          LETTA_PARENT_AGENT_ID: "parent",
+          LETTA_CODE_AGENT_ROLE: "subagent",
+        },
+        lookupParentAgent: async (id) => {
+          expect(override).toBeUndefined();
+          return id === "agent-1" ? "parent" : undefined;
+        },
+        initializeSettings: async () => {},
+        isServerMcpAvailable: () => false,
+        getLocalServers: (id) => {
+          expect(id).toBe(override ? "agent-1" : "parent");
+          return [
+            {
+              name: "everything",
+              transport: "stdio",
+              command: process.execPath,
+              args: [EVERYTHING_SERVER],
+            },
+          ];
+        },
+        stdout: (message) => stdout.push(message),
+        stderr: (message) => stderr.push(message),
+      };
+
+      expect(
+        await runMcpSubcommand(
+          [
+            "call",
+            "mcp__everything__echo",
+            "--args",
+            '{"message":"hello from CLI"}',
+            ...(override ? [override, "agent-1"] : []),
+          ],
+          deps,
+        ),
+      ).toBe(0);
+      expect(stderr).toEqual([]);
+      expect(JSON.parse(stdout[0] ?? "{}")).toEqual({
+        content: [{ type: "text", text: "Echo: hello from CLI" }],
+      });
+    },
+    20_000,
+  );
 
   test("prints MCP protocol errors and returns exit code 2", async () => {
     const harness = localHarness({

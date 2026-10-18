@@ -1,7 +1,14 @@
 import { Box, useInput } from "ink";
 import { memo, useMemo, useState } from "react";
+import {
+  countPreviewRows,
+  fitPreviewLines,
+} from "@/cli/helpers/approval-preview";
 import { useProgressIndicator } from "@/cli/hooks/use-progress-indicator";
-import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
+import {
+  useTerminalRows,
+  useTerminalWidth,
+} from "@/cli/hooks/use-terminal-width";
 import { useTextInputCursor } from "@/cli/hooks/use-text-input-cursor";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -25,6 +32,14 @@ type Props = {
 
 // Horizontal line character for Claude Code style
 const SOLID_LINE = "─";
+
+// Rows the live area needs besides the summary and prompt while this dialog
+// is shown: rule, header, spacers, options with spacer, hint with spacer, the
+// live-item margin above and the collapsed input margin below, plus slack for
+// wrapped option text. Task approvals never get AppCoordinator's eager
+// preview commit, so the prompt must keep the whole dialog on screen.
+const APPROVAL_CHROME_ROWS = 15;
+const MIN_PROMPT_ROWS = 3;
 
 /**
  * InlineTaskApproval - Renders Task tool approval UI inline with pretty formatting
@@ -50,6 +65,7 @@ export const InlineTaskApproval = memo(
       clear,
     } = useTextInputCursor();
     const columns = useTerminalWidth();
+    const terminalRows = useTerminalRows();
     useProgressIndicator();
 
     // Custom option index depends on whether "always" option is shown
@@ -135,8 +151,20 @@ export const InlineTaskApproval = memo(
       const { subagentType, description, prompt, model, isBackground } =
         taskInfo;
 
-      // Show full prompt - users need to see what the task will do
-      const truncatedPrompt = prompt;
+      // Show as much of the prompt as fits, from the start: a live area
+      // taller than the terminal is clipped to its bottom rows, which would
+      // hide the header and the task being approved.
+      const summary = `${subagentType}${isBackground ? " [background]" : ""} — ${description}${model ? ` (${model})` : ""}`;
+      const truncatedPrompt = fitPreviewLines(
+        prompt.split("\n"),
+        Math.max(
+          MIN_PROMPT_ROWS,
+          terminalRows -
+            APPROVAL_CHROME_ROWS -
+            countPreviewRows(summary.split("\n"), contentWidth),
+        ),
+        contentWidth,
+      ).join("\n");
 
       return (
         <>
@@ -178,7 +206,7 @@ export const InlineTaskApproval = memo(
           </Box>
         </>
       );
-    }, [taskInfo, solidLine, contentWidth]);
+    }, [taskInfo, solidLine, contentWidth, terminalRows]);
 
     // Hint text based on state
     const hintText = isOnCustomOption

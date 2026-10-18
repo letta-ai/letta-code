@@ -323,7 +323,7 @@ describe("current repository impact graph", () => {
 
   test("a direct channel dependency still selects channel tests", () => {
     const result = planUnitTests({
-      changedFiles: [{ status: "M", path: "src/tools/interactive-policy.ts" }],
+      changedFiles: [{ status: "M", path: "src/permissions/mode.ts" }],
       allTestFiles: [
         "src/channels/gateway-core.test.ts",
         "src/tools/client-toolset.test.ts",
@@ -331,6 +331,7 @@ describe("current repository impact graph", () => {
       impactIndex,
     });
 
+    expect(result.mode).toBe("selected");
     expect(result.selectedTests).toContain("src/channels/gateway-core.test.ts");
   });
 

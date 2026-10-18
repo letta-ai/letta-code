@@ -6,6 +6,7 @@ export type ActiveTurnLoopStatus = Exclude<
 >;
 
 export type TurnOrigin = "message" | "approval_recovery";
+export type TurnInterruptionCause = "explicit_user" | "transport";
 
 export type TurnLease = Readonly<{
   id: string;
@@ -31,6 +32,7 @@ type ActiveTurnState = {
   workingDirectory: string;
   runId: string | null;
   executingToolCallIds: readonly string[];
+  interruptionCause: TurnInterruptionCause | null;
 };
 
 type CancellingTurnState = {
@@ -43,6 +45,7 @@ type CancellingTurnState = {
   loopStatus: "WAITING_ON_INPUT";
   ownerFinished: boolean;
   externalSettlementPending: boolean;
+  interruptionCause: TurnInterruptionCause;
 };
 
 type TurnState =
@@ -65,6 +68,7 @@ export type TurnCancellationTransition = {
   lease: TurnLease | null;
   runId: string | null;
   executingToolCallIds: readonly string[];
+  interruptionCause: TurnInterruptionCause | null;
 };
 
 export type TurnCancellationSettlementTransition = {
@@ -76,6 +80,7 @@ export type TurnFinishTransition = {
   finished: boolean;
   previousKind: "active" | "cancelling" | null;
   runId: string | null;
+  interruptionCause: TurnInterruptionCause | null;
 };
 
 const IDLE_STATE: IdleTurnState = {
@@ -147,6 +152,7 @@ export class TurnLifecycle {
         workingDirectory: state.workingDirectory,
         runId: state.runId,
         executingToolCallIds: [...state.executingToolCallIds],
+        interruptionCause: state.interruptionCause,
       };
     }
     if (state.kind === "cancelling") {
@@ -157,6 +163,7 @@ export class TurnLifecycle {
         runId: state.runId,
         executingToolCallIds: [...state.executingToolCallIds],
         loopStatus: state.loopStatus,
+        interruptionCause: state.interruptionCause,
       };
     }
     return { ...state };
@@ -189,6 +196,7 @@ export class TurnLifecycle {
       workingDirectory: options.workingDirectory,
       runId: null,
       executingToolCallIds: [...(options.executingToolCallIds ?? [])],
+      interruptionCause: null,
     };
     this.#lastStopReason = null;
     return lease;
@@ -265,16 +273,51 @@ export class TurnLifecycle {
     return true;
   }
 
-  requestCancellation(options?: {
+  markTransportInterruption(lease: TurnLease): boolean {
+    if (this.#state.kind !== "active" || !this.isCurrent(lease)) return false;
+    if (this.#state.interruptionCause !== null) return false;
+    this.#state = { ...this.#state, interruptionCause: "transport" };
+    return true;
+  }
+
+  getInterruptionCause(lease: TurnLease): TurnInterruptionCause | null {
+    if (
+      (this.#state.kind !== "active" && this.#state.kind !== "cancelling") ||
+      this.#state.lease.id !== lease.id
+    ) {
+      return null;
+    }
+    return this.#state.interruptionCause;
+  }
+
+  requestCancellation(options: {
+    cause: TurnInterruptionCause;
     waitForExternalSettlement?: boolean;
   }): TurnCancellationTransition {
     const state = this.#state;
     if (state.kind === "cancelling") {
+      // A later explicit user abort is authoritative over an earlier transport
+      // interruption: the human asked to discard the continuation. It also adds
+      // the external-settlement fence because backend cancellation still has to
+      // complete before a replacement turn may start.
+      if (options.cause === "explicit_user") {
+        this.#state = {
+          ...state,
+          interruptionCause: "explicit_user",
+          externalSettlementPending:
+            state.externalSettlementPending ||
+            options.waitForExternalSettlement === true,
+        };
+      }
       return {
         transitioned: false,
         lease: state.lease,
         runId: state.runId,
         executingToolCallIds: [...state.executingToolCallIds],
+        interruptionCause:
+          options.cause === "explicit_user"
+            ? "explicit_user"
+            : state.interruptionCause,
       };
     }
     if (state.kind !== "active") {
@@ -283,12 +326,17 @@ export class TurnLifecycle {
         lease: null,
         runId: null,
         executingToolCallIds: [],
+        interruptionCause: null,
       };
     }
 
     if (!state.abortController.signal.aborted) {
       state.abortController.abort();
     }
+    const interruptionCause =
+      options.cause === "explicit_user"
+        ? "explicit_user"
+        : (state.interruptionCause ?? options.cause);
     this.#lastStopReason = "cancelled";
     this.#state = {
       kind: "cancelling",
@@ -299,13 +347,15 @@ export class TurnLifecycle {
       executingToolCallIds: [...state.executingToolCallIds],
       loopStatus: "WAITING_ON_INPUT",
       ownerFinished: false,
-      externalSettlementPending: options?.waitForExternalSettlement === true,
+      externalSettlementPending: options.waitForExternalSettlement === true,
+      interruptionCause,
     };
     return {
       transitioned: true,
       lease: state.lease,
       runId: state.runId,
       executingToolCallIds: [...state.executingToolCallIds],
+      interruptionCause,
     };
   }
 
@@ -316,7 +366,12 @@ export class TurnLifecycle {
       state.lease.id !== lease.id ||
       (state.kind === "cancelling" && state.ownerFinished)
     ) {
-      return { finished: false, previousKind: null, runId: null };
+      return {
+        finished: false,
+        previousKind: null,
+        runId: null,
+        interruptionCause: null,
+      };
     }
 
     this.#lastStopReason = stopReason;
@@ -332,6 +387,7 @@ export class TurnLifecycle {
       finished: true,
       previousKind: state.kind,
       runId: state.runId,
+      interruptionCause: state.interruptionCause,
     };
   }
 
@@ -369,10 +425,16 @@ export class TurnLifecycle {
         finished: true,
         previousKind: state.kind,
         runId: state.runId,
+        interruptionCause: state.interruptionCause,
       };
     }
 
     this.#state = IDLE_STATE;
-    return { finished: false, previousKind: null, runId: null };
+    return {
+      finished: false,
+      previousKind: null,
+      runId: null,
+      interruptionCause: null,
+    };
   }
 }

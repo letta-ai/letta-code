@@ -16,6 +16,17 @@
       "default": false,
       "description": "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop."
     },
+    "backup_after_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 604800,
+      "description": "Optional backup: if the monitor emits nothing for this many seconds (from start or its last event), a durable Wake fires in this conversation so a stalled watch can't go silent. Each event resets the clock; the backup is cancelled when the monitor ends or is stopped. Survives restarts of this process."
+    },
+    "backup_prompt": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Instruction for the backup wake's turn. Defaults to checking the real state of what the monitor watches, then reporting, re-arming, or stopping it."
+    },
     "command": {
       "type": "string",
       "description": "Shell command or script. Each stdout line is an event; exit ends the watch."

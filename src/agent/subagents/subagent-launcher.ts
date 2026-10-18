@@ -16,10 +16,15 @@ import {
   PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
 } from "@/mods/capabilities";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
+import {
+  readSubagentDepth,
+  SUBAGENT_DEPTH_ENV,
+} from "@/utils/subagent-depth-env";
 import {
   LISTENER_CONNECTION_ENV,
   SUBAGENT_LAUNCH_ENV,
@@ -27,7 +32,9 @@ import {
   SUBAGENT_NAME_ENV,
 } from "@/utils/subagent-launch-marker";
 import { TRANSCRIPT_ROOT_ENV } from "@/utils/transcript-paths";
+import { getActiveRuntime } from "@/websocket/listener/runtime";
 import type { SubagentLaunchProfile, SubagentMemoryScope } from ".";
+import { MEMORY_WORKER_SESSION_ENV } from "./memory-worker-session";
 
 interface ResolveSubagentLauncherOptions {
   env?: NodeJS.ProcessEnv;
@@ -202,7 +209,7 @@ function resolveMemorySubagentScratchpad(
  *   - MEMORY_DIR / LETTA_MEMORY_DIR are only overridden when the subagent
  *     declares the memory-subagent launch profile. Those subagents operate on
  *     the parent's memory as their working filesystem (reflection, memory,
- *     init, history-analyzer). Other subagents keep whatever MEMORY_DIR they
+ *     init). Other subagents keep whatever MEMORY_DIR they
  *     inherited from the parent process (usually unset).
  *
  * Pure function, no side effects — straightforward to unit-test.
@@ -230,20 +237,24 @@ export function composeSubagentChildEnv(
     ...parentProcessEnv,
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
-    ...(actingUserId && { [ACTING_USER_ID_ENV]: actingUserId }),
     LETTA_CODE_AGENT_ROLE: "subagent",
+    [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
-    ...(subagentType === "reflection" && {
+    ...((subagentType === "reflection" || subagentType === "memory") && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
     // Replace inherited parent addresses even when the new scope is unknown.
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
+    // Children are one level below the process (or listener turn) launching them.
+    [SUBAGENT_DEPTH_ENV]: String(readSubagentDepth(parentProcessEnv) + 1),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),
   };
 
   // A nested launch must never reuse its parent's assigned creation name.
+  if (actingUserId) childEnv[ACTING_USER_ID_ENV] = actingUserId;
+  else if (actingUserId === null) delete childEnv[ACTING_USER_ID_ENV];
   delete childEnv[SUBAGENT_NAME_ENV];
   if (options.subagentName) childEnv[SUBAGENT_NAME_ENV] = options.subagentName;
 
@@ -275,9 +286,41 @@ export function composeSubagentChildEnv(
     }
   } else if (listenerConnectionId?.startsWith("conn-")) {
     childEnv[LISTENER_CONNECTION_ENV] = listenerConnectionId;
+  } else if (
+    isUnattachedListenerLaunch({
+      listenerConnectionId,
+      launchProfile,
+      listenerConnectionCount: getActiveRuntime()?.connections.size ?? 0,
+    })
+  ) {
+    // A direct-API child inside a listener is unowned; later sends to it
+    // start a second harness on its conversation.
+    trackBoundaryError({
+      errorType: "subagent_launch_missing_listener_connection",
+      error: new Error(
+        "Subagent launched in a listener without its connection",
+      ),
+      context: "subagent_launch",
+    });
   }
 
   return childEnv;
+}
+
+/**
+ * A child launched inside a running listener but without its connection would
+ * fall back to a direct-API process that no listener owns.
+ */
+export function isUnattachedListenerLaunch(options: {
+  listenerConnectionId?: string | null;
+  launchProfile?: string;
+  listenerConnectionCount: number;
+}): boolean {
+  return (
+    !options.listenerConnectionId &&
+    options.launchProfile !== "memory-subagent" &&
+    options.listenerConnectionCount > 0
+  );
 }
 
 export function shouldLaunchThroughListener(options: {

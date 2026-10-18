@@ -47,13 +47,6 @@
       "minItems": 1,
       "maxItems": 4,
       "description": "Questions to ask the user (1-4 questions)"
-    },
-    "answers": {
-      "type": "object",
-      "additionalProperties": {
-        "type": "string"
-      },
-      "description": "User answers collected by the permission component"
     }
   },
   "required": ["questions"],

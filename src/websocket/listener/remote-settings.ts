@@ -20,6 +20,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
 import type { PermissionMode } from "@/permissions/mode";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   flushAbandonedRemoteSettingsLock,
   releaseRemoteSettingsLock,
@@ -280,7 +281,7 @@ function writeCwdRepairJournal(
     renameSync(tempPath, journalPath);
     return id;
   } catch {
-    if (process.env.LETTA_DEBUG) {
+    if (isDebugEnabled()) {
       console.warn("[Remote Settings] Unable to persist cwd repair journal");
     }
     return null;

@@ -56,3 +56,23 @@ test("human prompts have no agent attribution and explicit CLI sends use the sha
     buildAgentSendReminder({ agentId: "agent-sender" }, false),
   );
 });
+
+test("memory workers receive a silent task-log contract instead of a reply instruction", () => {
+  const env = composeSubagentChildEnv({
+    parentProcessEnv: {},
+    parentAgentId: "agent-parent",
+    parentConversationId: "conv-parent",
+    subagentType: "memory",
+    launchProfile: "memory-subagent",
+    inheritedPrimaryRoot: "/memory",
+  });
+  const reminder = buildHeadlessSenderReminder(true, undefined, env);
+  expect(reminder).toContain("Complete only the delegated memory assignment");
+  expect(reminder).toContain("not sent to the primary agent or user");
+  expect(reminder).not.toContain("Include your answer in your final response");
+  expect(reminder).toStartWith("<system-reminder>");
+  // The worker sentinel does not change explicit CLI sends made by a process.
+  expect(buildHeadlessSenderReminder(false, "agent-sender", env)).toBe(
+    buildAgentSendReminder({ agentId: "agent-sender" }, false),
+  );
+});

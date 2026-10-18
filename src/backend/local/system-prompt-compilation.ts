@@ -2,6 +2,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  isCoreMemoryPath,
+  isProjectedMemoryPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -75,10 +80,11 @@ export function getCommittedMemfsRevision(
 
 function collectCommittedMemoryFiles(memoryDir: string): {
   files: LocalMemoryFile[];
+  format: LocalMemoryFormat;
   revision?: string;
 } {
   const revision = getCommittedMemfsRevision(memoryDir);
-  if (!revision) return { files: [], revision };
+  if (!revision) return { files: [], format: "memfs-v1", revision };
 
   const files: LocalMemoryFile[] = [];
   let paths: string[] = [];
@@ -88,10 +94,29 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       .map((path) => normalizePath(path.trim()))
       .filter((path) => path.length > 0 && path.endsWith(".md"));
   } catch {
-    return { files: [], revision };
+    return { files: [], format: "memfs-v1", revision };
   }
 
+  const format: LocalMemoryFormat = paths.includes("MEMORY.md")
+    ? "memfs-v2"
+    : "memfs-v1";
+  const allPaths = new Set(paths);
+
   for (const relativePath of paths) {
+    const shouldRead =
+      format === "memfs-v1" ||
+      isCoreMemoryPath(relativePath, format) ||
+      (/^[^/]+\/MEMORY\.md$/.test(relativePath) &&
+        isProjectedMemoryPath(relativePath, allPaths, format));
+    if (!shouldRead) {
+      files.push({
+        relativePath,
+        label: labelFromPath(relativePath),
+        value: "",
+        description: "",
+      });
+      continue;
+    }
     try {
       const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
       const { frontmatter, body } = parseFrontmatter(raw);
@@ -112,8 +137,65 @@ function collectCommittedMemoryFiles(memoryDir: string): {
 
   return {
     files: files.sort((a, b) => a.label.localeCompare(b.label)),
+    format,
     revision,
   };
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#x27;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
+  const allPaths = new Set(files.map((file) => file.relativePath));
+  const rootFiles = files
+    .filter((file) => isCoreMemoryPath(file.relativePath, "memfs-v2"))
+    .filter((file) => file.relativePath !== "MEMORY.md")
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const rootIndex = files.find((file) => file.relativePath === "MEMORY.md");
+  const childIndexes = files
+    .filter(
+      (file) =>
+        /^[^/]+\/MEMORY\.md$/.test(file.relativePath) &&
+        !file.relativePath.startsWith("skills/") &&
+        isProjectedMemoryPath(file.relativePath, allPaths, "memfs-v2"),
+    )
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const blocks: string[] = [];
+
+  for (const file of rootFiles) {
+    const lines = [`<${file.label}>`];
+    const description = file.description.trim();
+    if (description) lines.push(`<description>${description}</description>`);
+    const value = file.value.trimEnd();
+    if (value) lines.push(value);
+    lines.push(`</${file.label}>`);
+    blocks.push(lines.join("\n"));
+  }
+
+  if (rootIndex) {
+    const lines = ["<memory>"];
+    const value = rootIndex.value.trimEnd();
+    if (value) lines.push(value);
+    if (childIndexes.length > 0) lines.push("<deferred-memory>");
+    for (const file of childIndexes) {
+      const directory = file.relativePath.slice(0, -"/MEMORY.md".length);
+      const escaped = escapeXmlAttribute(directory);
+      lines.push(
+        `<directory path="${escaped}/" index="${escaped}/MEMORY.md" />`,
+      );
+    }
+    if (childIndexes.length > 0) lines.push("</deferred-memory>");
+    lines.push("</memory>");
+    blocks.push(lines.join("\n"));
+  }
+
+  return blocks.join("\n\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -222,10 +304,14 @@ function renderSystemTree(files: LocalMemoryFile[]): string {
 
 function renderMemfsProjection(memoryDir: string): {
   content: string;
+  format: LocalMemoryFormat;
   revision?: string;
 } {
-  const { files, revision } = collectCommittedMemoryFiles(memoryDir);
-  if (files.length === 0) return { content: "", revision };
+  const { files, format, revision } = collectCommittedMemoryFiles(memoryDir);
+  if (files.length === 0) return { content: "", format, revision };
+  if (format === "memfs-v2") {
+    return { content: renderRootMemoryProjection(files), format, revision };
+  }
 
   const lines = [
     "Reminder: <projection> contains the local path of the memory file projection.",
@@ -261,7 +347,7 @@ function renderMemfsProjection(memoryDir: string): {
     lines.push("</memory>");
   }
 
-  return { content: lines.join("\n"), revision };
+  return { content: lines.join("\n"), format, revision };
 }
 
 function pad2(value: number): string {
@@ -351,14 +437,17 @@ export function compileLocalSystemPrompt(
     options.memoryDir ?? getScopedMemoryFilesystemRoot(options.agent.id);
   const memfs =
     options.includeMemfs === false
-      ? { content: "", revision: undefined }
+      ? { content: "", format: undefined, revision: undefined }
       : renderMemfsProjection(memoryDir);
-  const metadata = compileMemoryMetadata({
-    agentId: options.agent.id,
-    conversationId: options.conversationId,
-    compiledAt,
-    previousMessageCount: options.previousMessageCount ?? 0,
-  });
+  const metadata =
+    memfs.format === "memfs-v2"
+      ? ""
+      : compileMemoryMetadata({
+          agentId: options.agent.id,
+          conversationId: options.conversationId,
+          compiledAt,
+          previousMessageCount: options.previousMessageCount ?? 0,
+        });
   const coreMemory = [memfs.content, metadata]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");

@@ -25,6 +25,7 @@ describe("listener model catalog", () => {
       label: "Vendor label",
       providerType: "google_ai",
       providerCategory: "byok",
+      supportsStructuredOutputs: true,
     };
     const preset = models.find(
       (model) => model.handle === "google_ai/gemini-3.5-flash",
@@ -41,6 +42,7 @@ describe("listener model catalog", () => {
       handle: byok.handle,
       label: preset?.label,
       updateArgs: { ...preset?.updateArgs, provider_type: "google_ai" },
+      supportsStructuredOutputs: true,
     });
     expect(buildListModelsEntries([], { cloud: true })).toHaveLength(
       models.length,

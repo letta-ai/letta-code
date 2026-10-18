@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-mod-registry";
+import {
   createOrUpdateLocalProvider,
+  getLocalOAuthApiKey,
   getLocalProviderRecordByName,
   setLocalOAuthProvider,
 } from "./local-provider-auth-store";
@@ -101,5 +106,68 @@ describe("local OAuth provider storage", () => {
         access: "refreshed-access-token",
       },
     });
+  });
+
+  test("getLocalOAuthApiKey refreshes a rotating token once across callers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-refresh-"));
+    storageDirs.push(storageDir);
+    // A rotating-refresh-token provider: each refresh token works once.
+    const usedRefreshTokens = new Set<string>();
+    let refreshCalls = 0;
+    registerPiProvider("rotating-oauth", {
+      api: "openai-completions",
+      baseUrl: "https://rotating.example.test",
+      models: [],
+      oauth: {
+        login: async () => {
+          throw new Error("not used");
+        },
+        refreshToken: async (credentials) => {
+          refreshCalls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (usedRefreshTokens.has(credentials.refresh)) {
+            throw new Error("invalid_grant");
+          }
+          usedRefreshTokens.add(credentials.refresh);
+          return {
+            access: "fresh-access",
+            refresh: "refresh-2",
+            expires: Date.now() + 3_600_000,
+          };
+        },
+        getApiKey: (credentials) => credentials.access,
+      },
+    });
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "rotating-oauth",
+        providerType: "rotating-oauth",
+        auth: {
+          type: "oauth",
+          access: "expired-access",
+          refresh: "refresh-1",
+          expires: Date.now() - 1,
+        },
+      });
+      const getKey = () =>
+        getLocalOAuthApiKey({
+          providerId: "rotating-oauth",
+          providerNames: ["rotating-oauth"],
+          storageDir,
+        });
+
+      const results = await Promise.all([getKey(), getKey()]);
+
+      expect(refreshCalls).toBe(1);
+      for (const result of results) {
+        expect(result?.apiKey).toBe("fresh-access");
+      }
+      expect(
+        getLocalProviderRecordByName("rotating-oauth", storageDir)?.auth,
+      ).toMatchObject({ access: "fresh-access", refresh: "refresh-2" });
+    } finally {
+      clearRegisteredPiProviders();
+    }
   });
 });

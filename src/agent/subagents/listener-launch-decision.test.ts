@@ -5,6 +5,7 @@ import {
 } from "@/utils/subagent-launch-marker";
 import {
   composeSubagentChildEnv,
+  isUnattachedListenerLaunch,
   shouldLaunchThroughListener,
 } from "./subagent-launcher";
 
@@ -87,4 +88,18 @@ test("an ordinary child's caller routes it without changing the parent's environ
   });
   expect(env[LISTENER_CONNECTION_ENV]).toBe("conn-parent");
   expect(parentProcessEnv).toEqual({ USER_CWD: "/workspace" });
+});
+
+test("a listener launch without its connection is flagged, not silently local", () => {
+  const base = { launchProfile: "default", listenerConnectionCount: 1 };
+  expect(isUnattachedListenerLaunch(base)).toBe(true);
+  expect(
+    isUnattachedListenerLaunch({ ...base, listenerConnectionId: "conn-a" }),
+  ).toBe(false);
+  expect(
+    isUnattachedListenerLaunch({ ...base, launchProfile: "memory-subagent" }),
+  ).toBe(false);
+  expect(
+    isUnattachedListenerLaunch({ ...base, listenerConnectionCount: 0 }),
+  ).toBe(false);
 });

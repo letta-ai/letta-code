@@ -44,7 +44,7 @@ test.each([
     );
     expect(result).toBe(1);
     expect(JSON.parse(f.stdout.join("")).error).toBe(
-      "Cannot message the current conversation. Use a Monitor or schedule for self-invocation.",
+      "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
     expect(f.submissions).toHaveLength(0);
   },
@@ -159,7 +159,7 @@ test.each(["text", "json", "stream-json"])(
       { type: "text", text: "hello" },
     ]);
     expect(JSON.stringify(f.submissions[0]?.content)).toContain(
-      "use SendAgentMessage if available",
+      "call SendAgentMessage with conversation_id conv-parent",
     );
     expect(JSON.stringify(f.submissions[0]?.content)).toContain(
       "Ordinary assistant output is not forwarded",
@@ -167,6 +167,26 @@ test.each(["text", "json", "stream-json"])(
     expect(f.deps.env.CONVERSATION_ID).toBe("conv-parent");
   },
 );
+
+test("the CLI client message ID reaches Cloud enqueue unchanged", async () => {
+  const f = fixture();
+  expect(
+    await tryCloudHeadlessSend(
+      flags(
+        "--conversation",
+        "conv-target",
+        "--no-wait",
+        "--client-message-id",
+        "assignment:1",
+      ),
+      "hello",
+      f.backend,
+      false,
+      f.deps,
+    ),
+  ).toBe(0);
+  expect(f.submissions[0]?.clientMessageId).toBe("assignment:1");
+});
 
 test("computer is forwarded to enqueue without a direct environment send", async () => {
   const f = fixture();
@@ -534,3 +554,20 @@ test.each(["text", "json", "stream-json"])(
     ]);
   },
 );
+
+test("the CLI reply fallback uses a command the CLI accepts", () => {
+  const conv = buildAgentSendReminder(
+    { agentId: "agent-a", conversationId: "conv-a" },
+    true,
+  );
+  expect(conv).toContain("letta -p --conversation conv-a --no-wait");
+  expect(conv).not.toContain("--agent agent-a --conversation conv-a");
+  expect(
+    buildAgentSendReminder(
+      { agentId: "agent-a", conversationId: "default" },
+      true,
+    ),
+  ).toContain(
+    "SendAgentMessage with agent_id agent-a and conversation_id default. Only if that tool is unavailable, run letta -p --agent agent-a --conversation default --no-wait",
+  );
+});

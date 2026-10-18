@@ -576,17 +576,6 @@ test("Edit defaults to ask", () => {
   expect(result.decision).toBe("ask");
 });
 
-test("TodoWrite defaults to allow", () => {
-  const result = checkPermission(
-    "TodoWrite",
-    { todos: [] },
-    { allow: [], deny: [], ask: [] },
-    "/Users/test/project",
-  );
-
-  expect(result.decision).toBe("allow");
-});
-
 test("MessageChannel defaults to allow", () => {
   const result = checkPermission(
     "MessageChannel",

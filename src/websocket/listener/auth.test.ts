@@ -4,6 +4,11 @@ import {
   OAuthRefreshError,
   type TokenResponse,
 } from "@/auth/oauth";
+import {
+  __orgCredentialsTestUtils,
+  getOrgAccessToken,
+  peekOrgAccessToken,
+} from "@/auth/org-credentials-session";
 import { settingsManager } from "@/settings-manager";
 import {
   __listenerAuthTestUtils,
@@ -15,6 +20,10 @@ import {
   __listenerIdentityTestUtils,
   LISTENER_INSTANCE_ID_ENV,
 } from "@/websocket/listener/identity";
+import {
+  type OrgCredentials,
+  orgCredentialStore,
+} from "@/websocket/listener/org-credentials";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -45,9 +54,18 @@ describe("listener auth", () => {
   let settings: ListenerSettings;
   const updateSettingsMock = mock(() => {});
   const flushMock = mock(async () => {});
+  const originalOrgLoad = orgCredentialStore.load;
+  const originalOrgSave = orgCredentialStore.save;
+  let orgCredentials: Record<string, OrgCredentials>;
 
   beforeEach(() => {
     settings = { env: {} } as ListenerSettings;
+    orgCredentials = {};
+    orgCredentialStore.load = async (organizationId) =>
+      orgCredentials[organizationId] ?? {};
+    orgCredentialStore.save = async (organizationId, credentials) => {
+      orgCredentials[organizationId] = credentials;
+    };
     refreshAccessTokenMock.mockReset();
     requestDeviceCodeMock.mockReset();
     pollForTokenMock.mockReset();
@@ -77,6 +95,9 @@ describe("listener auth", () => {
   });
 
   afterEach(() => {
+    orgCredentialStore.load = originalOrgLoad;
+    orgCredentialStore.save = originalOrgSave;
+    __orgCredentialsTestUtils.reset();
     settingsManager.getSettingsWithSecureTokens =
       originalGetSettingsWithSecureTokens;
     settingsManager.updateSettings = originalUpdateSettings;
@@ -130,6 +151,7 @@ describe("listener auth", () => {
       }),
     );
     expect(flushMock).toHaveBeenCalledTimes(1);
+    expect(console.log).not.toHaveBeenCalled();
   });
 
   test("keeps a still-valid token when proactive refresh fails transiently", async () => {
@@ -250,6 +272,235 @@ describe("listener auth", () => {
     expect(first.apiKey).toBe("first-access-token");
     expect(second.apiKey).toBe("refreshed-access-token");
     expect(second.listenerInstanceId).toStartWith("listen-");
+  });
+
+  test("signs in to the requested organization without touching the global sign-in", async () => {
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "global-access-token" },
+      refreshToken: "global-refresh-token",
+    };
+    requestDeviceCodeMock.mockResolvedValue({
+      device_code: "device-code",
+      user_code: "ABCD-EFGH",
+      verification_uri: "https://app.letta.com/oauth/device",
+      verification_uri_complete:
+        "https://app.letta.com/oauth/device?user_code=ABCD-EFGH",
+      expires_in: 600,
+      interval: 5,
+    });
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123" },
+    );
+
+    expect(result.apiKey).toBe("org-access-token");
+    expect(requestDeviceCodeMock).toHaveBeenCalledWith("org-123");
+    expect(pollForTokenMock).toHaveBeenCalledWith(
+      "device-code",
+      5,
+      600,
+      "org-device-id",
+      "listener-name",
+    );
+    expect(orgCredentials["org-123"]).toEqual({
+      apiKey: "org-access-token",
+      refreshToken: "org-refresh-token",
+      tokenExpiresAt: expect.any(Number),
+    });
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    // Turn-side readers in this process now see the organization sign-in.
+    expect(peekOrgAccessToken()).toBe("org-access-token");
+    expect(await getOrgAccessToken()).toBe("org-access-token");
+  });
+
+  test("redeems a connect token without the browser sign-in", async () => {
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "global-access-token" },
+      refreshToken: "global-refresh-token",
+    };
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123", connectToken: "dc_preapproved" },
+    );
+
+    expect(result.apiKey).toBe("org-access-token");
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(openInBrowserMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).toHaveBeenCalledWith(
+      "dc_preapproved",
+      0,
+      expect.any(Number),
+      "org-device-id",
+      "listener-name",
+    );
+    expect(orgCredentials["org-123"]).toEqual({
+      apiKey: "org-access-token",
+      refreshToken: "org-refresh-token",
+      tokenExpiresAt: expect.any(Number),
+    });
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(peekOrgAccessToken()).toBe("org-access-token");
+  });
+
+  test("redeems a connect token even when the organization slot already has credentials", async () => {
+    orgCredentials["org-123"] = {
+      apiKey: "stale-org-token",
+      refreshToken: "stale-refresh",
+      tokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    pollForTokenMock.mockResolvedValue({
+      access_token: "fresh-org-token",
+      refresh_token: "fresh-refresh",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123", connectToken: "dc_preapproved" },
+    );
+
+    expect(result.apiKey).toBe("fresh-org-token");
+    expect(refreshAccessTokenMock).not.toHaveBeenCalled();
+    expect(orgCredentials["org-123"]?.apiKey).toBe("fresh-org-token");
+  });
+
+  test("tells the user to ask for a new command when the connect token was already used", async () => {
+    pollForTokenMock.mockRejectedValue(
+      new Error("OAuth error: Device code already used"),
+    );
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token was already used. Ask your agent for a new letta server command.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+  });
+
+  test("tells the user to ask for a new command when the connect token expired", async () => {
+    pollForTokenMock.mockRejectedValue(new Error("Device code expired"));
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow("This connect token was expired.");
+  });
+
+  test("refuses a connect token minted for another organization", async () => {
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      organization_id: "org-other",
+    });
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token belongs to organization org-other, not org-123.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+    expect(peekOrgAccessToken()).toBeUndefined();
+  });
+
+  test("rejects a connect token without an organization", async () => {
+    await expect(
+      resolveListenerRegistrationOptions("device-id", "listener-name", {
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow("--token requires --org");
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
+  test("leaves turn-side readers alone when no organization is requested", async () => {
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "global-access-token" },
+      refreshToken: "global-refresh-token",
+      tokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    };
+
+    const result = await resolveListenerRegistrationOptions(
+      "device-id",
+      "listener-name",
+    );
+
+    expect(result.apiKey).toBe("global-access-token");
+    expect(peekOrgAccessToken()).toBeUndefined();
+    expect(getOrgAccessToken()).toBeUndefined();
+  });
+
+  test("ignores ambient keys when an organization is requested", async () => {
+    process.env.LETTA_API_KEY = "env-access-token";
+    orgCredentials["org-123"] = { apiKey: "org-access-token" };
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123" },
+    );
+
+    expect(result.apiKey).toBe("org-access-token");
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+  });
+
+  test("refreshes an organization token into its own slot on reconnect", async () => {
+    orgCredentials["org-123"] = { refreshToken: "org-refresh-token" };
+    refreshAccessTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "rotated-org-refresh-token",
+      token_type: "Bearer",
+      expires_in: 3600,
+    });
+
+    expect(
+      await resolveListenerReconnectAuth({
+        deviceId: "org-device-id",
+        connectionName: "listener-name",
+        organizationId: "org-123",
+      }),
+    ).toEqual({ kind: "ready", apiKey: "org-access-token" });
+    expect(refreshAccessTokenMock).toHaveBeenCalledWith(
+      "org-refresh-token",
+      "org-device-id",
+      "listener-name",
+    );
+    expect(orgCredentials["org-123"]).toEqual({
+      apiKey: "org-access-token",
+      refreshToken: "rotated-org-refresh-token",
+      tokenExpiresAt: expect.any(Number),
+    });
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(peekOrgAccessToken()).toBe("org-access-token");
   });
 
   test("caches a spawner identity across registrations without exposing it to descendants", async () => {

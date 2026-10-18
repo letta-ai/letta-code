@@ -26,8 +26,7 @@ export function buildDefaultStatuslineParts(
   ui: StatuslineUiContext,
   rightColumnWidth = getDefaultStatuslineRightColumnWidth(context, ui),
 ): DefaultStatuslineParts {
-  const indicatorWidth =
-    (ui.isByokProvider ? 2 : 0) + (ui.hasTemporaryModelOverride ? 2 : 0);
+  const indicatorWidth = ui.hasTemporaryModelOverride ? 2 : 0;
   const separatorWidth = 3;
   const availableTextWidth = Math.max(
     12,
@@ -58,12 +57,6 @@ export function buildDefaultStatuslineParts(
   rightCoreParts.push(chalk.hex(colors.footer.agentName)(displayAgentName));
   rightCoreParts.push(chalk.dim(" · "));
   rightCoreParts.push(chalk.dim(displayModel));
-  if (ui.isByokProvider) {
-    rightCoreParts.push(chalk.dim(" "));
-    rightCoreParts.push(
-      ui.isOpenAICodexProvider ? chalk.hex("#74AA9C")("▲") : chalk.yellow("▲"),
-    );
-  }
   if (ui.hasTemporaryModelOverride) {
     rightCoreParts.push(chalk.dim(" "));
     rightCoreParts.push(chalk.yellow("▲"));

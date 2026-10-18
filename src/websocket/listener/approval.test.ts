@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
 import {
   rejectPendingApprovalResolvers,
   requestApprovalOverWS,
   resolvePendingApprovalResolver,
+  validateApprovalResultIds,
 } from "./approval";
 import {
   markListenerConnectionInitialized,
@@ -85,6 +86,46 @@ function makeSuccessResponse(requestId: string): ApprovalResponseBody {
     decision: { behavior: "allow" },
   };
 }
+
+test.each([
+  ["DEBUG", "0"],
+  ["DEBUG", "false"],
+  ["DEBUG", "letta:*"],
+  ["LETTA_DEBUG", "0"],
+  ["LETTA_DEBUG", "false"],
+  ["LETTA_DEBUG", "letta:*"],
+])("approval mismatch validation stays disabled for %s=%s", (name, value) => {
+  const originalDebug = process.env.DEBUG;
+  const originalLettaDebug = process.env.LETTA_DEBUG;
+  const originalConsoleError = console.error;
+  const consoleError = mock(() => {});
+  console.error = consoleError;
+  delete process.env.DEBUG;
+  delete process.env.LETTA_DEBUG;
+  process.env[name] = value;
+  try {
+    expect(() =>
+      validateApprovalResultIds(
+        [{ approval: { toolCallId: "expected" } }],
+        [
+          {
+            type: "tool",
+            tool_call_id: "different",
+            status: "success",
+            tool_return: "ok",
+          },
+        ],
+      ),
+    ).not.toThrow();
+    expect(consoleError).not.toHaveBeenCalled();
+  } finally {
+    console.error = originalConsoleError;
+    if (originalDebug === undefined) delete process.env.DEBUG;
+    else process.env.DEBUG = originalDebug;
+    if (originalLettaDebug === undefined) delete process.env.LETTA_DEBUG;
+    else process.env.LETTA_DEBUG = originalLettaDebug;
+  }
+});
 
 describe("listener approval lifecycle", () => {
   test("CLI-launched children deny interactive permission requests like one-shot headless", async () => {
@@ -464,7 +505,9 @@ describe("listener approval lifecycle", () => {
 
     const cancellingRuntime = createScopedRuntime();
     const turnLease = beginApprovalWait(cancellingRuntime);
-    cancellingRuntime.turnLifecycle.requestCancellation();
+    cancellingRuntime.turnLifecycle.requestCancellation({
+      cause: "explicit_user",
+    });
     await expect(
       requestApprovalOverWS(
         cancellingRuntime,
@@ -515,7 +558,7 @@ describe("listener approval lifecycle", () => {
     );
 
     expect(runtime.pendingApprovalResolvers.size).toBe(1);
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
 
     await expect(pending).rejects.toThrow("Cancelled by user");
     expect(runtime.pendingApprovalResolvers.size).toBe(0);

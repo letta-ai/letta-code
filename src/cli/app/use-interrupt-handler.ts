@@ -5,6 +5,7 @@ import {
   type MutableRefObject,
   type SetStateAction,
   useCallback,
+  useRef,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { getSubagents, interruptActiveSubagents } from "@/agent/subagent-state";
@@ -138,18 +139,66 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     });
   };
 
+  // Latched interrupt state, written synchronously on the first Esc: the
+  // aborted controller is the escalation witness (a rapid second Esc can
+  // arrive before React commits interruptRequested, and a stuck turn keeps
+  // its controller after force-settle), and the captured target keeps the
+  // escalated cancel aimed at the interrupted conversation even if a queued
+  // conversation switch runs while the turn unwinds.
+  const interruptEscalationRef = useRef<{
+    controller: AbortController | null;
+    target: string | null;
+  } | null>(null);
+
+  // Fire the backend cancel. The local interrupt already gave the user
+  // feedback, but a failed backend cancel leaves the server-side run
+  // executing and the next send hitting CONFLICT, so surface the failure
+  // instead of swallowing it.
+  const sendBackendCancel = () => {
+    Promise.resolve()
+      .then(() => {
+        const latched = interruptEscalationRef.current;
+        const cancelConversationId =
+          latched && latched.controller === abortControllerRef.current
+            ? latched.target
+            : conversationIdRef.current === "default"
+              ? agentIdRef.current
+              : conversationIdRef.current;
+        if (!cancelConversationId || cancelConversationId === "loading") {
+          return;
+        }
+        return getBackend().cancelConversation(cancelConversationId);
+      })
+      .catch(() => {
+        appendError(
+          "Interrupt acknowledged locally, but the backend cancel request failed — the run may still be executing server-side.",
+          true,
+        );
+      });
+  };
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects; .current is read dynamically when interrupt fires.
   const handleInterrupt = useCallback(async () => {
     // If we're executing client-side tools, abort them AND the main stream
     const hasTrackedTools =
       executingToolCallIdsRef.current.length > 0 ||
       autoAllowedExecutionRef.current?.results;
+    const latchInterruptTarget = () => {
+      interruptEscalationRef.current = {
+        controller: abortControllerRef.current,
+        target:
+          conversationIdRef.current === "default"
+            ? agentIdRef.current
+            : conversationIdRef.current,
+      };
+    };
     if (
       isExecutingTool &&
       toolAbortControllerRef.current &&
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
       // Mark any in-flight conversation as stale, consistent with EAGER_CANCEL.
@@ -157,6 +206,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // The stale turn keeps its processing count and abort controller until its
       // finally block runs; that block settles the interrupt.
       conversationGenerationRef.current += 1;
+
+      // Mark the interrupt in-flight until the stale turn unwinds, matching
+      // EAGER_CANCEL: a second Esc in this window must reach the escalation
+      // branch below (InputRich only forwards while streaming or requested).
+      setInterruptRequested(true);
 
       const autoAllowedResults = autoAllowedExecutionRef.current?.results;
       const autoAllowedMetadata = autoAllowedExecutionRef.current
@@ -219,26 +273,37 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Send cancel request to backend (fire-and-forget).
       // Without this, the backend stays in requires_approval state after tool interrupt,
       // causing CONFLICT on the next user message.
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
+      sendBackendCancel();
 
       settleIfNoTurnInFlight();
       return;
     }
 
-    if (!streaming || interruptRequested) {
+    const abortedControllerWitness =
+      abortControllerRef.current?.signal.aborted ?? false;
+    if (!streaming || interruptRequested || abortedControllerWitness) {
+      // Second+ Esc while the first interrupt is still unwinding: escalate.
+      // Re-fire the backend cancel (the first attempt may have failed) and
+      // settle the interrupt immediately so the UI is never wedged waiting
+      // for a turn that is not observing the abort. The first Esc aborts the
+      // controller synchronously, so signal.aborted witnesses an in-flight
+      // interrupt at the outer gate too: a rapid second Esc before React
+      // commits (stale closure still reads streaming) must reach this branch,
+      // as must a post-force-settle Esc while a stuck turn owns its controller.
+      if (interruptRequested || abortedControllerWitness) {
+        abortControllerRef.current?.abort();
+        sendBackendCancel();
+        appendError(
+          "Interrupt forced; the turn will stop as soon as it observes the abort.",
+          true,
+        );
+        settleTuiInterrupt({
+          userCancelledRef,
+          setInterruptRequested,
+          queueLength: tuiQueueRef.current?.length ?? 0,
+          bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+        });
+      }
       return;
     }
 
@@ -250,6 +315,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
+      latchInterruptTarget();
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 
@@ -338,22 +404,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       setAutoHandledResults([]);
       setAutoDeniedApprovals([]);
 
-      // Send cancel request to backend asynchronously (fire-and-forget)
-      // Don't wait for it or show errors since user already got feedback
-      Promise.resolve()
-        .then(() => {
-          const cancelConversationId =
-            conversationIdRef.current === "default"
-              ? agentIdRef.current
-              : conversationIdRef.current;
-          if (!cancelConversationId || cancelConversationId === "loading") {
-            return;
-          }
-          return getBackend().cancelConversation(cancelConversationId);
-        })
-        .catch(() => {
-          // Silently ignore - cancellation already happened client-side
-        });
+      // Send cancel request to backend asynchronously (fire-and-forget).
+      // Failures are surfaced so a server-side run isn't left executing
+      // while the client believes it stopped.
+      sendBackendCancel();
 
       settleIfNoTurnInFlight();
       return;

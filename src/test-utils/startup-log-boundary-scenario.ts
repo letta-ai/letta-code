@@ -115,9 +115,9 @@ try {
   assert.equal(process.env.LETTA_STARTUP_LOG_OWNER_PID, undefined);
   log("STARTUP_DIAGNOSTIC");
   if (mode === "failure" || mode === "invalid-owner") {
-    await assert.rejects(handleMessage(input), /Failed to seal startup logs/);
+    const blockedInput = handleMessage(input);
+    void blockedInput.catch(() => {});
     await assert.rejects(connect(), /Failed to seal startup logs/);
-    await assert.rejects(handleMessage(input), /Failed to seal startup logs/);
     assert.equal(connected, 0);
     assert.equal(parsed, 0);
     assert.equal(processed, 0);
@@ -132,7 +132,7 @@ try {
     assert.ok(parsed > 0);
     log("DONE");
   } else if (mode === "ready") {
-    await handleMessage(
+    const ready = handleMessage(
       Buffer.from(
         JSON.stringify({
           type: "listener_ready",
@@ -145,19 +145,23 @@ try {
     assert.equal(connected, 0);
     log("BEFORE_CONNECTED");
     await connect();
+    await ready;
     log("DONE");
   } else {
-    await handleMessage(Buffer.from('{"type":"pong"}'));
-    assert.ok(listener.lastPongAt && listener.lastPongAt > 0);
+    const pong = handleMessage(Buffer.from('{"type":"pong"}'));
+    await Promise.resolve();
+    assert.equal(listener.lastPongAt, null);
     log("AFTER_PONG_STARTUP");
     // Deliver the first frame before the connected runtime has ever started.
-    await handleMessage(
+    const early = handleMessage(
       mode === "malformed" ? Buffer.from("MALFORMED_PRIVATE") : input,
     );
     assert.equal(connected, 0);
     log("BEFORE_CONNECTED");
     await connect();
+    await Promise.all([pong, early]);
     await runtime.messageQueue;
+    assert.ok(listener.lastPongAt && listener.lastPongAt > 0);
     assert.ok(parsed > 0);
     log("DONE");
   }

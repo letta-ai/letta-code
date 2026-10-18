@@ -22,7 +22,6 @@ import {
   getPersonalityDefaultMemoryFiles,
   getPersonalityOption,
   type PersonalityId,
-  type PersonalityMemoryBlock,
 } from "./personality-presets";
 import { buildSystemPrompt, type MemoryPromptMode } from "./prompt-assets";
 
@@ -37,14 +36,27 @@ export const DEFAULT_CREATED_AGENT_BASE_TOOLS = ["web_search", "fetch_webpage"];
 
 export type CreateAgentMemoryBlock = CreateBlock;
 
+/**
+ * Root marker that makes the hosted memory repository use MemFS v2.
+ * The server seeds the root `MEMORY.md` layout only when the create request
+ * includes a block with this label.
+ */
+export const DEFAULT_ROOT_MEMORY_BLOCK: CreateAgentMemoryBlock = {
+  label: "MEMORY",
+  value: "# Memory\n",
+  description: "Root memory index.",
+};
+
 export interface BuildCreateAgentRequestOptions {
   personalityId?: PersonalityId;
   name?: string;
   description?: string;
   /** Model ID or handle. Personality default, then catalog default, applies. */
   model?: string;
-  /** Complete prompt override. Otherwise the standard prompt for prompt mode. */
-  system?: string;
+  /** Complete prompt override. Null delegates default selection to the server. */
+  system?: string | null;
+  /** Whether the target is Letta Cloud; callers determine this with their backend's cloud detection. */
+  isLettaCloud?: boolean;
   memoryPromptMode?: MemoryPromptMode;
   /**
    * Caller-defined identity. With a personality, matching labels replace its
@@ -69,7 +81,7 @@ export interface CreateAgentRequest {
   name?: string;
   description?: string;
   model: string;
-  system: string;
+  system: string | null;
   memory_blocks?: CreateAgentMemoryBlock[];
   block_ids?: string[];
   tags: string[];
@@ -86,7 +98,7 @@ export interface CreateAgentRequest {
 export type CreateAgentRequestForPersonality = CreateAgentRequest & {
   name: string;
   description: string;
-  memory_blocks: PersonalityMemoryBlock[];
+  memory_blocks: CreateAgentMemoryBlock[];
   profile_picture?: {
     content: string;
   };
@@ -106,6 +118,14 @@ function mergeMemoryBlocks(
     }
   }
   return blocks;
+}
+
+function ensureRootMemoryBlock(
+  blocks: CreateAgentMemoryBlock[],
+): CreateAgentMemoryBlock[] {
+  return blocks.some((block) => block.label === DEFAULT_ROOT_MEMORY_BLOCK.label)
+    ? blocks
+    : [{ ...DEFAULT_ROOT_MEMORY_BLOCK }, ...blocks];
 }
 
 /** Build the canonical Core create-agent request for a Letta Code agent. */
@@ -138,7 +158,7 @@ export async function buildCreateAgentRequest(
     : (options.enableMemfs ?? options.memoryPromptMode !== "standard");
   const memoryPromptMode = options.isSubagent
     ? "standard"
-    : (options.memoryPromptMode ?? (enableMemfs ? "memfs" : "standard"));
+    : (options.memoryPromptMode ?? (enableMemfs ? "root-memfs" : "standard"));
   const personalityTags = options.personalityId
     ? getPersonalityCreationTags(options.personalityId)
     : [];
@@ -148,11 +168,21 @@ export async function buildCreateAgentRequest(
         await getDefaultMemoryBlocks(),
       )
     : [];
+  const hasSuppliedMemoryBlocks =
+    options.personalityId !== undefined || options.memoryBlocks !== undefined;
+  const suppliedMemoryBlocks = hasSuppliedMemoryBlocks
+    ? mergeMemoryBlocks(personalityBlocks, options.memoryBlocks)
+    : [];
+  // Root-layout agents must send the MEMORY block so the server seeds a
+  // MemFS v2 repository; without it the initial repo uses the legacy
+  // system/ layout even when the prompt mode says otherwise.
   const memoryBlocks = options.isSubagent
     ? undefined
-    : options.personalityId || options.memoryBlocks !== undefined
-      ? mergeMemoryBlocks(personalityBlocks, options.memoryBlocks)
-      : undefined;
+    : memoryPromptMode === "root-memfs"
+      ? ensureRootMemoryBlock(suppliedMemoryBlocks)
+      : hasSuppliedMemoryBlocks
+        ? suppliedMemoryBlocks
+        : undefined;
   const blockIds = options.isSubagent ? undefined : options.blockIds;
 
   return {
@@ -164,7 +194,12 @@ export async function buildCreateAgentRequest(
       ? { description: options.description ?? personality?.description }
       : {}),
     model: modelHandle,
-    system: options.system ?? buildSystemPrompt("default", memoryPromptMode),
+    system:
+      options.system !== undefined
+        ? options.system
+        : options.isLettaCloud
+          ? null
+          : buildSystemPrompt("default", memoryPromptMode),
     ...(memoryBlocks !== undefined ? { memory_blocks: memoryBlocks } : {}),
     ...(blockIds && blockIds.length > 0 ? { block_ids: blockIds } : {}),
     tags: buildCreatedAgentTags({
@@ -198,10 +233,13 @@ export async function buildCreateAgentRequestForPersonality(params: {
   description?: string;
   model?: string;
   extraTags?: string[];
+  /** This browser-safe wrapper defaults to Cloud; pass false for a local server. */
+  isLettaCloud?: boolean;
 }): Promise<CreateAgentRequestForPersonality> {
-  const request = (await buildCreateAgentRequest(
-    params,
-  )) as CreateAgentRequestForPersonality;
+  const request = (await buildCreateAgentRequest({
+    ...params,
+    isLettaCloud: params.isLettaCloud ?? true,
+  })) as CreateAgentRequestForPersonality;
   const profilePicture = getPersonalityDefaultMemoryFiles(
     params.personalityId,
   ).find((file) => file.path === "profile.png");

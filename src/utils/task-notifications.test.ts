@@ -22,3 +22,24 @@ for (const actingUserId of ["user-a", undefined]) {
     });
   });
 }
+
+test("notification scope preserves explicit ambient-actor suppression", () => {
+  runWithRuntimeContext(
+    {
+      actingUserId: "ambient-user",
+      suppressActingUserFallback: true,
+    },
+    () => {
+      expect(
+        resolveNotificationScope({
+          agentId: "agent-a",
+          conversationId: "conv-a",
+        }),
+      ).toEqual({
+        agentId: "agent-a",
+        conversationId: "conv-a",
+        actingUserId: null,
+      });
+    },
+  );
+});

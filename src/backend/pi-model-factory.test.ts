@@ -335,6 +335,36 @@ describe("pi model factory", () => {
     }
   });
 
+  test("preserves max reasoning for GPT-6 models", () => {
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-sol",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-luna",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "max" },
+        "openai-codex/gpt-6-astra",
+      ),
+    ).toBe("max");
+    expect(
+      reasoningForSettings(
+        { reasoning_effort: "minimal" },
+        "openai-codex/gpt-6-sol",
+      ),
+    ).toBe("none" as "low");
+    expect(
+      reasoningForSettings({ reasoning_effort: "max" }, "openai-codex/gpt-5.4"),
+    ).toBe("xhigh");
+  });
+
   test("resolves generic local OAuth credentials through pi OAuth providers", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "pi-anthropic-oauth-"));
     try {
@@ -395,13 +425,13 @@ describe("pi model factory", () => {
     }
   });
 
-  test("resolves Anthropic Opus 5 from the Pi model catalog", async () => {
-    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-5", {
+  test("resolves Anthropic Opus 5.5 from the Pi model catalog", async () => {
+    const resolved = await resolvePiModelForAgent("anthropic/claude-opus-5-5", {
       provider_type: "anthropic",
     });
 
     expect(resolved.provider).toBe("anthropic");
-    expect(resolved.model.id).toBe("claude-opus-5");
+    expect(resolved.model.id).toBe("claude-opus-5-5");
     expect(resolved.model.api).toBe("anthropic-messages");
     expect(resolved.model.reasoning).toBe(true);
     expect(resolved.model.contextWindow).toBe(1000000);

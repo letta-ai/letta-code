@@ -88,6 +88,58 @@ describe("createLocalPiCredentialStore", () => {
     expect(maxConcurrent).toBe(1);
   });
 
+  test("modify is serialized across stores sharing a storage dir", async () => {
+    // Two processes (e.g. a channel listener and an App Server) each own a
+    // store over the same auth.json and race to refresh one expired token.
+    const storageDir = await makeStorageDir();
+    setLocalOAuthProvider({
+      storageDir,
+      providerName: "anthropic",
+      providerType: "anthropic",
+      auth: localOAuthAuthFromCredentials({
+        access: "expired-access",
+        refresh: "refresh-1",
+        expires: Date.now() - 1,
+      }),
+    });
+    const stores = [
+      createLocalPiCredentialStore(storageDir),
+      createLocalPiCredentialStore(storageDir),
+    ];
+
+    // A rotating-refresh-token provider: each refresh token works once.
+    const usedRefreshTokens = new Set<string>();
+    let refreshCalls = 0;
+    const refreshIfExpired = (store: (typeof stores)[number]) =>
+      store.modify("anthropic", async (current) => {
+        if (current?.type !== "oauth") throw new Error("missing credential");
+        if (current.expires > Date.now()) return undefined;
+        refreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        if (usedRefreshTokens.has(current.refresh)) {
+          throw new Error("invalid_grant");
+        }
+        usedRefreshTokens.add(current.refresh);
+        return {
+          type: "oauth",
+          access: "fresh-access",
+          refresh: "refresh-2",
+          expires: Date.now() + 3_600_000,
+        };
+      });
+
+    const results = await Promise.all(stores.map(refreshIfExpired));
+
+    expect(refreshCalls).toBe(1);
+    for (const result of results) {
+      expect(result).toMatchObject({
+        type: "oauth",
+        access: "fresh-access",
+        refresh: "refresh-2",
+      });
+    }
+  });
+
   test("a mod overriding a built-in id keeps that provider's record aliases", async () => {
     const storageDir = await makeStorageDir();
     try {

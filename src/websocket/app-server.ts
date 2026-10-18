@@ -245,6 +245,7 @@ export async function startAppServer(
         wsUrl: resolvedInfo?.url ?? options.listen ?? DEFAULT_LISTEN_URL,
         deviceId: settingsManager.getOrCreateDeviceId(),
         connectionName: options.connectionName ?? hostname(),
+        connectionIdCanResume: false,
         onConnected: () => {},
         onDisconnected: () => {},
         onError: (error) => {

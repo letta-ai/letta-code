@@ -14,7 +14,8 @@ export type SharedReminderId =
   | "permission-mode"
   | "memory-git-sync"
   | "command-io"
-  | "toolset-change";
+  | "toolset-change"
+  | "disk-space";
 
 export interface SharedReminderDefinition {
   id: SharedReminderId;
@@ -98,6 +99,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       id: "toolset-change",
       description: "Client-side toolset change context",
       modes: ["interactive"],
+    },
+    {
+      id: "disk-space",
+      description: "Low disk space warning in managed Cloud sandboxes",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
     },
   ];
 

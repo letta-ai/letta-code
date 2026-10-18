@@ -19,6 +19,9 @@ function buildPresetEntry(
       ? { isFeatured: model.isFeatured }
       : {}),
     ...(typeof model.free === "boolean" ? { free: model.free } : {}),
+    ...(typeof model.supportsStructuredOutputs === "boolean"
+      ? { supportsStructuredOutputs: model.supportsStructuredOutputs }
+      : {}),
     ...(model.updateArgs && typeof model.updateArgs === "object"
       ? { updateArgs: model.updateArgs as Record<string, unknown> }
       : {}),
@@ -49,6 +52,9 @@ function withAvailableModelMetadata(
   return {
     ...entry,
     handle: model.handle,
+    ...(typeof model.supportsStructuredOutputs === "boolean"
+      ? { supportsStructuredOutputs: model.supportsStructuredOutputs }
+      : {}),
     ...(availableUpdateArgs
       ? { updateArgs: { ...(entry.updateArgs ?? {}), ...availableUpdateArgs } }
       : {}),
@@ -79,6 +85,9 @@ export function buildNativeModelEntry(
     handle: model.handle,
     label: preset?.label ?? model.label,
     description: preset?.description ?? "",
+    ...(typeof model.supportsStructuredOutputs === "boolean"
+      ? { supportsStructuredOutputs: model.supportsStructuredOutputs }
+      : {}),
     ...(Object.keys(updateArgs).length > 0 ? { updateArgs } : {}),
   };
 }

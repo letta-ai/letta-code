@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
@@ -34,6 +33,7 @@ import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
   TO_SUBSCRIBERS,
+  toListenerConnection,
 } from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
@@ -43,8 +43,13 @@ import {
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
 import { buildDeviceToolsetStatus } from "./device-toolset-status";
+import { createLifecycleMessageBase } from "./lifecycle-message";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
+import {
+  createOutboundMessageDelivery,
+  type OutboundMessageDelivery,
+} from "./outbound-delivery";
 import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
 import {
@@ -54,7 +59,6 @@ import {
 import {
   getConversationRuntime,
   getPendingControlRequests,
-  getRecoveredApprovalStateForScope,
   hasInterruptedCacheForScope,
   safeEmitWsEvent,
 } from "./runtime";
@@ -300,18 +304,13 @@ export function buildLoopStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const recovered = getRecoveredApprovalStateForScope(listener, scope);
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
       : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
         ? "WAITING_ON_INPUT"
         : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
-    : recovered &&
-        recovered.pendingRequestIds.size > 0 &&
-        conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
-      ? "WAITING_ON_APPROVAL"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
+    : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
     active_run_ids:
@@ -367,6 +366,9 @@ type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
     : never
   : never;
 
+export { createLifecycleMessageBase } from "./lifecycle-message";
+export type { OutboundMessageDelivery } from "./outbound-delivery";
+
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -378,14 +380,30 @@ export function emitProtocolV2Message(
       }
     | undefined,
   routing: ListenerMessageRouting,
-): void {
+  notifyObservers = true,
+  envelope?: { idempotencyKey?: string },
+): OutboundMessageDelivery {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
-  if (!runtimeScope) return;
-  notifyStreamObservers(listener, message, runtimeScope);
+  const delivery = (
+    receipts: OutboundMessageDelivery["receipts"],
+  ): OutboundMessageDelivery =>
+    createOutboundMessageDelivery(receipts, (connectionId) =>
+      emitProtocolV2Message(
+        socket,
+        runtime,
+        message,
+        scope,
+        toListenerConnection(connectionId),
+        false,
+        envelope,
+      ),
+    );
+  if (!runtimeScope) return delivery([]);
+  if (notifyObservers) notifyStreamObservers(listener, message, runtimeScope);
   const frameClass = classifyOutboundFrame(message);
   const targets = resolveListenerConnectionTargets({
     runtime: listener,
@@ -394,9 +412,10 @@ export function emitProtocolV2Message(
     routing,
     streamMessage: isStreamChannelMessage(message.type),
   });
+  const receipts: OutboundMessageDelivery["receipts"] = [];
   for (const { connection, transport: targetSocket } of targets) {
     if (!isListenerTransportOpen(targetSocket)) continue;
-    enqueueOutboundFrame(targetSocket, {
+    const receipt = enqueueOutboundFrame(targetSocket, {
       typeLabel: message.type,
       frameClass,
       ...(frameClass === "status"
@@ -412,7 +431,9 @@ export function emitProtocolV2Message(
           runtime: runtimeScope,
           event_seq: eventSeq,
           emitted_at: new Date().toISOString(),
-          idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+          idempotency_key:
+            envelope?.idempotencyKey ??
+            `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
         } as WsProtocolMessage;
         let payload: string;
         try {
@@ -449,7 +470,9 @@ export function emitProtocolV2Message(
         });
       },
     });
+    receipts.push({ connectionId: connection?.id ?? null, ...receipt });
   }
+  return delivery(receipts);
 }
 
 export function broadcastServiceProtocolMessage(
@@ -772,9 +795,7 @@ export function emitStateSync(
   emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
-// ─────────────────────────────────────────────
 // Subagent state
-// ─────────────────────────────────────────────
 
 function resolveSubagentScopeForSnapshot(
   runtime: RuntimeCarrier,
@@ -798,9 +819,8 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include all statuses (pending, running, completed, error) so the
-      // web UI receives the final state with tool calls and agent URL
-      // before the subagent is cleaned up from the store.
+      // Include every status so the web UI gets the final state, tool calls
+      // and agent URL before the subagent is cleaned up from the store.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -825,9 +845,12 @@ export function buildSubagentSnapshot(
       prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
+      agent_id: a.agentId ?? null,
       conversation_id: a.conversationId ?? null,
+      super_run_id: a.superRunId,
       model: a.model,
       is_background: a.isBackground,
+      claims_parent_runtime: a.claimsParentRuntime,
       silent: a.silent,
       tool_call_id: a.toolCallId,
       parent_agent_id: a.parentAgentId,
@@ -837,6 +860,7 @@ export function buildSubagentSnapshot(
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,
+      ...(a.result !== undefined ? { result: a.result } : {}),
     }));
 }
 
@@ -873,23 +897,6 @@ export function emitSubagentStateIfOpen(
   }
 }
 
-export function createLifecycleMessageBase<TMessageType extends string>(
-  messageType: TMessageType,
-  runId?: string | null,
-): {
-  id: string;
-  date: string;
-  message_type: TMessageType;
-  run_id?: string;
-} {
-  return {
-    id: `lifecycle-${crypto.randomUUID()}`,
-    date: new Date().toISOString(),
-    message_type: messageType,
-    ...(runId ? { run_id: runId } : {}),
-  };
-}
-
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -898,38 +905,9 @@ export function emitCanonicalMessageDelta(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): void {
-  emitStreamDelta(socket, runtime, delta, scope);
-}
-
-export function emitLoopErrorDelta(
-  socket: ListenerTransport,
-  runtime: RuntimeCarrier,
-  params: {
-    message: string;
-    stopReason: StopReasonType;
-    isTerminal: boolean;
-    runId?: string | null;
-    agentId?: string | null;
-    conversationId?: string | null;
-    apiError?: LettaStreamingResponse.LettaErrorMessage;
-  },
-): void {
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      ...createLifecycleMessageBase("loop_error", params.runId),
-      message: params.message,
-      stop_reason: params.stopReason,
-      is_terminal: params.isTerminal,
-      ...(params.apiError ? { api_error: params.apiError } : {}),
-    } as StreamDelta,
-    {
-      agent_id: params.agentId,
-      conversation_id: params.conversationId,
-    },
-  );
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
+  return emitStreamDelta(socket, runtime, delta, scope, undefined, routing);
 }
 
 export function emitRetryDelta(
@@ -995,8 +973,8 @@ export function emitInterruptedStatusDelta(
     message: "Interrupted",
     level: "warning",
     runId: params.runId,
-    agentId: params.agentId ?? undefined,
-    conversationId: params.conversationId ?? undefined,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
   });
 }
 
@@ -1009,7 +987,8 @@ export function emitStreamDelta(
     conversation_id?: string | null;
   },
   subagentId?: string,
-): void {
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
   const message: Omit<
     StreamDeltaMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
@@ -1018,5 +997,5 @@ export function emitStreamDelta(
     delta,
     ...(subagentId ? { subagent_id: subagentId } : {}),
   };
-  emitProtocolV2Message(socket, runtime, message, scope, TO_SUBSCRIBERS);
+  return emitProtocolV2Message(socket, runtime, message, scope, routing);
 }

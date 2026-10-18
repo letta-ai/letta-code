@@ -5,6 +5,11 @@ import {
   clearBackgroundProcessCleanup,
 } from "@/tools/impl/process_manager";
 import { clearPendingMessages } from "@/utils/message-queue-bridge";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -50,6 +55,17 @@ for (const busy of [false, true])
       onDisconnected() {},
       onError() {},
     };
+    const connection = openListenerConnection({
+      runtime: listener,
+      connectionId: opts.connectionId,
+      writer: socket,
+      options: opts,
+    });
+    markListenerConnectionInitialized(listener, opts.connectionId, connection);
+    subscribeListenerConnection(listener, opts.connectionId, {
+      agent_id: "agent-a",
+      conversation_id: "default",
+    });
     const delivered: IncomingMessage[] = [];
     let onDelivered!: () => void;
     const deliveredPromise = new Promise<void>((resolve) => {
@@ -75,7 +91,6 @@ for (const busy of [false, true])
       runtimeScope: { agentId: "agent-a", conversationId: "default" },
       stdout: [],
       stderr: [],
-      lastReadIndex: { stdout: 0, stderr: 0 },
     });
     const handler = createListenerMessageHandler({
       runtime: listener,
@@ -139,7 +154,7 @@ for (const busy of [false, true])
       }
       await deliveredPromise;
       expect(delivered).toHaveLength(1);
-      expect(delivered[0]?.actingUserId).toBe(busy ? "human-a" : undefined);
+      expect(delivered[0]?.actingUserId).toBe("human-a");
       expect(delivered[0]?.messages[0]).toMatchObject({ role: "user" });
       const content = JSON.stringify(delivered[0]?.messages);
       expect(content).toContain("The user cancelled this Monitor.");

@@ -1,8 +1,13 @@
+import { randomUUID } from "node:crypto";
 import {
-  chmodSync,
+  closeSync,
   existsSync,
+  fsyncSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  renameSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -15,6 +20,7 @@ import {
   OPENAI_COMPATIBLE_PI_PROVIDER_ID,
   SUPPORTED_LOCAL_PROVIDER_TYPES,
 } from "@/backend/dev/pi-provider-registry";
+import { type FileLockOptions, withFileLock } from "@/utils/file-lock";
 import type { LocalProviderTimeout } from "./local-provider-timeout";
 import { getLocalBackendStorageDir } from "./paths";
 
@@ -91,6 +97,32 @@ export function getLocalProviderAuthPath(
   return join(storageDir, "providers", "auth.json");
 }
 
+// An OAuth refresh (a network call) can run while holding the lock, so the
+// lock is reaped only when its holder process is gone, never by age:
+// age-based reaping could let a second process refresh the same rotating
+// token while a slow holder is still mid-refresh. A live but hung holder
+// then makes waiters fail after `timeoutMs` instead of double-refreshing.
+const AUTH_FILE_LOCK_OPTIONS: FileLockOptions = {
+  reapOnlyDeadOwner: true,
+  retryMs: 50,
+  timeoutMs: 120_000,
+};
+
+/**
+ * Run a read-modify-write of auth.json exclusively across every process
+ * sharing the storage dir (e.g. a channel listener and an App Server), so
+ * two processes cannot both spend the same rotating OAuth refresh token.
+ * Callers must re-read the record inside `fn`. Not reentrant.
+ */
+export function withLocalProviderAuthLock<T>(
+  fn: () => Promise<T>,
+  storageDir?: string,
+): Promise<T> {
+  const authPath = getLocalProviderAuthPath(storageDir);
+  mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+  return withFileLock(`${authPath}.lock`, fn, AUTH_FILE_LOCK_OPTIONS);
+}
+
 function emptyAuthFile(): LocalProviderAuthFile {
   return { version: 1, providers: {} };
 }
@@ -113,11 +145,25 @@ function readAuthFile(storageDir?: string): LocalProviderAuthFile {
 function writeAuthFile(file: LocalProviderAuthFile, storageDir?: string): void {
   const path = getLocalProviderAuthPath(storageDir);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, {
-    encoding: "utf8",
-    mode: 0o600,
-  });
-  chmodSync(path, 0o600);
+  // Publish a complete snapshot: readers in other processes never see a
+  // half-written file, and a failed write leaves the previous file intact.
+  const temporaryPath = `${path}.${randomUUID()}.tmp`;
+  const fd = openSync(temporaryPath, "wx", 0o600);
+  try {
+    try {
+      writeFileSync(fd, `${JSON.stringify(file, null, 2)}\n`, "utf8");
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    renameSync(temporaryPath, path);
+  } finally {
+    try {
+      unlinkSync(temporaryPath);
+    } catch {
+      // Usually already renamed. Cleanup must not mask a failed write/rename.
+    }
+  }
 }
 
 function providerId(providerName: string): string {
@@ -453,24 +499,35 @@ export async function getLocalOAuthApiKey(input: {
 
   let credentials = toPiOAuthCredentials(record.auth);
   if (Date.now() >= credentials.expires) {
-    // pi-ai 0.84+: OAuthAuth.refresh requires an AbortSignal.
-    credentials = await oauth.refresh(
-      { type: "oauth", ...credentials },
-      new AbortController().signal,
-    );
+    // Refresh under the cross-process auth lock, re-reading first: another
+    // process may already have spent this refresh token and stored the
+    // rotated credentials.
+    const refreshed = await withLocalProviderAuthLock(async () => {
+      const current = localOAuthRecord(input.providerNames, input.storageDir);
+      if (!current || current.auth.type !== "oauth") return undefined;
+      const currentCredentials = toPiOAuthCredentials(current.auth);
+      if (Date.now() < currentCredentials.expires) return currentCredentials;
+      // pi-ai 0.84+: OAuthAuth.refresh requires an AbortSignal.
+      const next = await oauth.refresh(
+        { type: "oauth", ...currentCredentials },
+        new AbortController().signal,
+      );
+      const nextAuth = toLocalOAuthAuth(next, current.auth);
+      if (!localOAuthAuthEquals(nextAuth, current.auth)) {
+        setLocalOAuthProvider({
+          providerName: current.name,
+          providerType: current.provider_type,
+          auth: nextAuth,
+          storageDir: input.storageDir,
+        });
+      }
+      return next;
+    }, input.storageDir);
+    if (!refreshed) return undefined;
+    credentials = refreshed;
   }
   const modelAuth = await oauth.toAuth({ type: "oauth", ...credentials });
   if (!modelAuth.apiKey) return undefined;
-
-  const nextAuth = toLocalOAuthAuth(credentials, record.auth);
-  if (!localOAuthAuthEquals(nextAuth, record.auth)) {
-    setLocalOAuthProvider({
-      providerName: record.name,
-      providerType: record.provider_type,
-      auth: nextAuth,
-      storageDir: input.storageDir,
-    });
-  }
   const headers = modelAuth.headers
     ? Object.fromEntries(
         Object.entries(modelAuth.headers).filter(

@@ -47,6 +47,7 @@ interface RemoteCatalogEntry {
   label: string;
   brand: string;
   maxContextWindow: number;
+  supportsStructuredOutputs?: boolean;
   description?: string;
   shortLabel?: string;
   isFeatured?: boolean;
@@ -122,6 +123,7 @@ function isValidEntry(entry: unknown): entry is RemoteCatalogEntry {
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBoolean(candidate.supportsStructuredOutputs) &&
     isOptionalPositiveFiniteNumber(candidate.contextWindow) &&
     isOptionalPositiveFiniteNumber(candidate.maxOutputTokens) &&
     (candidate.config === undefined || isRecord(candidate.config))
@@ -138,6 +140,7 @@ function isValidCachedModel(entry: unknown): entry is CatalogModel {
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBoolean(candidate.supportsStructuredOutputs) &&
     (candidate.updateArgs === undefined || isRecord(candidate.updateArgs))
   );
 }
@@ -163,6 +166,9 @@ export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
     handle: entry.handle,
     label: entry.label,
     description: entry.description ?? "",
+    ...(typeof entry.supportsStructuredOutputs === "boolean"
+      ? { supportsStructuredOutputs: entry.supportsStructuredOutputs }
+      : {}),
     ...(entry.shortLabel ? { shortLabel: entry.shortLabel } : {}),
     ...(entry.isDefault ? { isDefault: true } : {}),
     ...(entry.isFeatured ? { isFeatured: true } : {}),
@@ -329,6 +335,9 @@ export function toRuntimeCatalogModels(
         handle: entry.handle,
         label: entry.label,
         description: "",
+        ...(typeof entry.supportsStructuredOutputs === "boolean"
+          ? { supportsStructuredOutputs: entry.supportsStructuredOutputs }
+          : {}),
         ...(Object.keys(updateArgs).length > 0 ? { updateArgs } : {}),
       });
     }

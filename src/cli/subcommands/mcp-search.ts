@@ -1,6 +1,6 @@
 import type { UnifiedMcpSearchMode } from "@/backend/api/unified-mcp";
 import type { McpToolDefinition } from "@/mcp-client";
-import { McpCliError } from "./mcp-io";
+import { McpCliError, type McpOutput } from "./mcp-io";
 
 const DEFAULT_SEARCH_LIMIT = 5;
 
@@ -162,7 +162,7 @@ export async function runMcpSearch(params: {
   query: string | undefined;
   mode: string | undefined;
   limit: string | undefined;
-  stdout: (message: string) => void;
+  stdout: McpOutput;
 }): Promise<number> {
   const query = params.query?.trim();
   if (!query) {
@@ -174,7 +174,7 @@ export async function runMcpSearch(params: {
   const searchMode = parseSearchMode(params.mode);
   const limit = parseSearchLimit(params.limit);
   const results = await params.searchTools({ query, searchMode, limit });
-  params.stdout(
+  await params.stdout(
     JSON.stringify(
       results.map((result, index) => ({
         tool: result.tool,

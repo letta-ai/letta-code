@@ -14,7 +14,7 @@ import {
   claimPendingTeleportAtBoundary,
   clearExpectedInboundTeleport,
   expectInboundTeleport,
-  finishTeleport,
+  finalizeClaimedTeleport,
   handleTeleportRequest,
   isInboundTeleportExpected,
   isRuntimeTeleportPending,
@@ -127,6 +127,7 @@ async function sync(
     },
     recoveredContinuationDependencies: {
       ensureSecretsHydrated: async () => {},
+      ensureModAdapters: async () => [],
       prepareToolExecutionContext: async () =>
         ({
           toolset: "codex",
@@ -200,7 +201,9 @@ describe("sync replay on a teleport source", () => {
       },
     });
     if (!pending) throw new Error("Expected pending source handoff");
-    finishTeleport(runtime, lease, pending);
+    finalizeClaimedTeleport(runtime.listener, pending, () =>
+      runtime.turnLifecycle.finish(lease, "cancelled"),
+    );
     await sync(runtime, transport, processed);
     await sync(runtime, transport, processed);
     await Bun.sleep(20);
@@ -209,9 +212,6 @@ describe("sync replay on a teleport source", () => {
     runtime.recoveredApprovalState = {
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      approvalsByRequestId: new Map(),
-      pendingRequestIds: new Set(),
-      responsesByRequestId: new Map(),
       autoDecisions: [
         { type: "deny", approval: sourceYieldedApproval, reason: "stale" },
       ],

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
   buildMcpServersInfoReminderText,
   type McpServersReminderDependencies,
@@ -18,6 +19,33 @@ async function buildReminder(
 }
 
 describe("mcp servers info reminder", () => {
+  test("fresh workers discover both MCP placements using the inherited scope", async () => {
+    const text = await runWithRuntimeContext(
+      {
+        executionSettings: {
+          allowed_tools: [],
+          disallowed_tools: [],
+          disable_memory_guard: false,
+          parent_agent_id: "parent",
+          agent_role: "subagent",
+        },
+      },
+      () =>
+        buildReminder(createSharedReminderState(), {
+          lookupParentAgent: async (id) =>
+            id === MCP_AGENT_ID ? "parent" : undefined,
+          getLocalServerNames: (id) => {
+            expect(id).toBe("parent");
+            return ["filesystem"];
+          },
+          listServerSideServers: async (id) => {
+            expect(id).toBe("parent");
+            return [{ name: "linear", toolCount: 3 }];
+          },
+        }),
+    );
+    expect(text).toContain("filesystem, linear (3 tools)");
+  });
   test("reports None once when no servers are available", async () => {
     const state = createSharedReminderState();
     const deps: McpServersReminderDependencies = {

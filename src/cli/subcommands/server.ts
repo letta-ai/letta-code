@@ -14,9 +14,11 @@ Run the local agent server as a remote computer, with messaging channels, or as 
 
 Remote computer options:
   --computer-name <name>  Friendly name for this computer (uses hostname if not provided)
+  --org <id>  Register this computer in a specific organization, signing in just for it
   --channels <list>  Comma-separated channel names to enable (e.g. telegram)
   --install-channel-runtimes  Install missing runtime dependencies for selected channels
   --debug  Log WebSocket events instead of showing the interactive status UI
+  --lifecycle-output jsonl  Emit payload-free JSON lifecycle transitions
 
 App Server options:
   --listen [url]  Accept App Server connections. If URL is omitted, binds to an available loopback port
@@ -35,6 +37,7 @@ Common options:
 Examples:
   letta server
   letta server --computer-name "work-laptop"
+  letta server --org org-123
   letta server --channels telegram
   letta server --listen
   letta server --listen ws://127.0.0.1:4500
@@ -88,8 +91,14 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
         arg.startsWith("--computer-name=") ||
         arg === "--env-name" ||
         arg.startsWith("--env-name=") ||
+        arg === "--org" ||
+        arg.startsWith("--org=") ||
+        arg === "--token" ||
+        arg.startsWith("--token=") ||
         arg === "--channels" ||
-        arg.startsWith("--channels="),
+        arg.startsWith("--channels=") ||
+        arg === "--lifecycle-output" ||
+        arg.startsWith("--lifecycle-output="),
     );
     if (conflictingOption) {
       throw new Error(
@@ -107,7 +116,13 @@ export function asLegacyAppServerCommand(argv: string[]): string[] {
 }
 
 export async function runServerSubcommand(argv: string[]): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  if (
+    (argv.includes("--help") || argv.includes("-h")) &&
+    !argv.some(
+      (arg) =>
+        arg === "--lifecycle-output" || arg.startsWith("--lifecycle-output="),
+    )
+  ) {
     printServerHelp();
     return 0;
   }

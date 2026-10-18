@@ -443,6 +443,23 @@ describe("APIBackend", () => {
     });
   });
 
+  test("rejects exact cancellation for agent_id:null without an API round-trip", async () => {
+    const backend = new APIBackend({
+      getClient: getClientMock as unknown as () => Promise<APIClient>,
+      forkConversation: forkConversationMock,
+    });
+
+    await expect(
+      backend.cancelConversationRun("conv-1", "run-1"),
+    ).rejects.toThrow(
+      "API backend does not support exact cancellation for conversations with agent_id:null",
+    );
+    expect(getClientMock).not.toHaveBeenCalled();
+    expect(retrieveRunMock).not.toHaveBeenCalled();
+    expect(cancelRunMock).not.toHaveBeenCalled();
+    expect(cancelConversationMock).not.toHaveBeenCalled();
+  });
+
   test("normalizes descending message cursors to chronological before and after", async () => {
     const backend = new APIBackend({
       getClient: getClientMock as unknown as () => Promise<APIClient>,

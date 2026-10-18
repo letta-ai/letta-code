@@ -18,6 +18,16 @@ describe("subagent name allocation", () => {
     expect(allocate()).toBe("Deckard the 2nd");
   });
 
+  test("pool has no near-duplicates that differ only by case or punctuation", () => {
+    const normalized = SUBAGENT_NAMES.map((name) =>
+      name.toLowerCase().replace(/[^a-z0-9]/g, ""),
+    );
+    const repeated = normalized.filter(
+      (name, index) => normalized.indexOf(name) !== index,
+    );
+    expect(repeated).toEqual([]);
+  });
+
   test("uses the random choice among names that remain, rather than retrying duplicates", () => {
     const allocate = createSubagentNameAllocator(() => 0.999999);
     const last = `${SUBAGENT_NAMES.at(-1)}`;

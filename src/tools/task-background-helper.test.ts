@@ -138,7 +138,9 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const task = backgroundTasks.get(launched.taskId);
     expect(task?.status).toBe("completed");
-    expect(task?.output[0]).toContain("reflection done");
+    expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+      "reflection done",
+    );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
     expect(queueMessages.length).toBe(1);
     expect(runSubagentStopHooksImpl).toHaveBeenCalledWith(
@@ -206,6 +208,50 @@ describe("spawnBackgroundSubagentTask", () => {
 
     expect(queueMessages).toHaveLength(1);
     expect(queueMessages[0]?.actingUserId).toBe("cloud-user-a");
+  });
+
+  test("runtime suppression reaches background launch and completion", async () => {
+    let launchedActor: unknown;
+    const spawnSubagentImpl = mock(async (...args: unknown[]) => {
+      launchedActor = args[15];
+      return {
+        agentId: "agent-child",
+        conversationId: "conv-child",
+        report: "done",
+        success: true,
+      };
+    });
+    const launched = runWithRuntimeContext(
+      {
+        actingUserId: "ambient-owner",
+        suppressActingUserFallback: true,
+      },
+      () =>
+        spawnBackgroundSubagentTask({
+          subagentType: "reflection",
+          prompt: "Reflect",
+          description: "Reflect safely",
+          parentScope: {
+            agentId: "agent-parent",
+            conversationId: "conv-parent",
+          },
+          deps: {
+            spawnSubagentImpl,
+            copyGitHubPullRequestTagsImpl: async () => {},
+            addToMessageQueueImpl,
+            formatTaskNotificationImpl,
+            runSubagentStopHooksImpl,
+            generateSubagentIdImpl,
+            registerSubagentImpl,
+            completeSubagentImpl,
+            getSubagentSnapshotImpl,
+          },
+        }),
+    );
+    expect(backgroundTasks.get(launched.taskId)?.actingUserId).toBeNull();
+    expect(launchedActor).toBeNull();
+    await Bun.sleep(0);
+    expect(queueMessages[0]?.actingUserId).toBeNull();
   });
 
   test("copies PR tags from the Agent conversation to its parent", async () => {
@@ -277,7 +323,9 @@ describe("spawnBackgroundSubagentTask", () => {
 
     const task = backgroundTasks.get(launched.taskId);
     expect(task?.status).toBe("completed");
-    expect(task?.output[0]).toContain("init done");
+    expect(readFileSync(task?.outputFile as string, "utf8")).toContain(
+      "init done",
+    );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
     // No notification queued
     expect(queueMessages.length).toBe(0);

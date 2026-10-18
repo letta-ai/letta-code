@@ -19,7 +19,12 @@ import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
+import {
+  peekOrganizationId,
+  warmOrganizationId,
+} from "@/agent/organization-id";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
 import { isLocalBackendMemfsDisabledForProcess } from "@/backend/local/paths";
 import {
@@ -172,7 +177,12 @@ export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
 }
 
-export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
+export function ensureLettaShimDir(
+  invocation: LettaInvocation,
+  electronExecPath: string | undefined = process.versions.electron
+    ? process.execPath
+    : undefined,
+): string | null {
   if (!invocation.command) return null;
 
   const shimDir = getLettaShimDir();
@@ -195,9 +205,17 @@ export function ensureLettaShimDir(invocation: LettaInvocation): string | null {
   const commandWithArgs = [invocation.command, ...invocation.args]
     .map(shellEscape)
     .join(" ");
-  writeFileSync(shimPath, `#!/bin/sh\nexec ${commandWithArgs} "$@"\n`, {
-    mode: 0o755,
-  });
+  // Electron needs this when launched from a fresh shell that did not inherit
+  // Desktop's environment. Do not add it for ordinary Node/Bun launchers.
+  const electronEnv =
+    electronExecPath && invocation.command === electronExecPath
+      ? "export ELECTRON_RUN_AS_NODE=1\n"
+      : "";
+  writeFileSync(
+    shimPath,
+    `#!/bin/sh\n${electronEnv}exec ${commandWithArgs} "$@"\n`,
+    { mode: 0o755 },
+  );
   return shimDir;
 }
 
@@ -315,8 +333,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     getRuntimeContext()?.executionSettings,
   );
   const env = { ...executionEnv };
-  const desktopAccessToken = getDesktopAccessToken();
-  if (desktopAccessToken) env.LETTA_API_KEY = desktopAccessToken;
+  const sessionAccessToken = peekOrgAccessToken() ?? getDesktopAccessToken();
+  if (sessionAccessToken) env.LETTA_API_KEY = sessionAccessToken;
   const pathKey =
     Object.keys(env).find((k) => k.toUpperCase() === "PATH") || "PATH";
   const pathPrefixes: string[] = [];
@@ -352,6 +370,16 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
   }
+  // Expose the signed-in organization when known. Never block on resolving it:
+  // the first shell may miss it while the cached one-shot lookup warms up.
+  if (!env.LETTA_ORGANIZATION_ID?.trim()) {
+    const organizationId = peekOrganizationId();
+    if (organizationId) {
+      env.LETTA_ORGANIZATION_ID = organizationId;
+    } else {
+      void warmOrganizationId();
+    }
+  }
   const listenerConnectionId = getRuntimeContext()?.connectionId;
   if (listenerConnectionId?.startsWith("conn-")) {
     env[LISTENER_CONNECTION_ENV] = listenerConnectionId;
@@ -359,6 +387,8 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const actingUserId = getRuntimeActingUserId();
   if (actingUserId) {
     env[ACTING_USER_ID_ENV] = actingUserId;
+  } else if (getRuntimeContext()?.suppressActingUserFallback) {
+    delete env[ACTING_USER_ID_ENV];
   }
 
   // Add Letta context for skill scripts.
@@ -523,9 +553,9 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   // `git push`/`pull` inside $MEMORY_DIR uses the proxy without persisting the
   // ephemeral localhost URL into the memory repo's git config.
   applyMemfsGitProxyEnv(env);
-  if (desktopAccessToken) {
+  if (sessionAccessToken) {
     const memfsPrefix = `${trimBaseUrl(getShellMemfsBaseUrl(env))}/v1/git/`;
-    const encoded = Buffer.from(`letta:${desktopAccessToken}`).toString(
+    const encoded = Buffer.from(`letta:${sessionAccessToken}`).toString(
       "base64",
     );
     appendGitConfigEnv(env, `credential.${memfsPrefix}.helper`, "");

@@ -5,13 +5,16 @@ import { isLocalAgentId } from "@/agent/agent-id";
 import { isLettaCloud } from "@/agent/memory-filesystem";
 import { getClient } from "@/backend/api/client";
 import {
+  createSandboxDesktopSession,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   uploadFileToSandbox,
 } from "@/backend/api/sandbox-files";
+import { buildDesktopViewerUrl } from "@/cli/helpers/app-urls";
 import { type SessionRef, settingsManager } from "@/settings-manager";
 
 interface SandboxSubcommandDeps {
+  createDesktopSession?: typeof createSandboxDesktopSession;
   downloadFile?: typeof downloadFileFromSandbox;
   ensureSandbox?: typeof ensureConversationSandbox;
   getLastSession?: () => SessionRef | null;
@@ -37,8 +40,9 @@ function printUsage(): void {
 Usage:
   letta sandbox upload <local-path>
   letta sandbox download <sandbox-path> [--to <local-path>]
+  letta sandbox desktop-link
 
-Target another conversation (upload or download):
+Target another conversation (upload, download, or desktop-link):
   letta sandbox upload <local-path> --conversation <conv-id>
   letta sandbox upload <local-path> --agent <agent-id>
 
@@ -51,6 +55,10 @@ Notes:
   - Run upload on the computer containing the local file, including a remote subagent.
   - Uploads are stored under /root/downloads in the conversation sandbox.
   - Downloads are limited to files under /root/downloads.
+  - desktop-link prints a chat.letta.com URL that opens the sandbox's live
+    desktop in a browser tab with no sign-in. Anyone with the link can view
+    and control the desktop until expiresAt (about one hour); share it only
+    with the person who needs it.
   - Output is JSON only.
 `.trim(),
   );
@@ -90,14 +98,14 @@ export function resolveSandboxSession(
     throw new Error("No active agent conversation found");
   }
   if (isLocalAgentId(session.agentId)) {
-    throw new Error("Sandbox file transfer requires a Letta Cloud agent");
+    throw new Error("The sandbox command requires a Letta Cloud agent");
   }
   if (
     !session.conversationId ||
     session.conversationId === "default" ||
     session.conversationId === "new"
   ) {
-    throw new Error("Sandbox file transfer requires an active conversation");
+    throw new Error("The sandbox command requires an active conversation");
   }
   return session;
 }
@@ -124,7 +132,7 @@ export async function resolveSandboxTarget(
     );
   }
   if (agentId && isLocalAgentId(agentId)) {
-    throw new Error("Sandbox file transfer requires a Letta Cloud agent");
+    throw new Error("The sandbox command requires a Letta Cloud agent");
   }
   if (conversationId === "default") {
     if (!agentId) throw new Error("--conversation default requires --agent");
@@ -167,8 +175,18 @@ export async function runSandboxSubcommand(
     printUsage();
     return 0;
   }
-  if ((action !== "upload" && action !== "download") || !path) {
-    console.error("Error: expected upload or download with a file path");
+  if (action === "desktop-link" && path !== undefined) {
+    console.error("Error: desktop-link takes no path argument");
+    printUsage();
+    return 1;
+  }
+  if (
+    action !== "desktop-link" &&
+    ((action !== "upload" && action !== "download") || !path)
+  ) {
+    console.error(
+      "Error: expected upload or download with a file path, or desktop-link",
+    );
     printUsage();
     return 1;
   }
@@ -176,7 +194,7 @@ export async function runSandboxSubcommand(
   try {
     await (deps.initializeSettings ?? initializeSandboxSettings)();
     if (!(await (deps.isCloud ?? isLettaCloud)())) {
-      throw new Error("Sandbox file transfer is only available on Letta Cloud");
+      throw new Error("The sandbox command is only available on Letta Cloud");
     }
     const session = await resolveSandboxTarget(
       parsed.values,
@@ -204,13 +222,33 @@ export async function runSandboxSubcommand(
         (sandbox.conversationId ?? "default") !== session.conversationId
       ) {
         throw new Error(
-          "The server returned a sandbox for a different conversation; no files transferred",
+          "The server returned a sandbox for a different conversation; nothing was done",
         );
       }
       return sandbox;
     };
     const targetOutput = explicitTarget ? session : {};
 
+    if (action === "desktop-link") {
+      const sandbox = await ensureSandbox();
+      const desktop = await (
+        deps.createDesktopSession ?? createSandboxDesktopSession
+      )(sandbox.sandboxId);
+      console.log(
+        JSON.stringify(
+          {
+            url: buildDesktopViewerUrl(desktop.url, desktop.expiresAt),
+            expiresAt: desktop.expiresAt,
+            ...targetOutput,
+          },
+          null,
+          2,
+        ),
+      );
+      return 0;
+    }
+
+    if (path === undefined) throw new Error("Missing file path");
     if (action === "upload") {
       const localPath = resolve(path);
       const fileStat = await (deps.statLocalPath ?? stat)(localPath);

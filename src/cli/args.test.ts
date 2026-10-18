@@ -95,6 +95,18 @@ describe("shared CLI arg schema", () => {
     expect(parsed.positionals.slice(2).join(" ")).toBe("hello");
   });
 
+  test("parses an optional initial Cloud client message ID without inheriting it", () => {
+    expect(
+      parseCliArgs(["--client-message-id", "assignment:1"], true).values,
+    ).toMatchObject({ "client-message-id": "assignment:1" });
+    expect(parseCliArgs([], true).values["client-message-id"]).toBeUndefined();
+    for (const id of ["", "  "]) {
+      expect(() => parseCliArgs(["--client-message-id", id], true)).toThrow(
+        "--client-message-id must be a non-empty string",
+      );
+    }
+  });
+
   test("accepts computer routing and its legacy environment aliases", () => {
     const primary = parseCliArgs(
       ["node", "script", "-p", "hello", "--computer", "office-mac"],

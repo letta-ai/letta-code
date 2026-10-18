@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import {
   allocateSubagentName,
   resolveCreatedAgentName,
@@ -20,6 +22,49 @@ const PARENT_ID = "agent-226cd814-09bf-4436-940e-aea9d91d14cb";
 const PARENT_MEMORY_DIR = `/Users/someone/.letta/agents/${PARENT_ID}/memory`;
 
 describe("composeSubagentChildEnv", () => {
+  test("an explicitly unattributed child deletes an ambient actor", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { [ACTING_USER_ID_ENV]: "ambient-user" },
+      parentAgentId: PARENT_ID,
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+      actingUserId: null,
+    });
+    expect(env[ACTING_USER_ID_ENV]).toBeUndefined();
+  });
+
+  test("an omitted actor override preserves the immediate parent actor", () => {
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { [ACTING_USER_ID_ENV]: "ambient-user" },
+      parentAgentId: "agent-parent",
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+    expect(env[ACTING_USER_ID_ENV]).toBe("ambient-user");
+  });
+  test("memory workers suppress worker-side sync without marking other children as memory workers", () => {
+    const worker = composeSubagentChildEnv({
+      parentProcessEnv: {},
+      parentAgentId: PARENT_ID,
+      subagentType: "memory",
+      launchProfile: "memory-subagent",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(worker)).toBe(true);
+    expect(worker[LETTA_MOD_CAPABILITY_PROFILE_ENV]).toBe(
+      PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
+    );
+    const other = composeSubagentChildEnv({
+      parentProcessEnv: worker,
+      parentAgentId: PARENT_ID,
+      subagentType: "general-purpose",
+      launchProfile: "default",
+      inheritedPrimaryRoot: PARENT_MEMORY_DIR,
+    });
+    expect(isMemoryWorkerSession(other)).toBe(false);
+  });
   test("carries the reserved generated name through child creation", () => {
     const reservedName = allocateSubagentName("Bob");
     const env = composeSubagentChildEnv({
