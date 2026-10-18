@@ -62,7 +62,13 @@ export class LocalIrreducibleContextError extends Error {
 export function assertLocalCompactionProgress(
   stats: LocalCompactionStats,
   mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
 ): void {
+  if ((stats.context_tokens_after ?? 0) > maxMessageTokens) {
+    throw new LocalIrreducibleContextError(
+      "Irreducible context: compaction would still exceed the pressure threshold.",
+    );
+  }
   const hasProgress =
     (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
       (stats.messages_count_before ?? 0) ||
