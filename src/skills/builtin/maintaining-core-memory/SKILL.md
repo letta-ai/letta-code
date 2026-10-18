@@ -1,13 +1,13 @@
 ---
 name: maintaining-core-memory
-description: Maintains an agent's core memory, the root Markdown files in $MEMORY_DIR that are compiled into its system prompt on every turn. Use when adding, revising, consolidating, or trimming persona, user, project, or root MEMORY.md content, or when turning a correction or preference into a standing instruction.
+description: Maintains an agent's core memory, the root Markdown files in $MEMORY_DIR that are compiled into its system prompt on every turn. Use when adding, revising, consolidating, or trimming persona, user, project, or root MEMORY.md content, or when folding a correction or preference into the agent's principles.
 ---
 
 # Maintaining core memory
 
 Every Markdown file directly in `$MEMORY_DIR` is core memory: part of the agent's system prompt, read in full on every turn of every conversation. Each line has a standing cost and shapes every response.
 
-Core memory is the agent's prompt, refined over its lifetime. Treat each change as a revision of that prompt, not an append to a log: the usual edit sharpens, merges, or replaces an existing rule, and a new rule earns its place only when no existing one can absorb it.
+Core memory is the agent's prompt, refined over its lifetime. Treat each change as a revision of that prompt, not an append to a log: the usual edit sharpens, merges, or replaces an existing principle, and a new one earns its place only when no existing one can absorb it.
 
 ## Is this core memory?
 
@@ -15,11 +15,11 @@ Letta memory has three tiers. Put each piece of context in the cheapest tier tha
 
 | Tier | Location | Visible to the agent | Holds |
 |---|---|---|---|
-| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
-| Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | Knowledge about a subject, looked up when that subject comes up |
+| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity and the agent's working model of the user and its work, plus the root `MEMORY.md` index |
+| Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | The agent's analysis of a subject, refined over time and looked up when that subject comes up |
 | Skill | `$MEMORY_DIR/skills/<name>/SKILL.md` | Name and description every turn; body when loaded | A procedure with a clear trigger |
 
-Message history (recall) is a fourth kind of memory that the harness stores automatically; do not copy it into files.
+Two records already exist outside these tiers: message history (recall), which holds every raw event, and the memory repository's git history, which holds every past version of every file. Do not copy either into memory files.
 
 Write to core memory only when the content should change how the agent behaves or what it knows on most turns. Otherwise use the `maintaining-deferred-memory` skill for subject knowledge or the `creating-skills` skill for procedures.
 
@@ -48,13 +48,18 @@ When the config file is absent, the defaults apply. Treat the limits as a ceilin
 - The file name becomes the block name in the prompt, so `human.md` renders as `<human>`. Choose short, stable names.
 - `description` says what belongs in the file. A future writer uses it to decide what to add here and what to put elsewhere.
 
-## Write instructions, not notes
+## Write principles, not rules
 
-- Write to the agent in the second person or imperative mood: "Lead with the answer", not "The user likes answers first".
-- Generalize a correction into the rule it implies, and keep the user's exact wording when the wording itself is the constraint. Do not log the incident that produced it.
-- Prefer one decisive rule over a list of examples or caveats. Add an example only when the rule is ambiguous without it.
-- Keep one home per fact. Update or replace the existing line instead of appending a near-duplicate.
-- Leave out content the agent can cheaply rederive: file contents, command lists, current status, recent activity, and anything retrievable from message history.
+Core memory is the agent's working model: who it is, how the user thinks and what they value, and the principles that follow. It is not a list of rules.
+
+- Treat a correction or preference as evidence about that model. Find the principle it belongs to and sharpen or rewrite that principle. Add a new one only when the evidence shows something the model was missing.
+- When several rules share a cause, replace them with the one principle that explains them all, and delete the lines it absorbs in the same edit. Adding the principle while keeping the old rules is a log with a summary on top. A healthy file becomes more general over time; a growing count of narrow rules is a sign of failure.
+- State the principle with the reason that makes it generalize: "Verify claims against the running system, because Sarah trusts evidence over plausibility", not three separate rules about tests, logs, and deployments.
+- Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
+- Update only from a pattern or an explicit instruction, not a single ambiguous event.
+- Check that a change does not contradict an existing line; resolve the conflict instead of adding both.
+- Write in plain language without all-caps or absolute emphasis. Overstated instructions get overapplied.
+- Leave out content the agent can cheaply rederive: file contents, command lists, current status, and recent activity.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
 ## Keep root MEMORY.md a map
@@ -75,10 +80,12 @@ When a root file is long or the total is near its limit:
 
 ## Save the change
 
-The edit takes effect only once it is committed, and only in later system prompts; the current conversation keeps the prompt it started with. Stage the files you changed by path and commit:
+The edit takes effect only once it is committed, and only in later system prompts; the current conversation keeps the prompt it started with. Stage the files you changed by path and commit. The commit message is where lineage lives: what prompted the change and which lines it replaced or merged.
 
 ```bash
-git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>"
+git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>" -m "<what prompted it>"
 ```
+
+`git log -p -- <file>` recovers the history of any line, so the file itself never needs to carry it.
 
 If the pre-commit hook rejects the commit, fix the reported files and commit again. Do not bypass the hook.

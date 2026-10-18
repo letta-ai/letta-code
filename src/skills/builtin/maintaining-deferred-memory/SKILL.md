@@ -13,13 +13,13 @@ Letta memory has three tiers. Put each piece of context in the cheapest tier tha
 
 | Tier | Location | Visible to the agent | Holds |
 |---|---|---|---|
-| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
-| Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | Knowledge about a subject, looked up when that subject comes up |
+| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity and the agent's working model of the user and its work, plus the root `MEMORY.md` index |
+| Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | The agent's analysis of a subject, refined over time and looked up when that subject comes up |
 | Skill | `$MEMORY_DIR/skills/<name>/SKILL.md` | Name and description every turn; body when loaded | A procedure with a clear trigger |
 
-Message history (recall) is a fourth kind of memory that the harness stores automatically; do not copy it into files.
+Two records already exist outside these tiers: message history (recall), which holds every raw event, and the memory repository's git history, which holds every past version of every file. Do not copy either into memory files.
 
-Use deferred memory for knowledge about a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill. `skills/` is reserved for skills and is never deferred memory.
+Use deferred memory for understanding of a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill. `skills/` is reserved for skills and is never deferred memory.
 
 ## Check the limits first
 
@@ -51,7 +51,7 @@ $MEMORY_DIR/
   ```markdown
   ---
   name: acme
-  description: The Acme integration: owners, architecture, and known failure modes.
+  description: How the Acme integration works, why it fails, and what to do about it.
   ---
   ```
 
@@ -69,19 +69,27 @@ Discovery runs through the `MEMORY.md` chain, one level at a time:
 
 After adding or moving a file, trace the path a future request would take from root `MEMORY.md` to the file. If any step depends on knowing the file already exists, fix the index.
 
-## Write the content
+## Write analysis, not logs
 
-- Lead with what the agent should do about the subject, then the facts that support it.
-- Keep one home per fact. Update the existing file instead of adding a near-duplicate, and replace stale information where it lives.
-- Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, current status, and anything retrievable from message history. Link to the owning source instead.
+Recall already returns what happened. A deferred memory file is worth keeping only when it holds what recall cannot: the agent's own synthesis of a subject, built across many events and refined as understanding improves.
+
+- Before writing, ask whether searching message history would give a future agent the same thing. If it would, do not write the file.
+- Write the current understanding: how the subject works, the patterns across events, why things failed or succeeded, what to do about it, and the open questions.
+- Revise the file in place when new evidence arrives. Fold the new event into the analysis; never append a dated entry, a quote, or an incident narrative.
+- When the file you are updating is already a log, convert it: write the analysis the entries support and delete the entries. Keeping them under an "incident history" heading leaves the log in place; git and recall already hold it.
+- When a raw event matters, point to it with terms that will find it in recall rather than copying it.
+- Keep one home per subject. Update the existing file instead of adding a near-duplicate, and replace stale conclusions where they live.
+- Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, and current status. Link to the owning source instead.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
 ## Save the change
 
-Changes are saved only once committed. Stage the files you changed, including any updated indexes, by path and commit:
+Changes are saved only once committed. Stage the files you changed, including any updated indexes, by path and commit. The commit message is where lineage lives: what new evidence prompted the revision and how the conclusion changed.
 
 ```bash
-git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>"
+git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>" -m "<what prompted it>"
 ```
+
+`git log -p -- <file>` recovers how the analysis evolved, so the file itself holds only the current understanding.
 
 If the pre-commit hook rejects the commit, fix the reported files and commit again. Do not bypass the hook.
