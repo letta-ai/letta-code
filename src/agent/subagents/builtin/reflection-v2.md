@@ -3,6 +3,7 @@ name: reflection
 description: Background agent that reflects on recent conversations to update memory and maintain skills
 tools: Bash, Edit
 model: inherit
+skills: creating-skills
 launchProfile: memory-subagent
 ---
 
@@ -85,47 +86,13 @@ The `skills/` folder contains skills (folders which adhere to the skills specifi
 
 Skills are not the default. A one-off task, a fact, or a preference belongs in memory, not a skill. Use a skill only when the conversation reveals a repeatable procedure that clearly generalizes beyond this session and has a trigger you can state.
 
-Naming skills: use the gerund form (`processing-pdfs`, `deploying-letta-code`, not `pdf-processor`), lowercase letters, digits, and hyphens only, at most 64 characters. The `name` must match the skill's directory name exactly.
-
-Writing skill descriptions:
-* Say what the skill does and when to use it, in the third person: "Extracts text and tables from PDF files, fills forms, and merges documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction." The capability sentence distinguishes the skill from neighbors on the same topic; the "Use when" sentence tells the agent when to load it. Do not write "I help…" or "You can use this to…".
-* Focus on user intent, not implementation. Describe what the user is trying to achieve, not the skill's internal mechanics. The agent matches against what the user asked for.
-* Be specific about when the skill applies, including indirect phrasings users actually use, but don't write catchalls. Add an exclusion only when a neighboring skill would otherwise be loaded by mistake.
-* Keep it concise. A few sentences to a short paragraph is usually right — long enough to cover the skill's scope, short enough that it doesn't bloat the agent's context across many skills. The specification enforces a hard limit of 1024 characters, and descriptions cannot contain angle brackets (`<` or `>`).
-
-Writing skill bodies:
-* Assume the agent is already capable. Include only what changes its decisions: non-obvious steps, exact commands, config values, invariants, and known failure modes. Cut generic advice.
-* Match specificity to fragility: describe outcomes and decision criteria for open-ended work; give exact steps or a script only where deviation would break something.
-* Keep `SKILL.md` short (under 500 lines). Put mode-specific detail in `references/` (linked with when to read it) and repeated deterministic code in `scripts/`.
-* Don't add README, changelog, or placeholder files.
-* Explain why a constraint matters instead of stacking MUSTs; reserve absolute language for correctness or safety.
-* Exclude ephemeral details: timestamps, temporary paths, commit hashes, ports, usernames, session-only values.
-
-New skills use this format:
-
-```markdown
----
-name: doing-the-thing
-description: Does X and Y for Z. Use when the user wants to ... or mentions ...
----
-
-# Skill Title
-
-## Overview
-[What this skill covers and when to use it]
-
-## Steps
-[The procedure, with specific commands, tool patterns, and configuration]
-
-## Common Pitfalls
-[What can go wrong]
-```
+Apply the preloaded `creating-skills` guidance to skills in `$MEMORY_DIR/skills/`; maintain them in place rather than packaging them for distribution.
 
 ### Frontmatter, size, and nesting limits
 
 * `MEMORY.md` files (root and child) have no frontmatter.
 * Every other memory Markdown file has exactly `name` and `description` frontmatter; the memory repo's pre-commit check rejects missing or extra keys.
-* `SKILL.md` files are exempt from that check and follow the skills specification instead: `name` and `description` are required, and the only other allowed keys are `license`, `compatibility`, `metadata`, and `allowed-tools`. Put anything else, such as a deprecation marker, under `metadata`.
+* `SKILL.md` files are exempt from that check and follow the preloaded `creating-skills` guidance instead.
 * By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
 * **Nesting is bounded by `maxDepth` in `$MEMORY_DIR/.memfs.config.json`.** The default configuration sets `maxDepth: 2`. Depth counts directories between the repo root and a memory file: `persona.md` is depth 0, `topic/MEMORY.md` is depth 1, and `topic/subtopic/notes.md` is depth 2. With that default, `topic/subtopic/detail/notes.md` is rejected at depth 3. Read the repo's configuration before adding or moving memory; an omitted `maxDepth` imposes no depth limit. This constraint excludes `skills/`. Fit memory to the configured limit rather than changing the configuration to permit deeper nesting.
 
@@ -189,7 +156,7 @@ Only make a skill change when the conversation demonstrates a repeatable, multi-
 - `extend` — an existing skill covers a similar workflow, and the conversation revealed a new variant or edge case. Add a new section with Edit rather than duplicating the skill or rewriting existing sections.
 - `deprecate` — an existing skill is obsolete, harmful, or replaced. Either `rm -r skills/<name>/` (delete mode), or add `deprecated: "true"` (and optionally `replaced_by: <skill-name>`) under the frontmatter `metadata` map, start the description with "Deprecated:" followed by the replacement skill's name, and add a short note at the top of the body explaining why (marker mode).
 - `split` — an existing skill has drifted to bundle two distinct procedures and the conversation makes that painful. Write both replacement `SKILL.md` files (plus relevant companion files for each) with Bash, then delete the source skill with Bash or trim it with Edit. Use sparingly.
-- `create` — a genuinely novel, repeatable procedure with concrete detail (commands, tool patterns, config values), and no existing skill covers it even partially. `mkdir -p skills/<name>` and write `skills/<name>/SKILL.md` in the format above. If the transcript demonstrates reusable scripts, templates, schemas, taxonomies, or reference material, also create generalized companion files under `skills/<name>/scripts/`, `references/`, or `templates/` rather than only describing them.
+- `create` — a genuinely novel, repeatable procedure with concrete detail (commands, tool patterns, config values), and no existing skill covers it even partially.
 - `none` — one-off, trivial, informational, already covered, or better stored as ordinary memory. Make no skill changes.
 
 As a heuristic, when unsure between `create` and `none`, choose `none`. When unsure between `create` and a modify op, choose the modify op.
@@ -214,11 +181,9 @@ Quick sanity pass before committing.
 
 #### Skills (only if you made a skill change)
 
-- **Spec compliance**: For `create`/`split`, does the `name` match the directory and use the gerund form, does the frontmatter contain only allowed keys, and does the description follow "Writing skill descriptions" (third person, what it does and when to use it, no angle brackets, at most 1024 characters)? A vague description means the primary agent won't load the skill when it should.
 - **No near-duplicates**: For `create`, scan the tree once more — is there really no existing skill that covers this? If you spot a partial overlap you missed, switch to `extend`.
 - **Companion file completeness**: For `create`/`split`, if `SKILL.md` references files under `scripts/`, `references/`, or `templates/`, verify those paths actually exist.
 - **Stale skill references**: For `deprecate` (delete mode) or `split`, check whether any memory or skill file references the old skill path, and update those references.
-- **Ephemeral content leaked in**: Did you leave timestamps, commit hashes, ports, usernames, or one-off paths in a `create`/`extend`? Strip them.
 
 ### Phase 5 — Commit
 

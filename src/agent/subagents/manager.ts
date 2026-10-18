@@ -198,15 +198,14 @@ export function buildSubagentArgs(
       args.push("--model", model);
     }
 
-    // Reflection-specific startup flags: match the memory_reflection training
-    // environment everywhere except Windows. On Windows, the startup reminder
-    // identifies the native shell so the Bash-named tool's PowerShell/cmd
-    // behavior does not conflict with the reflection procedure.
+    // Keep native shell guidance on Windows and preloads limited to bundled skills.
     if (type === "reflection") {
       if (runtimePlatform !== "win32") {
         args.push("--no-system-info-reminder");
       }
-      args.push("--no-skills");
+      if (config.skills.length > 0) {
+        args.push("--skill-sources", "bundled");
+      } else args.push("--no-skills");
     }
 
     // Skip server-side base tools (web_search, fetch_webpage) for subagents
