@@ -35,6 +35,7 @@ import {
   type RecoveryClaim,
   resolveRecoveryEligibility,
 } from "./recovery-ownership";
+import { recoveryRefusalPolicy } from "./recovery-refusal-policy";
 import { getActiveRuntime, getConversationRuntimeKey } from "./runtime";
 import { handleIncomingMessage } from "./turn";
 import { createTurnFinishedStore } from "./turn-finished-replay";
@@ -110,9 +111,21 @@ export async function recoverRecordedTurns(
   const store = deps.store ?? createInterruptedTurnStore();
   const terminalStore = deps.terminalStore ?? createTurnFinishedStore();
   const canRecover = deps.canRecover ?? canRecoverConversation;
-  let deferred = false;
+  let retryIn = Infinity;
   try {
     for (const record of store.list()) {
+      const policy = recoveryRefusalPolicy(
+        listener,
+        record,
+        deps.acquireClaim ?? acquireRecoveryClaim,
+      );
+      const defer = () => {
+        retryIn = Math.min(retryIn, policy.delay(deps.retryDelayMs ?? 5000));
+      };
+      if (!policy.ready) {
+        defer();
+        continue;
+      }
       if (record.revision) {
         const scope = {
           agentId: record.agentId,
@@ -125,7 +138,7 @@ export async function recoverRecordedTurns(
           if (
             hasPreparedInputTerminalRevision(listener, scope, record.revision)
           ) {
-            deferred = true;
+            defer();
             continue;
           }
         }
@@ -153,7 +166,7 @@ export async function recoverRecordedTurns(
               record.revision,
             )
           ) {
-            deferred = true;
+            defer();
           }
           continue;
         }
@@ -172,7 +185,7 @@ export async function recoverRecordedTurns(
           )
         : null;
       if (runningCompletion?.independentSuccessor && !recoverySnapshot) {
-        deferred = true;
+        defer();
         continue;
       }
       const recoveryRecord = recoverySnapshot?.record ?? record;
@@ -195,11 +208,11 @@ export async function recoverRecordedTurns(
             runningCompletion?.lineageId ?? "",
           )?.revisionToken === recoverySnapshot.revisionToken);
       if (runtime.turnLifecycle.kind !== "idle") {
-        deferred = true;
+        defer();
         continue;
       }
       if (!(await canRecover(runtime))) {
-        deferred = true;
+        defer();
         continue;
       }
       let recoveryClaim: RecoveryClaim | null | undefined;
@@ -212,34 +225,32 @@ export async function recoverRecordedTurns(
             deps.canRecover,
           );
           if (eligibility !== "owned") {
-            deferred = true;
+            defer();
             continue;
           }
           if (!unchanged()) {
-            deferred = true;
+            defer();
             continue;
           }
-          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-            runtime,
-            () =>
-              scheduleRecordedTurnRecovery(listener, () =>
-                recoverRecordedTurns(listener, deps),
-              ),
+          recoveryClaim = await policy.acquire(runtime, () =>
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
+            ),
           );
           if (!recoveryClaim) {
-            deferred = true;
+            defer();
             continue;
           }
           if (!unchanged()) {
             await recoveryClaim.release();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           if (!(await recoveryClaim.complete())) {
             recoveryClaim.abandon();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           recoveryClaim = undefined;
@@ -252,7 +263,7 @@ export async function recoverRecordedTurns(
               })
             : "failed";
           if (retirement === "failed" || retirement === "preserved") {
-            deferred = true;
+            defer();
           }
           continue;
         }
@@ -277,20 +288,18 @@ export async function recoverRecordedTurns(
             deps.canRecover,
           );
           if (eligibility !== "owned" || !unchanged()) {
-            deferred = true;
+            defer();
             continue;
           }
-          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-            runtime,
-            () =>
-              scheduleRecordedTurnRecovery(listener, () =>
-                recoverRecordedTurns(listener, deps),
-              ),
+          recoveryClaim = await policy.acquire(runtime, () =>
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
+            ),
           );
           if (!recoveryClaim?.owned || !unchanged()) {
             await recoveryClaim?.release();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           const pendingCompletion = markRecoveryClaimCompletionPending(
@@ -305,7 +314,7 @@ export async function recoverRecordedTurns(
           ) {
             recoveryClaim.abandon();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           recoveryClaim = undefined;
@@ -316,7 +325,7 @@ export async function recoverRecordedTurns(
             pendingRevision: pendingCompletion.revision,
           });
           if (retirement !== "removed" && retirement !== "stale") {
-            deferred = true;
+            defer();
           }
           continue;
         }
@@ -329,7 +338,7 @@ export async function recoverRecordedTurns(
             teleportId,
           );
           if (!unchanged()) {
-            deferred = true;
+            defer();
             continue;
           }
           if (teleport.status === "completed") {
@@ -339,7 +348,7 @@ export async function recoverRecordedTurns(
                 record,
                 recoverySnapshot?.revisionToken ?? record.revision,
               );
-              deferred = true;
+              defer();
               continue;
             }
             if (
@@ -349,7 +358,7 @@ export async function recoverRecordedTurns(
                 record.revision ?? null,
               )
             ) {
-              deferred = true;
+              defer();
             }
           } else if (teleport.status === "failed") {
             // Once teleport_failed durably admits its continuation, that payload
@@ -383,7 +392,7 @@ export async function recoverRecordedTurns(
                 record,
                 recoverySnapshot?.revisionToken ?? record.revision,
               );
-              deferred = true;
+              defer();
               continue;
             }
             if (
@@ -391,7 +400,7 @@ export async function recoverRecordedTurns(
               !recoveryRecord.teleport ||
               !record.revision
             ) {
-              deferred = true;
+              defer();
             } else if (
               recoveryRecord.teleport.readyRevision === record.revision
             ) {
@@ -405,7 +414,7 @@ export async function recoverRecordedTurns(
                   record.revision,
                 )
               ) {
-                deferred = true;
+                defer();
               }
             } else {
               try {
@@ -416,7 +425,7 @@ export async function recoverRecordedTurns(
                   record.revision,
                 );
               } catch {
-                deferred = true;
+                defer();
               }
             }
           } else if (
@@ -430,20 +439,18 @@ export async function recoverRecordedTurns(
               deps.canRecover,
             );
             if (eligibility !== "owned" || !unchanged()) {
-              deferred = true;
+              defer();
               continue;
             }
-            recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-              runtime,
-              () =>
-                scheduleRecordedTurnRecovery(listener, () =>
-                  recoverRecordedTurns(listener, deps),
-                ),
+            recoveryClaim = await policy.acquire(runtime, () =>
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              ),
             );
             if (!recoveryClaim?.owned || !unchanged()) {
               await recoveryClaim?.release();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             const terminalReady =
@@ -460,7 +467,7 @@ export async function recoverRecordedTurns(
             if (!terminalReady || !recoveryClaim.owned || !unchanged()) {
               await recoveryClaim.release();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             try {
@@ -492,12 +499,12 @@ export async function recoverRecordedTurns(
                 );
               }
             } catch {
-              deferred = true;
+              defer();
             }
             await recoveryClaim.release();
             recoveryClaim = undefined;
           } else {
-            deferred = true;
+            defer();
           }
           continue;
         }
@@ -511,7 +518,7 @@ export async function recoverRecordedTurns(
           )
         ).pendingApprovals;
         if (!unchanged()) {
-          deferred = true;
+          defer();
           continue;
         }
         const recordedRunId = await resolveRecordedRunId(
@@ -520,7 +527,7 @@ export async function recoverRecordedTurns(
           pending,
         );
         if (!recordedRunId) {
-          deferred = true;
+          defer();
           continue;
         }
         const recordedRun =
@@ -528,7 +535,7 @@ export async function recoverRecordedTurns(
             ? await backend.retrieveRun(recordedRunId)
             : null;
         if (!unchanged()) {
-          deferred = true;
+          defer();
           continue;
         }
         if (
@@ -541,11 +548,11 @@ export async function recoverRecordedTurns(
         if (!pending.length) {
           const run = recordedRun;
           if (!unchanged()) {
-            deferred = true;
+            defer();
             continue;
           }
           if (run?.status === "running" || run?.status === "created") {
-            deferred = true;
+            defer();
             continue;
           }
           const recoveredStopReason: StopReasonType =
@@ -560,24 +567,22 @@ export async function recoverRecordedTurns(
               deps.canRecover,
             );
             if (eligibility !== "owned" || !unchanged()) {
-              deferred = true;
+              defer();
               continue;
             }
-            recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-              runtime,
-              () =>
-                scheduleRecordedTurnRecovery(listener, () =>
-                  recoverRecordedTurns(listener, deps),
-                ),
+            recoveryClaim = await policy.acquire(runtime, () =>
+              scheduleRecordedTurnRecovery(listener, () =>
+                recoverRecordedTurns(listener, deps),
+              ),
             );
             if (!recoveryClaim) {
-              deferred = true;
+              defer();
               continue;
             }
             if (!unchanged()) {
               await recoveryClaim.release();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             if (
@@ -599,7 +604,7 @@ export async function recoverRecordedTurns(
             ) {
               await recoveryClaim.release();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             const pendingCompletion = markRecoveryClaimCompletionPending(
@@ -610,13 +615,13 @@ export async function recoverRecordedTurns(
             if (!pendingCompletion?.revision) {
               await recoveryClaim.release();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             if (!recoveryClaim.owned || !(await recoveryClaim.complete())) {
               recoveryClaim.abandon();
               recoveryClaim = undefined;
-              deferred = true;
+              defer();
               continue;
             }
             recoveryClaim = undefined;
@@ -627,7 +632,7 @@ export async function recoverRecordedTurns(
               pendingRevision: pendingCompletion.revision,
             });
             if (retirement === "failed" || retirement === "preserved") {
-              deferred = true;
+              defer();
             }
             continue;
           }
@@ -636,20 +641,18 @@ export async function recoverRecordedTurns(
             deps.canRecover,
           );
           if (completionEligibility !== "owned" || !unchanged()) {
-            deferred = true;
+            defer();
             continue;
           }
-          recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-            runtime,
-            () =>
-              scheduleRecordedTurnRecovery(listener, () =>
-                recoverRecordedTurns(listener, deps),
-              ),
+          recoveryClaim = await policy.acquire(runtime, () =>
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
+            ),
           );
           if (!recoveryClaim?.owned || !unchanged()) {
             await recoveryClaim?.release();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           if (
@@ -667,7 +670,7 @@ export async function recoverRecordedTurns(
           ) {
             await recoveryClaim.release();
             recoveryClaim = undefined;
-            deferred = true;
+            defer();
             continue;
           }
           const removed = store.remove(
@@ -677,7 +680,7 @@ export async function recoverRecordedTurns(
           );
           await recoveryClaim.release();
           recoveryClaim = undefined;
-          if (!removed) deferred = true;
+          if (!removed) defer();
           continue;
         }
         const owned = [];
@@ -697,12 +700,12 @@ export async function recoverRecordedTurns(
             owned.push(approval);
         }
         if (!unchanged()) {
-          deferred = true;
+          defer();
           continue;
         }
         if (!owned.length) {
           if (runningCompletion?.independentSuccessor) {
-            deferred = true;
+            defer();
             continue;
           }
           if (
@@ -712,7 +715,7 @@ export async function recoverRecordedTurns(
               record.revision ?? null,
             )
           ) {
-            deferred = true;
+            defer();
           }
           continue;
         }
@@ -721,32 +724,29 @@ export async function recoverRecordedTurns(
           deps.canRecover,
         );
         if (eligibility !== "owned") {
-          deferred = true;
+          defer();
           continue;
         }
         if (!unchanged()) {
-          deferred = true;
+          defer();
           continue;
         }
-        recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
-          runtime,
-          () => {
-            // Do not abort an effect which may already be committing. The
-            // authority guard fences transport and terminal publication; a
-            // successor starts only after this detached predecessor settles.
-            scheduleRecordedTurnRecovery(listener, () =>
-              recoverRecordedTurns(listener, deps),
-            );
-          },
-        );
+        recoveryClaim = await policy.acquire(runtime, () => {
+          // Do not abort an effect which may already be committing. The
+          // authority guard fences transport and terminal publication; a
+          // successor starts only after this detached predecessor settles.
+          scheduleRecordedTurnRecovery(listener, () =>
+            recoverRecordedTurns(listener, deps),
+          );
+        });
         if (listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
-          deferred = true;
+          defer();
           continue;
         }
         if (!unchanged()) {
           await recoveryClaim?.release();
           recoveryClaim = undefined;
-          deferred = true;
+          defer();
           continue;
         }
         const hasProvablyUnstartedApproval = owned.some((approval) =>
@@ -758,7 +758,7 @@ export async function recoverRecordedTurns(
           // completion path while that exact replay remains available.
           await recoveryClaim?.release();
           recoveryClaim = undefined;
-          deferred = true;
+          defer();
           continue;
         }
         const approvals = recordedToolResults(
@@ -958,7 +958,7 @@ export async function recoverRecordedTurns(
         if (recoveryClaim && !continuationStarted) {
           await recoveryClaim.release();
         }
-        deferred = true;
+        defer();
         debugWarn(
           "recovery",
           "Recorded turn recovery failed; retaining local work",
@@ -974,8 +974,8 @@ export async function recoverRecordedTurns(
         () => recoverRecordedTurns(listener, deps),
         deps.retryDelayMs,
       );
-    } else if (deferred && !listener.intentionallyClosed) {
-      const retryDelayMs = deps.retryDelayMs ?? 5000;
+    } else if (Number.isFinite(retryIn) && !listener.intentionallyClosed) {
+      const retryDelayMs = retryIn;
       const timer = setTimeout(() => {
         retryTimers.delete(listener);
         scheduleRecordedTurnRecovery(

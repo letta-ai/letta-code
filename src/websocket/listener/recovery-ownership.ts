@@ -1,5 +1,5 @@
 import { getAgentRuntimeStatus } from "@/backend/api/agents";
-import { apiRequest } from "@/backend/api/request";
+import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { debugWarn } from "@/utils/debug";
 import {
   isInboundTeleportExpected,
@@ -34,6 +34,7 @@ type RecoveryClaimRequest = (
 ) => Promise<RecoveryClaimResponse>;
 
 export type RecoveryClaimDependencies = {
+  onOwnerMismatch?: () => void;
   request?: RecoveryClaimRequest;
   schedule?: (callback: () => void, delayMs: number) => unknown;
   cancel?: (timer: unknown) => void;
@@ -310,6 +311,15 @@ export async function acquireRecoveryClaim(
     runtime.listener.activeRecoveryClaims.add(claim);
     return claim;
   } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      error.status === 409 &&
+      /"owner_mismatch"/.test(error.responseText) &&
+      dependencies.onOwnerMismatch
+    ) {
+      dependencies.onOwnerMismatch();
+      return null;
+    }
     debugWarn("recovery", "Recovery claim acquisition failed", error);
     return null;
   }
