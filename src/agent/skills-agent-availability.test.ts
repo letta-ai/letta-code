@@ -18,6 +18,7 @@ describe("isSkillAvailableForAgent", () => {
       "image-generation",
       "managing-agent-webhooks",
       "managing-shared-memory",
+      "music-generation",
       "speech-generation",
       "working-across-computers",
     ]) {
@@ -68,21 +69,26 @@ describe("isSkillAvailableForAgent", () => {
     }
   });
 
-  test("ships the speech skill only to Cloud agents", async () => {
-    for (const [agentId, available] of [
-      ["agent-local-123", false],
-      ["agent-123", true],
+  test("ships the speech and music skills only to Cloud agents", async () => {
+    for (const [skillId, endpoint] of [
+      ["speech-generation", "/v1/audio/speech"],
+      ["music-generation", "/v1/audio/music"],
     ] as const) {
-      const content = readSkillContent(
-        "speech-generation",
-        "/tmp/no-project-skills",
-        agentId,
-        { attachedRepositories: [] },
-      );
-      if (available) {
-        expect((await content).content).toContain("/v1/audio/speech");
-      } else {
-        await expect(content).rejects.toThrow("not found");
+      for (const [agentId, available] of [
+        ["agent-local-123", false],
+        ["agent-123", true],
+      ] as const) {
+        const content = readSkillContent(
+          skillId,
+          "/tmp/no-project-skills",
+          agentId,
+          { attachedRepositories: [] },
+        );
+        if (available) {
+          expect((await content).content).toContain(endpoint);
+        } else {
+          await expect(content).rejects.toThrow("not found");
+        }
       }
     }
   });

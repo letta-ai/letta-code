@@ -111,6 +111,11 @@ export function getNextWorkflowId() {
   return `workflow_${workflowIdCounter++}`;
 }
 
+let codeModeIdCounter = 1;
+export function getNextCodeModeId() {
+  return `code_mode_${codeModeIdCounter++}`;
+}
+
 let execSessionIdCounter = 1;
 export function getNextExecSessionId() {
   return String(execSessionIdCounter++);
