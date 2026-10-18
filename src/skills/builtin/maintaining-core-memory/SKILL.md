@@ -1,25 +1,27 @@
 ---
-name: writing-prompts
-description: Writes and edits an agent's root memory files, the Markdown in the top level of $MEMORY_DIR that is compiled into its system prompt on every turn. Use when adding, revising, consolidating, or trimming persona, user, project, or root MEMORY.md content, or when turning a correction or preference into a standing instruction.
+name: maintaining-core-memory
+description: Maintains an agent's core memory, the root Markdown files in $MEMORY_DIR that are compiled into its system prompt on every turn. Use when adding, revising, consolidating, or trimming persona, user, project, or root MEMORY.md content, or when turning a correction or preference into a standing instruction.
 ---
 
-# Writing prompts
+# Maintaining core memory
 
-Every Markdown file directly in `$MEMORY_DIR` is part of the agent's system prompt. The agent reads it in full on every turn, in every conversation, so each line has a standing cost and shapes every response. Writing these files is writing the agent's prompt.
+Every Markdown file directly in `$MEMORY_DIR` is core memory: part of the agent's system prompt, read in full on every turn of every conversation. Each line has a standing cost and shapes every response.
 
-## Is this prompt material?
+Core memory is the agent's prompt, refined over its lifetime. Treat each change as a revision of that prompt, not an append to a log: the usual edit sharpens, merges, or replaces an existing rule, and a new rule earns its place only when no existing one can absorb it.
+
+## Is this core memory?
 
 Letta memory has three tiers. Put each piece of context in the cheapest tier that still works:
 
 | Tier | Location | Visible to the agent | Holds |
 |---|---|---|---|
-| Prompt | Markdown files directly in `$MEMORY_DIR` | In full on every turn | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
+| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
 | Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | Knowledge about a subject, looked up when that subject comes up |
 | Skill | `$MEMORY_DIR/skills/<name>/SKILL.md` | Name and description every turn; body when loaded | A procedure with a clear trigger |
 
 Message history (recall) is a fourth kind of memory that the harness stores automatically; do not copy it into files.
 
-Write to the prompt only when the content should change how the agent behaves or what it knows on most turns. Otherwise use the `writing-deferred-memory` skill for subject knowledge or the `creating-skills` skill for procedures.
+Write to core memory only when the content should change how the agent behaves or what it knows on most turns. Otherwise use the `maintaining-deferred-memory` skill for subject knowledge or the `creating-skills` skill for procedures.
 
 ## Check the limits first
 
@@ -57,11 +59,11 @@ When the config file is absent, the defaults apply. Treat the limits as a ceilin
 
 ## Keep root MEMORY.md a map
 
-The root `MEMORY.md` is the agent's map of everything outside the prompt. The prompt lists each indexed subdirectory only by path, so the root index is where the agent learns when to open one.
+The root `MEMORY.md` is the agent's map of everything outside core memory. The prompt lists each indexed subdirectory only by path, so the root index is where the agent learns when to open one.
 
 - Give each subdirectory a one-line entry saying when to open it, in the words a future request would use, such as "deployments, rollbacks, on-call runbooks".
 - Name a specific deeper file when its topic would not be guessable from the directory entry.
-- Do not re-index root files; they are already in the prompt.
+- Do not re-index root files; they are already in core memory.
 
 ## Shrink before you grow
 
@@ -73,7 +75,7 @@ When a root file is long or the total is near its limit:
 
 ## Save the change
 
-The edit takes effect only once it is committed, and only in later prompts; the current conversation keeps the prompt it started with. Stage the files you changed by path and commit:
+The edit takes effect only once it is committed, and only in later system prompts; the current conversation keeps the prompt it started with. Stage the files you changed by path and commit:
 
 ```bash
 git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>"

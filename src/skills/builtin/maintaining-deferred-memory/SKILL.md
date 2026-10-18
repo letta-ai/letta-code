@@ -1,11 +1,11 @@
 ---
-name: writing-deferred-memory
-description: Writes and organizes an agent's deferred memory, the indexed subdirectories of $MEMORY_DIR that stay out of the system prompt until the agent opens them. Use when saving knowledge about a person, project, repository, system, or incident for later lookup, or when adding, moving, splitting, or indexing memory directories.
+name: maintaining-deferred-memory
+description: Maintains an agent's deferred memory, the indexed subdirectories of $MEMORY_DIR that stay out of the system prompt until the agent opens them. Use when saving knowledge about a person, project, repository, system, or incident for later lookup, or when adding, moving, splitting, or indexing memory directories.
 ---
 
-# Writing deferred memory
+# Maintaining deferred memory
 
-Deferred memory is Markdown stored in subdirectories of `$MEMORY_DIR`. It costs nothing on turns where the agent does not need it, and the agent loads it progressively: the prompt shows that a directory exists, the directory's `MEMORY.md` shows what is inside, and the agent reads individual files only when a task calls for them.
+Deferred memory is Markdown stored in subdirectories of `$MEMORY_DIR`. It costs nothing on turns where the agent does not need it, and the agent loads it progressively: the system prompt shows that a directory exists, the directory's `MEMORY.md` shows what is inside, and the agent reads individual files only when a task calls for them.
 
 ## Is this deferred memory?
 
@@ -13,13 +13,13 @@ Letta memory has three tiers. Put each piece of context in the cheapest tier tha
 
 | Tier | Location | Visible to the agent | Holds |
 |---|---|---|---|
-| Prompt | Markdown files directly in `$MEMORY_DIR` | In full on every turn | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
+| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity, standing instructions, and facts needed on most turns, plus the root `MEMORY.md` index |
 | Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | Knowledge about a subject, looked up when that subject comes up |
 | Skill | `$MEMORY_DIR/skills/<name>/SKILL.md` | Name and description every turn; body when loaded | A procedure with a clear trigger |
 
 Message history (recall) is a fourth kind of memory that the harness stores automatically; do not copy it into files.
 
-Use deferred memory for knowledge about a subject that matters only when that subject comes up. If the agent needs it on most turns, use the `writing-prompts` skill. If it is a procedure with a trigger, use the `creating-skills` skill. `skills/` is reserved for skills and is never deferred memory.
+Use deferred memory for knowledge about a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill. `skills/` is reserved for skills and is never deferred memory.
 
 ## Check the limits first
 
@@ -35,7 +35,7 @@ When the config file is absent, the defaults apply. When content does not fit, s
 
 ```text
 $MEMORY_DIR/
-├── MEMORY.md              # root index (part of the prompt)
+├── MEMORY.md              # root index (core memory)
 └── projects/
     ├── MEMORY.md          # index for projects/
     ├── acme.md
@@ -62,7 +62,7 @@ $MEMORY_DIR/
 
 Discovery runs through the `MEMORY.md` chain, one level at a time:
 
-- The prompt lists each top-level memory directory only by path. Add a line to root `MEMORY.md` saying when to open the directory, in the words a future request would use. When a deeper file's topic would not be guessable from that line, name the file there too.
+- The system prompt lists each top-level memory directory only by path. Add a line to root `MEMORY.md` saying when to open the directory, in the words a future request would use. When a deeper file's topic would not be guessable from that line, name the file there too.
 - When the agent opens a directory, it sees that directory's `MEMORY.md`, then each file's `description` and each subdirectory's index summary (the first prose paragraph of its `MEMORY.md`). Start every `MEMORY.md` with that summary paragraph.
 - A directory listing shows at most 10 entries, most recently edited first. When a directory grows beyond that, link every file from its `MEMORY.md` or split it into subdirectories.
 - Use relative Markdown links from the memory root, such as `[Acme](projects/acme.md)`.
