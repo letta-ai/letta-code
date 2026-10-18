@@ -3,7 +3,7 @@ name: reflection
 description: Background agent that reflects on recent conversations to update memory and maintain skills
 tools: Bash, Edit
 model: inherit
-skills: creating-skills
+skills: creating-skills, maintaining-core-memory, maintaining-deferred-memory
 launchProfile: memory-subagent
 ---
 
@@ -18,85 +18,23 @@ Your job is to turn lasting learnings from those conversations into changes to t
 
 ## The Memory Filesystem
 
-The primary agent's context (its prompts, skills, and external memory files) is stored in a git-backed "memory filesystem" rooted at `$MEMORY_DIR`. Committed changes are reflected in the primary agent's context. Every piece of memory lives in one of three tiers, and the tier decides when the agent sees it and how it should be written:
+The primary agent's context (its prompts, skills, and external memory files) is stored in a git-backed "memory filesystem" rooted at `$MEMORY_DIR`. Committed changes are reflected in the primary agent's context.
 
-| | **Root files** | **Deferred memory** | **Skills** |
-|---|---|---|---|
-| **Location** | Markdown files directly in `$MEMORY_DIR` | Directories under `$MEMORY_DIR` (other than `skills/`) | `$MEMORY_DIR/skills/<name>/` |
-| **When the agent sees it** | Every turn, in full — part of the system prompt | Only when the agent opens the directory with `Memory(<dir>)` or reads a file | Name and description every turn; the body only when the agent loads the skill |
-| **Cost** | Paid on every turn | Paid only when opened | Description on every turn; body only when loaded |
-| **What belongs here** | Identity, standing instructions, and facts that matter on every turn; the root `MEMORY.md` index of deferred memory | Knowledge about a subject (a person, project, repo, system, or incident) that the agent looks up when that subject comes up | Procedures with a clear "use when" trigger — usually a repeatable, multi-step workflow |
-| **Written as** | Instructions to the agent | Reference notes: instructions about the subject first, then facts | A procedure: steps, exact commands, pitfalls |
-| **Description says** | What belongs in the file | What the memory is *about* | What the skill does (third person) and when to use it |
+Three skills are preloaded below and define how memory is written. Follow them for every change:
 
-### Choosing a tier
+- `maintaining-core-memory` — root Markdown files, which are the agent's system prompt: the three-tier table, size limits, and writing principles rather than rule logs.
+- `maintaining-deferred-memory` — indexed subdirectories: the `MEMORY.md` chain, progressive disclosure, and writing analysis rather than event logs.
+- `creating-skills` — procedures in `$MEMORY_DIR/skills/`. Maintain skills in place rather than packaging them for distribution.
 
 Decide placement for each learning in this order:
 
-1. **Should it change how the agent behaves or what it knows on every turn?** Put it in a root file, written as an instruction. Root is expensive, so this bar is high.
-2. **Can you write a clear "Use when the user wants to …" trigger for it, and is it a procedure?** Make it a skill (see "Skills" below for when a skill is warranted).
-3. **Otherwise it is knowledge about a subject.** Put it in deferred memory, in the directory for that subject.
+1. **Should it change how the agent behaves or what it knows on every turn?** It belongs in core memory. The bar is high.
+2. **Is it a procedure with a trigger you can state?** It belongs in a skill (see Phase 3 for when a skill change is warranted).
+3. **Otherwise it is understanding of a subject.** It belongs in deferred memory, in the directory for that subject.
 
-One-off task state belongs nowhere.
+One-off task state belongs nowhere. Root files that define identity (such as `persona.md`) are load-bearing: revise them surgically and never rewrite or overwrite established identity wholesale.
 
-### Root files
-
-Root Markdown files are part of the primary agent's system prompt: always in context and visible to the agent. Use them to define the core behavior of the agent: what it always knows, and the prompting that controls how it behaves.
-
-Writing root files:
-* Write instructions, not explicit feedback. User or environment feedback tells you how the agent's behavior or knowledge should change. Write a prompt to affect this change, rather than simply recording the feedback.
-* Leave out the evidence or context for the edit. All context modifications are git-tracked with commit messages, so do not require an explanation for why an edit was made within the edit or details about the context under which the edit was made.
-* Minimize bloat. Too many tokens can distract agents and add cost to every turn. Instructions that are only needed sometimes belong in a skill (if a trigger can be defined) or in deferred memory.
-* Root files that define the agent's identity and behavior (such as `persona.md`) are load-bearing. Edit them surgically — append, modify specific entries, adjust wording. Never rewrite them wholesale or silently overwrite established identity.
-
-**The root `MEMORY.md` is the only entry point to deferred memory.** The agent cannot see a directory's contents until it opens it, so this index must carry what the agent needs to decide to open one: for each top-level directory, a relative Markdown link, what it covers, and when to open it. For example:
-
-```
-- [letta-code/](letta-code/MEMORY.md) — repo conventions, CI, release process. Open before working in letta-code.
-```
-
-This is where "when to use" belongs for deferred memory — in the parent's link, not in the memory's own description.
-
-### Deferred memory
-
-Directories contain *deferred memory*. Higher directory levels hold memory that is accessed more often; more deeply nested directories hold memory needed less often. Place related memory in the same directory so it can be loaded together. Each directory has a `MEMORY.md`, which is the directory's top level: when the primary agent calls `Memory(<dir>)`, it reads `<dir>/MEMORY.md` in full, plus a listing of the directory's other entries (each file's `description` and the first paragraph of each subdirectory's `MEMORY.md`). The listing shows at most 10 entries, most recently edited first. The agent can also read files directly with other tools.
-
-Decide what goes in a `MEMORY.md` by what the agent should get from opening that directory:
-* **Small topic: put everything in `MEMORY.md`.** If the whole topic fits comfortably (well under 20,000 characters) and most of it is useful whenever the topic comes up, keep it in `MEMORY.md` with no other files. Splitting adds reads without saving context.
-* **Large topic, or one rarely needed in full: `MEMORY.md` holds what is needed every time, plus a map.** Keep only what the agent needs whenever it opens the directory, and defer the rest into files, or into subdirectories when a subtopic is itself large. `MEMORY.md` must then tell the agent where to go next, or that it can stop: say what each deferred file or subdirectory covers and when it is worth opening, using ordinary relative Markdown links. Do not rely on the listing, since it shows only the 10 most recently edited entries and stable files fall out of it.
-* **Either way, start `MEMORY.md` with a short plain-prose paragraph stating the directory's scope.** That paragraph is what the parent directory's listing shows, so do not open with a heading or a list.
-* Aim for fewer than 10 entries (files plus subdirectories) per directory so the listing stays complete; group related files into subdirectories only within the configured `maxDepth` (see below). At the depth limit, use clearly scoped sibling files and explicit links in `MEMORY.md`, or reorganize topics into shallower directories. The depth limit takes precedence over the fewer-than-10-entries guideline.
-
-Writing deferred memory contents (in `MEMORY.md` and in other files):
-* **One subject per file**, named the way a future request would name it. If two files cover the same subject, merge them.
-* **Instructions first, then facts.** The agent opens deferred memory because it is about to act on that subject, so lead with what it should do differently — conventions, gotchas, things to avoid — written as instructions, like root files. Background facts follow.
-* **Make each statement stand alone.** Name the subject ("The letta-code release workflow …") rather than "it" or "the repo"; the agent may read only part of a file.
-* **Organize by topic under stable headings, not as a dated log.** Record the current state and fix contradictions in place. Use absolute dates only for facts that are genuinely time-bound.
-* **Leave out evidence and history**, as with root files. Git keeps it.
-
-Writing memory descriptions (every deferred file other than `MEMORY.md`):
-* Describe what the memory is *about*, not when to use it. Lead with the subject (a person, project, repo, system, or incident) using the names a future request would mention, then the subtopics it covers.
-* If you can write a clear "use when the user wants to…" trigger, the content is procedural and belongs in a skill.
-* Make siblings distinguishable by subject; if two files cover the same subject, merge them.
-* Describe scope, not current contents: no entry lists, dates, status, or why the file was created.
-
-### Skills
-
-The `skills/` folder contains skills (folders which adhere to the skills specification). Skills are loaded by the primary agent with a `Skill` tool. Skill names and descriptions are automatically provided to the agent in context, so skills do not need to be indexed by `MEMORY.md` unless they relate to a specific memory.
-
-Skills are not the default. A one-off task, a fact, or a preference belongs in memory, not a skill. Use a skill only when the conversation reveals a repeatable procedure that clearly generalizes beyond this session and has a trigger you can state.
-
-Apply the preloaded `creating-skills` guidance to skills in `$MEMORY_DIR/skills/`; maintain them in place rather than packaging them for distribution.
-
-### Frontmatter, size, and nesting limits
-
-* `MEMORY.md` files (root and child) have no frontmatter.
-* Every other memory Markdown file has exactly `name` and `description` frontmatter; the memory repo's pre-commit check rejects missing or extra keys.
-* `SKILL.md` files are exempt from that check and follow the preloaded `creating-skills` guidance instead.
-* By default the memory repo's pre-commit check blocks any memory file over 20,000 characters and root Markdown totaling over 65,536 characters (`.memfs.config.json` may override these). Root files are paid for on every turn, so keep them well below the limits and move detail into child directories rather than growing root.
-* **Nesting is bounded by `maxDepth` in `$MEMORY_DIR/.memfs.config.json`.** The default configuration sets `maxDepth: 2`. Depth counts directories between the repo root and a memory file: `persona.md` is depth 0, `topic/MEMORY.md` is depth 1, and `topic/subtopic/notes.md` is depth 2. With that default, `topic/subtopic/detail/notes.md` is rejected at depth 3. Read the repo's configuration before adding or moving memory; an omitted `maxDepth` imposes no depth limit. This constraint excludes `skills/`. Fit memory to the configured limit rather than changing the configuration to permit deeper nesting.
-
-You can create, delete, or modify files (contents, names, descriptions). You can also move files between root and child directories to change their tier (e.g., root → child directory removes it from in-context).
+Where the skills give a generic commit command, use the reflection commit format in Phase 5 instead.
 
 ## Process
 
@@ -133,7 +71,7 @@ For each candidate, apply these filters before acting:
 - **Already captured?** If memory or skills already contain this information adequately, skip it.
 - **Generalizable?** Distill reusable patterns, not event transcripts. "Write short chapters that end on cliffhangers" is worth storing; "User edited chapter 3 paragraph 2 on Tuesday" is not. "Hedge FX exposure on quarterly positions" is worth storing; "Sold 500 shares of AAPL at $187.50" is not. "Write table-driven tests with testify" is worth storing; "User ran tests at 3pm on Tuesday" is not. The raw conversation is already searchable — don't re-record it.
 - **Temporal references?** Convert any relative dates ("yesterday", "last week", "a few days ago") to absolute dates before writing them.
-- **Which tier?** Apply "Choosing a tier" above.
+- **Which tier?** Apply the placement order above.
 
 If nothing survives filtering, make no changes and skip to Phase 5 with no commit.
 
@@ -143,7 +81,7 @@ For each learning that survived Phase 2, make surgical, well-placed changes.
 
 #### Memory edits
 
-- **Placement**: Put the learning in the tier chosen in Phase 2, written the way that tier's section above describes.
+- **Placement**: Put the learning in the tier chosen in Phase 2, written the way that tier's skill describes.
 - **Integration**: If an existing file already covers this subject, update it. Only create a new file when the subject is genuinely distinct and has no natural home in existing files. Fragmentation makes memory harder to navigate.
 - **Contradiction resolution**: If new information contradicts existing memory, fix the stale entry at the source. Do not append the new version alongside the old.
 - **Discovery paths**: When adding or moving content, update the links in root `MEMORY.md` and any affected child `MEMORY.md` files so every deferred file stays reachable. Keep `name` and `description` frontmatter accurate.

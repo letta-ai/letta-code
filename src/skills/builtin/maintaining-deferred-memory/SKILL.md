@@ -64,10 +64,21 @@ Discovery runs through the `MEMORY.md` chain, one level at a time:
 
 - The system prompt lists each top-level memory directory only by path. Add a line to root `MEMORY.md` saying when to open the directory, in the words a future request would use. When a deeper file's topic would not be guessable from that line, name the file there too.
 - When the agent opens a directory, it sees that directory's `MEMORY.md`, then each file's `description` and each subdirectory's index summary (the first prose paragraph of its `MEMORY.md`). Start every `MEMORY.md` with that summary paragraph.
-- A directory listing shows at most 10 entries, most recently edited first. When a directory grows beyond that, link every file from its `MEMORY.md` or split it into subdirectories.
+- A directory listing shows at most 10 entries, most recently edited first, so stable files fall out of it. Link every file that matters from its `MEMORY.md` rather than relying on the listing.
 - Use relative Markdown links from the memory root, such as `[Acme](projects/acme.md)`.
 
 After adding or moving a file, trace the path a future request would take from root `MEMORY.md` to the file. If any step depends on knowing the file already exists, fix the index.
+
+## Design for progressive disclosure
+
+Each level should give the agent enough to decide whether to go deeper, and nothing it would have to read past to decide.
+
+- Put frequently needed material shallow and rarely needed detail deeper. Keep related material in one directory so it loads together.
+- A small topic, where most of the content is useful whenever the subject comes up, belongs entirely in its directory's `MEMORY.md`. Splitting it adds reads without saving context.
+- For a large topic, `MEMORY.md` holds only what the agent needs every time it opens the directory, plus a map: what each deeper file or subdirectory covers and when it is worth opening. The map should also tell the agent when it can stop.
+- A `description` states what the file is about, not when to use it; when-to-open belongs in the parent's link. If you can write a "use when the user wants to…" trigger, the content is a procedure and belongs in a skill.
+- Make each statement stand alone. Name the subject instead of writing "it" or "the repo", because the agent may read only part of a file.
+- Aim for fewer than 10 entries per directory so the listing stays complete. At the `maxDepth` limit, use clearly scoped sibling files linked from `MEMORY.md` rather than nesting further.
 
 ## Write analysis, not logs
 

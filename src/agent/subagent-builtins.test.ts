@@ -169,10 +169,20 @@ Custom prompt body`,
       }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
-      // shared v2 layout markers
-      expect(resolved.systemPrompt).toContain("MEMORY.md");
-      expect(resolved.systemPrompt).toContain("no frontmatter");
-      expect(resolved.systemPrompt).toContain("`name` and `description`");
+      if (name === "init") {
+        // shared v2 layout markers
+        expect(resolved.systemPrompt).toContain("MEMORY.md");
+        expect(resolved.systemPrompt).toContain("no frontmatter");
+        expect(resolved.systemPrompt).toContain("`name` and `description`");
+      } else {
+        // writers get the v2 layout from the preloaded memory skills
+        expect(config.skills).toEqual(["creating-skills"]);
+        expect(resolved.skills).toEqual([
+          "creating-skills",
+          "maintaining-core-memory",
+          "maintaining-deferred-memory",
+        ]);
+      }
 
       const localResolved = resolveSubagentConfigForMemoryFormat(
         config,
