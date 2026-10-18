@@ -919,13 +919,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  if (preLoadSkillsRaw && resolvedSkillSources.length === 0) {
-    console.error(
-      "Error: --pre-load-skills cannot be used when all skill sources are disabled.",
-    );
-    process.exit(1);
-  }
-
   try {
     const normalized = normalizeConversationShorthandFlags({
       specifiedConversationId,

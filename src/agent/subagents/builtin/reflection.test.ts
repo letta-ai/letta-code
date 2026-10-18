@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { buildClientSkillsPayload } from "@/agent/client-skills";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { resolveSkillSourcesSelection } from "@/agent/skill-sources";
 import {
@@ -9,20 +10,21 @@ import { buildSubagentArgs } from "@/agent/subagents/manager";
 import creatingSkills from "@/skills/builtin/creating-skills/SKILL.md";
 import reflectionPrompt from "./reflection.md";
 
-test.each(["memfs-v1", "memfs-v2"] as const)(
-  "%s reflection launch can load its bundled authoring skill without expanding tools",
-  async (format) => {
+test.each([
+  ["reflection", "memfs-v1", "Bash,Edit"],
+  ["reflection", "memfs-v2", "Bash,Edit"],
+  ["memory", "memfs-v1", "Bash,Read,Edit,Write"],
+  ["memory", "memfs-v2", "Bash,Read,Edit,Write"],
+] as const)(
+  "%s %s launch can load its bundled authoring skill without expanding tools",
+  async (type, format, tools) => {
     const configs = await getAllSubagentConfigs(import.meta.dir);
-    const reflection = configs.reflection;
-    if (!reflection) throw new Error("Missing built-in reflection config");
-    const config = resolveSubagentConfigForMemoryFormat(
-      reflection,
-      format,
-      false,
-    );
+    const builtin = configs[type];
+    if (!builtin) throw new Error(`Missing built-in ${type} config`);
+    const config = resolveSubagentConfigForMemoryFormat(builtin, format, false);
     for (const platform of ["linux", "win32"] as const) {
       const args = buildSubagentArgs(
-        "reflection",
+        type,
         config,
         null,
         "Review the transcript",
@@ -37,13 +39,20 @@ test.each(["memfs-v1", "memfs-v2"] as const)(
         noSkills: args.includes("--no-skills"),
         skillSourcesRaw: args[args.indexOf("--skill-sources") + 1],
       });
-      expect(sources).toEqual(["bundled"]);
+      expect(sources).toEqual([]);
+      const catalog = await buildClientSkillsPayload({
+        skillSources: sources,
+        attachedRepositories: [],
+      });
+      expect(catalog.availableSkills).toEqual([]);
       const loaded = await loadPreloadedSkills(
         (args[preloadIndex + 1] ?? "").split(","),
         { skillSources: sources, attachedRepositories: [] },
       );
-      expect(loaded).toContain(creatingSkills);
-      expect(args[args.indexOf("--tools") + 1]).toBe("Bash,Edit");
+      expect(loaded).toBe(
+        `<loaded_skills>\n<creating-skills>\n${creatingSkills}\n</creating-skills>\n</loaded_skills>`,
+      );
+      expect(args[args.indexOf("--tools") + 1]).toBe(tools);
     }
   },
 );

@@ -198,14 +198,12 @@ export function buildSubagentArgs(
       args.push("--model", model);
     }
 
-    // Keep native shell guidance on Windows and preloads limited to bundled skills.
-    if (type === "reflection") {
-      if (runtimePlatform !== "win32") {
-        args.push("--no-system-info-reminder");
-      }
-      if (config.skills.length > 0) {
-        args.push("--skill-sources", "bundled");
-      } else args.push("--no-skills");
+    // Keep native shell guidance on Windows; named preloads need no skill catalog.
+    if (type === "reflection" && runtimePlatform !== "win32") {
+      args.push("--no-system-info-reminder");
+    }
+    if (type === "reflection" || type === "memory") {
+      args.push("--no-skills");
     }
 
     // Skip server-side base tools (web_search, fetch_webpage) for subagents
