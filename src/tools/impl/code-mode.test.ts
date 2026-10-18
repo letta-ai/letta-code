@@ -18,6 +18,13 @@ import {
   executeTool,
 } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
+import {
+  clearPendingMessages,
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
+import { killBackgroundProcess } from "./kill-bash";
+import { backgroundProcesses } from "./process_manager";
 
 const originalHome = process.env.HOME;
 const originalLocalDir = process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -31,8 +38,11 @@ const serverPath = fileURLToPath(
   ),
 );
 let home: string;
+let queued: QueuedMessage[];
 
 beforeEach(async () => {
+  queued = [];
+  setMessageQueueAdder((message) => queued.push(message));
   await settingsManager.reset();
   home = mkdtempSync(join(tmpdir(), "code-mode-test-"));
   process.env.HOME = home;
@@ -42,6 +52,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  setMessageQueueAdder(null);
+  clearPendingMessages();
   clearCapturedToolExecutionContexts();
   await settingsManager.reset();
   configureBackendMode(originalMode);
@@ -61,6 +73,7 @@ async function run(
   mode: "unrestricted" | "strict" = "unrestricted",
   signal?: AbortSignal,
   conversationId = "default",
+  background: { run_in_background?: boolean; foregroundYieldMs?: number } = {},
 ) {
   const { preparedToolContext } =
     await prepareToolExecutionContextForResolvedTarget({
@@ -84,7 +97,7 @@ async function run(
     () =>
       executeTool(
         "CodeMode",
-        { code, args: { path: join(home, "input.txt") } },
+        { code, args: { path: join(home, "input.txt") }, ...background },
         {
           toolContextId: preparedToolContext.contextId,
           signal,
@@ -199,6 +212,56 @@ test("an aborted invocation does not launch nested writes", async () => {
     "unrestricted",
     controller.signal,
   );
-  expect(result.status).toBe("error");
+  expect(result).toMatchObject({
+    status: "error",
+    toolReturn: "Interrupted by user",
+  });
   expect(existsSync(join(home, "input.txt"))).toBe(false);
+});
+
+async function waitFor(condition: () => boolean) {
+  for (let i = 0; i < 200 && !condition(); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(condition()).toBe(true);
+}
+
+test("run_in_background returns a task ID and notifies after the turn is interrupted", async () => {
+  writeFileSync(join(home, "input.txt"), "background read");
+  const interrupted = new AbortController();
+  const launch = await run(
+    `const text = await tools.Read({ file_path: args.path });
+console.log('read', text.includes('background read'));
+return text.includes('background read');`,
+    "unrestricted",
+    interrupted.signal,
+    "default",
+    { run_in_background: true },
+  );
+  interrupted.abort();
+  expect(launch.status).toBe("success");
+  const taskId = (launch.toolReturn as string).match(/with ID: (\S+)/)?.[1];
+  expect(taskId).toStartWith("code_mode_");
+  await waitFor(() => queued.length === 1);
+  expect(queued[0]).toMatchObject({ kind: "task_notification", agentId });
+  expect(queued[0]?.text).toContain("<status>completed</status>");
+  expect(queued[0]?.text).toContain('{"result":true,"output":["read true"]}');
+  expect(backgroundProcesses.get(taskId as string)?.status).toBe("completed");
+});
+
+test("a script still running after the foreground wait yields, and TaskStop aborts it silently", async () => {
+  const launch = await run(
+    "await new Promise(() => {});",
+    "unrestricted",
+    undefined,
+    "default",
+    { foregroundYieldMs: 20 },
+  );
+  expect(launch.toolReturn).toContain("still running with task ID");
+  const taskId = (launch.toolReturn as string).match(/task ID: (\S+)/)?.[1];
+  expect(backgroundProcesses.get(taskId as string)?.status).toBe("running");
+  expect(killBackgroundProcess(taskId as string)).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  expect(backgroundProcesses.has(taskId as string)).toBe(false);
+  expect(queued).toHaveLength(0);
 });
