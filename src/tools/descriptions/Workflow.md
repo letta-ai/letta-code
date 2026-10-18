@@ -1,8 +1,8 @@
 Execute a workflow script that orchestrates multiple subagents deterministically (loops, conditionals, fan-out) rather than model-driven.
 
-Workflows run in the background: this tool returns immediately with a task ID, and a <task-notification> carrying the script's return value arrives when the workflow completes. Do not poll or sleep for it, and never fabricate the result before it arrives. TaskStop aborts the run. With `wait: true`, the workflow runs in the foreground instead and this tool returns the script's value directly; use it for short scripts.
+Workflows run in the background: this tool returns immediately with a task ID, and a <task-notification> carrying the script's return value arrives when the workflow completes. Do not poll or sleep for it, and never fabricate the result before it arrives. TaskStop aborts the run. With `wait: true`, the workflow runs in the foreground instead and this tool returns the script's value directly.
 
-Scripts that call `agent()` or `decide()` spend money on subagents and model calls. Run one only when the user explicitly asked for a workflow or multi-agent orchestration ("use a workflow", "fan out agents") or a skill's instructions call this tool; otherwise describe the workflow and ask first. Scripts that only call `tools.*` need no opt-in.
+Scripts that call `agent()` or `decide()` spend money on subagents and model calls. Run one only when the user explicitly asked for a workflow or multi-agent orchestration ("use a workflow", "fan out agents") or a skill's instructions call this tool; otherwise describe the workflow and ask first. For scripts that only call tools, use CodeMode instead.
 
 Scripts can call tools directly: `await tools.<name>(args)` for this turn's built-in tools and `await tools.mcp__server__tool(args)` for the agent's MCP tools, subject to the user's permission rules. `await listTools()` returns `[{ name, description }]`; `await describeTool(name)` returns `{ name, description, inputSchema }`, or `undefined` for an unknown tool.
 

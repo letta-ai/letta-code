@@ -111,7 +111,7 @@ const [source, echoed] = await Promise.all([
 const second = await tools.mcp__everything__echo({ message: echoed });
 const schema = await describeTool('mcp__everything__echo');
 const names = (await listTools()).map(t => t.name);
-console.log('combined');
+console.log('combined', names.length > 0, { echoed });
 return {
   file: source.includes('hello from a file'), echoed, second,
   schema: schema.inputSchema.required,
@@ -131,7 +131,7 @@ return {
       excluded: ["undefined", "undefined", "undefined"],
       orchestration: ["undefined", "undefined"],
     },
-    output: ["combined"],
+    output: ["combined true { echoed: 'Echo: hello from MCP' }"],
   });
 }, 15000);
 

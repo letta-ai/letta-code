@@ -15,6 +15,7 @@
  * approval prompt shows its source so the user approves what actually runs.
  */
 
+import { format } from "node:util";
 import vm from "node:vm";
 import { submitWorkflowDecision } from "./decide.ts";
 import { appendJournalEntry } from "./journal.ts";
@@ -493,8 +494,8 @@ async function executeScript(
     emit({ kind: "phase", title });
   }
 
-  function log(message: unknown): void {
-    emit({ kind: "log", message: String(message) });
+  function log(...messages: unknown[]): void {
+    emit({ kind: "log", message: format(...messages) });
   }
 
   const context = vm.createContext({
