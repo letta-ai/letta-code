@@ -24,7 +24,7 @@ Do not use a skill to store facts, preferences, or event logs. If the agent alre
 
 Every skill belongs to an agent or to a project.
 
-- **Agent-owned skill**, at `$MEMORY_DIR/skills/<name>/SKILL.md`. Use it for a capability specific to this agent, such as its own tools, integrations, or workflows, that it carries across every project. It is part of the agent's memory. Write it, then commit and push the memory repository.
+- **Agent-owned skill**, at `$MEMORY_DIR/skills/<name>/SKILL.md`. Use it for a capability specific to this agent, such as its own tools, integrations, or workflows, that it carries across every project. It is part of the agent's memory, so it is not saved until committed: run `git -C "$MEMORY_DIR" add skills/<name> && git -C "$MEMORY_DIR" commit -m "Add <name> skill"`.
 - **Project-owned skill**, at `<repo>/.agents/skills/<name>/SKILL.md`. Use it for a procedure specific to one repository, such as building, testing, releasing, or debugging that code, that any agent or human working in the repo should share. It is part of the codebase, so it needs human approval: put it on a branch and open a pull request. Do not commit it directly to the default branch.
 
 If the procedure only makes sense in one repository, the project owns it. If it is about how this agent works wherever it runs, the agent owns it. When both exist under the same name, the project skill takes precedence in that repository.
