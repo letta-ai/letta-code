@@ -9,6 +9,7 @@ import {
   backgroundTasks,
   createBackgroundOutputFile,
 } from "@/tools/impl/process_manager";
+import { buildBackgroundTaskAbortHook } from "@/tools/impl/task";
 import { task_stop } from "@/tools/impl/task-stop";
 
 function startRemoteTask(taskId: string, conversationId: string) {
@@ -136,5 +137,44 @@ describe("TaskStop for remote subagents", () => {
     ).toMatchObject({ killed: true });
     expect(received).toMatchObject({ agentId });
     expect(abortController.signal.aborted).toBe(true);
+  });
+});
+
+describe("Background task interrupt hook", () => {
+  afterEach(() => {
+    backgroundTasks.clear();
+    clearAllSubagents();
+  });
+
+  test("routes a user interrupt through TaskStop and cancels the remote run", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "cancelled",
+    });
+    startRemoteTask("task_hook_remote", "conv-child");
+    const controller = backgroundTasks.get("task_hook_remote")
+      ?.abortController as AbortController;
+
+    buildBackgroundTaskAbortHook("task_hook_remote", controller)();
+    await Bun.sleep(20);
+
+    expect(cancel).toHaveBeenCalledWith("conv-child");
+    expect(controller.signal.aborted).toBe(true);
+    cancel.mockRestore();
+  });
+
+  test("falls back to a local abort when TaskStop cannot claim the kill", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "failed",
+    });
+    startRemoteTask("task_hook_fallback", "conv-child");
+    const controller = backgroundTasks.get("task_hook_fallback")
+      ?.abortController as AbortController;
+
+    buildBackgroundTaskAbortHook("task_hook_fallback", controller)();
+    await Bun.sleep(20);
+
+    expect(cancel).toHaveBeenCalledWith("conv-child");
+    expect(controller.signal.aborted).toBe(true); // fail-safe local abort
+    cancel.mockRestore();
   });
 });

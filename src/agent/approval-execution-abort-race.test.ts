@@ -1,11 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
+  ABORT_GRACE_MS,
   type ApprovalResult,
   executeApprovalBatch,
   settleApprovalExecutionTasks,
 } from "@/agent/approval-execution";
 import {
+  clearAllSubagents,
   clearSubagentAbortHook,
+  getSubagents,
   interruptActiveSubagents,
   registerSubagent,
   registerSubagentAbortHook,
@@ -176,9 +179,125 @@ describe("settleApprovalExecutionTasks abort race", () => {
     expect(error.name).toBe("AbortError");
     expect(error.partialResults).toEqual([result("call-a")]);
   });
+
+  test("mid-batch abort resolves with real results when tools honor the signal in the grace window", async () => {
+    const controller = new AbortController();
+    const decisions = [
+      {
+        type: "approve" as const,
+        approval: {
+          toolCallId: "call-a",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      },
+      {
+        type: "approve" as const,
+        approval: {
+          toolCallId: "call-b",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      },
+    ];
+
+    const promise = executeApprovalBatch(decisions, undefined, {
+      abortSignal: controller.signal,
+      toolContextId: "context-abort-race",
+      executeTool: (async (
+        _toolName: string,
+        _args: Record<string, unknown>,
+        opts: { toolCallId: string; signal?: AbortSignal },
+      ): Promise<{ toolReturn: string; status: "success" }> => {
+        if (opts.toolCallId === "call-a") {
+          return { toolReturn: "call-a-done", status: "success" };
+        }
+        // call-b honors the abort signal: settles shortly after the abort,
+        // well inside the grace window.
+        await Bun.sleep(30);
+        if (opts.signal?.aborted) {
+          return { toolReturn: "call-b-interrupted", status: "success" };
+        }
+        return { toolReturn: "call-b-done", status: "success" };
+      }) as never,
+    });
+
+    await Bun.sleep(10);
+    controller.abort();
+    // The batch must RESOLVE with the real results (no throw): a cancel of
+    // well-behaved tools is a cancel, not "This operation was aborted".
+    const results = await promise;
+    expect(results.map((r) => r.tool_call_id)).toEqual(["call-a", "call-b"]);
+  });
+
+  test("late onChunk from a discarded straggler is suppressed after the grace-expiry throw", async () => {
+    const controller = new AbortController();
+    const chunks: string[] = [];
+    const decisions = [
+      {
+        type: "approve" as const,
+        approval: {
+          toolCallId: "call-a",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      },
+      {
+        type: "approve" as const,
+        approval: {
+          toolCallId: "call-b",
+          toolName: "Read",
+          toolArgs: "{}",
+        },
+      },
+    ];
+
+    const promise = executeApprovalBatch(
+      decisions,
+      (chunk) => {
+        chunks.push(chunk.tool_call_id);
+      },
+      {
+        abortSignal: controller.signal,
+        toolContextId: "context-abort-race",
+        executeTool: (async (
+          _toolName: string,
+          _args: Record<string, unknown>,
+          opts: { toolCallId: string },
+        ): Promise<{ toolReturn: string; status: "success" }> => {
+          if (opts.toolCallId === "call-a") {
+            return { toolReturn: "call-a-done", status: "success" };
+          }
+          // call-b ignores the signal and returns after the grace expiry;
+          // its late result is discarded and must not publish onChunk.
+          await Bun.sleep(ABORT_GRACE_MS + 150);
+          return { toolReturn: "call-b-done", status: "success" };
+        }) as never,
+      },
+    );
+
+    await Bun.sleep(10);
+    controller.abort();
+    const error = (await promise.then(
+      () => {
+        throw new Error("expected rejection");
+      },
+      (e: unknown) => e,
+    )) as Error & { partialResults?: ApprovalResult[] };
+    expect(error.name).toBe("AbortError");
+    expect(error.partialResults).toEqual([result("call-a")]);
+
+    // Let the straggler settle late; its onChunk must stay suppressed.
+    await Bun.sleep(250);
+    expect(chunks).toEqual(["call-a"]);
+  });
 });
 
 describe("subagent abort hooks", () => {
+  afterEach(() => {
+    clearAllSubagents();
+  });
+
   test("interruptActiveSubagents invokes the registered hook", () => {
     const aborted: string[] = [];
     registerSubagent(
@@ -214,6 +333,89 @@ describe("subagent abort hooks", () => {
     clearSubagentAbortHook("sub-abort-2");
 
     interruptActiveSubagents(INTERRUPTED_BY_USER);
+
+    expect(aborted).toEqual([]);
+  });
+
+  test("scoped interrupt only stops subagents in that conversation", () => {
+    const aborted: string[] = [];
+    registerSubagent(
+      "sub-scope-conv1",
+      "general-purpose",
+      "scoped",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: "conv-1" },
+    );
+    registerSubagent(
+      "sub-scope-conv2",
+      "general-purpose",
+      "scoped",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: "conv-2" },
+    );
+    registerSubagentAbortHook("sub-scope-conv1", () => {
+      aborted.push("sub-scope-conv1");
+    });
+    registerSubagentAbortHook("sub-scope-conv2", () => {
+      aborted.push("sub-scope-conv2");
+    });
+
+    interruptActiveSubagents(INTERRUPTED_BY_USER, {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(aborted).toEqual(["sub-scope-conv1"]);
+    const other = getSubagents().find((a) => a.id === "sub-scope-conv2");
+    expect(other?.status).toBe("pending"); // concurrent conversation untouched
+  });
+
+  test("subagents with no recorded conversation stay interruptible by agent", () => {
+    const aborted: string[] = [];
+    registerSubagent(
+      "sub-scope-noscope",
+      "general-purpose",
+      "no conversation",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: null },
+    );
+    registerSubagentAbortHook("sub-scope-noscope", () => {
+      aborted.push("sub-scope-noscope");
+    });
+
+    interruptActiveSubagents(INTERRUPTED_BY_USER, {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
+
+    expect(aborted).toEqual(["sub-scope-noscope"]);
+  });
+
+  test("scoped interrupt skips subagents of other agents", () => {
+    const aborted: string[] = [];
+    registerSubagent(
+      "sub-scope-other-agent",
+      "general-purpose",
+      "other agent",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-2", conversationId: "conv-1" },
+    );
+    registerSubagentAbortHook("sub-scope-other-agent", () => {
+      aborted.push("sub-scope-other-agent");
+    });
+
+    interruptActiveSubagents(INTERRUPTED_BY_USER, {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    });
 
     expect(aborted).toEqual([]);
   });

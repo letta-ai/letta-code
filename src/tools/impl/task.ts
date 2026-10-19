@@ -221,6 +221,22 @@ async function resolveCompletionSummary(
   return trimmed.length > 0 ? trimmed : defaultSummary;
 }
 
+/** Interrupt hook for a background Task: route through TaskStop semantics
+ * (remote workers/runs, process cleanup), falling back to a local abort. */
+export function buildBackgroundTaskAbortHook(
+  taskId: string,
+  abortController: AbortController,
+): () => void {
+  return () => {
+    void import("./task-stop.js")
+      .then((m) => m.task_stop({ task_id: taskId }))
+      .then((result) => {
+        if (!result.killed) abortController.abort();
+      })
+      .catch(() => abortController.abort());
+  };
+}
+
 /**
  * Spawn a background subagent task and return task metadata immediately.
  * Notification/hook behavior is identical to Task's background path.
@@ -316,21 +332,17 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
-  // A user interrupt must stop the running subagent process, not just its UI
-  // status: register the task's abort trigger so interruptActiveSubagents
-  // can reach it (background tasks are fire-and-forget from the turn's view).
-  registerSubagentAbortHook(subagentId, () => abortController.abort());
+  // Register the abort trigger so interruptActiveSubagents can reach this
+  // fire-and-forget task (see buildBackgroundTaskAbortHook).
+  registerSubagentAbortHook(
+    subagentId,
+    buildBackgroundTaskAbortHook(taskId, abortController),
+  );
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
-  // Intentionally fire-and-forget: background tasks own their lifecycle and
-  // capture failures in task state/transcripts instead of surfacing a promise
-  // back to the caller.
-  //
-  // Capture parentAgentId synchronously here (not inside spawnSubagent, which
-  // runs after async yields and can see a drifted in-process context if the
-  // listener is processing another agent's turn). resolvedParentScope.agentId
-  // is the authoritative value — the listener and App.tsx both derive it
-  // from their own closure-captured agentId.
+  // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
+  // synchronously (not inside spawnSubagent, which runs after async yields
+  // and can see a drifted context): resolvedParentScope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope

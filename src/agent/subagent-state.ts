@@ -533,11 +533,20 @@ export function clearSubagentAbortHook(id: string): void {
 /**
  * Mark all running/pending subagents as interrupted
  * Called when user presses ESC to interrupt execution
+ *
+ * Scope: when `scope` is provided, only subagents belonging to that
+ * agent/conversation are interrupted — concurrent conversations of the same
+ * agent (or other agents in the listener) keep running. Subagents with no
+ * recorded parent conversation stay interruptible by agent alone.
  */
-export function interruptActiveSubagents(errorMessage: string): void {
+export function interruptActiveSubagents(
+  errorMessage: string,
+  scope?: { agentId?: string; conversationId?: string },
+): void {
   let anyInterrupted = false;
   for (const [id, agent] of store.agents.entries()) {
     if (agent.status === "pending" || agent.status === "running") {
+      if (scope && !subagentMatchesScope(agent, scope)) continue;
       subagentAbortHooks.get(id)?.();
       subagentAbortHooks.delete(id);
       const updatedAgent: SubagentState = {
@@ -554,6 +563,20 @@ export function interruptActiveSubagents(errorMessage: string): void {
   if (anyInterrupted) {
     notifyListeners();
   }
+}
+
+function subagentMatchesScope(
+  agent: SubagentState,
+  scope: { agentId?: string; conversationId?: string },
+): boolean {
+  if (scope.agentId !== undefined && agent.parentAgentId !== scope.agentId) {
+    return false;
+  }
+  if (scope.conversationId === undefined) return true;
+  return (
+    agent.parentConversationId === undefined ||
+    agent.parentConversationId === scope.conversationId
+  );
 }
 
 // ============================================================================

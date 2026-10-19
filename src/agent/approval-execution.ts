@@ -1,6 +1,7 @@
 // src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
 import * as path from "node:path";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   ApprovalReturn,
   TextContent,
@@ -21,6 +22,31 @@ import {
   type ToolExecutionResult,
   type ToolReturnContent,
 } from "@/tools/manager";
+
+/** Grace period an aborted batch waits for signal-honoring tools to unwind
+ * before discarding stragglers (ms). */
+export const ABORT_GRACE_MS = 500;
+
+/** True when an error represents a user-initiated abort of a tool batch. */
+export function isUserAbortError(error: unknown): boolean {
+  return (
+    error instanceof APIUserAbortError ||
+    (error instanceof Error &&
+      (error.name === "AbortError" ||
+        error.message === INTERRUPTED_BY_USER ||
+        error.message === "The operation was aborted"))
+  );
+}
+
+/** Overlay real partial results over queued synthetic interrupted results:
+ * settled tools' actual outputs win; stragglers keep their synthetics. */
+export function overlayPartialResults(
+  queued: ApprovalResult[] | null,
+  partials: ApprovalResult[] | undefined,
+): ApprovalResult[] {
+  const realById = new Map((partials ?? []).map((r) => [r.tool_call_id, r]));
+  return (queued ?? []).map((r) => realById.get(r.tool_call_id) ?? r);
+}
 
 /**
  * Extract displayable text from tool return content (for UI display).
@@ -415,17 +441,37 @@ export async function settleApprovalExecutionTasks(
     return;
   }
 
-  // Aborted while tools are still in flight. Prefer an actual rejection
-  // (a tool that honored the signal) over a synthesized abort error so
-  // callers observe the same error shape as a signal-honoring cancel.
+  // Aborted while tools are still in flight. Give signal-honoring tools a
+  // short grace window to unwind so a well-behaved batch settles exactly as
+  // fast as the base implementation and callers observe real results instead
+  // of a spurious "This operation was aborted" error.
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const graceExpired = new Promise<void>((resolve) => {
+    graceTimer = setTimeout(resolve, ABORT_GRACE_MS);
+  });
+  try {
+    await Promise.race([
+      Promise.all(tracked).then(() => undefined),
+      graceExpired,
+    ]);
+  } finally {
+    clearTimeout(graceTimer);
+  }
+  if (remaining === 0) {
+    throwFirstSettledRejection(settled, partialResults);
+    return;
+  }
+
+  // Grace expired with stragglers still running and ignoring the abort
+  // signal. Prefer an actual rejection (a tool that honored the signal)
+  // over a synthesized abort error so callers observe the same error shape
+  // as a signal-honoring cancel; the straggler keeps running detached and
+  // its late result is discarded (or CAS-upgraded by the listener's effect
+  // boundary if it settles later).
   throwFirstSettledRejection(
     settled.filter((result) => result !== undefined),
     partialResults,
   );
-  // Every settled task fulfilled, but at least one tool is still running
-  // and ignoring the abort signal. Throw the abort now so the turn unwinds;
-  // the straggler keeps running detached and its late result is discarded
-  // (or CAS-upgraded by the listener's effect boundary if it settles later).
   const error =
     signal.reason instanceof Error
       ? signal.reason
@@ -468,6 +514,30 @@ async function executeApprovalBatchUnwatched(
   const results: (ApprovalResult | null)[] = new Array(decisions.length).fill(
     null,
   );
+  // Once the settle race throws (grace-expiry abort), the batch's results
+  // are discarded: suppress late onChunk/onStreamingOutput callbacks from
+  // detached straggler tools so they cannot overwrite the tool lines the
+  // interrupt already marked cancelled.
+  let batchDiscarded = false;
+  const guardedOnChunk = onChunk
+    ? (chunk: ToolReturnMessage) => {
+        if (!batchDiscarded) onChunk(chunk);
+      }
+    : undefined;
+  const guardedOptions = options?.onStreamingOutput
+    ? {
+        ...options,
+        onStreamingOutput: (
+          toolCallId: string,
+          chunk: string,
+          isStderr?: boolean,
+        ) => {
+          if (!batchDiscarded) {
+            options.onStreamingOutput?.(toolCallId, chunk, isStderr);
+          }
+        },
+      }
+    : options;
 
   // Categorize decisions by execution strategy
   const parallelIndices: number[] = [];
@@ -518,11 +588,11 @@ async function executeApprovalBatchUnwatched(
     const decision = decisions[i];
     if (decision) {
       let crossedEffectBoundary = false;
-      const result = await executeSingleDecision(decision, onChunk, {
-        ...options,
+      const result = await executeSingleDecision(decision, guardedOnChunk, {
+        ...guardedOptions,
         toolContextId,
         beforeToolExecution: async (toolCallId) => {
-          await options?.beforeToolExecution?.(toolCallId);
+          await guardedOptions?.beforeToolExecution?.(toolCallId);
           crossedEffectBoundary = true;
         },
       });
@@ -543,21 +613,27 @@ async function executeApprovalBatchUnwatched(
   //
   // Do not fail fast here. A sibling may already have crossed its effect boundary;
   // callers must retain their claim/lease until every started group has settled.
-  await settleApprovalExecutionTasks(
-    [
-      // Parallel-safe tools + denials: all run in parallel
-      ...parallelIndices.map(execute),
-      ...denyIndices.map(execute),
-      // Write tools: sequential within each resource group, parallel across groups
-      ...Array.from(writeToolsByResource.values()).map(async (indices) => {
-        for (const i of indices) {
-          await execute(i);
-        }
-      }),
-    ],
-    () => results.filter((result): result is ApprovalResult => result !== null),
-    { abortSignal: options?.abortSignal },
-  );
+  try {
+    await settleApprovalExecutionTasks(
+      [
+        // Parallel-safe tools + denials: all run in parallel
+        ...parallelIndices.map(execute),
+        ...denyIndices.map(execute),
+        // Write tools: sequential within each resource group, parallel across groups
+        ...Array.from(writeToolsByResource.values()).map(async (indices) => {
+          for (const i of indices) {
+            await execute(i);
+          }
+        }),
+      ],
+      () =>
+        results.filter((result): result is ApprovalResult => result !== null),
+      { abortSignal: options?.abortSignal },
+    );
+  } catch (error) {
+    batchDiscarded = true;
+    throw error;
+  }
 
   // Filter out nulls (shouldn't happen, but TypeScript needs this)
   return results.filter((r): r is ApprovalResult => r !== null);

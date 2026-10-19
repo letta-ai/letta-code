@@ -8,7 +8,11 @@ import {
   useCallback,
   useEffect,
 } from "react";
-import type { ApprovalResult } from "@/agent/approval-execution";
+import {
+  type ApprovalResult,
+  isUserAbortError,
+  overlayPartialResults,
+} from "@/agent/approval-execution";
 import type { SessionStats } from "@/agent/stats";
 import {
   type Buffers,
@@ -368,6 +372,12 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           setApprovalResults([]);
           setAutoHandledResults([]);
           setAutoDeniedApprovals([]);
+          // Mirror the finally cleanup: this return precedes controller install.
+          clearApprovalToolContext();
+          toolAbortControllerRef.current = null;
+          executingToolCallIdsRef.current = [];
+          interruptQueuedRef.current = false;
+          toolResultsInFlightRef.current = false;
           return;
         }
 
@@ -474,6 +484,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           });
         }
 
+        // Orphan guard: controller replaced/cleared — skip this stale batch.
+        if (toolAbortControllerRef.current !== approvalAbortController) {
+          return;
+        }
+
         // Combine with auto-handled and auto-denied results using snapshots
         const allResults = [
           ...autoHandledSnapshot.map((ar) => ({
@@ -526,15 +541,11 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         refreshDerived();
 
         const wasAborted = approvalAbortController.signal.aborted;
-        // Check if user cancelled via ESC. We use wasAborted (toolAbortController was aborted)
-        // as the primary signal, plus userCancelledRef for cancellations that happen just before
-        // tools complete. Note: we can't use `abortControllerRef.current === null` because
-        // abortControllerRef is also null in the normal approval flow (no stream running).
+        // ESC cancel: wasAborted primary; userCancelledRef covers late cancels.
         const userCancelled = userCancelledRef.current;
 
         if (wasAborted || userCancelled) {
-          // Queue results to send alongside the next user message so the backend
-          // doesn't keep requesting the same approvals after an interrupt.
+          // Queue results with the next message: stops re-requested approvals.
           if (!interruptQueuedRef.current) {
             queueApprovalResults(allResults as ApprovalResult[]);
           }
@@ -563,8 +574,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           if (queuedTurn.hasQueuedMessage || hadNotifications) {
             refreshDerived();
           }
-          // Flush finished items synchronously before reentry so deferred
-          // non-Task commits cannot delay Task grouping mid-reentry.
+          // Flush finished items before reentry so deferred non-Task commits cannot delay Task grouping.
           flushEligibleLinesBeforeReentry(
             commitEligibleLines,
             buffersRef.current,
@@ -573,11 +583,37 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           await processConversation(queuedTurn.input, queuedTurn.options);
           toolResultsInFlightRef.current = false;
 
-          // Clear stale queued results from previous interrupts; otherwise they
-          // get sent on the next onSubmit, causing "Invalid tool call IDs" errors.
+          // Clear stale queued results: they'd cause "Invalid tool call IDs".
           queueApprovalResults(null);
         }
       } catch (error) {
+        // Orphan guard: a newer batch owns the refs; don't clobber it.
+        if (toolAbortControllerRef.current !== approvalAbortController) {
+          return;
+        }
+        if (isUserAbortError(error)) {
+          // Grace-expiry abort: overlay real partials over the synthetics.
+          markIncompleteToolsAsCancelled(
+            buffersRef.current,
+            true,
+            "user_interrupt",
+          );
+          const merged = overlayPartialResults(
+            queuedApprovalResultsRef.current,
+            (error as Error & { partialResults?: ApprovalResult[] })
+              .partialResults,
+          );
+          // Only re-queue when there is something to send: queueing [] would
+          // still stamp queue metadata for the next submit.
+          if (merged.length > 0) {
+            queueApprovalResults(merged);
+          }
+          setStreaming(false);
+          closeTrajectorySegment();
+          syncTrajectoryElapsedBase();
+          refreshDerived();
+          return;
+        }
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
@@ -593,8 +629,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         syncTrajectoryElapsedBase();
         refreshDerived();
       } finally {
-        // Release the guard only if no newer batch took over the refs
-        // while this await unwound (orphaned force-settle batch guard).
+        // Release the guard only if no newer batch took over the refs.
         if (toolAbortControllerRef.current === approvalAbortController) {
           clearApprovalToolContext();
           setIsExecutingTool(false);
@@ -670,8 +705,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
-          // All approvals collected, execute and send to backend
-          // sendAllResults owns the lock release via its finally block
+          // All approvals collected: sendAllResults owns the lock release
           await sendAllResults(decision);
         } else {
           // Not done yet, store decision and show next approval
@@ -766,8 +800,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         cmd.finish(`Added permission: ${rule}${scopeText}`, true);
       }
 
-      // Re-check remaining approvals against the newly saved permission
-      // This allows subsequent approvals that match the new rule to be auto-allowed
+      // Re-check remaining approvals against the saved permission for auto-allow
       const remainingApprovals = pendingApprovals.slice(currentIndex + 1);
       if (remainingApprovals.length > 0) {
         const recheckResults = await Promise.all(
@@ -798,8 +831,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             r.permission.decision === "alwaysAsk",
         );
 
-        // Only auto-handle if ALL remaining are now allowed
-        // (avoids complex state synchronization issues with partial batches)
+        // Only auto-handle if ALL remaining are now allowed (avoids partial-batch sync issues)
         if (stillNeedAsking.length === 0 && nowAutoAllowed.length > 0) {
           const currentApproval = pendingApprovals[currentIndex];
           if (!currentApproval) return;
@@ -813,8 +845,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
           setIsExecutingTool(true);
 
-          // Snapshot current state BEFORE clearing (critical for ID matching!)
-          // This must include ALL previous decisions, auto-handled, and auto-denied
+          // Snapshot BEFORE clearing (ID matching): include ALL prior decisions
           const approvalResultsSnapshot = [...approvalResults];
           const autoHandledSnapshot = [...autoHandledResults];
           const autoDeniedSnapshot = [...autoDeniedApprovals];
@@ -984,8 +1015,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
         // Check if we're done with all approvals
         if (currentIndex + 1 >= pendingApprovals.length) {
-          // All approvals collected, execute and send to backend
-          // sendAllResults owns the lock release via its finally block
+          // All approvals collected: sendAllResults owns the lock release
           setThinkingMessage(getRandomThinkingVerb());
           await sendAllResults(decision);
         } else {
@@ -1024,8 +1054,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
     ],
   );
 
-  // Cancel all pending approvals - queue denials to send with next message
-  // Similar to interrupt flow during tool execution
+  // Cancel pending approvals: queue denials with the next message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: buffersRef is stable; .current is read dynamically.
   const handleCancelApprovals = useCallback(() => {
     if (pendingApprovals.length === 0) return;

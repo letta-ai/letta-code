@@ -212,7 +212,13 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
-  const toolScope = await createScriptToolScope(parentAgentId);
+  // Foreground workflows are turn-scoped: their script tool calls must honor
+  // the turn's abort signal. Background workflows run past turn interrupts
+  // by design (TaskStop aborts them via engine cut points) and stay unscoped.
+  const toolScope = await createScriptToolScope(
+    parentAgentId,
+    args.wait ? args.signal : undefined,
+  );
   return {
     spawner,
     ...toolScope,

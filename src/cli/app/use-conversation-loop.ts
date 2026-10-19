@@ -1,7 +1,7 @@
 // src/cli/app/useConversationLoop.ts
 
 import { randomUUID } from "node:crypto";
-import { APIError, APIUserAbortError } from "@letta-ai/letta-client/core/error";
+import { APIError } from "@letta-ai/letta-client/core/error";
 import type {
   AgentState,
   MessageCreate,
@@ -14,7 +14,10 @@ import {
   type SetStateAction,
   useCallback,
 } from "react";
-import { executeAutoAllowedTools } from "@/agent/approval-execution";
+import {
+  executeAutoAllowedTools,
+  isUserAbortError,
+} from "@/agent/approval-execution";
 import {
   extractConflictDetail,
   fetchRunErrorInfo,
@@ -479,9 +482,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       initialInput: Array<MessageCreate | ApprovalCreate>,
       options?: import("./types").ProcessConversationOptions,
     ): Promise<void> => {
-      // Transient pre-stream retries can yield for seconds.
-      // Pin the user's permission mode for the duration of the submission so
-      // auto-approvals (YOLO / unrestricted) don't regress after a retry.
+      // Pre-stream retries can yield for seconds: pin the user's permission
+      // mode so auto-approvals don't regress after a retry.
       const pinnedPermissionMode = uiPermissionModeRef.current;
       const restorePinnedPermissionMode = () => {
         if (permissionMode.getMode() !== pinnedPermissionMode) {
@@ -536,21 +538,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let currentInput = [...inputList];
       const allowReentry = options?.allowReentry ?? false;
 
-      // Use provided generation (from onSubmit) or capture current
-      // This allows detecting if ESC was pressed during async work before this function was called
+      // Use provided generation or capture current: detects ESC during async work
       const myGeneration =
         options?.submissionGeneration ?? conversationGenerationRef.current;
 
-      // Check if we're already stale (ESC was pressed while we were queued in onSubmit).
-      // This can happen if ESC was pressed during async work before processConversation was called.
-      // We check early to avoid setting state (streaming, etc.) for stale conversations.
+      // Already stale (ESC while queued in onSubmit): check early to avoid
+      // setting state (streaming, etc.) for stale conversations.
       if (myGeneration !== conversationGenerationRef.current) {
         return;
       }
 
-      // Guard against concurrent processConversation calls
-      // This can happen if user submits two messages in quick succession
-      // Uses dedicated ref (not streamingRef) since streaming may be set early for UI responsiveness
+      // Guard against concurrent calls (two quick submissions). Dedicated ref,
+      // not streamingRef: streaming is set early for UI responsiveness.
       if (processingConversationRef.current > 0 && !allowReentry) {
         return;
       }
@@ -659,9 +658,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           return;
         }
 
-        // Recover interrupted message only after explicit user interrupt:
-        // if cache contains ONLY user messages, prepend them.
-        // Note: type="message" is a local discriminator (not in SDK types) to distinguish from approvals
+        // Recover interrupted message only after explicit user interrupt: if
+        // cache holds ONLY user messages, prepend them (type="message" is a
+        // local discriminator, not in SDK types).
         const originalInput = currentInput;
         const cacheIsAllUserMsgs = lastSentInputRef.current?.every(
           (m: MessageCreate | ApprovalCreate) =>
@@ -712,10 +711,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           lastSentInputRef.current = originalInput;
         }
 
-        // Clear stale pending tool calls from previous turns; pass false to avoid
-        // setting interrupted=true (races with concurrent processConversation).
-        // Skip when allowReentry=true: server-side tools may still be pending and
-        // their results arrive in this stream; premature cancel shows "Cancelled".
+        // Clear stale pending tool calls (false: avoid racing interrupted=true
+        // with a concurrent call). Skip when allowReentry=true — server-side
+        // tool results still arrive in this stream.
         if (!allowReentry) {
           markIncompleteToolsAsCancelled(
             buffersRef.current,
@@ -745,17 +743,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            // Only set streaming=false if this is the current generation.
-            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            // streaming=false only for the current generation: a newer call
+            // may be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
               setStreaming(false);
             }
             return;
           }
 
-          // Inject queued skill content as user message parts (LET-7353)
-          // This centralizes skill content injection so all approval-send paths
-          // automatically get skill SKILL.md content alongside tool results.
+          // Inject queued skill content as user message parts (LET-7353), so
+          // all approval-send paths get SKILL.md alongside tool results.
           const { consumeQueuedSkillContent } = await import(
             "@/tools/impl/skill-content-registry"
           );
@@ -774,8 +771,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             ];
           }
 
-          // Stream one turn (ref gives the latest conversationId); try-catch
-          // covers sendMessageStream throwing before streaming begins (desync).
+          // Stream one turn; try-catch covers pre-stream throws (desync).
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
@@ -831,9 +827,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
-            // Resolve stale approval conflict: fetch real pending approvals, auto-deny, retry.
-            // Shares llmApiErrorRetriesRef budget with LLM transient-error retries (max 3 per turn).
-            // Resets on each processConversation entry and on success.
+            // Stale approval conflict: fetch real pending approvals, auto-deny,
+            // retry. Shares llmApiErrorRetriesRef budget (max 3 per turn).
             if (
               shouldAttemptApprovalRecovery({
                 approvalPendingDetected:
@@ -893,8 +888,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
-              // Attempt to resume the in-flight run via the conversation stream endpoint.
-              // Server resolves: (1) otid lookup, (2) active run fallback.
+              // Resume the in-flight run via the conversation stream endpoint (otid lookup, active-run fallback)
               try {
                 const backend = getBackend();
                 const messageOtid = currentInput
@@ -1100,8 +1094,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
 
             if (hasApprovalInPayload) {
-              // "Invalid tool call IDs" means server HAS pending approvals but with different IDs.
-              // We need to fetch the actual pending approvals and show them to the user.
+              // "Invalid tool call IDs": server HAS differently-IDed pending approvals
+              // — fetch the real pending approvals and show them.
               if (isInvalidToolCallIdsError(errorDetail)) {
                 try {
                   const agent = await getBackend().retrieveAgent(
@@ -1114,8 +1108,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     );
 
                   if (serverApprovals && serverApprovals.length > 0) {
-                    // Preserve user message from current input (if any)
-                    // Filter out system reminders to avoid re-injecting them
+                    // Preserve user message (filter system reminders to avoid re-inject)
                     const userMessage = currentInput.find(
                       (item) => item?.type === "message",
                     );
@@ -1174,8 +1167,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       // If analysis fails, contexts remain empty (will show basic options)
                     }
 
-                    // Stop streaming and exit - user needs to approve/deny
-                    // (finally block will decrement processingConversationRef)
+                    // Stop streaming: user needs to approve/deny (finally decrements)
                     setStreaming(false);
                     sendDesktopNotification("Approval needed");
                     return;
@@ -1195,20 +1187,18 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           if (signal?.aborted) {
             const isStaleAtAbort =
               myGeneration !== conversationGenerationRef.current;
-            // Only set streaming=false if this is the current generation.
-            // If stale, a newer processConversation might be running and we shouldn't affect its UI.
+            // streaming=false only for the current generation: a newer call
+            // may be running and we shouldn't affect its UI.
             if (!isStaleAtAbort) {
               setStreaming(false);
             }
             return;
           }
 
-          // Define callback to sync agent state on first message chunk
-          // This ensures the UI shows the correct model as early as possible
+          // Sync agent state on first chunk so the UI shows the correct model early.
           const syncAgentState = async () => {
             try {
-              // Reuse the agent fetched by prepareToolExecutionContextForScope
-              // (avoids a redundant agents.retrieve per turn).
+              // Reuse the agent from prepareToolExecutionContextForScope (no redundant retrieve).
               const agent =
                 prefetchedAgent ??
                 (await getBackend().retrieveAgent(agentIdRef.current));
@@ -1938,6 +1928,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     )
                   : [];
 
+              // Orphan guard: if the refs were replaced or cleared while the
+              // auto-allowed batch was executing, do not write continuation
+              // results or re-enter the stream from this stale batch.
+              if (
+                shouldTrackAutoAllowed &&
+                toolAbortControllerRef.current !== autoAllowedAbortController
+              ) {
+                return;
+              }
+
               // Create denial results for auto-denied tools and update buffers
               autoDeniedResults = autoDenied.map((ac) => {
                 const reason = formatPermissionDenial(ac.permission);
@@ -2217,8 +2217,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
 
               if (serverApprovals && serverApprovals.length > 0) {
-                // Preserve user message from current input (if any)
-                // Filter out system reminders to avoid re-injecting them
+                // Preserve user message (filter system reminders to avoid re-inject)
                 const userMessage = currentInput.find(
                   (item) => item?.type === "message",
                 );
@@ -2277,8 +2276,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   // If analysis fails, contexts remain empty (will show basic options)
                 }
 
-                // Stop streaming and exit - user needs to approve/deny
-                // (finally block will decrement processingConversationRef)
+                // Stop streaming: user needs to approve/deny (finally decrements)
                 setStreaming(false);
                 sendDesktopNotification("Approval needed");
                 return;
@@ -2779,12 +2777,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         markIncompleteToolsAsCancelled(
           buffersRef.current,
           true,
-          e instanceof APIUserAbortError ? "user_interrupt" : "stream_error",
+          isUserAbortError(e) ? "user_interrupt" : "stream_error",
         );
 
         // If using eager cancel and this is an abort error, silently ignore it
         // The user already got "Stream interrupted by user" feedback from handleInterrupt
-        if (EAGER_CANCEL && e instanceof APIUserAbortError) {
+        if (EAGER_CANCEL && isUserAbortError(e)) {
           setStreaming(false);
           refreshDerived();
           return;
