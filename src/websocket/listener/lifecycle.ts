@@ -99,7 +99,9 @@ import { safeSocketSend } from "./socket-send";
 import {
   applyListenerPairIdentity,
   attachSplitStreamSocketHandlers,
+  createListenerLifecycleLog,
   createListenerPairIdentity,
+  formatListenerSocketClose,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
   preparePairedListenerTransport,
@@ -715,6 +717,7 @@ async function connectWithRetry(
       ? new WebSocket(streamUrl.toString(), { headers })
       : null;
 
+  const lifecycleLog = createListenerLifecycleLog(opts);
   const fileCommandSession = createFileCommandSession({
     socket,
     safeSocketSend,
@@ -767,6 +770,7 @@ async function connectWithRetry(
       runtime,
       streamSocket,
       trackListenerError,
+      log: lifecycleLog,
     });
   }
   socket.on("open", () => {
@@ -797,6 +801,7 @@ async function connectWithRetry(
           runtime,
           streamSocket: streamOpen.streamSocket,
           trackListenerError,
+          log: lifecycleLog,
         });
       }
       if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
@@ -855,6 +860,7 @@ async function connectWithRetry(
   });
 
   socket.on("close", (code: number, reason: Buffer) => {
+    lifecycleLog(formatListenerSocketClose("control", code, reason));
     abortStartupIngress();
     if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
       return;
@@ -878,12 +884,6 @@ async function connectWithRetry(
     }
 
     clearRuntimeTimers(runtime);
-
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] WebSocket disconnected (code: ${code}, reason: ${reason.toString()})`,
-      );
-    }
 
     if (!terminalClose) {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
@@ -963,6 +963,7 @@ async function connectWithRetry(
 
   socket.on("error", (error: Error) => {
     trackListenerError("listener_websocket_error", error, "listener_socket");
+    lifecycleLog(`control socket error: ${error.message}`);
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_error",
       message: error.message,
