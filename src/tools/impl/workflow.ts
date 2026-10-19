@@ -33,6 +33,7 @@ import {
 } from "@/tools/script-tool-scope";
 import {
   finishWorkflowExecution,
+  getWorkflowExecution,
   recordWorkflowProgress,
   registerWorkflowExecution,
 } from "@/tools/workflow/execution-registry";
@@ -304,6 +305,24 @@ function jsonSafe(value: unknown): unknown {
   }
 }
 
+/**
+ * A failure late in a run (e.g. the final synthesis agent) must not read as
+ * if everything was lost: completed calls are already in the journal.
+ */
+export function formatFailureResult(
+  error: string | undefined,
+  agentsDone: number,
+  journalPath: string,
+): string {
+  const lines = [`Workflow failed: ${error ?? "unknown error"}`];
+  if (agentsDone > 0) {
+    lines.push(
+      `${agentsDone} agent call${agentsDone === 1 ? "" : "s"} completed before the failure. Their full results are saved in ${journalPath} (one line per completed call; the return value is outcome.value).`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function formatCompletionResult(
   run: WorkflowExecutionResult,
   executionDir: string,
@@ -532,7 +551,11 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     }
     const result = outcome.run
       ? formatCompletionResult(outcome.run, executionDir)
-      : `Workflow failed: ${outcome.error ?? "unknown error"}`;
+      : formatFailureResult(
+          outcome.error,
+          getWorkflowExecution(taskId)?.agentsDone ?? 0,
+          journalPath,
+        );
     appendToOutputFile(
       outputFile,
       outcome.run ? `\n[result]\n${result}\n` : `\n[error] ${outcome.error}\n`,
