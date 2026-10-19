@@ -7,6 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
@@ -291,13 +292,16 @@ export async function resolveStaleApprovals(
   deps: {
     getResumeData?: typeof getResumeDataFromBackend;
     retrieveAgent?: RetrieveAgent;
+    retrieveConversation?: ReturnType<
+      typeof getBackend
+    >["retrieveConversation"];
     prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     drainRecoveryStream?: typeof drainRecoveryStreamWithEmission;
     authorityGuard?: () => boolean;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
-  if (!runtime.agentId) return null;
+  if (!runtime.agentId && runtime.conversationId === "default") return null;
 
   const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
   const prepareToolExecutionContext =
@@ -320,9 +324,11 @@ export async function resolveStaleApprovals(
   const backend = getBackend();
   let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await (deps.retrieveAgent
-      ? deps.retrieveAgent(runtime.agentId)
-      : backend.retrieveAgent(runtime.agentId));
+    agent = await retrieveResumeState(runtime.agentId, runtime.conversationId, {
+      retrieveAgent: deps.retrieveAgent ?? backend.retrieveAgent.bind(backend),
+      retrieveConversation:
+        deps.retrieveConversation ?? backend.retrieveConversation.bind(backend),
+    });
   } catch (err) {
     assertCurrentTurnLease();
     if (isBackendNotFoundError(err)) {
@@ -364,10 +370,9 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
-  const modAdapters = await ensureListenerModAdaptersForAgent(
-    runtime.listener,
-    runtime.agentId,
-  );
+  const modAdapters = runtime.agentId
+    ? await ensureListenerModAdaptersForAgent(runtime.listener, runtime.agentId)
+    : [];
   const preparedToolContext = await prepareToolExecutionContext({
     connectionId: resolveTurnExecutionConnectionId(
       runtime.listener,
@@ -382,7 +387,9 @@ export async function resolveStaleApprovals(
       runtime.agentId,
       runtime.conversationId,
     ),
-    modContext: createListenerAgentModContext(runtime.agentId),
+    ...(runtime.agentId
+      ? { modContext: createListenerAgentModContext(runtime.agentId) }
+      : {}),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });

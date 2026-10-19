@@ -4,7 +4,7 @@ import { buildCreateAgentRequest } from "@/agent/create-agent-request";
 import { getModelUpdateArgs } from "@/agent/model";
 import type { MemoryPromptMode } from "@/agent/prompt-assets";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
-import { getBackend } from "@/backend";
+import { type Backend, getBackend } from "@/backend";
 import {
   createEphemeralConversation as createEphemeralConversationRequest,
   type EphemeralConversationCreateBody,
@@ -98,6 +98,22 @@ export function projectConversationState(conversation: {
       | undefined,
     context_window_limit: conversation.context_window_limit,
   });
+}
+
+/** Load compatibility state without replacing a conversation's history owner. */
+export async function retrieveResumeState(
+  agentId: string | null,
+  conversationId: string,
+  backend: Pick<
+    Backend,
+    "retrieveAgent" | "retrieveConversation"
+  > = getBackend(),
+): Promise<AgentState> {
+  return agentId
+    ? backend.retrieveAgent(agentId)
+    : projectConversationState(
+        await backend.retrieveConversation(conversationId),
+      );
 }
 
 export async function createLocalEphemeralConversation(

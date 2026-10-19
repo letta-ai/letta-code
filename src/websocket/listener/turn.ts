@@ -8,6 +8,7 @@ import {
   rotateChatGPTPlanOnQuotaLimit,
 } from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
@@ -15,7 +16,6 @@ import {
   isEmptyResponseRetryable,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
-import { getBackend } from "@/backend";
 import {
   createBuffers,
   findLastAssistantText,
@@ -461,7 +461,7 @@ async function handleIncomingMessageInner(
           });
 
           try {
-            const agent = await getBackend().retrieveAgent(agentId || "");
+            const agent = await retrieveResumeState(agentId, conversationId);
             const { pendingApprovals: existingApprovals } =
               await getResumeDataFromBackend(agent, requestedConversationId);
             turnInput = rebuildTurnInputWithFreshDenials(

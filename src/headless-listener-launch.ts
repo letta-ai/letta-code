@@ -281,7 +281,7 @@ export async function launchListenerConversation(
       ...(params.skillSources !== undefined
         ? { skill_sources: params.skillSources }
         : { preserve_skill_sources: true }),
-      recover_approvals: params.scope.agent_id === null,
+      recover_approvals: false,
       wait_for_replay: true,
     });
     if (!runtime.success)
