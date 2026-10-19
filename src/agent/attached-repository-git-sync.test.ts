@@ -39,7 +39,9 @@ function makeRepositoryFixture(shallow = false): {
   git(seed, ["add", "MEMORY.md"]);
   git(seed, ["commit", "-m", "initialize shared memory"]);
   if (shallow) {
-    commitFile(seed, "existing.md", "history before the shallow boundary\n");
+    for (let i = 0; i < 3; i++) {
+      commitFile(seed, "existing.md", `historical revision ${i}\n`);
+    }
   }
   git(seed, ["remote", "add", "origin", remote]);
   git(seed, ["push", "-u", "origin", "main"]);
@@ -157,6 +159,51 @@ describe("syncPendingAttachedRepositoryCommits", () => {
       "true",
     );
   });
+
+  test.each(["--deepen=2", "--unshallow"])(
+    "refreshes and pushes after fetching %s in a shallow mount",
+    async (historyOption) => {
+      const fixture = makeRepositoryFixture(true);
+      expect(git(fixture.mount, ["rev-parse", "--is-shallow-repository"])).toBe(
+        "true",
+      );
+      git(fixture.mount, ["fetch", historyOption]);
+      const expectedShallow = historyOption === "--deepen=2" ? "true" : "false";
+      expect(git(fixture.mount, ["rev-parse", "--is-shallow-repository"])).toBe(
+        expectedShallow,
+      );
+      expect(git(fixture.mount, ["rev-list", "--count", "HEAD"])).toBe(
+        historyOption === "--deepen=2" ? "3" : "4",
+      );
+
+      commitFile(fixture.peer, "first.md", "first remote update\n");
+      const remoteTip = commitFile(
+        fixture.peer,
+        "second.md",
+        "second remote update\n",
+      );
+      git(fixture.peer, ["push", "origin", "main"]);
+      git(fixture.mount, ["pull", "--ff-only"]);
+      expect(git(fixture.mount, ["rev-parse", "HEAD"])).toBe(remoteTip);
+
+      const localSha = commitFile(
+        fixture.mount,
+        "local.md",
+        "local update after fetching history\n",
+      );
+      expect(git(fixture.mount, ["rev-parse", "HEAD^"])).toBe(remoteTip);
+      const result = await syncFixture(fixture, "read_write");
+
+      expect(result.status).toBe("pushed");
+      expect(git(fixture.remote, ["rev-parse", "main"])).toBe(localSha);
+      expect(git(fixture.mount, ["rev-list", "--count", "@{u}..HEAD"])).toBe(
+        "0",
+      );
+      expect(git(fixture.mount, ["rev-parse", "--is-shallow-repository"])).toBe(
+        expectedShallow,
+      );
+    },
+  );
 
   test("pushes the first commit when the remote has no branch", async () => {
     const fixture = makeEmptyRepositoryFixture();
