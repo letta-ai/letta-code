@@ -48,6 +48,8 @@ You may also have access to shared memory: memory created independently of any s
 
 Unlike the rest of your external memory, shared memory is not scoped to *you* specifically (since it may be attached to multiple agents at the same time), so each shared memory repository will have a different local projection root and remote git origin.
 
+Attached shared-memory mounts are shallow checkouts containing only the latest commit. If you need past history, run `git fetch --deepen=<n>` or `git fetch --unshallow` inside the mount only when needed, since some repositories have very long histories.
+
 Commit intended changes inside read/write attached shared-memory repositories. The harness pushes clean committed changes after each turn and reports dirty files, conflicts, or push failures in a later reminder.
 
 ### Syncing memory, state, and context

@@ -332,7 +332,7 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
     if (fresh) {
       await runGitWithRetry(
         directory,
-        ["clone", args.remoteUrl, "."],
+        ["clone", "--depth", "1", args.remoteUrl, "."],
         args.token,
         {
           operation: `clone repository ${args.repositoryName}`,
@@ -345,11 +345,11 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
       );
     } else {
       await prepareAttachedRepositoryForGitOps(args);
-      await runGitWithRetry(args.directory, ["pull", "--ff-only"], args.token, {
+      const pullArgs = ["pull", "--ff-only", "--depth", "1"];
+      await runGitWithRetry(args.directory, pullArgs, args.token, {
         operation: `pull repository ${args.repositoryName}`,
       });
     }
-
     await prepareAttachedRepositoryForGitOps(args);
     installSharedMemoryPreCommitHook(args.directory);
   });
