@@ -1,8 +1,6 @@
 ---
 name: maintaining-deferred-memory
 description: Maintains deferred memory, which stores accumulated knowledge, analysis, and observations made by the agent over time. Use when saving knowledge (e.g. about a person, project, repository, system, or event). Do NOT use for managing skills, prompts, or for saving information that is already automatically stored in the message history.
-disable-model-invocation: true
-user-invocable: false
 ---
 
 Deferred memory contains the agent's knowledge. Use deferred memory for understanding of a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill.

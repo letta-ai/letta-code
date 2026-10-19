@@ -346,6 +346,13 @@ async function executeScript(
     ) {
       throw new Error("agent() maxToolCalls must be a positive safe integer.");
     }
+    if (
+      opts.skills !== undefined &&
+      (!Array.isArray(opts.skills) ||
+        !opts.skills.every((id) => typeof id === "string" && id.trim()))
+    ) {
+      throw new Error("agent() skills must be an array of skill names.");
+    }
     const callIndex = callCounter++;
     const label = opts.label ?? defaultLabel(prompt);
     const phase = opts.phase ?? currentPhase;
