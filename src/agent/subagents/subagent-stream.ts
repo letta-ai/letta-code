@@ -151,7 +151,7 @@ function handleToolReturnEvent(
 function isEnqueueReceipt(event: {
   status?: unknown;
   agent_id?: unknown;
-  resource_agent_id?: unknown;
+  parent_agent_id?: unknown;
   conversation_id?: unknown;
   client_message_id?: unknown;
   super_run_id?: unknown;
@@ -161,10 +161,9 @@ function isEnqueueReceipt(event: {
   return (
     event.status === "queued" &&
     (typeof event.agent_id === "string" ||
-      (event.agent_id === null &&
-        typeof event.resource_agent_id === "string")) &&
-    (event.resource_agent_id === undefined ||
-      typeof event.resource_agent_id === "string") &&
+      (event.agent_id === null && typeof event.parent_agent_id === "string")) &&
+    (event.parent_agent_id === undefined ||
+      typeof event.parent_agent_id === "string") &&
     typeof event.conversation_id === "string" &&
     typeof event.client_message_id === "string" &&
     typeof event.super_run_id === "string" &&
@@ -200,7 +199,7 @@ function handleResultEvent(
     num_turns?: number;
     status?: unknown;
     agent_id?: unknown;
-    resource_agent_id?: unknown;
+    parent_agent_id?: unknown;
     conversation_id?: unknown;
     client_message_id?: unknown;
     super_run_id?: unknown;
@@ -216,8 +215,8 @@ function handleResultEvent(
       state.enqueueReceipt = {
         status: "queued",
         agent_id: event.agent_id,
-        ...(event.resource_agent_id
-          ? { resource_agent_id: event.resource_agent_id }
+        ...(event.parent_agent_id
+          ? { parent_agent_id: event.parent_agent_id }
           : {}),
         conversation_id: event.conversation_id,
         client_message_id: event.client_message_id,

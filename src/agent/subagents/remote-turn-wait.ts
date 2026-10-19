@@ -3,7 +3,7 @@ import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import {
   type EnqueueReceipt,
-  getEnqueueResourceAgentId,
+  getEnqueueAgentId,
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
@@ -25,7 +25,7 @@ export async function collectRemoteTurnResult(
   updateSubagent(subagentId, {
     agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
-    agentURL: buildAgentReference(getEnqueueResourceAgentId(receipt), {
+    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
       conversationId: receipt.conversation_id,
     }),
   });

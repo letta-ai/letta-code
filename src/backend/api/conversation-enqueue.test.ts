@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import {
   dequeueConversationMessage,
   enqueueConversationMessage,
-  getEnqueueResourceAgentId,
+  getEnqueueAgentId,
   getExactSuperRun,
 } from "./conversation-enqueue";
 import { ApiRequestError, apiRequest } from "./request";
@@ -280,7 +280,7 @@ test("explicit actor suppression reaches enqueue and cancellation despite an amb
     expect(receipt.acting_user_id).toBeNull();
     await dequeueConversationMessage(
       {
-        agentId: getEnqueueResourceAgentId(receipt),
+        agentId: getEnqueueAgentId(receipt),
         conversationId: receipt.conversation_id,
         clientMessageId: receipt.client_message_id,
         actingUserId: receipt.acting_user_id,

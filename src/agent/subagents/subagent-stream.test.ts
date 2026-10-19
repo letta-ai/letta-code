@@ -190,7 +190,7 @@ describe("result envelope parsing", () => {
 
   test.each([
     { agent_id: "agent-1" },
-    { agent_id: null, resource_agent_id: "agent-parent" },
+    { agent_id: null, parent_agent_id: "agent-parent" },
   ])("captures the enqueue receipt from a queued envelope: %j", (identity) => {
     const state = freshState();
     processStreamEvent(

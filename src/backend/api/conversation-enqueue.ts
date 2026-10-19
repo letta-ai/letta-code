@@ -66,14 +66,14 @@ export interface EnqueueReceipt {
   /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
   /** Parent used for Cloud status and cancellation, never for history ownership. */
-  resource_agent_id?: string;
+  parent_agent_id?: string;
   /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
   acting_user_id?: string | null;
 }
 
-export function getEnqueueResourceAgentId(receipt: EnqueueReceipt): string {
-  const id = receipt.resource_agent_id ?? receipt.agent_id;
-  if (!id) throw new Error("Queued conversation has no resource agent.");
+export function getEnqueueAgentId(receipt: EnqueueReceipt): string {
+  const id = receipt.agent_id ?? receipt.parent_agent_id;
+  if (!id) throw new Error("Queued conversation has no agent or parent agent.");
   return id;
 }
 

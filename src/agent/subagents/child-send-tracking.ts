@@ -7,7 +7,7 @@ import {
 import { type Backend, getBackend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
-  getEnqueueResourceAgentId,
+  getEnqueueAgentId,
   getExactSuperRun,
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
@@ -111,7 +111,7 @@ export function trackChildSend(input: TrackChildSendInput): string {
     agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
     superRunId: receipt.super_run_id,
-    agentURL: buildAgentReference(getEnqueueResourceAgentId(receipt), {
+    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
       conversationId: receipt.conversation_id,
     }),
   });

@@ -318,82 +318,9 @@ describe("Startup Flow - Integration", () => {
     { timeout: 190000 },
   );
 
-  test(
-    "--conversation resumes a conversation without an agent",
-    async () => {
-      await settingsManager.initialize();
-      const homeDir = await mkdtemp(
-        join(tmpdir(), "letta-conversation-resume-"),
-      );
-      const options = {
-        timeoutMs: 180000,
-        includeMemfsStartup: false,
-        retryOnTimeouts: 0,
-        retryOnParseErrors: 0,
-        env: createAuthenticatedCliTestEnv({
-          HOME: homeDir,
-          LETTA_SKIP_KEYCHAIN_CHECK: "1",
-          LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
-        }),
-      };
-      let createdConversationId: string | undefined;
-      try {
-        const created = await runCliJson(
-          [
-            "--ephemeral",
-            "-m",
-            "openai/gpt-5.6-luna",
-            "-p",
-            "Remember the codeword PLUM-4471. Reply only OK.",
-            "--tools=",
-            "--output-format",
-            "json",
-          ],
-          options,
-        );
-        expect(created.exitCode).toBe(0);
-        expect(created.output.agent_id).toBeNull();
-        const conversationId = String(created.output.conversation_id);
-        expect(conversationId).toStartWith("conv-");
-        createdConversationId = conversationId;
-        const resumed = await runCliJson(
-          [
-            "--conversation",
-            conversationId,
-            "-p",
-            "What codeword did I ask you to remember? Reply only the codeword.",
-            "--tools=",
-            "--output-format",
-            "json",
-          ],
-          {
-            ...options,
-            env: {
-              ...options.env,
-              LETTA_CODE_AGENT_ROLE: "subagent",
-              LETTA_SUBAGENT_LAUNCH: "1",
-            },
-          },
-        );
-        expect(resumed.exitCode).toBe(0);
-        expect(resumed.output.agent_id).toBeNull();
-        expect(resumed.output.conversation_id).toBe(conversationId);
-        expect(String(resumed.output.result)).toContain("PLUM-4471");
-      } finally {
-        if (createdConversationId)
-          await apiRequest(
-            "DELETE",
-            `/v1/conversations/${createdConversationId}`,
-          );
-        await rm(homeDir, { recursive: true, force: true });
-      }
-    },
-    { timeout: 370000 },
-  );
-
-  test(
-    "--conversation resumes a worker through an inherited listener",
-    async () => {
+  test.each(["standalone", "listener"])(
+    "--conversation resumes the same worker history: %s",
+    async (mode) => {
       await settingsManager.initialize();
       const homeDir = await mkdtemp(join(tmpdir(), "letta-listener-resume-"));
       const name = `resume-test-${crypto.randomUUID()}`;
@@ -407,145 +334,149 @@ describe("Startup Flow - Integration", () => {
         LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: undefined,
         LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
       });
-      const listener = spawn(
-        cliCommand,
-        [
-          ...cliArgs,
-          "server",
-          "--computer-name",
-          name,
-          "--lifecycle-output",
-          "jsonl",
-        ],
-        { env },
-      );
+      const listener =
+        mode === "listener"
+          ? spawn(
+              cliCommand,
+              [
+                ...cliArgs,
+                "server",
+                "--computer-name",
+                name,
+                "--lifecycle-output",
+                "jsonl",
+              ],
+              { env },
+            )
+          : undefined;
       let listenerOutput = "";
-      listener.stderr.on("data", (chunk) => {
+      listener?.stderr.on("data", (chunk) => {
         listenerOutput += chunk;
       });
       let parentId: string | undefined;
       let conversationId: string | undefined;
       try {
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(
-            () =>
-              reject(
-                new Error(`Listener startup timed out: ${listenerOutput}`),
-              ),
-            60000,
-          );
-          listener.once("error", (error) => {
-            clearTimeout(timer);
-            reject(error);
-          });
-          listener.once("exit", (code) => {
-            clearTimeout(timer);
-            reject(new Error(`Listener exited ${code}: ${listenerOutput}`));
-          });
-          listener.stdout.on("data", (chunk) => {
-            listenerOutput += chunk;
-            if (listenerOutput.includes('"state":"connected"')) {
+        let connectionId: string | undefined;
+        if (listener) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(
+              () =>
+                reject(
+                  new Error(`Listener startup timed out: ${listenerOutput}`),
+                ),
+              60000,
+            );
+            listener.once("error", (error) => {
               clearTimeout(timer);
-              resolve();
-            }
+              reject(error);
+            });
+            listener.once("exit", (code) => {
+              clearTimeout(timer);
+              reject(new Error(`Listener exited ${code}: ${listenerOutput}`));
+            });
+            listener.stdout.on("data", (chunk) => {
+              listenerOutput += chunk;
+              if (listenerOutput.includes('"state":"connected"')) {
+                clearTimeout(timer);
+                resolve();
+              }
+            });
           });
-        });
-        const { connectionId } = await resolveEnvironmentConnectionId(name);
-        const parent = await apiRequest<{ id: string }>("POST", "/v1/agents/", {
-          name,
-          model: "openai/gpt-5.6-luna",
-          system: "Test resource parent.",
-          memory_blocks: [],
-          include_base_tools: false,
-          hidden: true,
-        });
-        parentId = parent.id;
+          ({ connectionId } = await resolveEnvironmentConnectionId(name));
+          const parent = await apiRequest<{ id: string }>(
+            "POST",
+            "/v1/agents/",
+            {
+              name,
+              model: "openai/gpt-5.6-luna",
+              system: "Test parent agent.",
+              memory_blocks: [],
+              include_base_tools: false,
+              hidden: true,
+            },
+          );
+          parentId = parent.id;
+        }
         const conversation = await createEphemeralConversation({
           model: "openai/gpt-5.6-luna",
-          system: "Follow the user instructions.",
-          parent_agent_id: parentId,
+          system: "Always prefix your reply with WORKER-PROMPT.",
+          ...(parentId ? { parent_agent_id: parentId } : {}),
           is_subagent: true,
           name,
         });
         conversationId = conversation.id;
-        const options = {
-          timeoutMs: 180000,
-          includeMemfsStartup: false,
-          retryOnTimeouts: 0,
-          retryOnParseErrors: 0,
-          env: {
-            ...env,
-            LETTA_CODE_AGENT_ROLE: "subagent",
-            LETTA_SUBAGENT_LAUNCH: "1",
-          },
-        };
-        const first = await runCliJson(
-          [
-            "--conversation",
-            conversationId,
-            "-p",
-            "Remember the codeword MINT-8932. Reply only OK.",
-            "--tools=",
-            "--output-format",
-            "json",
-          ],
-          options,
+        const runTurn = (prompt: string, connection?: string) =>
+          runCliJson(
+            [
+              "--conversation",
+              conversation.id,
+              "-p",
+              prompt,
+              "--tools=",
+              "--output-format",
+              "json",
+            ],
+            {
+              timeoutMs: 180000,
+              includeMemfsStartup: false,
+              retryOnTimeouts: 0,
+              retryOnParseErrors: 0,
+              env: {
+                ...env,
+                LETTA_CODE_AGENT_ROLE: "subagent",
+                LETTA_SUBAGENT_LAUNCH: "1",
+                LETTA_RUNTIME_LISTENER_CONNECTION_ID: connection,
+              },
+            },
+          );
+        const first = await runTurn(
+          "Remember the codeword MINT-8932. Reply only OK.",
         );
         expect(first.exitCode).toBe(0);
-        const resumed = await runCliJson(
-          [
-            "--conversation",
-            conversationId,
-            "-p",
-            "What codeword did I ask you to remember? Reply only the codeword.",
-            "--tools=",
-            "--output-format",
-            "json",
-          ],
-          {
-            ...options,
-            env: {
-              ...options.env,
-              LETTA_RUNTIME_LISTENER_CONNECTION_ID: connectionId,
-            },
-          },
+        const resumed = await runTurn(
+          "What codeword did I ask you to remember? Reply only the codeword.",
+          connectionId,
         );
         expect(resumed.exitCode).toBe(0);
         expect(resumed.output).toMatchObject({
-          status: "queued",
           agent_id: null,
-          resource_agent_id: parentId,
           conversation_id: conversationId,
-          connection_id: connectionId,
         });
         const client = await getClient();
-        const reply = await waitForAcceptedSuperRun(
-          resumed.output as unknown as EnqueueReceipt,
-          AbortSignal.timeout(180000),
-          {
-            exact: getExactSuperRun,
-            run: (id, signal) => client.runs.retrieve(id, { signal }),
-            messages: listEnqueuedRunMessages,
-          },
-        ).catch(async (error) => {
-          const messages = await client.conversations.messages.list(
-            conversation.id,
-            { limit: 10, order: "desc" },
-          );
-          throw new Error(
-            `${String(error)}\n${JSON.stringify({ receipt: resumed.output, messages: messages.getPaginatedItems().map((message) => ({ type: message.message_type, run_id: message.run_id, content: "content" in message ? message.content : undefined })) })}`,
-          );
-        });
-        expect(reply.text).toContain("MINT-8932");
         expect(
           await client.conversations.retrieve(conversationId),
         ).toMatchObject({
           agent_id: null,
-          parent_agent_id: parentId,
+          parent_agent_id: parentId ?? null,
         });
+        let reply = resumed.output.result;
+        if (connectionId) {
+          expect(resumed.output).toMatchObject({
+            status: "queued",
+            parent_agent_id: parentId,
+            connection_id: connectionId,
+          });
+          reply = (
+            await waitForAcceptedSuperRun(
+              resumed.output as unknown as EnqueueReceipt,
+              AbortSignal.timeout(180000),
+              {
+                exact: getExactSuperRun,
+                run: (id, signal) => client.runs.retrieve(id, { signal }),
+                messages: listEnqueuedRunMessages,
+              },
+            )
+          ).text;
+        }
+        expect(String(reply)).toContain("MINT-8932");
+        expect(String(reply)).toStartWith("WORKER-PROMPT");
       } finally {
-        listener.kill();
-        if (listener.exitCode === null && listener.signalCode === null) {
+        listener?.kill();
+        if (
+          listener &&
+          listener.exitCode === null &&
+          listener.signalCode === null
+        ) {
           await new Promise<void>((resolve) =>
             listener.once("exit", () => resolve()),
           );

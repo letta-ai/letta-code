@@ -817,7 +817,7 @@ export async function handleHeadlessCommand(
   const forceNew = values["new-agent"];
   const ephemeralFlag = values.ephemeral;
   let isDetached = Boolean(ephemeralFlag);
-  let resourceAgentId: string | null = null;
+  let parentAgentId: string | null = null;
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
@@ -1076,7 +1076,7 @@ export async function handleHeadlessCommand(
       ({
         agent,
         detached: isDetached,
-        resourceAgentId,
+        parentAgentId,
       } = await retrieveHeadlessConversation(
         startupBackend,
         specifiedConversationId,
@@ -1938,8 +1938,8 @@ export async function handleHeadlessCommand(
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
 
   if (usesRemoteEnvironment) {
-    const resourceId = resourceAgentId ?? publicAgentId;
-    if (!resourceId)
+    const agentId = publicAgentId ?? parentAgentId;
+    if (!agentId)
       throw new Error(
         "Listener delivery requires a conversation with an agent or parent agent.",
       );
@@ -1947,7 +1947,7 @@ export async function handleHeadlessCommand(
     const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
     const environmentRouting = environmentSelector
       ? useCloudSandbox
-        ? await resolveAgentSandboxConnectionId(resourceId, { conversationId })
+        ? await resolveAgentSandboxConnectionId(agentId, { conversationId })
         : await resolveEnvironmentConnectionId(environmentSelector)
       : null;
     const connectionId =
@@ -1966,7 +1966,7 @@ export async function handleHeadlessCommand(
       noWait: isAgentLaunch || Boolean(values["no-wait"]),
       clientMessageId: values["client-message-id"],
       connectionId,
-      resourceAgentId: resourceId,
+      parentAgentId: parentAgentId ?? undefined,
       scope: {
         agent_id: publicAgentId,
         conversation_id: conversationId,

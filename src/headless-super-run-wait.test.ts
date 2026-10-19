@@ -69,34 +69,32 @@ function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
 
 test.each([
   receipt,
-  { ...receipt, agent_id: null, resource_agent_id: "agent-1" },
-])(
-  "requires the exact accepted Super Run and its newest child run: %j",
-  async (accepted) => {
-    const reads: string[] = [];
-    const result = await waitForAcceptedSuperRun(
-      accepted,
-      new AbortController().signal,
-      deps({
-        exact: async (agentId, superRunId) => {
-          reads.push(`${agentId}:${superRunId}`);
-          return { ...exact(), run_ids: ["run-2", "run-1"] };
-        },
-        run: async (runId) => {
-          reads.push(runId);
-          return { ...run(), id: runId } as Run;
-        },
-        messages: async (runId) => {
-          reads.push(`messages:${runId}`);
-          return [];
-        },
-      }),
-    );
-    expect(reads).toEqual(["agent-1:sr-1", "run-2", "messages:run-2"]);
-    expect(result.runIds).toEqual(["run-2", "run-1"]);
-    expect(result.stopReason).toBe("end_turn");
-  },
-);
+  { ...receipt, agent_id: null, parent_agent_id: "agent-1" },
+  { ...receipt, parent_agent_id: "agent-parent" },
+])("reads the exact send and newest child: %j", async (receipt) => {
+  const reads: string[] = [];
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async (agentId, superRunId) => {
+        reads.push(`${agentId}:${superRunId}`);
+        return { ...exact(), run_ids: ["run-2", "run-1"] };
+      },
+      run: async (runId) => {
+        reads.push(runId);
+        return { ...run(), id: runId } as Run;
+      },
+      messages: async (runId) => {
+        reads.push(`messages:${runId}`);
+        return [];
+      },
+    }),
+  );
+  expect(reads).toEqual(["agent-1:sr-1", "run-2", "messages:run-2"]);
+  expect(result.runIds).toEqual(["run-2", "run-1"]);
+  expect(result.stopReason).toBe("end_turn");
+});
 
 test("a successful child run does not require an assistant message", async () => {
   const result = await waitForAcceptedSuperRun(

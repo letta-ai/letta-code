@@ -66,29 +66,25 @@ export function clearHeadlessClientToolRules(agent: AgentState): void {
     });
 }
 
-/** Keep history ownership separate from the parent used for Cloud resources. */
+/** Return the existing parent without treating it as the history owner. */
 export async function retrieveHeadlessConversation(
   backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
   conversationId: string,
 ): Promise<{
   agent: AgentState;
   detached: boolean;
-  resourceAgentId: string | null;
+  parentAgentId: string | null;
 }> {
   const conversation = await backend.retrieveConversation(conversationId);
-  if (conversation.agent_id === null) {
-    const parentId = Reflect.get(conversation, "parent_agent_id");
-    return {
-      agent: projectConversationState(conversation),
-      detached: true,
-      resourceAgentId: typeof parentId === "string" ? parentId : null,
-    };
-  }
+  const detached = conversation.agent_id === null;
+  const parentId = Reflect.get(conversation, "parent_agent_id");
   return {
-    agent: await backend.retrieveAgent(conversation.agent_id, {
-      include: ["agent.tools", "agent.tags"],
-    }),
-    detached: false,
-    resourceAgentId: conversation.agent_id,
+    agent: detached
+      ? projectConversationState(conversation)
+      : await backend.retrieveAgent(conversation.agent_id, {
+          include: ["agent.tools", "agent.tags"],
+        }),
+    detached,
+    parentAgentId: detached && typeof parentId === "string" ? parentId : null,
   };
 }

@@ -11,7 +11,7 @@ import {
   dequeueConversationMessage,
   type EnqueueReceipt,
   enqueueConversationMessage,
-  getEnqueueResourceAgentId,
+  getEnqueueAgentId,
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
@@ -61,7 +61,7 @@ async function createListenerClient(
 export async function cancelListenerInput(params: {
   client: AppServerClient;
   scope: ConversationRuntimeScope;
-  resourceAgentId?: string;
+  parentAgentId?: string;
   clientMessageId: string;
   dequeue?: typeof dequeueConversationMessage;
   readState: () => {
@@ -69,12 +69,12 @@ export async function cancelListenerInput(params: {
     cancelled: boolean;
   };
 }): Promise<boolean> {
-  const resourceAgentId = params.resourceAgentId ?? params.scope.agent_id;
-  if (!resourceAgentId)
-    throw new Error("Listener cancellation requires a resource agent.");
+  const agentId = params.scope.agent_id ?? params.parentAgentId;
+  if (!agentId)
+    throw new Error("Listener cancellation requires an agent or parent agent.");
   const removed = await (params.dequeue ?? dequeueConversationMessage)(
     {
-      agentId: resourceAgentId,
+      agentId,
       conversationId: params.scope.conversation_id,
       clientMessageId: params.clientMessageId,
       actingUserId: params.scope.acting_user_id,
@@ -105,7 +105,7 @@ export async function cancelAcceptedListenerInput(
 ): Promise<boolean> {
   const removed = await dequeueConversationMessage(
     {
-      agentId: getEnqueueResourceAgentId(receipt),
+      agentId: getEnqueueAgentId(receipt),
       conversationId: receipt.conversation_id,
       clientMessageId: receipt.client_message_id,
       actingUserId: receipt.acting_user_id,
@@ -134,7 +134,7 @@ export async function cancelAcceptedListenerInput(
     return await cancelListenerInput({
       client,
       scope,
-      resourceAgentId: getEnqueueResourceAgentId(receipt),
+      parentAgentId: receipt.parent_agent_id,
       clientMessageId: receipt.client_message_id,
       dequeue: async () => removed,
       readState: () => ({ loop, cancelled: false }),
@@ -150,7 +150,7 @@ export async function launchListenerConversation(
   params: {
     connectionId: string;
     scope: ConversationRuntimeScope;
-    resourceAgentId?: string;
+    parentAgentId?: string;
     content: MessageCreate["content"];
     /** Initial assignment identity, not a control-command request_id. */
     clientMessageId?: string;
@@ -178,9 +178,9 @@ export async function launchListenerConversation(
     waitDeadline?: AbortSignal;
   } = {},
 ): Promise<ListenerLaunchResult> {
-  const resourceAgentId = params.resourceAgentId ?? params.scope.agent_id;
-  if (!resourceAgentId)
-    throw new Error("Listener delivery requires a resource agent.");
+  const agentId = params.scope.agent_id ?? params.parentAgentId;
+  if (!agentId)
+    throw new Error("Listener delivery requires an agent or parent agent.");
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
@@ -293,7 +293,7 @@ export async function launchListenerConversation(
     if (interrupted) throw new Error("Launch cancelled before input was sent");
     const accepted = await (deps.enqueue ?? enqueueConversationMessage)(
       {
-        agentId: resourceAgentId,
+        agentId,
         conversationId: params.scope.conversation_id,
         clientMessageId,
         content: params.content,
@@ -312,7 +312,7 @@ export async function launchListenerConversation(
           connection_id: params.connectionId,
           agent_id: params.scope.agent_id,
           ...(params.scope.agent_id === null
-            ? { resource_agent_id: resourceAgentId }
+            ? { parent_agent_id: agentId }
             : {}),
         },
       };
@@ -329,7 +329,7 @@ export async function launchListenerConversation(
           await cancelListenerInput({
             client,
             scope: params.scope,
-            resourceAgentId,
+            parentAgentId: params.parentAgentId,
             clientMessageId,
             dequeue: deps.dequeue,
             readState: () => ({ loop, cancelled }),

@@ -7,7 +7,7 @@ import type {
 import {
   type EnqueueReceipt,
   type ExactSuperRun,
-  getEnqueueResourceAgentId,
+  getEnqueueAgentId,
 } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import type { EnqueuedReply } from "@/headless-enqueue-wait";
@@ -94,7 +94,7 @@ function assistantText(messages: Message[]): string | null {
 }
 
 function noReplyMessage(receipt: EnqueueReceipt): string {
-  return `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${getEnqueueResourceAgentId(receipt)} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
+  return `Remote task finished. Its reply was not collected. Read the conversation with: letta messages list --agent ${getEnqueueAgentId(receipt)} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
 }
 
 /** Follow the exact accepted send. Reads may retry; the task is never resubmitted. */
@@ -114,7 +114,7 @@ export async function waitForAcceptedSuperRun(
     const exact = await retryRead(
       () =>
         deps.exact(
-          getEnqueueResourceAgentId(receipt),
+          getEnqueueAgentId(receipt),
           receipt.super_run_id,
           AbortSignal.any([signal, AbortSignal.timeout(30_000)]),
         ),
