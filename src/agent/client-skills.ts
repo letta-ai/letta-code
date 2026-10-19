@@ -682,8 +682,9 @@ export async function buildClientSkillsPayload(
       path: skill.path,
       source: skill.source,
     })),
+    // Explicit preloads (subagent `skills:`) may name skills hidden from model invocation.
     skillPathById: Object.fromEntries(
-      sortedSkills
+      discovery.skills
         .filter(
           (skill) => typeof skill.path === "string" && skill.path.length > 0,
         )

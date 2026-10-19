@@ -169,10 +169,20 @@ Custom prompt body`,
       }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
-      // shared v2 layout markers
-      expect(resolved.systemPrompt).toContain("MEMORY.md");
-      expect(resolved.systemPrompt).toContain("no frontmatter");
-      expect(resolved.systemPrompt).toContain("`name` and `description`");
+      if (name === "init") {
+        // shared v2 layout markers
+        expect(resolved.systemPrompt).toContain("MEMORY.md");
+        expect(resolved.systemPrompt).toContain("no frontmatter");
+        expect(resolved.systemPrompt).toContain("`name` and `description`");
+      } else {
+        // writers get the v2 layout from the preloaded memory skills
+        expect(config.skills).toEqual(["creating-skills"]);
+        expect(resolved.skills).toEqual([
+          "creating-skills",
+          "maintaining-core-memory",
+          "maintaining-deferred-memory",
+        ]);
+      }
 
       const localResolved = resolveSubagentConfigForMemoryFormat(
         config,
@@ -184,12 +194,16 @@ Custom prompt body`,
 
     // per-prompt operational phrases proving copied v1 guidance remains
     const opsPhrases: Record<string, string[]> = {
-      reflection: ["Phase 1 — Investigate", "Phase 5 — Commit", "`create`"],
+      reflection: [
+        "## Commit",
+        "Edit does not expand environment variables",
+        "at most one skill change",
+      ],
       init: [
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      memory: ["## Updating memory", "## Git"],
+      memory: ["## Git", "(memory): <summary>"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];

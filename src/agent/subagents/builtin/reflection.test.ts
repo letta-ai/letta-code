@@ -8,6 +8,8 @@ import {
 } from "@/agent/subagents";
 import { buildSubagentArgs } from "@/agent/subagents/manager";
 import creatingSkills from "@/skills/builtin/creating-skills/SKILL.md";
+import maintainingCoreMemory from "@/skills/builtin/maintaining-core-memory/SKILL.md";
+import maintainingDeferredMemory from "@/skills/builtin/maintaining-deferred-memory/SKILL.md";
 import reflectionPrompt from "./reflection.md";
 
 test.each([
@@ -16,7 +18,7 @@ test.each([
   ["memory", "memfs-v1", "Bash,Read,Edit,Write"],
   ["memory", "memfs-v2", "Bash,Read,Edit,Write"],
 ] as const)(
-  "%s %s launch can load its bundled authoring skill without expanding tools",
+  "%s %s launch loads its bundled memory skills without expanding tools",
   async (type, format, tools) => {
     const configs = await getAllSubagentConfigs(import.meta.dir);
     const builtin = configs[type];
@@ -49,8 +51,11 @@ test.each([
         (args[preloadIndex + 1] ?? "").split(","),
         { skillSources: sources, attachedRepositories: [] },
       );
+      const creating = `<creating-skills>\n${creatingSkills}\n</creating-skills>`;
       expect(loaded).toBe(
-        `<loaded_skills>\n<creating-skills>\n${creatingSkills}\n</creating-skills>\n</loaded_skills>`,
+        format === "memfs-v2"
+          ? `<loaded_skills>\n${creating}\n\n<maintaining-core-memory>\n${maintainingCoreMemory}\n</maintaining-core-memory>\n\n<maintaining-deferred-memory>\n${maintainingDeferredMemory}\n</maintaining-deferred-memory>\n</loaded_skills>`
+          : `<loaded_skills>\n${creating}\n</loaded_skills>`,
       );
       expect(args[args.indexOf("--tools") + 1]).toBe(tools);
     }
