@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -6,6 +14,7 @@ import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { OAuthRefreshError, type TokenResponse } from "@/auth/oauth";
 import { settingsManager } from "@/settings-manager";
+import * as toolManager from "@/tools/manager";
 import type { ControlRequest } from "@/types/protocol_v2";
 import {
   startListenerClient,
@@ -322,33 +331,41 @@ describe("listener auth lifecycle", () => {
     expect(settings.refreshToken).toBe("rotated-refresh-token");
   });
 
-  test("reports the attempt-zero reconnect as soon as a connected socket closes", async () => {
-    const onRetrying = mock(
-      (
-        _attempt: number,
-        _maxAttempts: number,
-        _nextRetryIn: number,
-        _connectionId?: string,
-      ) => {},
-    );
-    await startClient({ onRetrying });
+  test("reconnects after startup without awaiting tool discovery again", async () => {
+    const onRetrying = mock(() => {});
+    const onError = mock(() => {});
+    await startClient({ onRetrying, onError });
     await waitFor(
-      () => connections.length === 1 && isClientInitialized(),
-      "initial socket did not open",
+      () => getActiveRuntime()?.hasSuccessfulConnection === true,
+      "initial startup did not complete",
     );
-
-    connections[0]?.close(1000, "reconnect");
-    await waitFor(
-      () => onRetrying.mock.calls.length > 0,
-      "listener did not report reconnecting",
+    // Tool discovery can block on filesystem/backend I/O. A dropped transport
+    // must reuse the already loaded tools instead of awaiting it a second time.
+    const reload = spyOn(toolManager, "loadTools").mockImplementation(
+      () => new Promise<void>(() => {}),
     );
-
-    expect(onRetrying).toHaveBeenCalledWith(
-      0,
-      expect.any(Number),
-      0,
-      "connection-id",
-    );
+    try {
+      for (let index = 0; index < 2; index += 1) {
+        connections[index]?.terminate();
+        await waitFor(
+          () =>
+            connections.length === index + 2 &&
+            getActiveRuntime()?.hasSuccessfulConnection === true,
+          "listener stalled after the attempt-zero reconnect notification",
+        );
+      }
+      expect(onRetrying).toHaveBeenCalledTimes(2);
+      expect(onRetrying).toHaveBeenLastCalledWith(
+        0,
+        expect.any(Number),
+        0,
+        "connection-id",
+      );
+      expect(reload).not.toHaveBeenCalled();
+      expect(onError).not.toHaveBeenCalled();
+    } finally {
+      reload.mockRestore();
+    }
   });
 
   test("grows reconnect backoff while connected startup never completes", async () => {
@@ -363,8 +380,8 @@ describe("listener auth lifecycle", () => {
     );
     await startClient({
       onRetrying,
-      // Startup reaches an initialized connection, then stalls before the
-      // pong heartbeat starts (as a hung recovery or ready hook would).
+      // Startup reaches an initialized connection with the early heartbeat
+      // running, then stalls in the ready hook without resetting backoff.
       onConnectionReady: () =>
         new Promise<void>((resolve) => releaseStalledStartups.push(resolve)),
     });
