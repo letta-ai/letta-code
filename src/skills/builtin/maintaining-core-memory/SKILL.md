@@ -1,8 +1,6 @@
 ---
 name: maintaining-core-memory
 description: Maintains an agent's core memory, the editable part of its system prompt. Use to modify the agent's core behavior, embed critical knowledge (needed on every turn), or instruct the agent on how to use deferred memory.
-disable-model-invocation: true
-user-invocable: false
 ---
 
 Core memory is the agent's prompt, refined over its lifetime. Treat each change as a revision of that prompt, not an append to a log: the usual edit sharpens, merges, or replaces an existing principle, and a new one earns its place only when no existing one can absorb it.

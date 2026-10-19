@@ -5,6 +5,7 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { getBackend } from "@/backend";
 import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
@@ -515,6 +516,24 @@ export function createSdkSpawner(
         error: `Unknown model "${options.model}". Run \`letta model list\` for valid handles.`,
       };
     }
+    // Same <loaded_skills> block --pre-load-skills puts in a subagent's turn,
+    // resolved from the parent's skill sources.
+    const loadedSkills = options.skills?.length
+      ? await loadPreloadedSkills(options.skills, {
+          agentId: config.parentAgentId,
+          ...(config.cwd ? { workingDirectory: config.cwd } : {}),
+        })
+      : "";
+    const missingSkills = (options.skills ?? []).filter(
+      (id) => !loadedSkills.includes(`<${id}>\n`),
+    );
+    if (missingSkills.length) {
+      return {
+        value: null,
+        failed: true,
+        error: `Unknown skill(s): ${missingSkills.join(", ")}.`,
+      };
+    }
     if (signal.aborted) {
       return {
         value: null,
@@ -535,7 +554,7 @@ export function createSdkSpawner(
     let query: SdkQuery;
     try {
       query = client.query({
-        prompt,
+        prompt: loadedSkills ? `${loadedSkills}\n\n${prompt}` : prompt,
         options: {
           ...buildQueryOptions(options, model, config, request.callIndex),
           ...(resumeId ? { conversationId: resumeId } : {}),
