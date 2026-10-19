@@ -863,6 +863,24 @@ to accept the default message without opening an editor.
 is `summary_search`, NOT `summary`. The API silently ignores unknown query
 params; using `summary` returns ALL conversations for the agent.
 
+### Memory Repository Sync Failure Recovery
+
+MemFS memory repositories are git-backed. When a post-turn sync hits a
+`conflict` or `invalid` state that the background repair worker cannot finish,
+the harness suppresses further automatic retries of that operation, releases
+the checkout, and the reminder tells the primary to leave the repository
+unchanged and report the blocked update. The primary must not perform manual
+git surgery on the memory repository to "fix" it.
+
+Any recovery implementation must keep the active-worker guard and retry
+suppression, and must be explicitly user-authorized and non-destructive:
+acquire the checkout lock and refuse while another memory writer is active;
+validate the hosted revision before changing local state so a network or auth
+failure leaves the checkout untouched; back up local state before ending the
+unfinished Git operation and restoring the checkout to the latest hosted
+memory (never erase hosted memory); then verify a clean checkout and report
+the backup location.
+
 ---
 
 ## Shared Remote Server (lettamate)
