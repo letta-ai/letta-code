@@ -7,7 +7,10 @@ import {
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
-import { stopRemoteExternalCodingAgent } from "./remote-external-coding-agent.js";
+import {
+  REMOTE_EXTERNAL_WORKER_STOPPED,
+  stopRemoteExternalCodingAgent,
+} from "./remote-external-coding-agent.js";
 import { validateRequiredParams } from "./validation.js";
 
 interface TaskStopArgs {
@@ -59,6 +62,7 @@ export async function task_stop(
       );
       const external = parseExternalCodingAgentId(child?.agentId ?? undefined);
       let remote: TaskStopResult | undefined;
+      let remoteExternalStopped = false;
       if (external?.computer) {
         try {
           if (!task.runtimeScope)
@@ -79,6 +83,7 @@ export async function task_stop(
               ? "Stopped the remote external subagent"
               : "The remote external subagent was not running",
           };
+          remoteExternalStopped = result.stopped;
         } catch (error) {
           remote = {
             killed: false,
@@ -89,7 +94,9 @@ export async function task_stop(
         remote = await cancelRemoteRun(task.subagentId);
       }
       if (remote && !remote.killed) return remote;
-      task.abortController.abort();
+      task.abortController.abort(
+        remoteExternalStopped ? REMOTE_EXTERNAL_WORKER_STOPPED : undefined,
+      );
       task.error = "Aborted by user";
       await task.completion;
       task.status = "failed";
