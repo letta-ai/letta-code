@@ -712,13 +712,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           lastSentInputRef.current = originalInput;
         }
 
-        // Clear any stale pending tool calls from previous turns
-        // If we're sending a new message, old pending state is no longer relevant
-        // Pass false to avoid setting interrupted=true, which causes race conditions
-        // with concurrent processConversation calls reading the flag
-        // IMPORTANT: Skip this when allowReentry=true (continuing after tool execution)
-        // because server-side tools (like memory) may still be pending and their results
-        // will arrive in this stream. Cancelling them prematurely shows "Cancelled" in UI.
+        // Clear stale pending tool calls from previous turns; pass false to avoid
+        // setting interrupted=true (races with concurrent processConversation).
+        // Skip when allowReentry=true: server-side tools may still be pending and
+        // their results arrive in this stream; premature cancel shows "Cancelled".
         if (!allowReentry) {
           markIncompleteToolsAsCancelled(
             buffersRef.current,
@@ -1286,10 +1283,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           );
           const handleFirstMessage = () => {
             setNetworkPhase("download");
-            // Only sync agent state on user messages or when manual approval
-            // mode is active (user may have changed model while reviewing).
-            // In bypass mode, tool-result continuations happen instantly —
-            // no time for the agent to have changed.
+            // Sync agent state only on user messages or manual approval mode;
+            // in bypass mode continuations are instant — no time for model changes.
             if (isUserInitiated || !isAutoApprovalMode) {
               void syncAgentState();
             }
@@ -2137,7 +2132,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
             } finally {
-              if (shouldTrackAutoAllowed) {
+              // Skip cleanup when a newer batch took over the refs while
+              // this await unwound (orphaned-batch guard, use-approval-flow).
+              if (
+                shouldTrackAutoAllowed &&
+                toolAbortControllerRef.current === autoAllowedAbortController
+              ) {
                 setIsExecutingTool(false);
                 toolAbortControllerRef.current = null;
                 executingToolCallIdsRef.current = [];

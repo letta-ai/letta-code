@@ -354,6 +354,7 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         | { type: "approve"; approval: ApprovalRequest }
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
+      const approvalAbortController = new AbortController();
       try {
         // Don't send results if user has already cancelled
         if (
@@ -389,7 +390,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         // Ensure interrupted flag is cleared for this execution
         buffersRef.current.interrupted = false;
 
-        const approvalAbortController = new AbortController();
         toolAbortControllerRef.current = approvalAbortController;
 
         // Combine all decisions using snapshots
@@ -563,9 +563,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           if (queuedTurn.hasQueuedMessage || hadNotifications) {
             refreshDerived();
           }
-          // Flush finished items synchronously before reentry. This avoids a
-          // race where deferred non-Task commits delay Task grouping while the
-          // reentry path continues.
+          // Flush finished items synchronously before reentry so deferred
+          // non-Task commits cannot delay Task grouping mid-reentry.
           flushEligibleLinesBeforeReentry(
             commitEligibleLines,
             buffersRef.current,
@@ -574,10 +573,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           await processConversation(queuedTurn.input, queuedTurn.options);
           toolResultsInFlightRef.current = false;
 
-          // Clear any stale queued results from previous interrupts.
-          // This approval flow supersedes any previously queued results - if we don't
-          // clear them here, they persist with matching generation and get sent on the
-          // next onSubmit, causing "Invalid tool call IDs" errors.
+          // Clear stale queued results from previous interrupts; otherwise they
+          // get sent on the next onSubmit, causing "Invalid tool call IDs" errors.
           queueApprovalResults(null);
         }
       } catch (error) {
@@ -596,13 +593,16 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         syncTrajectoryElapsedBase();
         refreshDerived();
       } finally {
-        // Always release the execution guard, even if an error occurred
-        clearApprovalToolContext();
-        setIsExecutingTool(false);
-        toolAbortControllerRef.current = null;
-        executingToolCallIdsRef.current = [];
-        interruptQueuedRef.current = false;
-        toolResultsInFlightRef.current = false;
+        // Release the guard only if no newer batch took over the refs
+        // while this await unwound (orphaned force-settle batch guard).
+        if (toolAbortControllerRef.current === approvalAbortController) {
+          clearApprovalToolContext();
+          setIsExecutingTool(false);
+          toolAbortControllerRef.current = null;
+          executingToolCallIdsRef.current = [];
+          interruptQueuedRef.current = false;
+          toolResultsInFlightRef.current = false;
+        }
       }
     },
     [

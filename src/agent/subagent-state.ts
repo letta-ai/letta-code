@@ -514,6 +514,22 @@ export function hasActiveSubagents(): boolean {
   return false;
 }
 
+const subagentAbortHooks = new Map<string, () => void>();
+
+/**
+ * Register a callback that aborts a still-running background subagent task.
+ * Task spawn sites register the task's AbortController trigger so a user
+ * interrupt stops the subagent process, not just its UI status.
+ */
+export function registerSubagentAbortHook(id: string, hook: () => void): void {
+  subagentAbortHooks.set(id, hook);
+}
+
+/** Remove a subagent's abort hook once its task has settled. */
+export function clearSubagentAbortHook(id: string): void {
+  subagentAbortHooks.delete(id);
+}
+
 /**
  * Mark all running/pending subagents as interrupted
  * Called when user presses ESC to interrupt execution
@@ -522,6 +538,8 @@ export function interruptActiveSubagents(errorMessage: string): void {
   let anyInterrupted = false;
   for (const [id, agent] of store.agents.entries()) {
     if (agent.status === "pending" || agent.status === "running") {
+      subagentAbortHooks.get(id)?.();
+      subagentAbortHooks.delete(id);
       const updatedAgent: SubagentState = {
         ...agent,
         status: "error",

@@ -367,8 +367,77 @@ export async function executeApprovalBatch(
 export async function settleApprovalExecutionTasks(
   tasks: readonly Promise<void>[],
   partialResults: () => ApprovalResult[] = () => [],
+  options?: { abortSignal?: AbortSignal },
 ): Promise<void> {
-  const settled = await Promise.allSettled(tasks);
+  const signal = options?.abortSignal;
+  if (!signal || signal.aborted) {
+    // No signal, or one aborted before the batch started: every executor
+    // returns its interrupted result without running tools (freeze
+    // semantics), so settle normally instead of racing the signal.
+    throwFirstSettledRejection(await Promise.allSettled(tasks), partialResults);
+    return;
+  }
+
+  // Record each task's settlement as it happens so an abort can unwind the
+  // batch without waiting for a tool that ignores the abort signal. Without
+  // this race, cancelling a turn waits for the slowest signal-ignoring tool
+  // to finish ("abort waits for the tool" bug).
+  const settled: PromiseSettledResult<void>[] = new Array(tasks.length);
+  let remaining = tasks.length;
+  const tracked = tasks.map((task, index) =>
+    task
+      .then(
+        () => {
+          settled[index] = { status: "fulfilled", value: undefined };
+        },
+        (reason) => {
+          settled[index] = { status: "rejected", reason };
+        },
+      )
+      .finally(() => {
+        remaining -= 1;
+      }),
+  );
+
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = resolve;
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([Promise.all(tracked).then(() => undefined), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+
+  if (remaining === 0) {
+    throwFirstSettledRejection(settled, partialResults);
+    return;
+  }
+
+  // Aborted while tools are still in flight. Prefer an actual rejection
+  // (a tool that honored the signal) over a synthesized abort error so
+  // callers observe the same error shape as a signal-honoring cancel.
+  throwFirstSettledRejection(
+    settled.filter((result) => result !== undefined),
+    partialResults,
+  );
+  // Every settled task fulfilled, but at least one tool is still running
+  // and ignoring the abort signal. Throw the abort now so the turn unwinds;
+  // the straggler keeps running detached and its late result is discarded
+  // (or CAS-upgraded by the listener's effect boundary if it settles later).
+  const error =
+    signal.reason instanceof Error
+      ? signal.reason
+      : new Error(INTERRUPTED_BY_USER);
+  Object.assign(error, { partialResults: partialResults() });
+  throw error;
+}
+
+function throwFirstSettledRejection(
+  settled: PromiseSettledResult<void>[],
+  partialResults: () => ApprovalResult[],
+): void {
   for (const result of settled) {
     if (result.status !== "rejected") continue;
     const error =
@@ -487,6 +556,7 @@ async function executeApprovalBatchUnwatched(
       }),
     ],
     () => results.filter((result): result is ApprovalResult => result !== null),
+    { abortSignal: options?.abortSignal },
   );
 
   // Filter out nulls (shouldn't happen, but TypeScript needs this)

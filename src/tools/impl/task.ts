@@ -9,11 +9,13 @@ import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   addToolCall,
+  clearSubagentAbortHook,
   completeSubagent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
   registerSubagent,
+  registerSubagentAbortHook,
   updateSubagent,
 } from "@/agent/subagent-state.js";
 import {
@@ -314,6 +316,10 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
+  // A user interrupt must stop the running subagent process, not just its UI
+  // status: register the task's abort trigger so interruptActiveSubagents
+  // can reach it (background tasks are fire-and-forget from the turn's view).
+  registerSubagentAbortHook(subagentId, () => abortController.abort());
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
   // Intentionally fire-and-forget: background tasks own their lifecycle and
@@ -412,6 +418,7 @@ export function spawnBackgroundSubagentTask(
       );
       writeTaskTranscriptResult(outputFile, result, header, !!memoryTask);
       scheduleBackgroundTaskCleanup(taskId);
+      clearSubagentAbortHook(subagentId);
 
       completeSubagentFn(subagentId, {
         success: result.success,
@@ -516,6 +523,7 @@ export function spawnBackgroundSubagentTask(
         `[error] ${errorMessage}\n\n[Task failed]\n`,
       );
       scheduleBackgroundTaskCleanup(taskId);
+      clearSubagentAbortHook(subagentId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
