@@ -68,7 +68,7 @@ describe("headless approval recovery wiring", () => {
   test("resume approval recovery queues stale denials instead of replaying tools", () => {
     const start = source.indexOf("let queuedRecoveredApprovalResults");
     const end = source.indexOf(
-      "// Clear any pending approvals before starting a new turn",
+      'await resolveAllPendingApprovals("queue_for_next_turn")',
       start,
     );
 

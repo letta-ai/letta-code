@@ -128,16 +128,28 @@ describe("pre-stream recovery lease boundaries", () => {
   test.each([
     {
       name: "attributed",
+      agentId: "agent-1",
       queuedUser: "cloud-user-charles",
       expectedActor: "cloud-user-charles",
     },
-    { name: "unattributed", queuedUser: undefined, expectedActor: null },
+    {
+      name: "unattributed",
+      agentId: "agent-1",
+      queuedUser: undefined,
+      expectedActor: null,
+    },
+    {
+      name: "conversation-owned",
+      agentId: null,
+      queuedUser: undefined,
+      expectedActor: null,
+    },
   ])(
     "an $name queued user's identity survives pre-stream approval recovery",
-    async ({ queuedUser, expectedActor }) => {
+    async ({ queuedUser, expectedActor, agentId }) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
-        "agent-1",
+        agentId,
         "conv-1",
       );
       const turnLease = runtime.turnLifecycle.begin({
@@ -149,7 +161,7 @@ describe("pre-stream recovery lease boundaries", () => {
         runtime,
         {
           type: "message",
-          agentId: "agent-1",
+          agentId,
           conversationId: "conv-1",
           messages: [
             {
@@ -175,6 +187,12 @@ describe("pre-stream recovery lease boundaries", () => {
         turnLease,
         {
           retrieveAgent: async () => ({ id: "agent-1" }) as never,
+          retrieveConversation: async () =>
+            ({
+              id: "conv-1",
+              agent_id: null,
+              model: "openai/gpt-5.6-luna",
+            }) as never,
           getResumeData: async () => ({
             pendingApproval: approval,
             pendingApprovals: [approval],
