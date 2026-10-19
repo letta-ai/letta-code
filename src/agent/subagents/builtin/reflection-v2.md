@@ -22,7 +22,7 @@ The payload is at `$TRANSCRIPT_PATH`. It may be either:
 
 When reviewing multiple transcripts, prefer patterns supported across sessions, resolve contradictions in favor of the latest evidence, and avoid recording one-off task state.
 
-Read transcripts in bounded chunks: check the size with `wc -c` first, read files up to 15000 bytes in full, and use `head`, `tail`, `grep`, or `sed -n` on larger ones.
+Read transcripts in bounded chunks: check the size first, read files up to 15000 bytes in full, and use targeted reads on larger ones (`head`, `tail`, `grep`, `sed -n` on Unix; `Get-Content`, `Select-String` in PowerShell, which the Bash tool runs on Windows).
 
 ## Trajectory review
 
@@ -40,7 +40,7 @@ Skip anything ephemeral (one-off task state, line numbers, exact errors, tempora
 
 Write each change the way the preloaded skills describe. Before editing, read the relevant existing files so you integrate rather than duplicate. For skills, prefer updating or extending an existing skill over creating one, make at most one skill change per run, and when unsure whether a procedure deserves a skill, make none.
 
-Use Edit for files that already exist and a quoted heredoc to create new ones. Edit does not expand environment variables: resolve absolute paths first, for example `printf "%s/persona.md\n" "$MEMORY_DIR"`, and pass the printed path. Keep all writes inside `$MEMORY_DIR`.
+Use Edit for files that already exist. Create new files with a quoted heredoc on Unix, or on Windows a single-quoted here-string piped to `Set-Content -Encoding utf8`; memory files must stay UTF-8. Edit does not expand environment variables: resolve absolute paths first (`printf "%s/persona.md\n" "$MEMORY_DIR"`, or `Join-Path $env:MEMORY_DIR "persona.md"` in PowerShell) and pass the printed path. Keep all writes inside `$MEMORY_DIR`.
 
 ## Commit
 
