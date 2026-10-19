@@ -38,6 +38,9 @@ function makeRepositoryFixture(shallow = false): {
   writeFileSync(join(seed, "MEMORY.md"), "# Shared memory\n", "utf8");
   git(seed, ["add", "MEMORY.md"]);
   git(seed, ["commit", "-m", "initialize shared memory"]);
+  if (shallow) {
+    commitFile(seed, "existing.md", "history before the shallow boundary\n");
+  }
   git(seed, ["remote", "add", "origin", remote]);
   git(seed, ["push", "-u", "origin", "main"]);
   git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
@@ -114,17 +117,23 @@ describe("syncPendingAttachedRepositoryCommits", () => {
     expect(git(fixture.remote, ["rev-parse", "main"])).toBe(localSha);
   });
 
-  test("refreshes an up-to-date shallow mount without downloading full history", () => {
+  test("fast-forwards a shallow mount after the remote advances by two commits", () => {
     const fixture = makeRepositoryFixture(true);
-    const remoteTip = git(fixture.remote, ["rev-parse", "main"]);
+    commitFile(fixture.peer, "first.md", "first remote update\n");
+    const remoteTip = commitFile(
+      fixture.peer,
+      "second.md",
+      "second remote update\n",
+    );
+    git(fixture.peer, ["push", "origin", "main"]);
 
-    git(fixture.mount, ["pull", "--ff-only", "--depth", "1"]);
+    git(fixture.mount, ["pull", "--ff-only"]);
 
     expect(git(fixture.mount, ["rev-parse", "HEAD"])).toBe(remoteTip);
     expect(git(fixture.mount, ["rev-parse", "--is-shallow-repository"])).toBe(
       "true",
     );
-    expect(git(fixture.mount, ["rev-list", "--count", "HEAD"])).toBe("1");
+    expect(git(fixture.mount, ["rev-list", "--count", "HEAD"])).toBe("3");
   });
 
   test("pushes a fast-forward commit from a shallow read-write mount", async () => {

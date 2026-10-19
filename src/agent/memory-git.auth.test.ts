@@ -872,7 +872,7 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
 });
 
 describe("attached repository mount depth", () => {
-  test("limits fresh clones and fast-forward refreshes to depth one", () => {
+  test("uses shallow clones and normal fast-forward refreshes", () => {
     const source = readFileSync(
       new URL("./memory-git.ts", import.meta.url),
       "utf8",
@@ -884,6 +884,6 @@ describe("attached repository mount depth", () => {
     expect(mountSync).toContain(
       '["clone", "--depth", "1", args.remoteUrl, "."]',
     );
-    expect(mountSync).toContain('["pull", "--ff-only", "--depth", "1"]');
+    expect(mountSync).toContain('["pull", "--ff-only"]');
   });
 });
