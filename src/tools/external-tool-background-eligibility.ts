@@ -41,11 +41,13 @@ export function listenerExternalToolBackgroundOptions(
     actingUserId?: string;
     suppressActingUserFallback?: boolean;
   },
+  signal?: AbortSignal,
 ): {
   runtimeScope: typeof runtimeScope;
   canBackground: () => boolean;
   yieldMs?: number;
   shouldEnqueue?: () => Promise<boolean>;
+  signal?: AbortSignal;
 } {
   const registration = tool ? listenerRegistrations.get(tool) : undefined;
   const notificationGuard = registration?.createNotificationGuard();
@@ -60,5 +62,6 @@ export function listenerExternalToolBackgroundOptions(
       ? { shouldEnqueue: notificationGuard.waitUntilCurrent }
       : {}),
     runtimeScope,
+    ...(signal ? { signal } : {}),
   };
 }
