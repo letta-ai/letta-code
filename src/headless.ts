@@ -1549,7 +1549,6 @@ export async function handleHeadlessCommand(
     conversationOpenReason = "new";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
-
   setConversationId(conversationId);
   await tagSubagentConversation(backend, conversationId, isAgentLaunch);
 
