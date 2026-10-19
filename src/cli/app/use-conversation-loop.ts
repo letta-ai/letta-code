@@ -2794,6 +2794,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           e instanceof Error ? (e.stack ?? e.message) : String(e),
         );
 
+        // Turn-ownership guard (same witness as finishTuiTurn): a
+        // replacement turn overwrites abortControllerRef with its own
+        // controller, so a mismatch means this turn was superseded — its
+        // late rejection must not cancel the replacement's tool lines,
+        // overlay stale partials into its approval queue, or stop its
+        // streaming indicator.
+        if (abortControllerRef.current !== turnAbortController) {
+          return;
+        }
+
         // Mark incomplete tool calls as cancelled to prevent stuck blinking UI
         markIncompleteToolsAsCancelled(
           buffersRef.current,

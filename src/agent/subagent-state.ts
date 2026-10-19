@@ -504,6 +504,16 @@ export function clearCompletedSubagents(): void {
 export function clearSubagentsByIds(ids: string[]): void {
   let removedAny = false;
   for (const id of ids) {
+    const agent = store.agents.get(id);
+    if (agent?.cancelPending) {
+      // The row's Task line was promoted to the static transcript, but the
+      // interrupt's cancel is still in flight and the row is a live remote
+      // run's only retry handle (its conversationId). Keep it — hidden,
+      // since its display life is over — until the abort hook settles the
+      // cancel; the retention timer then removes it like any terminal row.
+      updateSubagent(id, { silent: true });
+      continue;
+    }
     clearCompletedSubagentCleanup(id);
     removedAny = store.agents.delete(id) || removedAny;
   }

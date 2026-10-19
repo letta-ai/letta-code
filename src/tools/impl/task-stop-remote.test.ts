@@ -4,6 +4,7 @@ import {
   __setCompletedSubagentRetentionMsForTests,
   clearAllSubagents,
   clearCompletedSubagents,
+  clearSubagentsByIds,
   completeSubagent,
   getSubagents,
   interruptActiveSubagents,
@@ -386,6 +387,84 @@ describe("Background task interrupt hook", () => {
     expect(getSubagents().some((a) => a.id === "sub_task_hook_natural")).toBe(
       false,
     );
+    cancel.mockRestore();
+  });
+
+  test("keeps the retry row through static-transcript promotion while the cancel is in flight", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_promote", "conv-child");
+    const controller = backgroundTasks.get("task_hook_promote")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_promote",
+      buildBackgroundTaskAbortHook("task_hook_promote", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    // Let the hook reach cancelConversation so the cancel is genuinely in
+    // flight before the promotion runs.
+    await Bun.sleep(20);
+    // Esc's refreshDerived promotes the finished Task line to the static
+    // transcript and clears the backing rows — the third deletion path.
+    clearSubagentsByIds(["sub_task_hook_promote"]);
+    const retained = getSubagents().find(
+      (a) => a.id === "sub_task_hook_promote",
+    );
+    // The row survives as a hidden retry handle: its line was promoted, so
+    // it must not double-render in the live subagent display.
+    expect(retained).toBeDefined();
+    expect(retained?.silent).toBe(true);
+
+    // The cancel fails: the retained row is restored and a later interrupt
+    // retries through it.
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_promote")?.status,
+    ).toBe("running");
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    expect(cancel).toHaveBeenCalledTimes(2);
+    cancel.mockRestore();
+  });
+
+  test("releases a promoted row to cleanup once its cancel lands", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_promote_ok", "conv-child");
+    const controller = backgroundTasks.get("task_hook_promote_ok")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_promote_ok",
+      buildBackgroundTaskAbortHook("task_hook_promote_ok", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    clearSubagentsByIds(["sub_task_hook_promote_ok"]);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_promote_ok")?.silent,
+    ).toBe(true);
+
+    // The cancel lands: the flag clears and the hidden terminal row is
+    // cleanup-eligible again — retention is bounded, not a leak.
+    resolveCancel({ "run-child": "cancelled" });
+    await Bun.sleep(20);
+    clearCompletedSubagents();
+    expect(
+      getSubagents().some((a) => a.id === "sub_task_hook_promote_ok"),
+    ).toBe(false);
     cancel.mockRestore();
   });
 });
