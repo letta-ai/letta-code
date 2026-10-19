@@ -24,35 +24,61 @@ export function buildBackgroundTaskAbortHook(
       .then((m) => m.task_stop({ task_id: taskId }))
       .then((result) => {
         if (!result.killed) failSafeAbort();
-        // A failed remote cancel must not strand the task: the interrupt
-        // already marked the subagent row errored (removal next turn),
-        // which destroys the conversationId a TaskStop retry needs.
-        if (remote && !result.killed && bgTask) {
-          restoreInterruptedSubagentRow(bgTask.subagentId, hook);
-        }
+        settleInterruptedCancel(bgTask, remote, result.killed, hook);
       })
       .catch(() => {
         failSafeAbort();
-        if (remote && bgTask) {
-          restoreInterruptedSubagentRow(bgTask.subagentId, hook);
-        }
+        settleInterruptedCancel(bgTask, remote, false, hook);
       });
   };
   return hook;
+}
+
+/** Resolve the interrupt's cancelPending marking once the cancel settles.
+ * A still-running remote task whose cancel could not land gets its row
+ * restored (the conversationId is the only retry handle); every other
+ * outcome releases the row to normal terminal-row cleanup. */
+function settleInterruptedCancel(
+  bgTask: { subagentId: string; status: string } | undefined,
+  remote: boolean,
+  killed: boolean,
+  hook: () => void,
+): void {
+  if (!bgTask) return;
+  // Only a task that is still live has anything to retry: one that settled
+  // on its own (natural failure/completion) while the cancel was in flight
+  // owns its terminal row, and resurrecting it would create a ghost.
+  const taskLive = bgTask.status === "running";
+  if (remote && !killed && taskLive) {
+    restoreInterruptedSubagentRow(bgTask.subagentId, hook);
+    return;
+  }
+  // The cancel landed, went local, or the task is gone: nothing to retry.
+  updateSubagent(bgTask.subagentId, { cancelPending: undefined });
 }
 
 /**
  * Undo an interrupt's errored marking when its cancel could not land (a
  * remote TaskStop that failed): keeps the row — and the conversationId a
  * retry needs — alive, and re-arms the hook so a later interrupt retries.
- * Rows that settled any other way keep their state.
+ * Rows that settled any other way (natural completion or failure) keep
+ * their state.
  */
 function restoreInterruptedSubagentRow(
   subagentId: string,
   hook: () => void,
 ): void {
   const row = getSubagents().find((agent) => agent.id === subagentId);
-  if (!row || row.status !== "error") return;
-  updateSubagent(subagentId, { status: "running", error: undefined });
+  if (!row || row.status !== "error" || row.result !== undefined) {
+    // The row settled on its own or is gone: nothing to reclaim. Release
+    // any cancelPending marking so cleanup can proceed.
+    if (row) updateSubagent(subagentId, { cancelPending: undefined });
+    return;
+  }
+  updateSubagent(subagentId, {
+    status: "running",
+    error: undefined,
+    cancelPending: undefined,
+  });
   registerSubagentAbortHook(subagentId, hook);
 }

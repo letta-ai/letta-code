@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
+  __resetCompletedSubagentRetentionMsForTests,
+  __setCompletedSubagentRetentionMsForTests,
   clearAllSubagents,
   clearCompletedSubagents,
+  completeSubagent,
   getSubagents,
   interruptActiveSubagents,
   registerSubagent,
@@ -262,6 +265,127 @@ describe("Background task interrupt hook", () => {
     expect(
       getSubagents().find((a) => a.id === "sub_task_hook_completed")?.status,
     ).toBe("completed");
+    cancel.mockRestore();
+  });
+
+  test("keeps the retry row through a turn-start cleanup while the cancel is in flight", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_race", "conv-child");
+    const controller = backgroundTasks.get("task_hook_race")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_race",
+      buildBackgroundTaskAbortHook("task_hook_race", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    // Let the hook reach cancelConversation so the cancel is genuinely in
+    // flight before the new turn starts.
+    await Bun.sleep(20);
+    // The user starts a new turn while the cancel is still in flight: the
+    // turn-start sweep must not delete the row that holds the remote run's
+    // only retry handle.
+    clearCompletedSubagents();
+    expect(getSubagents().some((a) => a.id === "sub_task_hook_race")).toBe(
+      true,
+    );
+
+    // The cancel fails: the protected row is restored and stays retryable.
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_race")?.status,
+    ).toBe("running");
+    cancel.mockRestore();
+  });
+
+  test("keeps the retry row through the terminal-row cleanup timer while the cancel is in flight", async () => {
+    __setCompletedSubagentRetentionMsForTests(10);
+    try {
+      let resolveCancel!: (value: Record<string, string>) => void;
+      const cancel = spyOn(
+        getBackend(),
+        "cancelConversation",
+      ).mockImplementation(
+        () =>
+          new Promise<Record<string, string>>((resolve) => {
+            resolveCancel = resolve;
+          }),
+      );
+      startRemoteTask("task_hook_timer", "conv-child");
+      const controller = backgroundTasks.get("task_hook_timer")
+        ?.abortController as AbortController;
+      registerSubagentAbortHook(
+        "sub_task_hook_timer",
+        buildBackgroundTaskAbortHook("task_hook_timer", controller),
+      );
+
+      interruptActiveSubagents("Interrupted by user");
+      // Several retention windows elapse while the cancel is in flight:
+      // the timer must keep re-checking instead of deleting the row.
+      await Bun.sleep(35);
+      expect(getSubagents().some((a) => a.id === "sub_task_hook_timer")).toBe(
+        true,
+      );
+
+      resolveCancel({ "run-child": "failed" });
+      await Bun.sleep(20);
+      expect(
+        getSubagents().find((a) => a.id === "sub_task_hook_timer")?.status,
+      ).toBe("running");
+      cancel.mockRestore();
+    } finally {
+      __resetCompletedSubagentRetentionMsForTests();
+    }
+  });
+
+  test("does not resurrect a task that failed naturally while its cancel was in flight", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_natural", "conv-child");
+    const controller = backgroundTasks.get("task_hook_natural")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_natural",
+      buildBackgroundTaskAbortHook("task_hook_natural", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    // Let the hook reach cancelConversation so the cancel is genuinely in
+    // flight when the task fails on its own.
+    await Bun.sleep(20);
+    // The task fails on its own while the cancel is in flight: settlement
+    // marks the background task failed and writes the real error.
+    const bgTask = backgroundTasks.get("task_hook_natural");
+    bgTask!.status = "failed";
+    completeSubagent("sub_task_hook_natural", {
+      success: false,
+      error: "natural failure",
+    });
+
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    // The natural failure stands: no running ghost, no re-armed hook, and
+    // the row no longer blocks terminal-row cleanup.
+    const row = getSubagents().find((a) => a.id === "sub_task_hook_natural");
+    expect(row?.status).toBe("error");
+    expect(row?.error).toBe("natural failure");
+    expect(row?.cancelPending).toBeUndefined();
+    clearCompletedSubagents();
+    expect(getSubagents().some((a) => a.id === "sub_task_hook_natural")).toBe(
+      false,
+    );
     cancel.mockRestore();
   });
 });

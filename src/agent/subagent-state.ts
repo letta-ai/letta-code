@@ -47,6 +47,10 @@ export interface SubagentState {
   silent?: boolean; // True if this subagent should be hidden from SubagentGroupDisplay
   parentAgentId?: string; // Parent runtime scope agent id (for listener-mode WS scoping)
   parentConversationId?: string; // Parent runtime scope conversation id
+  /** True while an interrupt's abort-hook cancel is still in flight: the
+   * row is a live remote run's only retry handle (its conversationId), so
+   * cleanup must not delete it until the hook settles the cancel. */
+  cancelPending?: boolean;
 }
 
 export type SubagentLifecycleStatus = SubagentState["status"];
@@ -152,19 +156,32 @@ function scheduleCompletedSubagentCleanup(id: string): void {
   }
 
   clearCompletedSubagentCleanup(id);
+  armCompletedSubagentCleanup(id);
+}
+
+function armCompletedSubagentCleanup(id: string): void {
+  const agent = store.agents.get(id);
+  if (!agent) return;
   const timer = setTimeout(
     () => {
+      completedSubagentCleanupTimers.delete(id);
       const current = store.agents.get(id);
       if (
         !current ||
         (current.status !== "completed" && current.status !== "error")
       ) {
-        completedSubagentCleanupTimers.delete(id);
+        return;
+      }
+
+      // A cancel is still in flight: the row is a live remote run's only
+      // retry handle. Keep it and re-check after another retention window;
+      // the abort hook clears the flag once the cancel settles.
+      if (current.cancelPending) {
+        armCompletedSubagentCleanup(id);
         return;
       }
 
       store.agents.delete(id);
-      completedSubagentCleanupTimers.delete(id);
       notifyListeners();
     },
     agent.result !== undefined
@@ -466,6 +483,10 @@ export function clearCompletedSubagents(): void {
   for (const [id, agent] of store.agents.entries()) {
     // A published result waits for its remote caller; its own timer removes it.
     if (agent.result !== undefined) continue;
+    // A cancel is still in flight for this row: deleting it would lose a
+    // live remote run's only retry handle. The abort hook clears the flag
+    // once the cancel settles.
+    if (agent.cancelPending) continue;
     if (agent.status === "completed" || agent.status === "error") {
       clearCompletedSubagentCleanup(id);
       store.agents.delete(id);
@@ -547,13 +568,17 @@ export function interruptActiveSubagents(
   for (const [id, agent] of store.agents.entries()) {
     if (agent.status === "pending" || agent.status === "running") {
       if (scope && !subagentMatchesScope(agent, scope)) continue;
-      subagentAbortHooks.get(id)?.();
+      const hook = subagentAbortHooks.get(id);
+      hook?.();
       subagentAbortHooks.delete(id);
       const updatedAgent: SubagentState = {
         ...agent,
         status: "error",
         error: errorMessage,
         durationMs: Date.now() - agent.startTime,
+        // The fired hook's cancel is now in flight: protect the row (the
+        // remote run's retry handle) from cleanup until the hook settles.
+        ...(hook ? { cancelPending: true } : {}),
       };
       store.agents.set(id, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
