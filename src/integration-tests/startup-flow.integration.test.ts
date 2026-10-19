@@ -172,12 +172,8 @@ function parseJsonFromStdout(stdout: string) {
 
 async function runCliJson(
   args: string[],
-  options: {
-    timeoutMs?: number;
-    retryOnTimeouts?: number;
+  options: Parameters<typeof runCli>[1] & {
     retryOnParseErrors?: number;
-    env?: NodeJS.ProcessEnv;
-    includeMemfsStartup?: boolean;
   } = {},
 ): Promise<{
   stdout: string;
@@ -418,6 +414,7 @@ describe("Startup Flow - Integration", () => {
             ],
             {
               timeoutMs: 180000,
+              expectExit: 0,
               includeMemfsStartup: false,
               retryOnTimeouts: 0,
               retryOnParseErrors: 0,
@@ -429,15 +426,11 @@ describe("Startup Flow - Integration", () => {
               },
             },
           );
-        const first = await runTurn(
-          "Remember the codeword MINT-8932. Reply only OK.",
-        );
-        expect(first.exitCode).toBe(0);
+        await runTurn("Remember the codeword MINT-8932. Reply only OK.");
         const resumed = await runTurn(
           "What codeword did I ask you to remember? Reply only the codeword.",
           connectionId,
         );
-        expect(resumed.exitCode).toBe(0);
         expect(resumed.output).toMatchObject({
           agent_id: null,
           conversation_id: conversationId,
