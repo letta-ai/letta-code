@@ -332,7 +332,7 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
     if (fresh) {
       await runGitWithRetry(
         directory,
-        ["clone", args.remoteUrl, "."],
+        ["clone", "--depth", "1", args.remoteUrl, "."],
         args.token,
         {
           operation: `clone repository ${args.repositoryName}`,
