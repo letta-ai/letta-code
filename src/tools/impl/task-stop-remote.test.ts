@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import {
   clearAllSubagents,
+  clearCompletedSubagents,
+  getSubagents,
+  interruptActiveSubagents,
   registerSubagent,
+  registerSubagentAbortHook,
   updateSubagent,
 } from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
@@ -9,7 +13,7 @@ import {
   backgroundTasks,
   createBackgroundOutputFile,
 } from "@/tools/impl/process_manager";
-import { buildBackgroundTaskAbortHook } from "@/tools/impl/task";
+import { buildBackgroundTaskAbortHook } from "@/tools/impl/task-abort-hook";
 import { task_stop } from "@/tools/impl/task-stop";
 
 function startRemoteTask(taskId: string, conversationId: string) {
@@ -204,5 +208,60 @@ describe("Background task interrupt hook", () => {
 
     // Local tasks have no remote handle to preserve: fail-safe local abort.
     expect(controller.signal.aborted).toBe(true);
+  });
+
+  test("restores the subagent row so a failed remote cancel stays retryable", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "failed",
+    });
+    startRemoteTask("task_hook_retry", "conv-child");
+    const controller = backgroundTasks.get("task_hook_retry")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_retry",
+      buildBackgroundTaskAbortHook("task_hook_retry", controller),
+    );
+
+    // First interrupt: fires the hook, errored the row, removed the hook.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(controller.signal.aborted).toBe(false);
+
+    // The failed remote cancel restored the row: it survives completed-row
+    // cleanup and keeps the conversationId a TaskStop retry needs.
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_retry")?.status,
+    ).toBe("running");
+    clearCompletedSubagents();
+    expect(getSubagents().some((a) => a.id === "sub_task_hook_retry")).toBe(
+      true,
+    );
+
+    // A later interrupt reaches the re-armed hook and retries the cancel.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    expect(cancel).toHaveBeenCalledTimes(2);
+    cancel.mockRestore();
+  });
+
+  test("leaves a completed subagent row settled when the cancel reports killed:false", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+      "run-child": "failed",
+    });
+    startRemoteTask("task_hook_completed", "conv-child");
+    updateSubagent("sub_task_hook_completed", { status: "completed" });
+    const controller = backgroundTasks.get("task_hook_completed")
+      ?.abortController as AbortController;
+
+    buildBackgroundTaskAbortHook("task_hook_completed", controller)();
+    await Bun.sleep(20);
+
+    // Restore only reclaims rows the interrupt errored; a row that settled
+    // on its own keeps its terminal state.
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_completed")?.status,
+    ).toBe("completed");
+    cancel.mockRestore();
   });
 });

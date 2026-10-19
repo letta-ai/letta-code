@@ -70,6 +70,7 @@ import {
 } from "./process_manager.js";
 import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
 import { resolveLaunchComputer } from "./subagent-computer";
+import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
   buildTaskResultHeader,
   writeTaskTranscriptResult,
@@ -219,25 +220,6 @@ async function resolveCompletionSummary(
 
   const trimmed = resolved.trim();
   return trimmed.length > 0 ? trimmed : defaultSummary;
-}
-
-/** Interrupt hook for a background Task: route through TaskStop semantics
- * (remote workers/runs, process cleanup), falling back to a local abort. */
-export function buildBackgroundTaskAbortHook(
-  taskId: string,
-  abortController: AbortController,
-): () => void {
-  // Remote: killed:false preserves the retry handle; only local fail-safe aborts.
-  const remote = backgroundTasks.get(taskId)?.remote ?? false;
-  const failSafeAbort = () => !remote && abortController.abort();
-  return () => {
-    void import("./task-stop.js")
-      .then((m) => m.task_stop({ task_id: taskId }))
-      .then((result) => {
-        if (!result.killed) failSafeAbort();
-      })
-      .catch(failSafeAbort);
-  };
 }
 
 /**

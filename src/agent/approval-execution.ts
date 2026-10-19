@@ -53,6 +53,54 @@ export function overlayPartialResults(
   return [...overlaid, ...extras];
 }
 
+/** Map auto-denied decisions to their wire form. Denials are decisions, not
+ * tool executions: they must reach the server even when the batch aborts. */
+export function buildDeniedResults(
+  autoDenied: Array<{ approval: ApprovalRequest; reason: string }>,
+): ApprovalResult[] {
+  return autoDenied.map((ad) => ({
+    type: "approval" as const,
+    tool_call_id: ad.approval.toolCallId,
+    approve: false,
+    reason: ad.reason,
+  }));
+}
+
+/** Results for decisions that never execute client-side: auto-handled tools
+ * with precomputed results and auto-denied calls. They must ride along on
+ * both the fulfilled path and the grace-expiry overlay, or the server's
+ * approval batch goes out incomplete. */
+export function buildCompanionResults(
+  autoHandled: Array<{
+    toolCallId: string;
+    result: ToolExecutionResult;
+  }>,
+  autoDenied: Array<{ approval: ApprovalRequest; reason: string }>,
+): ApprovalResult[] {
+  return [
+    ...autoHandled.map((ar) => ({
+      type: "tool" as const,
+      tool_call_id: ar.toolCallId,
+      tool_return: ar.result.toolReturn,
+      status: ar.result.status,
+      stdout: ar.result.stdout,
+      stderr: ar.result.stderr,
+    })),
+    ...buildDeniedResults(autoDenied),
+  ];
+}
+
+/** Attach extra decisions (e.g. pre-built denials) to an abort error's
+ * partials so the recovery queue carries a complete approval batch. */
+export function appendAbortPartials(
+  error: unknown,
+  extras: ApprovalResult[],
+): void {
+  if (extras.length === 0 || !isUserAbortError(error)) return;
+  const abortError = error as Error & { partialResults?: ApprovalResult[] };
+  abortError.partialResults = [...(abortError.partialResults ?? []), ...extras];
+}
+
 /**
  * Extract displayable text from tool return content (for UI display).
  * Multimodal content returns the text parts concatenated.

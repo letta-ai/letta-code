@@ -16,6 +16,8 @@ import {
 } from "react";
 import {
   type ApprovalResult,
+  appendAbortPartials,
+  buildDeniedResults,
   executeAutoAllowedTools,
   isUserAbortError,
   overlayPartialResults,
@@ -1888,10 +1890,19 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               toolCallId: string;
               result: ToolExecutionResult;
             }> = [];
-            let autoDeniedResults: Array<{
+            // Denial decisions are built before execution: a grace-expiry
+            // rejection must still carry them (via appendAbortPartials) so
+            // the server's approval batch stays complete — denials are
+            // decisions, not tool executions.
+            const autoDeniedResults: Array<{
               approval: ApprovalRequest;
               reason: string;
-            }> = [];
+            }> = autoDenied.map((ac) => ({
+              approval: ac.approval,
+              reason: formatPermissionDenial(ac.permission),
+            }));
+            const prebuiltDeniedApprovalResults =
+              buildDeniedResults(autoDeniedResults);
 
             if (shouldTrackAutoAllowed) {
               setIsExecutingTool(true);
@@ -1913,14 +1924,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
 
               // Execute auto-allowed tools (sequential for writes, parallel for reads)
-              const approvalToolContextId =
-                approvalToolContextIdRef.current ??
-                (
-                  await prepareScopedToolExecutionContext(
-                    tempModelOverrideRef.current ?? undefined,
-                  )
-                ).preparedToolContext.contextId;
               try {
+                const approvalToolContextId =
+                  approvalToolContextIdRef.current ??
+                  (
+                    await prepareScopedToolExecutionContext(
+                      tempModelOverrideRef.current ?? undefined,
+                    )
+                  ).preparedToolContext.contextId;
                 autoAllowedResults =
                   autoAllowed.length > 0
                     ? await executeAutoAllowedTools(
@@ -1934,7 +1945,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                       )
                     : [];
               } catch (error) {
-                // Orphan guard on the rejection path too: a stale batch's
+                // Orphan guard on the rejection path too (covers context
+                // preparation and execution alike): a stale batch's
                 // rejection must not cancel a newer owner (mirrors below).
                 if (
                   shouldTrackAutoAllowed &&
@@ -1942,6 +1954,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 ) {
                   return;
                 }
+                // Grace-expiry still owes the server every auto-denied
+                // decision: attach the pre-built denials so the recovery
+                // queue carries a complete batch.
+                appendAbortPartials(error, prebuiltDeniedApprovalResults);
                 throw error;
               }
 
@@ -1955,27 +1971,20 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 return;
               }
 
-              // Create denial results for auto-denied tools and update buffers
-              autoDeniedResults = autoDenied.map((ac) => {
-                const reason = formatPermissionDenial(ac.permission);
-
-                // Update buffers with tool rejection for UI
+              // Update buffers with tool rejection for UI (denial results
+              // were pre-built before execution)
+              for (const ad of autoDeniedResults) {
                 onChunk(buffersRef.current, {
                   message_type: "tool_return_message",
                   id: "dummy",
                   date: new Date().toISOString(),
-                  tool_call_id: ac.approval.toolCallId,
-                  tool_return: `Error: request to call tool denied. User reason: ${reason}`,
+                  tool_call_id: ad.approval.toolCallId,
+                  tool_return: `Error: request to call tool denied. User reason: ${ad.reason}`,
                   status: "error",
                   stdout: null,
                   stderr: null,
                 });
-
-                return {
-                  approval: ac.approval,
-                  reason,
-                };
-              });
+              }
 
               const allResults = [
                 ...autoAllowedResults.map((ar) => ({
@@ -1986,12 +1995,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   stdout: ar.result.stdout,
                   stderr: ar.result.stderr,
                 })),
-                ...autoDeniedResults.map((ad) => ({
-                  type: "approval" as const,
-                  tool_call_id: ad.approval.toolCallId,
-                  approve: false,
-                  reason: ad.reason,
-                })),
+                ...prebuiltDeniedApprovalResults,
               ];
 
               if (autoAllowedExecutionRef.current) {

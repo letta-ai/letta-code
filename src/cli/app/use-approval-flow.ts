@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   type ApprovalResult,
+  buildCompanionResults,
   isUserAbortError,
   overlayPartialResults,
 } from "@/agent/approval-execution";
@@ -359,6 +360,19 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
         | { type: "deny"; approval: ApprovalRequest; reason: string },
     ) => {
       const approvalAbortController = new AbortController();
+      // Snapshot current state before clearing dialog. Companion results
+      // (auto-handled + auto-denied) are built here — before the try — so
+      // the catch below can still overlay them on a grace-expiry abort:
+      // the server's approval batch must contain every decision, not just
+      // the manually-executed ones.
+      const approvalResultsSnapshot = [...approvalResults];
+      const autoHandledSnapshot = [...autoHandledResults];
+      const autoDeniedSnapshot = [...autoDeniedApprovals];
+      const pendingSnapshot = [...pendingApprovals];
+      const companionResults = buildCompanionResults(
+        autoHandledSnapshot,
+        autoDeniedSnapshot,
+      );
       try {
         // Don't send results if user has already cancelled
         if (
@@ -380,12 +394,6 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           toolResultsInFlightRef.current = false;
           return;
         }
-
-        // Snapshot current state before clearing dialog
-        const approvalResultsSnapshot = [...approvalResults];
-        const autoHandledSnapshot = [...autoHandledResults];
-        const autoDeniedSnapshot = [...autoDeniedApprovals];
-        const pendingSnapshot = [...pendingApprovals];
 
         // Clear dialog state immediately so UI updates right away
         setPendingApprovals([]);
@@ -489,24 +497,8 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
           return;
         }
 
-        // Combine with auto-handled and auto-denied results using snapshots
-        const allResults = [
-          ...autoHandledSnapshot.map((ar) => ({
-            type: "tool" as const,
-            tool_call_id: ar.toolCallId,
-            tool_return: ar.result.toolReturn,
-            status: ar.result.status,
-            stdout: ar.result.stdout,
-            stderr: ar.result.stderr,
-          })),
-          ...autoDeniedSnapshot.map((ad) => ({
-            type: "approval" as const,
-            tool_call_id: ad.approval.toolCallId,
-            approve: false,
-            reason: ad.reason,
-          })),
-          ...executedResults,
-        ];
+        // Combine with companion results (pre-built above)
+        const allResults = [...companionResults, ...executedResults];
 
         // Dev-only validation: ensure outgoing IDs match expected IDs (using snapshots)
         if (process.env.NODE_ENV !== "production") {
@@ -599,10 +591,16 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
             true,
             "user_interrupt",
           );
+          // Grace-expiry abort: overlay the executed partials plus the
+          // companion snapshots over Esc's synthetics, so the recovery
+          // queue carries a complete approval batch.
           const merged = overlayPartialResults(
             queuedApprovalResultsRef.current,
-            (error as Error & { partialResults?: ApprovalResult[] })
-              .partialResults,
+            [
+              ...((error as Error & { partialResults?: ApprovalResult[] })
+                .partialResults ?? []),
+              ...companionResults,
+            ],
           );
           // Only re-queue when there is something to send: queueing [] would
           // still stamp queue metadata for the next submit.

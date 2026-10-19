@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import {
   ABORT_GRACE_MS,
   type ApprovalResult,
+  appendAbortPartials,
+  buildCompanionResults,
+  buildDeniedResults,
   executeApprovalBatch,
   overlayPartialResults,
   settleApprovalExecutionTasks,
@@ -508,5 +511,107 @@ describe("overlayPartialResults", () => {
   test("partials alone still surface when nothing was queued", () => {
     const overlaid = overlayPartialResults(null, [result("t1")]);
     expect(overlaid).toEqual([result("t1")]);
+  });
+});
+
+describe("companion and denial results", () => {
+  const approval = (toolCallId: string) => ({
+    toolCallId,
+    toolName: "Read",
+    toolArgs: "{}",
+  });
+
+  test("buildCompanionResults maps auto-handled tools and auto-denied calls", () => {
+    const companions = buildCompanionResults(
+      [
+        {
+          toolCallId: "t-handled",
+          result: {
+            toolReturn: "handled-done",
+            status: "success",
+            stdout: undefined,
+            stderr: undefined,
+          },
+        },
+      ],
+      [{ approval: approval("t-denied"), reason: "not allowed" }],
+    );
+    expect(companions).toEqual([
+      {
+        type: "tool",
+        tool_call_id: "t-handled",
+        tool_return: "handled-done",
+        status: "success",
+        stdout: undefined,
+        stderr: undefined,
+      },
+      {
+        type: "approval",
+        tool_call_id: "t-denied",
+        approve: false,
+        reason: "not allowed",
+      },
+    ]);
+  });
+
+  test("buildDeniedResults maps denial decisions to their wire form", () => {
+    expect(
+      buildDeniedResults([{ approval: approval("t-denied"), reason: "nope" }]),
+    ).toEqual([
+      {
+        type: "approval",
+        tool_call_id: "t-denied",
+        approve: false,
+        reason: "nope",
+      },
+    ]);
+  });
+});
+
+describe("appendAbortPartials", () => {
+  test("appends extras to an abort error's existing partials", () => {
+    const error = new Error(INTERRUPTED_BY_USER) as Error & {
+      partialResults?: ApprovalResult[];
+    };
+    error.partialResults = [result("t1")];
+    appendAbortPartials(error, [
+      {
+        type: "approval",
+        tool_call_id: "t-denied",
+        approve: false,
+        reason: "no",
+      },
+    ]);
+    expect(error.partialResults).toEqual([
+      result("t1"),
+      {
+        type: "approval",
+        tool_call_id: "t-denied",
+        approve: false,
+        reason: "no",
+      },
+    ]);
+  });
+
+  test("creates partials when the abort error carries none", () => {
+    const error = new Error(INTERRUPTED_BY_USER) as Error & {
+      partialResults?: ApprovalResult[];
+    };
+    appendAbortPartials(error, [result("t1")]);
+    expect(error.partialResults).toEqual([result("t1")]);
+  });
+
+  test("ignores non-abort errors and empty extras", () => {
+    const plain = new Error("boom") as Error & {
+      partialResults?: ApprovalResult[];
+    };
+    appendAbortPartials(plain, [result("t1")]);
+    expect(plain.partialResults).toBeUndefined();
+
+    const aborted = new Error(INTERRUPTED_BY_USER) as Error & {
+      partialResults?: ApprovalResult[];
+    };
+    appendAbortPartials(aborted, []);
+    expect(aborted.partialResults).toBeUndefined();
   });
 });
