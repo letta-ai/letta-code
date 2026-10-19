@@ -7,9 +7,10 @@ export function startListenerStartupDeadline(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
   opts: Pick<StartListenerOptions, "onLog">,
+  enabled = true,
 ): () => void {
   const socket = runtime.socket;
-  if (!socket || socket !== transport) return () => {};
+  if (!enabled || !socket || socket !== transport) return () => {};
   const configured = Number(process.env.LETTA_LISTENER_STARTUP_DEADLINE_MS);
   const deadlineMs =
     Number.isFinite(configured) && configured > 0 ? configured : 60_000;

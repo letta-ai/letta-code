@@ -126,6 +126,8 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import type {
+  ConnectedListenerOptions,
+  ConnectedListenerRuntimeOptions,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -230,26 +232,11 @@ export function stopRuntime(
 export async function startConnectedListenerRuntime(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
-  opts: Pick<
-    StartListenerOptions,
-    | "connectionId"
-    | "onConnected"
-    | "onLog"
-    | "onConnectionReady"
-    | "onStatusChange"
-    | "onWsEvent"
-  >,
+  opts: ConnectedListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-  options: {
-    startHeartbeat?: boolean;
-    startCronScheduler?: boolean;
-    startProcessServices?: boolean;
-    streamTransport?: ListenerTransport | null;
-    emitInitialState?: boolean;
-    updateReconnectState?: boolean;
+  options: ConnectedListenerRuntimeOptions & {
     recoverRecordedWork?: typeof recoverRecordedTurns;
     restoreDurableQueuedInputs?: typeof restoreDurableQueuedInputs;
-    activateIngress?: () => Promise<boolean>;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
@@ -290,6 +277,7 @@ export async function startConnectedListenerRuntime(
     runtime,
     transport,
     opts,
+    options.startStartupDeadline,
   );
   let startupComplete = false;
   try {
@@ -380,7 +368,13 @@ export async function startConnectedListenerRuntime(
   }
 }
 
-/** Attach a local socket without reconnect; the next client creates a fresh runtime. */
+/**
+ * Attach an already-open, locally accepted websocket to a listener runtime.
+ *
+ * Unlike the cloud listener client path, this helper does not reconnect on
+ * close. It is intended for local app-server transports where the HTTP server
+ * keeps running and the next client connection creates a fresh runtime.
+ */
 
 export async function attachOpenListenerSocket(
   runtime: ListenerRuntime,
@@ -549,6 +543,9 @@ export async function attachOpenListenerSocket(
   );
 }
 
+/**
+ * Start the listener WebSocket client with automatic retry.
+ */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
