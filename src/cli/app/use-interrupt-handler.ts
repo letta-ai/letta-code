@@ -268,9 +268,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // that may never fire.
       interruptSubagentsAndReleaseReflection(
         agentId,
-        conversationIdRef.current === "default"
-          ? undefined
-          : conversationIdRef.current,
+        // Pass the conversation id as-is: "default" must scope to tasks whose
+        // parentConversationId is "default" (or unset for legacy rows), not
+        // to every subagent of this agent.
+        conversationIdRef.current,
       );
 
       // Show interrupt feedback (yellow message if no tools were cancelled)
@@ -357,9 +358,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // that may never fire.
       interruptSubagentsAndReleaseReflection(
         agentId,
-        conversationIdRef.current === "default"
-          ? undefined
-          : conversationIdRef.current,
+        conversationIdRef.current,
       );
 
       // NOW abort the stream - interrupted flag is already set. The controller

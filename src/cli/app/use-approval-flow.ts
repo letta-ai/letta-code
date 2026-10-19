@@ -546,9 +546,10 @@ export function useApprovalFlow(ctx: ApprovalFlowContext) {
 
         if (wasAborted || userCancelled) {
           // Queue results with the next message: stops re-requested approvals.
-          if (!interruptQueuedRef.current) {
-            queueApprovalResults(allResults as ApprovalResult[]);
-          }
+          // Always queue the REAL results — when Esc already queued synthetic
+          // interrupted results, the settled outputs must replace them so a
+          // completed side effect is not reported as interrupted/retriable.
+          queueApprovalResults(allResults as ApprovalResult[]);
           setStreaming(false);
           closeTrajectorySegment();
           syncTrajectoryElapsedBase();

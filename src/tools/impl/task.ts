@@ -227,13 +227,16 @@ export function buildBackgroundTaskAbortHook(
   taskId: string,
   abortController: AbortController,
 ): () => void {
+  // Remote: killed:false preserves the retry handle; only local fail-safe aborts.
+  const remote = backgroundTasks.get(taskId)?.remote ?? false;
+  const failSafeAbort = () => !remote && abortController.abort();
   return () => {
     void import("./task-stop.js")
       .then((m) => m.task_stop({ task_id: taskId }))
       .then((result) => {
-        if (!result.killed) abortController.abort();
+        if (!result.killed) failSafeAbort();
       })
-      .catch(() => abortController.abort());
+      .catch(failSafeAbort);
   };
 }
 
@@ -332,8 +335,7 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
-  // Register the abort trigger so interruptActiveSubagents can reach this
-  // fire-and-forget task (see buildBackgroundTaskAbortHook).
+  // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
   registerSubagentAbortHook(
     subagentId,
     buildBackgroundTaskAbortHook(taskId, abortController),
@@ -341,8 +343,7 @@ export function spawnBackgroundSubagentTask(
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
-  // synchronously (not inside spawnSubagent, which runs after async yields
-  // and can see a drifted context): resolvedParentScope.agentId wins.
+  // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope

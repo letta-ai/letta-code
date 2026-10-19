@@ -15,8 +15,10 @@ import {
   useCallback,
 } from "react";
 import {
+  type ApprovalResult,
   executeAutoAllowedTools,
   isUserAbortError,
+  overlayPartialResults,
 } from "@/agent/approval-execution";
 import {
   extractConflictDetail,
@@ -232,6 +234,8 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
+  /** Read side of the approval-results queue, for abort partial-result overlays. */
+  queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
   quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
@@ -328,6 +332,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,
@@ -1915,18 +1920,30 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     tempModelOverrideRef.current ?? undefined,
                   )
                 ).preparedToolContext.contextId;
-              autoAllowedResults =
-                autoAllowed.length > 0
-                  ? await executeAutoAllowedTools(
-                      autoAllowed,
-                      (chunk) => onChunk(buffersRef.current, chunk),
-                      {
-                        abortSignal: autoAllowedAbortController.signal,
-                        onStreamingOutput: updateStreamingOutput,
-                        toolContextId: approvalToolContextId,
-                      },
-                    )
-                  : [];
+              try {
+                autoAllowedResults =
+                  autoAllowed.length > 0
+                    ? await executeAutoAllowedTools(
+                        autoAllowed,
+                        (chunk) => onChunk(buffersRef.current, chunk),
+                        {
+                          abortSignal: autoAllowedAbortController.signal,
+                          onStreamingOutput: updateStreamingOutput,
+                          toolContextId: approvalToolContextId,
+                        },
+                      )
+                    : [];
+              } catch (error) {
+                // Orphan guard on the rejection path too: a stale batch's
+                // rejection must not cancel a newer owner (mirrors below).
+                if (
+                  shouldTrackAutoAllowed &&
+                  toolAbortControllerRef.current !== autoAllowedAbortController
+                ) {
+                  return;
+                }
+                throw error;
+              }
 
               // Orphan guard: if the refs were replaced or cleared while the
               // auto-allowed batch was executing, do not write continuation
@@ -2783,6 +2800,16 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         // If using eager cancel and this is an abort error, silently ignore it
         // The user already got "Stream interrupted by user" feedback from handleInterrupt
         if (EAGER_CANCEL && isUserAbortError(e)) {
+          // Overlay real partial results over Esc's synthetics so completed
+          // side effects are reported as completed, not interrupted.
+          const partials = (e as { partialResults?: ApprovalResult[] })
+            .partialResults;
+          const overlaid = partials
+            ? overlayPartialResults(queuedApprovalResultsRef.current, partials)
+            : [];
+          if (overlaid.length > 0) {
+            queueApprovalResults(overlaid);
+          }
           setStreaming(false);
           refreshDerived();
           return;

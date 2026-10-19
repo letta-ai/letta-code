@@ -39,13 +39,18 @@ export function isUserAbortError(error: unknown): boolean {
 }
 
 /** Overlay real partial results over queued synthetic interrupted results:
- * settled tools' actual outputs win; stragglers keep their synthetics. */
+ * settled tools' actual outputs win; stragglers keep their synthetics.
+ * Partials for tools never present in the queue (denials, precomputed
+ * results) are appended so real work is not silently dropped. */
 export function overlayPartialResults(
   queued: ApprovalResult[] | null,
   partials: ApprovalResult[] | undefined,
 ): ApprovalResult[] {
   const realById = new Map((partials ?? []).map((r) => [r.tool_call_id, r]));
-  return (queued ?? []).map((r) => realById.get(r.tool_call_id) ?? r);
+  const overlaid = (queued ?? []).map((r) => realById.get(r.tool_call_id) ?? r);
+  const queuedIds = new Set((queued ?? []).map((r) => r.tool_call_id));
+  const extras = (partials ?? []).filter((r) => !queuedIds.has(r.tool_call_id));
+  return [...overlaid, ...extras];
 }
 
 /**

@@ -3711,6 +3711,7 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,

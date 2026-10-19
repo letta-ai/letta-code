@@ -162,19 +162,47 @@ describe("Background task interrupt hook", () => {
     cancel.mockRestore();
   });
 
-  test("falls back to a local abort when TaskStop cannot claim the kill", async () => {
+  test("preserves the remote task handle when TaskStop cannot claim the kill", async () => {
     const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
       "run-child": "failed",
     });
-    startRemoteTask("task_hook_fallback", "conv-child");
-    const controller = backgroundTasks.get("task_hook_fallback")
+    startRemoteTask("task_hook_preserve", "conv-child");
+    const controller = backgroundTasks.get("task_hook_preserve")
       ?.abortController as AbortController;
 
-    buildBackgroundTaskAbortHook("task_hook_fallback", controller)();
+    buildBackgroundTaskAbortHook("task_hook_preserve", controller)();
     await Bun.sleep(20);
 
     expect(cancel).toHaveBeenCalledWith("conv-child");
-    expect(controller.signal.aborted).toBe(true); // fail-safe local abort
+    // task_stop deliberately returned killed:false without aborting so the
+    // handle survives for a retry; the hook must not destroy that handle.
+    expect(controller.signal.aborted).toBe(false);
+    expect(backgroundTasks.get("task_hook_preserve")?.status).toBe("running");
     cancel.mockRestore();
+  });
+
+  test("aborts a local task locally when TaskStop cannot claim the kill", async () => {
+    registerSubagent("sub_task_hook_local", "general-purpose", "local");
+    updateSubagent("sub_task_hook_local", { conversationId: "conv-local" });
+    const controller = new AbortController();
+    backgroundTasks.set("task_hook_local", {
+      description: "local",
+      subagentType: "general-purpose",
+      subagentId: "sub_task_hook_local",
+      // Not running: task_stop returns killed:false without aborting, so
+      // the hook's fail-safe local abort is the only thing that fires.
+      status: "failed",
+      startTime: new Date(),
+      outputFile: createBackgroundOutputFile("task_hook_local"),
+      abortController: controller,
+      completion: Promise.resolve(),
+      remote: false,
+    });
+
+    buildBackgroundTaskAbortHook("task_hook_local", controller)();
+    await Bun.sleep(20);
+
+    // Local tasks have no remote handle to preserve: fail-safe local abort.
+    expect(controller.signal.aborted).toBe(true);
   });
 });

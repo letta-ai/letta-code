@@ -3,6 +3,7 @@ import {
   ABORT_GRACE_MS,
   type ApprovalResult,
   executeApprovalBatch,
+  overlayPartialResults,
   settleApprovalExecutionTasks,
 } from "@/agent/approval-execution";
 import {
@@ -418,5 +419,94 @@ describe("subagent abort hooks", () => {
     });
 
     expect(aborted).toEqual([]);
+  });
+
+  test("default-conversation interrupt does not hit explicit-conversation subagents", () => {
+    const aborted: string[] = [];
+    registerSubagent(
+      "sub-default-parent",
+      "general-purpose",
+      "default parent",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: "default" },
+    );
+    registerSubagent(
+      "sub-explicit-parent",
+      "general-purpose",
+      "explicit parent",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: "conv-1" },
+    );
+    registerSubagentAbortHook("sub-default-parent", () => {
+      aborted.push("sub-default-parent");
+    });
+    registerSubagentAbortHook("sub-explicit-parent", () => {
+      aborted.push("sub-explicit-parent");
+    });
+
+    // Esc in the default conversation must scope to default-parented tasks,
+    // not act as an agent-wide wildcard over explicit conversations.
+    interruptActiveSubagents(INTERRUPTED_BY_USER, {
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+
+    expect(aborted).toEqual(["sub-default-parent"]);
+  });
+
+  test("default-conversation interrupt still reaches legacy unscoped subagents", () => {
+    const aborted: string[] = [];
+    registerSubagent(
+      "sub-default-legacy",
+      "general-purpose",
+      "legacy unscoped",
+      undefined,
+      false,
+      true,
+      { agentId: "agent-1", conversationId: null },
+    );
+    registerSubagentAbortHook("sub-default-legacy", () => {
+      aborted.push("sub-default-legacy");
+    });
+
+    interruptActiveSubagents(INTERRUPTED_BY_USER, {
+      agentId: "agent-1",
+      conversationId: "default",
+    });
+
+    expect(aborted).toEqual(["sub-default-legacy"]);
+  });
+});
+
+describe("overlayPartialResults", () => {
+  const synthetic = (toolCallId: string): ApprovalResult => ({
+    type: "tool",
+    tool_call_id: toolCallId,
+    tool_return: INTERRUPTED_BY_USER,
+    status: "error",
+  });
+
+  test("real partials replace synthetic interrupted results for the same tool", () => {
+    const queued = [synthetic("t1"), synthetic("t2")];
+    const overlaid = overlayPartialResults(queued, [result("t1")]);
+    expect(overlaid).toEqual([result("t1"), synthetic("t2")]);
+  });
+
+  test("partials for tools missing from the queue are appended, not dropped", () => {
+    const queued = [synthetic("t1")];
+    const overlaid = overlayPartialResults(queued, [
+      result("t1"),
+      result("t-denied"),
+    ]);
+    expect(overlaid).toEqual([result("t1"), result("t-denied")]);
+  });
+
+  test("partials alone still surface when nothing was queued", () => {
+    const overlaid = overlayPartialResults(null, [result("t1")]);
+    expect(overlaid).toEqual([result("t1")]);
   });
 });
