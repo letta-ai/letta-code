@@ -106,6 +106,7 @@ import {
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
 } from "./split-stream-lifecycle";
+import { startListenerStartupDeadline } from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
@@ -233,6 +234,7 @@ export async function startConnectedListenerRuntime(
     StartListenerOptions,
     | "connectionId"
     | "onConnected"
+    | "onLog"
     | "onConnectionReady"
     | "onStatusChange"
     | "onWsEvent"
@@ -284,6 +286,11 @@ export async function startConnectedListenerRuntime(
   }
   const heartbeat =
     options.startHeartbeat !== false && runtime.heartbeatInterval;
+  const clearStartupDeadline = startListenerStartupDeadline(
+    runtime,
+    transport,
+    opts,
+  );
   let startupComplete = false;
   try {
     if (
@@ -311,6 +318,7 @@ export async function startConnectedListenerRuntime(
     if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
     startupComplete = true;
   } finally {
+    clearStartupDeadline();
     if (!startupComplete && heartbeat) {
       clearInterval(heartbeat);
       if (runtime.heartbeatInterval === heartbeat)
@@ -372,13 +380,7 @@ export async function startConnectedListenerRuntime(
   }
 }
 
-/**
- * Attach an already-open, locally accepted websocket to a listener runtime.
- *
- * Unlike the cloud listener client path, this helper does not reconnect on
- * close. It is intended for local app-server transports where the HTTP server
- * keeps running and the next client connection creates a fresh runtime.
- */
+/** Attach a local socket without reconnect; the next client creates a fresh runtime. */
 
 export async function attachOpenListenerSocket(
   runtime: ListenerRuntime,
@@ -547,9 +549,6 @@ export async function attachOpenListenerSocket(
   );
 }
 
-/**
- * Start the listener WebSocket client with automatic retry.
- */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
