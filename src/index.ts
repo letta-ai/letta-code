@@ -622,12 +622,12 @@ async function main(): Promise<void> {
     }
   }
 
-  // Subcommands exit before TUI initialization and tool bootstrapping.
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
-    process.exit(subcommandResult);
+    // Let pending native async work drain before Node tears down libuv (Windows).
+    process.exitCode = subcommandResult;
+    return;
   }
-
   // Everything below only runs for interactive/headless agent mode
   await settingsManager.initialize();
   const settings = await settingsManager.getSettingsWithSecureTokens();
