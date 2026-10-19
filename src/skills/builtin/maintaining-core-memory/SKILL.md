@@ -55,12 +55,27 @@ Core memory is the agent's working model: who it is, how the user thinks and wha
 - Treat a correction or preference as evidence about that model. Find the principle it belongs to and sharpen or rewrite that principle. Add a new one only when the evidence shows something the model was missing.
 - When several rules share a cause, replace them with the one principle that explains them all, and delete the lines it absorbs in the same edit. Adding the principle while keeping the old rules is a log with a summary on top. A healthy file becomes more general over time; a growing count of narrow rules is a sign of failure.
 - State the principle with the reason that makes it generalize: "Verify claims against the running system, because Sarah trusts evidence over plausibility", not three separate rules about tests, logs, and deployments.
+- Write to the agent in the second person or imperative mood: "Lead with the answer", not "The user likes answers first". Say what to do rather than only what to avoid.
 - Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
 - Update only from a pattern or an explicit instruction, not a single ambiguous event.
 - Check that a change does not contradict an existing line; resolve the conflict instead of adding both.
 - Write in plain language without all-caps or absolute emphasis. Overstated instructions get overapplied.
 - Leave out content the agent can cheaply rederive: file contents, command lists, current status, and recent activity.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
+
+## Teach with examples, not more rules
+
+A correction that reveals a gap in a principle calls for sharpening its wording. A correction the principle already covers, such as the user pointing out the same kind of mistake again, means the principle is too abstract to apply: attach a contrastive example to it instead of rewording it again or adding another rule.
+
+```markdown
+- Lead with the answer, because the user reads the first line and skims the rest.
+  - Not: "I looked at the config, then the logs, and it turns out the timeout is too low." Instead: "The timeout is too low: 5s, and the slow query takes 8s."
+```
+
+- Keep at most one or two examples per principle, and make them differ from each other. A new correction replaces the weaker example rather than adding another.
+- Write the example as a generic instance of the behavior, not a record of the incident: no dates, names, or quotes.
+- Keep the bad half short and labeled, and end on the good half. The agent imitates the details of examples, including the ones it should avoid.
+- When a principle or example starts producing the wrong behavior, revise or remove it. A memory edit is a hypothesis about the agent's behavior; later conversations test it.
 
 ## Keep root MEMORY.md a map
 
