@@ -42,6 +42,18 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
+Alternatively, install with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) (Node.js is bundled):
+
+```bash
+uv tool install letta
+# or
+pipx install letta
+```
+
+Requires Python 3.9+. Wheels support glibc Linux 2.28+ (x86-64/ARM64), macOS 14+ (Intel/Apple Silicon), and Windows x64; Alpine/musl, 32-bit systems, and Windows ARM64 are unsupported.
+
+If `npm install -g` fails with `EACCES`, don't use `sudo`: root ownership prevents the CLI's `npm install -g` self-updates. Use uv/pipx, a user-owned npm prefix, or nvm. See the [CLI installation docs](https://docs.letta.com/platform/cli).
+
 Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)). You can also run the tutorial agent with: 
 ```
 letta --new-agent --personality tutorial
