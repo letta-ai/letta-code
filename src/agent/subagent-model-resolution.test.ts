@@ -581,6 +581,27 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--base-tools");
   });
 
+  test.each([
+    [["web_search"], "web_search"],
+    [[], "none"],
+  ])(
+    "passes the parent's base tools %j to new subagents",
+    (baseTools, flag) => {
+      const args = buildSubagentArgs(
+        "general-purpose",
+        baseConfig,
+        null,
+        "hello",
+        undefined,
+        undefined,
+        undefined,
+        { baseTools },
+      );
+
+      expect(args[args.indexOf("--base-tools") + 1]).toBe(flag);
+    },
+  );
+
   test("does not inject --base-tools when deploying an existing reflection agent", () => {
     const args = buildSubagentArgs(
       "reflection",
