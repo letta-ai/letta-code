@@ -194,12 +194,16 @@ Custom prompt body`,
 
     // per-prompt operational phrases proving copied v1 guidance remains
     const opsPhrases: Record<string, string[]> = {
-      reflection: ["Phase 1 — Investigate", "Phase 5 — Commit", "`create`"],
+      reflection: [
+        "## Commit",
+        "Edit does not expand environment variables",
+        "at most one skill change",
+      ],
       init: [
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      memory: ["## Updating memory", "## Git"],
+      memory: ["## Git", "(memory): <summary>"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];

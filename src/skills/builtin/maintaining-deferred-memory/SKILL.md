@@ -1,25 +1,15 @@
 ---
 name: maintaining-deferred-memory
-description: Maintains an agent's deferred memory, the indexed subdirectories of $MEMORY_DIR that stay out of the system prompt until the agent opens them. Use when saving knowledge about a person, project, repository, system, or incident for later lookup, or when adding, moving, splitting, or indexing memory directories.
+description: Maintains deferred memory, which stores accumulated knowledge, analysis, and observations made by the agent over time. Use when saving knowledge (e.g. about a person, project, repository, system, or event). Do NOT use for managing skills, prompts, or for saving information that is already automatically stored in the message history.
+disable-model-invocation: true
+user-invocable: false
 ---
 
-# Maintaining deferred memory
+Deferred memory contains the agent's knowledge. Use deferred memory for understanding of a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill.
 
-Deferred memory is Markdown stored in subdirectories of `$MEMORY_DIR`. It costs nothing on turns where the agent does not need it, and the agent loads it progressively: the system prompt shows that a directory exists, the directory's `MEMORY.md` shows what is inside, and the agent reads individual files only when a task calls for them.
-
-## Is this deferred memory?
-
-Letta memory has three tiers. Put each piece of context in the cheapest tier that still works:
-
-| Tier | Location | Visible to the agent | Holds |
-|---|---|---|---|
-| Core memory | Markdown files directly in `$MEMORY_DIR` | In full on every turn, as part of the system prompt | Identity and the agent's working model of the user and its work, plus the root `MEMORY.md` index |
-| Deferred memory | Indexed subdirectories of `$MEMORY_DIR` | Only after the agent opens them | The agent's analysis of a subject, refined over time and looked up when that subject comes up |
-| Skill | `$MEMORY_DIR/skills/<name>/SKILL.md` | Name and description every turn; body when loaded | A procedure with a clear trigger |
-
-Two records already exist outside these tiers: message history (recall), which holds every raw event, and the memory repository's git history, which holds every past version of every file. Do not copy either into memory files.
-
-Use deferred memory for understanding of a subject that matters only when that subject comes up. If the agent needs it on most turns, it is core memory: use the `maintaining-core-memory` skill. If it is a procedure with a trigger, use the `creating-skills` skill. `skills/` is reserved for skills and is never deferred memory.
+Deferred memory should NOT be used to store:
+- Information that can be accessed by querying the message history (recall memory). For example, logs of specific interactions can simply be looked up in past messages. Reserve deferred memory to store knowledge that is actually *derived* from experience, or to organize knowledge in a way that optimizes recalling the right information at the right time through progressive disclosure.
+- Justifications or reasons for updating memory. These belong in the git commit history of MemFS.
 
 ## Check the limits first
 
@@ -43,7 +33,8 @@ $MEMORY_DIR/
         ├── MEMORY.md      # index for projects/acme/
         └── incidents.md
 ```
-
+- The top-level `MEMORY.md` is always in context, so it must tell the agent what each subdirectory contains and when to open it. Without that entry the directory is never read.
+- `skills/` is reserved for skills and is never deferred memory.
 - A directory is memory only when it has its own `MEMORY.md`. The agent will not discover a directory without one, and neither will the files in it.
 - Every `MEMORY.md` has no frontmatter.
 - Every other Markdown file starts with frontmatter containing exactly two fields:
@@ -93,14 +84,3 @@ Recall already returns what happened. A deferred memory file is worth keeping on
 - Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, and current status. Link to the owning source instead.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
-## Save the change
-
-Changes are saved only once committed. Stage the files you changed, including any updated indexes, by path and commit. The commit message is where lineage lives: what new evidence prompted the revision and how the conclusion changed.
-
-```bash
-git -C "$MEMORY_DIR" add <file>... && git -C "$MEMORY_DIR" commit -m "<what changed>" -m "<what prompted it>"
-```
-
-`git log -p -- <file>` recovers how the analysis evolved, so the file itself holds only the current understanding.
-
-If the pre-commit hook rejects the commit, fix the reported files and commit again. Do not bypass the hook.
