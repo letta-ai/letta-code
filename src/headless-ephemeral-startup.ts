@@ -2,8 +2,10 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import {
   createEphemeralConversation,
   createLocalEphemeralConversation,
+  projectConversationState,
 } from "@/agent/ephemeral-conversation";
 import {
+  type Backend,
   configureEphemeralLocalBackend,
   isLocalBackendEnabled,
 } from "@/backend";
@@ -62,4 +64,31 @@ export function clearHeadlessClientToolRules(agent: AgentState): void {
         `Failed to clear persisted client tool rules for ${agent.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
     });
+}
+
+/** Keep history ownership separate from the parent used for Cloud resources. */
+export async function retrieveHeadlessConversation(
+  backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
+  conversationId: string,
+): Promise<{
+  agent: AgentState;
+  detached: boolean;
+  resourceAgentId: string | null;
+}> {
+  const conversation = await backend.retrieveConversation(conversationId);
+  if (conversation.agent_id === null) {
+    const parentId = Reflect.get(conversation, "parent_agent_id");
+    return {
+      agent: projectConversationState(conversation),
+      detached: true,
+      resourceAgentId: typeof parentId === "string" ? parentId : null,
+    };
+  }
+  return {
+    agent: await backend.retrieveAgent(conversation.agent_id, {
+      include: ["agent.tools", "agent.tags"],
+    }),
+    detached: false,
+    resourceAgentId: conversation.agent_id,
+  };
 }

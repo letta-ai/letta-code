@@ -4,6 +4,17 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getClient } from "@/backend/api/client";
+import {
+  type EnqueueReceipt,
+  getExactSuperRun,
+  listEnqueuedRunMessages,
+} from "@/backend/api/conversation-enqueue";
+import { resolveEnvironmentConnectionId } from "@/backend/api/environments";
+import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
+import { apiRequest } from "@/backend/api/request";
+import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
+import { settingsManager } from "@/settings-manager";
 import {
   createAuthenticatedCliTestEnv,
   createIsolatedCliTestEnv,
@@ -21,6 +32,10 @@ import {
  */
 
 const projectRoot = process.cwd();
+const cliCommand = process.env.LETTA_TEST_CLI_BUNDLE ? "node" : "bun";
+const cliArgs = process.env.LETTA_TEST_CLI_BUNDLE
+  ? [process.env.LETTA_TEST_CLI_BUNDLE]
+  : ["run", "dev"];
 
 async function runCli(
   args: string[],
@@ -45,10 +60,9 @@ async function runCli(
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
         const proc = spawn(
-          "bun",
+          cliCommand,
           [
-            "run",
-            "dev",
+            ...cliArgs,
             ...(includeMemfsStartup ? ["--memfs-startup", "skip"] : []),
             ...args,
           ],
@@ -302,6 +316,247 @@ describe("Startup Flow - Integration", () => {
       }
     },
     { timeout: 190000 },
+  );
+
+  test(
+    "--conversation resumes a conversation without an agent",
+    async () => {
+      await settingsManager.initialize();
+      const homeDir = await mkdtemp(
+        join(tmpdir(), "letta-conversation-resume-"),
+      );
+      const options = {
+        timeoutMs: 180000,
+        includeMemfsStartup: false,
+        retryOnTimeouts: 0,
+        retryOnParseErrors: 0,
+        env: createAuthenticatedCliTestEnv({
+          HOME: homeDir,
+          LETTA_SKIP_KEYCHAIN_CHECK: "1",
+          LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
+        }),
+      };
+      let createdConversationId: string | undefined;
+      try {
+        const created = await runCliJson(
+          [
+            "--ephemeral",
+            "-m",
+            "openai/gpt-5.6-luna",
+            "-p",
+            "Remember the codeword PLUM-4471. Reply only OK.",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          options,
+        );
+        expect(created.exitCode).toBe(0);
+        expect(created.output.agent_id).toBeNull();
+        const conversationId = String(created.output.conversation_id);
+        expect(conversationId).toStartWith("conv-");
+        createdConversationId = conversationId;
+        const resumed = await runCliJson(
+          [
+            "--conversation",
+            conversationId,
+            "-p",
+            "What codeword did I ask you to remember? Reply only the codeword.",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          {
+            ...options,
+            env: {
+              ...options.env,
+              LETTA_CODE_AGENT_ROLE: "subagent",
+              LETTA_SUBAGENT_LAUNCH: "1",
+            },
+          },
+        );
+        expect(resumed.exitCode).toBe(0);
+        expect(resumed.output.agent_id).toBeNull();
+        expect(resumed.output.conversation_id).toBe(conversationId);
+        expect(String(resumed.output.result)).toContain("PLUM-4471");
+      } finally {
+        if (createdConversationId)
+          await apiRequest(
+            "DELETE",
+            `/v1/conversations/${createdConversationId}`,
+          );
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    { timeout: 370000 },
+  );
+
+  test(
+    "--conversation resumes a worker through an inherited listener",
+    async () => {
+      await settingsManager.initialize();
+      const homeDir = await mkdtemp(join(tmpdir(), "letta-listener-resume-"));
+      const name = `resume-test-${crypto.randomUUID()}`;
+      const env = createAuthenticatedCliTestEnv({
+        HOME: homeDir,
+        LETTA_DEBUG: "0",
+        DEBUG: undefined,
+        LETTA_SKIP_KEYCHAIN_CHECK: "1",
+        LETTA_LISTENER_DEVICE_ID: undefined,
+        LETTA_LISTENER_INSTANCE_ID: undefined,
+        LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: undefined,
+        LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
+      });
+      const listener = spawn(
+        cliCommand,
+        [
+          ...cliArgs,
+          "server",
+          "--computer-name",
+          name,
+          "--lifecycle-output",
+          "jsonl",
+        ],
+        { env },
+      );
+      let listenerOutput = "";
+      listener.stderr.on("data", (chunk) => {
+        listenerOutput += chunk;
+      });
+      let parentId: string | undefined;
+      let conversationId: string | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(
+            () =>
+              reject(
+                new Error(`Listener startup timed out: ${listenerOutput}`),
+              ),
+            60000,
+          );
+          listener.once("error", (error) => {
+            clearTimeout(timer);
+            reject(error);
+          });
+          listener.once("exit", (code) => {
+            clearTimeout(timer);
+            reject(new Error(`Listener exited ${code}: ${listenerOutput}`));
+          });
+          listener.stdout.on("data", (chunk) => {
+            listenerOutput += chunk;
+            if (listenerOutput.includes('"state":"connected"')) {
+              clearTimeout(timer);
+              resolve();
+            }
+          });
+        });
+        const { connectionId } = await resolveEnvironmentConnectionId(name);
+        const parent = await apiRequest<{ id: string }>("POST", "/v1/agents/", {
+          name,
+          model: "openai/gpt-5.6-luna",
+          system: "Test resource parent.",
+          memory_blocks: [],
+          include_base_tools: false,
+          hidden: true,
+        });
+        parentId = parent.id;
+        const conversation = await createEphemeralConversation({
+          model: "openai/gpt-5.6-luna",
+          system: "Follow the user instructions.",
+          parent_agent_id: parentId,
+          is_subagent: true,
+          name,
+        });
+        conversationId = conversation.id;
+        const options = {
+          timeoutMs: 180000,
+          includeMemfsStartup: false,
+          retryOnTimeouts: 0,
+          retryOnParseErrors: 0,
+          env: {
+            ...env,
+            LETTA_CODE_AGENT_ROLE: "subagent",
+            LETTA_SUBAGENT_LAUNCH: "1",
+          },
+        };
+        const first = await runCliJson(
+          [
+            "--conversation",
+            conversationId,
+            "-p",
+            "Remember the codeword MINT-8932. Reply only OK.",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          options,
+        );
+        expect(first.exitCode).toBe(0);
+        const resumed = await runCliJson(
+          [
+            "--conversation",
+            conversationId,
+            "-p",
+            "What codeword did I ask you to remember? Reply only the codeword.",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          {
+            ...options,
+            env: {
+              ...options.env,
+              LETTA_RUNTIME_LISTENER_CONNECTION_ID: connectionId,
+            },
+          },
+        );
+        expect(resumed.exitCode).toBe(0);
+        expect(resumed.output).toMatchObject({
+          status: "queued",
+          agent_id: null,
+          resource_agent_id: parentId,
+          conversation_id: conversationId,
+          connection_id: connectionId,
+        });
+        const client = await getClient();
+        const reply = await waitForAcceptedSuperRun(
+          resumed.output as unknown as EnqueueReceipt,
+          AbortSignal.timeout(180000),
+          {
+            exact: getExactSuperRun,
+            run: (id, signal) => client.runs.retrieve(id, { signal }),
+            messages: listEnqueuedRunMessages,
+          },
+        ).catch(async (error) => {
+          const messages = await client.conversations.messages.list(
+            conversation.id,
+            { limit: 10, order: "desc" },
+          );
+          throw new Error(
+            `${String(error)}\n${JSON.stringify({ receipt: resumed.output, messages: messages.getPaginatedItems().map((message) => ({ type: message.message_type, run_id: message.run_id, content: "content" in message ? message.content : undefined })) })}`,
+          );
+        });
+        expect(reply.text).toContain("MINT-8932");
+        expect(
+          await client.conversations.retrieve(conversationId),
+        ).toMatchObject({
+          agent_id: null,
+          parent_agent_id: parentId,
+        });
+      } finally {
+        listener.kill();
+        if (listener.exitCode === null && listener.signalCode === null) {
+          await new Promise<void>((resolve) =>
+            listener.once("exit", () => resolve()),
+          );
+        }
+        if (conversationId)
+          await apiRequest("DELETE", `/v1/conversations/${conversationId}`);
+        if (parentId) await apiRequest("DELETE", `/v1/agents/${parentId}`);
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    { timeout: 420000 },
   );
 
   test(

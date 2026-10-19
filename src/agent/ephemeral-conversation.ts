@@ -80,6 +80,26 @@ export async function createEphemeralConversation(
   };
 }
 
+/** Local compatibility state only; the conversation still has no agent. */
+export function projectConversationState(conversation: {
+  id: string;
+  model?: string | null;
+  model_settings?: unknown;
+  context_window_limit?: number | null;
+}): AgentState {
+  if (!conversation.model) {
+    throw new Error("Cannot resume a conversation without a persisted model.");
+  }
+  return projectEphemeralAgent(conversation.id, {
+    model: conversation.model,
+    system: "",
+    model_settings: (conversation.model_settings ?? undefined) as
+      | Record<string, unknown>
+      | undefined,
+    context_window_limit: conversation.context_window_limit,
+  });
+}
+
 export async function createLocalEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
