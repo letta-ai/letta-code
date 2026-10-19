@@ -16,6 +16,7 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPostStreamRunError,
   shouldRetryPreStreamTransientError,
@@ -847,5 +848,14 @@ describe("isEmptyResponseRetryable", () => {
     expect(
       isEmptyResponseRetryable("llm_error", "Connection error occurred", 0, 2),
     ).toBe(false);
+  });
+});
+
+describe("STALE_APPROVAL_RECOVERY_DENIAL_REASON", () => {
+  test("does not tell the model to blindly re-issue a call that may have run", () => {
+    expect(STALE_APPROVAL_RECOVERY_DENIAL_REASON).not.toMatch(/re-issue/i);
+    expect(STALE_APPROVAL_RECOVERY_DENIAL_REASON).toContain(
+      "check whether its effect already happened",
+    );
   });
 });
