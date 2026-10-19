@@ -624,7 +624,7 @@ async function main(): Promise<void> {
 
   const subcommandResult = await runSubcommand(subcommandArgs);
   if (subcommandResult !== null) {
-    // Let pending native async work drain before Node tears down libuv (Windows).
+    process.channel?.unref(); // Desktop credentials IPC must not keep subcommands alive.
     process.exitCode = subcommandResult;
     return;
   }
