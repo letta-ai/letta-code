@@ -305,6 +305,67 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
+    "--conversation resumes an agent-free Cloud conversation",
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), "letta-agent-free-resume-"));
+      const options = {
+        timeoutMs: 180000,
+        includeMemfsStartup: false,
+        env: createAuthenticatedCliTestEnv({
+          HOME: homeDir,
+          LETTA_SKIP_KEYCHAIN_CHECK: "1",
+        }),
+      };
+
+      try {
+        const created = await runCliJson(
+          [
+            "--ephemeral",
+            "-m",
+            "openai/gpt-5.6-luna",
+            "-p",
+            "Remember the codeword PLUM-4471. Reply with OK and nothing else.",
+            "--tools=",
+            "--output-format",
+            "json",
+          ],
+          options,
+        );
+        expect(created.exitCode).toBe(0);
+        const conversationId = String(created.output.conversation_id);
+        expect(conversationId).toStartWith("conv-");
+
+        // Resume the way the Agent tool resumes a Workflow worker.
+        const resumed = await runCliJson(
+          [
+            "--conversation",
+            conversationId,
+            "-p",
+            "What codeword did I ask you to remember? Reply with only the codeword.",
+            "--output-format",
+            "json",
+          ],
+          {
+            ...options,
+            env: {
+              ...options.env,
+              LETTA_CODE_AGENT_ROLE: "subagent",
+              LETTA_SUBAGENT_LAUNCH: "1",
+            },
+          },
+        );
+        expect(resumed.exitCode).toBe(0);
+        expect(resumed.output.agent_id).toBeNull();
+        expect(resumed.output.conversation_id).toBe(conversationId);
+        expect(String(resumed.output.result)).toContain("PLUM-4471");
+      } finally {
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    { timeout: 370000 },
+  );
+
+  test(
     "--ephemeral runs fully locally without Cloud authentication or persistent state",
     async () => {
       const homeDir = await mkdtemp(

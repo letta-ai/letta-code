@@ -69,6 +69,23 @@ function projectEphemeralAgent(
   } as unknown as AgentState;
 }
 
+/** Project an existing agent-free conversation so headless can resume it. */
+export function projectAgentFreeConversation(conversation: {
+  id: string;
+  model?: string | null;
+  model_settings?: unknown;
+  context_window_limit?: number | null;
+}): AgentState {
+  return projectEphemeralAgent(conversation.id, {
+    model: conversation.model ?? "",
+    system: "",
+    model_settings: (conversation.model_settings ?? undefined) as
+      | Record<string, unknown>
+      | undefined,
+    context_window_limit: conversation.context_window_limit,
+  });
+}
+
 export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {

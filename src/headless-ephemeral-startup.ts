@@ -2,8 +2,10 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import {
   createEphemeralConversation,
   createLocalEphemeralConversation,
+  projectAgentFreeConversation,
 } from "@/agent/ephemeral-conversation";
 import {
+  type Backend,
   configureEphemeralLocalBackend,
   isLocalBackendEnabled,
 } from "@/backend";
@@ -37,6 +39,28 @@ export async function createHeadlessEphemeralConversation(params: {
   return params.backendMode === "local"
     ? createLocalEphemeralConversation(options)
     : createEphemeralConversation(options);
+}
+
+/**
+ * Resolve the agent behind `--conversation`. Agent-free conversations
+ * (Workflow workers, --ephemeral) have no agent to load, so they resume as a
+ * detached session over a projection of the conversation's own model.
+ */
+export async function retrieveConversationAgent(
+  backend: Pick<Backend, "retrieveAgent" | "retrieveConversation">,
+  conversationId: string,
+): Promise<{ agent: AgentState; agentFree: boolean }> {
+  const conversation = await backend.retrieveConversation(conversationId);
+  if (!conversation.agent_id) {
+    return {
+      agent: projectAgentFreeConversation(conversation),
+      agentFree: true,
+    };
+  }
+  const agent = await backend.retrieveAgent(conversation.agent_id, {
+    include: ["agent.tools", "agent.tags"],
+  });
+  return { agent, agentFree: false };
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {

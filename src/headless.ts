@@ -130,6 +130,7 @@ import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
   prepareHeadlessEphemeralBackend,
+  retrieveConversationAgent,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
 import { resolveHeadlessMemfsPolicy } from "./headless-memfs-policy";
@@ -815,6 +816,7 @@ export async function handleHeadlessCommand(
   let specifiedAgentIdFromAmbient = false;
   const forceNew = values["new-agent"];
   const ephemeralFlag = values.ephemeral;
+  let isDetached = Boolean(ephemeralFlag);
   const systemPromptPreset = values.system;
   const systemCustom = values["system-custom"];
   const personalityInput = values.personality;
@@ -1063,20 +1065,17 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Priority 0: --conversation derives agent from conversation ID.
-  // "default" is virtual and requires --agent, so it is never retrieved.
+  // Priority 0: --conversation derives its agent ("default" needs --agent).
   if (specifiedConversationId && specifiedConversationId !== "default") {
     try {
       debugLog(
         "conversations",
         `retrieve(${specifiedConversationId}) [headless conv→agent lookup]`,
       );
-      const conversation = await startupBackend.retrieveConversation(
+      ({ agent, agentFree: isDetached } = await retrieveConversationAgent(
+        startupBackend,
         specifiedConversationId,
-      );
-      agent = await startupBackend.retrieveAgent(conversation.agent_id, {
-        include: ["agent.tools", "agent.tags"],
-      });
+      ));
     } catch (error) {
       trackHeadlessBoundaryError(
         "headless_conversation_lookup_failed",
@@ -1262,9 +1261,9 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
   markMilestone("HEADLESS_AGENT_RESOLVED");
-  const publicAgentId = ephemeralFlag ? null : agent.id;
+  const publicAgentId = isDetached ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
-  const isResumingAgent = !ephemeralFlag && !!(specifiedAgentId || !forceNew);
+  const isResumingAgent = !isDetached && !!(specifiedAgentId || !forceNew);
   let conversationModel: Partial<ConversationCreateBody> | undefined;
   // Refresh presets before applying optional model/system-prompt overrides.
 
@@ -1318,7 +1317,7 @@ export async function handleHeadlessCommand(
   let memfsBgPromise: Promise<unknown> | undefined;
 
   // Init secrets cache — runs in parallel with memfs sync below.
-  const secretsAgentId = ephemeralFlag ? undefined : agent?.id;
+  const secretsAgentId = isDetached ? undefined : agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
         initSecretsFromServer(secretsAgentId),
@@ -1330,7 +1329,7 @@ export async function handleHeadlessCommand(
   //   "blocking"  (default) – await the pull; exit on conflict.
   //   "background"           – fire pull async; session init proceeds immediately.
   //   "skip"                 – skip the pull this session.
-  if (isStatelessSession) {
+  if (isStatelessSession || isDetached) {
     // Stateless subagents retain the inherited checkout without enabling their own MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);
   } else if (!backend.capabilities.remoteMemfs) {
@@ -1464,12 +1463,12 @@ export async function handleHeadlessCommand(
     });
   }
 
-  if (!ephemeralFlag) {
+  if (!isDetached) {
     clearHeadlessClientToolRules(agent);
   }
 
   try {
-    if (ephemeralFlag) {
+    if (isDetached) {
       effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
     } else {
       const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(
@@ -1554,7 +1553,7 @@ export async function handleHeadlessCommand(
 
   // Save session (agent + conversation) to both project and global settings
   // Skip for subagents - they shouldn't pollute the LRU settings
-  if (!ephemeralFlag && shouldPersistSessionState()) {
+  if (!isDetached && shouldPersistSessionState()) {
     await settingsManager.loadLocalProjectSettings();
     settingsManager.persistSession(agent.id, conversationId);
   }
@@ -1757,7 +1756,7 @@ export async function handleHeadlessCommand(
     const { getResumeDataFromBackend } = await import("@/agent/check-approval");
     while (true) {
       // Detached conversations have no server-side agent to retrieve.
-      const freshAgent = ephemeralFlag
+      const freshAgent = isDetached
         ? agent
         : await backend.retrieveAgent(agent.id);
 
@@ -1859,7 +1858,7 @@ export async function handleHeadlessCommand(
 
   // Clear any pending approvals before starting a new turn - ONLY when resuming (LET-7101)
   // For new agents/conversations, lazy recovery handles any edge cases
-  if (isResumingAgent) {
+  if (isResumingAgent || (isDetached && !ephemeralFlag)) {
     try {
       await resolveAllPendingApprovals("queue_for_next_turn");
     } catch (approvalError) {
