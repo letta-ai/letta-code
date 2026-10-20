@@ -702,7 +702,7 @@ export function populateInterruptQueue(
       type: "approval" as const,
       tool_call_id: toolCallId,
       approve: false,
-      reason: "User interrupted the stream",
+      reason: input.denialReason ?? "User interrupted the stream",
     }));
     runtime.pendingInterruptedContext = {
       agentId: input.agentId,

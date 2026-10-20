@@ -707,6 +707,7 @@ export interface InterruptPopulateInput {
   agentId: string | null;
   conversationId: string;
   requestOtid?: string;
+  denialReason?: string;
 }
 
 export interface InterruptToolReturn {
