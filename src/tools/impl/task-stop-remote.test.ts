@@ -467,4 +467,118 @@ describe("Background task interrupt hook", () => {
     ).toBe(false);
     cancel.mockRestore();
   });
+
+  test("marks a restored row stop-failed so the UI can surface and retry it", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_stopfail", "conv-child");
+    const controller = backgroundTasks.get("task_hook_stopfail")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_stopfail",
+      buildBackgroundTaskAbortHook("task_hook_stopfail", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    // The cancel fails: the row restores as the retry handle, marked
+    // stop-failed so the transcript surfaces the live remote run and idle
+    // Esc can retry its stop.
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    const restored = getSubagents().find(
+      (a) => a.id === "sub_task_hook_stopfail",
+    );
+    expect(restored?.status).toBe("running");
+    expect(restored?.stopFailed).toBe(true);
+    cancel.mockRestore();
+  });
+
+  test("clears stopFailed when a later stop lands", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_stopfail_ok", "conv-child");
+    const controller = backgroundTasks.get("task_hook_stopfail_ok")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_stopfail_ok",
+      buildBackgroundTaskAbortHook("task_hook_stopfail_ok", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_stopfail_ok")
+        ?.stopFailed,
+    ).toBe(true);
+
+    // A later stop lands: the row settles as a plain terminal row — no
+    // lingering stopFailed marking keeps idle Esc or notifications armed.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "cancelled" });
+    await Bun.sleep(20);
+    const settled = getSubagents().find(
+      (a) => a.id === "sub_task_hook_stopfail_ok",
+    );
+    expect(settled?.status).toBe("error");
+    expect(settled?.stopFailed).toBeUndefined();
+    expect(settled?.cancelPending).toBeUndefined();
+    clearCompletedSubagents();
+    expect(
+      getSubagents().some((a) => a.id === "sub_task_hook_stopfail_ok"),
+    ).toBe(false);
+    cancel.mockRestore();
+  });
+
+  test("clears stopFailed when the task completes naturally", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_stopfail_natural", "conv-child");
+    const controller = backgroundTasks.get("task_hook_stopfail_natural")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_stopfail_natural",
+      buildBackgroundTaskAbortHook("task_hook_stopfail_natural", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_stopfail_natural")
+        ?.stopFailed,
+    ).toBe(true);
+
+    // The run finishes on its own while armed for a retry: the natural
+    // result stands and no stop-failed marking survives it.
+    completeSubagent("sub_task_hook_stopfail_natural", {
+      success: true,
+      result: "done",
+    });
+    const settled = getSubagents().find(
+      (a) => a.id === "sub_task_hook_stopfail_natural",
+    );
+    expect(settled?.status).toBe("completed");
+    expect(settled?.stopFailed).toBeUndefined();
+    cancel.mockRestore();
+  });
 });

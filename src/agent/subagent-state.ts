@@ -51,6 +51,9 @@ export interface SubagentState {
    * row is a live remote run's only retry handle (its conversationId), so
    * cleanup must not delete it until the hook settles the cancel. */
   cancelPending?: boolean;
+  /** A user-requested stop failed and the remote run is still live: the row
+   * is the retry handle and idle Esc retries its stop. */
+  stopFailed?: boolean;
 }
 
 export type SubagentLifecycleStatus = SubagentState["status"];
@@ -359,6 +362,8 @@ export function completeSubagent(
     ...agent,
     status: result.success ? "completed" : "error",
     error: result.error,
+    // The run settled on its own: no failed stop remains to retry.
+    stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
@@ -612,6 +617,21 @@ function subagentMatchesScope(
     agent.parentConversationId === undefined ||
     agent.parentConversationId === scope.conversationId
   );
+}
+
+/** True when a live subagent row's user-requested stop failed and the remote
+ * run is still going — the state where a later Esc must retry the stop. */
+export function hasStopFailedSubagents(scope?: {
+  agentId?: string;
+  conversationId?: string;
+}): boolean {
+  for (const agent of store.agents.values()) {
+    if (!agent.stopFailed) continue;
+    if (agent.status !== "pending" && agent.status !== "running") continue;
+    if (scope && !subagentMatchesScope(agent, scope)) continue;
+    return true;
+  }
+  return false;
 }
 
 // ============================================================================

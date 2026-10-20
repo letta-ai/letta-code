@@ -8,7 +8,11 @@ import {
   useRef,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { getSubagents, interruptActiveSubagents } from "@/agent/subagent-state";
+import {
+  getSubagents,
+  hasStopFailedSubagents,
+  interruptActiveSubagents,
+} from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
@@ -326,6 +330,22 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           queueLength: tuiQueueRef.current?.length ?? 0,
           bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
         });
+      }
+      // Idle: no turn is streaming or unwinding, but a background task whose
+      // remote stop failed is still running. Esc retries its stop through
+      // the re-armed hook — the only user-reachable retry, because the row's
+      // Task line was promoted and no longer renders the live row.
+      if (
+        hasStopFailedSubagents({
+          agentId,
+          conversationId: conversationIdRef.current,
+        })
+      ) {
+        interruptSubagentsAndReleaseReflection(
+          agentId,
+          conversationIdRef.current,
+        );
+        appendError("Retrying stop of background task...", true);
       }
       return;
     }

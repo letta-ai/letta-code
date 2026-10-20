@@ -212,3 +212,42 @@ export function appendTaskNotificationEventsToBuffer(
   flush?.();
   return true;
 }
+
+/**
+ * Select transcript notifications for subagent rows whose user-requested stop
+ * failed (the remote run is still live). Deduplicates by row id via the
+ * caller-owned seen set and scopes to the given conversation: only rows in
+ * the active conversation notify, so switching conversations never replays
+ * another conversation's failure. Returns the notification messages; the
+ * caller appends them as task_notification event lines.
+ */
+export function selectStopFailedNotifications(
+  rows: Array<{
+    id: string;
+    description: string;
+    status: string;
+    stopFailed?: boolean;
+    parentConversationId?: string;
+  }>,
+  seenIds: Set<string>,
+  scope: { conversationId?: string },
+): string[] {
+  const messages: string[] = [];
+  for (const row of rows) {
+    if (!row.stopFailed) continue;
+    if (row.status !== "pending" && row.status !== "running") continue;
+    if (seenIds.has(row.id)) continue;
+    if (
+      scope.conversationId !== undefined &&
+      row.parentConversationId !== undefined &&
+      row.parentConversationId !== scope.conversationId
+    ) {
+      continue;
+    }
+    seenIds.add(row.id);
+    messages.push(
+      `Background task "${row.description}" could not be stopped — still running remotely. Press Esc to retry.`,
+    );
+  }
+  return messages;
+}

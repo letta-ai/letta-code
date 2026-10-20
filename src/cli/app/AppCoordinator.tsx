@@ -42,6 +42,7 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  hasStopFailedSubagents,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
@@ -199,7 +200,10 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import {
+  appendTaskNotificationEventsToBuffer,
+  selectStopFailedNotifications,
+} from "@/utils/task-notifications";
 import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";
@@ -4662,6 +4666,26 @@ export function App({
     getSubagentSnapshot,
   );
 
+  // A background task whose remote stop failed is still running: idle Esc
+  // must reach the interrupt handler so it can retry the stop, and the
+  // failure must surface as a transcript event instead of letting the
+  // promoted "interrupted" line claim the stop succeeded.
+  const hasStopFailedTasks = hasStopFailedSubagents({
+    agentId,
+    conversationId,
+  });
+  const stopFailedNotifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const messages = selectStopFailedNotifications(
+      subagents,
+      stopFailedNotifiedRef.current,
+      { conversationId },
+    );
+    if (messages.length > 0) {
+      appendTaskNotificationEvents(messages);
+    }
+  }, [subagents, conversationId, appendTaskNotificationEvents]);
+
   // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
     // Count actual lines in live content by counting newlines
@@ -5023,6 +5047,7 @@ export function App({
         interruptRequested={
           interruptRequested || !!abortControllerRef.current?.signal.aborted
         }
+        hasStopFailedTasks={hasStopFailedTasks}
         isAgentBusy={isAgentBusy}
         liveItems={liveItems}
         liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}

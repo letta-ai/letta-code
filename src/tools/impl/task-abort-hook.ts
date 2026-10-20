@@ -54,7 +54,10 @@ function settleInterruptedCancel(
     return;
   }
   // The cancel landed, went local, or the task is gone: nothing to retry.
-  updateSubagent(bgTask.subagentId, { cancelPending: undefined });
+  updateSubagent(bgTask.subagentId, {
+    cancelPending: undefined,
+    stopFailed: undefined,
+  });
 }
 
 /**
@@ -79,6 +82,10 @@ function restoreInterruptedSubagentRow(
     status: "running",
     error: undefined,
     cancelPending: undefined,
+    // The stop failed and the remote run is still live: idle Esc retries
+    // through this row, and the UI surfaces the failure instead of letting
+    // the promoted "interrupted" line claim the stop succeeded.
+    stopFailed: true,
   });
   registerSubagentAbortHook(subagentId, hook);
 }
