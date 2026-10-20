@@ -733,6 +733,26 @@ test suite. Use `setupRuntimeModelCatalogFixture()` (bundles setup + cleanup) fr
 `src/test-utils/runtime-model-catalog.ts`. All test files touching the model
 catalog must use this fixture.
 
+### Context Window Limits and Worker Inheritance
+
+The configured context window comes from the catalog entry the selected model
+handle resolves to, not the model's nominal maximum. Setting a bare handle
+applies that entry's `context_window_limit`, which can be far below the model's
+advertised size while a larger-window variant exists as a separate entry (for
+example an `-1m` handle) that must be selected explicitly. After configuring,
+verify the agent's actual `context_window` value rather than the model's
+advertised maximum.
+
+Workflow and subagent workers created with a null `context_window_limit` inherit
+the parent agent's context window, so configuring the spawner agent controls the
+workers' window.
+
+Once a prompt exceeds the configured `context_window_limit`, compaction can run
+on nearly every step, add tens of seconds per step, and (as observed) fail to
+bring the prompt back under the limit. When long-running agent or worker steps
+are dominated by compaction, treat the window as under-provisioned and raise it
+rather than debugging the harness or workflow.
+
 ---
 
 ## Subagent Lifecycle & Reflection
