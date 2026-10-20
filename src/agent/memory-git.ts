@@ -40,10 +40,12 @@ import {
   installPostCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
+import { withPeerSeed } from "./memory-git-seed";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
 
 const execFile = promisify(execFileCb);
+const cloneGitWithPeerSeed = withPeerSeed(runGitWithRetry);
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
@@ -330,7 +332,7 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
   await withRepositoryCheckout(args.directory, async (directory, fresh) => {
     args = { ...args, publishedDirectory: args.directory, directory };
     if (fresh) {
-      await runGitWithRetry(
+      await cloneGitWithPeerSeed(
         directory,
         ["clone", "--depth", "1", args.remoteUrl, "."],
         args.token,
@@ -1497,9 +1499,7 @@ export async function syncAttachedAgentRepositories(
 }
 
 /**
- * Clone the agent's state repo into the memory directory.
- *
- * Git root is ~/.letta/agents/{id}/memory/ (not the agent root).
+ * Clone state into ~/.letta/agents/{id}/memory/ (not the agent root).
  */
 export async function cloneMemoryRepo(agentId: string): Promise<void> {
   startAttachedAgentRepositories(agentId);
@@ -1509,7 +1509,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
     getMemoryRepoDir(agentId),
     async (dir, fresh) => {
       if (fresh) {
-        await runGitWithRetry(dir, ["clone", url, "."], token, {
+        await cloneGitWithPeerSeed(dir, ["clone", url, "."], token, {
           operation: "clone memory repo",
           timeoutMs: GIT_CLONE_TIMEOUT_MS,
         });
@@ -1522,7 +1522,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
             rmSync(tmpDir, { recursive: true, force: true });
           }
           mkdirSync(tmpDir, { recursive: true });
-          await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+          await cloneGitWithPeerSeed(tmpDir, ["clone", url, "."], token, {
             operation: "clone memory repo (tmp migration)",
             timeoutMs: GIT_CLONE_TIMEOUT_MS,
           });
