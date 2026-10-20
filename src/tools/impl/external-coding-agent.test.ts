@@ -1,4 +1,9 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -515,4 +520,72 @@ describe("external coding agent vault secrets", () => {
     expect(result.report).not.toContain(token);
     expect(result.report).toContain("the token is");
   });
+});
+
+describe("parent memory launch instructions", () => {
+  test.each(["claude-code", "codex"] as const)(
+    "composes instructions before the %s launch",
+    async (type) => {
+      const parentAgentId = `agent-worker-parent-${randomUUID()}`;
+      const directory = getScopedMemoryFilesystemRoot(parentAgentId);
+      for (const [hasMemory, mcpReminder] of [
+        [true, "MCP discovery"],
+        [true, undefined],
+        [false, undefined],
+        [false, "MCP discovery"],
+      ] as const) {
+        if (hasMemory) mkdirSync(directory, { recursive: true });
+        let received: string | undefined;
+        try {
+          const resolvedMcpReminder =
+            mcpReminder ??
+            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
+              inherit: false,
+            }));
+          await runExternalCodingAgent(
+            {
+              type,
+              parentAgentId,
+              prompt: "task",
+              mcpReminder: resolvedMcpReminder,
+            },
+            {
+              resolveSecretEnv: async () => ({}),
+              runPreflight: async () => ({
+                exitCode: 0,
+                stdout: '{"loggedIn":true}',
+                stderr: "",
+              }),
+              runProcess: async (command) => {
+                const index = command.args.indexOf("--append-system-prompt");
+                received = index >= 0 ? command.args[index + 1] : undefined;
+                return {
+                  exitCode: 0,
+                  stdout: '{"result":"done","session_id":"c1"}',
+                  stderr: "",
+                };
+              },
+              runCodexTurn: async (options) => {
+                received = options.mcpReminder;
+                throw new Error("captured launch instructions");
+              },
+            },
+          );
+          const note = buildParentMemoryNote(parentAgentId);
+          expect(received).toBe(
+            [
+              note
+                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
+                : undefined,
+              mcpReminder,
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined,
+          );
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
 });
