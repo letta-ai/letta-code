@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.18",
+  "version": "0.34.19",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -2058,15 +2058,15 @@
       }
     },
     "node_modules/@shikijs/vscode-textmate": {
-      "version": "10.0.2",
-      "resolved": "https://registry.npmjs.org/@shikijs/vscode-textmate/-/vscode-textmate-10.0.2.tgz",
-      "integrity": "sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==",
+      "version": "10.1.0",
+      "resolved": "https://registry.npmjs.org/@shikijs/vscode-textmate/-/vscode-textmate-10.1.0.tgz",
+      "integrity": "sha512-cVBuhDQjBZaNMTwBquYfPydrUP+E3hE6oYGasx8h6ZrODIM7/r+gxLDXdd66oszbrggZHEntdE6j+5gYIVyMWQ==",
       "license": "MIT"
     },
     "node_modules/@smithy/core": {
-      "version": "3.36.0",
-      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.36.0.tgz",
-      "integrity": "sha512-3hJiwG1F5t1SoXqp/yOCmYXziyx7ZVqF63S5W6YU201e/qwVaHPex+E/3vvyY9a3ORq/b+BydeNZpP2saQ9X2g==",
+      "version": "3.36.1",
+      "resolved": "https://registry.npmjs.org/@smithy/core/-/core-3.36.1.tgz",
+      "integrity": "sha512-WC5W1Jrsfxu1y6LeqXMie7N14qmcdafij/Haye4feVlyMMXLGpYxBeOX6Ee1iRJbDzGG5LVman8U1rrt9MYFHA==",
       "license": "Apache-2.0",
       "dependencies": {
         "@smithy/types": "^4.19.0",
@@ -3197,9 +3197,9 @@
       "license": "Unlicense"
     },
     "node_modules/fast-uri": {
-      "version": "3.1.8",
-      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.8.tgz",
-      "integrity": "sha512-GZMtZUTNRpOVIECoXwLNZS5xUGE+mVNbTB8h/7Rwh2TFWcBQiPzTgyZi05BF9UMZKkLJv8XBRJTlU7zg8+ZfMg==",
+      "version": "3.1.9",
+      "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.9.tgz",
+      "integrity": "sha512-hS/0Wt3Ya043oKXs0sIxrMpKQITXhMLIrVAKKXi4gozGC9v7YRWVnXIZzjNPTO02M9BdxLCWqK1yRXgNziVyJQ==",
       "funding": [
         {
           "type": "github",
@@ -3792,9 +3792,9 @@
       "license": "ISC"
     },
     "node_modules/jose": {
-      "version": "6.2.12",
-      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.12.tgz",
-      "integrity": "sha512-9NiFmJEex0sy2Dk58j2UGBSHgUs2ypF9eZSu4L6vjOX3Dp96Sw1F3uL+H+D1sx02jZZdzUT0HgvCy59CuvXcWw==",
+      "version": "6.2.13",
+      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.13.tgz",
+      "integrity": "sha512-7TIg10ZE1x82YediN+lcrPNvGMKge9yFHQD+Qho/b8y2adfugU3AsvvHfxV0fzyFllT6l9xCjf4RWY9g/Z9PJQ==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/panva"
@@ -5452,7 +5452,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.18",
+      "version": "0.34.19",
       "dependencies": {
         "@earendil-works/pi-ai": "^0.99.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
