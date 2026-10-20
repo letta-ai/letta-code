@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve, sep } from "node:path";
 import type { Skill } from "@/agent/skills";
 import {
   buildExternalCodingAgentSkillsReminder,
@@ -26,7 +27,7 @@ describe("external coding agent skills", () => {
 The following skills are available. Read the relevant SKILL.md before using a skill; resolve its referenced files relative to that file's directory.
 
 - database-review: Review database changes
-  SKILL.md: /repo/.agents/skills/database-review/SKILL.md
+  SKILL.md: ${resolve(skill("database-review").path)}
 </system-reminder>`);
   });
 
@@ -60,12 +61,31 @@ The following skills are available. Read the relevant SKILL.md before using a sk
     expect(reminder).toContain("parent-skill");
   });
 
+  test("unresolvable parent linkage skips skills without discovering another scope", async () => {
+    let discovered = false;
+    const reminder = await resolveExternalCodingAgentSkillsReminder(
+      "child",
+      "/project",
+      {
+        getScopeAgentId: async () => {
+          throw new Error("parent unavailable");
+        },
+        discoverSkills: async () => {
+          discovered = true;
+          return { skills: [skill("wrong-scope")], errors: [] };
+        },
+      },
+    );
+    expect(reminder).toBeUndefined();
+    expect(discovered).toBe(false);
+  });
+
   test("caps large inventories without cutting paths", () => {
     const reminder = buildExternalCodingAgentSkillsReminder(
       Array.from({ length: 200 }, (_, i) => skill(`skill-${i}`)),
     );
     expect(reminder?.match(/SKILL.md:/g)).toHaveLength(100);
-    expect(reminder?.endsWith("/SKILL.md\n</system-reminder>")).toBe(true);
+    expect(reminder?.endsWith(`${sep}SKILL.md\n</system-reminder>`)).toBe(true);
     expect(
       buildExternalCodingAgentSkillsReminder([
         { ...skill("huge"), description: "x".repeat(33_000) },

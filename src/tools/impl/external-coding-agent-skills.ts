@@ -43,9 +43,13 @@ export async function resolveExternalCodingAgentSkillsReminder(
     discoverSkills?: typeof discoverClientSideSkills;
   } = {},
 ): Promise<string | undefined> {
-  const agentId = await (deps.getScopeAgentId ?? getMcpScopeAgentId)(
-    parentAgentId,
-  );
+  let agentId: string;
+  try {
+    agentId = await (deps.getScopeAgentId ?? getMcpScopeAgentId)(parentAgentId);
+  } catch {
+    // Skill forwarding is optional; never widen access on broken parent linkage.
+    return undefined;
+  }
   const discovery = await (deps.discoverSkills ?? discoverClientSideSkills)({
     agentId,
     workingDirectory,
