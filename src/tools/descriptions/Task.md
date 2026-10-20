@@ -32,6 +32,8 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`.
 
+Subagents like Claude Code/Codex are forwarded the same skills and MCP servers that you have (when launched with the `Agent` tool), but lack long-term memory and context. Forward any relevant memory files or other context in the task specification or via steering if additional context is required post-launch.
+
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
 Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
