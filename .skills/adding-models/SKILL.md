@@ -57,6 +57,14 @@ Common provider prefixes:
 - `google_vertex/` - Vertex AI
 - `openrouter/` - Various providers
 
+Catalog entries, not handles, carry the effective context window. Several
+entries can share one provider `handle` with different context windows (e.g.
+`anthropic/claude-opus-5-5` has a 200k default entry and a 950k `opus-5.5-1m`
+entry), and a bare handle resolves to the first matching entry. When the
+context window matters, select the specific catalog entry id rather than the
+bare handle, and confirm the effective limit on a live agent with
+`letta model get`.
+
 ### Step 2: Update the Owning Catalog
 
 Letta Code does not bundle a model catalog:
