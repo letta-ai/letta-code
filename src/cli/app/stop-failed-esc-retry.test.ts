@@ -25,20 +25,17 @@ describe("stop-failed background task retry wiring", () => {
     const settleIndex = source.indexOf("settleTuiInterrupt({", gateIndex);
     expect(settleIndex).toBeGreaterThan(gateIndex);
 
-    const guardIndex = source.indexOf("hasStopFailedSubagents(", settleIndex);
-    expect(guardIndex).toBeGreaterThan(settleIndex);
-
     const retryIndex = source.indexOf(
-      "interruptSubagentsAndReleaseReflection(",
-      guardIndex,
+      "interruptStopFailedSubagents(",
+      settleIndex,
     );
-    expect(retryIndex).toBeGreaterThan(guardIndex);
+    expect(retryIndex).toBeGreaterThan(settleIndex);
 
     const feedbackIndex = source.indexOf(
       "Retrying stop of background task",
-      guardIndex,
+      retryIndex,
     );
-    expect(feedbackIndex).toBeGreaterThan(guardIndex);
+    expect(feedbackIndex).toBeGreaterThan(retryIndex);
   });
 
   test("idle Esc reaches the interrupt handler only through the full prop chain", () => {
@@ -58,5 +55,11 @@ describe("stop-failed background task retry wiring", () => {
     expect(coordinator).toContain("hasStopFailedSubagents({");
     expect(coordinator).toContain("hasStopFailedTasks={hasStopFailedTasks}");
     expect(coordinator).toContain("selectStopFailedNotifications(");
+    // The notification scope must match the Esc retry's scoping: agent AND
+    // conversation, so a failure never lands in (or is consumed by) the
+    // wrong agent's transcript.
+    expect(coordinator).toContain("stopFailedRetryingRef.current,");
+    expect(coordinator).toContain("{ agentId, conversationId },");
+    expect(coordinator).toContain("[...failures, ...stops]");
   });
 });

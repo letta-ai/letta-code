@@ -213,13 +213,29 @@ export function appendTaskNotificationEventsToBuffer(
   return true;
 }
 
+export interface StopFailedNotificationSelection {
+  /** New stop-failure messages for rows entering the surfaced state. */
+  failures: string[];
+  /** Stop-landed messages for retries the user dispatched from this view. */
+  stops: string[];
+}
+
 /**
  * Select transcript notifications for subagent rows whose user-requested stop
- * failed (the remote run is still live). Deduplicates by row id via the
- * caller-owned seen set and scopes to the given conversation: only rows in
- * the active conversation notify, so switching conversations never replays
- * another conversation's failure. Returns the notification messages; the
- * caller appends them as task_notification event lines.
+ * failed (the remote run is still live), and for retries that later landed.
+ *
+ * Scope: rows are matched against the active agent AND conversation (rows
+ * with no recorded parent match any, mirroring the interrupt scoping), so a
+ * failure never lands in — or is consumed by — the wrong agent's transcript.
+ *
+ * Dedup is transition-based via the caller-owned seen set: an id stays in
+ * the set only while its row is a live stop-failure in scope, so a failed
+ * retry (the row leaves for cancelPending, then restores stopFailed)
+ * re-notifies instead of surfacing exactly once. When a surfaced failure's
+ * retry is dispatched, the id moves to the caller-owned retrying set; a
+ * retry that lands emits a "stopped" correction, a retry that fails is
+ * re-notified by the seen-set transition, and a run that settles naturally
+ * stays silent (its own completion path owns that message).
  */
 export function selectStopFailedNotifications(
   rows: Array<{
@@ -227,27 +243,77 @@ export function selectStopFailedNotifications(
     description: string;
     status: string;
     stopFailed?: boolean;
+    cancelPending?: boolean;
+    parentAgentId?: string;
     parentConversationId?: string;
   }>,
   seenIds: Set<string>,
-  scope: { conversationId?: string },
-): string[] {
-  const messages: string[] = [];
-  for (const row of rows) {
-    if (!row.stopFailed) continue;
-    if (row.status !== "pending" && row.status !== "running") continue;
-    if (seenIds.has(row.id)) continue;
+  retryingIds: Set<string>,
+  scope: { agentId?: string; conversationId?: string },
+): StopFailedNotificationSelection {
+  const failures: string[] = [];
+  const stops: string[] = [];
+  const liveStopFailed = new Set<string>();
+
+  const matchesScope = (row: {
+    parentAgentId?: string;
+    parentConversationId?: string;
+  }): boolean => {
+    if (scope.agentId !== undefined && row.parentAgentId !== undefined) {
+      if (row.parentAgentId !== scope.agentId) return false;
+    }
     if (
       scope.conversationId !== undefined &&
       row.parentConversationId !== undefined &&
       row.parentConversationId !== scope.conversationId
     ) {
-      continue;
+      return false;
     }
+    return true;
+  };
+
+  for (const row of rows) {
+    if (!row.stopFailed) continue;
+    if (row.status !== "pending" && row.status !== "running") continue;
+    if (!matchesScope(row)) continue;
+    liveStopFailed.add(row.id);
+    if (seenIds.has(row.id)) continue;
     seenIds.add(row.id);
-    messages.push(
+    failures.push(
       `Background task "${row.description}" could not be stopped — still running remotely. Press Esc to retry.`,
     );
   }
-  return messages;
+
+  // Ids whose row left the surfaced state stop consuming the dedupe entry;
+  // a row that left because a retry was dispatched is tracked so its
+  // outcome can be reported.
+  for (const id of seenIds) {
+    if (liveStopFailed.has(id)) continue;
+    seenIds.delete(id);
+    const row = rows.find((candidate) => candidate.id === id);
+    if (row?.cancelPending) {
+      retryingIds.add(id);
+    }
+  }
+
+  for (const id of retryingIds) {
+    const row = rows.find((candidate) => candidate.id === id);
+    if (!row || liveStopFailed.has(id) || row.status === "completed") {
+      // Deleted, restored as a fresh failure, or settled naturally: the
+      // retry outcome is reported (or owned) elsewhere.
+      retryingIds.delete(id);
+      continue;
+    }
+    if (row.status !== "error" || row.cancelPending) continue;
+    if (!matchesScope(row)) {
+      // The retry landed while another conversation was active: never
+      // write this conversation's correction into that transcript.
+      retryingIds.delete(id);
+      continue;
+    }
+    retryingIds.delete(id);
+    stops.push(`Background task "${row.description}" stopped.`);
+  }
+
+  return { failures, stops };
 }

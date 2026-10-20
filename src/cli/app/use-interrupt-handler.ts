@@ -10,8 +10,8 @@ import {
 import type { ApprovalResult } from "@/agent/approval-execution";
 import {
   getSubagents,
-  hasStopFailedSubagents,
   interruptActiveSubagents,
+  interruptStopFailedSubagents,
 } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { Buffers } from "@/cli/helpers/accumulator";
@@ -334,17 +334,24 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // Idle: no turn is streaming or unwinding, but a background task whose
       // remote stop failed is still running. Esc retries its stop through
       // the re-armed hook — the only user-reachable retry, because the row's
-      // Task line was promoted and no longer renders the live row.
-      if (
-        hasStopFailedSubagents({
-          agentId,
-          conversationId: conversationIdRef.current,
-        })
-      ) {
-        interruptSubagentsAndReleaseReflection(
-          agentId,
-          conversationIdRef.current,
-        );
+      // Task line was promoted and no longer renders the live row. Only the
+      // failed rows are retried: a healthy same-scope background task must
+      // survive its sibling's stop retry.
+      const retried = interruptStopFailedSubagents(INTERRUPTED_BY_USER, {
+        agentId,
+        conversationId: conversationIdRef.current,
+      });
+      if (retried.length > 0) {
+        if (
+          retried.some(
+            (id) =>
+              getSubagents()
+                .find((agent) => agent.id === id)
+                ?.type.toLowerCase() === "reflection",
+          )
+        ) {
+          releaseReflectionLaunch(agentId);
+        }
         appendError("Retrying stop of background task...", true);
       }
       return;

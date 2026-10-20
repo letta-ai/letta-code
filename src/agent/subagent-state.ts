@@ -594,6 +594,9 @@ export function interruptActiveSubagents(
         // The fired hook's cancel is now in flight: protect the row (the
         // remote run's retry handle) from cleanup until the hook settles.
         ...(hook ? { cancelPending: true } : {}),
+        // A fresh stop attempt supersedes the recorded failure; the hook
+        // re-marks stopFailed only if this cancel fails too.
+        stopFailed: undefined,
       };
       store.agents.set(id, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
@@ -603,6 +606,43 @@ export function interruptActiveSubagents(
   if (anyInterrupted) {
     notifyListeners();
   }
+}
+
+/**
+ * Retry the stop of subagents whose previous user-requested stop failed
+ * (stopFailed rows still pending/running in scope). Unlike
+ * interruptActiveSubagents this leaves healthy same-scope background tasks
+ * alone: an Esc retrying one task's stop must not abort its siblings.
+ * Returns the ids of the rows whose stop was re-dispatched.
+ */
+export function interruptStopFailedSubagents(
+  errorMessage: string,
+  scope?: { agentId?: string; conversationId?: string },
+): string[] {
+  const interrupted: string[] = [];
+  for (const [id, agent] of store.agents.entries()) {
+    if (!agent.stopFailed) continue;
+    if (agent.status !== "pending" && agent.status !== "running") continue;
+    if (scope && !subagentMatchesScope(agent, scope)) continue;
+    const hook = subagentAbortHooks.get(id);
+    hook?.();
+    subagentAbortHooks.delete(id);
+    const updatedAgent: SubagentState = {
+      ...agent,
+      status: "error",
+      error: errorMessage,
+      durationMs: Date.now() - agent.startTime,
+      ...(hook ? { cancelPending: true } : {}),
+      stopFailed: undefined,
+    };
+    store.agents.set(id, updatedAgent);
+    scheduleCompletedSubagentCleanup(id);
+    interrupted.push(id);
+  }
+  if (interrupted.length > 0) {
+    notifyListeners();
+  }
+  return interrupted;
 }
 
 function subagentMatchesScope(

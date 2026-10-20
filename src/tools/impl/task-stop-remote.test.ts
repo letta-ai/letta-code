@@ -8,6 +8,7 @@ import {
   completeSubagent,
   getSubagents,
   interruptActiveSubagents,
+  interruptStopFailedSubagents,
   registerSubagent,
   registerSubagentAbortHook,
   updateSubagent,
@@ -579,6 +580,151 @@ describe("Background task interrupt hook", () => {
     );
     expect(settled?.status).toBe("completed");
     expect(settled?.stopFailed).toBeUndefined();
+    cancel.mockRestore();
+  });
+
+  test("a fresh interrupt supersedes the recorded stop failure", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_supersede", "conv-child");
+    const controller = backgroundTasks.get("task_hook_supersede")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_supersede",
+      buildBackgroundTaskAbortHook("task_hook_supersede", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_supersede")
+        ?.stopFailed,
+    ).toBe(true);
+
+    // A new stop attempt is in flight: the recorded failure is superseded
+    // until the hook settles it (and re-marks only if it fails again).
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    const retrying = getSubagents().find(
+      (a) => a.id === "sub_task_hook_supersede",
+    );
+    expect(retrying?.status).toBe("error");
+    expect(retrying?.cancelPending).toBe(true);
+    expect(retrying?.stopFailed).toBeUndefined();
+    cancel.mockRestore();
+  });
+
+  test("an idle Esc retry stops only the failed task, not its healthy sibling", async () => {
+    const resolvers = new Map<
+      string,
+      (value: Record<string, string>) => void
+    >();
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      (conversationId: string) =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolvers.set(conversationId, resolve);
+        }),
+    );
+    startRemoteTask("task_hook_failed_one", "conv-child");
+    startRemoteTask("task_hook_healthy_one", "conv-other");
+    const failedController = backgroundTasks.get("task_hook_failed_one")
+      ?.abortController as AbortController;
+    const healthyController = backgroundTasks.get("task_hook_healthy_one")
+      ?.abortController as AbortController;
+    let healthyHookFired = 0;
+    registerSubagentAbortHook(
+      "sub_task_hook_failed_one",
+      buildBackgroundTaskAbortHook("task_hook_failed_one", failedController),
+    );
+    registerSubagentAbortHook(
+      "sub_task_hook_healthy_one",
+      buildBackgroundTaskAbortHook("task_hook_healthy_one", healthyController),
+    );
+    const originalHook = healthyController.abort.bind(healthyController);
+    healthyController.abort = () => {
+      healthyHookFired += 1;
+      return originalHook();
+    };
+
+    // First stop fails: only the failed row is marked. The cancels are
+    // keyed by conversation so the sibling's cancel stays pending.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolvers.get("conv-child")?.({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_failed_one")
+        ?.stopFailed,
+    ).toBe(true);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_healthy_one")?.status,
+    ).toBe("error");
+
+    // Restore both rows to live state: the failed one stop-failed, the
+    // sibling healthy again (as if its own interrupt had never happened).
+    updateSubagent("sub_task_hook_healthy_one", {
+      status: "running",
+      error: undefined,
+      cancelPending: undefined,
+    });
+
+    // The targeted retry re-dispatches only the stop-failed row's hook.
+    const retried = interruptStopFailedSubagents("Interrupted by user");
+    expect(retried).toEqual(["sub_task_hook_failed_one"]);
+    expect(healthyHookFired).toBe(0);
+    const sibling = getSubagents().find(
+      (a) => a.id === "sub_task_hook_healthy_one",
+    );
+    expect(sibling?.status).toBe("running");
+    expect(sibling?.cancelPending).toBeUndefined();
+    cancel.mockRestore();
+  });
+
+  test("a failed targeted retry re-marks the row for the next retry", async () => {
+    let resolveCancel!: (value: Record<string, string>) => void;
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      () =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolveCancel = resolve;
+        }),
+    );
+    startRemoteTask("task_hook_retry_loop", "conv-child");
+    const controller = backgroundTasks.get("task_hook_retry_loop")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_retry_loop",
+      buildBackgroundTaskAbortHook("task_hook_retry_loop", controller),
+    );
+
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_retry_loop")
+        ?.stopFailed,
+    ).toBe(true);
+
+    // The user follows the hint: the targeted retry dispatches, fails
+    // again, and the row re-marks stopFailed so the failure can re-surface
+    // and the next Esc stays armed.
+    const retried = interruptStopFailedSubagents("Interrupted by user");
+    expect(retried).toEqual(["sub_task_hook_retry_loop"]);
+    await Bun.sleep(20);
+    resolveCancel({ "run-child": "failed" });
+    await Bun.sleep(20);
+    const restored = getSubagents().find(
+      (a) => a.id === "sub_task_hook_retry_loop",
+    );
+    expect(restored?.status).toBe("running");
+    expect(restored?.stopFailed).toBe(true);
     cancel.mockRestore();
   });
 });

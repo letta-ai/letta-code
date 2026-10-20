@@ -4675,16 +4675,22 @@ export function App({
     conversationId,
   });
   const stopFailedNotifiedRef = useRef<Set<string>>(new Set());
+  const stopFailedRetryingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    const messages = selectStopFailedNotifications(
+    const { failures, stops } = selectStopFailedNotifications(
       subagents,
       stopFailedNotifiedRef.current,
-      { conversationId },
+      stopFailedRetryingRef.current,
+      // Match the Esc retry's scoping: a failure (or its correction) must
+      // land in the transcript of the agent that owns the row, never be
+      // consumed by whichever agent the user switched to mid-flight.
+      { agentId, conversationId },
     );
+    const messages = [...failures, ...stops];
     if (messages.length > 0) {
       appendTaskNotificationEvents(messages);
     }
-  }, [subagents, conversationId, appendTaskNotificationEvents]);
+  }, [subagents, conversationId, appendTaskNotificationEvents, agentId]);
 
   // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
