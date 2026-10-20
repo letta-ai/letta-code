@@ -725,6 +725,18 @@ BYOK row, while retaining the organization-specific handle for selection. Do
 not add provider-name rewrites to make hosted rows from `GET /v1/models` act
 like catalog rows.
 
+Catalog entries are the unit of selection, not provider handles: several
+entries can share one `handle` while carrying different per-entry context
+windows (remote `contextWindow` projects to `updateArgs.context_window` in
+`toCatalogModel`), and a bare handle resolves to the first matching entry, so
+an agent selected by bare handle can be capped at a smaller context window
+than its provider supports. Agents and Workflow workers spawned without an
+explicit `model` inherit the parent agent's context-window limit:
+`src/tools/impl/workflow.ts` snapshots the parent's `context_window_limit` and
+`src/tools/workflow/sdk-spawner.ts` applies it as `contextWindowLimit` when the
+worker has no model. Raise the parent agent's context window to raise a child
+worker's.
+
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
 
