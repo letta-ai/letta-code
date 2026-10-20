@@ -83,6 +83,21 @@ describe("ReplSession cells", () => {
     expect(run).toEqual({ result: [3, "undefined"], output: ["at 3"] });
   });
 
+  test("overlapping cells keep their own args", async () => {
+    const { repl } = session(scriptedSpawner().spawner);
+    await repl.runCell(
+      "gate = new Promise((resolve) => { release = resolve; });",
+    );
+    const first = repl.runCell("await gate; return args.n;", {
+      args: { n: 1 },
+    });
+    const second = await repl.runCell("release(); return args.n;", {
+      args: { n: 2 },
+    });
+    expect(second.result).toBe(2);
+    expect((await first).result).toBe(1);
+  });
+
   test("calls tools through the latest cell's bindings", async () => {
     const { repl } = session(scriptedSpawner().spawner);
     const calls: string[] = [];

@@ -152,7 +152,6 @@ export class ReplSession {
       agent,
       parallel,
       pipeline,
-      args: undefined,
       console: { log, warn: log, error: log, info: log },
     });
   }
@@ -187,13 +186,13 @@ export class ReplSession {
     const signal = options.signal ?? new AbortController().signal;
     let abortCell = () => {};
     try {
-      this.context.args = options.args;
       // Create the spawner inside the invoking tool call, where the parent's
       // runtime context (model, tools, permissions) is current.
       if (USES_AGENT.test(code)) await this.getSpawner();
       // Sloppy mode on purpose: a bare assignment (`w = agent.start(...)`)
-      // creates a context global that later cells can read.
-      const wrapped = `(async () => {\n${code}\n})()`;
+      // creates a context global that later cells can read. `args` is a
+      // parameter so overlapping cells each keep their own.
+      const wrapped = `(async (args) => {\n${code}\n})`;
       let script: vm.Script;
       try {
         script = new vm.Script(wrapped, {
@@ -207,9 +206,10 @@ export class ReplSession {
       let pending: Promise<unknown>;
       try {
         // Node reports syntax errors at construction; Bun compiles lazily.
-        pending = Promise.resolve(
-          script.runInContext(this.context) as Promise<unknown>,
-        );
+        const cell = script.runInContext(this.context) as (
+          args: unknown,
+        ) => Promise<unknown>;
+        pending = Promise.resolve(cell(options.args));
       } catch (error) {
         if ((error as { name?: string }).name === "SyntaxError") {
           throw new Error(
