@@ -13,7 +13,7 @@ Symptoms tied to a feature, such as a hook not firing or a skill not being used,
 | Symptom | Go to |
 | :- | :- |
 | Skills not found, a skill not being used, `Invalid skill name` error | [Skills troubleshooting](/docs/en/agent-sdk/skills#troubleshooting) |
-| MCP server shows `failed` status, tools not being called, connection timeouts, tool output that exceeds the maximum allowed tokens | [MCP troubleshooting](/docs/en/agent-sdk/mcp#troubleshooting) |
+| MCP server shows `failed` status, tools not being called, a tool missing from an SDK MCP server, connection timeouts, tool output that exceeds the maximum allowed tokens | [MCP troubleshooting](/docs/en/agent-sdk/mcp#troubleshooting) |
 | Plugin not loading, plugin skills not appearing | [Plugins troubleshooting](/docs/en/agent-sdk/plugins#troubleshooting) |
 | Claude not delegating to subagents, filesystem-based agents not loading | [Subagents troubleshooting](/docs/en/agent-sdk/subagents#troubleshooting) |
 | Checkpointing options not recognized, user messages without UUIDs, `No file checkpoint found`, `File rewinding is not enabled`, `ProcessTransport is not ready for writing` | [File checkpointing troubleshooting](/docs/en/agent-sdk/file-checkpointing#troubleshooting) |
@@ -140,11 +140,12 @@ The text after the colon is the CLI's report of what went wrong, so start there 
 
 ### structured\_output is None but the result says success
 
-A result message can end with `subtype: "success"` while `structured_output` is `None` in Python or `undefined` in TypeScript. The run completes, but no validated output exists. One way to hit this is a schema no output can satisfy, for example conflicting length constraints.
+A result message can end with `subtype: "success"` while `structured_output` is `None` in Python or `undefined` in TypeScript. The run completes, but no validated output exists.
 
-Treat this result as a failure in application code. Check both that `subtype` is `success` and that `structured_output` is present before using it. The [Error handling](/docs/en/agent-sdk/structured-outputs#error-handling) section shows this pattern for both SDKs.
+Treat this result as a failure in application code. Check both that `subtype` is `success` and that `structured_output` is present before using it. The [Error handling](/docs/en/agent-sdk/structured-outputs#error-handling) section shows this pattern for both SDKs. Then check for these causes:
 
-If it happens repeatedly with a schema you believe is correct, verify the schema is satisfiable, then simplify it until outputs validate, and reintroduce constraints one at a time.
+* **A request that Claude declined**: to detect this case in your code, check the result message's `stop_reason` for `"refusal"`. For what to try next, see [Usage Policy refusal](/docs/en/errors#usage-policy-refusal).
+* **A schema no output can satisfy**: for example, a string whose `minLength` is greater than its `maxLength`. If `structured_output` is missing repeatedly with a schema you believe is correct, look for constraints that contradict each other. If you find none, simplify the schema until outputs validate, then reintroduce your constraints one at a time.
 
 ## Report a new issue
 

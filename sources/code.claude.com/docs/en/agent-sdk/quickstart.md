@@ -21,115 +21,109 @@ Use the Agent SDK to build an AI agent that reads your code, finds bugs, and fix
 
 ## Setup
 
-<Steps>
-  <Step title="Create a project folder">
-    Create a new directory for this quickstart:
+**1. Create a project folder**
 
-    ```bash theme={null}
-    mkdir my-agent
-    cd my-agent
-    ```
+Create a new directory for this quickstart:
 
-    For your own projects, you can run the SDK from any folder; it will have access to files in that directory and its subdirectories by default.
-  </Step>
+```bash theme={null}
+mkdir my-agent
+cd my-agent
+```
 
-  <Step title="Install the SDK">
-    Install the Agent SDK package for your language:
+For your own projects, you can run the SDK from any folder; it will have access to files in that directory and its subdirectories by default.
 
-    <Tabs>
-      <Tab title="TypeScript (new project)">
-        ```bash theme={null}
-        npm init -y
-        npm pkg set type=module
-        npm install @anthropic-ai/claude-agent-sdk
-        npm install --save-dev tsx
-        ```
+**2. Install the SDK**
 
-        Setting `"type": "module"` in `package.json` lets your agent script use top-level `await`, and [tsx](https://tsx.hirok.io) runs TypeScript files directly. npm prints `added N packages` when the install succeeds.
-      </Tab>
+Install the Agent SDK package for your language:
 
-      <Tab title="TypeScript (existing project)">
-        ```bash theme={null}
-        npm install @anthropic-ai/claude-agent-sdk
-        npm install --save-dev tsx
-        ```
+**TypeScript (new project)**
 
-        [tsx](https://tsx.hirok.io) runs TypeScript files directly. If your project uses CommonJS, name your agent script `agent.mts` instead of `agent.ts`. The `.mts` extension makes tsx treat the file as an ES module, so top-level `await` works without converting your whole project to ES modules. Use `agent.mts` in place of `agent.ts` in the create and run steps later in this quickstart.
-      </Tab>
+```bash theme={null}
+npm init -y
+npm pkg set type=module
+npm install @anthropic-ai/claude-agent-sdk
+npm install --save-dev tsx
+```
 
-      <Tab title="Python (uv)">
-        [Install uv](https://docs.astral.sh/uv/), a fast Python package manager that handles virtual environments automatically. Then initialize a project and add the SDK:
+Setting `"type": "module"` in `package.json` lets your agent script use top-level `await`, and [tsx](https://tsx.hirok.io) runs TypeScript files directly. npm prints `added N packages` when the install succeeds.
 
-        ```bash theme={null}
-        uv init
-        uv add claude-agent-sdk
-        ```
-      </Tab>
+**TypeScript (existing project)**
 
-      <Tab title="Python (pip)">
-        Create and activate a virtual environment, then install the package.
+```bash theme={null}
+npm install @anthropic-ai/claude-agent-sdk
+npm install --save-dev tsx
+```
 
-        On macOS or Linux:
+[tsx](https://tsx.hirok.io) runs TypeScript files directly. If your project uses CommonJS, name your agent script `agent.mts` instead of `agent.ts`. The `.mts` extension makes tsx treat the file as an ES module, so top-level `await` works without converting your whole project to ES modules. Use `agent.mts` in place of `agent.ts` in the create and run steps later in this quickstart.
 
-        ```bash theme={null}
-        python3 -m venv .venv
-        source .venv/bin/activate
-        pip install claude-agent-sdk
-        ```
+**Python (uv)**
 
-        On Windows:
+[Install uv](https://docs.astral.sh/uv/), a fast Python package manager that handles virtual environments automatically. Then initialize a project and add the SDK:
 
-        ```powershell theme={null}
-        py -m venv .venv
-        .venv\Scripts\Activate.ps1
-        pip install claude-agent-sdk
-        ```
+```bash theme={null}
+uv init
+uv add claude-agent-sdk
+```
 
-        If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-ExecutionPolicy -Scope Process RemoteSigned` first.
-      </Tab>
-    </Tabs>
+**Python (pip)**
 
-    <Note>
-      Both the TypeScript and Python SDKs bundle a native Claude Code binary, so most installs need no separate Claude Code install. Some installs have no bundled binary:
+Create and activate a virtual environment, then install the package.
 
-      * If pip installs the Python SDK's source distribution instead of a platform wheel, for example on ARM64 Windows, no binary is bundled. [Install Claude Code natively](/docs/en/setup#install-claude-code). The Python SDK finds it on your `PATH`.
-      * The TypeScript SDK installs its binary through npm optional dependencies, so an install that skips them, for example `npm ci --omit=optional`, gets no binary even on a supported platform. Reinstall without skipping optional dependencies, or [install Claude Code natively](/docs/en/setup#install-claude-code) and set `pathToClaudeCodeExecutable` to its path.
-    </Note>
-  </Step>
+On macOS or Linux:
 
-  <Step title="Set your API key">
-    Get an API key from the [Claude Console](https://platform.claude.com/), then set it as an environment variable in the shell where you'll run your agent:
+```bash theme={null}
+python3 -m venv .venv
+source .venv/bin/activate
+pip install claude-agent-sdk
+```
 
-    <Tabs>
-      <Tab title="macOS / Linux">
-        ```bash theme={null}
-        export ANTHROPIC_API_KEY=your-api-key
-        ```
-      </Tab>
+On Windows:
 
-      <Tab title="Windows (PowerShell)">
-        ```powershell theme={null}
-        $env:ANTHROPIC_API_KEY = "your-api-key"
-        ```
-      </Tab>
-    </Tabs>
+```powershell theme={null}
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install claude-agent-sdk
+```
 
-    The SDK reads the key from the environment of the process that runs your agent; it doesn't load `.env` files automatically. If you keep the key in a `.env` file, load it yourself, for example with the `dotenv` package, before calling the SDK.
+If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-ExecutionPolicy -Scope Process RemoteSigned` first.
 
-    The SDK also supports authentication via third-party API providers:
+> [!NOTE]
+>
+> Both the TypeScript and Python SDKs bundle a native Claude Code binary, so most installs need no separate Claude Code install. Some installs have no bundled binary:
+>
+> * If pip installs the Python SDK's source distribution instead of a platform wheel, for example on ARM64 Windows, no binary is bundled. [Install Claude Code natively](/docs/en/setup#install-claude-code). The Python SDK finds it on your `PATH`.
+> * The TypeScript SDK installs its binary through npm optional dependencies, so an install that skips them, for example `npm ci --omit=optional`, gets no binary even on a supported platform. Reinstall without skipping optional dependencies, or [install Claude Code natively](/docs/en/setup#install-claude-code) and set `pathToClaudeCodeExecutable` to its path.
 
-    * **Amazon Bedrock**: set `CLAUDE_CODE_USE_BEDROCK=1` environment variable and configure AWS credentials
-    * **Claude Platform on AWS**: set `CLAUDE_CODE_USE_ANTHROPIC_AWS=1` and `ANTHROPIC_AWS_WORKSPACE_ID`, then configure AWS credentials
-    * **Google Cloud's Agent Platform**: set `CLAUDE_CODE_USE_VERTEX=1` environment variable and configure Google Cloud credentials
-    * **Microsoft Foundry**: set `CLAUDE_CODE_USE_FOUNDRY=1` environment variable and configure Azure credentials
+**3. Set your API key**
 
-    See the setup guides for [Amazon Bedrock](/docs/en/amazon-bedrock), [Claude Platform on AWS](/docs/en/claude-platform-on-aws), [Google Cloud's Agent Platform](/docs/en/google-vertex-ai), or [Microsoft Foundry](/docs/en/microsoft-foundry) for details.
+Get an API key from the [Claude Console](https://platform.claude.com/), then set it as an environment variable in the shell where you'll run your agent:
 
-    <Note>
-      Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK. Please use the API key authentication methods described in this document instead.
-    </Note>
-  </Step>
-</Steps>
+**macOS / Linux**
+
+```bash theme={null}
+export ANTHROPIC_API_KEY=your-api-key
+```
+
+**Windows (PowerShell)**
+
+```powershell theme={null}
+$env:ANTHROPIC_API_KEY = "your-api-key"
+```
+
+The SDK reads the key from the environment of the process that runs your agent; it doesn't load `.env` files automatically. If you keep the key in a `.env` file, load it yourself, for example with the `dotenv` package, before calling the SDK.
+
+The SDK also supports authentication via third-party API providers:
+
+* **Amazon Bedrock**: set `CLAUDE_CODE_USE_BEDROCK=1` environment variable and configure AWS credentials
+* **Claude Platform on AWS**: set `CLAUDE_CODE_USE_ANTHROPIC_AWS=1` and `ANTHROPIC_AWS_WORKSPACE_ID`, then configure AWS credentials
+* **Google Cloud's Agent Platform**: set `CLAUDE_CODE_USE_VERTEX=1` environment variable and configure Google Cloud credentials
+* **Microsoft Foundry**: set `CLAUDE_CODE_USE_FOUNDRY=1` environment variable and configure Azure credentials
+
+See the setup guides for [Amazon Bedrock](/docs/en/amazon-bedrock), [Claude Platform on AWS](/docs/en/claude-platform-on-aws), [Google Cloud's Agent Platform](/docs/en/google-vertex-ai), or [Microsoft Foundry](/docs/en/microsoft-foundry) for details.
+
+> [!NOTE]
+>
+> Unless previously approved, Anthropic does not allow third party developers to offer claude.ai login or rate limits for their products, including agents built on the Claude Agent SDK. Use the API key authentication methods described in this document instead.
 
 ## Create a buggy file
 
@@ -156,61 +150,59 @@ This code has two bugs:
 
 Create `agent.py` if you're using the Python SDK, or `agent.ts` for TypeScript. Use `agent.mts` instead if your existing project uses CommonJS:
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, ResultMessage
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, ResultMessage
 
 
-  async def main():
-      # Agentic loop: streams messages as Claude works
-      async for message in query(
-          prompt="Review utils.py for bugs that would cause crashes. Fix any issues you find.",
-          options=ClaudeAgentOptions(
-              allowed_tools=["Read", "Edit", "Glob"],  # Auto-approve these tools
-              permission_mode="acceptEdits",  # Auto-approve file edits
-          ),
-      ):
-          # Print human-readable output
-          if isinstance(message, AssistantMessage):
-              for block in message.content:
-                  if hasattr(block, "text"):
-                      print(block.text)  # Claude's reasoning
-                  elif hasattr(block, "name"):
-                      print(f"Tool: {block.name}")  # Tool being called
-          elif isinstance(message, ResultMessage):
-              print(f"Done: {message.subtype}")  # Final result
+async def main():
+    # Agentic loop: streams messages as Claude works
+    async for message in query(
+        prompt="Review utils.py for bugs that would cause crashes. Fix any issues you find.",
+        options=ClaudeAgentOptions(
+            allowed_tools=["Read", "Edit", "Glob"],  # Auto-approve these tools
+            permission_mode="acceptEdits",  # Auto-approve file edits
+        ),
+    ):
+        # Print human-readable output
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    print(block.text)  # Claude's reasoning
+                elif hasattr(block, "name"):
+                    print(f"Tool: {block.name}")  # Tool being called
+        elif isinstance(message, ResultMessage):
+            print(f"Done: {message.subtype}")  # Final result
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  // Agentic loop: streams messages as Claude works
-  for await (const message of query({
-    prompt: "Review utils.py for bugs that would cause crashes. Fix any issues you find.",
-    options: {
-      allowedTools: ["Read", "Edit", "Glob"], // Auto-approve these tools
-      permissionMode: "acceptEdits" // Auto-approve file edits
-    }
-  })) {
-    // Print human-readable output
-    if (message.type === "assistant" && message.message?.content) {
-      for (const block of message.message.content) {
-        if ("text" in block) {
-          console.log(block.text); // Claude's reasoning
-        } else if ("name" in block) {
-          console.log(`Tool: ${block.name}`); // Tool being called
-        }
-      }
-    } else if (message.type === "result") {
-      console.log(`Done: ${message.subtype}`); // Final result
-    }
+// Agentic loop: streams messages as Claude works
+for await (const message of query({
+  prompt: "Review utils.py for bugs that would cause crashes. Fix any issues you find.",
+  options: {
+    allowedTools: ["Read", "Edit", "Glob"], // Auto-approve these tools
+    permissionMode: "acceptEdits" // Auto-approve file edits
   }
-  ```
-</CodeGroup>
+})) {
+  // Print human-readable output
+  if (message.type === "assistant" && message.message?.content) {
+    for (const block of message.message.content) {
+      if ("text" in block) {
+        console.log(block.text); // Claude's reasoning
+      } else if ("name" in block) {
+        console.log(`Tool: ${block.name}`); // Tool being called
+      }
+    }
+  } else if (message.type === "result") {
+    console.log(`Done: ${message.subtype}`); // Final result
+  }
+}
+```
 
 This code has three main parts:
 
@@ -224,37 +216,35 @@ The `async for` loop keeps running as Claude thinks, calls tools, observes resul
 
 The message handling inside the loop filters for human-readable output. Without filtering, you'd see raw message objects including system initialization and internal state, which is useful for debugging but noisy otherwise.
 
-<Note>
-  This example uses streaming to show progress in real-time. If you don't need live output (for example, for background jobs or CI pipelines), you can collect all messages at once. See [Streaming vs. single-turn mode](/docs/en/agent-sdk/streaming-vs-single-mode) for details.
-</Note>
+> [!NOTE]
+>
+> This example uses streaming to show progress in real-time. If you don't need live output (for example, for background jobs or CI pipelines), you can collect all messages at once. See [Streaming vs. single-turn mode](/docs/en/agent-sdk/streaming-vs-single-mode) for details.
 
 ### Run your agent
 
 Your agent is ready. Run it with the following command:
 
-<Tabs>
-  <Tab title="TypeScript">
-    ```bash theme={null}
-    npx tsx agent.ts
-    ```
+**TypeScript**
 
-    If you named your script `agent.mts`, run `npx tsx agent.mts` instead.
-  </Tab>
+```bash theme={null}
+npx tsx agent.ts
+```
 
-  <Tab title="Python (uv)">
-    ```bash theme={null}
-    uv run agent.py
-    ```
-  </Tab>
+If you named your script `agent.mts`, run `npx tsx agent.mts` instead.
 
-  <Tab title="Python (pip)">
-    With your virtual environment still activated:
+**Python (uv)**
 
-    ```bash theme={null}
-    python agent.py
-    ```
-  </Tab>
-</Tabs>
+```bash theme={null}
+uv run agent.py
+```
+
+**Python (pip)**
+
+With your virtual environment still activated:
+
+```bash theme={null}
+python agent.py
+```
 
 As it works, the agent prints its reasoning and each tool it calls, ending with `Done: success`. After running, check `utils.py`. You'll see defensive code handling empty lists and null users. Your agent autonomously:
 
@@ -264,11 +254,11 @@ As it works, the agent prints its reasoning and each tool it calls, ending with 
 
 This is what makes the Agent SDK different: Claude executes tools directly instead of asking you to implement them.
 
-<Note>
-  If you see an authentication error such as `Not logged in` or `Invalid API key`, make sure you've set the `ANTHROPIC_API_KEY` environment variable in the shell where you run your agent. The SDK doesn't load `.env` files automatically.
-
-  For the causes and fixes behind these and other authentication errors, see [Authentication errors](/docs/en/errors#authentication-errors) in the Error reference.
-</Note>
+> [!NOTE]
+>
+> If you see an authentication error such as `Not logged in` or `Invalid API key`, make sure you've set the `ANTHROPIC_API_KEY` environment variable in the shell where you run your agent. The SDK doesn't load `.env` files automatically.
+>
+> For the causes and fixes behind these and other authentication errors, see [Authentication errors](/docs/en/errors#authentication-errors) in the Error reference.
 
 ### Try other prompts
 
@@ -284,63 +274,57 @@ You can modify your agent's behavior by changing the options. Here are a few exa
 
 **Add web search capability:**
 
-<CodeGroup>
-  ```python Python theme={null}
-  options = ClaudeAgentOptions(
-      allowed_tools=["Read", "Edit", "Glob", "WebSearch"], permission_mode="acceptEdits"
-  )
-  ```
+```python Python theme={null}
+options = ClaudeAgentOptions(
+    allowed_tools=["Read", "Edit", "Glob", "WebSearch"], permission_mode="acceptEdits"
+)
+```
 
-  ```typescript TypeScript hidelines={1,-1} theme={null}
-  const _ = {
-    options: {
-      allowedTools: ["Read", "Edit", "Glob", "WebSearch"],
-      permissionMode: "acceptEdits"
-    }
-  };
-  ```
-</CodeGroup>
+```typescript TypeScript hidelines={1,-1} theme={null}
+const _ = {
+  options: {
+    allowedTools: ["Read", "Edit", "Glob", "WebSearch"],
+    permissionMode: "acceptEdits"
+  }
+};
+```
 
 **Give Claude a custom system prompt:**
 
-<CodeGroup>
-  ```python Python theme={null}
-  options = ClaudeAgentOptions(
-      allowed_tools=["Read", "Edit", "Glob"],
-      permission_mode="acceptEdits",
-      system_prompt="You are a senior Python developer. Always follow PEP 8 style guidelines.",
-  )
-  ```
+```python Python theme={null}
+options = ClaudeAgentOptions(
+    allowed_tools=["Read", "Edit", "Glob"],
+    permission_mode="acceptEdits",
+    system_prompt="You are a senior Python developer. Always follow PEP 8 style guidelines.",
+)
+```
 
-  ```typescript TypeScript hidelines={1,-1} theme={null}
-  const _ = {
-    options: {
-      allowedTools: ["Read", "Edit", "Glob"],
-      permissionMode: "acceptEdits",
-      systemPrompt: "You are a senior Python developer. Always follow PEP 8 style guidelines."
-    }
-  };
-  ```
-</CodeGroup>
+```typescript TypeScript hidelines={1,-1} theme={null}
+const _ = {
+  options: {
+    allowedTools: ["Read", "Edit", "Glob"],
+    permissionMode: "acceptEdits",
+    systemPrompt: "You are a senior Python developer. Always follow PEP 8 style guidelines."
+  }
+};
+```
 
 **Run commands in the terminal:**
 
-<CodeGroup>
-  ```python Python theme={null}
-  options = ClaudeAgentOptions(
-      allowed_tools=["Read", "Edit", "Glob", "Bash"], permission_mode="acceptEdits"
-  )
-  ```
+```python Python theme={null}
+options = ClaudeAgentOptions(
+    allowed_tools=["Read", "Edit", "Glob", "Bash"], permission_mode="acceptEdits"
+)
+```
 
-  ```typescript TypeScript hidelines={1,-1} theme={null}
-  const _ = {
-    options: {
-      allowedTools: ["Read", "Edit", "Glob", "Bash"],
-      permissionMode: "acceptEdits"
-    }
-  };
-  ```
-</CodeGroup>
+```typescript TypeScript hidelines={1,-1} theme={null}
+const _ = {
+  options: {
+    allowedTools: ["Read", "Edit", "Glob", "Bash"],
+    permissionMode: "acceptEdits"
+  }
+};
+```
 
 With `Bash` enabled, try: `"Write unit tests for utils.py, run them, and fix any failures"`
 

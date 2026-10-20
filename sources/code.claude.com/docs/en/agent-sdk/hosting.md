@@ -16,41 +16,37 @@ If you don't need to run the agent loop itself on your own infrastructure, consi
 
 Every hosting decision on this page follows from how the SDK runs the agent. When your code calls `query()`, the SDK spawns a separate `claude` CLI process and talks to it over stdio. That subprocess owns the shell, the working directory, and the JSONL session transcripts on local disk.
 
-<img src="https://mintcdn.com/claude-code/ikqp3_70mqIahteV/images/agent-sdk/hosting-subprocess.svg?fit=max&auto=format&n=ikqp3_70mqIahteV&q=85&s=9dac857ca9d3b1410c3734900c386004" className="dark:hidden" alt="Request flow: client to your app, which spawns a claude CLI subprocess over stdio inside the container; the subprocess writes to local disk and calls api.anthropic.com over HTTPS" width="920" height="220" data-path="images/agent-sdk/hosting-subprocess.svg" />
-
-<img src="https://mintcdn.com/claude-code/_xqph1dUOslCOwsj/images/agent-sdk/hosting-subprocess-dark.svg?fit=max&auto=format&n=_xqph1dUOslCOwsj&q=85&s=3fdeff3d7f44b2b67762668acfbb25f5" className="hidden dark:block" alt="Request flow: client to your app, which spawns a claude CLI subprocess over stdio inside the container; the subprocess writes to local disk and calls api.anthropic.com over HTTPS" width="920" height="220" data-path="images/agent-sdk/hosting-subprocess-dark.svg" />
+![Request flow: client to your app, which spawns a claude CLI subprocess over stdio inside the container; the subprocess writes to local disk and calls api.anthropic.com over HTTPS](https://mintcdn.com/claude-code/ikqp3_70mqIahteV/images/agent-sdk/hosting-subprocess.svg?fit=max\&auto=format\&n=ikqp3_70mqIahteV\&q=85\&s=9dac857ca9d3b1410c3734900c386004)
 
 One agent session maps to one subprocess. Running N concurrent sessions means N subprocesses, each with its own process tree and transcript file. By default they all inherit your application's working directory. When sessions need separate filesystems, pass a distinct `cwd` in the options of each session's `query()` call:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Summarize the files in this directory",
-    options: { cwd: "/work/session-a" },
-  })) {
-    console.log(message);
-  }
-  ```
+for await (const message of query({
+  prompt: "Summarize the files in this directory",
+  options: { cwd: "/work/session-a" },
+})) {
+  console.log(message);
+}
+```
 
-  ```python Python theme={null}
-  import asyncio
+```python Python theme={null}
+import asyncio
 
-  from claude_agent_sdk import ClaudeAgentOptions, query
-
-
-  async def main():
-      async for message in query(
-          prompt="Summarize the files in this directory",
-          options=ClaudeAgentOptions(cwd="/work/session-a"),
-      ):
-          print(message)
+from claude_agent_sdk import ClaudeAgentOptions, query
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt="Summarize the files in this directory",
+        options=ClaudeAgentOptions(cwd="/work/session-a"),
+    ):
+        print(message)
+
+
+asyncio.run(main())
+```
 
 The TypeScript examples on this page use top-level `await`, so save them as `.mts` files or set `"type": "module"` in `package.json`.
 
@@ -80,34 +76,32 @@ Example workloads include bug investigation and fix, invoice and receipt extract
 
 The container runs a one-shot entrypoint that reads the task from the `TASK_PROMPT` environment variable, calls the SDK, and exits.
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  const prompt = process.env.TASK_PROMPT!;
-  for await (const message of query({ prompt, options: { maxTurns: 20 } })) {
-    console.log(message);
-  }
-  ```
+const prompt = process.env.TASK_PROMPT!;
+for await (const message of query({ prompt, options: { maxTurns: 20 } })) {
+  console.log(message);
+}
+```
 
-  ```python Python theme={null}
-  import asyncio
-  import os
+```python Python theme={null}
+import asyncio
+import os
 
-  from claude_agent_sdk import ClaudeAgentOptions, query
-
-
-  async def main():
-      async for message in query(
-          prompt=os.environ["TASK_PROMPT"],
-          options=ClaudeAgentOptions(max_turns=20),
-      ):
-          print(message)
+from claude_agent_sdk import ClaudeAgentOptions, query
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt=os.environ["TASK_PROMPT"],
+        options=ClaudeAgentOptions(max_turns=20),
+    ):
+        print(message)
+
+
+asyncio.run(main())
+```
 
 The script prints each message as it arrives, including a result message whose `subtype` is `success` when the task completes within the turn limit. If the task hits the 20-turn limit instead, the result message's `subtype` is `error_max_turns` and the `query()` call raises an error after yielding it, so wrap the loop in a try block if the container needs to exit cleanly. See [Handle the result](/docs/en/agent-sdk/agent-loop#handle-the-result) for the error subtypes.
 
@@ -134,45 +128,43 @@ Tune your provider's idle timeout to how frequently you expect users to return. 
 
 The pattern hinges on resuming a session by ID with a shared store attached:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query, type SessionStore } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query, type SessionStore } from "@anthropic-ai/claude-agent-sdk";
 
-  declare const userInput: string;
-  declare const sessionId: string;          // looked up from your database by user
-  declare const sessionStore: SessionStore; // an object store, key-value store, database, or your own adapter
+declare const userInput: string;
+declare const sessionId: string;          // looked up from your database by user
+declare const sessionStore: SessionStore; // an object store, key-value store, database, or your own adapter
 
-  for await (const message of query({
-    prompt: userInput,
-    options: { resume: sessionId, sessionStore },
-  })) {
-    // ...
-  }
-  ```
+for await (const message of query({
+  prompt: userInput,
+  options: { resume: sessionId, sessionStore },
+})) {
+  // ...
+}
+```
 
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions, SessionStore
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions, SessionStore
+import asyncio
 
-  user_input: str = ...
-  session_id: str = ...              # looked up from your database by user
-  session_store: SessionStore = ...  # an object store, key-value store, database, or your own adapter
-
-
-  async def main():
-      async for message in query(
-          prompt=user_input,
-          options=ClaudeAgentOptions(
-              resume=session_id,
-              session_store=session_store,
-          ),
-      ):
-          ...
+user_input: str = ...
+session_id: str = ...              # looked up from your database by user
+session_store: SessionStore = ...  # an object store, key-value store, database, or your own adapter
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt=user_input,
+        options=ClaudeAgentOptions(
+            resume=session_id,
+            session_store=session_store,
+        ),
+    ):
+        ...
+
+
+asyncio.run(main())
+```
 
 ### Multi-agent container
 
@@ -287,57 +279,55 @@ To isolate tenants inside a shared container:
 
 The example below applies the settings, auto memory, config directory, and working directory options together. Construct `tenantDir` and `configDir` so each tenant gets a path no other tenant can read. In TypeScript, `env` replaces the subprocess environment, so spread `...process.env` to keep inherited variables like `PATH` and `ANTHROPIC_API_KEY`. In Python, `env` is merged on top of the inherited environment.
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  declare const prompt: string;
-  declare const tenantDir: string;
-  declare const configDir: string;
+declare const prompt: string;
+declare const tenantDir: string;
+declare const configDir: string;
 
-  for await (const message of query({
-    prompt,
-    options: {
-      cwd: tenantDir,
-      settingSources: [],
-      env: {
-        ...process.env,
-        CLAUDE_CONFIG_DIR: configDir,
-        CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
-      },
+for await (const message of query({
+  prompt,
+  options: {
+    cwd: tenantDir,
+    settingSources: [],
+    env: {
+      ...process.env,
+      CLAUDE_CONFIG_DIR: configDir,
+      CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
     },
-  })) {
-    // ...
-  }
-  ```
+  },
+})) {
+  // ...
+}
+```
 
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions
+import asyncio
 
-  prompt: str = ...
-  tenant_dir: str = ...
-  config_dir: str = ...
-
-
-  async def main():
-      async for message in query(
-          prompt=prompt,
-          options=ClaudeAgentOptions(
-              cwd=tenant_dir,
-              setting_sources=[],
-              env={
-                  "CLAUDE_CONFIG_DIR": config_dir,
-                  "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
-              },
-          ),
-      ):
-          ...
+prompt: str = ...
+tenant_dir: str = ...
+config_dir: str = ...
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt=prompt,
+        options=ClaudeAgentOptions(
+            cwd=tenant_dir,
+            setting_sources=[],
+            env={
+                "CLAUDE_CONFIG_DIR": config_dir,
+                "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+            },
+        ),
+    ):
+        ...
+
+
+asyncio.run(main())
+```
 
 ## Known limitations
 

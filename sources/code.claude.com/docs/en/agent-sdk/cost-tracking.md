@@ -10,17 +10,17 @@ The Claude Agent SDK provides detailed token usage information for each interact
 
 For complete API documentation, see the [TypeScript SDK reference](/docs/en/agent-sdk/typescript) and [Python SDK reference](/docs/en/agent-sdk/python).
 
-<Warning>
-  The `total_cost_usd` and `costUSD` fields are client-side estimates, not authoritative billing data. The SDK computes them locally from a price table bundled at build time, unless a [`modelPricing`](/docs/en/settings-reference#modelpricing) table is in effect. They can drift from what you are actually billed when:
-
-  * pricing changes
-  * the installed SDK version does not recognize a model
-  * billing rules apply that the client cannot model
-
-  One billing rule the SDK does model is [data residency pricing](https://platform.claude.com/docs/en/about-claude/pricing#data-residency-pricing). When a response's `usage` reports `inference_geo: "us"`, the SDK multiplies the list price of that response's tokens by 1.1. Per-request fees such as web search aren't multiplied. Requires TypeScript Agent SDK v0.3.239 or later, or Python Agent SDK v0.2.144 or later.
-
-  Use these fields for development insight and approximate budgeting. For authoritative billing, use the [Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api) or the Usage page in the [Claude Console](https://platform.claude.com/usage). Do not bill end users or trigger financial decisions from these fields.
-</Warning>
+> [!WARNING]
+>
+> The `total_cost_usd` and `costUSD` fields are client-side estimates, not authoritative billing data. The SDK computes them locally from a price table bundled at build time, unless a [`modelPricing`](/docs/en/settings-reference#modelpricing) table is in effect. They can drift from what you are actually billed when:
+>
+> * pricing changes
+> * the installed SDK version does not recognize a model
+> * billing rules apply that the client cannot model
+>
+> One billing rule the SDK does model is [data residency pricing](https://platform.claude.com/docs/en/about-claude/pricing#data-residency-pricing). When a response's `usage` reports `inference_geo: "us"`, the SDK multiplies the list price of that response's tokens by 1.1. Per-request fees such as web search aren't multiplied. Requires TypeScript Agent SDK v0.3.239 or later, or Python Agent SDK v0.2.144 or later.
+>
+> Use these fields for development insight and approximate budgeting. For authoritative billing, use the [Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api) or the Usage page in the [Claude Console](https://platform.claude.com/usage). Do not bill end users or trigger financial decisions from these fields.
 
 ## Understand token usage
 
@@ -39,23 +39,19 @@ Cost tracking depends on understanding how the SDK scopes usage data:
 
 The following diagram shows the message stream from a single `query()` call, with token usage reported at each step and the cumulative estimate at the end:
 
-<img src="https://mintcdn.com/claude-code/ikqp3_70mqIahteV/images/agent-sdk/message-usage-flow.svg?fit=max&auto=format&n=ikqp3_70mqIahteV&q=85&s=68497aee338e01cc745323af7aea378e" className="dark:hidden" alt="Diagram showing a query producing two steps of messages. Step 1 has four assistant messages sharing the same ID and usage (count once), Step 2 has one assistant message with a new ID, and the final result message shows the estimated total_cost_usd." width="760" height="520" data-path="images/agent-sdk/message-usage-flow.svg" />
+![Diagram showing a query producing two steps of messages. Step 1 has four assistant messages sharing the same ID and usage (count once), Step 2 has one assistant message with a new ID, and the final result message shows the estimated total\_cost\_usd.](https://mintcdn.com/claude-code/ikqp3_70mqIahteV/images/agent-sdk/message-usage-flow.svg?fit=max\&auto=format\&n=ikqp3_70mqIahteV\&q=85\&s=68497aee338e01cc745323af7aea378e)
 
-<img src="https://mintcdn.com/claude-code/_xqph1dUOslCOwsj/images/agent-sdk/message-usage-flow-dark.svg?fit=max&auto=format&n=_xqph1dUOslCOwsj&q=85&s=8ea95085abc0a6b7f55ecef498bd4d14" className="hidden dark:block" alt="Diagram showing a query producing two steps of messages. Step 1 has four assistant messages sharing the same ID and usage (count once), Step 2 has one assistant message with a new ID, and the final result message shows the estimated total_cost_usd." width="760" height="520" data-path="images/agent-sdk/message-usage-flow-dark.svg" />
+**1. Each step produces assistant messages**
 
-<Steps>
-  <Step title="Each step produces assistant messages">
-    When Claude responds, it sends one or more assistant messages. In TypeScript, each assistant message contains a nested `BetaMessage` (accessed via `message.message`) with an `id` and a [`usage`](https://platform.claude.com/docs/en/api/messages) object with token counts (`input_tokens`, `output_tokens`). In Python, the `AssistantMessage` dataclass exposes the same data directly via `message.usage` and `message.message_id`. When Claude uses multiple tools in one turn, all messages in that turn share the same ID, so deduplicate by ID to avoid double-counting.
-  </Step>
+When Claude responds, it sends one or more assistant messages. In TypeScript, each assistant message contains a nested `BetaMessage` (accessed via `message.message`) with an `id` and a [`usage`](https://platform.claude.com/docs/en/api/messages) object with token counts (`input_tokens`, `output_tokens`). In Python, the `AssistantMessage` dataclass exposes the same data directly via `message.usage` and `message.message_id`. When Claude uses multiple tools in one turn, all messages in that turn share the same ID, so deduplicate by ID to avoid double-counting.
 
-  <Step title="The result message provides the cumulative estimate">
-    When the `query()` call completes, the SDK emits a result message with `total_cost_usd` and cumulative `usage`, typed as [`SDKResultMessage`](/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](/docs/en/agent-sdk/python#resultmessage) in Python. If you only need the estimated total, you can ignore the per-step usage and read this single value.
+**2. The result message provides the cumulative estimate**
 
-    If you make multiple independent `query()` calls, each result reflects only the cost of that individual call. A call that resumes a session also counts the session's earlier spend.
+When the `query()` call completes, the SDK emits a result message with `total_cost_usd` and cumulative `usage`, typed as [`SDKResultMessage`](/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](/docs/en/agent-sdk/python#resultmessage) in Python. If you only need the estimated total, you can ignore the per-step usage and read this single value.
 
-    In streaming input mode, each turn emits its own result message. See [Track costs in streaming input mode](#track-costs-in-streaming-input-mode) for how to read call totals in that mode.
-  </Step>
-</Steps>
+If you make multiple independent `query()` calls, each result reflects only the cost of that individual call. A call that resumes a session also counts the session's earlier spend.
+
+In streaming input mode, each turn emits its own result message. See [Track costs in streaming input mode](#track-costs-in-streaming-input-mode) for how to read call totals in that mode.
 
 ## Track costs in streaming input mode
 
@@ -99,45 +95,43 @@ In [single message input mode](/docs/en/agent-sdk/streaming-vs-single-mode#singl
 
 The following examples iterate over the message stream from a `query()` call and print the total cost when the `result` message arrives:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  try {
-    for await (const message of query({ prompt: "Summarize this project" })) {
-      if (message.type === "result") {
-        console.log(`Total cost: $${message.total_cost_usd}`);
-      }
+try {
+  for await (const message of query({ prompt: "Summarize this project" })) {
+    if (message.type === "result") {
+      console.log(`Total cost: $${message.total_cost_usd}`);
     }
-  } catch (error) {
-    // A single-shot query() throws after yielding an error result. If the
-    // failure was an error result, it still carried total_cost_usd and the
-    // branch above has already run; connection or process failures yield
-    // no result message.
-    console.error(`Session ended with an error: ${error}`);
   }
-  ```
+} catch (error) {
+  // A single-shot query() throws after yielding an error result. If the
+  // failure was an error result, it still carried total_cost_usd and the
+  // branch above has already run; connection or process failures yield
+  // no result message.
+  console.error(`Session ended with an error: ${error}`);
+}
+```
 
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ResultMessage
-  import asyncio
-
-
-  async def main():
-      try:
-          async for message in query(prompt="Summarize this project"):
-              if isinstance(message, ResultMessage):
-                  print(f"Total cost: ${message.total_cost_usd or 0}")
-      except Exception as error:
-          # A single-shot query() raises after yielding an error result. If the
-          # failure was an error result, the branch above has already run;
-          # connection or process failures yield no result message.
-          print(f"Session ended with an error: {error}")
+```python Python theme={null}
+from claude_agent_sdk import query, ResultMessage
+import asyncio
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    try:
+        async for message in query(prompt="Summarize this project"):
+            if isinstance(message, ResultMessage):
+                print(f"Total cost: ${message.total_cost_usd or 0}")
+    except Exception as error:
+        # A single-shot query() raises after yielding an error result. If the
+        # failure was an error result, the branch above has already run;
+        # connection or process failures yield no result message.
+        print(f"Session ended with an error: {error}")
+
+
+asyncio.run(main())
+```
 
 To bound how much subagents can add to `total_cost_usd`, set the [depth, concurrency, and spend limits](/docs/en/agent-sdk/subagents#cap-subagent-depth-concurrency-and-spend) on the query.
 
@@ -149,9 +143,9 @@ The examples in this section use TypeScript field names. In Python, the equivale
 
 Each assistant message contains a nested `BetaMessage` (accessed via `message.message`) with an `id` and `usage` object with token counts. When Claude uses tools in parallel, multiple messages share the same `id` with identical usage data. Track which IDs you've already counted and skip duplicates to avoid inflated totals.
 
-<Warning>
-  The deduplicated per-step values are accurate for input and cache tokens. Per-step `output_tokens` is a placeholder, so [read output tokens from the result message](#read-output-tokens-from-the-result-message).
-</Warning>
+> [!WARNING]
+>
+> The deduplicated per-step values are accurate for input and cache tokens. Per-step `output_tokens` is a placeholder, so [read output tokens from the result message](#read-output-tokens-from-the-result-message).
 
 The following example accumulates input tokens across all steps, counting each unique main-loop message ID only once and skipping subagent messages, and reads the output total from the result message, which covers the main loop:
 
@@ -228,76 +222,76 @@ Each `query()` call returns `total_cost_usd` on its results. How you combine the
 * **Independent calls, with no `resume` or `continue` option**: each result covers only its own call, so add the totals yourself, as the examples below do.
 * **Calls that resume the same session**: Claude Code saves the session's totals to its [transcript](/docs/en/sessions#where-transcripts-are-stored) when the process exits normally and restores them when a later call resumes or forks the session. Each result already includes the session's earlier spend. Read the latest result for the session total; summing results double-counts the restored spend. Before v2.1.277, a session that you resumed through the SDK or `claude -p` started its totals at zero, so each call's results covered only that call.
 
+Either way, the combined figure is still a [client-side estimate](#estimates-not-billing).
+
 In streaming input mode, read each call's total as described in [Track costs in streaming input mode](#track-costs-in-streaming-input-mode). For a call that ended in a crash, see [Recover totals after a session crash](#recover-totals-after-a-session-crash).
 
 The following examples run two `query()` calls sequentially, add each call's `total_cost_usd` to a running total, and print both the per-call and combined cost:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  // Track cumulative cost across multiple query() calls
-  let totalSpend = 0;
+// Track cumulative cost across multiple query() calls
+let totalSpend = 0;
 
-  const prompts = [
-    "Read the files in src/ and summarize the architecture",
-    "List all exported functions in src/auth.ts"
-  ];
+const prompts = [
+  "Read the files in src/ and summarize the architecture",
+  "List all exported functions in src/auth.ts"
+];
 
-  for (const prompt of prompts) {
-    try {
-      for await (const message of query({ prompt })) {
-        if (message.type === "result") {
-          totalSpend += message.total_cost_usd;
-          console.log(`This call: $${message.total_cost_usd}`);
-        }
+for (const prompt of prompts) {
+  try {
+    for await (const message of query({ prompt })) {
+      if (message.type === "result") {
+        totalSpend += message.total_cost_usd;
+        console.log(`This call: $${message.total_cost_usd}`);
       }
-    } catch (error) {
-      // A single-shot query() throws after yielding an error result. If the
-      // failure was an error result, this call's cost was already counted;
-      // connection or process failures yield no result message. Continue
-      // with the next prompt.
-      console.error(`Call failed: ${error}`);
     }
+  } catch (error) {
+    // A single-shot query() throws after yielding an error result. If the
+    // failure was an error result, this call's cost was already counted;
+    // connection or process failures yield no result message. Continue
+    // with the next prompt.
+    console.error(`Call failed: ${error}`);
   }
+}
 
-  console.log(`Total spend: $${totalSpend.toFixed(4)}`);
-  ```
+console.log(`Total spend: $${totalSpend.toFixed(4)}`);
+```
 
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ResultMessage
-  import asyncio
-
-
-  async def main():
-      # Track cumulative cost across multiple query() calls
-      total_spend = 0.0
-
-      prompts = [
-          "Read the files in src/ and summarize the architecture",
-          "List all exported functions in src/auth.ts",
-      ]
-
-      for prompt in prompts:
-          try:
-              async for message in query(prompt=prompt):
-                  if isinstance(message, ResultMessage):
-                      cost = message.total_cost_usd or 0
-                      total_spend += cost
-                      print(f"This call: ${cost}")
-          except Exception as error:
-              # A single-shot query() raises after yielding an error result. If
-              # the failure was an error result, this call's cost was already
-              # counted; connection or process failures yield no result message.
-              # Continue with the next prompt.
-              print(f"Call failed: {error}")
-
-      print(f"Total spend: ${total_spend:.4f}")
+```python Python theme={null}
+from claude_agent_sdk import query, ResultMessage
+import asyncio
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    # Track cumulative cost across multiple query() calls
+    total_spend = 0.0
+
+    prompts = [
+        "Read the files in src/ and summarize the architecture",
+        "List all exported functions in src/auth.ts",
+    ]
+
+    for prompt in prompts:
+        try:
+            async for message in query(prompt=prompt):
+                if isinstance(message, ResultMessage):
+                    cost = message.total_cost_usd or 0
+                    total_spend += cost
+                    print(f"This call: ${cost}")
+        except Exception as error:
+            # A single-shot query() raises after yielding an error result. If
+            # the failure was an error result, this call's cost was already
+            # counted; connection or process failures yield no result message.
+            # Continue with the next prompt.
+            print(f"Call failed: {error}")
+
+    print(f"Total spend: ${total_spend:.4f}")
+
+
+asyncio.run(main())
+```
 
 ## Handle errors, caching, and output token counts
 
@@ -351,43 +345,41 @@ To request a 1-hour TTL on cache writes, set the [`ENABLE_PROMPT_CACHING_1H`](/d
 
 The following example enables 1-hour TTL for an agent running on Amazon Bedrock. Because it sets `CLAUDE_CODE_USE_BEDROCK`, it requires working AWS credentials for [Amazon Bedrock](/docs/en/amazon-bedrock); without them the query fails.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import ClaudeAgentOptions, query
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import ClaudeAgentOptions, query
+import asyncio
 
 
-  async def main():
-      options = ClaudeAgentOptions(
-          env={
-              "CLAUDE_CODE_USE_BEDROCK": "1",
-              "ENABLE_PROMPT_CACHING_1H": "1",
-          },
-      )
+async def main():
+    options = ClaudeAgentOptions(
+        env={
+            "CLAUDE_CODE_USE_BEDROCK": "1",
+            "ENABLE_PROMPT_CACHING_1H": "1",
+        },
+    )
 
-      async for message in query(prompt="Summarize this project", options=options):
-          print(message)
+    async for message in query(prompt="Summarize this project", options=options):
+        print(message)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  const options = {
-    env: {
-      ...process.env,
-      CLAUDE_CODE_USE_BEDROCK: "1",
-      ENABLE_PROMPT_CACHING_1H: "1",
-    },
-  };
+const options = {
+  env: {
+    ...process.env,
+    CLAUDE_CODE_USE_BEDROCK: "1",
+    ENABLE_PROMPT_CACHING_1H: "1",
+  },
+};
 
-  for await (const message of query({ prompt: "Summarize this project", options })) {
-    console.log(message);
-  }
-  ```
-</CodeGroup>
+for await (const message of query({ prompt: "Summarize this project", options })) {
+  console.log(message);
+}
+```
 
 Cache writes with a 1-hour TTL are billed at a higher rate than 5-minute writes, so enabling this trades higher write cost for more cache reads. See [prompt caching pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching) for details. On a Claude subscription within your plan's included usage, you get the 1-hour TTL on your own turns, and on some of the helper requests Claude Code makes beside them, without setting this variable, and Claude Code drops those turns to the 5-minute TTL once you're drawing on [usage credits](https://support.claude.com/en/articles/12429409-extra-usage-for-paid-claude-plans).
 

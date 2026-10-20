@@ -13,6 +13,7 @@ Custom tools extend the Agent SDK by letting you define your own functions that 
 | What you want to do | Do this |
 | :- | :- |
 | Define a tool | Use [`@tool`](/docs/en/agent-sdk/python#tool) (Python) or [`tool()`](/docs/en/agent-sdk/typescript#tool) (TypeScript) with a name, description, schema, and handler. See [Create a custom tool](#create-a-custom-tool). |
+| Make a parameter optional | Declare it optional in the schema and apply the default in the handler. See [Make a parameter optional](#make-a-parameter-optional). |
 | Register a tool with Claude | Wrap in `create_sdk_mcp_server` / `createSdkMcpServer` and pass to `mcpServers` in `query()`. See [Call a custom tool](#call-a-custom-tool). |
 | Pre-approve a tool | Add to your allowed tools. See [Configure allowed tools](#configure-allowed-tools). |
 | Remove a built-in tool from Claude's context | Pass a `tools` array listing only the built-ins you want. See [Configure allowed tools](#configure-allowed-tools). |
@@ -28,7 +29,9 @@ A tool is defined by four parts, passed as arguments to the [`tool()`](/docs/en/
 
 * **Name:** a unique identifier Claude uses to call the tool.
 * **Description:** what the tool does. Claude reads this to decide when to call it.
-* **Input schema:** the arguments Claude must provide. In TypeScript this is always a [Zod schema](https://zod.dev/), and the handler's `args` are typed from it automatically. In Python this is a dict mapping names to types, like `{"latitude": float}`, which the SDK converts to JSON Schema for you. The Python decorator also accepts a full [JSON Schema](https://json-schema.org/understanding-json-schema/about) dict directly when you need enums, ranges, optional fields, or nested objects.
+* **Input schema:** the arguments the tool accepts, declared per language:
+  * **TypeScript**: a [Zod schema](https://zod.dev/). The handler's `args` take their types from it. Call `.describe()` on a field to give it a description Claude sees.
+  * **Python**: a dict mapping names to types, like `{"latitude": float}`, which the SDK converts to JSON Schema for you. Wrap a type in `Annotated`, like `{"latitude": Annotated[float, "Latitude coordinate"]}`, to give the field a description Claude sees. The decorator also accepts a full [JSON Schema](https://json-schema.org/understanding-json-schema/about) dict directly when you need enums, ranges, optional fields, or nested objects.
 * **Handler:** the async function that runs when Claude calls the tool. It receives the validated arguments and must return an object with:
   * `content` (required): an array of result blocks, each with a `type` of `"text"`, `"image"`, `"audio"`, `"resource"`, or `"resource_link"`. See [Return images and resources](#return-images-and-resources) for non-text blocks.
   * `structuredContent` (optional): a JSON object holding the result as machine-readable data, returned alongside `content`. See [Return structured data](#return-structured-data).
@@ -36,145 +39,185 @@ A tool is defined by four parts, passed as arguments to the [`tool()`](/docs/en/
 
 After defining a tool, wrap it in a server with [`createSdkMcpServer`](/docs/en/agent-sdk/typescript#createsdkmcpserver) (TypeScript) or [`create_sdk_mcp_server`](/docs/en/agent-sdk/python#create_sdk_mcp_server) (Python). The server runs in-process inside your application, not as a separate process.
 
+Python examples on this page that make HTTP requests use [httpx](https://www.python-httpx.org/). Add it with the package manager your project uses:
+
+**Python (uv)**
+
+```bash theme={null}
+uv add httpx
+```
+
+**Python (pip)**
+
+```bash theme={null}
+pip install httpx
+```
+
 ### Weather tool example
 
-This example defines a `get_temperature` tool and wraps it in an MCP server. It only sets up the tool; to pass it to `query` and run it, see [Call a custom tool](#call-a-custom-tool) below.
+This example defines a `get_temperature` tool and wraps it in an MCP server, without passing the server to `query`. To run the tool, see [Call a custom tool](#call-a-custom-tool) below.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from typing import Any
-  import httpx
-  from claude_agent_sdk import tool, create_sdk_mcp_server
-
-
-  # Define a tool: name, description, input schema, handler
-  @tool(
-      "get_temperature",
-      "Get the current temperature at a location",
-      {"latitude": float, "longitude": float},
-  )
-  async def get_temperature(args: dict[str, Any]) -> dict[str, Any]:
-      async with httpx.AsyncClient() as client:
-          response = await client.get(
-              "https://api.open-meteo.com/v1/forecast",
-              params={
-                  "latitude": args["latitude"],
-                  "longitude": args["longitude"],
-                  "current": "temperature_2m",
-                  "temperature_unit": "fahrenheit",
-              },
-          )
-          data = response.json()
-
-      # Return a content array - Claude sees this as the tool result
-      return {
-          "content": [
-              {
-                  "type": "text",
-                  "text": f"Temperature: {data['current']['temperature_2m']}°F",
-              }
-          ]
-      }
+```python Python theme={null}
+from typing import Annotated, Any
+import httpx
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 
-  # Wrap the tool in an in-process MCP server
-  weather_server = create_sdk_mcp_server(
-      name="weather",
-      version="1.0.0",
-      tools=[get_temperature],
-  )
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-  import { z } from "zod";
-
-  // Define a tool: name, description, input schema, handler
-  const getTemperature = tool(
+# Define a tool: name, description, input schema, handler
+@tool(
     "get_temperature",
     "Get the current temperature at a location",
     {
-      latitude: z.number().describe("Latitude coordinate"), // .describe() adds a field description Claude sees
-      longitude: z.number().describe("Longitude coordinate")
+        "latitude": Annotated[float, "Latitude coordinate"],
+        "longitude": Annotated[float, "Longitude coordinate"],
     },
-    async (args) => {
-      // args is typed from the schema: { latitude: number; longitude: number }
-      const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${args.latitude}&longitude=${args.longitude}&current=temperature_2m&temperature_unit=fahrenheit`
-      );
-      const data: any = await response.json();
+)
+async def get_temperature(args: dict[str, Any]) -> dict[str, Any]:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": args["latitude"],
+                "longitude": args["longitude"],
+                "current": "temperature_2m",
+                "temperature_unit": "fahrenheit",
+            },
+        )
+        data = response.json()
 
-      // Return a content array - Claude sees this as the tool result
-      return {
-        content: [{ type: "text", text: `Temperature: ${data.current.temperature_2m}°F` }]
-      };
+    # Return a content array - Claude sees this as the tool result
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": f"Temperature: {data['current']['temperature_2m']}°F",
+            }
+        ]
     }
-  );
 
-  // Wrap the tool in an in-process MCP server
-  const weatherServer = createSdkMcpServer({
-    name: "weather",
-    version: "1.0.0",
-    tools: [getTemperature]
-  });
-  ```
-</CodeGroup>
+
+# Wrap the tool in an in-process MCP server
+weather_server = create_sdk_mcp_server(
+    name="weather",
+    version="1.0.0",
+    tools=[get_temperature],
+)
+```
+
+```typescript TypeScript theme={null}
+import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+// Define a tool: name, description, input schema, handler
+const getTemperature = tool(
+  "get_temperature",
+  "Get the current temperature at a location",
+  {
+    latitude: z.number().describe("Latitude coordinate"), // .describe() adds a field description Claude sees
+    longitude: z.number().describe("Longitude coordinate")
+  },
+  async (args) => {
+    // args is typed from the schema: { latitude: number; longitude: number }
+    const response = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${args.latitude}&longitude=${args.longitude}&current=temperature_2m&temperature_unit=fahrenheit`
+    );
+    const data: any = await response.json();
+
+    // Return a content array - Claude sees this as the tool result
+    return {
+      content: [{ type: "text", text: `Temperature: ${data.current.temperature_2m}°F` }]
+    };
+  }
+);
+
+// Wrap the tool in an in-process MCP server
+const weatherServer = createSdkMcpServer({
+  name: "weather",
+  version: "1.0.0",
+  tools: [getTemperature]
+});
+```
 
 See the [`tool()`](/docs/en/agent-sdk/typescript#tool) TypeScript reference or the [`@tool`](/docs/en/agent-sdk/python#tool) Python reference for full parameter details, including JSON Schema input formats and return value structure.
 
-<Tip>
-  To make a parameter optional: in TypeScript, add `.optional()` to the Zod field and apply the default in the handler. In Python, the dict schema treats every key as required, so leave the parameter out of the schema, mention it in the description string, and read it with `args.get()` in the handler. The [`get_precipitation_chance` tool below](#add-more-tools) shows both patterns.
-</Tip>
+### Make a parameter optional
+
+To make a parameter optional, declare it optional in the schema and apply the default in the handler:
+
+* **TypeScript**: add `.optional()` to the Zod field.
+* **Python**: the dict schema requires every key. Use the JSON Schema form, leave the parameter out of `required`, and read it with `args.get()`. For a typed schema with optional keys, see [TypedDict class](/docs/en/agent-sdk/python#input-schema-options).
+
+The [`get_precipitation_chance` tool below](#add-more-tools) shows both patterns.
 
 ### Call a custom tool
 
-Pass the MCP server you created to `query` via the `mcpServers` option. The key in `mcpServers` becomes the `{server_name}` segment in each tool's fully qualified name: `mcp__{server_name}__{tool_name}`. List that name in `allowedTools` so the tool runs without a permission prompt.
+Pass the MCP server you created to `query` via the `mcpServers` option, and list each tool's [fully qualified name](/docs/en/agent-sdk/mcp#tool-naming-convention) in `allowedTools` so the tool runs without a permission prompt. That name is `mcp__{server_name}__{tool_name}`, where `{server_name}` is the key you give the server in `mcpServers`. If the key contains characters such as `.` or spaces, replace them with `_` when you write `{server_name}`.
 
 These snippets reuse the `weatherServer` from the [weather tool example](#weather-tool-example) to ask Claude what the weather is in a specific location.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
 
 
-  async def main():
-      options = ClaudeAgentOptions(
-          mcp_servers={"weather": weather_server},
-          allowed_tools=["mcp__weather__get_temperature"],
-      )
+async def main():
+    options = ClaudeAgentOptions(
+        mcp_servers={"weather": weather_server},
+        allowed_tools=["mcp__weather__get_temperature"],
+    )
 
-      async for message in query(
-          prompt="What's the temperature in San Francisco?",
-          options=options,
-      ):
-          # ResultMessage is the final message after all tool calls complete
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(message.result)
+    async for message in query(
+        prompt="What's the temperature in San Francisco?",
+        options=options,
+    ):
+        # ResultMessage is the final message after all tool calls complete
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "What's the temperature in San Francisco?",
-    options: {
-      mcpServers: { weather: weatherServer },
-      allowedTools: ["mcp__weather__get_temperature"]
-    }
-  })) {
-    // "result" is the final message after all tool calls complete
-    if (message.type === "result" && message.subtype === "success") {
-      console.log(message.result);
-    }
+for await (const message of query({
+  prompt: "What's the temperature in San Francisco?",
+  options: {
+    mcpServers: { weather: weatherServer },
+    allowedTools: ["mcp__weather__get_temperature"]
   }
-  ```
-</CodeGroup>
+})) {
+  // "result" is the final message after all tool calls complete
+  if (message.type === "result" && message.subtype === "success") {
+    console.log(message.result);
+  }
+}
+```
 
-Combine this snippet with the tool and server definitions from the [weather tool example](#weather-tool-example) in one file, then run it with `python weather.py` for Python or `npx tsx weather.ts` for TypeScript. Claude calls `get_temperature` and the script prints a one-line answer with the current temperature in San Francisco.
+Combine this snippet with the tool and server definitions from the [weather tool example](#weather-tool-example) in one file, `weather.py` or `weather.ts`, then run it from your terminal:
+
+**TypeScript**
+
+```bash theme={null}
+npx tsx weather.ts
+```
+
+**Python (uv)**
+
+```bash theme={null}
+uv run weather.py
+```
+
+**Python (pip)**
+
+Activate the virtual environment where you installed the SDK, then run:
+
+```bash theme={null}
+python weather.py
+```
+
+Claude calls `get_temperature` and the script prints a one-line answer with the current temperature in San Francisco.
 
 ### Add more tools
 
@@ -182,87 +225,98 @@ A server holds as many tools as you list in its `tools` array. With more than on
 
 The example below defines a second tool, `get_precipitation_chance`, and replaces the `weatherServer` definition from the [weather tool example](#weather-tool-example) with one that lists both tools in the array.
 
-<CodeGroup>
-  ```python Python theme={null}
-  # Define a second tool for the same server
-  @tool(
-      "get_precipitation_chance",
-      "Get the hourly precipitation probability for a location. "
-      "Optionally pass 'hours' (1-24) to control how many hours to return.",
-      {"latitude": float, "longitude": float},
-  )
-  async def get_precipitation_chance(args: dict[str, Any]) -> dict[str, Any]:
-      # 'hours' isn't in the schema - read it with .get() to make it optional
-      hours = args.get("hours", 12)
-      async with httpx.AsyncClient() as client:
-          response = await client.get(
-              "https://api.open-meteo.com/v1/forecast",
-              params={
-                  "latitude": args["latitude"],
-                  "longitude": args["longitude"],
-                  "hourly": "precipitation_probability",
-                  "forecast_days": 1,
-              },
-          )
-          data = response.json()
-      chances = data["hourly"]["precipitation_probability"][:hours]
-
-      return {
-          "content": [
-              {
-                  "type": "text",
-                  "text": f"Next {hours} hours: {'%, '.join(map(str, chances))}%",
-              }
-          ]
-      }
-
-
-  # Rebuild the server with both tools in the array
-  weather_server = create_sdk_mcp_server(
-      name="weather",
-      version="1.0.0",
-      tools=[get_temperature, get_precipitation_chance],
-  )
-  ```
-
-  ```typescript TypeScript theme={null}
-  // Define a second tool for the same server
-  const getPrecipitationChance = tool(
+```python Python theme={null}
+# Define a second tool for the same server
+@tool(
     "get_precipitation_chance",
     "Get the hourly precipitation probability for a location",
     {
-      latitude: z.number(),
-      longitude: z.number(),
-      hours: z
-        .number()
-        .int()
-        .min(1)
-        .max(24)
-        .optional() // .optional() lets Claude omit the parameter
-        .describe("How many hours of forecast to return")
+        "type": "object",
+        "properties": {
+            "latitude": {"type": "number"},
+            "longitude": {"type": "number"},
+            "hours": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 24,
+                "description": "How many hours of forecast to return",
+            },
+        },
+        # 'hours' is left out of required, so Claude can omit it
+        "required": ["latitude", "longitude"],
     },
-    async (args) => {
-      const hours = args.hours ?? 12; // Apply the default in the handler
-      const response = await fetch(
-        `https://api.open-meteo.com/v1/forecast?latitude=${args.latitude}&longitude=${args.longitude}&hourly=precipitation_probability&forecast_days=1`
-      );
-      const data: any = await response.json();
-      const chances = data.hourly.precipitation_probability.slice(0, hours);
+)
+async def get_precipitation_chance(args: dict[str, Any]) -> dict[str, Any]:
+    # 'hours' isn't in required - read it with .get() to fall back to a default
+    hours = args.get("hours", 12)
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": args["latitude"],
+                "longitude": args["longitude"],
+                "hourly": "precipitation_probability",
+                "forecast_days": 1,
+            },
+        )
+        data = response.json()
+    chances = data["hourly"]["precipitation_probability"][:hours]
 
-      return {
-        content: [{ type: "text", text: `Next ${hours} hours: ${chances.join("%, ")}%` }]
-      };
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": f"Next {hours} hours: {'%, '.join(map(str, chances))}%",
+            }
+        ]
     }
-  );
 
-  // Rebuild the server with both tools in the array
-  const weatherServer = createSdkMcpServer({
-    name: "weather",
-    version: "1.0.0",
-    tools: [getTemperature, getPrecipitationChance]
-  });
-  ```
-</CodeGroup>
+
+# Rebuild the server with both tools in the array
+weather_server = create_sdk_mcp_server(
+    name="weather",
+    version="1.0.0",
+    tools=[get_temperature, get_precipitation_chance],
+)
+```
+
+```typescript TypeScript theme={null}
+// Define a second tool for the same server
+const getPrecipitationChance = tool(
+  "get_precipitation_chance",
+  "Get the hourly precipitation probability for a location",
+  {
+    latitude: z.number(),
+    longitude: z.number(),
+    hours: z
+      .number()
+      .int()
+      .min(1)
+      .max(24)
+      .optional() // .optional() lets Claude omit the parameter
+      .describe("How many hours of forecast to return")
+  },
+  async (args) => {
+    const hours = args.hours ?? 12; // Apply the default in the handler
+    const response = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${args.latitude}&longitude=${args.longitude}&hourly=precipitation_probability&forecast_days=1`
+    );
+    const data: any = await response.json();
+    const chances = data.hourly.precipitation_probability.slice(0, hours);
+
+    return {
+      content: [{ type: "text", text: `Next ${hours} hours: ${chances.join("%, ")}%` }]
+    };
+  }
+);
+
+// Rebuild the server with both tools in the array
+const weatherServer = createSdkMcpServer({
+  name: "weather",
+  version: "1.0.0",
+  tools: [getTemperature, getPrecipitationChance]
+});
+```
 
 [Tool search](/docs/en/agent-sdk/tool-search) is on by default and defers SDK MCP tools: Claude sees each tool's name in a compact list and loads its full schema on demand. With tool search disabled, every tool in this array consumes context window space on every turn. In TypeScript, pass `alwaysLoad: true` in the `extras` argument of [`tool()`](/docs/en/agent-sdk/typescript#tool) or in the options of [`createSdkMcpServer()`](/docs/en/agent-sdk/typescript#createsdkmcpserver) to keep a tool's full schema in the initial prompt.
 
@@ -281,36 +335,34 @@ Annotations are metadata, not enforcement. A tool marked `readOnlyHint: true` ca
 
 This example adds `readOnlyHint` to the `get_temperature` tool from the [weather tool example](#weather-tool-example).
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import tool, ToolAnnotations
+```python Python theme={null}
+from claude_agent_sdk import tool, ToolAnnotations
 
 
-  @tool(
-      "get_temperature",
-      "Get the current temperature at a location",
-      {"latitude": float, "longitude": float},
-      annotations=ToolAnnotations(
-          readOnlyHint=True
-      ),  # Lets Claude batch this with other read-only calls
-  )
-  async def get_temperature(args):
-      return {"content": [{"type": "text", "text": "..."}]}
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { tool } from "@anthropic-ai/claude-agent-sdk";
-  import { z } from "zod";
-
-  tool(
+@tool(
     "get_temperature",
     "Get the current temperature at a location",
-    { latitude: z.number(), longitude: z.number() },
-    async (args) => ({ content: [{ type: "text", text: `...` }] }),
-    { annotations: { readOnlyHint: true } } // Lets Claude batch this with other read-only calls
-  );
-  ```
-</CodeGroup>
+    {"latitude": float, "longitude": float},
+    annotations=ToolAnnotations(
+        readOnlyHint=True
+    ),  # Lets Claude batch this with other read-only calls
+)
+async def get_temperature(args):
+    return {"content": [{"type": "text", "text": "..."}]}
+```
+
+```typescript TypeScript theme={null}
+import { tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+tool(
+  "get_temperature",
+  "Get the current temperature at a location",
+  { latitude: z.number(), longitude: z.number() },
+  async (args) => ({ content: [{ type: "text", text: `...` }] }),
+  { annotations: { readOnlyHint: true } } // Lets Claude batch this with other read-only calls
+);
+```
 
 See `ToolAnnotations` in the [TypeScript](/docs/en/agent-sdk/typescript#toolannotations) or [Python](/docs/en/agent-sdk/python#toolannotations) reference.
 
@@ -344,101 +396,99 @@ In both cases Claude can retry, try a different tool, or explain the failure. Ca
 
 The example below catches two kinds of failures inside the handler and composes the error message Claude reads. A non-200 HTTP status is caught from the response and returned as an error result. A network error or invalid JSON is caught by the surrounding `try/except` (Python) or `try/catch` (TypeScript) and also returned as an error result. In both cases Claude receives a message that describes the failure instead of a bare exception string.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import json
-  import httpx
-  from typing import Any
-  from claude_agent_sdk import tool
+```python Python theme={null}
+import json
+import httpx
+from typing import Any
+from claude_agent_sdk import tool
 
 
-  @tool(
-      "fetch_data",
-      "Fetch data from an API",
-      {"endpoint": str},  # Simple schema
-  )
-  async def fetch_data(args: dict[str, Any]) -> dict[str, Any]:
-      try:
-          async with httpx.AsyncClient() as client:
-              response = await client.get(args["endpoint"])
-              if response.status_code != 200:
-                  # Return the failure as a tool result so Claude can react to it.
-                  # is_error marks this as a failed call rather than odd-looking data.
-                  return {
-                      "content": [
-                          {
-                              "type": "text",
-                              "text": f"API error: {response.status_code} {response.reason_phrase}",
-                          }
-                      ],
-                      "is_error": True,
-                  }
-
-              data = response.json()
-              return {"content": [{"type": "text", "text": json.dumps(data, indent=2)}]}
-      except Exception as e:
-          # Composes the message Claude reads. An uncaught exception would
-          # reach Claude as the raw str(e) with no context.
-          return {
-              "content": [{"type": "text", "text": f"Failed to fetch data: {str(e)}"}],
-              "is_error": True,
-          }
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { tool } from "@anthropic-ai/claude-agent-sdk";
-  import { z } from "zod";
-
-  tool(
+@tool(
     "fetch_data",
     "Fetch data from an API",
-    {
-      endpoint: z.string().url().describe("API endpoint URL")
-    },
-    async (args) => {
-      try {
-        const response = await fetch(args.endpoint);
+    {"endpoint": str},  # Simple schema
+)
+async def fetch_data(args: dict[str, Any]) -> dict[str, Any]:
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(args["endpoint"])
+            if response.status_code != 200:
+                # Return the failure as a tool result so Claude can react to it.
+                # is_error marks this as a failed call rather than odd-looking data.
+                return {
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": f"API error: {response.status_code} {response.reason_phrase}",
+                        }
+                    ],
+                    "is_error": True,
+                }
 
-        if (!response.ok) {
-          // Return the failure as a tool result so Claude can react to it.
-          // isError marks this as a failed call rather than odd-looking data.
-          return {
-            content: [
-              {
-                type: "text",
-                text: `API error: ${response.status} ${response.statusText}`
-              }
-            ],
-            isError: true
-          };
+            data = response.json()
+            return {"content": [{"type": "text", "text": json.dumps(data, indent=2)}]}
+    except Exception as e:
+        # Composes the message Claude reads. An uncaught exception would
+        # reach Claude as the raw str(e) with no context.
+        return {
+            "content": [{"type": "text", "text": f"Failed to fetch data: {str(e)}"}],
+            "is_error": True,
         }
+```
 
-        const data = await response.json();
+```typescript TypeScript theme={null}
+import { tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+tool(
+  "fetch_data",
+  "Fetch data from an API",
+  {
+    endpoint: z.string().url().describe("API endpoint URL")
+  },
+  async (args) => {
+    try {
+      const response = await fetch(args.endpoint);
+
+      if (!response.ok) {
+        // Return the failure as a tool result so Claude can react to it.
+        // isError marks this as a failed call rather than odd-looking data.
         return {
           content: [
             {
               type: "text",
-              text: JSON.stringify(data, null, 2)
-            }
-          ]
-        };
-      } catch (error) {
-        // Composes the message Claude reads. An uncaught throw would
-        // reach Claude as the raw error message with no context.
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Failed to fetch data: ${error instanceof Error ? error.message : String(error)}`
+              text: `API error: ${response.status} ${response.statusText}`
             }
           ],
           isError: true
         };
       }
+
+      const data = await response.json();
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(data, null, 2)
+          }
+        ]
+      };
+    } catch (error) {
+      // Composes the message Claude reads. An uncaught throw would
+      // reach Claude as the raw error message with no context.
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Failed to fetch data: ${error instanceof Error ? error.message : String(error)}`
+          }
+        ],
+        isError: true
+      };
     }
-  );
-  ```
-</CodeGroup>
+  }
+);
+```
 
 ## Return images and resources
 
@@ -456,62 +506,60 @@ An image block carries the image bytes inline, encoded as base64. There is no UR
 | `data` | `string` | Base64-encoded bytes. Raw base64 only, no `data:image/...;base64,` prefix |
 | `mimeType` | `string` | Required. For example `image/png`, `image/jpeg`, `image/webp`, `image/gif` |
 
-<CodeGroup>
-  ```python Python theme={null}
-  import base64
-  import httpx
-  from claude_agent_sdk import tool
+```python Python theme={null}
+import base64
+import httpx
+from claude_agent_sdk import tool
 
 
-  # Define a tool that fetches an image from a URL and returns it to Claude
-  @tool("fetch_image", "Fetch an image from a URL and return it to Claude", {"url": str})
-  async def fetch_image(args):
-      async with httpx.AsyncClient() as client:  # Fetch the image bytes
-          response = await client.get(args["url"])
+# Define a tool that fetches an image from a URL and returns it to Claude
+@tool("fetch_image", "Fetch an image from a URL and return it to Claude", {"url": str})
+async def fetch_image(args):
+    async with httpx.AsyncClient() as client:  # Fetch the image bytes
+        response = await client.get(args["url"])
 
-      return {
-          "content": [
-              {
-                  "type": "image",
-                  "data": base64.b64encode(response.content).decode(
-                      "ascii"
-                  ),  # Base64-encode the raw bytes
-                  "mimeType": response.headers.get(
-                      "content-type", "image/png"
-                  ),  # Read MIME type from the response
-              }
-          ]
-      }
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { tool } from "@anthropic-ai/claude-agent-sdk";
-  import { z } from "zod";
-
-  tool(
-    "fetch_image",
-    "Fetch an image from a URL and return it to Claude",
-    {
-      url: z.string().url()
-    },
-    async (args) => {
-      const response = await fetch(args.url); // Fetch the image bytes
-      const buffer = Buffer.from(await response.arrayBuffer()); // Read into a Buffer for base64 encoding
-      const mimeType = response.headers.get("content-type") ?? "image/png";
-
-      return {
-        content: [
-          {
-            type: "image",
-            data: buffer.toString("base64"), // Base64-encode the raw bytes
-            mimeType
-          }
+    return {
+        "content": [
+            {
+                "type": "image",
+                "data": base64.b64encode(response.content).decode(
+                    "ascii"
+                ),  # Base64-encode the raw bytes
+                "mimeType": response.headers.get(
+                    "content-type", "image/png"
+                ),  # Read MIME type from the response
+            }
         ]
-      };
     }
-  );
-  ```
-</CodeGroup>
+```
+
+```typescript TypeScript theme={null}
+import { tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+tool(
+  "fetch_image",
+  "Fetch an image from a URL and return it to Claude",
+  {
+    url: z.string().url()
+  },
+  async (args) => {
+    const response = await fetch(args.url); // Fetch the image bytes
+    const buffer = Buffer.from(await response.arrayBuffer()); // Read into a Buffer for base64 encoding
+    const mimeType = response.headers.get("content-type") ?? "image/png";
+
+    return {
+      content: [
+        {
+          type: "image",
+          data: buffer.toString("base64"), // Base64-encode the raw bytes
+          mimeType
+        }
+      ]
+    };
+  }
+);
+```
 
 ### Resources
 
@@ -527,37 +575,35 @@ A resource block embeds a piece of content identified by a URI. The actual conte
 
 This example shows a resource block returned from inside a tool handler. The SDK doesn't read from the example's URI, `file:///tmp/report.md`.
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  return {
-    content: [
-      {
-        type: "resource",
-        resource: {
-          uri: "file:///tmp/report.md", // Label for Claude to reference, not a path the SDK reads
-          mimeType: "text/markdown",
-          text: "# Report\n..." // The actual content, inline
-        }
+```typescript TypeScript theme={null}
+return {
+  content: [
+    {
+      type: "resource",
+      resource: {
+        uri: "file:///tmp/report.md", // Label for Claude to reference, not a path the SDK reads
+        mimeType: "text/markdown",
+        text: "# Report\n..." // The actual content, inline
       }
-    ]
-  };
-  ```
+    }
+  ]
+};
+```
 
-  ```python Python theme={null}
-  return {
-      "content": [
-          {
-              "type": "resource",
-              "resource": {
-                  "uri": "file:///tmp/report.md",  # Not a path the SDK reads
-                  "mimeType": "text/markdown",
-                  "text": "# Report\n...",  # The actual content, inline
-              },
-          }
-      ]
-  }
-  ```
-</CodeGroup>
+```python Python theme={null}
+return {
+    "content": [
+        {
+            "type": "resource",
+            "resource": {
+                "uri": "file:///tmp/report.md",  # Not a path the SDK reads
+                "mimeType": "text/markdown",
+                "text": "# Report\n...",  # The actual content, inline
+            },
+        }
+    ]
+}
+```
 
 These block shapes come from the MCP `CallToolResult` type. See the [MCP specification](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-result) for the full definition.
 
@@ -584,9 +630,9 @@ return {
 };
 ```
 
-<Note>
-  The Python `@tool` decorator forwards only `content` and `is_error` from the handler's return dict. To return `structuredContent` from Python, run a [standalone MCP server](/docs/en/agent-sdk/mcp) instead of an in-process SDK server.
-</Note>
+> [!NOTE]
+>
+> The Python `@tool` decorator forwards only `content` and `is_error` from the handler's return dict. To return `structuredContent` from Python, run a [standalone MCP server](/docs/en/agent-sdk/mcp) instead of an in-process SDK server.
 
 ## Example: unit converter
 
@@ -597,247 +643,243 @@ It demonstrates two patterns:
 * **Enum schemas:** `unit_type` is constrained to a fixed set of values. In TypeScript, use `z.enum()`. In Python, the dict schema doesn't support enums, so the full JSON Schema dict is required.
 * **Unsupported input handling:** when a conversion pair isn't found, the handler returns `isError: true` so Claude can tell the user what went wrong rather than treating a failure as a normal result.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from typing import Any
-  from claude_agent_sdk import tool, create_sdk_mcp_server
+```python Python theme={null}
+from typing import Any
+from claude_agent_sdk import tool, create_sdk_mcp_server
 
 
-  # z.enum() in TypeScript becomes an "enum" constraint in JSON Schema.
-  # The dict schema has no equivalent, so full JSON Schema is required.
-  @tool(
-      "convert_units",
-      "Convert a value from one unit to another",
-      {
-          "type": "object",
-          "properties": {
-              "unit_type": {
-                  "type": "string",
-                  "enum": ["length", "temperature", "weight"],
-                  "description": "Category of unit",
-              },
-              "from_unit": {
-                  "type": "string",
-                  "description": "Unit to convert from, e.g. kilometers, fahrenheit, pounds",
-              },
-              "to_unit": {"type": "string", "description": "Unit to convert to"},
-              "value": {"type": "number", "description": "Value to convert"},
-          },
-          "required": ["unit_type", "from_unit", "to_unit", "value"],
-      },
-  )
-  async def convert_units(args: dict[str, Any]) -> dict[str, Any]:
-      conversions = {
-          "length": {
-              "kilometers_to_miles": lambda v: v * 0.621371,
-              "miles_to_kilometers": lambda v: v * 1.60934,
-              "meters_to_feet": lambda v: v * 3.28084,
-              "feet_to_meters": lambda v: v * 0.3048,
-          },
-          "temperature": {
-              "celsius_to_fahrenheit": lambda v: (v * 9) / 5 + 32,
-              "fahrenheit_to_celsius": lambda v: (v - 32) * 5 / 9,
-              "celsius_to_kelvin": lambda v: v + 273.15,
-              "kelvin_to_celsius": lambda v: v - 273.15,
-          },
-          "weight": {
-              "kilograms_to_pounds": lambda v: v * 2.20462,
-              "pounds_to_kilograms": lambda v: v * 0.453592,
-              "grams_to_ounces": lambda v: v * 0.035274,
-              "ounces_to_grams": lambda v: v * 28.3495,
-          },
-      }
-
-      key = f"{args['from_unit']}_to_{args['to_unit']}"
-      fn = conversions.get(args["unit_type"], {}).get(key)
-
-      if not fn:
-          return {
-              "content": [
-                  {
-                      "type": "text",
-                      "text": f"Unsupported conversion: {args['from_unit']} to {args['to_unit']}",
-                  }
-              ],
-              "is_error": True,
-          }
-
-      result = fn(args["value"])
-      return {
-          "content": [
-              {
-                  "type": "text",
-                  "text": f"{args['value']} {args['from_unit']} = {result:.4f} {args['to_unit']}",
-              }
-          ]
-      }
-
-
-  converter_server = create_sdk_mcp_server(
-      name="converter",
-      version="1.0.0",
-      tools=[convert_units],
-  )
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
-  import { z } from "zod";
-
-  const convert = tool(
+# z.enum() in TypeScript becomes an "enum" constraint in JSON Schema.
+# The dict schema has no equivalent, so full JSON Schema is required.
+@tool(
     "convert_units",
     "Convert a value from one unit to another",
     {
-      unit_type: z.enum(["length", "temperature", "weight"]).describe("Category of unit"),
-      from_unit: z
-        .string()
-        .describe("Unit to convert from, e.g. kilometers, fahrenheit, pounds"),
-      to_unit: z.string().describe("Unit to convert to"),
-      value: z.number().describe("Value to convert")
+        "type": "object",
+        "properties": {
+            "unit_type": {
+                "type": "string",
+                "enum": ["length", "temperature", "weight"],
+                "description": "Category of unit",
+            },
+            "from_unit": {
+                "type": "string",
+                "description": "Unit to convert from, e.g. kilometers, fahrenheit, pounds",
+            },
+            "to_unit": {"type": "string", "description": "Unit to convert to"},
+            "value": {"type": "number", "description": "Value to convert"},
+        },
+        "required": ["unit_type", "from_unit", "to_unit", "value"],
     },
-    async (args) => {
-      type Conversions = Record<string, Record<string, (v: number) => number>>;
-
-      const conversions: Conversions = {
-        length: {
-          kilometers_to_miles: (v) => v * 0.621371,
-          miles_to_kilometers: (v) => v * 1.60934,
-          meters_to_feet: (v) => v * 3.28084,
-          feet_to_meters: (v) => v * 0.3048
+)
+async def convert_units(args: dict[str, Any]) -> dict[str, Any]:
+    conversions = {
+        "length": {
+            "kilometers_to_miles": lambda v: v * 0.621371,
+            "miles_to_kilometers": lambda v: v * 1.60934,
+            "meters_to_feet": lambda v: v * 3.28084,
+            "feet_to_meters": lambda v: v * 0.3048,
         },
-        temperature: {
-          celsius_to_fahrenheit: (v) => (v * 9) / 5 + 32,
-          fahrenheit_to_celsius: (v) => ((v - 32) * 5) / 9,
-          celsius_to_kelvin: (v) => v + 273.15,
-          kelvin_to_celsius: (v) => v - 273.15
+        "temperature": {
+            "celsius_to_fahrenheit": lambda v: (v * 9) / 5 + 32,
+            "fahrenheit_to_celsius": lambda v: (v - 32) * 5 / 9,
+            "celsius_to_kelvin": lambda v: v + 273.15,
+            "kelvin_to_celsius": lambda v: v - 273.15,
         },
-        weight: {
-          kilograms_to_pounds: (v) => v * 2.20462,
-          pounds_to_kilograms: (v) => v * 0.453592,
-          grams_to_ounces: (v) => v * 0.035274,
-          ounces_to_grams: (v) => v * 28.3495
-        }
-      };
+        "weight": {
+            "kilograms_to_pounds": lambda v: v * 2.20462,
+            "pounds_to_kilograms": lambda v: v * 0.453592,
+            "grams_to_ounces": lambda v: v * 0.035274,
+            "ounces_to_grams": lambda v: v * 28.3495,
+        },
+    }
 
-      const key = `${args.from_unit}_to_${args.to_unit}`;
-      const fn = conversions[args.unit_type]?.[key];
+    key = f"{args['from_unit']}_to_{args['to_unit']}"
+    fn = conversions.get(args["unit_type"], {}).get(key)
 
-      if (!fn) {
+    if not fn:
         return {
-          content: [
-            {
-              type: "text",
-              text: `Unsupported conversion: ${args.from_unit} to ${args.to_unit}`
-            }
-          ],
-          isError: true
-        };
-      }
+            "content": [
+                {
+                    "type": "text",
+                    "text": f"Unsupported conversion: {args['from_unit']} to {args['to_unit']}",
+                }
+            ],
+            "is_error": True,
+        }
 
-      const result = fn(args.value);
+    result = fn(args["value"])
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": f"{args['value']} {args['from_unit']} = {result:.4f} {args['to_unit']}",
+            }
+        ]
+    }
+
+
+converter_server = create_sdk_mcp_server(
+    name="converter",
+    version="1.0.0",
+    tools=[convert_units],
+)
+```
+
+```typescript TypeScript theme={null}
+import { tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+
+const convert = tool(
+  "convert_units",
+  "Convert a value from one unit to another",
+  {
+    unit_type: z.enum(["length", "temperature", "weight"]).describe("Category of unit"),
+    from_unit: z
+      .string()
+      .describe("Unit to convert from, e.g. kilometers, fahrenheit, pounds"),
+    to_unit: z.string().describe("Unit to convert to"),
+    value: z.number().describe("Value to convert")
+  },
+  async (args) => {
+    type Conversions = Record<string, Record<string, (v: number) => number>>;
+
+    const conversions: Conversions = {
+      length: {
+        kilometers_to_miles: (v) => v * 0.621371,
+        miles_to_kilometers: (v) => v * 1.60934,
+        meters_to_feet: (v) => v * 3.28084,
+        feet_to_meters: (v) => v * 0.3048
+      },
+      temperature: {
+        celsius_to_fahrenheit: (v) => (v * 9) / 5 + 32,
+        fahrenheit_to_celsius: (v) => ((v - 32) * 5) / 9,
+        celsius_to_kelvin: (v) => v + 273.15,
+        kelvin_to_celsius: (v) => v - 273.15
+      },
+      weight: {
+        kilograms_to_pounds: (v) => v * 2.20462,
+        pounds_to_kilograms: (v) => v * 0.453592,
+        grams_to_ounces: (v) => v * 0.035274,
+        ounces_to_grams: (v) => v * 28.3495
+      }
+    };
+
+    const key = `${args.from_unit}_to_${args.to_unit}`;
+    const fn = conversions[args.unit_type]?.[key];
+
+    if (!fn) {
       return {
         content: [
           {
             type: "text",
-            text: `${args.value} ${args.from_unit} = ${result.toFixed(4)} ${args.to_unit}`
+            text: `Unsupported conversion: ${args.from_unit} to ${args.to_unit}`
           }
-        ]
+        ],
+        isError: true
       };
     }
-  );
 
-  const converterServer = createSdkMcpServer({
-    name: "converter",
-    version: "1.0.0",
-    tools: [convert]
-  });
-  ```
-</CodeGroup>
+    const result = fn(args.value);
+    return {
+      content: [
+        {
+          type: "text",
+          text: `${args.value} ${args.from_unit} = ${result.toFixed(4)} ${args.to_unit}`
+        }
+      ]
+    };
+  }
+);
+
+const converterServer = createSdkMcpServer({
+  name: "converter",
+  version: "1.0.0",
+  tools: [convert]
+});
+```
 
 Once the server is defined, pass it to `query` the same way as the weather example. This example sends three different prompts in a loop to show the same tool handling different unit types. For each response, it inspects `AssistantMessage` objects (which contain the tool calls Claude made during that turn) and prints each `ToolUseBlock` before printing the final `ResultMessage` text. This lets you see when Claude is using the tool versus answering from its own knowledge.
 
 Because [tool search](/docs/en/agent-sdk/tool-search) is on by default, the output may also include a `ToolSearch` call as Claude loads the deferred tool schema.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import (
-      query,
-      ClaudeAgentOptions,
-      ResultMessage,
-      AssistantMessage,
-      ToolUseBlock,
-  )
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import (
+    query,
+    ClaudeAgentOptions,
+    ResultMessage,
+    AssistantMessage,
+    ToolUseBlock,
+)
 
 
-  async def main():
-      options = ClaudeAgentOptions(
-          mcp_servers={"converter": converter_server},
-          allowed_tools=["mcp__converter__convert_units"],
-      )
+async def main():
+    options = ClaudeAgentOptions(
+        mcp_servers={"converter": converter_server},
+        allowed_tools=["mcp__converter__convert_units"],
+    )
 
-      prompts = [
-          "Convert 100 kilometers to miles.",
-          "What is 72°F in Celsius?",
-          "How many pounds is 5 kilograms?",
-      ]
+    prompts = [
+        "Convert 100 kilometers to miles.",
+        "What is 72°F in Celsius?",
+        "How many pounds is 5 kilograms?",
+    ]
 
-      for prompt in prompts:
-          try:
-              async for message in query(prompt=prompt, options=options):
-                  if isinstance(message, AssistantMessage):
-                      for block in message.content:
-                          if isinstance(block, ToolUseBlock):
-                              print(f"[tool call] {block.name}({block.input})")
-                  elif isinstance(message, ResultMessage) and message.subtype == "success":
-                      print(f"Q: {prompt}\nA: {message.result}\n")
-          except Exception as error:
-              # A single-shot query() raises after yielding an error result. Only success
-              # results are printed above, so handle the failure here and continue with
-              # the next prompt.
-              print(f"Call failed: {error}")
+    for prompt in prompts:
+        try:
+            async for message in query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, ToolUseBlock):
+                            print(f"[tool call] {block.name}({block.input})")
+                elif isinstance(message, ResultMessage) and message.subtype == "success":
+                    print(f"Q: {prompt}\nA: {message.result}\n")
+        except Exception as error:
+            # A single-shot query() raises after yielding an error result. Only success
+            # results are printed above, so handle the failure here and continue with
+            # the next prompt.
+            print(f"Call failed: {error}")
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  const prompts = [
-    "Convert 100 kilometers to miles.",
-    "What is 72°F in Celsius?",
-    "How many pounds is 5 kilograms?"
-  ];
+const prompts = [
+  "Convert 100 kilometers to miles.",
+  "What is 72°F in Celsius?",
+  "How many pounds is 5 kilograms?"
+];
 
-  for (const prompt of prompts) {
-    try {
-      for await (const message of query({
-        prompt,
-        options: {
-          mcpServers: { converter: converterServer },
-          allowedTools: ["mcp__converter__convert_units"]
-        }
-      })) {
-        if (message.type === "assistant") {
-          for (const block of message.message.content) {
-            if (block.type === "tool_use") {
-              console.log(`[tool call] ${block.name}`, block.input);
-            }
-          }
-        } else if (message.type === "result" && message.subtype === "success") {
-          console.log(`Q: ${prompt}\nA: ${message.result}\n`);
-        }
+for (const prompt of prompts) {
+  try {
+    for await (const message of query({
+      prompt,
+      options: {
+        mcpServers: { converter: converterServer },
+        allowedTools: ["mcp__converter__convert_units"]
       }
-    } catch (error) {
-      // A single-shot query() throws after yielding an error result. Only success
-      // results are logged above, so handle the failure here and continue with
-      // the next prompt.
-      console.error(`Call failed: ${error}`);
+    })) {
+      if (message.type === "assistant") {
+        for (const block of message.message.content) {
+          if (block.type === "tool_use") {
+            console.log(`[tool call] ${block.name}`, block.input);
+          }
+        }
+      } else if (message.type === "result" && message.subtype === "success") {
+        console.log(`Q: ${prompt}\nA: ${message.result}\n`);
+      }
     }
+  } catch (error) {
+    // A single-shot query() throws after yielding an error result. Only success
+    // results are logged above, so handle the failure here and continue with
+    // the next prompt.
+    console.error(`Call failed: ${error}`);
   }
-  ```
-</CodeGroup>
+}
+```
 
 ## Next steps
 

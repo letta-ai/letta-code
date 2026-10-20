@@ -21,45 +21,43 @@ Load plugins by providing their local file system paths in your options configur
 
 To use a plugin distributed through a [marketplace](/docs/en/plugins/overview) or remote repository, download it first and provide the local directory path. For the directory layout a plugin needs, see the [Plugin structure reference](#plugin-structure-reference) below.
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Hello",
-    options: {
-      plugins: [
-        { type: "local", path: "./my-plugin" },
-        { type: "local", path: "/absolute/path/to/another-plugin" }
-      ]
-    }
-  })) {
-    // Plugin commands, agents, and other features are now available
+for await (const message of query({
+  prompt: "Hello",
+  options: {
+    plugins: [
+      { type: "local", path: "./my-plugin" },
+      { type: "local", path: "/absolute/path/to/another-plugin" }
+    ]
   }
-  ```
+})) {
+  // Plugin commands, agents, and other features are now available
+}
+```
 
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions
-
-
-  async def main():
-      async for message in query(
-          prompt="Hello",
-          options=ClaudeAgentOptions(
-              plugins=[
-                  {"type": "local", "path": "./my-plugin"},
-                  {"type": "local", "path": "/absolute/path/to/another-plugin"},
-              ]
-          ),
-      ):
-          # Plugin commands, agents, and other features are now available
-          pass
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt="Hello",
+        options=ClaudeAgentOptions(
+            plugins=[
+                {"type": "local", "path": "./my-plugin"},
+                {"type": "local", "path": "/absolute/path/to/another-plugin"},
+            ]
+        ),
+    ):
+        # Plugin commands, agents, and other features are now available
+        pass
+
+
+asyncio.run(main())
+```
 
 ### Path specifications
 
@@ -68,201 +66,195 @@ Plugin paths can be:
 * **Relative paths**: resolved relative to the `cwd` option (for example, `"./plugins/my-plugin"`)
 * **Absolute paths**: full file system paths (for example, `"/home/user/plugins/my-plugin"`)
 
-<Note>
-  The path should point to the plugin's root directory: the parent of `skills/`, `agents/`, `hooks/`, `commands/`, or `.claude-plugin/`.
-</Note>
+> [!NOTE]
+>
+> The path should point to the plugin's root directory: the parent of `skills/`, `agents/`, `hooks/`, `commands/`, or `.claude-plugin/`.
 
 ## Verifying plugin installation
 
 When plugins load successfully, they appear in the system initialization message. You can verify that your plugins are available:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Hello",
-    options: {
-      plugins: [{ type: "local", path: "./my-plugin" }]
-    }
-  })) {
-    if (message.type === "system" && message.subtype === "init") {
-      // Check loaded plugins
-      console.log("Plugins:", message.plugins);
-      // Example: [{ name: "my-plugin", path: "/absolute/path/to/my-plugin" }]
-
-      // Plugin skills appear with the plugin name as a prefix
-      console.log("Skills:", message.skills);
-      // Example: ["my-plugin:greet"]
-
-      // Plugin commands use the same prefix, and skills appear here too
-      console.log("Commands:", message.slash_commands);
-      // Example: ["compact", "context", "my-plugin:custom-command", "my-plugin:greet"]
-    }
+for await (const message of query({
+  prompt: "Hello",
+  options: {
+    plugins: [{ type: "local", path: "./my-plugin" }]
   }
-  ```
+})) {
+  if (message.type === "system" && message.subtype === "init") {
+    // Check loaded plugins
+    console.log("Plugins:", message.plugins);
+    // Example: [{ name: "my-plugin", path: "/absolute/path/to/my-plugin" }]
 
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, SystemMessage
+    // Plugin skills appear with the plugin name as a prefix
+    console.log("Skills:", message.skills);
+    // Example: ["my-plugin:greet"]
 
+    // Plugin commands use the same prefix, and skills appear here too
+    console.log("Commands:", message.slash_commands);
+    // Example: ["compact", "context", "my-plugin:custom-command", "my-plugin:greet"]
+  }
+}
+```
 
-  async def main():
-      async for message in query(
-          prompt="Hello",
-          options=ClaudeAgentOptions(
-              plugins=[{"type": "local", "path": "./my-plugin"}]
-          ),
-      ):
-          if isinstance(message, SystemMessage) and message.subtype == "init":
-              # Check loaded plugins
-              print("Plugins:", message.data.get("plugins"))
-              # Example: [{"name": "my-plugin", "path": "/absolute/path/to/my-plugin"}]
-
-              # Plugin skills appear with the plugin name as a prefix
-              print("Skills:", message.data.get("skills"))
-              # Example: ["my-plugin:greet"]
-
-              # Plugin commands use the same prefix, and skills appear here too
-              print("Commands:", message.data.get("slash_commands"))
-              # Example: ["compact", "context", "my-plugin:custom-command", "my-plugin:greet"]
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, SystemMessage
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    async for message in query(
+        prompt="Hello",
+        options=ClaudeAgentOptions(
+            plugins=[{"type": "local", "path": "./my-plugin"}]
+        ),
+    ):
+        if isinstance(message, SystemMessage) and message.subtype == "init":
+            # Check loaded plugins
+            print("Plugins:", message.data.get("plugins"))
+            # Example: [{"name": "my-plugin", "path": "/absolute/path/to/my-plugin"}]
+
+            # Plugin skills appear with the plugin name as a prefix
+            print("Skills:", message.data.get("skills"))
+            # Example: ["my-plugin:greet"]
+
+            # Plugin commands use the same prefix, and skills appear here too
+            print("Commands:", message.data.get("slash_commands"))
+            # Example: ["compact", "context", "my-plugin:custom-command", "my-plugin:greet"]
+
+
+asyncio.run(main())
+```
 
 ## Use plugin skills
 
 Skills from plugins are automatically namespaced with the plugin name to avoid conflicts. To invoke one directly, send `/plugin-name:skill-name` as the prompt.
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  // Load a plugin with a custom /greet skill
-  for await (const message of query({
-    prompt: "/my-plugin:greet", // Use plugin skill with namespace
-    options: {
-      plugins: [{ type: "local", path: "./my-plugin" }]
-    }
-  })) {
-    // Claude executes the custom greeting skill from the plugin
-    if (message.type === "assistant") {
-      console.log(message.message.content);
-    }
+// Load a plugin with a custom /greet skill
+for await (const message of query({
+  prompt: "/my-plugin:greet", // Use plugin skill with namespace
+  options: {
+    plugins: [{ type: "local", path: "./my-plugin" }]
   }
-  ```
+})) {
+  // Claude executes the custom greeting skill from the plugin
+  if (message.type === "assistant") {
+    console.log(message.message.content);
+  }
+}
+```
 
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
-
-
-  async def main():
-      # Load a plugin with a custom /greet skill
-      async for message in query(
-          prompt="/my-plugin:greet",  # Use plugin skill with namespace
-          options=ClaudeAgentOptions(
-              plugins=[{"type": "local", "path": "./my-plugin"}]
-          ),
-      ):
-          # Claude executes the custom greeting skill from the plugin
-          if isinstance(message, AssistantMessage):
-              for block in message.content:
-                  if isinstance(block, TextBlock):
-                      print(f"Claude: {block.text}")
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    # Load a plugin with a custom /greet skill
+    async for message in query(
+        prompt="/my-plugin:greet",  # Use plugin skill with namespace
+        options=ClaudeAgentOptions(
+            plugins=[{"type": "local", "path": "./my-plugin"}]
+        ),
+    ):
+        # Claude executes the custom greeting skill from the plugin
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    print(f"Claude: {block.text}")
 
-<Note>
-  If you installed a plugin via the CLI (for example, `/plugin install my-plugin@marketplace`), you can still use it in the SDK by providing its installation path. Check `~/.claude/plugins/` for CLI-installed plugins.
-</Note>
+
+asyncio.run(main())
+```
+
+> [!NOTE]
+>
+> If you installed a plugin via the CLI (for example, `/plugin install my-plugin@marketplace`), you can still use it in the SDK by providing its installation path. Check `~/.claude/plugins/` for CLI-installed plugins.
 
 ## Complete example
 
 Here's a full example demonstrating plugin loading and usage:
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
-  import { fileURLToPath } from "node:url";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import { fileURLToPath } from "node:url";
 
-  async function runWithPlugin() {
-    const pluginPath = fileURLToPath(new URL("./plugins/my-plugin", import.meta.url));
+async function runWithPlugin() {
+  const pluginPath = fileURLToPath(new URL("./plugins/my-plugin", import.meta.url));
 
-    console.log("Loading plugin from:", pluginPath);
+  console.log("Loading plugin from:", pluginPath);
 
-    for await (const message of query({
-      prompt: "What custom commands do you have available?",
-      options: {
-        plugins: [{ type: "local", path: pluginPath }],
-        maxTurns: 3
-      }
-    })) {
-      if (message.type === "system" && message.subtype === "init") {
-        console.log("Loaded plugins:", message.plugins);
-        console.log("Available skills:", message.skills);
-        console.log("Available commands:", message.slash_commands);
-      }
+  for await (const message of query({
+    prompt: "What custom commands do you have available?",
+    options: {
+      plugins: [{ type: "local", path: pluginPath }],
+      maxTurns: 3
+    }
+  })) {
+    if (message.type === "system" && message.subtype === "init") {
+      console.log("Loaded plugins:", message.plugins);
+      console.log("Available skills:", message.skills);
+      console.log("Available commands:", message.slash_commands);
+    }
 
-      if (message.type === "assistant") {
-        console.log("Assistant:", message.message.content);
-      }
+    if (message.type === "assistant") {
+      console.log("Assistant:", message.message.content);
     }
   }
+}
 
-  runWithPlugin().catch(console.error);
-  ```
+runWithPlugin().catch(console.error);
+```
 
-  ```python Python theme={null}
-  #!/usr/bin/env python3
-  """Example demonstrating how to use plugins with the Agent SDK."""
+```python Python theme={null}
+#!/usr/bin/env python3
+"""Example demonstrating how to use plugins with the Agent SDK."""
 
-  import asyncio
-  from pathlib import Path
+import asyncio
+from pathlib import Path
 
-  from claude_agent_sdk import (
-      AssistantMessage,
-      ClaudeAgentOptions,
-      SystemMessage,
-      TextBlock,
-      query,
-  )
-
-
-  async def run_with_plugin():
-      """Example using a custom plugin."""
-      plugin_path = Path(__file__).parent / "plugins" / "my-plugin"
-
-      print(f"Loading plugin from: {plugin_path}")
-
-      options = ClaudeAgentOptions(
-          plugins=[{"type": "local", "path": str(plugin_path)}],
-          max_turns=3,
-      )
-
-      async for message in query(
-          prompt="What custom commands do you have available?", options=options
-      ):
-          if isinstance(message, SystemMessage) and message.subtype == "init":
-              print(f"Loaded plugins: {message.data.get('plugins')}")
-              print(f"Available skills: {message.data.get('skills')}")
-              print(f"Available commands: {message.data.get('slash_commands')}")
-
-          if isinstance(message, AssistantMessage):
-              for block in message.content:
-                  if isinstance(block, TextBlock):
-                      print(f"Assistant: {block.text}")
+from claude_agent_sdk import (
+    AssistantMessage,
+    ClaudeAgentOptions,
+    SystemMessage,
+    TextBlock,
+    query,
+)
 
 
-  if __name__ == "__main__":
-      asyncio.run(run_with_plugin())
-  ```
-</CodeGroup>
+async def run_with_plugin():
+    """Example using a custom plugin."""
+    plugin_path = Path(__file__).parent / "plugins" / "my-plugin"
+
+    print(f"Loading plugin from: {plugin_path}")
+
+    options = ClaudeAgentOptions(
+        plugins=[{"type": "local", "path": str(plugin_path)}],
+        max_turns=3,
+    )
+
+    async for message in query(
+        prompt="What custom commands do you have available?", options=options
+    ):
+        if isinstance(message, SystemMessage) and message.subtype == "init":
+            print(f"Loaded plugins: {message.data.get('plugins')}")
+            print(f"Available skills: {message.data.get('skills')}")
+            print(f"Available commands: {message.data.get('slash_commands')}")
+
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    print(f"Assistant: {block.text}")
+
+
+if __name__ == "__main__":
+    asyncio.run(run_with_plugin())
+```
 
 ## Plugin structure reference
 
@@ -284,9 +276,9 @@ my-plugin/
 └── .mcp.json                # MCP server definitions
 ```
 
-<Note>
-  The `commands/` directory holds skills as flat Markdown files. Use `skills/` for new plugins. Claude Code supports both locations.
-</Note>
+> [!NOTE]
+>
+> The `commands/` directory holds skills as flat Markdown files. Use `skills/` for new plugins. Claude Code supports both locations.
 
 ## Multiple plugin sources
 
@@ -305,9 +297,9 @@ plugins: [
 ];
 ```
 
-<Note>
-  The SDK doesn't expand tilde paths like `~/plugins`. If a plugin path doesn't exist, the SDK skips that plugin and the session continues, so check the `plugins` list in the init message to confirm each plugin loaded.
-</Note>
+> [!NOTE]
+>
+> The SDK doesn't expand tilde paths like `~/plugins`. If a plugin path doesn't exist, the SDK skips that plugin and the session continues, so check the `plugins` list in the init message to confirm each plugin loaded.
 
 ## Troubleshooting
 

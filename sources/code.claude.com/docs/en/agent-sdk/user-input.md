@@ -20,39 +20,40 @@ This guide shows you how to detect each type of request and respond appropriatel
 
 Pass a `canUseTool` callback in your query options. The callback fires whenever Claude needs user input, receiving the tool name and input as arguments:
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import ClaudeAgentOptions
+```python Python theme={null}
+from claude_agent_sdk import ClaudeAgentOptions
 
 
-  async def handle_tool_request(tool_name, input_data, context):
-      # Prompt user and return allow or deny
-      ...
+async def handle_tool_request(tool_name, input_data, context):
+    # Prompt user and return allow or deny
+    ...
 
 
-  options = ClaudeAgentOptions(can_use_tool=handle_tool_request)
-  ```
+options = ClaudeAgentOptions(can_use_tool=handle_tool_request)
+```
 
-  ```typescript TypeScript theme={null}
-  async function handleToolRequest(toolName, input, options) {
-    // options includes { signal: AbortSignal, suggestions?: PermissionUpdate[] }
-    // Prompt user and return allow or deny
-  }
+```typescript TypeScript theme={null}
+import type { CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 
-  const options = { canUseTool: handleToolRequest };
-  ```
-</CodeGroup>
+const handleToolRequest: CanUseTool = async (toolName, input, options) => {
+  // options includes { signal: AbortSignal, suggestions?: PermissionUpdate[] }
+  // Prompt the user here, then return allow or deny
+  return { behavior: "deny", message: "User declined" };
+};
+
+const options = { canUseTool: handleToolRequest };
+```
 
 The callback fires in two cases:
 
 1. **Tool needs approval**: Claude wants to use a tool that isn't auto-approved by a [permission rule](/docs/en/agent-sdk/permissions) or permission mode. Check `tool_name` for the tool (e.g., `"Bash"`, `"Write"`).
 2. **Claude asks a question**: Claude calls the `AskUserQuestion` tool. Check if `tool_name == "AskUserQuestion"` to handle it differently. If you specify a `tools` array, include `AskUserQuestion` for this to work. See [Handle clarifying questions](#handle-clarifying-questions) for details.
 
-<Warning>
-  **The callback never fires for auto-approved tools.** Any approval earlier in the [permission evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated), an allow rule or a mode like `acceptEdits` or `bypassPermissions`, resolves the call before `canUseTool` is consulted. If you list a tool bare in `allowed_tools`, a `canUseTool` check for that tool runs only when the [evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) routes the call back to a prompt, such as an ask rule or `plan` mode. For logic that must apply to every tool call, use a [`PreToolUse` hook](/docs/en/agent-sdk/hooks), which executes before the rest of the flow and can allow, deny, or modify requests.
-
-  An allow rule doesn't pre-approve the [actions no mode auto-approves](/docs/en/permission-modes#actions-no-mode-auto-approves); see [How permissions are evaluated](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) for which of them reach the callback and what happens in `dontAsk` and `auto` mode.
-</Warning>
+> [!WARNING]
+>
+> **The callback never fires for auto-approved tools.** Any approval earlier in the [permission evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated), an allow rule or a mode like `acceptEdits` or `bypassPermissions`, resolves the call before `canUseTool` is consulted. If you list a tool bare in `allowed_tools`, a `canUseTool` check for that tool runs only when the [evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) routes the call back to a prompt, such as an ask rule or `plan` mode. For logic that must apply to every tool call, use a [`PreToolUse` hook](/docs/en/agent-sdk/hooks), which executes before the rest of the flow and can allow, deny, or modify requests.
+>
+> An allow rule doesn't pre-approve the [actions no mode auto-approves](/docs/en/permission-modes#actions-no-mode-auto-approves); see [How permissions are evaluated](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) for which of them reach the callback and what happens in `dontAsk` and `auto` mode.
 
 You can also use the [`PermissionRequest` hook](/docs/en/agent-sdk/hooks#available-hooks) to send external notifications (Slack, email, push) when Claude is waiting for approval.
 
@@ -83,122 +84,120 @@ You can display this information to the user so they can decide whether to allow
 
 The following example asks Claude to create and delete a test file. When Claude attempts each operation, the callback prints the tool request to the terminal and prompts for y/n approval.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
+```python Python theme={null}
+import asyncio
 
-  from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
-  from claude_agent_sdk.types import (
-      HookMatcher,
-      PermissionResultAllow,
-      PermissionResultDeny,
-      ToolPermissionContext,
-  )
-
-
-  async def can_use_tool(
-      tool_name: str, input_data: dict, context: ToolPermissionContext
-  ) -> PermissionResultAllow | PermissionResultDeny:
-      # Display the tool request
-      print(f"\nTool: {tool_name}")
-      if tool_name == "Bash":
-          print(f"Command: {input_data.get('command')}")
-          if input_data.get("description"):
-              print(f"Description: {input_data.get('description')}")
-      else:
-          print(f"Input: {input_data}")
-
-      # Get user approval
-      response = input("Allow this action? (y/n): ")
-
-      # Return allow or deny based on user's response
-      if response.lower() == "y":
-          # Allow: tool executes with the original (or modified) input
-          return PermissionResultAllow(updated_input=input_data)
-      else:
-          # Deny: tool doesn't execute, Claude sees the message
-          return PermissionResultDeny(message="User denied this action")
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk.types import (
+    HookMatcher,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    ToolPermissionContext,
+)
 
 
-  # Required workaround: dummy hook keeps the stream open for can_use_tool
-  async def dummy_hook(input_data, tool_use_id, context):
-      return {"continue_": True}
+async def can_use_tool(
+    tool_name: str, input_data: dict, context: ToolPermissionContext
+) -> PermissionResultAllow | PermissionResultDeny:
+    # Display the tool request
+    print(f"\nTool: {tool_name}")
+    if tool_name == "Bash":
+        print(f"Command: {input_data.get('command')}")
+        if input_data.get("description"):
+            print(f"Description: {input_data.get('description')}")
+    else:
+        print(f"Input: {input_data}")
+
+    # Get user approval
+    response = input("Allow this action? (y/n): ")
+
+    # Return allow or deny based on user's response
+    if response.lower() == "y":
+        # Allow: tool executes with the original (or modified) input
+        return PermissionResultAllow(updated_input=input_data)
+    else:
+        # Deny: tool doesn't execute, Claude sees the message
+        return PermissionResultDeny(message="User denied this action")
 
 
-  async def prompt_stream():
-      yield {
-          "type": "user",
-          "message": {
-              "role": "user",
-              "content": "Create a test file in /tmp and then delete it",
-          },
+# Required workaround: dummy hook keeps the stream open for can_use_tool
+async def dummy_hook(input_data, tool_use_id, context):
+    return {"continue_": True}
+
+
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "Create a test file in /tmp and then delete it",
+        },
+    }
+
+
+async def main():
+    async for message in query(
+        prompt=prompt_stream(),
+        options=ClaudeAgentOptions(
+            can_use_tool=can_use_tool,
+            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[dummy_hook])]},
+        ),
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(message.result)
+
+
+asyncio.run(main())
+```
+
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import * as readline from "readline";
+
+// Helper to prompt user for input in the terminal
+function prompt(question: string): Promise<string> {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout
+  });
+  return new Promise((resolve) =>
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer);
+    })
+  );
+}
+
+for await (const message of query({
+  prompt: "Create a test file in /tmp and then delete it",
+  options: {
+    canUseTool: async (toolName, input) => {
+      // Display the tool request
+      console.log(`\nTool: ${toolName}`);
+      if (toolName === "Bash") {
+        console.log(`Command: ${input.command}`);
+        if (input.description) console.log(`Description: ${input.description}`);
+      } else {
+        console.log(`Input: ${JSON.stringify(input, null, 2)}`);
       }
 
+      // Get user approval
+      const response = await prompt("Allow this action? (y/n): ");
 
-  async def main():
-      async for message in query(
-          prompt=prompt_stream(),
-          options=ClaudeAgentOptions(
-              can_use_tool=can_use_tool,
-              hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[dummy_hook])]},
-          ),
-      ):
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(message.result)
-
-
-  asyncio.run(main())
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
-  import * as readline from "readline";
-
-  // Helper to prompt user for input in the terminal
-  function prompt(question: string): Promise<string> {
-    const rl = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-    return new Promise((resolve) =>
-      rl.question(question, (answer) => {
-        rl.close();
-        resolve(answer);
-      })
-    );
-  }
-
-  for await (const message of query({
-    prompt: "Create a test file in /tmp and then delete it",
-    options: {
-      canUseTool: async (toolName, input) => {
-        // Display the tool request
-        console.log(`\nTool: ${toolName}`);
-        if (toolName === "Bash") {
-          console.log(`Command: ${input.command}`);
-          if (input.description) console.log(`Description: ${input.description}`);
-        } else {
-          console.log(`Input: ${JSON.stringify(input, null, 2)}`);
-        }
-
-        // Get user approval
-        const response = await prompt("Allow this action? (y/n): ");
-
-        // Return allow or deny based on user's response
-        if (response.toLowerCase() === "y") {
-          // Allow: tool executes with the original (or modified) input
-          return { behavior: "allow", updatedInput: input };
-        } else {
-          // Deny: tool doesn't execute, Claude sees the message
-          return { behavior: "deny", message: "User denied this action" };
-        }
+      // Return allow or deny based on user's response
+      if (response.toLowerCase() === "y") {
+        // Allow: tool executes with the original (or modified) input
+        return { behavior: "allow", updatedInput: input };
+      } else {
+        // Deny: tool doesn't execute, Claude sees the message
+        return { behavior: "deny", message: "User denied this action" };
       }
     }
-  })) {
-    if ("result" in message) console.log(message.result);
   }
-  ```
-</CodeGroup>
+})) {
+  if ("result" in message) console.log(message.result);
+}
+```
 
 This example uses a `y/n` flow where any input other than `y` is treated as a denial. In practice, you might build a richer UI that lets users modify the request, provide feedback, or redirect Claude entirely. See [Respond to tool requests](#respond-to-tool-requests) for all the ways you can respond.
 
@@ -226,321 +225,302 @@ Beyond allowing or denying, you can modify the tool's input or provide context t
 
 The `ask_user` and `askUser` helpers in the following snippets stand in for your application's own prompt UI.
 
-<Tabs>
-  <Tab title="Approve">
-    The user approves the action as-is. Pass through the `input` from your callback unchanged and the tool executes exactly as Claude requested.
+**Approve**
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name, input_data, context):
-          print(f"Claude wants to use {tool_name}")
-          approved = await ask_user("Allow this action?")
+The user approves the action as-is. Pass through the `input` from your callback unchanged and the tool executes exactly as Claude requested.
 
-          if approved:
-              return PermissionResultAllow(updated_input=input_data)
-          return PermissionResultDeny(message="User declined")
-      ```
+```python Python theme={null}
+async def can_use_tool(tool_name, input_data, context):
+    print(f"Claude wants to use {tool_name}")
+    approved = await ask_user("Allow this action?")
 
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input) => {
-        console.log(`Claude wants to use ${toolName}`);
-        const approved = await askUser("Allow this action?");
+    if approved:
+        return PermissionResultAllow(updated_input=input_data)
+    return PermissionResultDeny(message="User declined")
+```
 
-        if (approved) {
-          return { behavior: "allow", updatedInput: input };
-        }
-        return { behavior: "deny", message: "User declined" };
-      };
-      ```
-    </CodeGroup>
-  </Tab>
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input) => {
+  console.log(`Claude wants to use ${toolName}`);
+  const approved = await askUser("Allow this action?");
 
-  <Tab title="Approve with changes">
-    The user approves but wants to modify the request first. You can change the input before the tool executes. Claude sees the result but isn't told you changed anything. Useful for sanitizing parameters, adding constraints, or scoping access.
+  if (approved) {
+    return { behavior: "allow", updatedInput: input };
+  }
+  return { behavior: "deny", message: "User declined" };
+};
+```
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name, input_data, context):
-          if tool_name == "Bash":
-              # User approved, but scope all commands to sandbox
-              sandboxed_input = {**input_data}
-              sandboxed_input["command"] = input_data["command"].replace(
-                  "/tmp", "/tmp/sandbox"
-              )
-              return PermissionResultAllow(updated_input=sandboxed_input)
-          return PermissionResultAllow(updated_input=input_data)
-      ```
+**Approve with changes**
 
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input) => {
-        if (toolName === "Bash") {
-          // User approved, but scope all commands to sandbox
-          const sandboxedInput = {
-            ...input,
-            command: input.command.replace("/tmp", "/tmp/sandbox")
-          };
-          return { behavior: "allow", updatedInput: sandboxedInput };
-        }
-        return { behavior: "allow", updatedInput: input };
-      };
-      ```
-    </CodeGroup>
-  </Tab>
+The user approves but wants to modify the request first. You can change the input before the tool executes. Claude sees the result but isn't told you changed anything. Useful for sanitizing parameters, adding constraints, or scoping access.
 
-  <Tab title="Approve and remember">
-    The user approves and doesn't want to be asked again for this kind of call. The third callback argument carries `suggestions`, an array of ready-made [`PermissionUpdate`](/docs/en/agent-sdk/typescript#permissionupdate) entries. Echo one back in `updatedPermissions` to apply it. A suggestion with the `localSettings` destination writes the rule to `.claude/settings.local.json` so future sessions skip the prompt for matching calls.
+```python Python theme={null}
+async def can_use_tool(tool_name, input_data, context):
+    if tool_name == "Bash":
+        # User approved, but scope all commands to sandbox
+        sandboxed_input = {**input_data}
+        sandboxed_input["command"] = input_data["command"].replace(
+            "/tmp", "/tmp/sandbox"
+        )
+        return PermissionResultAllow(updated_input=sandboxed_input)
+    return PermissionResultAllow(updated_input=input_data)
+```
 
-    In TypeScript, skip the always-allow choice for a request whose options carry [`suppressAlwaysAllowRule: true`](/docs/en/agent-sdk/typescript#canusetool). The hint requires Agent SDK v0.3.268 or later, and the Python `context` doesn't carry it.
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input) => {
+  if (toolName === "Bash") {
+    // User approved, but scope all commands to sandbox
+    const sandboxedInput = {
+      ...input,
+      command: input.command.replace("/tmp", "/tmp/sandbox")
+    };
+    return { behavior: "allow", updatedInput: sandboxedInput };
+  }
+  return { behavior: "allow", updatedInput: input };
+};
+```
 
-    The Python example requires `claude-agent-sdk` 0.1.80 or later.
+**Approve and remember**
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name, input_data, context):
-          choice = await ask_user(f"Allow {tool_name}?", ["once", "always", "no"])
+The user approves and doesn't want to be asked again for this kind of call. The third callback argument carries `suggestions`, an array of ready-made [`PermissionUpdate`](/docs/en/agent-sdk/typescript#permissionupdate) entries. Echo one back in `updatedPermissions` to apply it. A suggestion with the `localSettings` destination writes the rule to `.claude/settings.local.json` so future sessions skip the prompt for matching calls.
 
-          if choice == "always":
-              persist = [
-                  s for s in context.suggestions if s.destination == "localSettings"
-              ]
-              return PermissionResultAllow(
-                  updated_input=input_data, updated_permissions=persist
-              )
-          if choice == "once":
-              return PermissionResultAllow(updated_input=input_data)
-          return PermissionResultDeny(message="User declined")
-      ```
+In TypeScript, skip the always-allow choice for a request whose options carry [`suppressAlwaysAllowRule: true`](/docs/en/agent-sdk/typescript#canusetool). The hint requires Agent SDK v0.3.268 or later, and the Python `context` doesn't carry it.
 
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input, { suggestions = [] }) => {
-        const choice = await askUser(`Allow ${toolName}?`, ["once", "always", "no"]);
+The Python example requires `claude-agent-sdk` 0.1.80 or later.
 
-        if (choice === "always") {
-          const persist = suggestions.filter(
-            (s) => s.destination === "localSettings"
-          );
-          return {
-            behavior: "allow",
-            updatedInput: input,
-            updatedPermissions: persist
-          };
-        }
-        if (choice === "once") {
-          return { behavior: "allow", updatedInput: input };
-        }
-        return { behavior: "deny", message: "User declined" };
-      };
-      ```
-    </CodeGroup>
-  </Tab>
+```python Python theme={null}
+async def can_use_tool(tool_name, input_data, context):
+    choice = await ask_user(f"Allow {tool_name}?", ["once", "always", "no"])
 
-  <Tab title="Reject">
-    The user doesn't want this action to happen. Block the tool and provide a message explaining why. Claude sees this message and may try a different approach.
+    if choice == "always":
+        persist = [
+            s for s in context.suggestions if s.destination == "localSettings"
+        ]
+        return PermissionResultAllow(
+            updated_input=input_data, updated_permissions=persist
+        )
+    if choice == "once":
+        return PermissionResultAllow(updated_input=input_data)
+    return PermissionResultDeny(message="User declined")
+```
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name, input_data, context):
-          approved = await ask_user(f"Allow {tool_name}?")
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input, { suggestions = [] }) => {
+  const choice = await askUser(`Allow ${toolName}?`, ["once", "always", "no"]);
 
-          if not approved:
-              return PermissionResultDeny(message="User rejected this action")
-          return PermissionResultAllow(updated_input=input_data)
-      ```
+  if (choice === "always") {
+    const persist = suggestions.filter(
+      (s) => s.destination === "localSettings"
+    );
+    return {
+      behavior: "allow",
+      updatedInput: input,
+      updatedPermissions: persist
+    };
+  }
+  if (choice === "once") {
+    return { behavior: "allow", updatedInput: input };
+  }
+  return { behavior: "deny", message: "User declined" };
+};
+```
 
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input) => {
-        const approved = await askUser(`Allow ${toolName}?`);
+**Reject**
 
-        if (!approved) {
-          return {
-            behavior: "deny",
-            message: "User rejected this action"
-          };
-        }
-        return { behavior: "allow", updatedInput: input };
-      };
-      ```
-    </CodeGroup>
-  </Tab>
+The user doesn't want this action to happen. Block the tool and provide a message explaining why. Claude sees this message and may try a different approach.
 
-  <Tab title="Suggest alternative">
-    The user doesn't want this specific action, but has a different idea. Block the tool and include guidance in your message. Claude will read this and decide how to proceed based on your feedback.
+```python Python theme={null}
+async def can_use_tool(tool_name, input_data, context):
+    approved = await ask_user(f"Allow {tool_name}?")
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name, input_data, context):
-          if tool_name == "Bash" and "rm" in input_data.get("command", ""):
-              # User doesn't want to delete, suggest archiving instead
-              return PermissionResultDeny(
-                  message="User doesn't want to delete files. They asked if you could compress them into an archive instead."
-              )
-          return PermissionResultAllow(updated_input=input_data)
-      ```
+    if not approved:
+        return PermissionResultDeny(message="User rejected this action")
+    return PermissionResultAllow(updated_input=input_data)
+```
 
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input) => {
-        if (toolName === "Bash" && input.command.includes("rm")) {
-          // User doesn't want to delete, suggest archiving instead
-          return {
-            behavior: "deny",
-            message:
-              "User doesn't want to delete files. They asked if you could compress them into an archive instead."
-          };
-        }
-        return { behavior: "allow", updatedInput: input };
-      };
-      ```
-    </CodeGroup>
-  </Tab>
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input) => {
+  const approved = await askUser(`Allow ${toolName}?`);
 
-  <Tab title="Redirect entirely">
-    For a complete change of direction (not just a nudge), use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
-  </Tab>
-</Tabs>
+  if (!approved) {
+    return {
+      behavior: "deny",
+      message: "User rejected this action"
+    };
+  }
+  return { behavior: "allow", updatedInput: input };
+};
+```
+
+**Suggest alternative**
+
+The user doesn't want this specific action, but has a different idea. Block the tool and include guidance in your message. Claude will read this and decide how to proceed based on your feedback.
+
+```python Python theme={null}
+async def can_use_tool(tool_name, input_data, context):
+    if tool_name == "Bash" and "rm" in input_data.get("command", ""):
+        # User doesn't want to delete, suggest archiving instead
+        return PermissionResultDeny(
+            message="User doesn't want to delete files. They asked if you could compress them into an archive instead."
+        )
+    return PermissionResultAllow(updated_input=input_data)
+```
+
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input) => {
+  if (toolName === "Bash" && input.command.includes("rm")) {
+    // User doesn't want to delete, suggest archiving instead
+    return {
+      behavior: "deny",
+      message:
+        "User doesn't want to delete files. They asked if you could compress them into an archive instead."
+    };
+  }
+  return { behavior: "allow", updatedInput: input };
+};
+```
+
+**Redirect entirely**
+
+For a complete change of direction (not just a nudge), use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
 
 ## Handle clarifying questions
 
 When Claude needs more direction on a task with multiple valid approaches, it calls the `AskUserQuestion` tool. This triggers your `canUseTool` callback with `toolName` set to `AskUserQuestion`. The input contains Claude's questions as multiple-choice options, which you display to the user and return their selections.
 
-<Tip>
-  Clarifying questions are especially common in [`plan` mode](/docs/en/agent-sdk/permissions#plan-mode-plan), where Claude explores the codebase and asks questions before proposing a plan. This makes plan mode ideal for interactive workflows where you want Claude to gather requirements before making changes.
-</Tip>
+> [!TIP]
+>
+> Clarifying questions are especially common in [`plan` mode](/docs/en/agent-sdk/permissions#plan-mode-plan), where Claude explores the codebase and asks questions before proposing a plan. This makes plan mode ideal for interactive workflows where you want Claude to gather requirements before making changes.
 
 The following steps show how to handle clarifying questions:
 
-<Steps>
-  <Step title="Pass a canUseTool callback">
-    Pass a `canUseTool` callback in your query options. By default, `AskUserQuestion` is available. If you specify a `tools` array to restrict Claude's capabilities (for example, a read-only agent with only `Read`, `Glob`, and `Grep`), include `AskUserQuestion` in that array. Otherwise, Claude won't be able to ask clarifying questions:
+**1. Pass a canUseTool callback**
 
-    <CodeGroup>
-      ```python Python theme={null}
-      async for message in query(
-          prompt="Analyze this codebase",
-          options=ClaudeAgentOptions(
-              # Include AskUserQuestion in your tools list
-              tools=["Read", "Glob", "Grep", "AskUserQuestion"],
-              can_use_tool=can_use_tool,
-          ),
-      ):
-          print(message)
-      ```
+Pass a `canUseTool` callback in your query options. By default, `AskUserQuestion` is available. If you specify a `tools` array to restrict Claude's capabilities (for example, a read-only agent with only `Read`, `Glob`, and `Grep`), include `AskUserQuestion` in that array. Otherwise, Claude won't be able to ask clarifying questions:
 
-      ```typescript TypeScript theme={null}
-      for await (const message of query({
-        prompt: "Analyze this codebase",
-        options: {
-          // Include AskUserQuestion in your tools list
-          tools: ["Read", "Glob", "Grep", "AskUserQuestion"],
-          canUseTool: async (toolName, input) => {
-            // Handle clarifying questions here
-          }
-        }
-      })) {
-        console.log(message);
-      }
-      ```
-    </CodeGroup>
-  </Step>
+```python Python theme={null}
+async for message in query(
+    prompt="Analyze this codebase",
+    options=ClaudeAgentOptions(
+        # Include AskUserQuestion in your tools list
+        tools=["Read", "Glob", "Grep", "AskUserQuestion"],
+        can_use_tool=can_use_tool,
+    ),
+):
+    print(message)
+```
 
-  <Step title="Detect AskUserQuestion">
-    In your callback, check if `toolName` equals `AskUserQuestion` to handle it differently from other tools:
-
-    <CodeGroup>
-      ```python Python theme={null}
-      async def can_use_tool(tool_name: str, input_data: dict, context):
-          if tool_name == "AskUserQuestion":
-              # Your implementation to collect answers from the user
-              return await handle_clarifying_questions(input_data)
-          # Handle other tools normally
-          return await prompt_for_approval(tool_name, input_data)
-      ```
-
-      ```typescript TypeScript theme={null}
-      canUseTool: async (toolName, input) => {
-        if (toolName === "AskUserQuestion") {
-          // Your implementation to collect answers from the user
-          return handleClarifyingQuestions(input);
-        }
-        // Handle other tools normally
-        return promptForApproval(toolName, input);
-      };
-      ```
-    </CodeGroup>
-  </Step>
-
-  <Step title="Parse the question input">
-    The input contains Claude's questions in a `questions` array. Each question has a `question` (the text to display), `options` (the choices), and `multiSelect` (whether multiple selections are allowed):
-
-    ```json theme={null}
-    {
-      "questions": [
-        {
-          "question": "How should I format the output?",
-          "header": "Format",
-          "options": [
-            { "label": "Summary", "description": "Brief overview" },
-            { "label": "Detailed", "description": "Full explanation" }
-          ],
-          "multiSelect": false
-        },
-        {
-          "question": "Which sections should I include?",
-          "header": "Sections",
-          "options": [
-            { "label": "Introduction", "description": "Opening context" },
-            { "label": "Conclusion", "description": "Final summary" }
-          ],
-          "multiSelect": true
-        }
-      ]
+```typescript TypeScript theme={null}
+for await (const message of query({
+  prompt: "Analyze this codebase",
+  options: {
+    // Include AskUserQuestion in your tools list
+    tools: ["Read", "Glob", "Grep", "AskUserQuestion"],
+    canUseTool: async (toolName, input) => {
+      // Placeholder that approves every call. The Detect AskUserQuestion step replaces it.
+      return { behavior: "allow", updatedInput: input };
     }
-    ```
+  }
+})) {
+  console.log(message);
+}
+```
 
-    See [Question format](#question-format) for full field descriptions.
-  </Step>
+**2. Detect AskUserQuestion**
 
-  <Step title="Collect answers from the user">
-    Present the questions to the user and collect their selections. How you do this depends on your application: a terminal prompt, a web form, a mobile dialog, etc.
-  </Step>
+In your callback, check if `toolName` equals `AskUserQuestion` to handle it differently from other tools:
 
-  <Step title="Return answers to Claude">
-    Build the `answers` object as a record where each key is the `question` text and each value is the selected option's `label`:
+```python Python theme={null}
+async def can_use_tool(tool_name: str, input_data: dict, context):
+    if tool_name == "AskUserQuestion":
+        # Your implementation to collect answers from the user
+        return await handle_clarifying_questions(input_data)
+    # Handle other tools normally
+    return await prompt_for_approval(tool_name, input_data)
+```
 
-    | From the question object | Use as |
-    | - | - |
-    | `question` field (for example, `"How should I format the output?"`) | Key |
-    | Selected option's `label` field (for example, `"Summary"`) | Value |
+```typescript TypeScript theme={null}
+canUseTool: async (toolName, input) => {
+  if (toolName === "AskUserQuestion") {
+    // Your implementation to collect answers from the user
+    return handleClarifyingQuestions(input);
+  }
+  // Handle other tools normally
+  return promptForApproval(toolName, input);
+};
+```
 
-    For multi-select questions, pass an array of labels or join them with `", "`. If you [support free-text input](#support-free-text-input), use the user's custom text as the value.
+**3. Parse the question input**
 
-    <CodeGroup>
-      ```python Python theme={null}
-      return PermissionResultAllow(
-          updated_input={
-              "questions": input_data.get("questions", []),
-              "answers": {
-                  "How should I format the output?": "Summary",
-                  "Which sections should I include?": ["Introduction", "Conclusion"],
-              },
-          }
-      )
-      ```
+The input contains Claude's questions in a `questions` array. Each question has a `question` (the text to display), `options` (the choices), and `multiSelect` (whether multiple selections are allowed):
 
-      ```typescript TypeScript theme={null}
-      return {
-        behavior: "allow",
-        updatedInput: {
-          questions: input.questions,
-          answers: {
+```json theme={null}
+{
+  "questions": [
+    {
+      "question": "How should I format the output?",
+      "header": "Format",
+      "options": [
+        { "label": "Summary", "description": "Brief overview" },
+        { "label": "Detailed", "description": "Full explanation" }
+      ],
+      "multiSelect": false
+    },
+    {
+      "question": "Which sections should I include?",
+      "header": "Sections",
+      "options": [
+        { "label": "Introduction", "description": "Opening context" },
+        { "label": "Conclusion", "description": "Final summary" }
+      ],
+      "multiSelect": true
+    }
+  ]
+}
+```
+
+See [Question format](#question-format) for full field descriptions.
+
+**4. Collect answers from the user**
+
+Present the questions to the user and collect their selections. How you do this depends on your application: a terminal prompt, a web form, a mobile dialog, etc.
+
+**5. Return answers to Claude**
+
+Build the `answers` object as a record where each key is the `question` text and each value is the selected option's `label`:
+
+| From the question object | Use as |
+| - | - |
+| `question` field (for example, `"How should I format the output?"`) | Key |
+| Selected option's `label` field (for example, `"Summary"`) | Value |
+
+For multi-select questions, pass an array of labels or join them with `", "`. If you [support free-text input](#support-free-text-input), use the user's custom text as the value.
+
+```python Python theme={null}
+return PermissionResultAllow(
+    updated_input={
+        "questions": input_data.get("questions", []),
+        "answers": {
             "How should I format the output?": "Summary",
-            "Which sections should I include?": "Introduction, Conclusion"
-          }
-        }
-      };
-      ```
-    </CodeGroup>
-  </Step>
-</Steps>
+            "Which sections should I include?": ["Introduction", "Conclusion"],
+        },
+    }
+)
+```
+
+```typescript TypeScript theme={null}
+return {
+  behavior: "allow",
+  updatedInput: {
+    questions: input.questions,
+    answers: {
+      "How should I format the output?": "Summary",
+      "Which sections should I include?": "Introduction, Conclusion"
+    }
+  }
+};
+```
 
 ### Question format
 
@@ -659,160 +639,159 @@ This example handles those questions in a terminal application. Here's what happ
 
 Save the TypeScript version as `ask.ts` and run it with `npx tsx ask.ts`, or save the Python version as `ask.py` and run it with `python ask.py`.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
+```python Python theme={null}
+import asyncio
 
-  from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
-  from claude_agent_sdk.types import HookMatcher, PermissionResultAllow
-
-
-  def parse_response(response: str, options: list) -> str:
-      """Parse user input as option number(s) or free text."""
-      try:
-          indices = [int(s.strip()) - 1 for s in response.split(",")]
-          labels = [options[i]["label"] for i in indices if 0 <= i < len(options)]
-          return ", ".join(labels) if labels else response
-      except ValueError:
-          return response
+from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from claude_agent_sdk.types import HookMatcher, PermissionResultAllow
 
 
-  async def handle_ask_user_question(input_data: dict) -> PermissionResultAllow:
-      """Display Claude's questions and collect user answers."""
-      answers = {}
-
-      for q in input_data.get("questions", []):
-          print(f"\n{q['header']}: {q['question']}")
-
-          options = q["options"]
-          for i, opt in enumerate(options):
-              print(f"  {i + 1}. {opt['label']} - {opt['description']}")
-          if q.get("multiSelect"):
-              print("  (Enter numbers separated by commas, or type your own answer)")
-          else:
-              print("  (Enter a number, or type your own answer)")
-
-          response = input("Your choice: ").strip()
-          answers[q["question"]] = parse_response(response, options)
-
-      return PermissionResultAllow(
-          updated_input={
-              "questions": input_data.get("questions", []),
-              "answers": answers,
-          }
-      )
+def parse_response(response: str, options: list) -> str:
+    """Parse user input as option number(s) or free text."""
+    try:
+        indices = [int(s.strip()) - 1 for s in response.split(",")]
+        labels = [options[i]["label"] for i in indices if 0 <= i < len(options)]
+        return ", ".join(labels) if labels else response
+    except ValueError:
+        return response
 
 
-  async def can_use_tool(
-      tool_name: str, input_data: dict, context
-  ) -> PermissionResultAllow:
-      # Route AskUserQuestion to our question handler
-      if tool_name == "AskUserQuestion":
-          return await handle_ask_user_question(input_data)
-      # Auto-approve other tools for this example
-      return PermissionResultAllow(updated_input=input_data)
+async def handle_ask_user_question(input_data: dict) -> PermissionResultAllow:
+    """Display Claude's questions and collect user answers."""
+    answers = {}
 
+    for q in input_data.get("questions", []):
+        print(f"\n{q['header']}: {q['question']}")
 
-  async def prompt_stream():
-      yield {
-          "type": "user",
-          "message": {
-              "role": "user",
-              "content": "Help me decide on the tech stack for a new mobile app",
-          },
-      }
+        options = q["options"]
+        for i, opt in enumerate(options):
+            print(f"  {i + 1}. {opt['label']} - {opt['description']}")
+        if q.get("multiSelect"):
+            print("  (Enter numbers separated by commas, or type your own answer)")
+        else:
+            print("  (Enter a number, or type your own answer)")
 
+        response = input("Your choice: ").strip()
+        answers[q["question"]] = parse_response(response, options)
 
-  # Required workaround: dummy hook keeps the stream open for can_use_tool
-  async def dummy_hook(input_data, tool_use_id, context):
-      return {"continue_": True}
-
-
-  async def main():
-      async for message in query(
-          prompt=prompt_stream(),
-          options=ClaudeAgentOptions(
-              can_use_tool=can_use_tool,
-              hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[dummy_hook])]},
-          ),
-      ):
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(message.result)
-
-
-  asyncio.run(main())
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
-  import * as readline from "readline/promises";
-
-  // Helper to prompt user for input in the terminal
-  async function prompt(question: string): Promise<string> {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    const answer = await rl.question(question);
-    rl.close();
-    return answer;
-  }
-
-  // Parse user input as option number(s) or free text
-  function parseResponse(response: string, options: any[]): string {
-    const indices = response.split(",").map((s) => parseInt(s.trim()) - 1);
-    const labels = indices
-      .filter((i) => !isNaN(i) && i >= 0 && i < options.length)
-      .map((i) => options[i].label);
-    return labels.length > 0 ? labels.join(", ") : response;
-  }
-
-  // Display Claude's questions and collect user answers
-  async function handleAskUserQuestion(input: any) {
-    const answers: Record<string, string> = {};
-
-    for (const q of input.questions) {
-      console.log(`\n${q.header}: ${q.question}`);
-
-      const options = q.options;
-      options.forEach((opt: any, i: number) => {
-        console.log(`  ${i + 1}. ${opt.label} - ${opt.description}`);
-      });
-      if (q.multiSelect) {
-        console.log("  (Enter numbers separated by commas, or type your own answer)");
-      } else {
-        console.log("  (Enter a number, or type your own answer)");
-      }
-
-      const response = (await prompt("Your choice: ")).trim();
-      answers[q.question] = parseResponse(response, options);
-    }
-
-    // Return the answers to Claude (must include original questions)
-    return {
-      behavior: "allow",
-      updatedInput: { questions: input.questions, answers }
-    };
-  }
-
-  async function main() {
-    for await (const message of query({
-      prompt: "Help me decide on the tech stack for a new mobile app",
-      options: {
-        canUseTool: async (toolName, input) => {
-          // Route AskUserQuestion to our question handler
-          if (toolName === "AskUserQuestion") {
-            return handleAskUserQuestion(input);
-          }
-          // Auto-approve other tools for this example
-          return { behavior: "allow", updatedInput: input };
+    return PermissionResultAllow(
+        updated_input={
+            "questions": input_data.get("questions", []),
+            "answers": answers,
         }
-      }
-    })) {
-      if ("result" in message) console.log(message.result);
+    )
+
+
+async def can_use_tool(
+    tool_name: str, input_data: dict, context
+) -> PermissionResultAllow:
+    # Route AskUserQuestion to our question handler
+    if tool_name == "AskUserQuestion":
+        return await handle_ask_user_question(input_data)
+    # Auto-approve other tools for this example
+    return PermissionResultAllow(updated_input=input_data)
+
+
+async def prompt_stream():
+    yield {
+        "type": "user",
+        "message": {
+            "role": "user",
+            "content": "Help me decide on the tech stack for a new mobile app",
+        },
     }
+
+
+# Required workaround: dummy hook keeps the stream open for can_use_tool
+async def dummy_hook(input_data, tool_use_id, context):
+    return {"continue_": True}
+
+
+async def main():
+    async for message in query(
+        prompt=prompt_stream(),
+        options=ClaudeAgentOptions(
+            can_use_tool=can_use_tool,
+            hooks={"PreToolUse": [HookMatcher(matcher=None, hooks=[dummy_hook])]},
+        ),
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(message.result)
+
+
+asyncio.run(main())
+```
+
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
+import type { PermissionResult } from "@anthropic-ai/claude-agent-sdk";
+import * as readline from "readline/promises";
+
+// Helper to prompt user for input in the terminal
+async function prompt(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await rl.question(question);
+  rl.close();
+  return answer;
+}
+
+// Parse user input as option number(s) or free text
+function parseResponse(response: string, options: any[]): string {
+  const indices = response.split(",").map((s) => parseInt(s.trim()) - 1);
+  const labels = indices
+    .filter((i) => !isNaN(i) && i >= 0 && i < options.length)
+    .map((i) => options[i].label);
+  return labels.length > 0 ? labels.join(", ") : response;
+}
+
+// Display Claude's questions and collect user answers
+async function handleAskUserQuestion(input: any): Promise<PermissionResult> {
+  const answers: Record<string, string> = {};
+
+  for (const q of input.questions) {
+    console.log(`\n${q.header}: ${q.question}`);
+
+    const options = q.options;
+    options.forEach((opt: any, i: number) => {
+      console.log(`  ${i + 1}. ${opt.label} - ${opt.description}`);
+    });
+    if (q.multiSelect) {
+      console.log("  (Enter numbers separated by commas, or type your own answer)");
+    } else {
+      console.log("  (Enter a number, or type your own answer)");
+    }
+
+    const response = (await prompt("Your choice: ")).trim();
+    answers[q.question] = parseResponse(response, options);
   }
 
-  main();
-  ```
-</CodeGroup>
+  // Return the answers to Claude (must include original questions)
+  return {
+    behavior: "allow",
+    updatedInput: { questions: input.questions, answers }
+  };
+}
+
+async function main() {
+  for await (const message of query({
+    prompt: "Help me decide on the tech stack for a new mobile app",
+    options: {
+      canUseTool: async (toolName, input) => {
+        // Route AskUserQuestion to our question handler
+        if (toolName === "AskUserQuestion") {
+          return handleAskUserQuestion(input);
+        }
+        // Auto-approve other tools for this example
+        return { behavior: "allow", updatedInput: input };
+      }
+    }
+  })) {
+    if ("result" in message) console.log(message.result);
+  }
+}
+
+main();
+```
 
 ## Limitations
 

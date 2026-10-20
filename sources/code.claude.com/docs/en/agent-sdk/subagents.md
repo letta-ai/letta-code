@@ -38,107 +38,105 @@ Most examples on this page print only the final result. To confirm that Claude d
 
 This example creates two subagents: a code reviewer with read-only access and a test runner that can execute commands.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
 
 
-  async def main():
-      async for message in query(
-          prompt="Review the authentication module for security issues",
-          options=ClaudeAgentOptions(
-              # Auto-approve these tools
-              allowed_tools=["Read", "Grep", "Glob", "Agent"],
-              agents={
-                  "code-reviewer": AgentDefinition(
-                      # description tells Claude when to use this subagent
-                      description="Expert code review specialist. Use for quality, security, and maintainability reviews.",
-                      # prompt defines the subagent's behavior and expertise
-                      prompt="""You are a code review specialist with expertise in security, performance, and best practices.
+async def main():
+    async for message in query(
+        prompt="Review the authentication module for security issues",
+        options=ClaudeAgentOptions(
+            # Auto-approve these tools
+            allowed_tools=["Read", "Grep", "Glob", "Agent"],
+            agents={
+                "code-reviewer": AgentDefinition(
+                    # description tells Claude when to use this subagent
+                    description="Expert code review specialist. Use for quality, security, and maintainability reviews.",
+                    # prompt defines the subagent's behavior and expertise
+                    prompt="""You are a code review specialist with expertise in security, performance, and best practices.
 
-  When reviewing code:
-  - Identify security vulnerabilities
-  - Check for performance issues
-  - Verify adherence to coding standards
-  - Suggest specific improvements
+When reviewing code:
+- Identify security vulnerabilities
+- Check for performance issues
+- Verify adherence to coding standards
+- Suggest specific improvements
 
-  Be thorough but concise in your feedback.""",
-                      # tools restricts what the subagent can do (read-only here)
-                      tools=["Read", "Grep", "Glob"],
-                      # model overrides the default model for this subagent
-                      model="sonnet",
-                  ),
-                  "test-runner": AgentDefinition(
-                      description="Runs and analyzes test suites. Use for test execution and coverage analysis.",
-                      prompt="""You are a test execution specialist. Run tests and provide clear analysis of results.
+Be thorough but concise in your feedback.""",
+                    # tools restricts what the subagent can do (read-only here)
+                    tools=["Read", "Grep", "Glob"],
+                    # model overrides the default model for this subagent
+                    model="sonnet",
+                ),
+                "test-runner": AgentDefinition(
+                    description="Runs and analyzes test suites. Use for test execution and coverage analysis.",
+                    prompt="""You are a test execution specialist. Run tests and provide clear analysis of results.
 
-  Focus on:
-  - Running test commands
-  - Analyzing test output
-  - Identifying failing tests
-  - Suggesting fixes for failures""",
-                      # Bash access lets this subagent run test commands
-                      tools=["Bash", "Read", "Grep"],
-                  ),
-              },
-          ),
-      ):
-          if hasattr(message, "result"):
-              print(message.result)
+Focus on:
+- Running test commands
+- Analyzing test output
+- Identifying failing tests
+- Suggesting fixes for failures""",
+                    # Bash access lets this subagent run test commands
+                    tools=["Bash", "Read", "Grep"],
+                ),
+            },
+        ),
+    ):
+        if hasattr(message, "result"):
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Review the authentication module for security issues",
-    options: {
-      // Auto-approve these tools
-      allowedTools: ["Read", "Grep", "Glob", "Agent"],
-      agents: {
-        "code-reviewer": {
-          // description tells Claude when to use this subagent
-          description:
-            "Expert code review specialist. Use for quality, security, and maintainability reviews.",
-          // prompt defines the subagent's behavior and expertise
-          prompt: `You are a code review specialist with expertise in security, performance, and best practices.
+for await (const message of query({
+  prompt: "Review the authentication module for security issues",
+  options: {
+    // Auto-approve these tools
+    allowedTools: ["Read", "Grep", "Glob", "Agent"],
+    agents: {
+      "code-reviewer": {
+        // description tells Claude when to use this subagent
+        description:
+          "Expert code review specialist. Use for quality, security, and maintainability reviews.",
+        // prompt defines the subagent's behavior and expertise
+        prompt: `You are a code review specialist with expertise in security, performance, and best practices.
 
-  When reviewing code:
-  - Identify security vulnerabilities
-  - Check for performance issues
-  - Verify adherence to coding standards
-  - Suggest specific improvements
+When reviewing code:
+- Identify security vulnerabilities
+- Check for performance issues
+- Verify adherence to coding standards
+- Suggest specific improvements
 
-  Be thorough but concise in your feedback.`,
-          // tools restricts what the subagent can do (read-only here)
-          tools: ["Read", "Grep", "Glob"],
-          // model overrides the default model for this subagent
-          model: "sonnet"
-        },
-        "test-runner": {
-          description:
-            "Runs and analyzes test suites. Use for test execution and coverage analysis.",
-          prompt: `You are a test execution specialist. Run tests and provide clear analysis of results.
+Be thorough but concise in your feedback.`,
+        // tools restricts what the subagent can do (read-only here)
+        tools: ["Read", "Grep", "Glob"],
+        // model overrides the default model for this subagent
+        model: "sonnet"
+      },
+      "test-runner": {
+        description:
+          "Runs and analyzes test suites. Use for test execution and coverage analysis.",
+        prompt: `You are a test execution specialist. Run tests and provide clear analysis of results.
 
-  Focus on:
-  - Running test commands
-  - Analyzing test output
-  - Identifying failing tests
-  - Suggesting fixes for failures`,
-          // Bash access lets this subagent run test commands
-          tools: ["Bash", "Read", "Grep"]
-        }
+Focus on:
+- Running test commands
+- Analyzing test output
+- Identifying failing tests
+- Suggesting fixes for failures`,
+        // Bash access lets this subagent run test commands
+        tools: ["Bash", "Read", "Grep"]
       }
     }
-  })) {
-    if ("result" in message) console.log(message.result);
   }
-  ```
-</CodeGroup>
+})) {
+  if ("result" in message) console.log(message.result);
+}
+```
 
 ### AgentDefinition configuration
 
@@ -154,24 +152,30 @@ This example creates two subagents: a code reviewer with read-only access and a 
 | `mcpServers` | `(string \| object)[]` | No | MCP servers available to this agent, by name or inline config |
 | `initialPrompt` | `string` | No | Auto-submitted as the first user turn when this agent runs as the main thread agent. Ignored when the agent is invoked as a subagent |
 | `maxTurns` | `number` | No | Maximum number of agentic turns before the agent stops. When the agent reaches the limit, Claude Code returns its output marked as partial, and you can [resume the agent](#resume-subagents) to continue. The partial marking requires Claude Code v2.1.246 or later |
+| `autoCompactWindow` | `number` | No | Lower the [auto-compact window](/docs/en/sub-agents#subagent-auto-compact-window) for this agent when it runs as a subagent, to a token count from `100000` to `1000000`. Requires TypeScript Agent SDK v0.3.296 or later. The Python SDK's [`AgentDefinition`](/docs/en/agent-sdk/python#agentdefinition) doesn't have this field |
 | `background` | `boolean` | No | Run this agent as a non-blocking background task when invoked |
-| `omitClaudeMd` | `boolean` | No | Run this agent without the user, project, and local CLAUDE.md files when it runs as a subagent; managed policy files still load. Ignored when the agent runs as the main thread agent. Requires TypeScript Agent SDK v0.3.271 or later. The Python SDK's [`AgentDefinition`](/docs/en/agent-sdk/python#agentdefinition) doesn't have this field |
+| `omitClaudeMd` | `boolean` | No | Leave the user, project, and local CLAUDE.md files out of this agent's initial context; managed policy files still load. Ignored when the agent runs as the main thread agent. Requires TypeScript Agent SDK v0.3.271 or later. The Python SDK's [`AgentDefinition`](/docs/en/agent-sdk/python#agentdefinition) doesn't have this field |
 | `effort` | `'low' \| 'medium' \| 'high' \| 'xhigh' \| 'max' \| number` | No | Reasoning effort level for this agent |
 | `permissionMode` | `PermissionMode` | No | Permission mode for tool execution within this agent. The [subagent inheritance rules](/docs/en/agent-sdk/permissions#available-modes) decide when it applies |
 
 In the Python SDK, multi-word field names such as `disallowedTools` and `mcpServers` keep their camelCase spelling to match the wire format rather than following Python's snake\_case convention. See the [`AgentDefinition` reference](/docs/en/agent-sdk/python#agentdefinition) for details.
 
-Subagents run in the background by default. An Agent tool call that omits the [`run_in_background`](/docs/en/sub-agents#run-subagents-in-foreground-or-background) input launches a background subagent, and Claude sets `run_in_background: false` when it needs the result before continuing. Set the `background` field to `true` to force background execution for a specific agent regardless of what Claude requests. Before Claude Code v2.1.198, the background default was rolling out gradually, and an Agent tool call that omitted `run_in_background` could run the subagent synchronously.
+#### Choose whether Claude waits for subagents
 
-Subagents can also spawn subagents of their own. To limit how deep that nesting goes, how many subagents run at once, and how much a query spends, see [Cap subagent depth, concurrency, and spend](#cap-subagent-depth-concurrency-and-spend).
+By default, a subagent your main agent spawns [runs in the background](/docs/en/sub-agents#run-subagents-in-foreground-or-background). The Agent tool result has `status: "async_launched"`, and the report arrives in a later turn.
+
+Claude waits when its next action needs the report: the call blocks and returns `status: "completed"`. To make that choice yourself:
+
+* **In your prompt**: ask Claude to wait, such as "run the test-runner agent and wait for it"
+* **In the definition**: set `background` to `true` to keep that agent in the background
 
 ### Filesystem-based definition (alternative)
 
 You can also define subagents as markdown files in `.claude/agents/` directories. See the [Claude Code subagents documentation](/docs/en/sub-agents) for details on this approach. Programmatically defined agents take precedence over filesystem-based agents with the same name.
 
-<Note>
-  When Claude calls the Agent tool without a `subagent_type`, it gets the built-in `general-purpose` subagent, which Claude can spawn even when you define no agents of your own. Setting [`CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`](/docs/en/env-vars) removes that default, and such a call fails with [`subagent_type is required`](/docs/en/errors#subagent-type-is-required).
-</Note>
+> [!NOTE]
+>
+> When Claude calls the Agent tool without a `subagent_type`, it gets the built-in `general-purpose` subagent, which Claude can spawn even when you define no agents of your own. Setting [`CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS=1`](/docs/en/env-vars) removes that default, and such a call fails with [`subagent_type is required`](/docs/en/errors#subagent-type-is-required).
 
 ## What subagents inherit
 
@@ -186,20 +190,20 @@ The table below lists what a non-fork subagent's context contains and what it le
 | The subagent receives | The subagent doesn't receive |
 | :- | :- |
 | Its own system prompt (`AgentDefinition.prompt`) and the Agent tool's prompt | The parent's conversation history or tool results |
-| Project CLAUDE.md (loaded via [`settingSources`](/docs/en/agent-sdk/claude-code-features#control-filesystem-settings-with-settingsources)), unless the agent sets [`omitClaudeMd`](#agentdefinition-configuration) | Preloaded skill content, unless listed in `AgentDefinition.skills` |
+| Project CLAUDE.md (loaded via [`settingSources`](/docs/en/agent-sdk/claude-code-features#control-filesystem-settings-with-settingsources)). An agent that sets [`omitClaudeMd`](#agentdefinition-configuration) starts without it | Preloaded skill content, unless listed in `AgentDefinition.skills` |
 | Tool definitions (inherited from parent or the subset in `tools`, [filtered for background runs](/docs/en/sub-agents#available-tools)) | The parent's system prompt |
 
-<Note>
-  The parent receives the subagent's final message as the Agent tool result, but may summarize it in its own response. To preserve subagent output verbatim in the user-facing response, include an instruction to do so in the prompt or `systemPrompt` option you pass to the main `query()` call.
-
-  In v2.1.210 and later, Claude Code [scans the final message for instruction-shaped patterns](/docs/en/sub-agents#subagent-output-scanning) before the parent reads it. The scan treats three kinds of pattern differently:
-
-  * **Control-tag imitation**: Claude Code neutralizes a tag that only the harness emits, such as a `<system-reminder>` block, in place. It inserts a backslash after the opening angle bracket and deletes nothing.
-  * **Permission-configuration mentions**: Claude Code keeps references to the permission configuration, such as `.claude/settings.json`, `bypassPermissions`, or `--dangerously-skip-permissions`, as written.
-  * **Turn markers**: a line that starts with `Human:` or `Assistant:` gets a backslash before the colon, so the message can't imitate a conversation turn boundary.
-
-  For a control-tag or permission-configuration match, Claude Code prepends a `[harness: ...]` marker line naming the matched patterns; a turn-marker match doesn't add the marker line. Those are the only modifications the scan makes: it never removes or rewords the subagent's text.
-</Note>
+> [!NOTE]
+>
+> The parent receives the subagent's final report, but may summarize it in its own response. To preserve subagent output verbatim in the user-facing response, include an instruction to do so in the prompt or `systemPrompt` option you pass to the main `query()` call.
+>
+> In v2.1.210 and later, Claude Code [scans the final message for instruction-shaped patterns](/docs/en/sub-agents#subagent-output-scanning) before the parent reads it. The scan treats three kinds of pattern differently:
+>
+> * **Control-tag imitation**: Claude Code neutralizes a tag that only the harness emits, such as a `<system-reminder>` block, in place. It inserts a backslash after the opening angle bracket and deletes nothing.
+> * **Permission-configuration mentions**: Claude Code keeps references to the permission configuration, such as `.claude/settings.json`, `bypassPermissions`, or `--dangerously-skip-permissions`, as written.
+> * **Turn markers**: a line that starts with `Human:` or `Assistant:` gets a backslash before the colon, so the message can't imitate a conversation turn boundary.
+>
+> For a control-tag or permission-configuration match, Claude Code prepends a `[harness: ...]` marker line naming the matched patterns; a turn-marker match doesn't add the marker line. Those are the only modifications the scan makes: it never removes or rewords the subagent's text.
 
 An API error that ends the subagent early, such as a rate limit, is never delivered as its result. See [API errors in subagents](/docs/en/sub-agents#api-errors-in-subagents) for the foreground and background behavior.
 
@@ -221,172 +225,195 @@ To guarantee Claude uses a specific subagent, mention it by name in your prompt:
 
 This bypasses automatic matching and directly invokes the named subagent.
 
+### Forked subagents
+
+A [fork](/docs/en/sub-agents#fork-the-current-conversation) is a subagent that copies the conversation so far instead of starting fresh. From Claude Code v2.1.302, Claude can start forks in your application with nothing configured, by calling the Agent tool with `subagent_type: "fork"`.
+
+To stop Claude from starting forks, add an [`Agent(fork)` deny rule](/docs/en/agent-sdk/permissions#allow-and-deny-rules):
+
+```python Python theme={null}
+options = ClaudeAgentOptions(
+    # Deny only the fork subagent type; other subagents still run
+    disallowed_tools=["Agent(fork)"],
+)
+```
+
+```typescript TypeScript theme={null}
+const options = {
+  // Deny only the fork subagent type; other subagents still run
+  disallowedTools: ["Agent(fork)"]
+};
+```
+
 ### Dynamic agent configuration
 
 You can create agent definitions dynamically based on runtime conditions. This example creates a security reviewer with different strictness levels, using a more capable model for strict reviews.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
 
 
-  # Factory function that returns an AgentDefinition
-  # This pattern lets you customize agents based on runtime conditions
-  def create_security_agent(security_level: str) -> AgentDefinition:
-      is_strict = security_level == "strict"
-      return AgentDefinition(
-          description="Security code reviewer",
-          # Customize the prompt based on strictness level
-          prompt=f"You are a {'strict' if is_strict else 'balanced'} security reviewer...",
-          tools=["Read", "Grep", "Glob"],
-          # Key insight: use a more capable model for high-stakes reviews
-          model="opus" if is_strict else "sonnet",
-      )
+# Factory function that returns an AgentDefinition
+# This pattern lets you customize agents based on runtime conditions
+def create_security_agent(security_level: str) -> AgentDefinition:
+    is_strict = security_level == "strict"
+    return AgentDefinition(
+        description="Security code reviewer",
+        # Customize the prompt based on strictness level
+        prompt=f"You are a {'strict' if is_strict else 'balanced'} security reviewer...",
+        tools=["Read", "Grep", "Glob"],
+        # Key insight: use a more capable model for high-stakes reviews
+        model="opus" if is_strict else "sonnet",
+    )
 
 
-  async def main():
-      # The agent is created at query time, so each request can use different settings
-      async for message in query(
-          prompt="Review this PR for security issues",
-          options=ClaudeAgentOptions(
-              allowed_tools=["Read", "Grep", "Glob", "Agent"],
-              agents={
-                  # Call the factory with your desired configuration
-                  "security-reviewer": create_security_agent("strict")
-              },
-          ),
-      ):
-          if hasattr(message, "result"):
-              print(message.result)
+async def main():
+    # The agent is created at query time, so each request can use different settings
+    async for message in query(
+        prompt="Review this PR for security issues",
+        options=ClaudeAgentOptions(
+            allowed_tools=["Read", "Grep", "Glob", "Agent"],
+            agents={
+                # Call the factory with your desired configuration
+                "security-reviewer": create_security_agent("strict")
+            },
+        ),
+    ):
+        if hasattr(message, "result"):
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query, type AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query, type AgentDefinition } from "@anthropic-ai/claude-agent-sdk";
 
-  // Factory function that returns an AgentDefinition
-  // This pattern lets you customize agents based on runtime conditions
-  function createSecurityAgent(securityLevel: "basic" | "strict"): AgentDefinition {
-    const isStrict = securityLevel === "strict";
-    return {
-      description: "Security code reviewer",
-      // Customize the prompt based on strictness level
-      prompt: `You are a ${isStrict ? "strict" : "balanced"} security reviewer...`,
-      tools: ["Read", "Grep", "Glob"],
-      // Key insight: use a more capable model for high-stakes reviews
-      model: isStrict ? "opus" : "sonnet"
-    };
-  }
+// Factory function that returns an AgentDefinition
+// This pattern lets you customize agents based on runtime conditions
+function createSecurityAgent(securityLevel: "basic" | "strict"): AgentDefinition {
+  const isStrict = securityLevel === "strict";
+  return {
+    description: "Security code reviewer",
+    // Customize the prompt based on strictness level
+    prompt: `You are a ${isStrict ? "strict" : "balanced"} security reviewer...`,
+    tools: ["Read", "Grep", "Glob"],
+    // Key insight: use a more capable model for high-stakes reviews
+    model: isStrict ? "opus" : "sonnet"
+  };
+}
 
-  // The agent is created at query time, so each request can use different settings
-  for await (const message of query({
-    prompt: "Review this PR for security issues",
-    options: {
-      allowedTools: ["Read", "Grep", "Glob", "Agent"],
-      agents: {
-        // Call the factory with your desired configuration
-        "security-reviewer": createSecurityAgent("strict")
-      }
+// The agent is created at query time, so each request can use different settings
+for await (const message of query({
+  prompt: "Review this PR for security issues",
+  options: {
+    allowedTools: ["Read", "Grep", "Glob", "Agent"],
+    agents: {
+      // Call the factory with your desired configuration
+      "security-reviewer": createSecurityAgent("strict")
     }
-  })) {
-    if ("result" in message) console.log(message.result);
   }
-  ```
-</CodeGroup>
+})) {
+  if ("result" in message) console.log(message.result);
+}
+```
 
 ## Detect subagent invocation
 
-Claude invokes subagents through the Agent tool. To detect when a subagent is invoked, check for `tool_use` blocks where `name` is `"Agent"`. Messages from within a subagent's context include a `parent_tool_use_id` field.
+Claude invokes subagents through the Agent tool. To detect when a subagent is invoked, check for `tool_use` blocks where `name` is `"Agent"`.
 
-<Note>
-  The tool appears as `"Agent"` in `tool_use` blocks but as `"Task"` in the `system:init` tools list. Before Claude Code v2.1.63, `tool_use` blocks also named it `"Task"`. To keep detection working across SDK versions, match both values in `block.name`.
-</Note>
+Messages from within a subagent's context include a `parent_tool_use_id` field. In TypeScript, each assistant and user message a subagent produces also carries [`agent_id`](/docs/en/agent-sdk/typescript#sdkassistantmessage): the `task_id` of that subagent's [task events](/docs/en/agent-sdk/typescript#sdktaskstartedmessage). `agent_id` requires TypeScript Agent SDK v0.3.292 or later.
+
+> [!NOTE]
+>
+> The tool appears as `"Agent"` in `tool_use` blocks but as `"Task"` in the `system:init` tools list. Before Claude Code v2.1.63, `tool_use` blocks also named it `"Task"`. To keep detection working across SDK versions, match both values in `block.name`.
 
 The message structure differs between SDKs. In Python, you access content blocks directly via `message.content`. In TypeScript, `SDKAssistantMessage` wraps the Claude API message, so you access content via `message.message.content`.
 
-This example iterates through streamed messages, logging when a subagent is invoked and when subsequent messages originate from within that subagent's execution context.
+This example iterates through streamed messages, logging when a subagent is invoked and when subsequent messages originate from within that subagent's execution context. The TypeScript version also logs the `agent_id` of each subagent message that carries one.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition, ToolUseBlock
-
-
-  async def main():
-      async for message in query(
-          prompt="Use the code-reviewer agent to review this codebase",
-          options=ClaudeAgentOptions(
-              allowed_tools=["Read", "Glob", "Grep", "Agent"],
-              agents={
-                  "code-reviewer": AgentDefinition(
-                      description="Expert code reviewer.",
-                      prompt="Analyze code quality and suggest improvements.",
-                      tools=["Read", "Glob", "Grep"],
-                  )
-              },
-          ),
-      ):
-          # Check for subagent invocation. Match both names: older SDK
-          # versions emitted "Task", current versions emit "Agent".
-          if hasattr(message, "content") and message.content:
-              for block in message.content:
-                  if isinstance(block, ToolUseBlock) and block.name in (
-                      "Task",
-                      "Agent",
-                  ):
-                      print(f"Subagent invoked: {block.input.get('subagent_type')}")
-
-          # Check if this message is from within a subagent's context
-          if hasattr(message, "parent_tool_use_id") and message.parent_tool_use_id:
-              print("  (running inside subagent)")
-
-          if hasattr(message, "result"):
-              print(message.result)
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition, ToolUseBlock
 
 
-  asyncio.run(main())
-  ```
+async def main():
+    async for message in query(
+        prompt="Use the code-reviewer agent to review this codebase",
+        options=ClaudeAgentOptions(
+            allowed_tools=["Read", "Glob", "Grep", "Agent"],
+            agents={
+                "code-reviewer": AgentDefinition(
+                    description="Expert code reviewer.",
+                    prompt="Analyze code quality and suggest improvements.",
+                    tools=["Read", "Glob", "Grep"],
+                )
+            },
+        ),
+    ):
+        # Check for subagent invocation. Match both names: older SDK
+        # versions emitted "Task", current versions emit "Agent".
+        if hasattr(message, "content") and message.content:
+            for block in message.content:
+                if isinstance(block, ToolUseBlock) and block.name in (
+                    "Task",
+                    "Agent",
+                ):
+                    print(f"Subagent invoked: {block.input.get('subagent_type')}")
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+        # Check if this message is from within a subagent's context
+        if hasattr(message, "parent_tool_use_id") and message.parent_tool_use_id:
+            print("  (running inside subagent)")
 
-  for await (const message of query({
-    prompt: "Use the code-reviewer agent to review this codebase",
-    options: {
-      allowedTools: ["Read", "Glob", "Grep", "Agent"],
-      agents: {
-        "code-reviewer": {
-          description: "Expert code reviewer.",
-          prompt: "Analyze code quality and suggest improvements.",
-          tools: ["Read", "Glob", "Grep"]
-        }
+        if hasattr(message, "result"):
+            print(message.result)
+
+
+asyncio.run(main())
+```
+
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
+
+for await (const message of query({
+  prompt: "Use the code-reviewer agent to review this codebase",
+  options: {
+    allowedTools: ["Read", "Glob", "Grep", "Agent"],
+    agents: {
+      "code-reviewer": {
+        description: "Expert code reviewer.",
+        prompt: "Analyze code quality and suggest improvements.",
+        tools: ["Read", "Glob", "Grep"]
       }
-    }
-  })) {
-    const msg = message as any;
-
-    // Check for subagent invocation. Match both names: older SDK versions
-    // emitted "Task", current versions emit "Agent".
-    for (const block of msg.message?.content ?? []) {
-      if (block.type === "tool_use" && (block.name === "Task" || block.name === "Agent")) {
-        console.log(`Subagent invoked: ${block.input.subagent_type}`);
-      }
-    }
-
-    // Check if this message is from within a subagent's context
-    if (msg.parent_tool_use_id) {
-      console.log("  (running inside subagent)");
-    }
-
-    if ("result" in message) {
-      console.log(message.result);
     }
   }
-  ```
-</CodeGroup>
+})) {
+  const msg = message as any;
+
+  // Check for subagent invocation. Match both names: older SDK versions
+  // emitted "Task", current versions emit "Agent".
+  for (const block of msg.message?.content ?? []) {
+    if (block.type === "tool_use" && (block.name === "Task" || block.name === "Agent")) {
+      console.log(`Subagent invoked: ${block.input.subagent_type}`);
+    }
+  }
+
+  // Check if this message is from within a subagent's context
+  if (msg.parent_tool_use_id) {
+    console.log("  (running inside subagent)");
+    // On assistant and user messages, agent_id matches the task_id
+    // on that subagent's task_started and other task events
+    if (msg.agent_id) {
+      console.log(`  agent_id: ${msg.agent_id}`);
+    }
+  }
+
+  if ("result" in message) {
+    console.log(message.result);
+  }
+}
+```
 
 ## Resume subagents
 
@@ -400,133 +427,131 @@ When a subagent completes, the Agent tool result includes a text block containin
 2. **Extract the agent ID**: parse `agentId` from the Agent tool result text
 3. **Resume the session**: pass `resume: sessionId` in the second query's options, and include the agent ID in your prompt. Each `query()` call starts a new session by default, and you must resume the same session to access the subagent's transcript.
 
-<Note>
-  When using a custom agent, pass the same agent definition in the `agents` parameter for both queries.
-</Note>
+> [!NOTE]
+>
+> When using a custom agent, pass the same agent definition in the `agents` parameter for both queries.
 
 The example below defines a custom `endpoint-finder` agent. The first query runs it and captures the session ID and agent ID from the Agent tool result, then the second query resumes the session to ask a follow-up question that requires context from the first analysis.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  import re
-  from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition, ToolResultBlock
+```python Python theme={null}
+import asyncio
+import re
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition, ToolResultBlock
 
-  AGENTS = {
-      "endpoint-finder": AgentDefinition(
-          description="Locates and catalogs API endpoints in a codebase.",
-          prompt="You find and document API endpoints. Report each endpoint's path, method, and handler.",
-          tools=["Read", "Grep", "Glob"],
-      )
+AGENTS = {
+    "endpoint-finder": AgentDefinition(
+        description="Locates and catalogs API endpoints in a codebase.",
+        prompt="You find and document API endpoints. Report each endpoint's path, method, and handler.",
+        tools=["Read", "Grep", "Glob"],
+    )
+}
+
+
+def extract_agent_id(block: ToolResultBlock) -> str | None:
+    """Extract agentId from an Agent tool result's text content."""
+    parts = block.content if isinstance(block.content, list) else [{"text": block.content}]
+    for part in parts:
+        if match := re.search(r"agentId:\s*([\w-]+)", part.get("text") or ""):
+            return match.group(1)
+    return None
+
+
+async def main():
+    agent_id = None
+    session_id = None
+
+    # First invocation - run the endpoint-finder subagent
+    try:
+        async for message in query(
+            prompt="Use the endpoint-finder agent to find all API endpoints in this codebase",
+            options=ClaudeAgentOptions(allowed_tools=["Read", "Grep", "Glob", "Agent"], agents=AGENTS),
+        ):
+            # Capture session_id from ResultMessage (needed to resume this session)
+            if hasattr(message, "session_id"):
+                session_id = message.session_id
+            # Search tool results for the agentId trailer
+            for block in getattr(message, "content", None) or []:
+                if isinstance(block, ToolResultBlock):
+                    agent_id = extract_agent_id(block) or agent_id
+            # Print the final result
+            if hasattr(message, "result"):
+                print(message.result)
+    except Exception as error:
+        # A single-shot query() raises after yielding an error result,
+        # so session_id and agent_id have already been captured by the loop above.
+        print(f"Session ended with an error: {error}")
+
+    # Second invocation - resume and ask follow-up
+    if agent_id and session_id:
+        async for message in query(
+            prompt=f"Resume agent {agent_id} and list the top 3 most complex endpoints",
+            options=ClaudeAgentOptions(
+                allowed_tools=["Read", "Grep", "Glob", "Agent"], agents=AGENTS, resume=session_id
+            ),
+        ):
+            if hasattr(message, "result"):
+                print(message.result)
+    else:
+        print("No agentId found in the first query, so there is no subagent to resume.")
+
+
+asyncio.run(main())
+```
+
+```typescript TypeScript theme={null}
+import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
+
+const agents = {
+  "endpoint-finder": {
+    description: "Locates and catalogs API endpoints in a codebase.",
+    prompt: "You find and document API endpoints. Report each endpoint's path, method, and handler.",
+    tools: ["Read", "Grep", "Glob"]
   }
+};
 
+// Stringify content to search for agentId without traversing nested block types
+function extractAgentId(message: SDKMessage): string | undefined {
+  if (message.type !== "assistant" && message.type !== "user") return undefined;
+  const content = JSON.stringify(message.message.content);
+  const match = content.match(/agentId:\s*([\w-]+)/);
+  return match?.[1];
+}
 
-  def extract_agent_id(block: ToolResultBlock) -> str | None:
-      """Extract agentId from an Agent tool result's text content."""
-      parts = block.content if isinstance(block.content, list) else [{"text": block.content}]
-      for part in parts:
-          if match := re.search(r"agentId:\s*([\w-]+)", part.get("text") or ""):
-              return match.group(1)
-      return None
+let agentId: string | undefined;
+let sessionId: string | undefined;
 
-
-  async def main():
-      agent_id = None
-      session_id = None
-
-      # First invocation - run the endpoint-finder subagent
-      try:
-          async for message in query(
-              prompt="Use the endpoint-finder agent to find all API endpoints in this codebase",
-              options=ClaudeAgentOptions(allowed_tools=["Read", "Grep", "Glob", "Agent"], agents=AGENTS),
-          ):
-              # Capture session_id from ResultMessage (needed to resume this session)
-              if hasattr(message, "session_id"):
-                  session_id = message.session_id
-              # Search tool results for the agentId trailer
-              for block in getattr(message, "content", None) or []:
-                  if isinstance(block, ToolResultBlock):
-                      agent_id = extract_agent_id(block) or agent_id
-              # Print the final result
-              if hasattr(message, "result"):
-                  print(message.result)
-      except Exception as error:
-          # A single-shot query() raises after yielding an error result,
-          # so session_id and agent_id have already been captured by the loop above.
-          print(f"Session ended with an error: {error}")
-
-      # Second invocation - resume and ask follow-up
-      if agent_id and session_id:
-          async for message in query(
-              prompt=f"Resume agent {agent_id} and list the top 3 most complex endpoints",
-              options=ClaudeAgentOptions(
-                  allowed_tools=["Read", "Grep", "Glob", "Agent"], agents=AGENTS, resume=session_id
-              ),
-          ):
-              if hasattr(message, "result"):
-                  print(message.result)
-      else:
-          print("No agentId found in the first query, so there is no subagent to resume.")
-
-
-  asyncio.run(main())
-  ```
-
-  ```typescript TypeScript theme={null}
-  import { query, type SDKMessage } from "@anthropic-ai/claude-agent-sdk";
-
-  const agents = {
-    "endpoint-finder": {
-      description: "Locates and catalogs API endpoints in a codebase.",
-      prompt: "You find and document API endpoints. Report each endpoint's path, method, and handler.",
-      tools: ["Read", "Grep", "Glob"]
-    }
-  };
-
-  // Stringify content to search for agentId without traversing nested block types
-  function extractAgentId(message: SDKMessage): string | undefined {
-    if (message.type !== "assistant" && message.type !== "user") return undefined;
-    const content = JSON.stringify(message.message.content);
-    const match = content.match(/agentId:\s*([\w-]+)/);
-    return match?.[1];
+// First invocation - run the endpoint-finder subagent
+try {
+  for await (const message of query({
+    prompt: "Use the endpoint-finder agent to find all API endpoints in this codebase",
+    options: { allowedTools: ["Read", "Grep", "Glob", "Agent"], agents }
+  })) {
+    // Capture session_id from ResultMessage (needed to resume this session)
+    if ("session_id" in message) sessionId = message.session_id;
+    // Search message content for the agentId (appears in Agent tool results)
+    const extractedId = extractAgentId(message);
+    if (extractedId) agentId = extractedId;
+    // Print the final result
+    if ("result" in message) console.log(message.result);
   }
+} catch (error) {
+  // A single-shot query() throws after yielding an error result,
+  // so sessionId and agentId have already been captured by the loop above.
+  console.error(`Session ended with an error: ${error}`);
+}
 
-  let agentId: string | undefined;
-  let sessionId: string | undefined;
-
-  // First invocation - run the endpoint-finder subagent
-  try {
-    for await (const message of query({
-      prompt: "Use the endpoint-finder agent to find all API endpoints in this codebase",
-      options: { allowedTools: ["Read", "Grep", "Glob", "Agent"], agents }
-    })) {
-      // Capture session_id from ResultMessage (needed to resume this session)
-      if ("session_id" in message) sessionId = message.session_id;
-      // Search message content for the agentId (appears in Agent tool results)
-      const extractedId = extractAgentId(message);
-      if (extractedId) agentId = extractedId;
-      // Print the final result
-      if ("result" in message) console.log(message.result);
-    }
-  } catch (error) {
-    // A single-shot query() throws after yielding an error result,
-    // so sessionId and agentId have already been captured by the loop above.
-    console.error(`Session ended with an error: ${error}`);
+// Second invocation - resume and ask follow-up
+if (agentId && sessionId) {
+  for await (const message of query({
+    prompt: `Resume agent ${agentId} and list the top 3 most complex endpoints`,
+    options: { allowedTools: ["Read", "Grep", "Glob", "Agent"], agents, resume: sessionId }
+  })) {
+    if ("result" in message) console.log(message.result);
   }
-
-  // Second invocation - resume and ask follow-up
-  if (agentId && sessionId) {
-    for await (const message of query({
-      prompt: `Resume agent ${agentId} and list the top 3 most complex endpoints`,
-      options: { allowedTools: ["Read", "Grep", "Glob", "Agent"], agents, resume: sessionId }
-    })) {
-      if ("result" in message) console.log(message.result);
-    }
-  } else {
-    console.log("No agentId found in the first query, so there is no subagent to resume.");
-  }
-  ```
-</CodeGroup>
+} else {
+  console.log("No agentId found in the first query, so there is no subagent to resume.");
+}
+```
 
 Subagent transcripts are stored in separate files and persist independently of the main conversation. See [resume subagents in Claude Code](/docs/en/sub-agents#resume-subagents) for compaction behavior and the `cleanupPeriodDays` cleanup period.
 
@@ -541,57 +566,55 @@ A tool you leave out isn't in the subagent's session at all: Claude works withou
 
 This example creates a read-only analysis agent that can examine code but can't modify files or run commands.
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, AgentDefinition
 
 
-  async def main():
-      async for message in query(
-          prompt="Analyze the architecture of this codebase",
-          options=ClaudeAgentOptions(
-              allowed_tools=["Read", "Grep", "Glob", "Agent"],
-              agents={
-                  "code-analyzer": AgentDefinition(
-                      description="Static code analysis and architecture review",
-                      prompt="""You are a code architecture analyst. Analyze code structure,
-  identify patterns, and suggest improvements without making changes.""",
-                      # Read-only tools: no Edit, Write, or Bash access
-                      tools=["Read", "Grep", "Glob"],
-                  )
-              },
-          ),
-      ):
-          if hasattr(message, "result"):
-              print(message.result)
+async def main():
+    async for message in query(
+        prompt="Analyze the architecture of this codebase",
+        options=ClaudeAgentOptions(
+            allowed_tools=["Read", "Grep", "Glob", "Agent"],
+            agents={
+                "code-analyzer": AgentDefinition(
+                    description="Static code analysis and architecture review",
+                    prompt="""You are a code architecture analyst. Analyze code structure,
+identify patterns, and suggest improvements without making changes.""",
+                    # Read-only tools: no Edit, Write, or Bash access
+                    tools=["Read", "Grep", "Glob"],
+                )
+            },
+        ),
+    ):
+        if hasattr(message, "result"):
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Analyze the architecture of this codebase",
-    options: {
-      allowedTools: ["Read", "Grep", "Glob", "Agent"],
-      agents: {
-        "code-analyzer": {
-          description: "Static code analysis and architecture review",
-          prompt: `You are a code architecture analyst. Analyze code structure,
-  identify patterns, and suggest improvements without making changes.`,
-          // Read-only tools: no Edit, Write, or Bash access
-          tools: ["Read", "Grep", "Glob"]
-        }
+for await (const message of query({
+  prompt: "Analyze the architecture of this codebase",
+  options: {
+    allowedTools: ["Read", "Grep", "Glob", "Agent"],
+    agents: {
+      "code-analyzer": {
+        description: "Static code analysis and architecture review",
+        prompt: `You are a code architecture analyst. Analyze code structure,
+identify patterns, and suggest improvements without making changes.`,
+        // Read-only tools: no Edit, Write, or Bash access
+        tools: ["Read", "Grep", "Glob"]
       }
     }
-  })) {
-    if ("result" in message) console.log(message.result);
   }
-  ```
-</CodeGroup>
+})) {
+  if ("result" in message) console.log(message.result);
+}
+```
 
 ### Common tool combinations
 
@@ -604,9 +627,9 @@ This example creates a read-only analysis agent that can examine code but can't 
 
 ## Cap subagent depth, concurrency, and spend
 
-<Note>
-  This section describes TypeScript SDK v0.3.219 and Python SDK v0.2.127 and later, the releases that bundle Claude Code v2.1.219 or later. On earlier releases, some of these limits are missing or default differently, so upgrade before you rely on them to bound a run. The [environment variable reference](/docs/en/env-vars) and [turns and budget](/docs/en/agent-sdk/agent-loop#turns-and-budget) record the Claude Code version that added each variable and the spend cap's subagent enforcement.
-</Note>
+> [!NOTE]
+>
+> This section describes TypeScript SDK v0.3.219 and Python SDK v0.2.127 and later, the releases that bundle Claude Code v2.1.219 or later. On earlier releases, some of these limits are missing or default differently, so upgrade before you rely on them to bound a run. The [environment variable reference](/docs/en/env-vars) and [turns and budget](/docs/en/agent-sdk/agent-loop#turns-and-budget) record the Claude Code version that added each variable and the spend cap's subagent enforcement.
 
 Claude decides on its own when to spawn a subagent and how many to spawn. Each subagent makes its own API requests, which count toward the query's `total_cost_usd`, and a subagent can spawn subagents of its own, so one prompt can grow into a tree of agents.
 
@@ -620,65 +643,63 @@ You can cap that growth in three ways: how deeply subagents nest, how many run a
 
 The two SDKs treat the `env` option differently: the TypeScript SDK replaces the subprocess environment with it, so spread `process.env` into it to keep variables like `PATH`, while the Python SDK merges it into the inherited environment. This example turns nesting off, allows at most five subagents at a time, and stops the query once the estimated spend reaches \$5:
 
-<CodeGroup>
-  ```python Python theme={null}
-  import asyncio
-  from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+```python Python theme={null}
+import asyncio
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
 
 
-  async def main():
-      try:
-          async for message in query(
-              prompt="Audit every service in this repo for unhandled promise rejections",
-              options=ClaudeAgentOptions(
-                  allowed_tools=["Read", "Grep", "Glob", "Agent"],
-                  # env is merged on top of the inherited environment
-                  env={
-                      "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
-                      "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "5",
-                  },
-                  max_budget_usd=5.0,
-              ),
-          ):
-              if isinstance(message, ResultMessage):
-                  print(f"{message.subtype}: ${message.total_cost_usd}")
-      except Exception as error:
-          # A single-shot query() raises after yielding an error result,
-          # so the budget-capped result has already been printed above.
-          print(f"Session ended with an error: {error}")
+async def main():
+    try:
+        async for message in query(
+            prompt="Audit every service in this repo for unhandled promise rejections",
+            options=ClaudeAgentOptions(
+                allowed_tools=["Read", "Grep", "Glob", "Agent"],
+                # env is merged on top of the inherited environment
+                env={
+                    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1",
+                    "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": "5",
+                },
+                max_budget_usd=5.0,
+            ),
+        ):
+            if isinstance(message, ResultMessage):
+                print(f"{message.subtype}: ${message.total_cost_usd}")
+    except Exception as error:
+        # A single-shot query() raises after yielding an error result,
+        # so the budget-capped result has already been printed above.
+        print(f"Session ended with an error: {error}")
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  try {
-    for await (const message of query({
-      prompt: "Audit every service in this repo for unhandled promise rejections",
-      options: {
-        allowedTools: ["Read", "Grep", "Glob", "Agent"],
-        // env replaces the subprocess environment, so spread process.env to keep PATH
-        env: {
-          ...process.env,
-          CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "1",
-          CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "5",
-        },
-        maxBudgetUsd: 5,
+try {
+  for await (const message of query({
+    prompt: "Audit every service in this repo for unhandled promise rejections",
+    options: {
+      allowedTools: ["Read", "Grep", "Glob", "Agent"],
+      // env replaces the subprocess environment, so spread process.env to keep PATH
+      env: {
+        ...process.env,
+        CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: "1",
+        CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "5",
       },
-    })) {
-      if (message.type === "result") {
-        console.log(`${message.subtype}: $${message.total_cost_usd}`);
-      }
+      maxBudgetUsd: 5,
+    },
+  })) {
+    if (message.type === "result") {
+      console.log(`${message.subtype}: $${message.total_cost_usd}`);
     }
-  } catch (error) {
-    // A single-shot query() throws after yielding an error result,
-    // so the budget-capped result has already been logged above.
-    console.error(`Session ended with an error: ${error}`);
   }
-  ```
-</CodeGroup>
+} catch (error) {
+  // A single-shot query() throws after yielding an error result,
+  // so the budget-capped result has already been logged above.
+  console.error(`Session ended with an error: ${error}`);
+}
+```
 
 What you see depends on which limit, if any, the query reaches:
 
@@ -724,6 +745,6 @@ For the file format, see [how to write subagent files](/docs/en/sub-agents#write
 
 ## Related documentation
 
-* [Claude Code subagents](/docs/en/sub-agents): comprehensive subagent documentation including filesystem-based definitions
+* [Claude Code subagents](/docs/en/sub-agents): subagent documentation including filesystem-based definitions
 * [Dynamic workflows](/docs/en/workflows): orchestrate many subagents from a script for jobs too large for one conversation
 * [SDK overview](/docs/en/agent-sdk/overview): getting started with the Claude Agent SDK

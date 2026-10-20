@@ -8,7 +8,7 @@
 
 ## Overview
 
-The Claude Code SDK has been renamed to the **Claude Agent SDK** and its documentation has been reorganized. This change reflects the SDK's broader capabilities for building AI agents beyond just coding tasks.
+The Claude Code SDK has been renamed to the **Claude Agent SDK** and its documentation has been reorganized. This change reflects the SDK's broader capabilities for building AI agents beyond coding tasks.
 
 Migrating from the OpenAI Agents SDK instead? The [OpenAI Agents SDK migration recipe](https://platform.claude.com/cookbook/claude-agent-sdk-04-migrating-from-openai-agents-sdk) maps each primitive onto the Claude Agent SDK through a single worked example.
 
@@ -22,7 +22,7 @@ Migrating from the OpenAI Agents SDK instead? The [OpenAI Agents SDK migration r
 
 ## Migration Steps
 
-### For TypeScript/JavaScript Projects
+### Migrate a TypeScript or JavaScript project
 
 **1. Uninstall the old package:**
 
@@ -56,7 +56,7 @@ If `@anthropic-ai/claude-code` is still listed in your `package.json`, replace i
 
 Make any code changes needed to complete the migration.
 
-### For Python Projects
+### Migrate a Python project
 
 **1. Uninstall the old package:**
 
@@ -92,9 +92,9 @@ Make any code changes needed to complete the migration.
 
 ## Breaking changes
 
-<Warning>
-  To improve isolation and explicit configuration, Claude Agent SDK v0.1.0 introduces breaking changes for users migrating from Claude Code SDK.
-</Warning>
+> [!WARNING]
+>
+> To improve isolation and explicit configuration, Claude Agent SDK v0.1.0 introduces breaking changes for users migrating from Claude Code SDK.
 
 ### Python: ClaudeCodeOptions renamed to ClaudeAgentOptions
 
@@ -120,62 +120,60 @@ options = ClaudeAgentOptions(model="claude-opus-4-7", permission_mode="acceptEdi
 
 **Migration:**
 
-<CodeGroup>
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  // BEFORE (v0.0.x) - Used Claude Code's system prompt by default
-  const before = query({ prompt: "Hello" });
+// BEFORE (v0.0.x) - Used Claude Code's system prompt by default
+const before = query({ prompt: "Hello" });
 
-  // AFTER (v0.1.0) - Uses minimal system prompt by default
-  // To get the old behavior, explicitly request Claude Code's preset:
-  const presetResult = query({
-    prompt: "Hello",
-    options: {
-      systemPrompt: { type: "preset", preset: "claude_code" }
-    }
-  });
+// AFTER (v0.1.0) - Uses minimal system prompt by default
+// To get the old behavior, explicitly request Claude Code's preset:
+const presetResult = query({
+  prompt: "Hello",
+  options: {
+    systemPrompt: { type: "preset", preset: "claude_code" }
+  }
+});
 
-  // Or use a custom system prompt:
-  const customResult = query({
-    prompt: "Hello",
-    options: {
-      systemPrompt: "You are a helpful coding assistant"
-    }
-  });
-  ```
+// Or use a custom system prompt:
+const customResult = query({
+  prompt: "Hello",
+  options: {
+    systemPrompt: "You are a helpful coding assistant"
+  }
+});
+```
 
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions
-  import asyncio
-
-
-  async def main():
-      # BEFORE (v0.0.x) - Used Claude Code's system prompt by default
-      async for message in query(prompt="Hello"):
-          print(message)
-
-      # AFTER (v0.1.0) - Uses minimal system prompt by default
-      # To get the old behavior, explicitly request Claude Code's preset:
-      async for message in query(
-          prompt="Hello",
-          options=ClaudeAgentOptions(
-              system_prompt={"type": "preset", "preset": "claude_code"}  # Use the preset
-          ),
-      ):
-          print(message)
-
-      # Or use a custom system prompt:
-      async for message in query(
-          prompt="Hello",
-          options=ClaudeAgentOptions(system_prompt="You are a helpful coding assistant"),
-      ):
-          print(message)
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions
+import asyncio
 
 
-  asyncio.run(main())
-  ```
-</CodeGroup>
+async def main():
+    # BEFORE (v0.0.x) - Used Claude Code's system prompt by default
+    async for message in query(prompt="Hello"):
+        print(message)
+
+    # AFTER (v0.1.0) - Uses minimal system prompt by default
+    # To get the old behavior, explicitly request Claude Code's preset:
+    async for message in query(
+        prompt="Hello",
+        options=ClaudeAgentOptions(
+            system_prompt={"type": "preset", "preset": "claude_code"}  # Use the preset
+        ),
+    ):
+        print(message)
+
+    # Or use a custom system prompt:
+    async for message in query(
+        prompt="Hello",
+        options=ClaudeAgentOptions(system_prompt="You are a helpful coding assistant"),
+    ):
+        print(message)
+
+
+asyncio.run(main())
+```
 
 ### Settings sources default
 
@@ -187,9 +185,9 @@ To run isolated from filesystem settings, pass `settingSources: []`, or `setting
 
 Isolation is especially important for CI/CD pipelines, deployed applications, test environments, and multi-tenant systems where local customizations should not leak in.
 
-<Note>
-  Python SDK 0.1.59 and earlier treated an empty list the same as omitting the option, so upgrade before relying on `setting_sources=[]`. See [What settingSources does not control](/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control) for inputs that are read even when `settingSources` is `[]`.
-</Note>
+> [!NOTE]
+>
+> Python SDK 0.1.59 and earlier treated an empty list the same as omitting the option, so upgrade before relying on `setting_sources=[]`. See [What settingSources does not control](/docs/en/agent-sdk/claude-code-features#what-settingsources-does-not-control) for inputs that are read even when `settingSources` is `[]`.
 
 ## Next Steps
 

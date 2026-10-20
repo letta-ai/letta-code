@@ -10,9 +10,9 @@ If you maintain a CLI or SDK, your tool can prompt Claude Code users to install 
 
 This page applies only if your plugin is listed in `claude-plugins-official` or another marketplace with one of Anthropic's [official marketplace names](/docs/en/plugins/security#official-marketplace-names). The community marketplace, `claude-community`, isn't one of them.
 
-<Note>
-  To publish a plugin, see [Publish and distribute a plugin](/docs/en/plugins/publish).
-</Note>
+> [!NOTE]
+>
+> To publish a plugin, see [Publish and distribute a plugin](/docs/en/plugins/publish).
 
 ## Emit the hint
 
@@ -27,38 +27,36 @@ The [environment variables reference](/docs/en/env-vars) has the details.
 
 The following examples gate on `CLAUDECODE` for the widest reach and emit a hint for a plugin named `example-cli` in the official marketplace:
 
-<CodeGroup>
-  ```javascript Node.js theme={null}
-  if (process.env.CLAUDECODE) {
-    process.stderr.write(
-      '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />\n',
+```javascript Node.js theme={null}
+if (process.env.CLAUDECODE) {
+  process.stderr.write(
+    '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />\n',
+  )
+}
+```
+
+```python Python theme={null}
+import os, sys
+
+if os.environ.get("CLAUDECODE"):
+    print(
+        '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />',
+        file=sys.stderr,
     )
-  }
-  ```
+```
 
-  ```python Python theme={null}
-  import os, sys
+```go Go theme={null}
+if os.Getenv("CLAUDECODE") != "" {
+    fmt.Fprintln(os.Stderr,
+        `<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />`)
+}
+```
 
-  if os.environ.get("CLAUDECODE"):
-      print(
-          '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />',
-          file=sys.stderr,
-      )
-  ```
-
-  ```go Go theme={null}
-  if os.Getenv("CLAUDECODE") != "" {
-      fmt.Fprintln(os.Stderr,
-          `<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />`)
-  }
-  ```
-
-  ```shell Shell theme={null}
-  if [ -n "$CLAUDECODE" ]; then
-    printf '%s\n' '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />' >&2
-  fi
-  ```
-</CodeGroup>
+```shell Shell theme={null}
+if [ -n "$CLAUDECODE" ]; then
+  printf '%s\n' '<claude-code-hint v="1" type="plugin" value="example-cli@claude-plugins-official" />' >&2
+fi
+```
 
 Replace `example-cli` with your plugin's name in the official marketplace.
 

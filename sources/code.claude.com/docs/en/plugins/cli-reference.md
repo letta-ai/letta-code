@@ -4,19 +4,19 @@
 
 # Plugin commands reference
 
-> Complete reference for the claude plugin shell commands, /plugin and /reload-plugins in a session, and the flags that load a plugin for one session.
+> Reference for the claude plugin shell commands, /plugin and /reload-plugins in a session, and the flags that load a plugin for one session.
 
 You run plugin commands either as `claude plugin` from your shell or a script, or as `/plugin` and `/reload-plugins` inside a Claude Code session. This reference gives each command's flags, defaults, output, and exit codes, along with the two flags that load a plugin for one session.
 
-Run `claude plugin --help` on your build to confirm which subcommands your version has.
+The tables below list each subcommand's commonly used options, not every option. Run `claude plugin --help` in your shell to see which subcommands your version has, and `claude plugin <subcommand> --help` for a subcommand's full option list.
 
-<Note>
-  These cases are covered on other pages:
-
-  * **Install and manage steps, and where `/plugin` runs**: see [Install and manage plugins](/docs/en/plugins/install)
-  * **What a command changes on disk and which scope takes precedence**: see [Plugin loading reference](/docs/en/plugins/loading)
-  * **What an error message means**: see [Troubleshoot plugins](/docs/en/plugins/troubleshooting)
-</Note>
+> [!NOTE]
+>
+> These cases are covered on other pages:
+>
+> * **Install and manage steps, and where `/plugin` runs**: see [Install and manage plugins](/docs/en/plugins/install)
+> * **What a command changes on disk and which scope takes precedence**: see [Plugin loading reference](/docs/en/plugins/loading)
+> * **What an error message means**: see [Troubleshoot plugins](/docs/en/plugins/troubleshooting)
 
 ## claude plugin commands
 
@@ -27,7 +27,7 @@ Run `claude plugin <subcommand>` from your shell or a script, outside a Claude C
 Every subcommand shares these exit codes, plugin arguments, and scope values:
 
 * **Exit codes**: `0` on success and `1` on failure. `validate` adds exit `2` for an unexpected error, and `eval` adds the codes listed in [its section](#plugin-eval).
-* **Plugin arguments**: a `<plugin>` argument is a plugin `name` or `name@marketplace`. When two marketplaces offer the same name, use the qualified form.
+* **Plugin arguments**: a `<plugin>` argument is a plugin `name` or `name@marketplace`. When two marketplaces offer the same name, use the qualified form. `configure` takes only the qualified form.
 * **Scopes**: `--scope` takes `user`, `project`, or `local`, and names the settings file the command writes to. `update` also takes `managed`.
 
 ### plugin init
@@ -70,7 +70,7 @@ Claude Code exits `1` without writing when it can't scaffold safely, and the mes
 
 ### plugin install
 
-Install a plugin from a marketplace you've added. `i` is an alias for `install`.
+Install a plugin from one of your marketplaces. `i` is an alias for `install`.
 
 ```bash theme={null}
 claude plugin install <plugin> [options]
@@ -81,10 +81,13 @@ Most plugins install without a prompt. For a plugin whose marketplace entry [run
 | Flag | Description |
 | :- | :- |
 | `-s, --scope <scope>` | Installation scope: `user`, `project`, or `local`. Defaults to `user` |
-| `--config <key=value>` | Set a [`userConfig`](/docs/en/plugins/manifest-reference) option the plugin's manifest declares. Repeat the flag for each option. Requires Claude Code v2.1.147 or later |
+| `--config <key=value>` | Set a [`userConfig`](/docs/en/plugins/manifest-reference) option the plugin's manifest declares. Repeat the flag for each option. A key written `<server>.<key>` sets a setting that a [bundled MCP server](/docs/en/plugins/components#include-a-packaged-mcpb-server) declares in its own `user_config` instead, for a bundle file shipped inside the plugin. The `<server>.<key>` form requires Claude Code v2.1.285 or later |
 | `-y, --yes` | Accept the displayed install command without the `Run this command now?` prompt. Ignored when the command runs inside a Claude Code session, such as from the Bash tool or a hook. Requires Claude Code v2.1.229 or later |
 | `--accept-command <sha256>` | Accept the displayed install command whose `sha256` a previous [`--json` run](#plugin-json-result) reported in `shownCommand`, in place of `-y`. Can't be combined with `-y`. See [Accept a displayed install command](#accept-a-displayed-install-command). Requires Claude Code v2.1.271 or later |
 | `--json` | Print the result as one JSON object on the last line of stdout instead of the human-readable message, for use in scripts. See [JSON result format](#plugin-json-result). Requires Claude Code v2.1.268 or later |
+| `--marketplace <source>` | Install `<plugin>`, given by its bare name, from the marketplace at `<source>`, adding the marketplace first if you haven't added it yet. See [Add a marketplace and install in one command](/docs/en/plugins/install#add-a-marketplace-and-install-in-one-command). Requires Claude Code v2.1.292 or later |
+
+Run `claude plugin install --help` in your shell to see every option your version supports.
 
 Pass `-y` from your own terminal to accept the displayed command without the prompt. Here's what happens without a TTY and when Claude runs the command:
 
@@ -103,9 +106,7 @@ Claude Code prints `Successfully installed plugin: formatter@my-marketplace (sco
 * **You decline a command-source prompt**: the output is `Aborted.` and the exit code is `1`
 * **You decline a `headersHelper` prompt, or it can't be confirmed without a TTY**: the output is `Aborted — the command was not run.` and the exit code is `1`
 
-<h4 id="plugin-json-result">
-  JSON result format
-</h4>
+#### JSON result format
 
 When you pass `--json` to `plugin install`, the last line of stdout is one JSON object. Parse only that line, because Claude Code prints any command the marketplace declares ahead of it.
 
@@ -120,6 +121,21 @@ Other fields, such as `pluginId`, `scope`, and `failureCode`, appear only when t
 The `--json` option on `plugin uninstall`, `plugin update`, `plugin enable`, and `plugin disable` prints the same object with that subcommand's own fields.
 
 A usage error, such as an invalid `--scope`, prints no result line and exits `1` with the reason on stderr.
+
+#### JSON result for marketplace commands
+
+On `plugin marketplace add`, `plugin marketplace remove`, and `plugin marketplace update`, `--json` prints one JSON object on the last line of stdout with `command`, `outcome`, and `message` fields. The following is the result of `claude plugin marketplace remove your-marketplace --json`:
+
+```json theme={null}
+{"command":"marketplace-remove","outcome":"ok","marketplace":"your-marketplace","message":"Successfully removed marketplace: your-marketplace"}
+```
+
+The `command` value is `marketplace-add`, `marketplace-remove`, or `marketplace-update`. The fields below appear only when they apply:
+
+* `marketplace`: the name of the marketplace the command acted on
+* `failureCode`: a code for why the command failed, such as `invalid_source`
+
+`plugin marketplace add` and `plugin marketplace remove` can print no result line when the argument is the [reserved name](/docs/en/plugins/marketplace-reference#reserved-names) `anthropic-plugin-directory`, so check the exit code for that name.
 
 #### Accept a displayed install command
 
@@ -155,7 +171,7 @@ claude plugin uninstall formatter@my-marketplace --scope project
 
 Claude Code prints `Successfully uninstalled plugin: formatter (scope: project)`. When the plugin isn't installed at that scope, the command prints a line that starts `Failed to uninstall plugin "formatter@my-marketplace":` and exits `1`.
 
-If the failure line continues with `"formatter" was not uninstalled:`, Claude Code couldn't confirm that the scope's settings no longer switch the plugin on, so the plugin stays installed with everything it saved. With `--json`, the result carries `failureCode: "settings_still_on"`. This settings check requires Claude Code v2.1.282 or later.
+If the failure line continues with `"formatter" was not uninstalled:` and names a settings file, Claude Code couldn't confirm that the scope's settings no longer switch the plugin on, so the plugin stays installed with everything it saved. With `--json`, the result carries `failureCode: "settings_still_on"`. This settings check requires Claude Code v2.1.282 or later.
 
 #### What an uninstall deletes and keeps
 
@@ -249,21 +265,29 @@ claude plugin update <plugin> [options]
 | `--accept-command <sha256>` | Accept the marketplace-declared command whose `sha256` a previous [`--json` run](#plugin-json-result) reported in `shownCommand`, in place of `-y`. Can't be combined with `-y`. Requires Claude Code v2.1.271 or later |
 | `--json` | Print the result as one JSON object on the last line of stdout, in the [same format as `plugin install --json`](#plugin-json-result). Requires Claude Code v2.1.268 or later |
 
-If you omit `--scope`, the command updates the plugin at the most specific scope it's installed at for your current project, checking local, project, user, then managed.
-
-Before v2.1.281, the command used `user` when you omitted `--scope`, so updating a plugin installed only at project or local scope failed with `Plugin "<name>" is not installed at scope user`. On those versions, pass `--scope`.
-
-`managed` is the one scope you can update but not install to. For admin-installed plugins, see [Manage plugins for your organization](/docs/en/plugins/org).
-
 Update a plugin:
 
 ```bash theme={null}
 claude plugin update formatter@my-marketplace
 ```
 
-Claude Code prints `Checking for updates for plugin "formatter@my-marketplace"…`, then the result. When nothing is newer, it prints `formatter is already at the latest version (1.0.0).` and exits `0`.
+Claude Code prints `Checking for updates for plugin "formatter@my-marketplace"…`, then the result. When nothing is newer, it prints `formatter is already at the latest version (1.0.0).` and exits `0`, unless it [retries the plugin's dependency install](#retry-an-unfinished-dependency-install) and that install fails.
+
+#### Which scope the command updates
+
+If you omit `--scope`, the command updates the plugin at the most specific scope it's installed at for your current project, checking local, project, user, then managed.
+
+Before v2.1.281, the command used `user` when you omitted `--scope`, so updating a plugin installed only at project or local scope failed with `Plugin "<name>" is not installed at scope user`. On those versions, pass `--scope`.
+
+`managed` is the one scope you can update but not install to. For admin-installed plugins, see [Manage plugins for your organization](/docs/en/plugins/org).
+
+#### Update by bare name
 
 You can pass a bare plugin name, which the command matches against your installed plugins. When installed plugins from different marketplaces share the name, the command refuses the update and lists the qualified `plugin-name@marketplace-name` commands to run instead. Updating by bare name requires Claude Code v2.1.246 or later.
+
+#### Retry an unfinished dependency install
+
+When the plugin is already at its latest version, the command can also retry an unfinished dependency install in its cached copy. For the cases where that retry runs or is skipped, see [The packages it lists are not installed](/docs/en/plugins/troubleshooting#the-packages-it-lists-are-not-installed). If the retry fails, the output is `Failed to update plugin "formatter@my-marketplace"` with the reason and the exit code is `1`. Before v2.1.287, the command reported the plugin at its latest version without retrying the install.
 
 ### plugin list
 
@@ -277,6 +301,7 @@ claude plugin list [options]
 | :- | :- |
 | `--json` | Print the list as JSON |
 | `--available` | Also list plugins your marketplaces offer that you haven't installed. Has no effect without `--json` |
+| `--data-size [plugin]` | Measure each installed plugin's [saved data directory](#what-an-uninstall-deletes-and-keeps), or only the named plugin's, given as `name@marketplace`. Has no effect without `--json`. If the name has no install record, the command prints `--data-size names a plugin that is not installed` and exits `1` instead of printing the list. Requires Claude Code v2.1.285 or later |
 
 Claude Code groups the human-readable output by how each plugin loads:
 
@@ -297,15 +322,21 @@ With `--json`, Claude Code prints an array with one object per installation. Eac
 | `version` | string | For a marketplace install, the [version Claude Code computed](/docs/en/plugins/loading#versions-and-updates) at install. For a session-only, skills-directory, or synced plugin, the manifest's `version`, or `unknown` when it declares none |
 | `scope` | string | `user`, `project`, `local`, or `managed` for installs; `user` or `project` for skills-directory plugins; `session` for session-only plugins; `synced` for plugins synced from claude.ai |
 | `enabled` | boolean | Whether the plugin is enabled in your merged settings |
-| `installPath` | string | Directory the plugin loads from |
+| `installPath` | string | Directory the plugin loads from, except for a plugin that sessions [load in place](/docs/en/plugins/loading#in-place-and-copied-plugins) from its marketplace's folder |
+| `readFromFolder` | string | For a plugin that sessions [load in place](/docs/en/plugins/loading#in-place-and-copied-plugins) from its marketplace's folder, the plugin's source directory inside that folder. Requires Claude Code v2.1.289 or later |
+| `folderVersion` | string | With `readFromFolder`, the plugin's `version` as Claude Code loaded it from that folder, which can differ from the `version` field above. Absent when the plugin didn't load or declares no version. Requires Claude Code v2.1.289 or later |
 | `installedAt` | string | ISO timestamp of the install. Marketplace installs only |
 | `lastUpdated` | string | ISO timestamp of the last update. Marketplace installs only |
 | `projectPath` | string | Project the install belongs to. `project` and `local` scope only |
 | `mcpServers` | object | The plugin's MCP server definitions, when a marketplace-installed plugin has any |
 | `errors` | array of strings | Load errors, when the plugin failed to load |
-| `notes` | array of strings | Authoring warnings for a plugin that loaded and works |
+| `notes` | array of strings | Warnings that aren't load errors, such as authoring issues or [packages that aren't installed](/docs/en/plugins/loading#when-the-dependency-install-fails-or-is-skipped) |
 | `errorDetails` | array of objects | One object per `errors` entry, giving its diagnostic `type` and the names it refers to, such as the plugin, marketplace, server, or file. Requires Claude Code v2.1.268 or later |
 | `noteDetails` | array of objects | The same detail objects for each `notes` entry. Requires Claude Code v2.1.268 or later |
+| `hasUserConfig` | boolean | Present and `true` when the plugin loaded and its manifest declares [`userConfig` options](/docs/en/plugins/manifest-reference#user-configuration). Absent for a plugin that failed to load, whatever its manifest declares. Saved values are never included. Requires Claude Code v2.1.285 or later |
+| `projectEnabled` | boolean | Whether the project's shared `.claude/settings.json` turns the plugin on. Marketplace installs only. Requires Claude Code v2.1.285 or later |
+| `dataDirSize` | object | With `--data-size`, the size of the plugin's [saved data directory](#what-an-uninstall-deletes-and-keeps) as `bytes` and `human`; absent when the directory is missing or empty. Marketplace installs only. Requires Claude Code v2.1.285 or later |
+| `dataDirUnreadable` | boolean | With `--data-size`, `true` when the saved data directory exists but couldn't be measured. Marketplace installs only. Requires Claude Code v2.1.285 or later |
 
 With `--json --available`, Claude Code prints one object instead of an array. Its `installed` field holds the array of installed-plugin objects, and its `available` field holds one object per uninstalled marketplace plugin with the fields below.
 
@@ -345,7 +376,44 @@ Claude Code prints the plugin's name, version, description, and source, then the
 
 For what the two cost figures mean, see [Measure plugin cost and usage](/docs/en/plugins/measure).
 
-For a plugin that isn't loaded, Claude Code prints ``Plugin "formatter" not found. Run `claude plugin list` to see installed plugins, or pass --plugin-dir <path> to load one from disk.`` and exits `1`.
+For a plugin that isn't loaded, Claude Code prints this message and exits `1`:
+
+```text theme={null}
+Plugin "formatter" not found. Run `claude plugin list` to see installed plugins, or pass --plugin-dir <path> to load one from disk.
+```
+
+An ID that ends in `@builtin` names one of the [plugins built into Claude Code](/docs/en/plugins/mods/overview#mods-built-into-claude-code). If you pass such an ID and Claude Code doesn't find that plugin, the message reads instead:
+
+```text theme={null}
+Plugin "<name>@builtin" not found. Built-in plugins don't appear in `claude plugin list`. To see the ones available in a session, run /plugin in Claude Code and open the Installed tab.
+```
+
+### plugin configure
+
+Show an installed plugin's [`userConfig`](/docs/en/plugins/manifest-reference#user-configuration) options and which are set, or save values piped in on stdin. Requires Claude Code v2.1.285 or later.
+
+```bash theme={null}
+claude plugin configure <plugin>
+```
+
+| Flag | Description |
+| :- | :- |
+| `--values-stdin` | Read option values from stdin as a JSON object of single-line strings and save them. Options you leave out keep their saved values |
+| `--json` | Print the result as one JSON object on stdout. Without `--values-stdin`, the object carries the options' `schema` and `choices`, their starting `inputs`, and the `configured` and `unconfigured` option names. With `--values-stdin`, it carries the `saved` option names and, when they could be read back, the `unconfigured` ones |
+
+Without flags, the command lists each option with up to three labels: `required` or `optional`, then `sensitive` for an option the manifest declares sensitive, then `set` or `not set`. It prints no saved values. With `--json`, the output includes the saved values of options that aren't sensitive, and never the text of a sensitive one.
+
+To save values, write them to a file as a JSON object that maps option keys to string values, then pass the file on stdin. Replace `formatter@my-marketplace` with your own plugin's id as `claude plugin list` shows it. This example sets one option named `api_url` from a file `values.json` that contains `{"api_url": "https://example.com"}`:
+
+```bash theme={null}
+claude plugin configure formatter@my-marketplace --values-stdin < values.json
+```
+
+Claude Code validates each value against the option's declared type and prints `Configuration saved. Restart Claude Code to apply it.` If you pass a key the manifest doesn't declare, or a value that fails validation, the command saves nothing, prints `Failed to save configuration:` with the reason, and exits `1`. With `--json`, a refused value also prints an object on stdout whose `refused` field carries the `message` and, when one option is at fault, its `option` key.
+
+Pass the plugin's full `name@marketplace` id, as `claude plugin list` shows it. `configure` doesn't accept a bare `name`. When no loaded plugin has that id, the command prints `No installed plugin has the id "<plugin>".` and exits `1`.
+
+For the settings of a bundled MCP server, see [`plugin install --config`](#plugin-install) or the **Configure** item in `/plugin`.
 
 ### plugin prune
 
@@ -409,8 +477,8 @@ This table lists the options most runs use. Run `claude plugin eval --help` for 
 | `--runs <n>` | Runs per case in each [arm](/docs/en/plugin-evals#compare-against-a-no-plugin-baseline) | Each case's `runs`, else 3 |
 | `-j, --concurrency <n>` | Agent sessions to run at once, 1 to 8. They share your rate limit | `1` |
 | `--model <model>` | Model for the agent under test | Each case's `model`, else `ANTHROPIC_MODEL` if set, else Claude Code's default |
-| `--judge-model <model>` | Model for `llm` and `baseline` graders | A small fast model |
-| `--ablation <mode>` | `none` or `with-without`. See [Compare against a no-plugin baseline](/docs/en/plugin-evals#compare-against-a-no-plugin-baseline) | `with-without` when a plugin resolves, else `none` |
+| `--judge-model <model>` | Model for `llm` and `baseline` graders | The model for [background tasks](/docs/en/plugin-evals#grade-the-result) |
+| `--ablation <mode>` | `none` or `with-without`. See [Score against the no-plugin baseline](/docs/en/plugin-evals#compare-against-a-no-plugin-baseline) | Decided per case, as that section describes |
 | `--threshold <0..1>` | Exit 1 if any case scores below this | `1.0` |
 | `--max-cost-usd <usd>` | Stop before the next run once spend reaches this, exit 2, and report partial results | No limit |
 | `--allow-tools <tools...>` | Grant tools beyond the read-only set, such as `Bash`, `Write`, `Edit`, or `"mcp__plugin_<plugin>_<server>__*"`. See [Grant tools](/docs/en/plugin-evals#grant-tools) | |
@@ -425,8 +493,8 @@ The exit code reports how the run ended. To act on it in a pipeline, see [Run ev
 
 | Exit code | Meaning |
 | :- | :- |
-| `0` | Every case meets the threshold |
-| `1` | A failing case, a load error, or an untrusted plugin directory |
+| `0` | The suite passed: every case meets the threshold and nothing else failed the run |
+| `1` | A failing case, a load error, an untrusted plugin directory, a run that [ended on an API error](/docs/en/plugin-evals#runs-ended-on-an-api-error), or another cause listed under [Run evals in CI](/docs/en/plugin-evals#run-evals-in-ci) |
 | `2` | A partial run |
 | `130` | Interrupted |
 | `143` | Terminated |
@@ -439,6 +507,8 @@ Create an eval suite for the plugin in the current directory. Requires Claude Co
 claude plugin eval init [name] [options]
 ```
 
+Run the command from the plugin's root folder, the directory that holds `.claude-plugin/plugin.json` or the skill's `SKILL.md`. To scaffold the suite in another directory on purpose, pass `--eval-dir`.
+
 In a terminal, the command opens an interactive Claude Code session for an authoring interview. In the interview, Claude does the following:
 
 1. Reads the plugin
@@ -449,7 +519,7 @@ In a terminal, the command opens an interactive Claude Code session for an autho
 
 With `--bare`, or without a terminal, the command writes a blank single-case template instead. When Claude runs the command from inside a Claude Code session, the command prints the interview instructions for that session to follow rather than writing a template.
 
-The optional `name` is a case name. It's required with `--bare` or without a terminal, because the command writes the blank template for that case. The interview doesn't need one.
+The optional `name` is a case name. It's required with `--bare` or without a terminal, because the command writes the blank template for that case. A case name starts with a letter or digit and contains only letters, digits, `.`, `_`, and `-`. On every platform, the command also refuses names that Windows can't store, such as `con` or a name ending in `.`.
 
 The command accepts these options:
 
@@ -501,6 +571,22 @@ The command exits `1` and prints the reason when it can't tag safely. Common rea
 * The tag already exists
 * The working tree is dirty
 
+### plugin test
+
+Run the tests for a [mod](/docs/en/plugins/mods/overview), a plugin whose code registers event handlers. The command needs no session, sign-in, or network. For how to write a test, see [Test a mod](/docs/en/plugins/mods/test).
+
+```bash theme={null}
+claude plugin test [directory]
+```
+
+The `[directory]` is the mod's directory, defaulting to the current directory. The command runs every file under it whose name ends in `.test.ts` or `.test.tsx`, and exits with status 1 when a test fails.
+
+Run the tests for a mod in `./first-mod`:
+
+```bash theme={null}
+claude plugin test ./first-mod
+```
+
 ### plugin validate
 
 Validate a plugin manifest, a marketplace manifest, or the skills, agents, and commands in a directory, and exit with a code a CI job can act on. For the create, test, and edit workflow, see [Create a plugin](/docs/en/plugins/create). For what the validator checks in each manifest, see the [plugin manifest reference](/docs/en/plugins/manifest-reference) and the [marketplace reference](/docs/en/plugins/marketplace-reference).
@@ -511,7 +597,7 @@ claude plugin validate <path> [options]
 
 | Flag | Description |
 | :- | :- |
-| `--strict` | Treat warnings as errors, so unrecognized fields and missing metadata that the runtime tolerates fail the run. Requires Claude Code v2.1.145 or later |
+| `--strict` | Treat warnings as errors, so unrecognized fields and missing metadata that the runtime tolerates fail the run |
 | `--json` | Output the validation report as one JSON object with the same exit codes. Requires Claude Code v2.1.259 or later |
 
 Validate a plugin before committing it:
@@ -531,6 +617,8 @@ The `<path>` is a manifest file or a directory. Given a directory, Claude Code p
   * A directory named `.claude`: the `skills`, `agents`, and `commands` directories inside it
   * Any other directory: those three directories under its `.claude`
 
+When the directory holds both a `.claude-plugin/marketplace.json` and a `.claude-plugin/plugin.json`, Claude Code validates the marketplace and also the plugin's manifest and component files. This requires Claude Code v2.1.289 or later.
+
 Claude Code doesn't follow symlinks inside the directory you name. What it does depends on where the link is:
 
 * **A linked `skills`, `agents`, or `commands` directory under the plugin or `.claude` root**: Claude Code warns that nothing in it was read.
@@ -541,7 +629,7 @@ A few files are not read by a validation run:
 
 * **A `SKILL.md` at the plugin root**: when you run `claude plugin validate` against a plugin directory, Claude Code doesn't check a `SKILL.md` at the plugin root
 * **A `CLAUDE.md` at the plugin root**: in a plugin run, Claude Code also warns about a `CLAUDE.md` at the plugin root
-* **Plugin files in a marketplace run**: from a marketplace directory, Claude Code doesn't open the plugins' skill, agent, command, or hook files, or the MCP server files they bundle. To find errors in those files, validate each plugin directory
+* **Plugin files in a marketplace run**: from a marketplace directory, Claude Code doesn't open the skill, agent, command, or hook files of plugins the marketplace lists in other directories, or the MCP server files they bundle. To find errors in those files, validate each plugin directory
 
 #### Output and exit codes
 
@@ -560,6 +648,7 @@ With `--json`, Claude Code writes the report to stdout as one JSON object with t
 * `target`: the resolved path Claude Code validated
 * `manifest`: the manifest's own result, or `null` for a run without a manifest
 * `contents`: per-file results, each naming its `file` and carrying `errors`, `warnings`, and `notes` arrays
+  * `gatingHooks`: whether each [mod](/docs/en/plugins/mods/overview) hook that can refuse an action, such as a `tool.call` hook, has a [`.catch` handler](/docs/en/plugins/mods/events#handle-a-hook-that-fails). Each item gives `module`, `pattern`, `hook`, and `hasCatch`. Requires Claude Code v2.1.290 or later
 
 On exit `2`, the command writes nothing to stdout. The error message goes to stderr.
 
@@ -587,6 +676,7 @@ claude plugin marketplace add <source> [options]
 | `--scope <scope>` | Settings file to declare the marketplace in: `user`, `project`, or `local`. Defaults to `user` |
 | `--sparse <paths...>` | Limit the git checkout to these directories, for monorepos. `github` and `git` sources only |
 | `--claudeai` | Read the argument as the name of a [marketplace hosted on claude.ai](/docs/en/plugins/install#add-from-claude-ai) instead of a source. Requires Claude Code v2.1.273 or later |
+| `--json` | Print whether the command succeeded, and its message, as one JSON object on the last line of stdout, in the [JSON result format](#plugin-json-result). Has no effect with `--claudeai`. Requires Claude Code v2.1.287 or later |
 
 `<source>` takes any of the forms in the table below, and its form decides the source type and how Claude Code fetches the marketplace. For the resulting source object, see the [marketplace reference](/docs/en/plugins/marketplace-reference).
 
@@ -594,8 +684,8 @@ claude plugin marketplace add <source> [options]
 | :- | :- | :- |
 | `owner/repo`, `owner/repo#ref`, or `owner/repo@ref` | `github` | Clones the GitHub repository, pinned to `ref` when given. Owner and repo must follow GitHub naming rules |
 | `user@host:path[.git][#ref]` | `git` | Clones over SSH |
-| `https://example.com/repo.git[#ref]`, or a URL containing `/_git/` | `git` | Clones over HTTPS, including Azure DevOps URLs |
-| `https://github.com/owner/repo` or `https://gitlab.com/namespace/project` | `git` | Clones over HTTPS after appending `.git` |
+| An `http://` or `https://` URL that ends in `.git[#ref]` or contains `/_git/`, such as `https://example.com/repo.git` | `git` | Clones the URL, including Azure DevOps URLs |
+| `https://github.com/owner/repo` or `https://gitlab.com/namespace/project`, or the same over `http://` | `git` | Clones the URL after appending `.git` |
 | Any other `http://` or `https://` URL, including a self-hosted git host without `.git` | `url` | Fetches the URL as a `marketplace.json`. To clone a repository there instead, append `.git` |
 | `./path`, `../path`, `/path`, or `~/path` to a directory | `directory` | Reads the directory in place. On Windows, `.\`, `..\`, and `C:\` forms also work |
 | The same path forms, to a `.json` file | `file` | Reads the file in place |
@@ -662,9 +752,11 @@ The `--json` output covers configured marketplaces only and leaves the section o
 
 Remove a marketplace's declaration from your settings. `rm` is an alias for `remove`.
 
-<Warning>
-  When you remove a marketplace from the last scope that declares it, Claude Code also deletes its cache and uninstalls every plugin you installed from it. Without `--scope`, the command removes the declaration from every scope. To refresh a marketplace without losing its plugins, run `plugin marketplace update` instead.
-</Warning>
+> [!WARNING]
+>
+> When you remove a marketplace from the last scope that declares it, Claude Code also deletes its cache and uninstalls every plugin you installed from it. It also deletes their saved [options and secrets](/docs/en/plugins/manifest-reference#user-configuration) and [data](/docs/en/plugins/components#path-variables-and-persistent-data) where it can.
+>
+> To refresh a marketplace without losing its plugins, run `plugin marketplace update` instead.
 
 ```bash theme={null}
 claude plugin marketplace remove <name> [options]
@@ -675,6 +767,7 @@ The `<name>` is the marketplace name that `plugin marketplace list` shows, not t
 | Flag | Description |
 | :- | :- |
 | `--scope <scope>` | Remove the declaration from one settings scope: `user`, `project`, or `local`. Without it, Claude Code removes the declaration from every scope |
+| `--json` | Print whether the command succeeded, and its message, as one JSON object on the last line of stdout, in the [JSON result format](#plugin-json-result). Requires Claude Code v2.1.287 or later |
 
 Remove a marketplace from every scope:
 
@@ -682,17 +775,21 @@ Remove a marketplace from every scope:
 claude plugin marketplace remove your-marketplace
 ```
 
-Claude Code prints `Successfully removed marketplace: your-marketplace`, adding `(from project settings)` when you scoped it. If you scope to a settings file that doesn't declare the marketplace, the command fails with `Marketplace 'your-marketplace' is not declared in project settings. Omit --scope to remove it from all scopes.`
+Claude Code prints `Successfully removed marketplace: your-marketplace`. When the command uninstalls plugins, the output lists them under a line such as `Also uninstalled 2 plugins from this marketplace:`. To use one of them again, add the marketplace back and reinstall the plugin.
+
+If you scope to a settings file that doesn't declare the marketplace, the command fails with `Marketplace 'your-marketplace' is not declared in project settings. Omit --scope to remove it from all scopes.`
 
 ### plugin marketplace update
 
 Refresh one marketplace, or every marketplace, from its source to fetch new plugins and versions. A marketplace added with a branch or tag `ref` updates to the latest commit of that ref, not the repository's default branch.
 
 ```bash theme={null}
-claude plugin marketplace update [name]
+claude plugin marketplace update [name] [options]
 ```
 
-The command takes no flags beyond `--help`.
+| Flag | Description |
+| :- | :- |
+| `--json` | Print whether the command succeeded, and its message, as one JSON object on the last line of stdout, in the [JSON result format](#plugin-json-result). Without a name, the command refuses `--json` and exits `1`. Requires Claude Code v2.1.287 or later |
 
 Refresh one marketplace:
 
@@ -700,11 +797,9 @@ Refresh one marketplace:
 claude plugin marketplace update your-marketplace
 ```
 
-Claude Code prints `Successfully updated marketplace: your-marketplace`. When you omit the name, it prints a count such as `Successfully updated 2 marketplaces`. With no marketplaces added, it prints `No marketplaces configured` and exits `0`.
+Claude Code prints `Successfully updated marketplace: your-marketplace`. When you omit the name, it prints a count such as `Successfully updated 2 marketplaces`.
 
-<h2 id="plugin-in-a-session">
-  /plugin in a session
-</h2>
+## /plugin in a session
 
 Inside an interactive session, `/plugin` opens the plugin panel. Each subcommand opens the panel on a tab, runs an action there, or prints a result inline. `/plugins` and `/marketplace` are aliases for `/plugin`.
 
@@ -714,22 +809,23 @@ For which surfaces have `/plugin`, how to install without it, and what each pane
 
 A `<plugin>` is a plugin `name` or `name@marketplace`.
 
-The table below lists every session form. The shell subcommands `init`, `update`, `details`, `prune`, `eval`, and `eval init` have no session form.
+The table below lists every session form. The shell subcommands `init`, `update`, `details`, `prune`, `eval`, `eval init`, and `test` have no session form.
 
 | Command | Aliases | What it does |
 | :- | :- | :- |
 | `/plugin` | | Opens the panel on the **Discover** tab. Any unrecognized first word after `/plugin` does the same |
 | `/plugin help` | `/plugin --help`, `/plugin -h` | Shows the usage list of `/plugin` subcommands |
-| `/plugin list [--enabled\|--disabled]` | `ls` | Prints your marketplace-installed plugins inline, with version, scope, and status. A filter flag shows only that state. A plugin whose enable state hasn't been applied yet is marked `— run /reload-plugins to apply`. Requires Claude Code v2.1.163 or later |
+| `/plugin list [--enabled\|--disabled]` | `ls` | Prints your marketplace-installed plugins inline, with version, scope, and status. A filter flag shows only that state. A plugin whose enable state hasn't been applied yet is marked `— run /reload-plugins to apply` |
 | `/plugin install` | `i` | Opens the **Discover** tab |
 | `/plugin install <plugin>` | `i` | Opens the plugin's details in the **Discover** tab. With `name@marketplace`, opens them in that marketplace's list |
+| `/plugin install <source>` | `i` | Reports a [marketplace not found](/docs/en/plugins/troubleshooting#marketplace-not-found) error and installs nothing when the target is a path, URL, or `owner/repo`, even a source you've already added. To install from a source, see [Add a marketplace and install in one command](/docs/en/plugins/install#add-a-marketplace-and-install-in-one-command) |
 | `/plugin install <plugin> --marketplace <source>` | `i` | Adds the marketplace at `<source>` when you haven't added it yet, asking you to confirm first, then opens the plugin's details. See [Add a marketplace and install in one command](/docs/en/plugins/install#add-a-marketplace-and-install-in-one-command). Requires Claude Code v2.1.275 or later |
 | `/plugin manage` | | Opens the **Installed** tab |
 | `/plugin stats` | | Opens the **Stats** tab, in sessions where [`/skill-doctor`](/docs/en/skills#find-unused-skills) is available. Anywhere else it opens the panel on the **Discover** tab |
 | `/plugin enable <plugin>` | | Opens the **Installed** tab at the plugin and enables it |
 | `/plugin disable <plugin>` | | Opens the **Installed** tab at the plugin and disables it |
 | `/plugin uninstall <plugin>` | | Opens the **Installed** tab at the plugin and uninstalls it |
-| `/plugin configure <plugin>` | `config` | Opens the plugin's [`userConfig`](/docs/en/plugins/manifest-reference) dialog, or reports that the plugin declares none. Requires Claude Code v2.1.147 or later |
+| `/plugin configure <plugin>` | `config` | Opens the plugin's [`userConfig`](/docs/en/plugins/manifest-reference) dialog, or reports that the plugin declares none |
 | `/plugin validate <path>` | | Prints the same report as `claude plugin validate`, inline |
 | `/plugin tag [path] [--push] [--dry-run] [--force]` | | Creates the release tag as `claude plugin tag` does. Accepts `--push`, `--dry-run`, and `--force` or `-f`; with any other flag or an extra argument, Claude Code prints usage instead |
 | `/plugin marketplace` | `market` | Does nothing visible. Pass `add`, `list`, `update`, or `remove` |
@@ -740,9 +836,7 @@ The table below lists every session form. The shell subcommands `init`, `update`
 
 If you name a plugin that isn't installed in the current project in `/plugin enable`, `disable`, `uninstall`, or `configure`, Claude Code prints `Plugin "<plugin>" is not installed in this project` instead of acting.
 
-<h2 id="reload-plugins">
-  /reload-plugins
-</h2>
+## /reload-plugins
 
 Apply pending plugin changes to the running session without restarting it. Pending changes are plugins you installed, updated, enabled, disabled, or edited on disk since the session started.
 
@@ -787,7 +881,7 @@ Plugin authors use them to test a plugin before publishing. For the load-edit-re
 | `--plugin-dir <path>` | Load a plugin from a directory or a `.zip` archive of one. A folder of plugins loads each child folder that holds a `.claude-plugin/plugin.json`. Each flag takes one path | `claude --plugin-dir ./my-plugin --plugin-dir ./other.zip` |
 | `--plugin-url <url>` | Fetch a plugin `.zip` archive from a URL. Repeat the flag, or pass several URLs space-separated in one quoted value | `claude --plugin-url "https://example.com/a.zip https://example.com/b.zip"` |
 
-A plugin that either flag loads is a session-only plugin. `claude plugin list` shows it as `<name>@inline` with scope `session`, but only when the same flag precedes the subcommand. For example, run `claude --plugin-dir ./my-plugin plugin list`.
+A plugin that either flag loads is a session-only plugin. [`claude plugin list`](#plugin-list) shows it only when the same flag precedes the subcommand, as in `claude --plugin-dir ./my-plugin plugin list`. The plugin appears as `<name>@inline` under a heading that begins `Session-only plugins`, and `--json` reports its `scope` as `session`.
 
 When a session-only plugin shares a name with an installed plugin, Claude Code loads the session-only copy for that session and skips the installed one. The installed copy loads instead if you disabled the session-only copy with `claude plugin disable <name>@inline`, or if managed settings lock that plugin name. For the precedence, see [Plugin loading reference](/docs/en/plugins/loading).
 

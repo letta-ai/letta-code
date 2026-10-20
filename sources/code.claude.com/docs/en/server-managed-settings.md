@@ -6,11 +6,11 @@
 
 > Centrally configure Claude Code for your organization through server-delivered settings, without requiring device management infrastructure.
 
-Server-managed settings let organization Owners centrally configure Claude Code from [**Admin Settings > Claude Code > Managed settings**](https://claude.ai/admin-settings/claude-code) in the claude.ai console. Claude Code clients fetch these settings automatically when users authenticate with an eligible credential on a platform where server-managed delivery is supported. See [Platform availability](#platform-availability) for the credentials and platforms that qualify.
+Server-managed settings let organization Owners centrally configure Claude Code from [**Organization settings > Claude Code > Managed settings**](https://claude.ai/admin-settings/claude-code) in the claude.ai console. Claude Code clients fetch these settings automatically when users authenticate with an eligible credential on a platform where server-managed delivery is supported. See [Platform availability](#platform-availability) for the credentials and platforms that qualify.
 
-<Note>
-  Server-managed settings are available for [Claude for Teams](https://claude.com/pricing?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_teams#team-&-enterprise) and [Claude for Enterprise](https://anthropic.com/contact-sales?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_enterprise) customers.
-</Note>
+> [!NOTE]
+>
+> Server-managed settings are available for [Claude for Teams](https://claude.com/pricing?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_teams#team-&-enterprise) and [Claude for Enterprise](https://anthropic.com/contact-sales?utm_source=claude_code\&utm_medium=docs\&utm_content=server_settings_enterprise) customers.
 
 ## Requirements
 
@@ -33,61 +33,63 @@ If your devices are enrolled in an MDM or endpoint management solution, endpoint
 
 ## Configure server-managed settings
 
-<Steps>
-  <Step title="Open the admin console">
-    In the claude.ai console, go to [**Admin Settings > Claude Code > Managed settings**](https://claude.ai/admin-settings/claude-code).
+**1. Open the admin console**
 
-    If the link redirects you to a different Admin Settings page instead of the Claude Code page, your account doesn't have the required role. Admin and other non-Owner roles can't view or edit managed settings, so ask an Owner or Primary Owner in your organization to make the change. See [Access control](#access-control).
-  </Step>
+In the claude.ai console, go to [**Organization settings > Claude Code > Managed settings**](https://claude.ai/admin-settings/claude-code).
 
-  <Step title="Define your settings">
-    Add your configuration as JSON. All [settings available in `settings.json`](/docs/en/settings-reference#all-settings) are supported except those restricted to OS-level policy delivery; see [Current limitations](#current-limitations) for that short list. This includes [hooks](/docs/en/hooks), [environment variables](/docs/en/env-vars), and [managed-only settings](/docs/en/managed-settings#managed-only-settings) like `allowManagedPermissionRulesOnly`.
+In a Team or Enterprise organization, if the page says you don't have access, ask an [Owner or Primary Owner](#access-control) to make the change.
 
-    This example enforces a permission deny list, prevents users from bypassing permissions, and restricts permission rules to those defined in managed settings. The `Bash(curl *)` rule matches `curl` [as Claude writes it](/docs/en/permissions#bash-rule-limits), not `/usr/bin/curl` or `sh -c 'curl …'`; for network enforcement that doesn't depend on the command text, add a [`sandbox` block with `allowManagedDomainsOnly`](/docs/en/sandboxing#configure-the-sandbox-for-your-organization).
+**2. Define your settings**
 
-    ```json theme={null}
-    {
-      "permissions": {
-        "deny": [
-          "Bash(curl *)",
-          "Read(./.env)",
-          "Read(./.env.*)",
-          "Read(./secrets/**)"
-        ],
-        "disableBypassPermissionsMode": "disable"
-      },
-      "allowManagedPermissionRulesOnly": true
-    }
-    ```
+Add your configuration as JSON. All [settings available in `settings.json`](/docs/en/settings-reference#all-settings) are supported except those restricted to OS-level policy delivery; see [Current limitations](#current-limitations) for that short list. This includes [hooks](/docs/en/hooks), [environment variables](/docs/en/env-vars), and [managed-only settings](/docs/en/managed-settings#managed-only-settings) like `allowManagedPermissionRulesOnly`.
 
-    Hooks use the same format as in `settings.json`.
+This example enforces a permission deny list, prevents users from bypassing permissions, and restricts permission rules to those defined in managed settings. The `Bash(curl *)` rule matches `curl` [as Claude writes it](/docs/en/permissions#bash-rule-limits), not `/usr/bin/curl` or `sh -c 'curl …'`; for network enforcement that doesn't depend on the command text, add a [`sandbox` block with `allowManagedDomainsOnly`](/docs/en/sandboxing#configure-the-sandbox-for-your-organization).
 
-    This example runs an audit script after every file edit across the organization:
+```json theme={null}
+{
+  "permissions": {
+    "deny": [
+      "Bash(curl *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)"
+    ],
+    "disableBypassPermissionsMode": "disable"
+  },
+  "allowManagedPermissionRulesOnly": true
+}
+```
 
-    ```json theme={null}
-    {
-      "hooks": {
-        "PostToolUse": [
-          {
-            "matcher": "Edit|Write",
-            "hooks": [
-              { "type": "command", "command": "/usr/local/bin/audit-edit.sh" }
-            ]
-          }
+Hooks use the same format as in `settings.json`.
+
+This example runs an audit script after every file edit across the organization:
+
+```json theme={null}
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          { "type": "command", "command": "/usr/local/bin/audit-edit.sh" }
         ]
       }
-    }
-    ```
+    ]
+  }
+}
+```
 
-    Because hooks execute shell commands, users in interactive sessions see a [security approval dialog](#security-approval-dialogs) before Claude Code applies them.
+Because hooks execute shell commands, users in interactive sessions see a [security approval dialog](#security-approval-dialogs) before Claude Code applies them.
 
-    To configure the [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) classifier so it knows which repos, buckets, and domains your organization trusts, deliver an `autoMode` block the same way; see [Configure auto mode](/docs/en/auto-mode-config) for how the `autoMode` entries affect what the classifier blocks and important warnings about the `environment`, `allow`, `soft_deny`, and `hard_deny` fields.
-  </Step>
+To configure the [auto mode](/docs/en/permission-modes#eliminate-prompts-with-auto-mode) classifier so it knows which repos, buckets, and domains your organization trusts, deliver an `autoMode` block the same way; see [Configure auto mode](/docs/en/auto-mode-config) for how the `autoMode` entries affect what the classifier blocks and important warnings about the `environment`, `allow`, `soft_deny`, and `hard_deny` fields.
 
-  <Step title="Save and deploy">
-    Save your changes. Claude Code clients receive the updated settings on their next startup or hourly polling cycle.
-  </Step>
-</Steps>
+**3. Save and deploy**
+
+Save your changes. Claude Code clients receive the updated settings on their next startup or hourly polling cycle.
+
+The editor checks your JSON against the published JSON schema for Claude Code settings. If it finds a problem in JSON that parses, it shows a warning and relabels the save button. The label is **Update with errors** when settings are already saved, and **Add with errors** when no settings are saved yet. That button still saves, because a schema warning doesn't block the save.
+
+The schema [can lag behind the newest releases](/docs/en/settings#edit-a-settings-file), so the editor can flag a key or value that the [settings reference](/docs/en/settings-reference#all-settings) documents. Claude Code receives the keys and values you saved and runs [its own validation](#invalid-entries-in-delivered-settings) when it loads them.
 
 ### Verify settings delivery
 
@@ -131,7 +133,7 @@ Server-managed settings have the following limitations:
 
 ### Settings precedence
 
-Server-managed settings and [endpoint-managed settings](/docs/en/managed-settings#delivery-mechanisms) both occupy the highest tier in the Claude Code [settings hierarchy](/docs/en/settings#settings-precedence). No other settings level can override them, including command line arguments, apart from the [exceptions to managed settings precedence](/docs/en/settings#exceptions-to-managed-settings-precedence).
+Server-managed settings and [endpoint-managed settings](/docs/en/managed-settings#delivery-mechanisms) both occupy the highest tier in the Claude Code [settings hierarchy](/docs/en/settings#settings-precedence). A key you set here takes precedence over the same key in a user's own settings files or in a `--settings` value, apart from the [exceptions to managed settings precedence](/docs/en/settings#exceptions-to-managed-settings-precedence).
 
 Within the managed tier, Claude Code by default uses the first source that delivers at least one policy key, checking server-managed settings first and then endpoint-managed settings, apart from the [exception keys covered next](#per-key-exceptions-across-managed-sources). [How Claude Code combines managed sources](/docs/en/managed-settings#precedence-within-the-managed-tier) has the full ranking, the carve-out for the control keys, and the opt-in that applies every source.
 
@@ -143,7 +145,7 @@ If you clear your server-managed configuration in the admin console with the int
 
 ### Per-key exceptions across managed sources
 
-Three kinds of keys are exceptions to the no-merge rule:
+These keys are exceptions to the no-merge rule:
 
 * **Cross-source lock keys**: a small set of keys, such as the sandbox allowlist locks, [listed on the managed settings page](/docs/en/managed-settings#precedence-within-the-managed-tier). Claude Code honors them when any admin-controlled managed source sets them; the user-writable HKCU registry tier is excluded.
 
@@ -151,6 +153,7 @@ Three kinds of keys are exceptions to the no-merge rule:
 * **The `env` block**: apart from the telemetry unit and routing variables paired with a credential key, both covered below, it merges per key across the admin-controlled sources. For each environment variable, the highest-priority source defining it wins, and lower admin sources fill in variables the higher sources leave unset. An endpoint-managed `env` entry therefore applies whenever the server-managed configuration leaves that variable unset, or while a cached server value for it is [withheld pending server confirmation](#fetch-and-caching-behavior). Requires Claude Code v2.1.223 or later. Before v2.1.223, Claude Code applies the selected source's whole `env` block only.
   * **Telemetry unit**: the `OTEL_EXPORTER_OTLP_*` exporter keys, the `OTEL_LOG_*` content-capture toggles, `OTEL_LOGS_EXPORTER`, and the beta tracing variables `ENABLE_BETA_TRACING_DETAILED` and `BETA_TRACING_ENDPOINT` follow the highest source that sets any of them as a unit. A source that delivers the `otelHeadersHelper` credential key claims the unit too, but lands these variables only when it is the selected source: a source that isn't selected but delivers the key contributes none of them and still blocks lower sources from filling them in. Either way, an exporter endpoint from one source can never pair with credentials from another.
   * **Credential-paired routing**: a source that pairs routing variables with a selected-source-only credential key, such as `apiKeyHelper` or `otelHeadersHelper`, contributes those routing variables only when it wins the slot.
+* **`allowedProviders`**: a list set on the machine and a server-managed list combine as [its entry's Scope note](/docs/en/settings-reference#allowedproviders) states. Requires Claude Code v2.1.285 or later
 * **Gateway sign-in keys**: Claude Code never reads [`forceLoginGatewayUrl`](/docs/en/settings-reference#forcelogingatewayurl), [`gatewayInternalNetworks`](/docs/en/settings-reference#gatewayinternalnetworks), or the `"gateway"` value of [`forceLoginMethod`](/docs/en/settings-reference#forceloginmethod) from server-managed settings, so a value there neither applies nor hides one set in an MDM policy or managed settings file. The [`managedSourcesBehavior` entry](/docs/en/settings-reference#managedsourcesbehavior) says which admin source on the machine supplies them.
 
 ### Fetch and caching behavior
@@ -174,7 +177,7 @@ A client signed in through a [Claude apps gateway](#platform-availability) fetch
 * Cached settings persist through network failures. If the startup fetch fails, Claude Code warns in interactive sessions that the cached policy is in effect
 * Until a fetch succeeds, the values withheld at startup stay withheld
 
-Claude Code withholds several categories of variables in the cached `env` block until the server confirms the payload for the session. This keeps a cached proxy, certificate authority, endpoint, or credential value from redirecting, intercepting, or re-authenticating the settings fetch that confirms the payload. The hardening applies only to the server-fetched settings cache: [endpoint-managed settings](/docs/en/managed-settings#delivery-mechanisms) deployed through MDM or `managed-settings.json` are unaffected. The withholding requires Claude Code v2.1.198 or later; before v2.1.198, the whole cached `env` block applies at startup. The withheld categories include:
+Claude Code withholds several categories of variables in the cached `env` block until the server confirms the payload for the session. This keeps a cached proxy, certificate authority, endpoint, or credential value from redirecting, intercepting, or re-authenticating the settings fetch that confirms the payload. The hardening applies only to the server-fetched settings cache: [endpoint-managed settings](/docs/en/managed-settings#delivery-mechanisms) deployed through MDM or `managed-settings.json` are unaffected. The withheld categories include:
 
 * Proxy and TLS configuration, such as `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, and the mTLS client certificate variables `CLAUDE_CODE_CLIENT_CERT` and `CLAUDE_CODE_CLIENT_KEY`
 * API routing and provider selection, including `ANTHROPIC_BASE_URL`, the provider selection variables such as `CLAUDE_CODE_USE_BEDROCK` and `CLAUDE_CODE_USE_VERTEX`, and the provider endpoint URLs such as `ANTHROPIC_BEDROCK_BASE_URL`
@@ -277,10 +280,10 @@ With a saved claude.ai login:
 
 Claude Code can't always show the dialog. Each case below says which settings apply when it can't and when you next see the dialog:
 
-* **An interactive session that can't show the dialog**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. The dialog appears in the next session that can show it. Requires Claude Code v2.1.211 or later.
+* **An interactive session that can't show the dialog**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. The dialog appears in the next session that can show it.
 * **`claude install` or `claude update`**: Claude Code doesn't show the dialog during either command. The command runs with the last-approved settings, and the dialog appears in your next interactive session. If Claude Code waits for the settings fetch at startup, such as with [`forceRemoteSettingsRefresh`](#enforce-fail-closed-startup) set or on a [Claude apps gateway](/docs/en/claude-apps-gateway) deployment, it shows the dialog during the command instead, and an install run from a pipe fails; see [`Raw mode is not supported` during install](/docs/en/troubleshoot-install#raw-mode-is-not-supported-during-install). Before v2.1.246, Claude Code tried to show the dialog during these commands too.
 * **An error closes the dialog before you answer**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. It shows the dialog again in the next session that can show it.
-* **A non-interactive run**, such as `claude -p` or an Agent SDK session: Claude Code can't show the dialog, so when the delivered settings would require approval, it applies them for that run only. It doesn't record them as approved or write them to the [local cache](#fetch-and-caching-behavior), and the next interactive session shows the dialog. Until a user approves in an interactive session, each non-interactive run fetches the settings again at startup. Before v2.1.207, a non-interactive run saved the settings as approved, so later interactive sessions never showed the dialog for them.
+* **A non-interactive run**, such as `claude -p`, an Agent SDK session, or a session in the VS Code extension's chat panel or the desktop app's Code tab: Claude Code can't show the dialog, so when the delivered settings would require approval, it applies them for that run only. It doesn't record them as approved or write them to the [local cache](#fetch-and-caching-behavior), and the next interactive session shows the dialog. Until a user approves in an interactive session, each non-interactive run fetches the settings again at startup. Before v2.1.207, a non-interactive run saved the settings as approved, so later interactive sessions never showed the dialog for them.
 
 #### Environment variables and the approval dialog
 
@@ -313,6 +316,11 @@ Server-managed settings require a direct connection to `api.anthropic.com`. Deli
 
 Neither keys returned by an [`apiKeyHelper`](/docs/en/settings-reference#apikeyhelper) script nor [Workload Identity Federation](https://platform.claude.com/docs/en/manage-claude/workload-identity-federation) credentials trigger the settings fetch.
 
+A session receives the managed settings of the organization that owns the credential it authenticates with. An API key from the [Claude Console](https://platform.claude.com) belongs to the Console organization it was created in, which is a separate organization from your claude.ai Team or Enterprise organization. Settings you configure in claude.ai Admin Settings therefore don't reach a session that authenticates with that key, such as a CI job that uses your company's Console API key. To apply them to that job, use one of these options. The OAuth token option doesn't apply to a job that runs with [`--bare`](/docs/en/headless#start-faster-with-bare-mode), because bare mode doesn't read `CLAUDE_CODE_OAUTH_TOKEN`.
+
+* **OAuth token**: generate a token with [`claude setup-token`](/docs/en/authentication#generate-a-long-lived-token), authorize it for your Team or Enterprise organization, and set it as `CLAUDE_CODE_OAUTH_TOKEN` in the job's environment. Remove any credential that [takes precedence](/docs/en/authentication#authentication-precedence) over the token from that environment, such as `ANTHROPIC_API_KEY`.
+* **Endpoint-managed settings**: deploy a [managed settings file](/docs/en/managed-settings#delivery-mechanisms) to the machine that runs the job.
+
 In a [Cowork](https://claude.com/docs/cowork/overview) session in the Claude Desktop app, Claude Code doesn't fetch server-managed settings from the claude.ai admin console, even when the user signs in with a Team or Enterprise account. [Where and when a policy applies](/docs/en/managed-settings#where-and-when-a-policy-applies) covers which policy reaches Cowork sessions on the user's machine and remote Cowork sessions. claude.ai still applies your [`strictKnownMarketplaces`](/docs/en/settings-reference#strictknownmarketplaces) and [`blockedMarketplaces`](/docs/en/settings-reference#blockedmarketplaces) lists itself when a Cowork user adds a marketplace from a git repository on claude.ai or from **Customize** in the Cowork tab. [How restrictions work](/docs/en/plugins/org#restrict-what-users-can-install) describes that check.
 
 If you export a `CLAUDE_CODE_USE_*` provider variable or a non-default `ANTHROPIC_BASE_URL` in your shell, Claude Code skips the settings fetch for your sessions. [`claude doctor` and `/status` report the skipped fetch and its cause](#verify-settings-delivery).
@@ -340,7 +348,7 @@ Server-managed settings provide centralized policy enforcement, but they operate
 | User runs a modified Claude Code binary | A user who can run a modified client can bypass any client-side control |
 | User runs an older Claude Code version | Versions that predate server-managed settings don't fetch or apply them |
 | API is unavailable | Cached settings apply if available, except for the [values Claude Code withholds](#fetch-and-caching-behavior) until a fetch succeeds. Without a cache, Claude Code enforces no server-managed settings until the next successful fetch and still applies any [endpoint-managed settings](/docs/en/managed-settings#delivery-mechanisms) on the device. With `forceRemoteSettingsRefresh: true`, the CLI exits instead of continuing, except for [`claude auth` subcommands](#enforce-fail-closed-startup). Clients signed in through a [Claude apps gateway](#platform-availability) exit at startup without that setting, with the same `claude auth` exemption |
-| User authenticates with a different organization | Settings are not delivered for accounts outside the managed organization |
+| User authenticates with a different organization | Settings are not delivered for accounts outside the managed organization, including a session that authenticates with a [Console API key](#platform-availability) |
 | User configures a [third-party model provider](#platform-availability) | Server-managed settings are bypassed. This includes setting `CLAUDE_CODE_USE_BEDROCK`, `CLAUDE_CODE_USE_MANTLE`, `CLAUDE_CODE_USE_VERTEX`, `CLAUDE_CODE_USE_FOUNDRY`, `CLAUDE_CODE_USE_ANTHROPIC_AWS`, or a non-default `ANTHROPIC_BASE_URL` |
 | Network traffic is intercepted or redirected | Disabled TLS validation or intercepted traffic can alter the settings the client receives |
 

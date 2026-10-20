@@ -16,58 +16,56 @@ The setting sources option ([`setting_sources`](/docs/en/agent-sdk/python#claude
 
 This example loads both user-level and project-level settings by setting `settingSources` to `["user", "project"]`:
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, ResultMessage
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, ResultMessage
+import asyncio
 
 
-  async def main():
-      async for message in query(
-          prompt="Help me refactor the auth module",
-          options=ClaudeAgentOptions(
-              # "user" loads from ~/.claude/, "project" loads from ./.claude/ in cwd.
-              # Together they give the agent access to CLAUDE.md, skills, hooks, and
-              # permissions from both locations.
-              setting_sources=["user", "project"],
-              allowed_tools=["Read", "Edit", "Bash"],
-          ),
-      ):
-          if isinstance(message, AssistantMessage):
-              for block in message.content:
-                  if hasattr(block, "text"):
-                      print(block.text)
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(f"\nResult: {message.result}")
+async def main():
+    async for message in query(
+        prompt="Help me refactor the auth module",
+        options=ClaudeAgentOptions(
+            # "user" loads from ~/.claude/, "project" loads from ./.claude/ in cwd.
+            # Together they give the agent access to CLAUDE.md, skills, hooks, and
+            # permissions from both locations.
+            setting_sources=["user", "project"],
+            allowed_tools=["Read", "Edit", "Bash"],
+        ),
+    ):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if hasattr(block, "text"):
+                    print(block.text)
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(f"\nResult: {message.result}")
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  for await (const message of query({
-    prompt: "Help me refactor the auth module",
-    options: {
-      // "user" loads from ~/.claude/, "project" loads from ./.claude/ in cwd.
-      // Together they give the agent access to CLAUDE.md, skills, hooks, and
-      // permissions from both locations.
-      settingSources: ["user", "project"],
-      allowedTools: ["Read", "Edit", "Bash"]
-    }
-  })) {
-    if (message.type === "assistant") {
-      for (const block of message.message.content) {
-        if (block.type === "text") console.log(block.text);
-      }
-    }
-    if (message.type === "result" && message.subtype === "success") {
-      console.log(`\nResult: ${message.result}`);
+for await (const message of query({
+  prompt: "Help me refactor the auth module",
+  options: {
+    // "user" loads from ~/.claude/, "project" loads from ./.claude/ in cwd.
+    // Together they give the agent access to CLAUDE.md, skills, hooks, and
+    // permissions from both locations.
+    settingSources: ["user", "project"],
+    allowedTools: ["Read", "Edit", "Bash"]
+  }
+})) {
+  if (message.type === "assistant") {
+    for (const block of message.message.content) {
+      if (block.type === "text") console.log(block.text);
     }
   }
-  ```
-</CodeGroup>
+  if (message.type === "result" && message.subtype === "success") {
+    console.log(`\nResult: ${message.result}`);
+  }
+}
+```
 
 When this runs, the assistant's response prints to stdout, followed by a final result line once the run completes.
 
@@ -95,9 +93,9 @@ The `cwd` option determines where the SDK looks for project-level inputs. Projec
 | [claude.ai MCP connectors](/docs/en/mcp#use-mcp-servers-from-claude-ai) | Loaded when the session authenticates with your claude.ai login. Not loaded when `CLAUDE_CODE_OAUTH_TOKEN` holds a token from [`claude setup-token`](/docs/en/authentication#generate-a-long-lived-token), which can only make model requests. Passing `mcpServers: {}` does not suppress the connectors | Set `strictMcpConfig: true`, [`disableClaudeAiConnectors: true`](/docs/en/mcp#disable-claude-ai-connectors) in settings, or `ENABLE_CLAUDEAI_MCP_SERVERS=false` in `env` |
 | [`sandbox.credentials`](/docs/en/sandboxing#protect-credentials) `deny` entries and file `mask` entries in `~/.claude/settings.json` | When the [command sandbox](/docs/en/sandboxing) runs, Claude Code applies the `deny` entries and keeps the `credentials.files` `mask` entries as restrictions even when `settingSources` excludes user settings. Claude Code uses these entries only to narrow what sandboxed commands can access | Remove the entries from `~/.claude/settings.json` |
 
-<Warning>
-  Do not rely on default `query()` options for multi-tenant isolation. Because the inputs above are read regardless of `settingSources`, an SDK process can pick up host-level configuration and per-directory memory. For multi-tenant deployments, run each tenant in its own filesystem and set `settingSources: []` plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in `env`. [Server-managed settings](/docs/en/server-managed-settings) are fetched when the process authenticates with an organization credential; filesystem isolation does not remove them. See [Secure deployment](/docs/en/agent-sdk/secure-deployment).
-</Warning>
+> [!WARNING]
+>
+> Do not rely on default `query()` options for multi-tenant isolation. Because the inputs above are read regardless of `settingSources`, an SDK process can pick up host-level configuration and per-directory memory. For multi-tenant deployments, run each tenant in its own filesystem and set `settingSources: []` plus `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` in `env`. [Server-managed settings](/docs/en/server-managed-settings) are fetched when the process authenticates with an organization credential; filesystem isolation does not remove them. See [Secure deployment](/docs/en/agent-sdk/secure-deployment).
 
 ## Project instructions (CLAUDE.md and rules)
 
@@ -110,16 +108,16 @@ The `cwd` option determines where the SDK looks for project-level inputs. Projec
 | Project (root) | `<cwd>/CLAUDE.md` or `<cwd>/.claude/CLAUDE.md` | `settingSources` includes `"project"` |
 | Project rules | `<cwd>/.claude/rules/*.md` and `.claude/rules/*.md` in every parent directory | `settingSources` includes `"project"` |
 | Project (parent dirs) | `CLAUDE.md` files in directories above `cwd` | `settingSources` includes `"project"`, loaded at session start |
-| Project (child dirs) | `CLAUDE.md` files in subdirectories of `cwd` | `settingSources` includes `"project"`, loaded on demand when the agent reads a file in that subtree |
+| Project (child dirs) | `CLAUDE.md` files in subdirectories of `cwd` | `settingSources` includes `"project"`, loaded [on demand](/docs/en/memory#how-claude-md-files-load) |
 | Local | `<cwd>/CLAUDE.local.md` and `CLAUDE.local.md` in every parent directory | `settingSources` includes `"local"` |
 | User | `~/.claude/CLAUDE.md` | `settingSources` includes `"user"` |
 | User rules | `~/.claude/rules/*.md` | `settingSources` includes `"user"` |
 
 All levels are additive: if both project and user CLAUDE.md files exist, the agent sees both. There is no hard precedence rule between levels; if instructions conflict, the outcome depends on how Claude interprets them. Write non-conflicting rules, or state precedence explicitly in the more specific file ("These project instructions override any conflicting user-level defaults").
 
-<Tip>
-  You can also inject context directly via `systemPrompt` without using CLAUDE.md files. See [Modify system prompts](/docs/en/agent-sdk/modifying-system-prompts). Use CLAUDE.md when you want the same context shared between interactive Claude Code sessions and your SDK agents.
-</Tip>
+> [!TIP]
+>
+> You can also inject context directly via `systemPrompt` without using CLAUDE.md files. See [Modify system prompts](/docs/en/agent-sdk/modifying-system-prompts). Use CLAUDE.md when you want the same context shared between interactive Claude Code sessions and your SDK agents.
 
 For how to structure and organize CLAUDE.md content, see [Manage Claude's memory](/docs/en/memory).
 
@@ -129,53 +127,51 @@ Skills are markdown files that give your agent specialized knowledge and invocab
 
 Skills are discovered from the filesystem through `settingSources`. When the `skills` option on `query()` is omitted, discovered user and project skills are enabled and the Skill tool is available, matching CLI behavior. To control which skills are enabled, pass `skills` as `"all"`, a list of skill names, or `[]` to disable all. When `skills` is set, the SDK adds the Skill tool to `allowedTools` automatically. If you also pass an explicit `tools` list, include `"Skill"` in that list so Claude can invoke skills.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions, ResultMessage
+import asyncio
 
 
-  # Skills in .claude/skills/ are discovered automatically
-  # when settingSources includes "project"
-  async def main():
-      async for message in query(
-          prompt="Review this PR using our code review checklist",
-          options=ClaudeAgentOptions(
-              setting_sources=["user", "project"],
-              skills="all",
-              allowed_tools=["Read", "Grep", "Glob"],
-          ),
-      ):
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(message.result)
+# Skills in .claude/skills/ are discovered automatically
+# when settingSources includes "project"
+async def main():
+    async for message in query(
+        prompt="Review this PR using our code review checklist",
+        options=ClaudeAgentOptions(
+            setting_sources=["user", "project"],
+            skills="all",
+            allowed_tools=["Read", "Grep", "Glob"],
+        ),
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
-  // Skills in .claude/skills/ are discovered automatically
-  // when settingSources includes "project"
-  for await (const message of query({
-    prompt: "Review this PR using our code review checklist",
-    options: {
-      settingSources: ["user", "project"],
-      skills: "all",
-      allowedTools: ["Read", "Grep", "Glob"]
-    }
-  })) {
-    if (message.type === "result" && message.subtype === "success") {
-      console.log(message.result);
-    }
+// Skills in .claude/skills/ are discovered automatically
+// when settingSources includes "project"
+for await (const message of query({
+  prompt: "Review this PR using our code review checklist",
+  options: {
+    settingSources: ["user", "project"],
+    skills: "all",
+    allowedTools: ["Read", "Grep", "Glob"]
   }
-  ```
-</CodeGroup>
+})) {
+  if (message.type === "result" && message.subtype === "success") {
+    console.log(message.result);
+  }
+}
+```
 
-<Note>
-  Skills must be created as filesystem artifacts (`.claude/skills/<name>/SKILL.md`). The SDK does not have a programmatic API for registering skills. See [Agent Skills in the SDK](/docs/en/agent-sdk/skills) for full details.
-</Note>
+> [!NOTE]
+>
+> Skills must be created as filesystem artifacts (`.claude/skills/<name>/SKILL.md`). The SDK does not have a programmatic API for registering skills. See [Agent Skills in the SDK](/docs/en/agent-sdk/skills) for full details.
 
 ## Hooks
 
@@ -186,88 +182,86 @@ The SDK supports two ways to define hooks, and they run side by side:
 
 Hook callbacks receive the tool input and return a decision dict. Returning `{}` means allow the tool to proceed. To block execution, return a `hookSpecificOutput` object with `permissionDecision: "deny"` and a `permissionDecisionReason`. The reason is sent to Claude as the tool result. See the [hooks guide](/docs/en/agent-sdk/hooks) for the full callback signature and return types.
 
-<CodeGroup>
-  ```python Python theme={null}
-  from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher, ResultMessage
-  import asyncio
+```python Python theme={null}
+from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher, ResultMessage
+import asyncio
 
 
-  # PreToolUse hook callback. Positional args:
-  #   input_data: HookInput dict with tool_name, tool_input, hook_event_name
-  #   tool_use_id: str | None, the ID of the tool call being intercepted
-  #   context: HookContext, reserved for future abort-signal support
-  async def audit_bash(input_data, tool_use_id, context):
-      command = input_data.get("tool_input", {}).get("command", "")
-      if "rm -rf" in command:
-          return {
-              "hookSpecificOutput": {
-                  "hookEventName": "PreToolUse",
-                  "permissionDecision": "deny",
-                  "permissionDecisionReason": "Destructive command blocked",
-              }
-          }
-      return {}  # Empty dict: allow the tool to proceed
+# PreToolUse hook callback. Positional args:
+#   input_data: HookInput dict with tool_name, tool_input, hook_event_name
+#   tool_use_id: str | None, the ID of the tool call being intercepted
+#   context: HookContext, reserved for future abort-signal support
+async def audit_bash(input_data, tool_use_id, context):
+    command = input_data.get("tool_input", {}).get("command", "")
+    if "rm -rf" in command:
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "Destructive command blocked",
+            }
+        }
+    return {}  # Empty dict: allow the tool to proceed
 
 
-  # Filesystem hooks from .claude/settings.json run automatically
-  # when settingSources loads them. You can also add programmatic hooks:
-  async def main():
-      async for message in query(
-          prompt="Refactor the auth module",
-          options=ClaudeAgentOptions(
-              setting_sources=["project"],  # Loads hooks from .claude/settings.json
-              hooks={
-                  "PreToolUse": [
-                      HookMatcher(matcher="Bash", hooks=[audit_bash]),
-                  ]
-              },
-          ),
-      ):
-          if isinstance(message, ResultMessage) and message.subtype == "success":
-              print(message.result)
+# Filesystem hooks from .claude/settings.json run automatically
+# when settingSources loads them. You can also add programmatic hooks:
+async def main():
+    async for message in query(
+        prompt="Refactor the auth module",
+        options=ClaudeAgentOptions(
+            setting_sources=["project"],  # Loads hooks from .claude/settings.json
+            hooks={
+                "PreToolUse": [
+                    HookMatcher(matcher="Bash", hooks=[audit_bash]),
+                ]
+            },
+        ),
+    ):
+        if isinstance(message, ResultMessage) and message.subtype == "success":
+            print(message.result)
 
 
-  asyncio.run(main())
-  ```
+asyncio.run(main())
+```
 
-  ```typescript TypeScript theme={null}
-  import { query, type HookInput, type HookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
+```typescript TypeScript theme={null}
+import { query, type HookInput, type HookJSONOutput } from "@anthropic-ai/claude-agent-sdk";
 
-  // PreToolUse hook callback. HookInput is a discriminated union on
-  // hook_event_name, so narrowing on it gives TypeScript the right
-  // tool_input shape for this event.
-  const auditBash = async (input: HookInput): Promise<HookJSONOutput> => {
-    if (input.hook_event_name !== "PreToolUse") return {};
-    const toolInput = input.tool_input as { command?: string };
-    if (toolInput.command?.includes("rm -rf")) {
-      return {
-        hookSpecificOutput: {
-          hookEventName: "PreToolUse",
-          permissionDecision: "deny",
-          permissionDecisionReason: "Destructive command blocked",
-        },
-      };
-    }
-    return {}; // Empty object: allow the tool to proceed
-  };
+// PreToolUse hook callback. HookInput is a discriminated union on
+// hook_event_name, so narrowing on it gives TypeScript the right
+// tool_input shape for this event.
+const auditBash = async (input: HookInput): Promise<HookJSONOutput> => {
+  if (input.hook_event_name !== "PreToolUse") return {};
+  const toolInput = input.tool_input as { command?: string };
+  if (toolInput.command?.includes("rm -rf")) {
+    return {
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "Destructive command blocked",
+      },
+    };
+  }
+  return {}; // Empty object: allow the tool to proceed
+};
 
-  // Filesystem hooks from .claude/settings.json run automatically
-  // when settingSources loads them. You can also add programmatic hooks:
-  for await (const message of query({
-    prompt: "Refactor the auth module",
-    options: {
-      settingSources: ["project"], // Loads hooks from .claude/settings.json
-      hooks: {
-        PreToolUse: [{ matcher: "Bash", hooks: [auditBash] }]
-      }
-    }
-  })) {
-    if (message.type === "result" && message.subtype === "success") {
-      console.log(message.result);
+// Filesystem hooks from .claude/settings.json run automatically
+// when settingSources loads them. You can also add programmatic hooks:
+for await (const message of query({
+  prompt: "Refactor the auth module",
+  options: {
+    settingSources: ["project"], // Loads hooks from .claude/settings.json
+    hooks: {
+      PreToolUse: [{ matcher: "Bash", hooks: [auditBash] }]
     }
   }
-  ```
-</CodeGroup>
+})) {
+  if (message.type === "result" && message.subtype === "success") {
+    console.log(message.result);
+  }
+}
+```
 
 ### When to use which hook type
 
@@ -276,9 +270,9 @@ Hook callbacks receive the tool input and return a decision dict. Returning `{}`
 | **Filesystem** (`settings.json`) | Sharing hooks between CLI and SDK sessions. Supports `"command"` (shell scripts), `"http"` (POST to an endpoint), `"mcp_tool"` (call a connected MCP server's tool), `"prompt"` (LLM evaluates a prompt), and `"agent"` (spawns a verifier agent). These fire in the main agent and any subagents it spawns. |
 | **Programmatic** (callbacks in `query()`) | Application-specific logic, structured decisions, and in-process integration. These also fire inside subagents. The hook input, the callback's first argument, carries `agent_id` and `agent_type` fields that identify which agent fired the hook. |
 
-<Note>
-  The TypeScript SDK supports additional hook events beyond Python, including `SessionStart`, `SessionEnd`, `TeammateIdle`, and `TaskCompleted`. See the [hooks guide](/docs/en/agent-sdk/hooks) for the full event compatibility table.
-</Note>
+> [!NOTE]
+>
+> The TypeScript SDK supports additional hook events beyond Python, including `SessionStart`, `SessionEnd`, `TeammateIdle`, and `TaskCompleted`. See the [hooks guide](/docs/en/agent-sdk/hooks) for the full event compatibility table.
 
 For full details on programmatic hooks, see [Control execution with hooks](/docs/en/agent-sdk/hooks). For filesystem hook syntax, see [Hooks](/docs/en/hooks).
 
