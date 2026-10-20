@@ -725,8 +725,24 @@ BYOK row, while retaining the organization-specific handle for selection. Do
 not add provider-name rewrites to make hosted rows from `GET /v1/models` act
 like catalog rows.
 
+**Handles map to presets, not capabilities.** Several catalog presets can
+share one handle while differing in `context_window`. `resolveCatalogModel`
+returns the first entry matching the handle, so a bare handle (e.g.
+`anthropic/claude-opus-5-5`) may resolve to a default preset capped far below
+the model's native capability (e.g. `opus-5.5` at 200k vs `opus-5.5-1m` at
+~950k). To use the full window, select the explicit wide-context preset id,
+not the bare handle. The raw model capability from `GET /v1/models` does not
+change the preset an agent gets.
+
+**Workers inherit the parent's context window.** Agent-free workflow workers
+created without their own model get the parent agent's `context_window_limit`,
+snapshotted at spawn and passed as `contextWindowLimit`. To give workers a
+larger window, raise the parent (orchestrating) agent's preset first, or pass
+an explicit wider model via `opts.model`.
+
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
-`src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
+`src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`,
+`src/tools/workflow/sdk-spawner.ts`, `src/tools/impl/workflow.ts`.
 
 **Test fixture pattern:** The `models` array is shared mutable state across the
 test suite. Use `setupRuntimeModelCatalogFixture()` (bundles setup + cleanup) from
