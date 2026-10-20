@@ -12,6 +12,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
 import { createStartupBackend } from "@/headless-startup-backend";
@@ -3673,6 +3674,41 @@ async function runBidirectionalMode(
     });
   }
 
+  /** Sentinel: an external-tool wait unwound because the turn was cancelled. */
+  const EXTERNAL_TOOL_WAIT_ABORTED = Symbol("externalToolWaitAborted");
+  type ExternalToolWaitOutcome =
+    | string
+    | null
+    | typeof EXTERNAL_TOOL_WAIT_ABORTED;
+
+  // Wait for the next stdin line, but settle early when the turn's abort
+  // signal fires. On abort the pending line resolver is consumed so later
+  // stdin lines land in lineQueue for the main loop instead of resolving an
+  // orphaned waiter (which would silently drop them).
+  async function getNextLineOrAbort(
+    signal: AbortSignal | undefined,
+  ): Promise<ExternalToolWaitOutcome> {
+    if (signal?.aborted) return EXTERNAL_TOOL_WAIT_ABORTED;
+    if (lineQueue.length > 0) return lineQueue.shift() ?? null;
+    if (!signal) return getNextLine();
+    return new Promise<ExternalToolWaitOutcome>((resolve) => {
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      const onAbort = () => {
+        cleanup();
+        // Consume the pending resolver so lines arriving after this wait
+        // unwinds queue for the main loop rather than resolving an orphan.
+        if (lineResolver === settle) lineResolver = null;
+        resolve(EXTERNAL_TOOL_WAIT_ABORTED);
+      };
+      const settle = (line: string | null) => {
+        cleanup();
+        resolve(line);
+      };
+      signal.addEventListener("abort", onAbort);
+      lineResolver = settle;
+    });
+  }
+
   // Helper to send permission request and wait for response
   // Uses Claude SDK's control_request/control_response format for compatibility
   async function requestPermission(
@@ -3910,48 +3946,91 @@ async function runBidirectionalMode(
         registerExternalTools(tools);
 
         // Set up the external tool executor to send requests back to SDK
-        setExternalToolExecutor(async (toolCallId, toolName, input) => {
-          // Send execute_external_tool request to SDK
-          const execRequest: ControlRequest = {
-            type: "control_request",
-            request_id: `ext-${toolCallId}`,
-            request: {
-              subtype: "execute_external_tool",
-              tool_call_id: toolCallId,
-              tool_name: toolName,
-              input,
-            } as unknown as CanUseToolControlRequest, // Type cast for compatibility
-          };
-          writeWireMessage(execRequest);
-
-          // Wait for external_tool_result response
-          while (true) {
-            const line = await getNextLine();
-            if (line === null) {
+        setExternalToolExecutor(
+          async (toolCallId, toolName, input, context) => {
+            const signal = context?.signal;
+            // A cancelled turn must not start new remote work.
+            if (signal?.aborted) {
               return {
-                content: [{ type: "text", text: "stdin closed" }],
+                content: [{ type: "text", text: INTERRUPTED_BY_USER }],
                 isError: true,
               };
             }
-            if (!line.trim()) continue;
+            // Send execute_external_tool request to SDK
+            const execRequest: ControlRequest = {
+              type: "control_request",
+              request_id: `ext-${toolCallId}`,
+              request: {
+                subtype: "execute_external_tool",
+                tool_call_id: toolCallId,
+                tool_name: toolName,
+                input,
+              } as unknown as CanUseToolControlRequest, // Type cast for compatibility
+            };
+            writeWireMessage(execRequest);
 
+            // Wait for external_tool_result response. Lines that arrive while
+            // the remote tool runs are deferred back to lineQueue (permission-
+            // wait parity) so queued user input and control requests are not
+            // dropped; stale external_tool_result responses for other calls
+            // stay dropped. The turn's abort signal unwinds the wait so a
+            // cancel does not block on the remote tool.
+            const deferredLines: string[] = [];
             try {
-              const msg = JSON.parse(line);
-              if (
-                msg.type === "control_response" &&
-                msg.response?.subtype === "external_tool_result" &&
-                msg.response?.tool_call_id === toolCallId
-              ) {
-                return {
-                  content: msg.response.content ?? [{ type: "text", text: "" }],
-                  isError: msg.response.is_error ?? false,
-                };
+              while (true) {
+                const line = await getNextLineOrAbort(signal);
+                if (line === EXTERNAL_TOOL_WAIT_ABORTED) {
+                  return {
+                    content: [{ type: "text", text: INTERRUPTED_BY_USER }],
+                    isError: true,
+                  };
+                }
+                if (line === null) {
+                  // The interrupt fast path wakes a blocked waiter with null; an
+                  // aborted controller distinguishes a user interrupt from stdin
+                  // actually closing.
+                  return {
+                    content: [
+                      {
+                        type: "text",
+                        text: currentAbortController?.signal.aborted
+                          ? INTERRUPTED_BY_USER
+                          : "stdin closed",
+                      },
+                    ],
+                    isError: true,
+                  };
+                }
+                if (!line.trim()) continue;
+
+                try {
+                  const msg = JSON.parse(line);
+                  if (
+                    msg.type === "control_response" &&
+                    msg.response?.subtype === "external_tool_result"
+                  ) {
+                    if (msg.response.tool_call_id === toolCallId) {
+                      return {
+                        content: msg.response.content ?? [
+                          { type: "text", text: "" },
+                        ],
+                        isError: msg.response.is_error ?? false,
+                      };
+                    }
+                    // Stale result for another call: keep dropping it.
+                    continue;
+                  }
+                } catch {
+                  // Unparseable lines are deferred; the main loop surfaces the
+                  // parse error just as it would have without the tool call.
+                }
+                deferredLines.push(line);
               }
-            } catch {
-              // Ignore parse errors, keep waiting
+            } finally {
+              if (deferredLines.length > 0) lineQueue.unshift(...deferredLines);
             }
-          }
-        });
+          },
+        );
 
         const registerResponse: ControlResponse = {
           type: "control_response",
@@ -4132,9 +4211,10 @@ async function runBidirectionalMode(
         break;
       }
 
-      // Enqueue consumed items for lifecycle tracking here (not at
-      // arrival): the external-tool wait loop consumes non-matching lines
-      // via getNextLine() without deferring them back to lineQueue.
+      // Enqueue consumed items into msgQueueRuntime for lifecycle tracking.
+      // Done here (not at arrival): the external-tool wait loop defers
+      // non-matching lines back to lineQueue, so items are consumed exactly
+      // once, here, when the coalescing loop yields them.
       for (const input of queuedInputs) {
         enqueueForTracking(input);
       }

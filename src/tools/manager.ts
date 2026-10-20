@@ -670,6 +670,7 @@ export async function executeExternalTool(
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
   toolDefinition?: ExternalToolDefinition,
+  signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -687,7 +688,7 @@ export async function executeExternalTool(
       toolCallId,
       toolName,
       input,
-      tool ? { tool } : undefined,
+      tool ? { tool, signal } : undefined,
     );
     success = !result.isError;
     return {
@@ -2134,11 +2135,13 @@ async function executeToolInner(
           eventArgs as Record<string, unknown>,
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
+          options?.signal,
         ),
         listenerExternalToolBackgroundOptions(
           externalTool,
           modEvents,
           executionScope,
+          options?.signal,
         ),
       ),
     );

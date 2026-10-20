@@ -87,6 +87,11 @@
       "reason": "Imports the real media module while Slack adapter tests replace it."
     },
     {
+      "path": "src/channels/message-channel-gateway-routing.test.ts",
+      "timeoutMs": 15000,
+      "reason": "Swaps the process-global backend via __testSetBackend(new FakeHeadlessBackend()) without restoring it; the fake backend's environmentRouting:false then leaks into every later suite in the same bun process (broke task-tool-assets 'keeps computer for the Cloud server' when test-selection changes co-located them in one shard)."
+    },
+    {
       "path": "src/cli/subcommands/teleport.test.ts",
       "timeoutMs": 15000,
       "reason": "Reads process-global channel route state that other shared-batch suites mutate."
