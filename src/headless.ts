@@ -210,10 +210,8 @@ import {
   reportAllMilestones,
 } from "./utils/timing";
 
-// Maximum number of times to retry a turn when the backend
-// reports an `llm_api_error` stop reason. This helps smooth
-// over transient LLM/backend issues without requiring the
-// caller to manually resubmit the prompt.
+// Max retries for a turn whose backend stop reason is `llm_api_error`:
+// smooths transient LLM/backend issues without caller resubmission.
 const LLM_API_ERROR_MAX_RETRIES = 3;
 
 // Retry config for empty response errors (Opus 4.6 SADs)
@@ -831,9 +829,9 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs;
   const statelessFlag = values.stateless;
   const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  // Fresh subagents are stateless by role. --stateless extends only the
-  // MemFS-less session behavior to an existing --agent/--conversation launch;
-  // it does not change that agent's model, prompt, tools, or sampling config.
+  // Fresh subagents are stateless by role; --stateless only extends that to
+  // an existing --agent/--conversation launch — model, prompt, tools, and
+  // sampling config are unchanged.
   const memfsPolicy = resolveHeadlessMemfsPolicy({
     statelessRequested: Boolean(statelessFlag),
     isSubagentRole,
@@ -1515,13 +1513,12 @@ export async function handleHeadlessCommand(
       }
     }
   } else if (forceNewConversation) {
-    // --new flag: create a new conversation (for concurrent sessions).
-    // When --from-agent is set (agent-to-agent messaging), mark the new
-    // conversation as hidden so it doesn't clutter the target agent's
-    // default conversation list in the ADE. The `hidden` field is still
-    // missing from @letta-ai/letta-client@1.10.1 types, but the core
-    // endpoint accepts it and the SDK's create impl forwards unknown
-    // body fields unchanged — remove the cast once the SDK is bumped.
+    // --new creates a conversation for concurrent sessions. With
+    // --from-agent (agent-to-agent messaging), mark it hidden so it
+    // doesn't clutter the target agent's conversation list. `hidden` is
+    // missing from @letta-ai/letta-client@1.10.1 types; the core endpoint
+    // accepts it and the SDK forwards unknown body fields — drop the cast
+    // once the SDK is bumped.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
       ...conversationModel,
@@ -1538,9 +1535,9 @@ export async function handleHeadlessCommand(
     conversationId = "default";
     conversationOpenReason = "startup";
   } else {
-    // Default for headless: always create a new conversation to avoid
-    // 409 "conversation busy" races (e.g., parent agent calling letta -p).
-    // Use --conv default to explicitly target the agent's primary conversation.
+    // Headless default: new conversation, avoiding 409 "conversation busy"
+    // races (e.g., a parent agent calling letta -p). Use --conv default to
+    // target the agent's primary conversation explicitly.
     const conversation = await startupBackend.createConversation({
       agent_id: agent.id,
       ...conversationModel,
@@ -1860,9 +1857,9 @@ export async function handleHeadlessCommand(
     try {
       await resolveAllPendingApprovals("queue_for_next_turn");
     } catch (approvalError) {
-      // Don't crash on pre-loop approval resolution (e.g., 409 from server-side
-      // sleeptime run holding the conversation lock). The main loop's own
-      // approval-recovery and conversation-busy retry logic will handle it.
+      // Don't crash on pre-loop approval resolution (e.g., 409 from a
+      // server-side sleeptime run holding the lock): the main loop's own
+      // approval-recovery and busy-retry logic handles it.
       if (outputFormat === "stream-json") {
         const errorMsg: ErrorMessage = {
           type: "error",
@@ -2176,10 +2173,9 @@ export async function handleHeadlessCommand(
         (item) => item.type === "approval",
       );
 
-      // Check max turns limit before starting a new user turn.
-      // Do NOT enforce before approval continuations: otherwise we can exit
-      // with max_steps while the backend is still waiting for the approval
-      // response, leaving the run stuck in requires_approval.
+      // Check max turns before a new user turn — but not before approval
+      // continuations, or we can exit with max_steps while the backend is
+      // still waiting on the approval response (stuck requires_approval).
       if (!hasApprovalContinuation) {
         await checkMaxTurns();
       }
@@ -2259,8 +2255,7 @@ export async function handleHeadlessCommand(
         );
 
         // Check for pending approval blocking new messages - resolve and retry.
-        // This is distinct from "conversation busy" and needs approval resolution,
-        // not just a timed delay.
+        // Distinct from "conversation busy": needs approval resolution, not delay.
         if (preStreamAction === "resolve_approval_pending") {
           if (outputFormat === "stream-json") {
             const recoveryMsg: RecoveryMessage = {
@@ -2282,10 +2277,9 @@ export async function handleHeadlessCommand(
           continue;
         }
 
-        // Check for 409 "conversation busy" - resume via conversation stream endpoint.
-        // Server resolves: (1) otid lookup, (2) active run fallback.
-        // OTID lookup provides server-side request ownership validation.
-        // Falls back to exponential backoff retry if the endpoint fails.
+        // 409 "conversation busy": resume via the conversation stream
+        // endpoint. Server resolves otid lookup then active-run fallback;
+        // falls back to exponential backoff retry if the endpoint fails.
         if (preStreamAction === "retry_conversation_busy") {
           const messageOtid = currentInput
             .map((item) => (item as Record<string, unknown>).otid)
@@ -2434,10 +2428,9 @@ export async function handleHeadlessCommand(
             return { stopReason: "error", shouldAccumulate: true };
           }
 
-          // Approval-flow chunks are omitted from stream-json so the stream
-          // matches other coding agents (Claude Code / Codex): the canonical
-          // tool_call_message emitted post-drain is the single call event, and
-          // approvals are handled out-of-band. See emitLocalToolCalls.
+          // Approval-flow chunks are omitted from stream-json to match other
+          // coding agents: the post-drain tool_call_message is the single call
+          // event; approvals are out-of-band. See emitLocalToolCalls.
           const messageType = (chunk as { message_type?: string }).message_type;
           if (
             messageType === "approval_request_message" ||
@@ -2524,8 +2517,8 @@ export async function handleHeadlessCommand(
         chatgptExhaustedProviders.clear();
 
         // Emit turn_end. A mod may return { continue: "..." } to append a
-        // follow-up user message and run another turn. Auto-continues re-enter
-        // the loop and count against --max-turns via checkMaxTurns at the top.
+        // follow-up user message; auto-continues re-enter the loop and count
+        // against --max-turns via checkMaxTurns at the top.
         const continueMessage = await emitHeadlessTurnEnd({
           agent,
           conversationId,
@@ -2628,9 +2621,9 @@ export async function handleHeadlessCommand(
           "@/agent/approval-execution"
         );
 
-        // Local tools execute client-side, so their calls + returns never reach
-        // the server stream. Surface them on the wire so stream-json consumers get
-        // the same tool_call_message → tool_return_message pairing as server tools.
+        // Local tools execute client-side; surface their calls + returns on
+        // the wire so stream-json consumers see the same tool_call_message →
+        // tool_return_message pairing as server tools.
         if (outputFormat === "stream-json") {
           emitLocalToolCalls(decisions, sessionId);
         }
@@ -2799,10 +2792,9 @@ export async function handleHeadlessCommand(
         }
       }
 
-      // Unexpected stop reason (error, llm_api_error, etc.)
-      // Before failing, check run metadata to see if this is a retriable error
-      // This handles cases where the backend sends a generic error stop_reason but the
-      // underlying cause is a transient LLM/network issue that should be retried
+      // Unexpected stop reason: before failing, check run metadata for a
+      // retriable cause — the backend may send a generic error stop_reason
+      // for a transient LLM/network issue.
 
       // Early exit for stop reasons that should never be retried
       const nonRetriableReasons: StopReasonType[] = [
@@ -2847,9 +2839,8 @@ export async function handleHeadlessCommand(
               metaError?.retryable ?? metaError?.error?.retryable;
           }
 
-          // Special handling for empty response errors (Opus 4.6 SADs)
-          // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).
-          // Retry 1: same input unchanged. Retry 2: append system reminder nudging the model.
+          // Empty LLM response retry (Opus 4.6 SADs): retry 1 sends the same
+          // input; retry 2 appends a system reminder nudging the model.
           if (
             isEmptyResponseRetryable(
               errorType,
@@ -3061,6 +3052,10 @@ export async function handleHeadlessCommand(
       await exitHeadless(1, "headless_stop_reason_error");
     }
   } catch (error) {
+    // Grace-expiry straggler abort: classify as SIGINT, not an error.
+    if (sigintSignal.aborted) {
+      await exitInterrupted();
+    }
     // Mark incomplete tool calls as cancelled
     markIncompleteToolsAsCancelled(buffers, true, "stream_error");
 
@@ -3322,11 +3317,9 @@ async function runBidirectionalMode(
 
   // Track current operation for interrupt support
   let currentAbortController: AbortController | null = null;
-  // Latch: an interrupt may arrive on stdin between the user message and
-  // when the abort controller for that turn is created (the gap is small but
-  // real — readline fires the next line before the main loop's microtask
-  // creating the controller runs). When that happens, set this flag so the
-  // turn aborts immediately after creation.
+  // Latch: an interrupt can arrive on stdin between the user message and
+  // creation of that turn's abort controller (readline fires the next line
+  // before the loop's microtask runs). Flag it so the turn aborts on creation.
   let pendingInterrupt = false;
   // True only in the narrow window between a user message being handed to the
   // main loop and its AbortController being created. Gates `pendingInterrupt`
@@ -3454,18 +3447,16 @@ async function runBidirectionalMode(
   let lineResolver: ((line: string | null) => void) | null = null;
 
   // ── Queue lifecycle tracking (stream-json only) ────────────────
-  // Bidirectional mode always runs under stream-json input format, so queue
-  // events are always emitted here. emitQueueEvent is a no-op guard retained
-  // for clarity and future-proofing against non-stream-json callers.
+  // Bidirectional mode is always stream-json, so queue events always emit
+  // here; emitQueueEvent is a no-op guard for non-stream-json callers.
   const emitQueueEvent = (e: QueueLifecycleEvent): void => {
     writeWireMessage(e);
   };
 
   let turnInProgress = false;
-  // Set when a turn ends interrupted (aborted mid-flight). A cancel during a
-  // tool's approval gate leaves the agent in `requires_approval` with a
-  // dangling approval; the next user turn must clear it before sending or the
-  // run errors on stale state (surfaces downstream as a bare "refusal").
+  // Set when a turn ends interrupted (aborted mid-flight). A cancel during
+  // a tool's approval gate leaves `requires_approval` dangling; the next
+  // user turn must clear it or the run errors (bare "refusal").
   let priorTurnInterrupted = false;
 
   const msgQueueRuntime = new QueueRuntime({
@@ -3652,8 +3643,8 @@ async function runBidirectionalMode(
     }
     if (lineResolver) {
       // Handing a user message to a waiting main loop opens the pre-controller
-      // race window: mark turnStarting so an interrupt arriving in the same
-      // stdin burst (before the controller exists) latches via "latch" above.
+      // race window: turnStarting makes an interrupt in the same stdin burst
+      // latch via "latch" above (before the controller exists).
       if (parsedLine?.type === "user") turnStarting = true;
       const resolve = lineResolver;
       lineResolver = null;
@@ -4649,14 +4640,24 @@ async function runBidirectionalMode(
             // executed tool calls + returns (see one-shot path above).
             emitLocalToolCalls(decisions, sessionId);
 
-            const executedResults = await executeApprovalBatch(
-              decisions,
-              undefined,
-              {
-                toolContextId: turnToolContextId ?? undefined,
-                abortSignal: currentAbortController.signal,
-              },
-            );
+            let executedResults: ApprovalResult[];
+            try {
+              executedResults = await executeApprovalBatch(
+                decisions,
+                undefined,
+                {
+                  toolContextId: turnToolContextId ?? undefined,
+                  abortSignal: currentAbortController.signal,
+                },
+              );
+            } catch (error) {
+              // Grace-expiry abort: fall through to the interrupted result
+              // path rather than rendering a stop_reason error.
+              if (currentAbortController?.signal.aborted) {
+                break;
+              }
+              throw error;
+            }
 
             emitLocalToolReturns(executedResults, sessionId);
 

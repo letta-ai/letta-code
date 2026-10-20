@@ -149,7 +149,11 @@ export async function createScriptToolScope(
           isError: result.status === "error",
         };
       }
-      return (await mcp()).callTool(toolName, toolArgs);
+      return (await mcp()).callTool(
+        toolName,
+        toolArgs,
+        signal ? { signal } : {},
+      );
     },
     cleanup: async () => {
       await mcpSession

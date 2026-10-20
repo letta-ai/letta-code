@@ -154,7 +154,6 @@ export function isUserInvocableSkill(skill: Skill): boolean {
 }
 
 const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
-  "curating-memory-palace",
   "image-generation",
   "managing-agent-webhooks",
   "managing-shared-memory",
