@@ -275,5 +275,8 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-xHwgmxBsCCiYY3o9bJl2DPx84chNPq1OsLFGac23DBEoU+h6hGCcX7rZezQxutCYhG/yFzjQ65L3pZ5j6BzNbg=="
+  "lettaRuntimeGraphSha512": "sha512-xHwgmxBsCCiYY3o9bJl2DPx84chNPq1OsLFGac23DBEoU+h6hGCcX7rZezQxutCYhG/yFzjQ65L3pZ5j6BzNbg==",
+  "patchedDependencies": {
+    "@earendil-works/pi-ai@0.99.1": "patches/@earendil-works%2Fpi-ai@0.99.1.patch"
+  }
 }
