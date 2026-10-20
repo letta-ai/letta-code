@@ -727,4 +727,101 @@ describe("Background task interrupt hook", () => {
     expect(restored?.stopFailed).toBe(true);
     cancel.mockRestore();
   });
+
+  test("stop attempts are counted per dispatch and each settle records its outcome", async () => {
+    const resolvers = new Map<
+      string,
+      (value: Record<string, string>) => void
+    >();
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      (conversationId: string) =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolvers.set(conversationId, resolve);
+        }),
+    );
+    startRemoteTask("task_hook_outcomes", "conv-child");
+    const controller = backgroundTasks.get("task_hook_outcomes")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_outcomes",
+      buildBackgroundTaskAbortHook("task_hook_outcomes", controller),
+    );
+
+    // First stop attempt fails: the restore records the failed outcome for
+    // attempt 1.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolvers.get("conv-child")?.({ "run-child": "failed" });
+    await Bun.sleep(20);
+    const restored = getSubagents().find(
+      (a) => a.id === "sub_task_hook_outcomes",
+    );
+    expect(restored?.stopAttempts).toBe(1);
+    expect(restored?.stopFailed).toBe(true);
+    expect(restored?.stopOutcome).toEqual({ attempt: 1, kind: "failed" });
+
+    // The targeted retry dispatches attempt 2 and the cancel lands: the
+    // settle records the stopped outcome for attempt 2.
+    const retried = interruptStopFailedSubagents("Interrupted by user");
+    expect(retried).toEqual(["sub_task_hook_outcomes"]);
+    await Bun.sleep(20);
+    resolvers.get("conv-child")?.({ "run-child": "cancelled" });
+    await Bun.sleep(20);
+    const stopped = getSubagents().find(
+      (a) => a.id === "sub_task_hook_outcomes",
+    );
+    expect(stopped?.stopAttempts).toBe(2);
+    expect(stopped?.stopFailed).toBeUndefined();
+    expect(stopped?.cancelPending).toBeUndefined();
+    expect(stopped?.stopOutcome).toEqual({ attempt: 2, kind: "stopped" });
+    cancel.mockRestore();
+  });
+
+  test("a natural failure during a retry records the natural outcome, never a stop", async () => {
+    const resolvers = new Map<
+      string,
+      (value: Record<string, string>) => void
+    >();
+    const cancel = spyOn(getBackend(), "cancelConversation").mockImplementation(
+      (conversationId: string) =>
+        new Promise<Record<string, string>>((resolve) => {
+          resolvers.set(conversationId, resolve);
+        }),
+    );
+    startRemoteTask("task_hook_natural_fail", "conv-child");
+    const controller = backgroundTasks.get("task_hook_natural_fail")
+      ?.abortController as AbortController;
+    registerSubagentAbortHook(
+      "sub_task_hook_natural_fail",
+      buildBackgroundTaskAbortHook("task_hook_natural_fail", controller),
+    );
+
+    // First stop attempt fails and restores the retry handle.
+    interruptActiveSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    resolvers.get("conv-child")?.({ "run-child": "failed" });
+    await Bun.sleep(20);
+    expect(
+      getSubagents().find((a) => a.id === "sub_task_hook_natural_fail")
+        ?.stopFailed,
+    ).toBe(true);
+
+    // The retry dispatches, but the task fails on its own while the cancel
+    // is in flight: the settle must record the natural outcome so the
+    // notification selector never mistakes it for a landed stop.
+    interruptStopFailedSubagents("Interrupted by user");
+    await Bun.sleep(20);
+    const bgTask = backgroundTasks.get("task_hook_natural_fail");
+    if (bgTask) bgTask.status = "failed";
+    resolvers.get("conv-child")?.({ "run-child": "failed" });
+    await Bun.sleep(20);
+    const settled = getSubagents().find(
+      (a) => a.id === "sub_task_hook_natural_fail",
+    );
+    expect(settled?.stopOutcome).toEqual({ attempt: 2, kind: "natural" });
+    expect(settled?.stopFailed).toBeUndefined();
+    expect(settled?.cancelPending).toBeUndefined();
+    expect(settled?.status).toBe("error");
+    cancel.mockRestore();
+  });
 });

@@ -57,8 +57,10 @@ describe("stop-failed background task retry wiring", () => {
     expect(coordinator).toContain("selectStopFailedNotifications(");
     // The notification scope must match the Esc retry's scoping: agent AND
     // conversation, so a failure never lands in (or is consumed by) the
-    // wrong agent's transcript.
-    expect(coordinator).toContain("stopFailedRetryingRef.current,");
+    // wrong agent's transcript. Dedup is attempt-qualified inside the
+    // selector's caller-owned seen set — no retry-tracking ref remains.
+    expect(coordinator).toContain("stopFailedNotifiedRef.current,");
+    expect(coordinator).not.toContain("stopFailedRetryingRef");
     expect(coordinator).toContain("{ agentId, conversationId },");
     expect(coordinator).toContain("[...failures, ...stops]");
   });

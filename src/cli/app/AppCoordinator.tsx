@@ -4675,12 +4675,10 @@ export function App({
     conversationId,
   });
   const stopFailedNotifiedRef = useRef<Set<string>>(new Set());
-  const stopFailedRetryingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const { failures, stops } = selectStopFailedNotifications(
       subagents,
       stopFailedNotifiedRef.current,
-      stopFailedRetryingRef.current,
       // Match the Esc retry's scoping: a failure (or its correction) must
       // land in the transcript of the agent that owns the row, never be
       // consumed by whichever agent the user switched to mid-flight.

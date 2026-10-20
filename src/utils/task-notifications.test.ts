@@ -48,229 +48,338 @@ import { selectStopFailedNotifications } from "./task-notifications";
 
 const FAILURE = (description: string) =>
   `Background task "${description}" could not be stopped — still running remotely. Press Esc to retry.`;
+const STOPPED = (description: string) =>
+  `Background task "${description}" stopped.`;
 
-test("stop-failed notifications surface once per live row and respect agent and conversation scope", () => {
+const base = {
+  id: "sub_a",
+  description: "deploy check",
+  parentAgentId: "agent-1",
+  parentConversationId: "conv-1",
+};
+
+test("stop-failure notifications surface once per failed attempt and respect the interrupt scope matcher", () => {
   const seen = new Set<string>();
-  const retrying = new Set<string>();
   const rows = [
     {
+      ...base,
       id: "sub_a",
-      description: "deploy check",
       status: "running",
       stopFailed: true,
-      parentAgentId: "agent-1",
-      parentConversationId: "conv-1",
+      stopOutcome: { attempt: 1, kind: "failed" as const },
     },
     {
+      ...base,
       id: "sub_b",
       description: "other conversation",
+      parentConversationId: "conv-2",
       status: "running",
       stopFailed: true,
-      parentAgentId: "agent-1",
-      parentConversationId: "conv-2",
+      stopOutcome: { attempt: 1, kind: "failed" as const },
     },
     {
+      ...base,
       id: "sub_c",
       description: "other agent",
+      parentAgentId: "agent-2",
       status: "running",
       stopFailed: true,
-      parentAgentId: "agent-2",
-      parentConversationId: "conv-1",
+      stopOutcome: { attempt: 1, kind: "failed" as const },
     },
     {
+      ...base,
       id: "sub_d",
+      description: "no recorded parent agent",
+      parentAgentId: undefined,
+      status: "running",
+      stopFailed: true,
+      stopOutcome: { attempt: 1, kind: "failed" as const },
+    },
+    {
+      ...base,
+      id: "sub_e",
       description: "already settled",
       status: "error",
       stopFailed: true,
-      parentAgentId: "agent-1",
-      parentConversationId: "conv-1",
+      stopOutcome: { attempt: 1, kind: "failed" as const },
     },
     {
-      id: "sub_e",
+      ...base,
+      id: "sub_f",
       description: "healthy task",
       status: "running",
-      parentAgentId: "agent-1",
-      parentConversationId: "conv-1",
     },
   ];
 
   const scope = { agentId: "agent-1", conversationId: "conv-1" };
-  const first = selectStopFailedNotifications(rows, seen, retrying, scope);
+  const first = selectStopFailedNotifications(rows, seen, scope);
   expect(first.failures).toEqual([FAILURE("deploy check")]);
   expect(first.stops).toEqual([]);
 
   // Deduplicated while the row stays a live stop-failure in scope.
-  const second = selectStopFailedNotifications(rows, seen, retrying, scope);
+  const second = selectStopFailedNotifications(rows, seen, scope);
   expect(second.failures).toEqual([]);
 
-  // Switching agents must not surface — or consume — another agent's
-  // failure: agent-2's row stays unseen for agent-1's transcript, and
-  // agent-2's view would surface it fresh.
+  // The scope matcher mirrors the interrupt paths exactly: agent matching
+  // is exact, so a row with no recorded parent agent never notifies under
+  // a specific agent scope (Esc could not retry it there either).
   const otherAgentSeen = new Set<string>();
-  const otherAgent = selectStopFailedNotifications(
-    rows,
-    otherAgentSeen,
-    new Set<string>(),
-    { agentId: "agent-2", conversationId: "conv-1" },
-  );
+  const otherAgent = selectStopFailedNotifications(rows, otherAgentSeen, {
+    agentId: "agent-2",
+    conversationId: "conv-1",
+  });
   expect(otherAgent.failures).toEqual([FAILURE("other agent")]);
-
-  // A row with no recorded parent (legacy) still notifies in any scope.
-  const legacy = selectStopFailedNotifications(
-    [
-      {
-        id: "sub_f",
-        description: "legacy row",
-        status: "running",
-        stopFailed: true,
-      },
-    ],
-    new Set<string>(),
-    new Set<string>(),
-    scope,
-  );
-  expect(legacy.failures).toEqual([FAILURE("legacy row")]);
+  expect(
+    selectStopFailedNotifications(rows, new Set<string>(), {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+    }).failures,
+  ).not.toContain(FAILURE("no recorded parent agent"));
+  // But a scope without an agent id still reaches the unscoped row.
+  expect(
+    selectStopFailedNotifications(rows, new Set<string>(), {
+      conversationId: "conv-1",
+    }).failures,
+  ).toContain(FAILURE("no recorded parent agent"));
 });
 
-test("a failed retry re-notifies and a landed retry reports the stop", () => {
+test("a fast retry that fails re-notifies without any render observing the in-flight state", () => {
   const seen = new Set<string>();
-  const retrying = new Set<string>();
   const scope = { agentId: "agent-1", conversationId: "conv-1" };
-  const base = {
-    id: "sub_a",
-    description: "deploy check",
-    parentAgentId: "agent-1",
-    parentConversationId: "conv-1",
-  };
 
-  // First failure surfaces.
+  // First failure surfaces (attempt 1).
   const first = selectStopFailedNotifications(
-    [{ ...base, status: "running", stopFailed: true }],
+    [
+      {
+        ...base,
+        status: "running",
+        stopFailed: true,
+        stopOutcome: { attempt: 1, kind: "failed" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
   expect(first.failures).toEqual([FAILURE("deploy check")]);
 
-  // The user dispatches the retry: the row leaves the surfaced state and
-  // the id moves to the retrying set — the dedupe entry is released.
-  const dispatched = selectStopFailedNotifications(
-    [{ ...base, status: "error", cancelPending: true }],
-    seen,
-    retrying,
-    scope,
-  );
-  expect(dispatched.failures).toEqual([]);
-  expect(dispatched.stops).toEqual([]);
-  expect(seen.has("sub_a")).toBe(false);
-  expect(retrying.has("sub_a")).toBe(true);
-
-  // The retry fails too: the restore re-enters the surfaced state and the
-  // failure re-notifies (the first notification is not the last word).
+  // The retry dispatches and settles between two renders: the only
+  // snapshot the effect ever sees is the restored failure for attempt 2.
   const refailed = selectStopFailedNotifications(
-    [{ ...base, status: "running", stopFailed: true }],
+    [
+      {
+        ...base,
+        status: "running",
+        stopFailed: true,
+        stopOutcome: { attempt: 2, kind: "failed" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
   expect(refailed.failures).toEqual([FAILURE("deploy check")]);
   expect(refailed.stops).toEqual([]);
-  expect(retrying.has("sub_a")).toBe(false);
 
-  // Dispatch again, then the stop lands: the correction reports it.
-  selectStopFailedNotifications(
-    [{ ...base, status: "error", cancelPending: true }],
+  // Same attempt never re-notifies.
+  const stable = selectStopFailedNotifications(
+    [
+      {
+        ...base,
+        status: "running",
+        stopFailed: true,
+        stopOutcome: { attempt: 2, kind: "failed" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
-  const landed = selectStopFailedNotifications(
-    [{ ...base, status: "error" }],
+  expect(stable.failures).toEqual([]);
+});
+
+test("a fast retry that lands emits the correction from a single terminal snapshot", () => {
+  const seen = new Set<string>();
+  const scope = { agentId: "agent-1", conversationId: "conv-1" };
+
+  selectStopFailedNotifications(
+    [
+      {
+        ...base,
+        status: "running",
+        stopFailed: true,
+        stopOutcome: { attempt: 1, kind: "failed" },
+      },
+    ],
     seen,
-    retrying,
+    scope,
+  );
+  // Dispatch and settlement both land before the next render: the only
+  // snapshot is the terminal row with the recorded stopped outcome.
+  const landed = selectStopFailedNotifications(
+    [
+      {
+        ...base,
+        status: "error",
+        stopOutcome: { attempt: 2, kind: "stopped" },
+      },
+    ],
+    seen,
     scope,
   );
   expect(landed.failures).toEqual([]);
-  expect(landed.stops).toEqual(['Background task "deploy check" stopped.']);
-  expect(retrying.has("sub_a")).toBe(false);
+  expect(landed.stops).toEqual([STOPPED("deploy check")]);
 
   // Terminal state is stable: no repeat messages on later snapshots.
   const settled = selectStopFailedNotifications(
-    [{ ...base, status: "error" }],
+    [
+      {
+        ...base,
+        status: "error",
+        stopOutcome: { attempt: 2, kind: "stopped" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
   expect(settled.failures).toEqual([]);
   expect(settled.stops).toEqual([]);
 });
 
-test("a run that settles naturally during a retry stays silent", () => {
+test("a first stop that lands is never reported as a correction", () => {
   const seen = new Set<string>();
-  const retrying = new Set<string>();
   const scope = { agentId: "agent-1", conversationId: "conv-1" };
-  const base = {
-    id: "sub_a",
-    description: "deploy check",
-    parentAgentId: "agent-1",
-    parentConversationId: "conv-1",
-  };
+  // No failure was ever surfaced; a normal interrupt's successful stop
+  // must not emit a "stopped." line.
+  const result = selectStopFailedNotifications(
+    [
+      {
+        ...base,
+        status: "error",
+        stopOutcome: { attempt: 1, kind: "stopped" },
+      },
+    ],
+    seen,
+    scope,
+  );
+  expect(result.failures).toEqual([]);
+  expect(result.stops).toEqual([]);
+});
+
+test("a run that fails naturally during a retry is never reported as a stop", () => {
+  const seen = new Set<string>();
+  const scope = { agentId: "agent-1", conversationId: "conv-1" };
 
   selectStopFailedNotifications(
-    [{ ...base, status: "running", stopFailed: true }],
+    [
+      {
+        ...base,
+        status: "running",
+        stopFailed: true,
+        stopOutcome: { attempt: 1, kind: "failed" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
-  selectStopFailedNotifications(
-    [{ ...base, status: "error", cancelPending: true }],
-    seen,
-    retrying,
-    scope,
-  );
-  // Natural completion while the retry was in flight: the completion path
-  // owns that message; the retry tracker just retires.
+  // The task fails on its own while the retry's cancel is in flight: the
+  // settle records the natural outcome, and the row's own failure
+  // notification owns the transcript — no false "stopped." correction.
   const natural = selectStopFailedNotifications(
-    [{ ...base, status: "completed" }],
+    [
+      {
+        ...base,
+        status: "error",
+        stopOutcome: { attempt: 2, kind: "natural" },
+      },
+    ],
     seen,
-    retrying,
     scope,
   );
   expect(natural.failures).toEqual([]);
   expect(natural.stops).toEqual([]);
-  expect(retrying.has("sub_a")).toBe(false);
+
+  // Natural completion is equally silent.
+  const completed = selectStopFailedNotifications(
+    [
+      {
+        ...base,
+        status: "completed",
+        stopOutcome: { attempt: 2, kind: "natural" },
+      },
+    ],
+    seen,
+    scope,
+  );
+  expect(completed.failures).toEqual([]);
+  expect(completed.stops).toEqual([]);
 });
 
-test("a retry that lands while another conversation is active never writes there", () => {
+test("scope switches never replay a failure and never drop a landed correction", () => {
   const seen = new Set<string>();
-  const retrying = new Set<string>();
-  const row = {
-    id: "sub_a",
-    description: "deploy check",
-    status: "error",
-    parentAgentId: "agent-1",
-    parentConversationId: "conv-1",
+  const scopeA = { agentId: "agent-1", conversationId: "conv-1" };
+  const scopeB = { agentId: "agent-1", conversationId: "conv-2" };
+  const liveFailure = {
+    ...base,
+    status: "running",
+    stopFailed: true,
+    stopOutcome: { attempt: 1, kind: "failed" as const },
   };
-  // The failure was surfaced in conv-1 and its retry was dispatched there.
+
+  // Failure surfaces in conv-1.
+  expect(
+    selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
+  ).toEqual([FAILURE("deploy check")]);
+
+  // Switch to conv-2 and back: the still-live failure must not replay.
+  selectStopFailedNotifications([liveFailure], seen, scopeB);
+  expect(
+    selectStopFailedNotifications([liveFailure], seen, scopeA).failures,
+  ).toEqual([]);
+
+  // The retry lands while conv-2 is active: nothing is written there...
+  const landedRow = {
+    ...base,
+    status: "error",
+    stopOutcome: { attempt: 2, kind: "stopped" as const },
+  };
+  expect(
+    selectStopFailedNotifications([landedRow], seen, scopeB).stops,
+  ).toEqual([]);
+  // ...and returning to conv-1 emits the retained correction.
+  expect(
+    selectStopFailedNotifications([landedRow], seen, scopeA).stops,
+  ).toEqual([STOPPED("deploy check")]);
+  // Exactly once.
+  expect(
+    selectStopFailedNotifications([landedRow], seen, scopeA).stops,
+  ).toEqual([]);
+});
+
+test("entries retire only when their row leaves the snapshot", () => {
+  const seen = new Set<string>();
+  const scope = { agentId: "agent-1", conversationId: "conv-1" };
+  const row = {
+    ...base,
+    status: "running",
+    stopFailed: true,
+    stopOutcome: { attempt: 1, kind: "failed" as const },
+  };
+  selectStopFailedNotifications([row], seen, scope);
+  expect(seen.has("sub_a:1")).toBe(true);
+
+  // Row still in the snapshot (even terminal): entry survives.
   selectStopFailedNotifications(
-    [{ ...row, status: "running", stopFailed: true }],
+    [
+      {
+        ...base,
+        status: "error",
+        stopOutcome: { attempt: 2, kind: "stopped" },
+      },
+    ],
     seen,
-    retrying,
-    { agentId: "agent-1", conversationId: "conv-1" },
+    scope,
   );
-  selectStopFailedNotifications(
-    [{ ...row, status: "error", cancelPending: true }],
-    seen,
-    retrying,
-    { agentId: "agent-1", conversationId: "conv-1" },
-  );
-  // The stop lands while the user is in conv-2: no correction there, and
-  // the tracker retires so conv-1 does not get a stale message on return.
-  const elsewhere = selectStopFailedNotifications([row], seen, retrying, {
-    agentId: "agent-1",
-    conversationId: "conv-2",
-  });
-  expect(elsewhere.failures).toEqual([]);
-  expect(elsewhere.stops).toEqual([]);
-  expect(retrying.has("sub_a")).toBe(false);
+  expect(seen.has("sub_a:1")).toBe(true);
+
+  // Row deleted from the store: entry retires.
+  selectStopFailedNotifications([], seen, scope);
+  expect(seen.has("sub_a:1")).toBe(false);
 });

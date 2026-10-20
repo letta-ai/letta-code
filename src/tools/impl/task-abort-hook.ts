@@ -54,9 +54,19 @@ function settleInterruptedCancel(
     return;
   }
   // The cancel landed, went local, or the task is gone: nothing to retry.
+  // Record which outcome happened: killed:true means the backend cancelled
+  // every run in the child conversation (task_stop then marks the local
+  // wrapper failed as its own success path, so taskLive is already false
+  // here), while killed:false on a task that is no longer live means the
+  // run settled on its own mid-cancel and must never be reported as a stop.
+  const row = getSubagents().find((agent) => agent.id === bgTask.subagentId);
   updateSubagent(bgTask.subagentId, {
     cancelPending: undefined,
     stopFailed: undefined,
+    stopOutcome: {
+      attempt: row?.stopAttempts ?? 0,
+      kind: killed ? "stopped" : "natural",
+    },
   });
 }
 
@@ -74,8 +84,15 @@ function restoreInterruptedSubagentRow(
   const row = getSubagents().find((agent) => agent.id === subagentId);
   if (!row || row.status !== "error" || row.result !== undefined) {
     // The row settled on its own or is gone: nothing to reclaim. Release
-    // any cancelPending marking so cleanup can proceed.
-    if (row) updateSubagent(subagentId, { cancelPending: undefined });
+    // any cancelPending marking so cleanup can proceed, and record the
+    // natural outcome so the notification selector never mistakes the
+    // row's own settlement for a landed stop.
+    if (row) {
+      updateSubagent(subagentId, {
+        cancelPending: undefined,
+        stopOutcome: { attempt: row.stopAttempts ?? 0, kind: "natural" },
+      });
+    }
     return;
   }
   updateSubagent(subagentId, {
@@ -86,6 +103,7 @@ function restoreInterruptedSubagentRow(
     // through this row, and the UI surfaces the failure instead of letting
     // the promoted "interrupted" line claim the stop succeeded.
     stopFailed: true,
+    stopOutcome: { attempt: row.stopAttempts ?? 0, kind: "failed" },
   });
   registerSubagentAbortHook(subagentId, hook);
 }

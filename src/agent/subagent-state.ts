@@ -6,6 +6,8 @@
  * Uses an event-emitter pattern compatible with React's useSyncExternalStore.
  */
 
+import { subagentScopeMatches } from "@/utils/subagent-scope.js";
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -54,6 +56,17 @@ export interface SubagentState {
   /** A user-requested stop failed and the remote run is still live: the row
    * is the retry handle and idle Esc retries its stop. */
   stopFailed?: boolean;
+  /** Monotonic count of stop attempts dispatched through the row's abort
+   * hook; incremented by the interrupt marking whenever a hook fires. */
+  stopAttempts?: number;
+  /** Outcome of the most recently dispatched stop attempt, written only by
+   * the abort-hook settle/restore paths (the single writer that knows
+   * whether a cancel killed a live run, failed to land, or found the run
+   * already settled). */
+  stopOutcome?: {
+    attempt: number;
+    kind: "failed" | "stopped" | "natural";
+  };
 }
 
 export type SubagentLifecycleStatus = SubagentState["status"];
@@ -592,8 +605,12 @@ export function interruptActiveSubagents(
         error: errorMessage,
         durationMs: Date.now() - agent.startTime,
         // The fired hook's cancel is now in flight: protect the row (the
-        // remote run's retry handle) from cleanup until the hook settles.
-        ...(hook ? { cancelPending: true } : {}),
+        // remote run's retry handle) from cleanup until the hook settles,
+        // and count the attempt so its settle can be told apart from the
+        // previous one even when no render observes the transient state.
+        ...(hook
+          ? { cancelPending: true, stopAttempts: (agent.stopAttempts ?? 0) + 1 }
+          : {}),
         // A fresh stop attempt supersedes the recorded failure; the hook
         // re-marks stopFailed only if this cancel fails too.
         stopFailed: undefined,
@@ -632,7 +649,9 @@ export function interruptStopFailedSubagents(
       status: "error",
       error: errorMessage,
       durationMs: Date.now() - agent.startTime,
-      ...(hook ? { cancelPending: true } : {}),
+      ...(hook
+        ? { cancelPending: true, stopAttempts: (agent.stopAttempts ?? 0) + 1 }
+        : {}),
       stopFailed: undefined,
     };
     store.agents.set(id, updatedAgent);
@@ -649,13 +668,10 @@ function subagentMatchesScope(
   agent: SubagentState,
   scope: { agentId?: string; conversationId?: string },
 ): boolean {
-  if (scope.agentId !== undefined && agent.parentAgentId !== scope.agentId) {
-    return false;
-  }
-  if (scope.conversationId === undefined) return true;
-  return (
-    agent.parentConversationId === undefined ||
-    agent.parentConversationId === scope.conversationId
+  return subagentScopeMatches(
+    agent.parentAgentId,
+    agent.parentConversationId,
+    scope,
   );
 }
 
