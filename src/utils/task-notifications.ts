@@ -1,6 +1,7 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getRuntimeContext } from "@/runtime-context";
+import { subagentScopeMatches } from "@/utils/subagent-scope";
 
 /**
  * Task Notification Formatting
@@ -211,4 +212,104 @@ export function appendTaskNotificationEventsToBuffer(
   }
   flush?.();
   return true;
+}
+
+export interface StopFailedNotificationSelection {
+  /** New stop-failure messages for rows entering the surfaced state. */
+  failures: string[];
+  /** Stop-landed messages for retries the user dispatched from this view. */
+  stops: string[];
+}
+
+/**
+ * Select transcript notifications for subagent rows whose user-requested stop
+ * failed (the remote run is still live), and for retries that later landed.
+ *
+ * Scope: rows are matched with the same matcher the interrupt paths use
+ * (subagentScopeMatches), so a notification's "Press Esc to retry" hint is
+ * only ever written for rows an Esc can actually reach, and a failure never
+ * lands in — or is consumed by — the wrong agent's transcript.
+ *
+ * Dedup is attempt-qualified via the caller-owned seen set, keyed
+ * `${rowId}:${stopAttempt}`: correctness never depends on a render observing
+ * the transient in-flight state, so a stop whose dispatch and settlement
+ * both land between two renders still re-notifies on failure and still
+ * corrects on success. Entries survive scope switches (returning to a scope
+ * never replays its failure) and are retired only once the row leaves the
+ * snapshot entirely.
+ *
+ * A "stopped" correction fires only for an outcome the abort hook recorded
+ * as a genuine stop (a cancel that killed a still-live run) and only when
+ * a failure for an earlier attempt was surfaced, so a normal first-stop
+ * and a run that settled on its own mid-retry are never reported as stops.
+ */
+export function selectStopFailedNotifications(
+  rows: Array<{
+    id: string;
+    description: string;
+    status: string;
+    stopFailed?: boolean;
+    stopOutcome?: {
+      attempt: number;
+      kind: "failed" | "stopped" | "natural";
+    };
+    parentAgentId?: string;
+    parentConversationId?: string;
+  }>,
+  seenIds: Set<string>,
+  scope: { agentId?: string; conversationId?: string },
+): StopFailedNotificationSelection {
+  const failures: string[] = [];
+  const stops: string[] = [];
+
+  for (const row of rows) {
+    if (
+      !subagentScopeMatches(row.parentAgentId, row.parentConversationId, scope)
+    ) {
+      continue;
+    }
+    if (
+      row.stopFailed &&
+      (row.status === "pending" || row.status === "running")
+    ) {
+      const key = `${row.id}:${row.stopOutcome?.attempt ?? 0}`;
+      if (!seenIds.has(key)) {
+        seenIds.add(key);
+        failures.push(
+          `Background task "${row.description}" could not be stopped — still running remotely. Press Esc to retry.`,
+        );
+      }
+      continue;
+    }
+    if (row.stopOutcome?.kind === "stopped" && row.status === "error") {
+      const key = `${row.id}:${row.stopOutcome.attempt}`;
+      if (!seenIds.has(key)) {
+        let surfacedEarlierFailure = false;
+        for (let attempt = 0; attempt < row.stopOutcome.attempt; attempt += 1) {
+          if (seenIds.has(`${row.id}:${attempt}`)) {
+            surfacedEarlierFailure = true;
+            break;
+          }
+        }
+        if (surfacedEarlierFailure) {
+          seenIds.add(key);
+          stops.push(`Background task "${row.description}" stopped.`);
+        }
+      }
+    }
+  }
+
+  // Retire entries only for rows that left the snapshot entirely: entries
+  // for live rows persist across scope switches so returning to a scope
+  // never replays its failure, and terminal rows keep their keys so their
+  // correction can never re-fire.
+  const present = new Set(rows.map((row) => row.id));
+  for (const key of seenIds) {
+    const rowId = key.slice(0, key.lastIndexOf(":"));
+    if (!present.has(rowId)) {
+      seenIds.delete(key);
+    }
+  }
+
+  return { failures, stops };
 }

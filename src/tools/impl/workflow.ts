@@ -111,6 +111,8 @@ export interface WorkflowSpawnerHandle {
    * directory for later spawns, keeping the spawner's continuation state.
    */
   refresh?: () => Promise<void>;
+  /** TaskStop controller for background runs; absent for foreground runs. */
+  backgroundStopController?: AbortController;
   cleanup(): Promise<void>;
 }
 
@@ -229,7 +231,18 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
-  const toolScope = await createScriptToolScope(parentAgentId);
+  // Foreground workflows are turn-scoped: their script tool calls must honor
+  // the turn's abort signal. Background workflows run past turn interrupts
+  // by design; TaskStop aborts them via engine cut points, so their script
+  // tool calls honor the TaskStop controller created here — without it, a
+  // hanging MCP call inside the script would outlive TaskStop.
+  const backgroundStopController = args.wait
+    ? undefined
+    : new AbortController();
+  const toolScope = await createScriptToolScope(
+    parentAgentId,
+    args.wait ? args.signal : backgroundStopController?.signal,
+  );
   return {
     spawner,
     ...toolScope,
@@ -239,6 +252,7 @@ export async function createSdkSpawnerHandle(
         await captureInvokingContext(args, parentAgentId, () => {}),
       );
     },
+    backgroundStopController,
     cleanup: async () => {
       await toolScope.cleanup();
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
@@ -516,7 +530,11 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   const taskId = getNextWorkflowId();
   const outputFile = createBackgroundOutputFile(taskId);
   const scope = resolveNotificationScope(args.parentScope);
-  const abortController = new AbortController();
+  // Use the TaskStop controller the spawner handle created so the script's
+  // tools.*() calls share the same abort signal the engine cut points use.
+  // Custom test factories may not provide one; fall back to a fresh signal.
+  const abortController =
+    handle.backgroundStopController ?? new AbortController();
 
   const processState: BackgroundProcess = {
     process: {

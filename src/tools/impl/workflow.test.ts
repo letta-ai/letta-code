@@ -262,6 +262,39 @@ describe("Workflow tool (background launch)", () => {
     }
   });
 
+  test("background handle wires its TaskStop controller into script tool calls", async () => {
+    const handle = await createSdkSpawnerHandle({
+      model: "openai/gpt-4.1-mini",
+      parentScope: { agentId: "agent-parent", conversationId: "conv-child" },
+    });
+    try {
+      expect(handle.backgroundStopController).toBeDefined();
+      // TaskStop aborts this controller; the script's tools.*() calls must
+      // unwind with it instead of hanging past the engine cut points.
+      handle.backgroundStopController?.abort(
+        new Error("Workflow stopped via TaskStop"),
+      );
+      await expect(handle.callTool?.("mcp__server__tool", {})).rejects.toThrow(
+        "Workflow stopped via TaskStop",
+      );
+    } finally {
+      await handle.cleanup();
+    }
+  });
+
+  test("foreground handle stays turn-scoped with no TaskStop controller", async () => {
+    const handle = await createSdkSpawnerHandle({
+      model: "openai/gpt-4.1-mini",
+      wait: true,
+      parentScope: { agentId: "agent-parent", conversationId: "conv-child" },
+    });
+    try {
+      expect(handle.backgroundStopController).toBeUndefined();
+    } finally {
+      await handle.cleanup();
+    }
+  });
+
   test("rejects an unknown default model before creating a client", async () => {
     await expect(
       createSdkSpawnerHandle({

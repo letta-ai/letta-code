@@ -9,11 +9,13 @@ import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   addToolCall,
+  clearSubagentAbortHook,
   completeSubagent,
   generateSubagentId,
   getSnapshot as getSubagentSnapshot,
   getSubagentToolCount,
   registerSubagent,
+  registerSubagentAbortHook,
   updateSubagent,
 } from "@/agent/subagent-state.js";
 import {
@@ -68,6 +70,7 @@ import {
 } from "./process_manager.js";
 import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
 import { resolveLaunchComputer } from "./subagent-computer";
+import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
   buildTaskResultHeader,
   writeTaskTranscriptResult,
@@ -314,17 +317,15 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
+  // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
+  registerSubagentAbortHook(
+    subagentId,
+    buildBackgroundTaskAbortHook(taskId, abortController),
+  );
   writeTaskTranscriptStart(outputFile, description, subagentType);
 
-  // Intentionally fire-and-forget: background tasks own their lifecycle and
-  // capture failures in task state/transcripts instead of surfacing a promise
-  // back to the caller.
-  //
-  // Capture parentAgentId synchronously here (not inside spawnSubagent, which
-  // runs after async yields and can see a drifted in-process context if the
-  // listener is processing another agent's turn). resolvedParentScope.agentId
-  // is the authoritative value — the listener and App.tsx both derive it
-  // from their own closure-captured agentId.
+  // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
+  // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope
@@ -412,6 +413,7 @@ export function spawnBackgroundSubagentTask(
       );
       writeTaskTranscriptResult(outputFile, result, header, !!memoryTask);
       scheduleBackgroundTaskCleanup(taskId);
+      clearSubagentAbortHook(subagentId);
 
       completeSubagentFn(subagentId, {
         success: result.success,
@@ -516,6 +518,7 @@ export function spawnBackgroundSubagentTask(
         `[error] ${errorMessage}\n\n[Task failed]\n`,
       );
       scheduleBackgroundTaskCleanup(taskId);
+      clearSubagentAbortHook(subagentId);
       completeSubagentFn(subagentId, { success: false, error: errorMessage });
 
       try {
