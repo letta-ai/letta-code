@@ -536,8 +536,18 @@ describe("parent memory launch instructions", () => {
         if (hasMemory) mkdirSync(directory, { recursive: true });
         let received: string | undefined;
         try {
+          const resolvedMcpReminder =
+            mcpReminder ??
+            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
+              inherit: false,
+            }));
           await runExternalCodingAgent(
-            { type, parentAgentId, prompt: "task", mcpReminder },
+            {
+              type,
+              parentAgentId,
+              prompt: "task",
+              mcpReminder: resolvedMcpReminder,
+            },
             {
               resolveSecretEnv: async () => ({}),
               runPreflight: async () => ({
