@@ -121,6 +121,42 @@ describe("FakeHeadlessBackend", () => {
     expect(JSON.stringify(chunks)).toContain("pong");
   });
 
+  test("scopes active runs by agent when two agents share a conversation id", async () => {
+    const backend = new FakeHeadlessBackend("agent-a");
+    const runs = (
+      backend as unknown as {
+        runs: Map<string, { agent_id: string; status: string }>;
+      }
+    ).runs;
+    const runFor = (agentId: string) =>
+      [...runs.values()].find((run) => run.agent_id === agentId);
+
+    // Leave both streams unconsumed so both runs stay active.
+    await backend.createConversationMessageStream("default", {
+      agent_id: "agent-a",
+      messages: [{ role: "user", content: "from a" }],
+    } as ConversationMessageCreateBody);
+    await backend.createConversationMessageStream("default", {
+      agent_id: "agent-b",
+      messages: [{ role: "user", content: "from b" }],
+    } as ConversationMessageCreateBody);
+    expect(runFor("agent-a")?.status).toBe("running");
+    expect(runFor("agent-b")?.status).toBe("running");
+
+    // Default-conversation cancels address the agent id.
+    await backend.cancelConversation("agent-b");
+    expect(runFor("agent-b")?.status).toBe("cancelled");
+    expect(runFor("agent-a")?.status).toBe("running");
+
+    // Agent B's cleanup left agent A's ownership intact.
+    await expect(
+      backend.createConversationMessageStream("default", {
+        agent_id: "agent-a",
+        messages: [{ role: "user", content: "again" }],
+      } as ConversationMessageCreateBody),
+    ).rejects.toThrow("already has an active run");
+  });
+
   test("rejects a pre-aborted send before persisting input or starting a run", async () => {
     const backend = new FakeHeadlessBackend("agent-fake-headless");
     const conversation = await backend.createConversation({

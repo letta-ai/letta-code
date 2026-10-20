@@ -18,6 +18,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { localConversationKey } from "@/backend/local/local-conversation-key";
 import {
   LocalBackendNotFoundError,
   LocalStore,
@@ -200,6 +201,8 @@ export class HeadlessBackend implements Backend {
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
+  // Keyed by localConversationKey: "default" is per-agent, so a bare
+  // conversation id would let two agents' default chats collide.
   private readonly activeRunByConversation = new Map<string, string>();
   private readonly runControllerByRunId = new Map<string, AbortController>();
   // Fires when a run is cancelled (or its turn signal aborts) while the turn
@@ -377,8 +380,18 @@ export class HeadlessBackend implements Backend {
 
   async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
     const [conversationIdOrAgentId] = args;
+    // Callers pass the agent id for a default conversation, else the
+    // conversation id; try both scoped keys before the agent-wide fallback.
     const runId =
-      this.activeRunByConversation.get(conversationIdOrAgentId) ??
+      this.activeRunByConversation.get(
+        localConversationKey(
+          conversationIdOrAgentId,
+          this.store.resolveAgentIdForConversation(conversationIdOrAgentId),
+        ),
+      ) ??
+      this.activeRunByConversation.get(
+        localConversationKey("default", conversationIdOrAgentId),
+      ) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
     const run = runId ? this.runs.get(runId) : undefined;
     if (run?.conversation_id && run.agent_id) {
@@ -445,7 +458,13 @@ export class HeadlessBackend implements Backend {
   ) {
     const [conversationId, requestedRunId] = args;
     const runId =
-      requestedRunId ?? this.activeRunByConversation.get(conversationId);
+      requestedRunId ??
+      this.activeRunByConversation.get(
+        localConversationKey(
+          conversationId,
+          this.store.resolveAgentIdForConversation(conversationId),
+        ),
+      );
     if (!runId) return {} as never;
     const run = this.runs.get(runId);
     if (!run || run.conversation_id !== conversationId || isTerminalRun(run)) {
@@ -491,7 +510,12 @@ export class HeadlessBackend implements Backend {
     if (options?.signal?.aborted) {
       throw new APIUserAbortError();
     }
-    const activeRunId = this.activeRunByConversation.get(conversationId);
+    const turnAgentId =
+      (body as { agent_id?: string }).agent_id ??
+      this.store.resolveAgentIdForConversation(conversationId);
+    const activeRunId = this.activeRunByConversation.get(
+      localConversationKey(conversationId, turnAgentId),
+    );
     const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
     if (activeRun && !isTerminalRun(activeRun)) {
       throw new Error(
@@ -699,7 +723,10 @@ export class HeadlessBackend implements Backend {
       },
     } as Run;
     this.runs.set(run.id, run);
-    this.activeRunByConversation.set(conversationId, run.id);
+    this.activeRunByConversation.set(
+      localConversationKey(conversationId, agentId),
+      run.id,
+    );
     return run;
   }
 
@@ -734,9 +761,7 @@ export class HeadlessBackend implements Backend {
             }
           : run.metadata,
     });
-    if (run.conversation_id) {
-      this.activeRunByConversation.delete(run.conversation_id);
-    }
+    this.releaseActiveRun(run);
     this.runControllerByRunId.delete(runId);
     this.runStartupPreemptByRunId.delete(runId);
   }
@@ -762,9 +787,7 @@ export class HeadlessBackend implements Backend {
         },
       },
     });
-    if (run.conversation_id) {
-      this.activeRunByConversation.delete(run.conversation_id);
-    }
+    this.releaseActiveRun(run);
     this.runControllerByRunId.delete(runId);
     this.runStartupPreemptByRunId.delete(runId);
   }
@@ -791,6 +814,16 @@ export class HeadlessBackend implements Backend {
     if (signal?.aborted) return true;
     const run = this.runs.get(runId);
     return run ? isTerminalRun(run) : false;
+  }
+
+  // Only drop the entry this run owns: a stale run's cleanup must not clear
+  // a newer run's ownership of the same conversation.
+  private releaseActiveRun(run: Run): void {
+    if (!run.conversation_id) return;
+    const key = localConversationKey(run.conversation_id, run.agent_id);
+    if (this.activeRunByConversation.get(key) === run.id) {
+      this.activeRunByConversation.delete(key);
+    }
   }
 
   private findActiveRunByAgentId(agentId: string): string | undefined {
