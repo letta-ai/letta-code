@@ -40,6 +40,8 @@ Skip anything ephemeral (one-off task state, line numbers, exact errors, tempora
 
 Write each change the way the preloaded skills describe. Before editing, read the relevant existing files so you integrate rather than duplicate. For skills, prefer updating or extending an existing skill over creating one, make at most one skill change per run, and when unsure whether a procedure deserves a skill, make none.
 
+When the agent works with several people, a preference or correction from one person goes in that person's file (such as `people/<id>.md`). Persona and other core files get only norms that apply to everyone: stated as shared, or given independently by several people. When unsure, scope it to the person. For example, one person asking "what's your plan?" belongs in their file, not in a global "always lead with a plan" rule.
+
 Use Edit for files that already exist. Create new files with a quoted heredoc on Unix, or on Windows a single-quoted here-string piped to `Set-Content -Encoding utf8`; memory files must stay UTF-8. Edit does not expand environment variables: resolve absolute paths first (`printf "%s/persona.md\n" "$MEMORY_DIR"`, or `Join-Path $env:MEMORY_DIR "persona.md"` in PowerShell) and pass the printed path. Keep all writes inside `$MEMORY_DIR`.
 
 ## Commit
