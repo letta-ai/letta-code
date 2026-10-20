@@ -1,6 +1,11 @@
 ---
 name: adding-models
 description: Guide for adding new LLM models to Letta Code. Use when the user wants to add support for a new model, needs to know valid model handles, or wants to update model-specific compatibility behavior. Covers runtime catalog sources, CI test matrices, and handle validation.
+metadata:
+  status: proposed
+  confidence: medium
+  evidence: '["letta:conv-8604cc1e-260e-4b03-9762-2003f7bf50f5"]'
+  rationale: A workflow parent's model handle determines the context window its spawned workers inherit; rediscovering this cost a full live probe of the spawner and Cloud worker settings. Recording the verified inheritance fact and the compaction-at-boundary consequence prevents that debug cost on future workflow runs.
 ---
 
 # Adding Models
@@ -100,6 +105,26 @@ Models are automatically assigned toolsets based on provider:
 - Others → `default` toolset
 
 This is handled by `isGeminiModel()` and `isOpenAIModel()` in `src/tools/manager.ts`. You typically don't need to modify this unless adding a new provider.
+
+## Workflow Worker Context Inheritance
+
+Workflow `agent()` workers launched without their own model inherit the parent
+agent's context window, not the model's maximum window. The spawner snapshots
+the parent's `context_window_limit` (`src/tools/impl/workflow.ts`) and applies it
+as the worker's `contextWindowLimit` when no distinct model is set
+(`src/tools/workflow/sdk-spawner.ts`); on Cloud the worker is created with
+`context_window_limit: null` and resolves to the parent's limit.
+
+Consequences for model selection:
+
+- A bare handle may resolve to a narrower default-tier catalog entry than the
+  model supports; an extended-window variant is usually a separate entry (for
+  example `<handle>-1m`). Install the entry whose `context_window` matches what
+  the spawned workers need, or they inherit the smaller window.
+- A worker whose inherited window is smaller than its accumulated input starts
+  compacting on nearly every step once it nears the boundary, adding large
+  per-step latency (observed roughly a 5-10x per-step slowdown compared with
+  running under a large enough window).
 
 ## Common Issues
 
