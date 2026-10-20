@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
@@ -21,7 +22,9 @@ import {
   parseGitHubPullRequestUrl,
 } from "./github-pull-request-watch";
 import {
+  getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
+  MONITOR_MAX_TIMEOUT_MS,
   MonitorOutputWriter,
   markMonitorFinished,
   queueMonitorEvent,
@@ -34,6 +37,7 @@ import {
   createBackgroundOutputFile,
   getNextMonitorId,
   notifyBackgroundProcessStateChanged,
+  unrefTimer,
 } from "./process_manager";
 
 const WATCH_POLL_MS = 30_000;
@@ -50,7 +54,7 @@ interface WatchPullRequestResult {
   taskId: string;
   url: string;
   headSha: string;
-  persistent: true;
+  persistent: boolean;
 }
 
 interface WatchPullRequestDeps {
@@ -133,6 +137,8 @@ export async function watch_pr(
   const controller = new AbortController();
   const secrets: Readonly<Record<string, string>> = {};
   let processState: BackgroundProcess;
+  const persistent = !isManagedCloudRuntime();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const events = createMonitorEventStream({
     emit(event) {
@@ -168,6 +174,7 @@ export async function watch_pr(
   processState = {
     process: {
       kill() {
+        clearTimeout(timeout);
         events.cancel();
         controller.abort();
       },
@@ -182,11 +189,26 @@ export async function watch_pr(
     kind: "monitor",
     description,
     monitorSource: "github_pull_request",
-    persistent: true,
+    persistent,
     secrets,
   };
   backgroundProcesses.set(taskId, processState);
   notifyBackgroundProcessStateChanged(scope);
+
+  if (!persistent) {
+    timeout = setTimeout(() => {
+      if (processState.status !== "running") return;
+      events.finish();
+      if (processState.status !== "running") return;
+      const event = getMonitorTimeoutEvent(MONITOR_MAX_TIMEOUT_MS);
+      output.append(`\n${event}\n`);
+      queueMonitorEvent({ taskId, event, scope, actingUserId, secrets });
+      processState.completionNotificationSuppressed = true;
+      markMonitorFinished(taskId, processState, "failed", null);
+      processState.process.kill();
+    }, MONITOR_MAX_TIMEOUT_MS);
+    unrefTimer(timeout);
+  }
 
   const wait = deps.wait ?? defaultWait;
   void (async () => {
@@ -244,25 +266,27 @@ export async function watch_pr(
         lastError = message;
       }
     }
-  })().catch((error: unknown) => {
-    if (processState.status !== "running") return;
-    emit([`WatchPR stopped after an unexpected error: ${errorText(error)}`]);
-    events.finish();
-    if (processState.status === "running") {
-      markMonitorFinished(taskId, processState, "failed", null);
-    }
-  });
+  })()
+    .catch((error: unknown) => {
+      if (processState.status !== "running") return;
+      emit([`WatchPR stopped after an unexpected error: ${errorText(error)}`]);
+      events.finish();
+      if (processState.status === "running") {
+        markMonitorFinished(taskId, processState, "failed", null);
+      }
+    })
+    .finally(() => clearTimeout(timeout));
 
   return {
     content: [
       {
         type: "text",
-        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}\n\nOutput file: ${outputFile}`,
+        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : " A hard 1-hour limit applies in this Cloud sandbox; use Wake or cron for later checks."}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}\n\nOutput file: ${outputFile}`,
       },
     ],
     taskId,
     url: ref.url,
     headSha: initial.headSha,
-    persistent: true,
+    persistent,
   };
 }
