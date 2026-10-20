@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -572,7 +573,14 @@ describe("parent memory launch instructions", () => {
           );
           const note = buildParentMemoryNote(parentAgentId);
           expect(received).toBe(
-            [note, mcpReminder].filter(Boolean).join("\n\n") || undefined,
+            [
+              note
+                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
+                : undefined,
+              mcpReminder,
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined,
           );
         } finally {
           rmSync(directory, { recursive: true, force: true });

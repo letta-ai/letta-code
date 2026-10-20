@@ -8,6 +8,7 @@ import {
   spawnManagedWorkloadProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
@@ -476,11 +477,17 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
+  const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
   // Compose once for both providers, independently of MCP inheritance.
   options = {
     ...options,
     mcpReminder:
-      [buildParentMemoryNote(options.parentAgentId), options.mcpReminder]
+      [
+        parentMemoryNote
+          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+          : undefined,
+        options.mcpReminder,
+      ]
         .filter(Boolean)
         .join("\n\n") || undefined,
   };

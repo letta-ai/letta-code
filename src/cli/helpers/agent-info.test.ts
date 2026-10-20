@@ -233,7 +233,13 @@ test("includes accessible parent memory only for a distinct resolved parent", ()
   );
   mkdirSync(directory, { recursive: true });
   try {
-    expect(buildAgentInfo({ agentInfo, parentAgentId })).toContain(directory);
+    const reminder = buildAgentInfo({ agentInfo, parentAgentId });
+    expect(reminder).toContain(directory);
+    expect(reminder).toContain(
+      "start with `MEMORY.md` and the directory indexes",
+    );
+    expect(reminder.match(/<system-reminder>/g)).toHaveLength(1);
+    expect(reminder.match(/<\/system-reminder>/g)).toHaveLength(1);
     expect(buildAgentInfo({ agentInfo })).not.toContain("Your parent agent");
     expect(
       buildAgentInfo({
