@@ -6,6 +6,7 @@ import type {
 import {
   createAgentSandbox,
   getTeleportStatus,
+  reportEnvironmentDiskPressure,
   resolveDesktopEnvironmentConnectionId,
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
@@ -338,4 +339,31 @@ describe("teleportToEnvironment", () => {
     expect(result.status).toBe("waiting_for_source");
     expect(result.targetConnectionId).toBe("conn-target");
   });
+});
+
+test("reports disk pressure for the sandbox connection, omitting the default conversation", async () => {
+  const calls: unknown[][] = [];
+  const request = (async (...args: unknown[]) => {
+    calls.push(args);
+    return { ownerNotified: true, resizeRequested: true };
+  }) as typeof apiRequest;
+  const scope = { connectionName: "sandbox-agent-1", agentId: "agent-1" };
+
+  await reportEnvironmentDiskPressure(
+    { ...scope, conversationId: "conv-1" },
+    request,
+  );
+  await reportEnvironmentDiskPressure(
+    { ...scope, conversationId: "default" },
+    request,
+  );
+
+  expect(calls).toEqual([
+    [
+      "POST",
+      "/v1/environments/disk-pressure",
+      { ...scope, conversationId: "conv-1" },
+    ],
+    ["POST", "/v1/environments/disk-pressure", scope],
+  ]);
 });

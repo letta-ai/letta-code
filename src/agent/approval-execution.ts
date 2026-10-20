@@ -361,6 +361,7 @@ export async function executeApprovalBatch(
     options?.workingDirectory ?? getCurrentWorkingDirectory(),
     (text) => deliverDiskSpaceReminder(text, options?.parentScope),
     () => executeApprovalBatchUnwatched(decisions, onChunk, options),
+    { scope: options?.parentScope },
   );
 }
 
