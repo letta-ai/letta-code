@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import {
@@ -475,6 +476,14 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
+  // Compose once for both providers, independently of MCP inheritance.
+  options = {
+    ...options,
+    mcpReminder:
+      [buildParentMemoryNote(options.parentAgentId), options.mcpReminder]
+        .filter(Boolean)
+        .join("\n\n") || undefined,
+  };
   const startedAt = Date.now();
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv

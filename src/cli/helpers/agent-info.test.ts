@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, rmSync } from "node:fs";
 import {
   getMemoryFilesystemRoot,
   getScopedMemoryFilesystemRoot,
@@ -220,4 +222,26 @@ describe("agent info reminder", () => {
     expect(context).not.toContain("Local time");
     expect(context).not.toContain("Git repository");
   });
+});
+
+test("includes accessible parent memory only for a distinct resolved parent", () => {
+  const parentAgentId = `agent-info-parent-${randomUUID()}`;
+  const directory = getScopedMemoryFilesystemRoot(parentAgentId);
+  const agentInfo = { id: "agent-child", name: "Child" };
+  expect(buildAgentInfo({ agentInfo, parentAgentId })).not.toContain(
+    "Your parent agent",
+  );
+  mkdirSync(directory, { recursive: true });
+  try {
+    expect(buildAgentInfo({ agentInfo, parentAgentId })).toContain(directory);
+    expect(buildAgentInfo({ agentInfo })).not.toContain("Your parent agent");
+    expect(
+      buildAgentInfo({
+        agentInfo: { ...agentInfo, id: parentAgentId },
+        parentAgentId,
+      }),
+    ).not.toContain("Your parent agent");
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

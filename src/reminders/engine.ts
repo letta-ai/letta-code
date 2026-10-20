@@ -64,7 +64,15 @@ async function buildAgentInfoReminder(
     return null;
   }
 
+  let parentAgentId: string | undefined;
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(context.agent.id);
+    if (scopeAgentId !== context.agent.id) parentAgentId = scopeAgentId;
+  } catch {
+    // Parent lookup must not prevent the agent's own info reminder.
+  }
   const reminder = buildAgentInfo({
+    parentAgentId,
     agentInfo: {
       id: context.agent.id,
       name: context.agent.name,
