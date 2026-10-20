@@ -62,14 +62,25 @@ function session(
   onWorkerSettled?: (id: string, turn: ReplTurnRecord) => void,
 ) {
   let created = 0;
+  let refreshed = 0;
   const repl = new ReplSession({
     createSpawner: async () => {
       created++;
-      return { spawner, cleanup: async () => {} };
+      return {
+        spawner,
+        refresh: async () => {
+          refreshed++;
+        },
+        cleanup: async () => {},
+      };
     },
     onWorkerSettled: (worker, turn) => onWorkerSettled?.(worker.id, turn),
   });
-  return { repl, spawnerCount: () => created };
+  return {
+    repl,
+    spawnerCount: () => created,
+    refreshCount: () => refreshed,
+  };
 }
 
 describe("ReplSession cells", () => {
@@ -206,6 +217,20 @@ describe("ReplSession workers", () => {
     expect(continued.request.prompt).toContain("Continue the task");
     continued.finish("finished");
     expect((await resumed).result).toBe("finished");
+  });
+
+  test("cells that can reach a live worker re-capture the invoking context", async () => {
+    const fake = scriptedSpawner();
+    const { repl, spawnerCount, refreshCount } = session(fake.spawner);
+    await repl.runCell("return 1;");
+    await repl.runCell("w = agent.start('First');");
+    expect([spawnerCount(), refreshCount()]).toEqual([1, 0]);
+    // No agent call in the cell, but w.send spawns under this turn's context.
+    await repl.runCell("w.send('Second'); return w.id;");
+    expect([spawnerCount(), refreshCount()]).toEqual([1, 1]);
+    await repl.runCell("await w.stop();");
+    await repl.runCell("return 2;");
+    expect([spawnerCount(), refreshCount()]).toEqual([1, 2]);
   });
 
   test("send to an idle worker continues the conversation without interrupting", async () => {

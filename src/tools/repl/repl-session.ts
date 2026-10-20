@@ -31,6 +31,8 @@ const SESSION_ABORTED = "Repl session was reset.";
 
 export interface ReplSpawnerHandle {
   spawner: SubagentSpawner;
+  /** Re-capture the invoking turn's model, permissions, and tools. */
+  refresh?: () => Promise<void>;
   cleanup(): Promise<void>;
 }
 
@@ -186,9 +188,12 @@ export class ReplSession {
     const signal = options.signal ?? new AbortController().signal;
     let abortCell = () => {};
     try {
-      // Create the spawner inside the invoking tool call, where the parent's
-      // runtime context (model, tools, permissions) is current.
-      if (USES_AGENT.test(code)) await this.getSpawner();
+      // Capture inside the invoking tool call, where the parent's runtime
+      // context (model, tools, permissions) is current. Any cell can steer a
+      // live worker, so worker turns follow the latest invoking turn.
+      if (USES_AGENT.test(code) || this.hasLiveWorkers()) {
+        await this.captureSpawnerContext();
+      }
       // Sloppy mode on purpose: a bare assignment (`w = agent.start(...)`)
       // creates a context global that later cells can read. `args` is a
       // parameter so overlapping cells each keep their own.
@@ -297,6 +302,19 @@ export class ReplSession {
       if (worker.conversationId === id || worker.label === id) return worker;
     }
     return undefined;
+  }
+
+  private hasLiveWorkers(): boolean {
+    for (const worker of this.workers.values()) {
+      if (worker.status !== "stopped") return true;
+    }
+    return false;
+  }
+
+  private async captureSpawnerContext(): Promise<void> {
+    const existing = this.spawnerHandle;
+    const handle = await this.getSpawner();
+    if (existing) await handle.refresh?.();
   }
 
   private getSpawner(): Promise<ReplSpawnerHandle> {
