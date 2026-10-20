@@ -857,6 +857,16 @@ to accept the default message without opening an editor.
   This is the right type for pushing to `letta-ai/letta-code`.
 - Push URL: `git push https://<user>:<token>@github.com/<org>/<repo>.git <branch> --force`
 
+### GitHub PR Merge-State Checks
+
+`gh pr view <pr> --json headRefOid,mergeable,mergeStateStatus,state` is
+definitive once `mergeStateStatus` is not `UNKNOWN`. Don't re-run it on the same
+PR while the result is unchanged (same `headRefOid` and merge state): a
+notification that references the PR or reports a transient `UNKNOWN` is not a
+state change. Re-check only after a real change (new `headRefOid`, PR
+closed/merged, or a review that could flip mergeability) and stop once the result
+is again definitive.
+
 ### Letta API: `summary_search` not `summary`
 
 `GET /v1/conversations?agent_id=X&summary_search=owner/repo/pr-N` , the param
