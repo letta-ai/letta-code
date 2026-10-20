@@ -552,9 +552,10 @@ export type ListenerRuntime = {
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   /**
-   * Epoch ms of the last `pong` observed from the cloud relay. Used by the
-   * heartbeat watchdog to detect a half-open socket (no `close` event) and
-   * force a reconnect. `null` until the first pong on a connection.
+   * Epoch ms of the last `pong` observed on the legacy single connection.
+   * Reported for diagnostics only: once several connections are live this is
+   * not attributable to a socket, so the heartbeat watchdog reads the pong time
+   * of the socket it pings instead. `null` until the first pong.
    */
   lastPongAt: number | null;
   intentionallyClosed: boolean;
