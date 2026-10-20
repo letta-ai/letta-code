@@ -129,9 +129,12 @@ export class ReplWorker {
         Promise.reject(new Error(`Worker ${this.id} is stopped.`)),
       );
     }
+    // Capture before enqueueing: an idle worker starts the new turn at once,
+    // and that turn must not be interrupted.
+    const running = this.active;
     const turn = this.enqueue(message, options);
-    if (this.active && options.interrupt !== false) {
-      this.active.controller.abort();
+    if (running && options.interrupt !== false) {
+      running.controller.abort();
     }
     return turn;
   }

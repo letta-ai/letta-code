@@ -193,6 +193,20 @@ describe("ReplSession workers", () => {
     expect((await resumed).result).toBe("finished");
   });
 
+  test("send to an idle worker continues the conversation without interrupting", async () => {
+    const fake = scriptedSpawner();
+    const { repl } = session(fake.spawner);
+    await repl.runCell("w = agent.start('First');");
+    (await fake.nextTurn(0)).finish("first done");
+    await repl.runCell("await w.result();");
+    const followUp = repl.runCell("return await w.send('Second');");
+    const second = await fake.nextTurn(1);
+    expect(second.signal.aborted).toBe(false);
+    expect(second.request.options.conversationId).toBe("conv-w1");
+    second.finish("second done");
+    expect((await followUp).result).toBe("second done");
+  });
+
   test("queued sends run after the active turn without interrupting it", async () => {
     const fake = scriptedSpawner();
     const { repl } = session(fake.spawner);
