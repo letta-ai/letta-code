@@ -196,7 +196,6 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
-  // Session teardown drops every held MCP originator token (memory-only).
   clearMcpOriginatorTokens();
   disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
@@ -211,10 +210,8 @@ export function stopRuntime(
       "Listener runtime stopped",
     );
     clearConversationRuntimeState(conversationRuntime);
-    if (conversationRuntime.queueRuntime) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      conversationRuntime.queueRuntime.clear("shutdown");
-    }
+    conversationRuntime.queuedMessagesByItemId.clear();
+    conversationRuntime.queueRuntime?.clear("shutdown");
   }
   runtime.conversationRuntimes.clear();
   closeListenerRuntimeConnections(runtime, suppressCallbacks);
