@@ -96,6 +96,8 @@ async function retrieveWorkerConversation(
  * guard, so the journal explains the null.
  */
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
+/** How long a continuation waits for this spawner's own interrupt to settle. */
+const STOP_SETTLE_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
 export const MAX_IDENTICAL_TOOL_CALLS = 3;
 
@@ -423,6 +425,25 @@ export function createSdkSpawner(
 ): SubagentSpawner {
   const activeResumeIds = new Set<string>();
   const locallyCompletedIds = new Set<string>();
+  // Turns this spawner interrupted, until the interrupt is acknowledged. An
+  // acknowledged interrupt leaves the conversation idle, so this execution may
+  // continue it, exactly as if the turn had completed.
+  const settlingStops = new Map<string, Promise<void>>();
+  const trackStop = (id: string, interrupted: Promise<boolean>) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<boolean>((resolve) => {
+      timer = setTimeout(() => resolve(false), STOP_SETTLE_TIMEOUT_MS);
+      timer.unref?.();
+    });
+    const settled: Promise<void> = Promise.race([interrupted, timedOut]).then(
+      (acknowledged) => {
+        clearTimeout(timer);
+        if (acknowledged) locallyCompletedIds.add(id);
+        if (settlingStops.get(id) === settled) settlingStops.delete(id);
+      },
+    );
+    settlingStops.set(id, settled);
+  };
   return async (
     request: SubagentRequest,
     signal: AbortSignal,
@@ -438,6 +459,7 @@ export function createSdkSpawner(
         "agent() conversationId must be a conv-... or local-conv-... ID.",
       );
     }
+    if (resumeId) await settlingStops.get(resumeId);
     // Never hand conversationId to an older SDK: it ignores the option and
     // creates a fresh worker, silently losing the conversation history.
     if (resumeId && !config.supportsAgentFreeResume) {
@@ -581,8 +603,13 @@ export function createSdkSpawner(
     const stop = (reason: string) => {
       if (finished) return;
       finished = true;
-      void query.interrupt().catch(() => undefined);
+      const interrupted = query.interrupt().then(
+        () => true,
+        () => false,
+      );
       query.close();
+      const stoppedId = activeId ?? query.conversationId;
+      if (stoppedId) trackStop(stoppedId, interrupted);
       settleStopped({
         finalText: "",
         success: false,

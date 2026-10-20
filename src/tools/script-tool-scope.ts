@@ -27,6 +27,7 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   "SendAgentMessage",
   "Workflow",
   "CodeMode",
+  "Repl",
 ]);
 
 function isOwningAgentId(value: string | null | undefined): value is string {
