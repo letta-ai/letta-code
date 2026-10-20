@@ -226,12 +226,15 @@ describe("peer seed checkout", () => {
     "miss",
     "status",
     "network",
+    "seed-timeout",
     "unsafe",
     "bad-bundle",
     "bad-json",
     "bad-shallow",
     "download-status",
     "stream-timeout",
+    "idle-timeout",
+    "headers-timeout",
     "partial",
   ])("fallback: %s", async (failure) => {
     const root = await mkdtemp(join(tmpdir(), "memfs-seed-fallback-"));
@@ -240,10 +243,45 @@ describe("peer seed checkout", () => {
     else process.env.DAYTONA_SANDBOX_ID = "sandbox-test";
     if (failure === "occupied")
       await writeFile(join(root, "keep"), "user data");
+    const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const prepareTimeoutMock =
+      failure === "seed-timeout"
+        ? spyOn(AbortSignal, "timeout").mockImplementation(() =>
+            nativeTimeout(10),
+          )
+        : undefined;
+    const nativeSetTimeout = globalThis.setTimeout;
+    const idleTimeoutMock = ["idle-timeout", "headers-timeout"].includes(
+      failure,
+    )
+      ? spyOn(globalThis, "setTimeout").mockImplementation(((
+          fn: (...args: unknown[]) => void,
+          ms?: number,
+          ...args: unknown[]
+        ) =>
+          nativeSetTimeout(
+            fn,
+            ms === 15_000 ? 10 : ms,
+            ...args,
+          )) as typeof setTimeout)
+      : undefined;
     const fetchMock = spyOn(globalThis, "fetch").mockImplementation((async (
       input,
+      init,
     ) => {
       if (failure === "network") throw new Error("unavailable");
+      if (
+        (failure === "seed-timeout" && String(input).endsWith("/seed")) ||
+        (failure === "headers-timeout" && String(input) === signedUrl)
+      ) {
+        return new Promise((_resolve, reject) =>
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("timed out")),
+            { once: true },
+          ),
+        );
+      }
       if (String(input) === `${remote}/seed`) {
         if (failure === "status") return new Response("", { status: 503 });
         if (failure === "bad-json") return new Response("not json");
@@ -259,7 +297,7 @@ describe("peer seed checkout", () => {
       }
       if (failure === "download-status")
         return new Response("", { status: 403 });
-      if (failure === "stream-timeout")
+      if (["stream-timeout", "idle-timeout"].includes(failure))
         return new Response(new ReadableStream());
       return new Response(
         failure === "bad-bundle"
@@ -280,14 +318,23 @@ describe("peer seed checkout", () => {
         );
         return { stdout: "" };
       })(root, ["clone", "--depth", "1", remote, "."], "test-token", {
-        timeoutMs: 50,
+        timeoutMs: failure === "seed-timeout" || idleTimeoutMock ? 1_000 : 50,
       });
       expect(commands.at(-1)).toEqual(["clone", "--depth", "1", remote, "."]);
       expect(commands.length).toBe(failure === "partial" ? 2 : 1);
       if (["outside", "occupied"].includes(failure))
         expect(fetchMock).not.toHaveBeenCalled();
+      if (prepareTimeoutMock)
+        expect(prepareTimeoutMock).toHaveBeenCalledWith(5_000);
+      if (idleTimeoutMock)
+        expect(idleTimeoutMock).toHaveBeenCalledWith(
+          expect.any(Function),
+          15_000,
+        );
     } finally {
       fetchMock.mockRestore();
+      prepareTimeoutMock?.mockRestore();
+      idleTimeoutMock?.mockRestore();
       if (oldSandbox === undefined) delete process.env.DAYTONA_SANDBOX_ID;
       else process.env.DAYTONA_SANDBOX_ID = oldSandbox;
       await rm(root, { recursive: true, force: true });

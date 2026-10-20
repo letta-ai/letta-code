@@ -2,7 +2,7 @@ import { createWriteStream } from "node:fs";
 import { mkdir, mkdtemp, open, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
 type CloneOptions = { operation?: string; timeoutMs?: number };
@@ -28,6 +28,7 @@ export function withPeerSeed(runGit: GitRunner) {
       return void (await runGit(directory, args, token, options));
     }
     let temporary: string | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
     let attemptedClone = false;
     try {
       const endpoint = new URL(`${remote}/seed`);
@@ -45,7 +46,7 @@ export function withPeerSeed(runGit: GitRunner) {
           "X-Letta-Sandbox-Id": sandboxId,
         },
         redirect: "error",
-        signal: AbortSignal.timeout(60_000),
+        signal: AbortSignal.timeout(5_000),
       });
       if (response.status !== 200) throw new Error("Seed unavailable");
       const seed = (await response.json()) as {
@@ -67,16 +68,30 @@ export function withPeerSeed(runGit: GitRunner) {
         throw new Error("Invalid seed URL");
       }
       // Never forward Letta credentials or follow redirects from a signed URL.
-      const signal = AbortSignal.timeout(options.timeoutMs ?? 180_000);
+      const idle = new AbortController();
+      const signal = AbortSignal.any([
+        AbortSignal.timeout(options.timeoutMs ?? 180_000),
+        idle.signal,
+      ]);
+      // Bound time to first byte and stalls, while allowing progressing downloads.
+      idleTimer = setTimeout(() => idle.abort(), 15_000);
       const download = await fetch(url, { redirect: "error", signal });
       if (!download.ok || !download.body) throw new Error("Seed unavailable");
       temporary = await mkdtemp(join(tmpdir(), "letta-git-seed-"));
       const bundle = join(temporary, "seed.bundle");
       await pipeline(
         Readable.fromWeb(download.body),
+        new Transform({
+          transform(chunk, _encoding, callback) {
+            if (chunk.length) idleTimer?.refresh();
+            callback(null, chunk);
+          },
+        }),
         createWriteStream(bundle, { mode: 0o600 }),
         { signal },
       );
+      clearTimeout(idleTimer);
+      idleTimer = undefined;
       // Accept standalone Git bundles, not bundle lists or response error pages.
       const file = await open(bundle, "r");
       try {
@@ -141,6 +156,7 @@ export function withPeerSeed(runGit: GitRunner) {
         await mkdir(directory, { recursive: true });
       }
     } finally {
+      clearTimeout(idleTimer);
       if (temporary) await rm(temporary, { recursive: true, force: true });
     }
     await runGit(directory, args, token, options);
