@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, rmSync } from "node:fs";
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
@@ -10,6 +10,11 @@ import { task_stop } from "./task-stop";
 import { watch_pr } from "./watch-pr";
 
 const url = "https://github.com/letta-ai/letta-code/pull/42";
+let previousManagedCloud: string | undefined;
+beforeEach(() => {
+  previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+  delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+});
 
 function snapshot(
   overrides: Partial<GitHubPullRequestSnapshot> = {},
@@ -33,6 +38,9 @@ function snapshot(
 }
 
 afterEach(() => {
+  if (previousManagedCloud === undefined)
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+  else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
   setMessageQueueAdder(null);
   for (const process of backgroundProcesses.values()) {
     try {
@@ -48,6 +56,62 @@ afterEach(() => {
 });
 
 describe("WatchPR background lifecycle", () => {
+  test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const realSetTimeout = globalThis.setTimeout;
+    const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+      Object.assign(
+        (...[callback, ms, ...args]: Parameters<typeof setTimeout>) =>
+          realSetTimeout(callback, ms === 3_600_000 ? 50 : ms, ...args),
+        { __promisify__: realSetTimeout.__promisify__ },
+      ),
+    );
+    const queued: Array<{
+      text: string;
+      agentId?: string;
+      conversationId?: string;
+    }> = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let calls = 0;
+    let pollSignal: AbortSignal | undefined;
+    try {
+      const result = await watch_pr(
+        {
+          url,
+          parentScope: { agentId: "agent-cloud", conversationId: "conv-cloud" },
+        },
+        {
+          wait: async () => {},
+          fetchSnapshot: async (_ref, { signal }) => {
+            if (++calls === 1) return snapshot();
+            pollSignal = signal;
+            return new Promise((_resolve, reject) =>
+              signal?.addEventListener(
+                "abort",
+                () => reject(new Error("aborted")),
+                { once: true },
+              ),
+            );
+          },
+        },
+      );
+      expect(result.persistent).toBe(false);
+      expect(result.content[0]?.text).toContain("1-hour");
+      await Bun.sleep(150);
+      expect(pollSignal?.aborted).toBe(true);
+      expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
+      expect(calls).toBe(2);
+      expect(queued).toHaveLength(1);
+      expect(queued[0]).toMatchObject({
+        agentId: "agent-cloud",
+        conversationId: "conv-cloud",
+      });
+      expect(queued[0]?.text).toContain("Wake or cron");
+    } finally {
+      timers.mockRestore();
+    }
+  });
+
   test("is exposed in every standard toolset as a read-only tool", () => {
     expect(TOOL_DEFINITIONS.WatchPR).toBeDefined();
     expect(TOOLSET_CATALOG.letta.tools).toContain("WatchPR");
@@ -111,6 +175,7 @@ describe("WatchPR background lifecycle", () => {
     );
 
     expect(result.content[0]?.text).toContain("Failing checks: tests");
+    expect(result.persistent).toBe(true);
     await Bun.sleep(250);
     expect(queued.join("\n")).toContain("New PR comment from @alice");
     expect(queued.join("\n")).toContain("PR merged");
