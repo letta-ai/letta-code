@@ -796,6 +796,7 @@ async function callCatalogTool(
   agentId: string,
   toolName: string,
   args: Record<string, unknown>,
+  options?: { signal?: AbortSignal },
 ): Promise<McpToolResult> {
   const tool = catalog.tools.find(
     (candidate) => candidate.schema.name === toolName,
@@ -807,7 +808,7 @@ async function callCatalogTool(
     );
   }
   return tool.target.kind === "client"
-    ? await tool.target.connection.callTool(tool.target.rawName, args)
+    ? await tool.target.connection.callTool(tool.target.rawName, args, options)
     : mcpToolResultFromServer(
         await runUnifiedMcpTool({
           client: await getServerClient(deps),
@@ -841,6 +842,7 @@ export interface AgentMcpSession {
   callTool(
     toolName: string,
     args: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
   ): Promise<McpToolResult>;
   listTools(): Promise<McpToolDefinition[]>;
   close(): Promise<void>;
@@ -865,8 +867,8 @@ export function createAgentMcpSession(
     return catalog;
   };
   return {
-    callTool: async (toolName, args) =>
-      callCatalogTool(await load(), deps, agentId, toolName, args),
+    callTool: async (toolName, args, options) =>
+      callCatalogTool(await load(), deps, agentId, toolName, args, options),
     listTools: async () => (await load()).tools.map((tool) => tool.schema),
     close: async () => {
       closed = true;
