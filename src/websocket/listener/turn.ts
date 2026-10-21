@@ -69,11 +69,11 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
+import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import {
-  checkpointTurnInputOwnership,
-  createTurnDurabilityOwnership,
-} from "./turn-durability-ownership";
-import { createTurnFinalizer } from "./turn-finalizer";
+  createQueuedTurnConsumer,
+  createTurnFinalizer,
+} from "./turn-finalizer";
 import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
@@ -184,6 +184,7 @@ async function handleIncomingMessageInner(
     recoveryLineageId,
     recoveryTerminalRevision,
     recoveryAuthorityStore,
+    mcpOriginatorSuperRunId: msg.mcpOriginatorSuperRunId,
   });
   const {
     finishClaimedTurn,
@@ -786,17 +787,15 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
-        onConsumeQueuedTurn: async (queuedTurn) => {
-          durabilityOwnership.recordInput(queuedTurn);
-          interruptedRevisionRef.current = await checkpointTurnInputOwnership(
-            runtime,
-            durabilityOwnership,
-            interruptedRevisionRef.current,
-            queuedTurn.actingUserId,
-            recoveryLineageId,
-            recoveryEvidenceWriter,
-          );
-        },
+        onConsumeQueuedTurn: createQueuedTurnConsumer({
+          parkedInput: msg,
+          turnToolContextId,
+          runtime,
+          ownership: durabilityOwnership,
+          interruptedRevisionRef,
+          recoveryLineageId,
+          recoveryEvidenceWriter,
+        }),
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
         originConnectionCanResume,

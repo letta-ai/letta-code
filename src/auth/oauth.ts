@@ -534,6 +534,7 @@ export async function refreshAccessToken(
   refreshToken: string,
   deviceId: string,
   deviceName?: string,
+  signal?: AbortSignal,
 ): Promise<TokenResponse> {
   const authHost = getOAuthAuthHost();
   try {
@@ -550,6 +551,14 @@ export async function refreshAccessToken(
           device_id: deviceId,
           ...(deviceName && { device_name: deviceName }),
         }),
+        // Static ceiling even when no caller signal is supplied (evil-shub
+        // round-9 P1): an unbounded refresh fetch hangs every waiter on the
+        // single-flight promise forever (OrgCredentialSession.pending never
+        // settles). Sixty seconds is generous for one POST; the caller's
+        // budget signal tightens it when provided.
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(60_000)])
+          : AbortSignal.timeout(60_000),
       },
     );
 

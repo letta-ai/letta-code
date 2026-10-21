@@ -1,15 +1,9 @@
-import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import type WebSocket from "ws";
 import {
   estimateActiveMemorySystemPromptTokens,
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
-import type {
-  AbortMessageCommand,
-  ApprovalResponseBody,
-  ChangeDeviceStateCommand,
-} from "@/types/protocol_v2";
 import { isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
@@ -44,22 +38,11 @@ import {
   handleExternalToolCallResponseCommand,
   updateRuntimeExternalTools,
 } from "./external-tools";
-import {
-  createIncomingMessage,
-  dispatchInboundMessageWhenReady,
-} from "./inbound-dispatch";
-import {
-  enqueueInboundUserMessage,
-  getInboundClientMessageId,
-} from "./inbound-queue";
-import {
-  commitInputDisposition,
-  forgetQueuedInputDisposition,
-  getInputDisposition,
-  ordinaryInputIdentity,
-  reserveInputDisposition,
-} from "./input-disposition";
-import { rollbackInputDisposition } from "./input-disposition-rollback";
+import { routeInputFrame } from "./input-frame-router";
+import type {
+  MessageRouterParams,
+  ParsedRuntimeScope,
+} from "./message-router-types";
 import {
   isExecuteCommandCommand,
   parseServerLifecycleMessage,
@@ -67,132 +50,16 @@ import {
 } from "./protocol-inbound";
 import { logV2Command, summarizeV2Command } from "./protocol-logging";
 import { emitDeviceStatusUpdate } from "./protocol-outbound";
-import {
-  scheduleQueuePump,
-  shouldProcessInboundMessageDirectly,
-  shouldQueueInboundMessage,
-} from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime, safeEmitWsEvent } from "./runtime";
 import { parseListenerReadyMessage } from "./split-stream-lifecycle";
-import { validateResponseFormat } from "./structured-output";
 import {
   handleTeleportFailure,
   handleTeleportProbe,
   handleTeleportRequest,
-  isRuntimeTeleportPending,
 } from "./teleport";
-import { admitTeleportContinueInput } from "./teleport-continue-input";
-import type { ListenerTransport } from "./transport";
 import { handleIncomingMessage } from "./turn";
 import { handleTurnFinishedAck } from "./turn-finished-ack";
-import type {
-  ConversationRuntime,
-  IncomingMessage,
-  ListenerConnectionId,
-  ListenerRuntime,
-  ProcessQueuedTurn,
-  StartListenerOptions,
-  SyncReplayOptions,
-} from "./types";
-
-type SafeSocketSend = (
-  socket: WebSocket,
-  payload: unknown,
-  errorType: string,
-  context: string,
-) => boolean;
-
-type RunDetachedListenerTask = (
-  commandName: string,
-  task: () => Promise<void>,
-) => void;
-
-type TrackListenerError = (
-  errorType: string,
-  error: unknown,
-  context: string,
-) => void;
-
-type FileCommandSession = {
-  handle(parsed: unknown): boolean;
-};
-type RuntimeScope = {
-  agent_id: string | null;
-  conversation_id: string;
-};
-
-type ParsedRuntimeScope = RuntimeScope | null;
-
-type MessageRouterParams = {
-  runtime: ListenerRuntime;
-  socket: WebSocket;
-  connectionId?: ListenerConnectionId;
-  lineageId?: string;
-  opts: StartListenerOptions;
-  processQueuedTurn: ProcessQueuedTurn;
-  fileCommandSession: FileCommandSession;
-  getParsedRuntimeScope: (parsed: unknown) => ParsedRuntimeScope;
-  replaySyncStateForRuntime: (
-    listenerRuntime: ListenerRuntime,
-    socket: WebSocket,
-    scope: RuntimeScope,
-    opts?: SyncReplayOptions,
-  ) => Promise<void>;
-  getOrCreateScopedRuntime: (
-    listener: ListenerRuntime,
-    agentId?: string | null,
-    conversationId?: string | null,
-  ) => ConversationRuntime;
-  handleApprovalResponseInput: (
-    listener: ListenerRuntime,
-    params: {
-      runtime: {
-        agent_id?: string | null;
-        conversation_id?: string | null;
-      };
-      response: ApprovalResponseBody;
-      connectionId: ListenerConnectionId;
-      socket: ListenerTransport;
-      opts: {
-        onStatusChange?: StartListenerOptions["onStatusChange"];
-        connectionId?: string;
-      };
-      processQueuedTurn: ProcessQueuedTurn;
-    },
-  ) => Promise<boolean>;
-  handleChangeDeviceStateInput: (
-    listener: ListenerRuntime,
-    params: {
-      command: ChangeDeviceStateCommand;
-      connectionId: ListenerConnectionId;
-      socket: WebSocket;
-      opts: {
-        onStatusChange?: StartListenerOptions["onStatusChange"];
-        connectionId?: string;
-      };
-      processQueuedTurn: ProcessQueuedTurn;
-    },
-  ) => Promise<boolean>;
-  handleAbortMessageInput: (
-    listener: ListenerRuntime,
-    params: {
-      command: AbortMessageCommand;
-      connectionId: ListenerConnectionId;
-      socket: WebSocket;
-      opts: {
-        onStatusChange?: StartListenerOptions["onStatusChange"];
-        connectionId?: string;
-      };
-      processQueuedTurn: ProcessQueuedTurn;
-    },
-  ) => Promise<boolean>;
-  stampInboundUserMessageOtids: (incoming: IncomingMessage) => IncomingMessage;
-  safeSocketSend: SafeSocketSend;
-  runDetachedListenerTask: RunDetachedListenerTask;
-  trackListenerError: TrackListenerError;
-  processIncomingMessage?: typeof handleIncomingMessage;
-};
 
 export function createListenerMessageHandler(
   params: MessageRouterParams,
@@ -436,238 +303,21 @@ export function createListenerMessageHandler(
       }
 
       if (parsed.type === "input") {
-        const acknowledgeInput = (
-          accepted: boolean,
-          error?: string,
-          disposition?: "started" | "queued",
-        ): void => {
-          if (!parsed.request_id) return;
-          safeSocketSend(
-            socket,
-            {
-              type: "input_accepted",
-              request_id: parsed.request_id,
-              runtime: parsed.runtime,
-              accepted,
-              ...(disposition ? { disposition } : {}),
-              ...(error ? { error } : {}),
-            },
-            "input_accepted_response",
-            "input",
-          );
-        };
-        if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) {
-          logV2Command(opts, "Dropping input: runtime mismatch or closed");
-          acknowledgeInput(false, "Runtime is no longer active");
-          return;
-        }
-        if (parsed.payload.kind === "teleport_continue") {
-          const teleportAgentId = parsed.runtime.agent_id;
-          if (!teleportAgentId) {
-            acknowledgeInput(
-              false,
-              "Teleport requires an agent-backed runtime",
-            );
-            return;
-          }
-          admitTeleportContinueInput({
-            listener: runtime,
-            scopedRuntime: getOrCreateScopedRuntime(
-              runtime,
-              parsed.runtime.agent_id,
-              parsed.runtime.conversation_id,
-            ),
-            connectionId,
-            agentId: teleportAgentId,
-            conversationId: parsed.runtime.conversation_id,
-            payload: parsed.payload,
-            onStatusChange: opts.onStatusChange,
-            acknowledgeInput,
-            runDetachedListenerTask,
-            processIncomingMessage,
-          });
-          return;
-        }
-        if (parsed.payload.kind === "approval_response") {
-          const handled = await handleApprovalResponseInput(runtime, {
-            runtime: parsed.runtime,
-            response: parsed.payload,
-            connectionId,
-            socket,
-            opts: {
-              onStatusChange: opts.onStatusChange,
-              connectionId: opts.connectionId,
-            },
-            processQueuedTurn,
-          });
-          acknowledgeInput(
-            handled,
-            handled ? undefined : "Approval request is no longer pending",
-          );
-          return;
-        }
-        const inputPayload = parsed.payload;
-        if (inputPayload.kind !== "create_message") {
-          emitLoopErrorNotice(socket, runtime, {
-            message: `Unsupported input payload kind: ${String((inputPayload as { kind?: unknown }).kind)}`,
-            stopReason: "error",
-            isTerminal: false,
-            agentId: parsed.runtime.agent_id,
-            conversationId: parsed.runtime.conversation_id,
-          });
-          acknowledgeInput(false, "Unsupported input payload kind");
-          return;
-        }
-        const error = validateResponseFormat(inputPayload.response_format);
-        if (error) {
-          acknowledgeInput(false, error);
-          return;
-        }
-        const incoming = createIncomingMessage(
-          parsed.runtime,
-          inputPayload,
-          connectionId,
-          parsed.terminal_consumer_id,
-        );
-        const hasApprovalPayload = incoming.messages.some(
-          (payload): payload is ApprovalCreate =>
-            "type" in payload && payload.type === "approval",
-        );
-        if (hasApprovalPayload) {
-          emitLoopErrorNotice(socket, runtime, {
-            message:
-              "Protocol violation: approval payloads are not allowed in input.kind=create_message. Use input.kind=approval_response.",
-            stopReason: "error",
-            isTerminal: false,
-            agentId: parsed.runtime.agent_id,
-            conversationId: parsed.runtime.conversation_id,
-          });
-          acknowledgeInput(
-            false,
-            "Approval payloads require approval_response",
-          );
-          return;
-        }
-
-        const scopedRuntime = getOrCreateScopedRuntime(
+        await routeInputFrame({
           runtime,
-          incoming.agentId,
-          incoming.conversationId,
-        );
-
-        const processIncomingMessageDirectly = (
-          directIncoming: IncomingMessage,
-        ): void => {
-          dispatchInboundMessageWhenReady({
-            listener: runtime,
-            runtime: scopedRuntime,
-            incoming: directIncoming,
-            socket,
-            options: opts,
-            processQueuedTurn,
-            processIncomingMessage,
-            actingUserId: parsed.runtime.acting_user_id,
-            trackListenerError,
-            onInputAccepted: ({ accepted, disposition }) =>
-              acknowledgeInput(
-                accepted,
-                accepted ? undefined : "Input was rejected by the queue",
-                disposition,
-              ),
-          });
-        };
-
-        if (shouldQueueInboundMessage(incoming)) {
-          const stampedIncoming = stampInboundUserMessageOtids(incoming);
-          const identity = ordinaryInputIdentity(
-            getInboundClientMessageId(stampedIncoming),
-          );
-          const acceptedDisposition = getInputDisposition(
-            scopedRuntime,
-            identity,
-          );
-          if (acceptedDisposition) {
-            acknowledgeInput(true, undefined, acceptedDisposition);
-            return;
-          }
-          if (
-            isRuntimeTeleportPending(
-              runtime,
-              scopedRuntime.agentId,
-              scopedRuntime.conversationId,
-            )
-          ) {
-            acknowledgeInput(false, "Conversation is switching computers");
-            return;
-          }
-          if (
-            shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)
-          ) {
-            processIncomingMessageDirectly(stampedIncoming);
-            return;
-          }
-
-          const admission = reserveInputDisposition(scopedRuntime, identity);
-          if (admission.kind === "duplicate") {
-            acknowledgeInput(true, undefined, admission.disposition);
-            return;
-          }
-          if (admission.kind === "full") {
-            acknowledgeInput(false, "Stable input ledger is at capacity");
-            return;
-          }
-          const reservation =
-            admission.kind === "reserved" ? admission.reservation : undefined;
-          const durableIncoming = identity
-            ? { ...stampedIncoming, durableInputIdentities: [identity] }
-            : stampedIncoming;
-          try {
-            const committed = commitInputDisposition(
-              scopedRuntime,
-              reservation,
-              "queued",
-              {
-                incoming: durableIncoming,
-                actingUserId: parsed.runtime.acting_user_id,
-              },
-            );
-            let enqueued = false;
-            try {
-              enqueued =
-                committed &&
-                enqueueInboundUserMessage(
-                  scopedRuntime,
-                  durableIncoming,
-                  parsed.runtime.acting_user_id,
-                );
-            } catch (error) {
-              if (committed)
-                forgetQueuedInputDisposition(scopedRuntime, identity);
-              throw error;
-            }
-            const durablyAccepted = committed && enqueued;
-            if (durablyAccepted) {
-              scheduleQueuePump(scopedRuntime, socket, opts, processQueuedTurn);
-            } else if (committed) {
-              forgetQueuedInputDisposition(scopedRuntime, identity);
-            } else {
-              rollbackInputDisposition(scopedRuntime, reservation);
-            }
-            acknowledgeInput(
-              durablyAccepted,
-              durablyAccepted
-                ? undefined
-                : "Input was rejected by the queue or durable ledger",
-              durablyAccepted ? "queued" : undefined,
-            );
-          } catch (error) {
-            rollbackInputDisposition(scopedRuntime, reservation);
-            throw error;
-          }
-          return;
-        }
-
-        processIncomingMessageDirectly(incoming);
+          socket,
+          connectionId,
+          opts,
+          parsed,
+          processQueuedTurn,
+          getOrCreateScopedRuntime,
+          handleApprovalResponseInput,
+          stampInboundUserMessageOtids,
+          safeSocketSend,
+          runDetachedListenerTask,
+          trackListenerError,
+          processIncomingMessage,
+        });
         return;
       }
 

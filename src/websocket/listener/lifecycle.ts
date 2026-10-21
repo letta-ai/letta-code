@@ -1,4 +1,5 @@
 import WebSocket from "ws";
+import { clearMcpOriginatorTokens } from "@/agent/mcp-originator-tokens";
 import {
   setExplicitOrganizationId,
   warmOrganizationId,
@@ -195,6 +196,7 @@ export function stopRuntime(
   suppressCallbacks: boolean,
 ): void {
   runtime.intentionallyClosed = true;
+  clearMcpOriginatorTokens();
   disposeBrowserDeviceMcpOAuthOperationsForRuntime(runtime);
   clearPreparedTerminalPromotionTimers(runtime);
   revokeRecoveryClaims(runtime);
@@ -208,10 +210,8 @@ export function stopRuntime(
       "Listener runtime stopped",
     );
     clearConversationRuntimeState(conversationRuntime);
-    if (conversationRuntime.queueRuntime) {
-      conversationRuntime.queuedMessagesByItemId.clear();
-      conversationRuntime.queueRuntime.clear("shutdown");
-    }
+    conversationRuntime.queuedMessagesByItemId.clear();
+    conversationRuntime.queueRuntime?.clear("shutdown");
   }
   runtime.conversationRuntimes.clear();
   closeListenerRuntimeConnections(runtime, suppressCallbacks);

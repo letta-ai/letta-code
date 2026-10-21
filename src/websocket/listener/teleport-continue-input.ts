@@ -5,6 +5,7 @@ import {
   reserveInputDisposition,
   teleportInputIdentity,
 } from "./input-disposition";
+import { hasLiveAcceptedInputOwnerWithOriginatorRetirement } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import {
   buildTeleportContinuationMessages,
@@ -24,6 +25,8 @@ export type AcknowledgeInput = (
   accepted: boolean,
   error?: string,
   disposition?: "started" | "queued",
+  deliveryHandling?: "create" | "refresh",
+  mayRecreateOwner?: () => boolean,
 ) => void;
 
 /**
@@ -41,6 +44,14 @@ export function admitTeleportContinueInput(params: {
   agentId: string;
   conversationId: string;
   payload: InputTeleportContinuePayload;
+  /**
+   * Originator super run id from the top-level frame (when present). Threaded
+   * onto the continuation so the turn finalizer can retire the run's token
+   * entry — including an entry a duplicate-branch ACK recreated from the live
+   * teleport disposition (evil-shub round 4: a recreated entry whose
+   * continuation carries no originator id is orphaned until TTL).
+   */
+  originatorSuperRunId?: string;
   onStatusChange: StartListenerOptions["onStatusChange"];
   acknowledgeInput: AcknowledgeInput;
   runDetachedListenerTask: (
@@ -75,7 +86,19 @@ export function admitTeleportContinueInput(params: {
     teleportInputIdentity(teleportId),
   );
   if (admission.kind === "duplicate") {
-    acknowledgeInput(true, undefined, admission.disposition);
+    // Duplicate re-ack: refresh-only. The durable ledger is the authority on
+    // whether this input still has a live owner whose token entry may be
+    // recreated after a crash (a terminal tombstone must not qualify), AND
+    // the persisted continuation must carry the owner id needed to retire a
+    // recreated entry — a pre-owner-id (650eb75f) record cannot, so its
+    // duplicate fails closed and the continuation runs headerless rather
+    // than orphaning a recreated token (evil-shub round-5 P2).
+    acknowledgeInput(true, undefined, admission.disposition, "refresh", () =>
+      hasLiveAcceptedInputOwnerWithOriginatorRetirement(
+        scopedRuntime,
+        teleportInputIdentity(teleportId),
+      ),
+    );
     return;
   }
   if (admission.kind === "full") {
@@ -103,6 +126,9 @@ export function admitTeleportContinueInput(params: {
       agentId,
       conversationId,
       clientPreferences: payload.client_preferences,
+      ...(params.originatorSuperRunId
+        ? { mcpOriginatorSuperRunId: params.originatorSuperRunId }
+        : {}),
       messages: buildTeleportContinuationMessages({
         teleportId,
         approvals: payload.continuation?.approvals,
@@ -127,7 +153,16 @@ export function admitTeleportContinueInput(params: {
       return;
     }
     clearExpectedInboundTeleport(scopedRuntime);
-    acknowledgeInput(true, undefined, "started");
+    // MCP originator delivery: refresh-only, and NO recreate predicate. A
+    // teleport continuation creates no new token owner here: the disposition
+    // committed above would make a live-owner predicate vacuously true, so a
+    // token riding this frame may re-assert an existing entry but must never
+    // create one. Crash recovery does not need a hatch here: a post-crash
+    // redelivery finds the durable disposition and takes the duplicate
+    // branch, which gates recreation correctly — and the continuation's
+    // threaded mcpOriginatorSuperRunId lets its finalizer retire that
+    // recreated entry instead of orphaning it.
+    acknowledgeInput(true, undefined, "started", "refresh");
     params.runDetachedListenerTask("teleport_continue", async () => {
       await params.processIncomingMessage(
         continuationInput,

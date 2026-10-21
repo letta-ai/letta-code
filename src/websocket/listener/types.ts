@@ -143,6 +143,22 @@ export interface IncomingMessage {
   durableInputIdentities?: readonly InputIdentity[];
   /** External applications which must acknowledge this turn's terminal. */
   terminalConsumerIds?: readonly string[];
+  /**
+   * Cloud super run this input belongs to, when the relay delivered one. The
+   * MCP originator token for this run is never carried here (this message is
+   * persisted by the durable input ledger); it lives only in the in-memory
+   * token store keyed by this id. Undefined on mixed-originator batches.
+   */
+  mcpOriginatorSuperRunId?: string;
+  /**
+   * Whether this input's relay delivery carried a live MCP originator token.
+   * The queue merge votes on (super run id, token presence) together: a
+   * token-bearing and a tokenless delivery for the SAME run must not merge
+   * into an attributed turn, because the tokenless one is a stale pre-mint
+   * frame whose delivery cleared the run's authority — merging them would
+   * let the stale member borrow the fresh member's token.
+   */
+  mcpOriginatorTokenPresent?: boolean;
 }
 
 export type ProcessQueuedTurn = (

@@ -9,6 +9,7 @@ export async function refreshAccessTokenSingleFlight(
   deviceId: string,
   deviceName?: string,
   refresh: RefreshAccessToken = refreshAccessToken,
+  options?: { signal?: AbortSignal },
 ): Promise<TokenResponse> {
   const refreshKey = `${refreshToken}\0${deviceId}`;
   const existing = inFlightRefreshes.get(refreshKey);
@@ -16,7 +17,14 @@ export async function refreshAccessTokenSingleFlight(
     return await existing;
   }
 
-  const pending = refresh(refreshToken, deviceId, deviceName);
+  // Only the starter's signal reaches the fetch (evil-shub round-9 P1): a
+  // joiner cannot cancel a refresh others await, and the fetch carries its
+  // own static ceiling so an un-signaled starter still cannot hang forever.
+  // Keep the legacy three-argument call shape when no budget was provided so
+  // existing test doubles and wrappers observe no signature change.
+  const pending = options?.signal
+    ? refresh(refreshToken, deviceId, deviceName, options.signal)
+    : refresh(refreshToken, deviceId, deviceName);
   inFlightRefreshes.set(refreshKey, pending);
   try {
     return await pending;
