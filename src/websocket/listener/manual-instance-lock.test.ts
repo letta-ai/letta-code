@@ -133,6 +133,37 @@ describe("manual listener instance lock", () => {
     await replacement.release();
   });
 
+  test("treats a live pid recorded before the current boot as stale", async () => {
+    await acquire(SCOPE, 101, "owner-pre-reboot");
+    const acquireWithBootTime = (
+      processId: number,
+      ownerToken: string,
+      bootTimeMs: number,
+    ) =>
+      acquireManualListenerLock(SCOPE, {
+        lockRoot,
+        processId,
+        ownerToken,
+        isProcessAlive: () => true,
+        bootTimeMs,
+      });
+
+    // Same boot: the live incumbent still blocks.
+    await expect(
+      acquireWithBootTime(202, "owner-same-boot", Date.now() - 3_600_000),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+
+    // After a reboot, pid 101 may belong to an unrelated process.
+    const replacement = await acquireWithBootTime(
+      303,
+      "owner-post-reboot",
+      Date.now() + 3_600_000,
+    );
+    const record = JSON.parse(await readFile(replacement.lockPath, "utf-8"));
+    expect(record.pid).toBe(303);
+    await replacement.release();
+  });
+
   test("fails closed on a corrupt incumbent record", async () => {
     const scopeHash = getManualListenerScopeHash(SCOPE);
     const listenersDir = path.join(lockRoot, "listeners");

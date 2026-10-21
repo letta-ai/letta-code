@@ -12,7 +12,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, uptime } from "node:os";
 import path from "node:path";
 
 export interface ManualListenerLockScope {
@@ -39,9 +39,13 @@ interface ManualListenerLockDeps {
   processId: number;
   ownerToken: string;
   isProcessAlive: (pid: number) => boolean;
+  /** Epoch ms of the current OS boot; records acquired earlier are stale. */
+  bootTimeMs: number;
 }
 
 const RECOVERY_MAX_DEPTH = 64;
+// Tolerates clock jitter between `acquiredAt` and the uptime-derived boot time.
+const BOOT_TIME_SLACK_MS = 60_000;
 
 export class ManualListenerAlreadyRunningError extends Error {
   readonly holderPid: number;
@@ -83,6 +87,28 @@ function defaultIsProcessAlive(pid: number): boolean {
     // platform failures stay fail-closed and report the lock as held.
     return !hasErrorCode(error, "ESRCH");
   }
+}
+
+function getDefaultBootTimeMs(): number {
+  return Date.now() - uptime() * 1000;
+}
+
+/**
+ * An owner recorded before the current boot cannot still be running, even if
+ * its pid has since been reused by an unrelated process.
+ */
+function isOwnerAlive(
+  record: ManualListenerLockRecord,
+  deps: ManualListenerLockDeps,
+): boolean {
+  const acquiredAtMs = Date.parse(record.acquiredAt);
+  if (
+    Number.isFinite(acquiredAtMs) &&
+    acquiredAtMs < deps.bootTimeMs - BOOT_TIME_SLACK_MS
+  ) {
+    return false;
+  }
+  return deps.isProcessAlive(record.pid);
 }
 
 function getDefaultLockRoot(): string {
@@ -240,7 +266,7 @@ async function recoverDeadOwner(
           lockPath,
         );
       }
-      if (deps.isProcessAlive(claimOwner.pid)) {
+      if (isOwnerAlive(claimOwner, deps)) {
         return false;
       }
     }
@@ -287,6 +313,7 @@ export async function acquireManualListenerLock(
     processId: process.pid,
     ownerToken: randomUUID(),
     isProcessAlive: defaultIsProcessAlive,
+    bootTimeMs: getDefaultBootTimeMs(),
     ...overrides,
   };
   const listenerLockDir = path.join(deps.lockRoot, "listeners");
@@ -369,7 +396,7 @@ export async function acquireManualListenerLock(
         lockPath,
       );
     }
-    if (deps.isProcessAlive(incumbent.pid)) {
+    if (isOwnerAlive(incumbent, deps)) {
       throw new ManualListenerAlreadyRunningError(incumbent.pid, lockPath);
     }
 
