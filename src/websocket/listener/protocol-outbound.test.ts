@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import WebSocket from "ws";
+import {
+  clearAllSubagents,
+  registerSubagent,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
 import {
   backgroundProcesses,
@@ -13,6 +18,7 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
+  suspendListenerConnection,
   TO_SUBSCRIBERS,
   toListenerConnection,
 } from "@/websocket/listener/connection";
@@ -24,6 +30,7 @@ import {
 } from "@/websocket/listener/mod-adapter";
 import { OUTBOUND_QUEUE_LIMITS } from "@/websocket/listener/outbound-wire";
 import {
+  buildSubagentSnapshot,
   emitDequeuedUserMessage,
   emitDeviceStatusUpdateIfChanged,
   emitProtocolV2Message,
@@ -35,7 +42,7 @@ import type {
 } from "@/websocket/listener/types";
 
 class MockSocket {
-  readyState = WebSocket.OPEN;
+  readyState: number = WebSocket.OPEN;
   bufferedAmount = 0;
   sentPayloads: string[] = [];
   terminated = false;
@@ -80,6 +87,114 @@ function parseOnlyStreamDelta(socket: MockSocket): StreamDeltaMessage {
 }
 
 describe("emitProtocolV2Message backpressure", () => {
+  test("delivers the canonical null-agent default scope", async () => {
+    const listener = createListenerRuntime();
+    const socket = new MockSocket();
+    const options = {
+      connectionId: "agent-free",
+      wsUrl: "ws://local",
+      deviceId: "device",
+      connectionName: "local",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: options.connectionId,
+      writer: socket as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, options.connectionId);
+    const scope = { agent_id: null, conversation_id: "default" };
+    subscribeListenerConnection(listener, options.connectionId, scope);
+    const runtime = getOrCreateScopedRuntime(listener, null, "default");
+
+    const delivery = emitProtocolV2Message(
+      socket as never,
+      runtime,
+      {
+        type: "stream_delta",
+        delta: {
+          type: "message",
+          id: "agent-free-terminal",
+          date: new Date(0).toISOString(),
+          message_type: "client_tool_end",
+          tool_call_id: "tool-1",
+          status: "success",
+        },
+      } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+
+    await expect(delivery.receipts[0]?.settlement).resolves.toBe("sent");
+    const message = JSON.parse(socket.sentPayloads[0] ?? "{}");
+    expect(message.runtime).toEqual(scope);
+  });
+
+  test("replays a known-unsent terminal delta to a same-ID replacement", async () => {
+    const listener = createListenerRuntime();
+    const original = new MockSocket();
+    original.bufferedAmount =
+      OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+    const options = {
+      connectionId: "relay",
+      wsUrl: "ws://relay",
+      deviceId: "device",
+      connectionName: "relay",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    };
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "relay",
+      writer: original as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, "relay");
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    subscribeListenerConnection(listener, "relay", scope);
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    const delta = {
+      type: "message",
+      id: "stable-terminal-id",
+      date: new Date(0).toISOString(),
+      message_type: "client_tool_end",
+      tool_call_id: "tool-1",
+      status: "success",
+    } as never;
+    const delivery = emitProtocolV2Message(
+      original as never,
+      runtime,
+      { type: "stream_delta", delta } as never,
+      scope,
+      TO_SUBSCRIBERS,
+    );
+    original.readyState = WebSocket.CLOSED;
+    suspendListenerConnection(listener, "relay");
+    await expect(delivery.receipts[0]?.settlement).resolves.toBe("dropped");
+
+    const replacement = new MockSocket();
+    openListenerConnection({
+      runtime: listener,
+      connectionId: "relay",
+      writer: replacement as never,
+      options,
+    });
+    markListenerConnectionInitialized(listener, "relay");
+    const replay = delivery.replayTo("relay");
+    await expect(replay.receipts[0]?.settlement).resolves.toBe("sent");
+    const message = JSON.parse(replacement.sentPayloads[0] ?? "{}");
+    expect(message.delta.id).toBe("stable-terminal-id");
+    expect(original.sentPayloads).toEqual([]);
+  });
+
   test("never sheds stream deltas that snapshots cannot replay", () => {
     const { runtime, socket } = createRuntime();
     socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
@@ -116,6 +231,33 @@ describe("emitProtocolV2Message backpressure", () => {
           type: "future_protocol_message",
           content: `frame-${i}`,
         } as never,
+        undefined,
+        TO_SUBSCRIBERS,
+      );
+    }
+
+    expect(socket.terminated).toBe(true);
+    expect(socket.sentPayloads).toEqual([]);
+  });
+
+  test("never coalesces queue removal transitions", () => {
+    const { runtime, socket } = createRuntime();
+    socket.bufferedAmount = OUTBOUND_QUEUE_LIMITS.HIGH_WATERMARK_BUFFERED_BYTES;
+
+    for (let i = 0; i <= OUTBOUND_QUEUE_LIMITS.MAX_QUEUED_FRAMES; i += 1) {
+      emitProtocolV2Message(
+        socket as never,
+        runtime,
+        {
+          type: "update_queue",
+          queue: [],
+          removed: [
+            {
+              client_message_id: `cm-${i}`,
+              disposition: "dequeued",
+            },
+          ],
+        },
         undefined,
         TO_SUBSCRIBERS,
       );
@@ -279,6 +421,44 @@ describe("emitProtocolV2Message connection routing", () => {
     expect(socketB.sentPayloads).toEqual([]);
   });
 
+  test("serializes parent runtime claims independently from background grouping", () => {
+    clearAllSubagents();
+    try {
+      registerSubagent(
+        "subagent-child-send",
+        "general-purpose",
+        "Continue child work",
+        undefined,
+        true,
+        false,
+        { agentId: "agent-a", conversationId: "conv-a" },
+        "Finish the task",
+        false,
+      );
+      updateSubagent("subagent-child-send", {
+        agentId: "claude_11111111-1111-4111-8111-111111111111",
+      });
+      const listener = createListenerRuntime();
+      const runtime = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
+
+      expect(
+        buildSubagentSnapshot(runtime, {
+          agent_id: "agent-a",
+          conversation_id: "conv-a",
+        }),
+      ).toEqual([
+        expect.objectContaining({
+          subagent_id: "subagent-child-send",
+          is_background: true,
+          claims_parent_runtime: false,
+          agent_id: "claude_11111111-1111-4111-8111-111111111111",
+        }),
+      ]);
+    } finally {
+      clearAllSubagents();
+    }
+  });
+
   test("keeps cron and background snapshots inside their subscribed runtime", () => {
     const listener = createListenerRuntime();
     const runtimeA = getOrCreateScopedRuntime(listener, "agent-a", "conv-a");
@@ -381,7 +561,6 @@ describe("emitProtocolV2Message connection routing", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
         startTime: new Date("2026-07-27T12:00:00.000Z"),
         runtimeScope: { agentId: "agent-a", conversationId: "conv-a" },
       });
@@ -390,7 +569,6 @@ describe("emitProtocolV2Message connection routing", () => {
         subagentType: "review",
         subagentId: "subagent-b",
         status: "running",
-        output: [],
         startTime: new Date("2026-07-27T12:01:00.000Z"),
         outputFile: "/tmp/task-agent-b.log",
         runtimeScope: { agentId: "agent-b", conversationId: "conv-b" },
@@ -402,7 +580,6 @@ describe("emitProtocolV2Message connection routing", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
       });
 
       emitDeviceStatusUpdateIfChanged(

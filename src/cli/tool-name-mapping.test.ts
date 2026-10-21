@@ -10,7 +10,6 @@ describe("toolNameMapping display mappings", () => {
   test("maps memory tools to one friendly label", () => {
     expect(getDisplayToolName("memory")).toBe("Memory");
     expect(getDisplayToolName("memory_apply_patch")).toBe("Memory");
-    expect(getDisplayToolName("memory_insert")).toBe("Memory");
   });
 
   test("maps web search tools to friendly labels", () => {
@@ -23,9 +22,6 @@ describe("toolNameMapping.isMemoryTool", () => {
   test("recognizes all supported memory tool names", () => {
     expect(isMemoryTool("memory")).toBe(true);
     expect(isMemoryTool("memory_apply_patch")).toBe(true);
-    expect(isMemoryTool("memory_insert")).toBe(true);
-    expect(isMemoryTool("memory_replace")).toBe(true);
-    expect(isMemoryTool("memory_rethink")).toBe(true);
   });
 
   test("returns false for non-memory tools", () => {

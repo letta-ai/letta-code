@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import {
+  isCronPauseCommand,
+  isCronResumeCommand,
+} from "@/websocket/listener/cron-protocol-inbound";
+import {
   isChannelAccountCreateCommand,
   isChannelAccountUpdateCommand,
   isChannelSetConfigCommand,
+  isConnectProviderCommand,
   isUpdateModelCommand,
   parseServerMessage,
 } from "@/websocket/listener/protocol-inbound";
+import { validateResponseFormat } from "@/websocket/listener/structured-output";
 
 describe("app-server protocol hard cut", () => {
   test.each([
@@ -18,6 +24,80 @@ describe("app-server protocol hard cut", () => {
   ])("rejects legacy command %s", (type) => {
     const parsed = parseServerMessage(Buffer.from(JSON.stringify({ type })));
     expect(parsed).toBeNull();
+  });
+});
+
+describe("connect provider protocol", () => {
+  test("accepts completed ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        provider_name: "chatgpt-work",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          refresh_token: "refresh-token",
+          account_id: "account-id",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects incomplete ChatGPT OAuth credentials", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "openai-codex-oauth",
+        fields: {},
+        oauth_config: {
+          access_token: "access-token",
+          id_token: "id-token",
+          expires_at: 1_800_000_000_000,
+        },
+      }),
+    ).toBe(false);
+  });
+
+  test("accepts subscription OAuth tokens from a client-run device login", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          refresh: "refresh-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test("rejects subscription OAuth tokens that cannot be refreshed", () => {
+    expect(
+      isConnectProviderCommand({
+        type: "connect_provider",
+        request_id: "request-1",
+        target: "local",
+        provider_id: "xai",
+        fields: {},
+        oauth_config: {
+          type: "oauth",
+          access: "access-token",
+          expires: 2_000_000_000_000,
+        },
+      }),
+    ).toBe(false);
   });
 });
 
@@ -43,6 +123,22 @@ describe("input protocol-inbound validators", () => {
     }
   });
 
+  test("validates request-scoped response format contracts", () => {
+    expect(validateResponseFormat(undefined)).toBeNull();
+    expect(validateResponseFormat("json")).toBe(
+      "response_format must be an object",
+    );
+    expect(validateResponseFormat({ type: "text" })).toBe(
+      "response_format.type must be json_schema",
+    );
+    expect(
+      validateResponseFormat({
+        type: "json_schema",
+        json_schema: { schema: { type: "object" } },
+      }),
+    ).toBeNull();
+  });
+
   test("rejects non-boolean exclude_interactive_tools", () => {
     const parsed = parseServerMessage(
       Buffer.from(
@@ -64,6 +160,326 @@ describe("input protocol-inbound validators", () => {
         "exclude_interactive_tools must be boolean",
       );
     }
+  });
+
+  test("accepts a teleport continuation without a synthetic user message", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: {
+              device_id: "source-device",
+              connection_name: "Laptop",
+            },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-1",
+                  status: "success",
+                  tool_return: "done",
+                },
+                {
+                  type: "approval",
+                  tool_call_id: "call-2",
+                  approve: false,
+                  reason: null,
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type === "input") {
+      expect(parsed.payload.kind).toBe("teleport_continue");
+    }
+  });
+
+  test("accepts text and image ToolReturn content parts", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "continue-parts",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-parts",
+            source: { device_id: "source", connection_name: "Source" },
+            continuation: {
+              approvals: [
+                {
+                  type: "tool",
+                  tool_call_id: "call-parts",
+                  status: "success",
+                  reason: "completed remotely",
+                  stdout: ["first", "second"],
+                  stderr: null,
+                  tool_return: [
+                    { type: "text", text: "done" },
+                    {
+                      type: "image",
+                      source: {
+                        type: "base64",
+                        media_type: "image/png",
+                        data: "aW1hZ2U=",
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    expect(parsed?.type).toBe("input");
+  });
+
+  test("rejects a teleport continuation without source identity", () => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+          },
+        }),
+      ),
+    );
+
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+
+  test.each([
+    { name: "missing approvals", continuation: {} },
+    { name: "non-array approvals", continuation: { approvals: {} } },
+    {
+      name: "malformed approval",
+      continuation: { approvals: [{ status: "success", tool_return: "ok" }] },
+    },
+    {
+      name: "malformed text content",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            status: "success",
+            tool_return: [{ type: "text", text: 42 }],
+          },
+        ],
+      },
+    },
+    {
+      name: "malformed image content",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            status: "success",
+            tool_return: [
+              {
+                type: "image",
+                source: { type: "base64", media_type: "image/png" },
+              },
+            ],
+          },
+        ],
+      },
+    },
+    {
+      name: "approval with tool discriminant",
+      continuation: {
+        approvals: [{ tool_call_id: "call-1", approve: true, type: "tool" }],
+      },
+    },
+    {
+      name: "ToolReturn with approval discriminant",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            type: "approval",
+            status: "success",
+            tool_return: "ok",
+          },
+        ],
+      },
+    },
+    {
+      name: "approval with malformed reason",
+      continuation: {
+        approvals: [{ tool_call_id: "call-1", approve: true, reason: 42 }],
+      },
+    },
+    {
+      name: "ToolReturn with malformed stdout",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            status: "success",
+            tool_return: "ok",
+            stdout: ["line", 42],
+          },
+        ],
+      },
+    },
+    {
+      name: "ToolReturn with malformed stderr",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            status: "success",
+            tool_return: "ok",
+            stderr: "not-an-array",
+          },
+        ],
+      },
+    },
+    {
+      name: "mixed approval and ToolReturn fields",
+      continuation: {
+        approvals: [
+          {
+            tool_call_id: "call-1",
+            approve: true,
+            status: "success",
+            tool_return: "ok",
+          },
+        ],
+      },
+    },
+  ])("rejects $name in a teleport continuation", ({ continuation }) => {
+    const parsed = parseServerMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "teleport_continue",
+            teleport_id: "teleport-1",
+            source: { device_id: "source", connection_name: "Source" },
+            continuation,
+          },
+        }),
+      ),
+    );
+    expect(parsed?.type).toBe("__invalid_input");
+  });
+});
+
+describe("teleport protocol-inbound validators", () => {
+  test.each([
+    {
+      type: "teleport_probe",
+      request_id: "probe-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    },
+    {
+      type: "teleport_request",
+      request_id: "teleport-1",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      target: {
+        connection_id: "target-connection",
+        device_id: "target-device",
+        connection_name: "Cloud",
+      },
+    },
+    {
+      type: "teleport_failed",
+      teleport_id: "teleport-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+      error: "Target failed to start",
+    },
+  ])("accepts $type", (message) => {
+    expect(parseServerMessage(Buffer.from(JSON.stringify(message)))?.type).toBe(
+      message.type,
+    );
+  });
+});
+
+describe("resume_queue protocol-inbound validators", () => {
+  test("accepts the resume_queue wire shape with and without request_id", () => {
+    const withRequestId = {
+      type: "resume_queue" as const,
+      request_id: "resume-1",
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    const withoutRequestId = {
+      type: "resume_queue" as const,
+      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+    };
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withRequestId))),
+    ).toEqual(withRequestId);
+    expect(
+      parseServerMessage(Buffer.from(JSON.stringify(withoutRequestId))),
+    ).toEqual(withoutRequestId);
+  });
+
+  test("rejects resume_queue without a runtime scope", () => {
+    expect(
+      parseServerMessage(
+        Buffer.from(
+          JSON.stringify({ type: "resume_queue", request_id: "resume-1" }),
+        ),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("cron pause protocol-inbound validators", () => {
+  test("accepts the exact pause and resume wire shapes", () => {
+    const pause = {
+      type: "cron_pause" as const,
+      request_id: "pause-1",
+      task_id: "task-1",
+    };
+    const resume = {
+      type: "cron_resume" as const,
+      request_id: "resume-1",
+      task_id: "task-1",
+      scheduled_for: "2026-08-27T12:00:00.000Z",
+    };
+
+    expect(isCronPauseCommand(pause)).toBe(true);
+    expect(isCronResumeCommand(resume)).toBe(true);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(pause)))).toEqual(
+      pause,
+    );
+    expect(parseServerMessage(Buffer.from(JSON.stringify(resume)))).toEqual(
+      resume,
+    );
+  });
+
+  test("rejects malformed pause and resume commands", () => {
+    expect(
+      isCronPauseCommand({
+        type: "cron_pause",
+        request_id: "pause-1",
+      }),
+    ).toBe(false);
+    expect(
+      isCronResumeCommand({
+        type: "cron_resume",
+        request_id: "resume-1",
+        task_id: "task-1",
+        scheduled_for: null,
+      }),
+    ).toBe(false);
   });
 });
 
@@ -109,6 +525,10 @@ describe("agent/conversation management protocol-inbound validators", () => {
       conversation_source_tags: ["channel:slack"],
       cwd: "/tmp/project",
       mode: "acceptEdits",
+      workspace_sandbox: {
+        root: "/tmp/runs/run-1",
+        isolation_root: "/tmp/runs",
+      },
       skill_sources: [],
       preserve_skill_sources: true,
       client_info: { name: "test", title: "Test", version: "1.0.0" },

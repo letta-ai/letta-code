@@ -6,6 +6,9 @@ import {
   resolveReasoningCycleTierLookupHandle,
   serviceTierForReasoningCycle,
 } from "@/cli/app/use-reasoning-cycle";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("resolveReasoningCycleModelHandle", () => {
   test("preserves local model handles from llm_config", () => {
@@ -95,6 +98,14 @@ describe("resolveReasoningCycleTierLookupHandle", () => {
         provider_type: "anthropic",
       } as unknown as AgentState["model_settings"]),
     ).toBe("anthropic/claude-opus-4-8");
+  });
+
+  test("uses the provider type to find MiniMax BYOK tiers in the Cloud catalog", () => {
+    expect(
+      resolveReasoningCycleTierLookupHandle("lc-minimax/MiniMax-M3", {
+        provider_type: "minimax",
+      } as unknown as AgentState["model_settings"]),
+    ).toBe("minimax/MiniMax-M3");
   });
 
   test("keeps canonical handles unchanged", () => {

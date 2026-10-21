@@ -1,4 +1,5 @@
 import type { Backend } from "@/backend";
+import { resolveProcessModCapabilities } from "@/mods/capabilities";
 import { areModsDisabled, disableModsForProcess } from "@/mods/disable";
 import { createDisabledModAdapter } from "@/mods/disabled-mod-adapter";
 import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
@@ -79,8 +80,13 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
     return createDisabledModAdapter();
   }
 
+  const effectiveEngineOptions = {
+    ...engineOptions,
+    capabilities: resolveProcessModCapabilities(engineOptions.capabilities),
+  };
+
   let disposed = false;
-  const initialHasModSources = hasModSources(engineOptions);
+  const initialHasModSources = hasModSources(effectiveEngineOptions);
   let loadState: ModAdapterLoadState = {
     hadModPanels: false,
     hasModSources: initialHasModSources,
@@ -92,7 +98,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   const getBackend = () => resolveBackend?.();
 
   const engine = createModEngine({
-    ...engineOptions,
+    ...effectiveEngineOptions,
     getBackend,
     onDiagnostic: () => scheduleDiagnosticsWrite(),
   });
@@ -141,6 +147,11 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
   }
 
   const events: ModEvents = {
+    hasHandlers(name) {
+      if (loadState.isLoading) return true;
+      if (!loadState.hasModSources) return false;
+      return (engine.getSnapshot().events[name]?.length ?? 0) > 0;
+    },
     async emit(name, event, scopedContext) {
       if (loadState.isLoading || !loadState.hasModSources) {
         // Events are best-effort hooks; do not deliver them while the mod
@@ -178,7 +189,7 @@ export function createModAdapter(options: CreateModAdapterOptions): ModAdapter {
       loadState.hadModPanels;
     loadState = {
       hadModPanels: previousHadModPanels,
-      hasModSources: hasModSources(engineOptions),
+      hasModSources: hasModSources(effectiveEngineOptions),
       isLoading: true,
     };
     publish();

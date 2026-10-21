@@ -1,3 +1,5 @@
+import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
+import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -13,6 +15,7 @@ import type {
   RuntimeStartExternalToolsGroup,
 } from "@/types/protocol_v2";
 import { createConnectionRequestKey } from "@/websocket/listener/connection";
+import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { isListenerTransportOpen } from "@/websocket/listener/transport";
 import type {
   ListenerConnectionId,
@@ -28,6 +31,17 @@ const connectionIdByRegistrationKey = new WeakMap<
   ListenerRuntime,
   Map<string, ListenerConnectionId>
 >();
+
+export function createExternalToolNotificationState(): Pick<
+  ListenerRuntime,
+  | "externalToolNotificationEpochByConversation"
+  | "externalToolNotificationBarrierByConversation"
+> {
+  return {
+    externalToolNotificationEpochByConversation: new Map(),
+    externalToolNotificationBarrierByConversation: new Map(),
+  };
+}
 
 function getPendingExternalToolCalls(runtime: ListenerRuntime) {
   return runtime.pendingExternalToolCalls;
@@ -51,13 +65,13 @@ function getConnectionIdsByRegistrationKey(runtime: ListenerRuntime) {
   return controllers;
 }
 
-function getRuntimeKey(runtime: RuntimeScope): string {
+function getRuntimeKey(runtime: RuntimeScope<string | null>): string {
   return `${runtime.agent_id}:${runtime.conversation_id}`;
 }
 
 function getToolRegistrationKey(
   connectionId: ListenerConnectionId,
-  runtime: RuntimeScope,
+  runtime: RuntimeScope<string | null>,
   scopeId: string | undefined,
   toolName: string,
 ): string {
@@ -71,30 +85,79 @@ function getToolRegistrationKey(
   ]);
 }
 
+export function captureExternalToolNotificationGuard(
+  listener: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+): ListenerExternalToolNotificationGuard | undefined {
+  if (listener.intentionallyClosed || !listener.processServicesStarted) {
+    return undefined;
+  }
+  const processServicesGeneration = listener.processServicesGeneration;
+  const runtimeKey = getConversationRuntimeKey(
+    runtimeScope.agent_id,
+    runtimeScope.conversation_id,
+  );
+  const notificationEpoch =
+    listener.externalToolNotificationEpochByConversation.get(runtimeKey) ?? 0;
+  const isCurrent = () =>
+    !listener.intentionallyClosed &&
+    listener.processServicesStarted &&
+    listener.processServicesGeneration === processServicesGeneration &&
+    (listener.externalToolNotificationEpochByConversation.get(runtimeKey) ??
+      0) === notificationEpoch;
+  return {
+    isCurrent,
+    waitUntilCurrent: async () => {
+      while (true) {
+        const pending =
+          listener.externalToolNotificationBarrierByConversation.get(
+            runtimeKey,
+          );
+        if (!pending) return isCurrent();
+        await pending;
+        if (
+          listener.externalToolNotificationBarrierByConversation.get(
+            runtimeKey,
+          ) === pending
+        ) {
+          return isCurrent();
+        }
+      }
+    },
+  };
+}
+
 function toExternalToolDefinition(
+  listener: ListenerRuntime,
   tool: ExternalToolDefinitionPayload,
   connectionId: ListenerConnectionId,
-  runtime: RuntimeScope,
+  runtimeScope: RuntimeScope<string | null>,
   scopeId?: string,
 ): ExternalToolDefinition {
-  return {
+  const toolDefinition: ExternalToolDefinition = {
     name: tool.name,
     connectionId,
     ...(tool.label !== undefined ? { label: tool.label } : {}),
     description: tool.description,
     parameters: tool.parameters,
+    ...(tool.timeout_ms !== undefined ? { timeoutMs: tool.timeout_ms } : {}),
+    autoBackground: tool.auto_background ?? true,
     registrationKey: getToolRegistrationKey(
       connectionId,
-      runtime,
+      runtimeScope,
       scopeId,
       tool.name,
     ),
     ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
-      agentId: runtime.agent_id,
-      conversationId: runtime.conversation_id,
+      agentId: runtimeScope.agent_id ?? undefined,
+      conversationId: runtimeScope.conversation_id,
     },
   };
+  return enableListenerExternalToolBackground(toolDefinition, {
+    createNotificationGuard: () =>
+      captureExternalToolNotificationGuard(listener, runtimeScope),
+  });
 }
 
 export function installExternalToolBridge(runtime: ListenerRuntime): void {
@@ -118,13 +181,12 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
     const requestId = `external-tool-${crypto.randomUUID()}`;
     const requestKey = createConnectionRequestKey(connection.id, requestId);
     const toolRuntime = context?.tool.runtime;
-    const requestRuntime =
-      toolRuntime?.agentId && toolRuntime.conversationId
-        ? {
-            agent_id: toolRuntime.agentId,
-            conversation_id: toolRuntime.conversationId,
-          }
-        : undefined;
+    const requestRuntime = toolRuntime?.conversationId
+      ? {
+          agent_id: toolRuntime.agentId ?? null,
+          conversation_id: toolRuntime.conversationId,
+        }
+      : undefined;
     const request: ExternalToolCallRequestMessage = {
       type: "external_tool_call_request",
       request_id: requestId,
@@ -137,6 +199,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       input,
     };
 
+    const timeoutMs = context?.tool.timeoutMs ?? EXTERNAL_TOOL_CALL_TIMEOUT_MS;
     const result = await new Promise<{
       content: Array<{
         type: string;
@@ -148,8 +211,12 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
     }>((resolve, reject) => {
       const timeout = setTimeout(() => {
         getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(new Error(`External tool call timed out: ${toolName}`));
-      }, EXTERNAL_TOOL_CALL_TIMEOUT_MS);
+        reject(
+          new Error(
+            `External tool call timed out after ${Math.ceil(timeoutMs / 1_000)}s: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
+          ),
+        );
+      }, timeoutMs);
 
       getPendingExternalToolCalls(runtime).set(requestKey, {
         connectionId: connection.id,
@@ -179,7 +246,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 export function registerRuntimeExternalTools(
   runtime: ListenerRuntime,
   connectionId: ListenerConnectionId,
-  runtimeScope: RuntimeScope,
+  runtimeScope: RuntimeScope<string | null>,
   groups?: readonly RuntimeStartExternalToolsGroup[],
 ): void {
   const resolvedGroups = groups ?? [];
@@ -194,6 +261,7 @@ export function registerRuntimeExternalTools(
   const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
       toExternalToolDefinition(
+        runtime,
         tool,
         connectionId,
         runtimeScope,

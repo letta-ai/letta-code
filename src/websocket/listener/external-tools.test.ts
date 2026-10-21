@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
+import { __testSetBackend } from "@/backend";
 import {
   clearExternalTools,
   executeTool,
@@ -7,7 +8,9 @@ import {
 } from "@/tools/manager";
 import type { ExternalToolCallRequestMessage } from "@/types/protocol_v2";
 import { openListenerConnection } from "@/websocket/listener/connection";
+import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import {
+  captureExternalToolNotificationGuard,
   handleExternalToolCallResponseCommand,
   installExternalToolBridge,
   registerRuntimeExternalTools,
@@ -20,12 +23,42 @@ import {
   startConnectedListenerRuntime,
   stopRuntime,
 } from "@/websocket/listener/lifecycle";
-import { setActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  clearConversationRuntimeState,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
 import type { LocalTransport } from "@/websocket/listener/transport";
 import type {
   ListenerRuntime,
   StartListenerOptions,
 } from "@/websocket/listener/types";
+
+function addMockConnection(
+  runtime: ListenerRuntime,
+  connectionId: string,
+  sent: ExternalToolCallRequestMessage[],
+): void {
+  const writer = {
+    readyState: 1,
+    send(data: string) {
+      const request = JSON.parse(data) as ExternalToolCallRequestMessage;
+      sent.push(request);
+      queueMicrotask(() => {
+        handleExternalToolCallResponseCommand(runtime, connectionId, {
+          type: "external_tool_call_response",
+          request_id: request.request_id,
+          result: {
+            content: [{ type: "text", text: `lookup:${request.input.id}` }],
+          },
+        });
+      });
+    },
+  } as unknown as WebSocket;
+  runtime.connections.set(connectionId, {
+    id: connectionId,
+    writer,
+  } as never);
+}
 
 function createMockRuntime(): {
   runtime: ListenerRuntime;
@@ -37,26 +70,7 @@ function createMockRuntime(): {
     pendingExternalToolCalls: new Map(),
     connections: new Map(),
   } as unknown as ListenerRuntime;
-  const writer = {
-    readyState: 1,
-    send(data: string) {
-      const request = JSON.parse(data) as ExternalToolCallRequestMessage;
-      sent.push(request);
-      queueMicrotask(() => {
-        handleExternalToolCallResponseCommand(runtime, "client-1", {
-          type: "external_tool_call_response",
-          request_id: request.request_id,
-          result: {
-            content: [{ type: "text", text: `lookup:${request.input.id}` }],
-          },
-        });
-      });
-    },
-  } as unknown as WebSocket;
-  runtime.connections.set("client-1", {
-    id: "client-1",
-    writer,
-  } as never);
+  addMockConnection(runtime, "client-1", sent);
   return { runtime, sent };
 }
 
@@ -68,6 +82,198 @@ describe("listener runtime_start external tool bridge", () => {
   afterEach(() => {
     clearExternalTools();
     setActiveRuntime(null);
+    __testSetBackend(null);
+  });
+
+  test("keeps completion through turn cancellation but drops it after reset or teardown", () => {
+    const listener = createRuntime();
+    listener.processServicesStarted = true;
+    listener.processServicesGeneration = 7;
+    const scope = {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    };
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp/worktree",
+    });
+    const cancellationGuard = captureExternalToolNotificationGuard(
+      listener,
+      scope,
+    );
+    expect(cancellationGuard?.isCurrent()).toBe(true);
+
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
+    expect(cancellationGuard?.isCurrent()).toBe(true);
+
+    clearConversationRuntimeState(runtime);
+    expect(cancellationGuard?.isCurrent()).toBe(false);
+
+    const teardownGuard = captureExternalToolNotificationGuard(listener, scope);
+    expect(teardownGuard?.isCurrent()).toBe(true);
+    listener.processServicesGeneration += 1;
+    expect(teardownGuard?.isCurrent()).toBe(false);
+  });
+
+  test("agent-free turns can see their runtime-owned SDK tools", async () => {
+    const { runtime, sent } = createMockRuntime();
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      {
+        agent_id: null,
+        conversation_id: "conv-worker",
+      },
+      [
+        {
+          tools: [
+            {
+              name: "StructuredOutput",
+              description: "Submit result",
+              parameters: {
+                type: "object",
+                properties: { answer: { type: "string" } },
+              },
+            },
+          ],
+        },
+      ],
+    );
+    const worker = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: null,
+          conversationId: "conv-worker",
+        },
+      },
+    );
+    const other = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: null,
+          conversationId: "conv-other",
+        },
+      },
+    );
+    expect(worker.clientTools.map((tool) => tool.name)).toContain(
+      "StructuredOutput",
+    );
+    expect(other.clientTools).toEqual([]);
+
+    // Process-owned turns carry no connection ID. The tool remains visible
+    // only in its conversation and executes through its captured controller.
+    const queued = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-5",
+      {
+        clientToolAllowlist: ["StructuredOutput"],
+        runtimeContext: { agentId: null, conversationId: "conv-worker" },
+      },
+    );
+    expect(queued.clientTools.map((tool) => tool.name)).toEqual([
+      "StructuredOutput",
+    ]);
+    const result = await executeTool(
+      "StructuredOutput",
+      { answer: "ok" },
+      {
+        toolContextId: queued.contextId,
+        toolCallId: "call-worker",
+      },
+    );
+    expect(result.status).toBe("success");
+    expect(sent).toMatchObject([
+      {
+        runtime: { agent_id: null, conversation_id: "conv-worker" },
+        tool_name: "StructuredOutput",
+      },
+    ]);
+  });
+
+  test("returns promptly when a registered tool's controller does not respond", async () => {
+    const { runtime, sent } = createMockRuntime();
+    runtime.connections.set("client-1", {
+      id: "client-1",
+      writer: {
+        readyState: 1,
+        send(data: string) {
+          sent.push(JSON.parse(data) as ExternalToolCallRequestMessage);
+        },
+      } as unknown as WebSocket,
+    } as never);
+    installExternalToolBridge(runtime);
+    registerRuntimeExternalTools(
+      runtime,
+      "client-1",
+      { agent_id: "agent-1", conversation_id: "conv-1" },
+      [
+        {
+          tools: [
+            {
+              name: "quick_action",
+              description: "Return a quick receipt",
+              parameters: { type: "object", properties: {} },
+              timeout_ms: 1_000,
+            },
+          ],
+        },
+      ],
+    );
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["quick_action"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    let result: Awaited<ReturnType<typeof executeTool>> | undefined;
+    try {
+      result = await Promise.race([
+        executeTool(
+          "quick_action",
+          {},
+          {
+            toolContextId: prepared.contextId,
+            toolCallId: "call-quick",
+          },
+        ),
+        new Promise<undefined>((resolve) =>
+          setTimeout(() => resolve(undefined), 1_500),
+        ),
+      ]);
+    } finally {
+      rejectPendingExternalToolCallsForConnection(
+        runtime,
+        "client-1",
+        "test cleanup",
+      );
+    }
+    expect(result?.status).toBe("error");
+    expect(String(result?.toolReturn)).toContain("outcome is unknown");
+    expect(sent).toHaveLength(1);
+    expect(runtime.pendingExternalToolCalls.size).toBe(0);
+    expect(
+      handleExternalToolCallResponseCommand(runtime, "client-1", {
+        type: "external_tool_call_response",
+        request_id: sent[0]?.request_id ?? "",
+        result: { content: [] },
+      }),
+    ).toBe(false);
   });
 
   test("process-owned turns execute unscoped runtime tools through their controller", async () => {
@@ -460,6 +666,104 @@ describe("listener runtime_start external tool bridge", () => {
     );
     expect(preparedAfterDisconnect.clientTools).toEqual([
       expect.objectContaining({ description: "Lookup from client A" }),
+    ]);
+  });
+
+  test("prefers the current turn controller for duplicate unscoped tool names", async () => {
+    const { runtime, sent: imessageSent } = createMockRuntime();
+    const slackSent: ExternalToolCallRequestMessage[] = [];
+    addMockConnection(runtime, "local-channels", slackSent);
+    installExternalToolBridge(runtime);
+    const runtimeScope = {
+      agent_id: "agent-1",
+      conversation_id: "conv-1",
+    };
+    const registerMessageChannel = (
+      connectionId: string,
+      description: string,
+      channel: string,
+    ) =>
+      registerRuntimeExternalTools(runtime, connectionId, runtimeScope, [
+        {
+          tools: [
+            {
+              name: "MessageChannel",
+              description,
+              parameters: {
+                type: "object",
+                properties: { channel: { enum: [channel] } },
+              },
+            },
+          ],
+        },
+      ]);
+
+    registerMessageChannel("client-1", "Reply through iMessage", "imessage");
+    registerMessageChannel("local-channels", "Send through Slack", "slack");
+
+    const imessageTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(imessageTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Reply through iMessage",
+        parameters: expect.objectContaining({
+          properties: { channel: { enum: ["imessage"] } },
+        }),
+      }),
+    ]);
+
+    const result = await executeTool(
+      "MessageChannel",
+      { id: "imessage-reply" },
+      { toolContextId: imessageTurn.contextId, toolCallId: "call-imessage" },
+    );
+    expect(result.status).toBe("success");
+    expect(imessageSent).toHaveLength(1);
+    expect(slackSent).toHaveLength(0);
+
+    const slackTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          connectionId: "local-channels",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(slackTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Send through Slack",
+      }),
+    ]);
+
+    const processTurn = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["MessageChannel"],
+        runtimeContext: {
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+      },
+    );
+    expect(processTurn.clientTools).toEqual([
+      expect.objectContaining({
+        name: "MessageChannel",
+        description: "Send through Slack",
+      }),
     ]);
   });
 

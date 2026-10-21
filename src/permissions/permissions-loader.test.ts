@@ -561,7 +561,7 @@ test("Saving local settings creates .gitignore if missing", async () => {
 test("Save permission dedupes canonical shell aliases", async () => {
   const projectDir = join(testDir, "project");
   await savePermissionRule(
-    "run_shell_command(curl -s http://localhost:4321/intro)",
+    "ShellCommand(curl -s http://localhost:4321/intro)",
     "allow",
     "project",
     projectDir,

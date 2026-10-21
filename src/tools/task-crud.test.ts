@@ -4,8 +4,19 @@ import { task_get } from "@/tools/impl/task-get";
 import { task_list } from "@/tools/impl/task-list";
 import { task_update } from "@/tools/impl/task-update";
 import { _resetTaskStoreForTests } from "@/tools/impl/tasks/store";
+import TaskUpdateSchema from "@/tools/schemas/TaskUpdate.json";
 
 describe("Task CRUD family", () => {
+  test("TaskUpdate schema matches the Anthropic metadata contract", () => {
+    expect(TaskUpdateSchema.required).toEqual(["taskId"]);
+    expect(TaskUpdateSchema.properties.metadata.additionalProperties).toEqual(
+      {},
+    );
+    expect(TaskUpdateSchema.properties.metadata.propertyNames).toEqual({
+      type: "string",
+    });
+  });
+
   beforeEach(() => {
     _resetTaskStoreForTests();
   });
@@ -78,16 +89,18 @@ describe("Task CRUD family", () => {
     expect(tasks.map((t) => t.subject)).toEqual(["a", "b", "c"]);
   });
 
-  test("TaskList excludes soft-deleted tasks but TaskGet still returns them", async () => {
+  test("TaskUpdate permanently deletes tasks", async () => {
     const a = await task_create({ subject: "a", description: "aa" });
     await task_create({ subject: "b", description: "bb" });
-    await task_update({ taskId: a.taskId, status: "deleted" });
+    const deleted = await task_update({
+      taskId: a.taskId,
+      status: "deleted",
+    });
 
+    expect(deleted.status).toBe("deleted");
     const { tasks } = await task_list({});
     expect(tasks.map((t) => t.subject)).toEqual(["b"]);
-
-    const deleted = await task_get({ taskId: a.taskId });
-    expect(deleted.status).toBe("deleted");
+    await expect(task_get({ taskId: a.taskId })).rejects.toThrow(/not found/);
   });
 
   test("TaskUpdate transitions status through lifecycle", async () => {
@@ -127,7 +140,7 @@ describe("Task CRUD family", () => {
     expect(b2.blockedBy).toEqual([a.taskId]);
   });
 
-  test("TaskUpdate merges metadata rather than replacing", async () => {
+  test("TaskUpdate merges arbitrary metadata and deletes null keys", async () => {
     const t = await task_create({
       subject: "x",
       description: "y",
@@ -136,9 +149,20 @@ describe("Task CRUD family", () => {
 
     const updated = await task_update({
       taskId: t.taskId,
-      metadata: { b: "overwritten", c: "3" },
+      metadata: {
+        a: null,
+        b: "overwritten",
+        count: 3,
+        flags: ["ready"],
+        details: { source: "review" },
+      },
     });
-    expect(updated.metadata).toEqual({ a: "1", b: "overwritten", c: "3" });
+    expect(updated.metadata).toEqual({
+      b: "overwritten",
+      count: 3,
+      flags: ["ready"],
+      details: { source: "review" },
+    });
   });
 
   test("TaskUpdate sets owner, subject, description, activeForm", async () => {

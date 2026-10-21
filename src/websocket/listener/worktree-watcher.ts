@@ -1,5 +1,6 @@
 import { readdir, stat, watch } from "node:fs/promises";
 import path from "node:path";
+import { debugLog, debugWarn } from "@/utils/debug";
 import {
   getConversationWorkingDirectory,
   getWorkingDirectoryScopeKey,
@@ -61,7 +62,7 @@ export function startWorktreeWatcher(params: {
   }).catch((err) => {
     // AbortError is expected when the watcher is stopped.
     if ((err as NodeJS.ErrnoException).name === "AbortError") return;
-    console.error("[WorktreeWatcher] watch loop error:", err);
+    debugWarn("WorktreeWatcher", "watch loop error:", err);
   });
 
   return state;
@@ -161,7 +162,7 @@ async function runWatchLoop(params: {
         agentId,
         conversationId,
       }).catch((err) => {
-        console.error("[WorktreeWatcher] failed to handle new worktree:", err);
+        debugWarn("WorktreeWatcher", "failed to handle new worktree:", err);
       });
     }, DEBOUNCE_MS);
   }
@@ -208,8 +209,9 @@ async function handleNewWorktree(params: {
 
   clearExpectedWorktreePath(conversationRuntime);
 
-  console.log(
-    `[WorktreeWatcher] New worktree detected: ${newWorktreePath} — switching CWD`,
+  debugLog(
+    "WorktreeWatcher",
+    `New worktree detected: ${newWorktreePath} — switching CWD`,
   );
 
   await switchConversationWorkingDirectory({

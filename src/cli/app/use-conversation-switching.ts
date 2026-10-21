@@ -30,7 +30,7 @@ import {
   getBackend,
   isLocalBackendEnabled,
 } from "@/backend";
-import { getServerUrl } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import type { BtwState } from "@/cli/components/BtwPane";
 import {
   type Buffers,
@@ -229,6 +229,7 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
               forked.id,
               currentInput,
               {
+                agentId,
                 overrideModel: tempModelOverrideRef.current ?? undefined,
                 preparedToolContext: preparedToolContext.preparedToolContext,
               },
@@ -569,7 +570,9 @@ export function useConversationSwitching(ctx: ConversationSwitchingContext) {
         }
 
         // Fetch new agent
-        const agent = await getBackend().retrieveAgent(targetAgentId);
+        const agent = await getBackend().retrieveAgent(targetAgentId, {
+          include: ["agent.blocks"],
+        });
 
         // Use specified conversation or default to the agent's default conversation
         const targetConversationId = opts?.conversationId ?? "default";

@@ -4,6 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
 import {
+  clearAvailableModelsCache,
+  getAvailableModelHandles,
+  getAvailableModelsCacheInfo,
+} from "@/agent/available-models";
+import { __testSetBackend } from "@/backend";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
+import {
   clearRegisteredPiProviders,
   type PiProviderOAuthLoginCallbacks,
   registerPiProvider,
@@ -78,6 +85,8 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
   });
 
   afterEach(async () => {
+    clearAvailableModelsCache();
+    __testSetBackend(null);
     clearRegisteredPiProviders();
     if (previousStorageDir === undefined) {
       delete process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -126,5 +135,18 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
       timeout: 30_000,
       auth: { type: "oauth" },
     });
+  });
+
+  test("invalidates the available model cache after OAuth login", async () => {
+    __testSetBackend(new FakeHeadlessBackend());
+    await getAvailableModelHandles();
+    expect(getAvailableModelsCacheInfo().hasCache).toBe(true);
+
+    await runLocalOAuthConnectFlow(FAKE_BYOK_PROVIDER, {
+      onStatus: () => {},
+      openBrowser: async () => {},
+    });
+
+    expect(getAvailableModelsCacheInfo().hasCache).toBe(false);
   });
 });

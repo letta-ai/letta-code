@@ -68,9 +68,9 @@ interface PrimaryStartupFlagOptions {
   specifiedAgentName: string | null | undefined;
   forceNewAgent: boolean | null | undefined;
   forceNewConversation: boolean | null | undefined;
-  importFile: string | null | undefined;
   shouldResume?: boolean | null;
   stateless: boolean | null | undefined;
+  ephemeral?: boolean | null;
   isHeadless: boolean;
   memfs: boolean | null | undefined;
   memfsStartup: string | null | undefined;
@@ -79,6 +79,36 @@ interface PrimaryStartupFlagOptions {
 export function validatePrimaryStartupFlagConflicts(
   options: PrimaryStartupFlagOptions,
 ): void {
+  validateFlagConflicts({
+    guard: options.ephemeral,
+    checks: [
+      {
+        when: !options.isHeadless,
+        message: "--ephemeral is only supported in headless mode",
+      },
+      {
+        when:
+          options.specifiedAgentId ||
+          options.specifiedAgentName ||
+          options.specifiedConversationId,
+        message:
+          "--ephemeral cannot be used with --agent, --name, or --conversation",
+      },
+      {
+        when: options.forceNewAgent || options.forceNewConversation,
+        message: "--ephemeral cannot be used with --new-agent or --new",
+      },
+      {
+        when: options.stateless || options.memfs || options.memfsStartup,
+        message:
+          "--ephemeral cannot be used with --stateless, --memfs, or --memfs-startup",
+      },
+      {
+        when: options.shouldResume,
+        message: "--ephemeral cannot be used with --resume",
+      },
+    ],
+  });
   validateStatelessStartupOptions({
     stateless: options.stateless,
     isHeadless: options.isHeadless,
@@ -110,10 +140,6 @@ export function validatePrimaryStartupFlagConflicts(
         message: "--conversation cannot be used with --new-agent",
       },
       {
-        when: options.importFile,
-        message: "--conversation cannot be used with --import",
-      },
-      {
         when: options.shouldResume,
         message: "--conversation cannot be used with --resume",
       },
@@ -133,12 +159,4 @@ export function validatePrimaryStartupFlagConflicts(
       },
     ],
   });
-}
-
-export function validateRegistryHandleOrThrow(handle: string): void {
-  const normalized = handle.startsWith("@") ? handle.slice(1) : handle;
-  const parts = normalized.split("/");
-  if (parts.length !== 2 || !parts[0] || !parts[1]) {
-    throw new Error(`Invalid registry handle "${handle}"`);
-  }
 }

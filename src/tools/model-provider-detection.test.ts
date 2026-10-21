@@ -1,8 +1,13 @@
-import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
 import { isOpenAIModel } from "@/tools/manager";
 import { deriveToolsetFromModel } from "@/tools/toolset";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("isOpenAIModel", () => {
   test("detects openai handles", () => {
@@ -21,7 +26,7 @@ describe("isOpenAIModel", () => {
     expect(isOpenAIModel("openai-codex/gpt-5.5")).toBe(true);
   });
 
-  test("detects chatgpt-plus-pro model ids via models.json metadata", () => {
+  test("detects chatgpt-plus-pro model ids via runtime catalog metadata", () => {
     expect(isOpenAIModel("gpt-5.5-plus-pro-high")).toBe(true);
   });
 
@@ -52,6 +57,31 @@ describe("deriveToolsetFromModel", () => {
     ).toBe("codex");
   });
 
+  test("maps managed OpenAI provider handles to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("lc-openai/gpt-6-astra", "openai")).toBe(
+      "codex",
+    );
+  });
+
+  test("maps BYOK OpenAI providers with arbitrary prefixes to codex toolset via provider type", () => {
+    expect(deriveToolsetFromModel("acme-corp/gpt-5.5", "openai")).toBe("codex");
+  });
+
+  test("keeps OpenAI-compatible proxy models on the default toolset", () => {
+    // Generic OpenAI-compatible endpoints report provider_type "openai" but
+    // may serve non-GPT models; the proxy marker excludes them.
+    expect(
+      deriveToolsetFromModel("lc-openai-compatible/llama-3.3-70b", "openai", {
+        openAICompatibleProxy: true,
+      }),
+    ).toBe("default");
+    expect(
+      deriveToolsetFromModel("my-gateway/some-model", "openai", {
+        openAICompatibleProxy: true,
+      }),
+    ).toBe("default");
+  });
+
   test("maps Gemini models to default (anthropic) toolset", () => {
     expect(deriveToolsetFromModel("google_ai/gemini-2.5-pro")).toBe("default");
     expect(deriveToolsetFromModel("gemini-pro")).toBe("default");
@@ -68,17 +98,5 @@ describe("deriveToolsetFromModel", () => {
     expect(deriveToolsetFromModel("letta/auto")).toBe("default");
     expect(deriveToolsetFromModel("auto-fast")).toBe("default");
     expect(deriveToolsetFromModel("letta/auto-fast")).toBe("default");
-  });
-});
-
-describe("toolset initialization safety", () => {
-  test("avoids top-level toolset aliases that can trigger circular-import TDZ", () => {
-    const toolsetPath = fileURLToPath(
-      new URL("../tools/toolset.ts", import.meta.url),
-    );
-    const source = readFileSync(toolsetPath, "utf-8");
-
-    expect(source).not.toContain("const CODEX_TOOLS = OPENAI_PASCAL_TOOLS");
-    expect(source).toContain("loadSpecificTools([...OPENAI_PASCAL_TOOLS])");
   });
 });

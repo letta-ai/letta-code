@@ -1,8 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
+import {
+  clearRuntimeModelCatalogFixture,
+  installRuntimeModelCatalogFixture,
+} from "@/test-utils/runtime-model-catalog";
+
+beforeEach(installRuntimeModelCatalogFixture);
+afterEach(clearRuntimeModelCatalogFixture);
 
 describe("model handles", () => {
   test("prefers canonical provider handles over stale endpoint types", () => {

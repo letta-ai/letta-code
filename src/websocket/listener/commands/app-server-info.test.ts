@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { APP_SERVER_PROTOCOL_VERSION } from "@/types/app-server-info";
+import {
+  APP_SERVER_PROTOCOL_VERSION,
+  isAppServerInfoResponseMessage,
+} from "@/types/app-server-info";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { buildAppServerInfoResponse } from "./app-server-info";
 
@@ -46,9 +49,44 @@ describe("app-server info protocol", () => {
         conversation_management: true,
         memory_management: true,
         runtime_start: true,
+        agent_free_conversations: true,
+        launch_subagent: true,
+        launch_subagent_notify_caller: true,
+        subagent_message: true,
+        runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
+        structured_outputs: false,
+        write_file_base64: true,
+        mcp_originator_queue_isolation: true,
         split_channels: false,
       },
     });
   });
+
+  test("advertises structured outputs only for the API backend", () => {
+    const response = buildAppServerInfoResponse(
+      { type: "app_server_info", request_id: "info-api" },
+      { backend: "api", version: "0.32.14" },
+    );
+    expect(response.capabilities.structured_outputs).toBe(true);
+  });
+});
+
+test("queue isolation capability is optional boolean, not inferred for old listeners", () => {
+  const response = buildAppServerInfoResponse(
+    { type: "app_server_info", request_id: "old" },
+    { backend: "api", version: "old" },
+  );
+  delete response.capabilities.mcp_originator_queue_isolation;
+  expect(isAppServerInfoResponseMessage(response)).toBe(true);
+  expect(response.capabilities.mcp_originator_queue_isolation).toBeUndefined();
+  expect(
+    isAppServerInfoResponseMessage({
+      ...response,
+      capabilities: {
+        ...response.capabilities,
+        mcp_originator_queue_isolation: "true",
+      },
+    }),
+  ).toBe(false);
 });

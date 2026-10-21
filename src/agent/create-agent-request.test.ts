@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   GIT_MEMORY_ENABLED_TAG,
   LETTA_CODE_ORIGIN_TAG,
@@ -8,9 +10,11 @@ import {
   buildCreateAgentRequest,
   buildCreateAgentRequestForPersonality,
   DEFAULT_CREATED_AGENT_BASE_TOOLS,
+  DEFAULT_ROOT_MEMORY_BLOCK,
   LETTA_CODE_AGENT_TYPE,
 } from "@/agent/create-agent-request";
 import { resolveModel } from "@/agent/model-catalog";
+import { updateAgentSystemPromptMemfs } from "@/agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "@/agent/personality";
 import {
   DEFAULT_CREATE_AGENT_PERSONALITIES,
@@ -18,6 +22,7 @@ import {
   getPersonalityOption,
 } from "@/agent/personality-presets";
 import { buildSystemPrompt } from "@/agent/prompt-assets";
+import { getBackend } from "@/backend";
 
 describe("buildCreateAgentRequest", () => {
   test("owns the complete default creation policy without a personality", async () => {
@@ -32,8 +37,9 @@ describe("buildCreateAgentRequest", () => {
     expect(request).toMatchObject({
       agent_type: LETTA_CODE_AGENT_TYPE,
       model: "openai/gpt-5.2",
-      system: buildSystemPrompt("default", "memfs"),
+      system: buildSystemPrompt("default", "root-memfs"),
       memory_blocks: [
+        DEFAULT_ROOT_MEMORY_BLOCK,
         { label: "persona", value: "You are Ezra." },
         { label: "human", value: "The human reads the docs." },
       ],
@@ -59,6 +65,7 @@ describe("buildCreateAgentRequest", () => {
     });
 
     expect(request.memory_blocks?.map((block) => block.label)).toEqual([
+      "MEMORY",
       "persona",
       "human",
       "project",
@@ -102,6 +109,58 @@ describe("buildCreateAgentRequest", () => {
     ).rejects.toThrow("must describe the same memory mode");
   });
 
+  test("creates an empty root index for root MemFS without identity blocks", async () => {
+    const request = await buildCreateAgentRequest({
+      memoryPromptMode: "root-memfs",
+      enableMemfs: true,
+    });
+
+    expect(request.memory_blocks).toEqual([DEFAULT_ROOT_MEMORY_BLOCK]);
+    expect(request.system).toBe(buildSystemPrompt("default", "root-memfs"));
+  });
+
+  test("preserves a caller-provided root index", async () => {
+    const customRoot = { label: "MEMORY", value: "# Custom index\n" };
+    const request = await buildCreateAgentRequest({
+      memoryPromptMode: "root-memfs",
+      enableMemfs: true,
+      memoryBlocks: [customRoot],
+    });
+
+    expect(request.memory_blocks).toEqual([customRoot]);
+  });
+
+  test("delegates Cloud defaults, but pins local and explicit overrides", async () => {
+    for (const memoryPromptMode of [
+      "standard",
+      "memfs",
+      "root-memfs",
+    ] as const) {
+      const cloud = await buildCreateAgentRequest({
+        isLettaCloud: true,
+        memoryPromptMode,
+      });
+      expect(JSON.parse(JSON.stringify(cloud))).toHaveProperty("system", null);
+
+      const local = await buildCreateAgentRequest({ memoryPromptMode });
+      expect(local.system).toBe(buildSystemPrompt("default", memoryPromptMode));
+    }
+    const inherited = await buildCreateAgentRequest({ system: null });
+    expect(JSON.parse(JSON.stringify(inherited))).toHaveProperty(
+      "system",
+      null,
+    );
+
+    const explicit = await buildCreateAgentRequest({
+      isLettaCloud: true,
+      system: "Custom prompt",
+    });
+    expect(JSON.parse(JSON.stringify(explicit))).toHaveProperty(
+      "system",
+      "Custom prompt",
+    );
+  });
+
   test("pins exact caller overrides without restoring server defaults", async () => {
     const request = await buildCreateAgentRequest({
       name: "Worker",
@@ -135,6 +194,23 @@ describe("buildCreateAgentRequest", () => {
   });
 });
 
+test("enabling MemFS leaves a Cloud-inherited system prompt untouched", async () => {
+  const backend = getBackend();
+  const retrieve = spyOn(backend, "retrieveAgent").mockResolvedValue({
+    system: null,
+  } as unknown as Awaited<ReturnType<typeof backend.retrieveAgent>>);
+  const update = spyOn(backend, "updateAgent");
+  try {
+    const result = await updateAgentSystemPromptMemfs("agent-cloud-default");
+    expect(result.success).toBe(true);
+    expect(retrieve).toHaveBeenCalledWith("agent-cloud-default");
+    expect(update).not.toHaveBeenCalled();
+  } finally {
+    retrieve.mockRestore();
+    update.mockRestore();
+  }
+});
+
 describe("buildCreateAgentRequestForPersonality", () => {
   test("matches the CLI create path for every create-agent personality", async () => {
     for (const personalityId of DEFAULT_CREATE_AGENT_PERSONALITIES) {
@@ -149,16 +225,18 @@ describe("buildCreateAgentRequestForPersonality", () => {
       // Same content the CLI's createAgent() would send for this personality.
       expect(request.name).toBe(cliOptions.name as string);
       expect(request.description).toBe(cliOptions.description as string);
-      expect(request.memory_blocks).toEqual(
-        cliOptions.memoryBlocks as typeof request.memory_blocks,
-      );
+      expect(request.memory_blocks).toEqual([
+        DEFAULT_ROOT_MEMORY_BLOCK,
+        ...(cliOptions.memoryBlocks as typeof request.memory_blocks),
+      ]);
       expect(request.model).toBe(
         resolveModel(personality.defaultModel ?? "auto") as string,
       );
 
-      // The CLI resolves the same prompt via memoryPromptMode: "memfs".
-      expect(cliOptions.memoryPromptMode).toBe("memfs");
-      expect(request.system).toBe(buildSystemPrompt("default", "memfs"));
+      // Direct Cloud creation and the CLI Cloud path both delegate the default
+      // prompt to the service. Local CLI creation still resolves it client-side.
+      expect(cliOptions.memoryPromptMode).toBe("root-memfs");
+      expect(request.system).toBeNull();
 
       expect(request.agent_type).toBe(LETTA_CODE_AGENT_TYPE);
       expect(request.tags).toEqual([
@@ -178,11 +256,20 @@ describe("buildCreateAgentRequestForPersonality", () => {
     }
   });
 
+  test("local personality creation sends the bundled default", async () => {
+    const request = await buildCreateAgentRequestForPersonality({
+      personalityId: "memo",
+      isLettaCloud: false,
+    });
+    expect(request.system).toBe(buildSystemPrompt("default", "root-memfs"));
+  });
+
   test("onboarding personalities include the cloud onboarding block", async () => {
     const request = await buildCreateAgentRequestForPersonality({
       personalityId: "tutorial",
     });
     expect(request.memory_blocks.map((block) => block.label)).toEqual([
+      "MEMORY",
       "persona",
       "human",
       "onboarding",
@@ -191,6 +278,22 @@ describe("buildCreateAgentRequestForPersonality", () => {
       request.memory_blocks.find((block) => block.label === "onboarding")
         ?.value,
     ).toContain("Offer to create one yourself.");
+  });
+
+  test("includes the Tutor profile picture without changing other presets", async () => {
+    const tutor = await buildCreateAgentRequestForPersonality({
+      personalityId: "tutorial",
+    });
+    expect(tutor.profile_picture?.content).toBe(
+      readFileSync(
+        join(import.meta.dir, "../../assets/tutor-profile.png"),
+      ).toString("base64"),
+    );
+
+    const memo = await buildCreateAgentRequestForPersonality({
+      personalityId: "memo",
+    });
+    expect(memo.profile_picture).toBeUndefined();
   });
 
   test("appends extra tags after the Letta Code tags", async () => {

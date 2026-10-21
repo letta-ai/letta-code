@@ -23,7 +23,7 @@ export interface PersonalityOption {
   id: "blank" | "kawaii" | "codex" | "claude" | "linus" | "memo" | "tutorial";
   label: string;
   description: string;
-  /** Model ID from models.json to use when no explicit model is provided. */
+  /** Model ID or handle to use when no explicit model is provided. */
   defaultModel?: string;
   /** Binary files seeded into MemFS after the initial checkout. */
   defaultMemoryFiles?: readonly PersonalityDefaultMemoryFile[];

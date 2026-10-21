@@ -488,8 +488,8 @@ describe("mod learning harness", () => {
               ...event.input,
               {
                 type: "message",
-                role: "system",
-                content: "For Python packages, use uv pip install instead of pip install.",
+                role: "user",
+                content: "<system-reminder>For Python packages, use uv pip install instead of pip install.</system-reminder>",
               },
             ],
           })));

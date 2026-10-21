@@ -2,6 +2,7 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { APIError } from "@letta-ai/letta-client";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   Message,
@@ -194,6 +195,36 @@ describe("isResumedConversation", () => {
 });
 
 describe("getResumeData", () => {
+  test("surfaces backend 5xx errors to recovery callers only", async () => {
+    const error = new APIError(
+      503,
+      { message: "Service unavailable" },
+      "Service unavailable",
+      new Headers(),
+    );
+    installBackend({
+      retrieveConversation: mock(async () => {
+        throw error;
+      }),
+    });
+
+    await expect(
+      getResumeDataFromBackend(makeAgent(), "conv-unavailable", {
+        includeMessageHistory: false,
+        throwOnReadError: true,
+      }),
+    ).rejects.toBe(error);
+    await expect(
+      getResumeDataFromBackend(makeAgent(), "conv-unavailable", {
+        includeMessageHistory: false,
+      }),
+    ).resolves.toEqual({
+      pendingApproval: null,
+      pendingApprovals: [],
+      messageHistory: [],
+    });
+  });
+
   afterEach(() => {
     __testSetBackend(null);
   });

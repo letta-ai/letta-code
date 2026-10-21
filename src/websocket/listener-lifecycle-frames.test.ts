@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type WebSocket from "ws";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "@/websocket/listener/connection";
 import { isListenerPongStale } from "@/websocket/listener/constants";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerLifecycleMessage } from "@/websocket/listener/protocol-inbound";
@@ -23,10 +27,23 @@ function makeListenerOptions(): StartListenerOptions {
 }
 
 function makeHandler(runtime: ListenerRuntime) {
+  const opts = makeListenerOptions();
+  const socket = {
+    readyState: 1,
+    bufferedAmount: 0,
+    send() {},
+  } as unknown as WebSocket;
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: opts.connectionId,
+    writer: socket,
+    options: opts,
+  });
+  markListenerConnectionInitialized(runtime, opts.connectionId, connection);
   return createListenerMessageHandler({
     runtime,
-    socket: {} as WebSocket,
-    opts: makeListenerOptions(),
+    socket,
+    opts,
     processQueuedTurn: async () => {},
     fileCommandSession: { handle: () => false },
     getParsedRuntimeScope: () => null,
@@ -86,7 +103,7 @@ describe("listener lifecycle frames", () => {
     expect(runtime.lastPongAt as number).toBeGreaterThanOrEqual(before);
   });
 
-  test("still logs malformed frames as unparseable lifecycle events", async () => {
+  test("logs only redacted metadata for malformed lifecycle frames", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
     const events: Array<{
       direction: "send" | "recv";
@@ -104,7 +121,7 @@ describe("listener lifecycle frames", () => {
       {
         direction: "recv",
         label: "lifecycle",
-        event: { type: "_ws_unparseable", raw: "not-json" },
+        event: { type: "_ws_unparseable" },
       },
     ]);
   });

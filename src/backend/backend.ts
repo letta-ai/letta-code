@@ -1,10 +1,28 @@
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { APIConnectionError } from "@letta-ai/letta-client/core/error";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  type ChatGPTUsageSnapshot,
+  normalizeCloudChatGPTUsageResponse,
+} from "@/providers/chatgpt-usage-service";
 import type { getClient } from "./api/client";
 import type {
   ForkConversationOptions,
   forkConversation as forkConversationRequest,
 } from "./api/conversations";
+import {
+  type CloudReflectionConfig,
+  retrieveCloudReflectionConfig,
+} from "./api/reflection";
+import {
+  postReflectionRun,
+  REFLECTION_UNSUPPORTED,
+  type ReflectionRunReceipt,
+  type ReflectionRunRequest,
+} from "./api/reflection-runs";
+import { isCloudServerUrl } from "./api/server-url";
 import {
   type BackendMode,
   resolveBackendMode,
@@ -42,6 +60,9 @@ export type RunMessageStreamParams = Parameters<
 >;
 export type RunMessageStreamBody = RunMessageStreamParams[1];
 export type RunMessageStreamOptions = RunMessageStreamParams[2];
+
+export type RunRetrieveParams = Parameters<APIClient["runs"]["retrieve"]>;
+export type RunRetrieveOptions = RunRetrieveParams[1];
 
 export type AgentRetrieveParams = Parameters<APIClient["agents"]["retrieve"]>;
 export type AgentRetrieveOptions = AgentRetrieveParams[1];
@@ -149,11 +170,21 @@ export interface BackendCapabilities {
   remoteMemfs: boolean;
   serverSideToolManagement: boolean;
   serverSecrets: boolean;
-  agentFileImportExport: boolean;
   promptRecompile: boolean;
   byokProviderRefresh: boolean;
   localModelCatalog: boolean;
   localMemfs: boolean;
+  /**
+   * Whether subagent turns can be routed to other computers (connected
+   * environments / Cloud sandboxes). Cloud-only: the environments API does
+   * not exist on local or self-hosted backends.
+   */
+  environmentRouting: boolean;
+}
+
+export interface AgentSecret {
+  key: string;
+  value: string;
 }
 
 export interface Backend {
@@ -179,6 +210,22 @@ export interface Backend {
     options?: AgentUpdateOptions,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["update"]>>>;
 
+  /** Null means a known non-Cloud API server; lookup errors must propagate. */
+  retrieveReflectionConfig?(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null>;
+
+  /** Cloud admission only; unsupported backends must not run local reflection. */
+  enqueueReflectionRun?(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt>;
+
+  /** Optional until every backend supports server-backed agent secrets. */
+  listAgentSecrets?(agentId: string): Promise<AgentSecret[]>;
+
   createAgent(
     body: AgentCreateBody,
     options?: AgentCreateOptions,
@@ -197,6 +244,21 @@ export interface Backend {
     body: ConversationCreateBody,
     options?: ConversationCreateOptions,
   ): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
+
+  /**
+   * Optional agent-free conversation creation used by SDK query() runtimes.
+   * Backends that implement this must preserve `agent_id: null` rather than
+   * materializing a hidden worker agent.
+   */
+  createEphemeralConversation?(body: {
+    model: string;
+    system: string;
+    model_settings?: Record<string, unknown>;
+    context_window_limit?: number | null;
+    parent_agent_id?: string | null;
+    name?: string;
+    is_subagent?: boolean;
+  }): Promise<Awaited<ReturnType<APIClient["conversations"]["create"]>>>;
 
   /** Optional: not all backends support deleting conversations. */
   deleteConversation?(
@@ -252,6 +314,11 @@ export interface Backend {
     options?: ModelsListOptions,
   ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
+  readChatGPTUsage?(
+    providerName: string,
+    signal?: AbortSignal,
+  ): Promise<ChatGPTUsageSnapshot | null>;
+
   createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
@@ -277,8 +344,14 @@ export interface Backend {
     runId: string,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
+  cancelConversationRun(
+    conversationId: string,
+    runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
+
   retrieveRun(
     runId: string,
+    options?: RunRetrieveOptions,
   ): Promise<Awaited<ReturnType<APIClient["runs"]["retrieve"]>>>;
 
   streamRunMessages(
@@ -301,19 +374,27 @@ interface APIBackendDeps {
 }
 
 export class APIBackend implements Backend {
-  readonly capabilities: BackendCapabilities = {
-    remoteMemfs: true,
-    serverSideToolManagement: true,
-    serverSecrets: true,
-    agentFileImportExport: true,
-    promptRecompile: true,
-    byokProviderRefresh: true,
-    localModelCatalog: false,
-    localMemfs: false,
-  };
+  get capabilities(): BackendCapabilities {
+    return {
+      remoteMemfs: true,
+      serverSideToolManagement: true,
+      serverSecrets: true,
+      promptRecompile: true,
+      byokProviderRefresh: true,
+      localModelCatalog: false,
+      localMemfs: false,
+      // Environment routing only exists on Letta Cloud; an APIBackend pointed
+      // at a self-hosted or remote app server has no environments API.
+      environmentRouting: isCloudServerUrl(),
+    };
+  }
 
   private readonly getApiClientOverride?: GetAPIClient;
   private readonly forkConversationOverride?: ForkConversation;
+  private readonly retrieveAgentInflightByKey = new Map<
+    string,
+    Promise<Awaited<ReturnType<APIClient["agents"]["retrieve"]>>>
+  >();
 
   constructor(deps: APIBackendDeps = {}) {
     this.getApiClientOverride = deps.getClient;
@@ -330,7 +411,66 @@ export class APIBackend implements Backend {
 
   async retrieveAgent(agentId: string, options?: AgentRetrieveOptions) {
     const client = await this.getClient();
-    return client.agents.retrieve(agentId, options);
+    if (options !== undefined) {
+      return client.agents.retrieve(agentId, options);
+    }
+
+    const inflight = this.retrieveAgentInflightByKey.get(agentId);
+    if (inflight) return inflight;
+
+    const request = client.agents.retrieve(agentId, undefined);
+    this.retrieveAgentInflightByKey.set(agentId, request);
+    request.then(
+      () => {
+        if (this.retrieveAgentInflightByKey.get(agentId) === request) {
+          this.retrieveAgentInflightByKey.delete(agentId);
+        }
+      },
+      () => {
+        if (this.retrieveAgentInflightByKey.get(agentId) === request) {
+          this.retrieveAgentInflightByKey.delete(agentId);
+        }
+      },
+    );
+    return request;
+  }
+
+  async retrieveReflectionConfig(
+    agentId: string,
+    options?: { headers: Record<string, string> },
+  ): Promise<CloudReflectionConfig | null> {
+    if (!isCloudServerUrl()) return null;
+    const headers = options ? { ...options.headers } : undefined;
+    const client = await this.getClient();
+    const config = await retrieveCloudReflectionConfig(
+      agentId,
+      (_method, path) => client.get(path, { headers, maxRetries: 0 }),
+    );
+    if (!config || typeof config.cutover !== "boolean") {
+      throw new Error(
+        "Unable to determine reflection ownership: missing cutover configuration.",
+      );
+    }
+    return config;
+  }
+
+  async enqueueReflectionRun(
+    agentId: string,
+    request: ReflectionRunRequest,
+    options?: { headers: Record<string, string> },
+  ): Promise<ReflectionRunReceipt> {
+    if (!isCloudServerUrl()) throw new Error(REFLECTION_UNSUPPORTED);
+    const body = { ...request };
+    const headers = options ? { headers: { ...options.headers } } : undefined;
+    const client = await this.getClient();
+    return postReflectionRun(client, agentId, body, headers);
+  }
+
+  async listAgentSecrets(agentId: string): Promise<AgentSecret[]> {
+    const client = await this.getClient();
+    return client.get<AgentSecret[]>(
+      `/v1/agents/${encodeURIComponent(agentId)}/secrets`,
+    );
   }
 
   async listAgents(body?: AgentListBody) {
@@ -471,13 +611,40 @@ export class APIBackend implements Backend {
     return client.models.list(options);
   }
 
+  async readChatGPTUsage(providerName: string, signal?: AbortSignal) {
+    const client = await this.getClient();
+    // Use the same credentials/server as model selection. Do not reuse the
+    // provider selector's name-only cache across authenticated projects.
+    const raw = await client.get<unknown>("/v1/providers/chatgpt-usage", {
+      query: { provider_name: providerName },
+      signal,
+      timeout: 3_000,
+      maxRetries: 0,
+    });
+    return normalizeCloudChatGPTUsageResponse({ raw, providerName });
+  }
+
   async createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
     options?: ConversationMessageCreateOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.create(conversationId, body, options);
+    const { data: stream, response } = await client.conversations.messages
+      .create(conversationId, body, options)
+      .withResponse();
+    const contentType = response.headers.get("content-type") ?? "";
+    if (
+      contentType.split(";")[0]?.trim().toLowerCase() !== "text/event-stream"
+    ) {
+      // A gateway can return HTTP 200 HTML while the API is down. Reject it
+      // before callers try to resume a run that never accepted this request.
+      stream.controller.abort();
+      throw new APIConnectionError({
+        message: `Connection error: expected text/event-stream, received ${contentType || "no content type"} (HTTP ${response.status}).`,
+      });
+    }
+    return stream;
   }
 
   async streamConversationMessages(
@@ -499,9 +666,22 @@ export class APIBackend implements Backend {
     return client.agents.messages.cancel(agentId, { run_ids: [runId] });
   }
 
-  async retrieveRun(runId: string) {
+  async cancelConversationRun(
+    _conversationId: string,
+    _runId?: string | null,
+  ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>> {
+    // The public conversations cancellation route cannot scope by run ID. Do
+    // not add a retrieve round-trip here: a run with agent_id:null still has no
+    // agent cancellation route, and waiting on that request would hold the
+    // listener's cancellation fence without making cancellation safer.
+    throw new Error(
+      "API backend does not support exact cancellation for conversations with agent_id:null",
+    );
+  }
+
+  async retrieveRun(runId: string, options?: RunRetrieveOptions) {
     const client = await this.getClient();
-    return client.runs.retrieve(runId);
+    return client.runs.retrieve(runId, options);
   }
 
   async streamRunMessages(
@@ -529,13 +709,22 @@ export function getLocalBackendStorageDir(homeDir = homedir()): string {
   return getLocalBackendStorageDirFromPaths(homeDir);
 }
 
+function localBackendExecutionMode():
+  | "deterministic"
+  | "deterministic-reflection"
+  | "pi" {
+  const configuredMode = process.env.LETTA_LOCAL_BACKEND_EXECUTOR;
+  if (configuredMode === "deterministic") return "deterministic";
+  if (configuredMode === "deterministic-reflection") {
+    return "deterministic-reflection";
+  }
+  return "pi";
+}
+
 function createExperimentalLocalBackend(): Backend {
   return new LocalBackend({
     storageDir: getLocalBackendStorageDir(),
-    executionMode:
-      process.env.LETTA_LOCAL_BACKEND_EXECUTOR === "deterministic"
-        ? "deterministic"
-        : "pi",
+    executionMode: localBackendExecutionMode(),
   });
 }
 
@@ -566,6 +755,25 @@ export function configureBackendMode(mode: BackendMode): void {
   setConfiguredBackendMode(mode);
   process.env[LOCAL_BACKEND_EXPERIMENTAL_ENV] = mode === "local" ? "1" : "0";
   backend = createBackendForMode(mode);
+}
+
+export function configureEphemeralLocalBackend(): void {
+  if (resolveBackendMode() !== "local") {
+    throw new Error("Ephemeral local backend requires local backend mode");
+  }
+
+  const stateStorageDir = mkdtempSync(
+    join(tmpdir(), "letta-code-ephemeral-local-"),
+  );
+  backend = new LocalBackend({
+    storageDir: getLocalBackendStorageDir(),
+    stateStorageDir,
+    memfsEnabled: false,
+    executionMode: localBackendExecutionMode(),
+  });
+  process.once("exit", () => {
+    rmSync(stateStorageDir, { recursive: true, force: true });
+  });
 }
 
 export function isLocalBackendEnabled(): boolean {

@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { grep } from "@/tools/impl/grep";
+import {
+  executeTool,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
+} from "@/tools/manager";
 
 describe("Grep tool", () => {
   let testDir: TestDirectory;
@@ -61,6 +66,38 @@ describe("Grep tool", () => {
     await expect(grep({} as Parameters<typeof grep>[0])).rejects.toThrow(
       /missing required parameter.*pattern/,
     );
+  });
+
+  test("stops when the turn is interrupted", async () => {
+    testDir = new TestDirectory();
+    testDir.createFile("test.txt", "match");
+    const abortController = new AbortController();
+    abortController.abort();
+    const prepared = await prepareToolExecutionContextForSpecificTools([
+      "Grep",
+    ]);
+
+    try {
+      const result = await executeTool(
+        "Grep",
+        {
+          pattern: "match",
+          path: testDir.path,
+          output_mode: "content",
+        },
+        {
+          signal: abortController.signal,
+          toolContextId: prepared.contextId,
+        },
+      );
+
+      expect(result).toMatchObject({
+        status: "error",
+        toolReturn: "Interrupted by user",
+      });
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
   });
 
   test("head_limit limits number of results", async () => {

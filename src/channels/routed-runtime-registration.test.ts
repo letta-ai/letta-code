@@ -157,12 +157,43 @@ test("revokes a known runtime that lost its route before publication", async () 
       },
     },
     channelNames: ["slack"],
-    buildTool: async () => createTool(),
+    buildTool: async (sources) => (sources.length > 0 ? createTool() : null),
   });
 
   await refresher.refresh();
 
   expect(updates).toEqual([[{ runtimes: [runtime], external_tools: [] }]]);
+  refresher.close();
+});
+
+test("preserves proactive tools for known runtimes without routes", async () => {
+  __testOverrideLoadRoutes(() => null);
+  const updates: RuntimeExternalToolsUpdateGroup[][] = [];
+  const refresher = createRoutedRuntimeRegistrationRefresher({
+    registry: { resolveRoutedTurnSources: () => [] },
+    publisher: {
+      getKnownRuntimes: () => [runtime],
+      publish: async (nextUpdates) => {
+        updates.push([...nextUpdates]);
+      },
+    },
+    channelNames: ["slack"],
+    buildTool: async (sources, nextRuntime) =>
+      sources.length === 0 && nextRuntime.agent_id === "agent-1"
+        ? createTool("Proactive Slack")
+        : null,
+  });
+
+  await refresher.refresh();
+
+  expect(updates).toEqual([
+    [
+      {
+        runtimes: [runtime],
+        external_tools: [{ tools: [createTool("Proactive Slack")] }],
+      },
+    ],
+  ]);
   refresher.close();
 });
 

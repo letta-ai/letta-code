@@ -10,6 +10,7 @@ import {
 } from "./connection";
 import { handleCwdChange } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { getConversationWorkingDirectory } from "./cwd";
 import { switchConversationWorkingDirectory } from "./cwd-change";
 import { createRuntime } from "./lifecycle";
 import { resetRemoteSettingsCache } from "./remote-settings";
@@ -79,6 +80,59 @@ describe("listener cwd change handling", () => {
     expect(runtime.reminderState.pendingSessionContextReason).toBe(
       "cwd_changed",
     );
+  });
+
+  test("repeated normalized cwd keeps reminder state and revision unchanged", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+
+    await switchConversationWorkingDirectory({
+      runtime: listener,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      workingDirectory: tempHome as string,
+      emitStatus: false,
+      updateCurrentRuntimeContext: false,
+    });
+    runtime.reminderState.hasSentSessionContext = true;
+    runtime.reminderState.pendingSessionContextReason = undefined;
+    const revisionAfterInitialChange = listener.workingDirectoryRevision;
+
+    await switchConversationWorkingDirectory({
+      runtime: listener,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      workingDirectory: join(tempHome as string, "."),
+      emitStatus: false,
+      updateCurrentRuntimeContext: false,
+    });
+
+    expect(listener.workingDirectoryRevision).toBe(revisionAfterInitialChange);
+    expect(runtime.reminderState.hasSentSessionContext).toBe(true);
+    expect(runtime.reminderState.pendingSessionContextReason).toBeUndefined();
+
+    const changedDirectory = await mkdtemp(
+      join(tempHome as string, "changed-"),
+    );
+    await switchConversationWorkingDirectory({
+      runtime: listener,
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      workingDirectory: changedDirectory,
+      emitStatus: false,
+      updateCurrentRuntimeContext: false,
+    });
+
+    expect(listener.workingDirectoryRevision).toBe(
+      (revisionAfterInitialChange ?? 0) + 1,
+    );
+    expect(getConversationWorkingDirectory(listener, "agent-1", "conv-1")).toBe(
+      changedDirectory,
+    );
+    expect(runtime.reminderState).toMatchObject({
+      hasSentSessionContext: false,
+      pendingSessionContextReason: "cwd_changed",
+    });
   });
 
   test("automatic cwd changes reach both runtime subscribers", async () => {

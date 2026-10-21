@@ -9,6 +9,8 @@ import {
   setCurrentAgentId,
   setCurrentAgentName,
 } from "@/agent/context";
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
@@ -17,18 +19,24 @@ import {
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { debugWarn, isDebugEnabled } from "@/utils/debug";
 import { detectShellContext } from "@/utils/shell-context";
+import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
+import { resolveTurnExecutionConnectionId } from "./connection";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
+import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
+  ensureListenerModAdapter,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import type { ConversationPermissionModeState } from "./permission-mode";
+import { hasInterruptedCacheForScope } from "./runtime";
 import { emitListenerTurnStart } from "./turn-events";
 import {
   createTurnInputState,
@@ -67,7 +75,7 @@ export type ListenerTurnSetupResult =
 export async function prepareListenerTurn(params: {
   msg: IncomingMessage;
   runtime: ConversationRuntime;
-  agentId: string;
+  agentId: string | null;
   requestedConversationId?: string;
   conversationId: string;
   workingDirectory: string;
@@ -112,14 +120,42 @@ export async function prepareListenerTurn(params: {
     onStatusChange?.("processing", connectionId);
   }
 
-  trackListenerUserInput(msg.messages, "unknown");
+  const hasAttributedUserMessage = msg.messages.some(
+    (message) =>
+      "role" in message &&
+      message.role === "user" &&
+      message.attribution?.acting_user_id,
+  );
+  if (!msg.actingUserId && hasAttributedUserMessage) {
+    console.warn("[Listen] Attributed input is missing acting user identity", {
+      agentId,
+      conversationId,
+    });
+  }
+  trackListenerUserInput(
+    msg.messages,
+    "unknown",
+    msg.actingUserId,
+    msg.suppressActingUserFallback,
+  );
 
   const messagesToSend: Array<MessageCreate | ApprovalCreate> = [];
   let queuedInterruptedToolCallIds: string[] = [];
+  const wasInterrupted = hasInterruptedCacheForScope(runtime.listener, {
+    agent_id: agentId,
+    conversation_id: conversationId,
+  });
   const consumed = consumeInterruptQueue(runtime, agentId, conversationId);
   if (consumed) {
     messagesToSend.push(consumed.approvalMessage);
     queuedInterruptedToolCallIds = consumed.interruptedToolCallIds;
+  }
+  if (wasInterrupted) {
+    messagesToSend.push({
+      role: "user",
+      content: INTERRUPT_RECOVERY_ALERT,
+      otid: crypto.randomUUID(),
+    });
   }
   messagesToSend.push(...ensureTurnInputMessageOtids(msg.messages));
 
@@ -133,7 +169,7 @@ export async function prepareListenerTurn(params: {
     "approvals" in firstMessage;
   let cachedAgent: AgentState | null = null;
 
-  if (!isApprovalMessage) {
+  if (!isApprovalMessage && agentId) {
     try {
       try {
         cachedAgent = (await getBackend().retrieveAgent(agentId, {
@@ -225,17 +261,18 @@ export async function prepareListenerTurn(params: {
   const hasUserMessage = messagesToSend.some(
     (message) => "role" in message && message.role === "user",
   );
-  const turnStartEmission = hasUserMessage
-    ? await emitListenerTurnStart({
-        agentId,
-        conversationId,
-        input: messagesToSend,
-        runtime: runtime.listener,
-        workingDirectory,
-        permissionMode: permissionModeState.mode,
-        cachedAgent,
-      })
-    : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
+  const turnStartEmission =
+    hasUserMessage && agentId
+      ? await emitListenerTurnStart({
+          agentId,
+          conversationId,
+          input: messagesToSend,
+          runtime: runtime.listener,
+          workingDirectory,
+          permissionMode: permissionModeState.mode,
+          cachedAgent,
+        })
+      : ({ cancelled: false, handlerCount: 0, input: messagesToSend } as const);
   if (isInterrupted()) {
     return { kind: "interrupted" };
   }
@@ -255,7 +292,7 @@ export async function prepareListenerTurn(params: {
   }
 
   const currentInput = ensureTurnInputMessageOtids(turnStartEmission.input);
-  const turnInput = createTurnInputState(
+  let turnInput = createTurnInputState(
     currentInput,
     getInboundImageFailureModes({
       imageFailureMode: msg.imageFailureMode,
@@ -265,23 +302,40 @@ export async function prepareListenerTurn(params: {
   if (currentInput !== messagesToSend) {
     inboundUserTranscriptLines = buildInboundUserTranscriptLines(currentInput);
   }
-  const modAdapters = await ensureListenerModAdaptersForAgent(
+  const modAdapters = agentId
+    ? await ensureListenerModAdaptersForAgent(runtime.listener, agentId)
+    : [ensureListenerModAdapter(runtime.listener)];
+  runtime.transientChannelRuntimeTools = agentId
+    ? await publishChannelRuntimeToolsForTurn(runtime.listener, {
+        agent_id: agentId,
+        conversation_id: conversationId,
+      })
+    : false;
+  if (isInterrupted()) {
+    return { kind: "interrupted" };
+  }
+  const executionConnectionId = resolveTurnExecutionConnectionId(
     runtime.listener,
-    agentId,
+    { agent_id: agentId, conversation_id: conversationId },
+    connectionId,
   );
-  const listenerOptions = connectionId
-    ? runtime.listener.connections.get(connectionId)?.options
+  const listenerOptions = executionConnectionId
+    ? runtime.listener.connections.get(executionConnectionId)?.options
     : runtime.listener.connections.values().next().value?.options;
   const environmentDeviceId = listenerOptions?.deviceId;
+  if (msg.clientPreferences !== undefined)
+    replaceClientPreferences(agentId, conversationId, msg.clientPreferences);
   const preparedToolContext = await prepareToolExecutionContextForScope({
-    connectionId,
+    connectionId: executionConnectionId,
     environmentDeviceId,
     agentId,
     conversationId,
+    actingUserId: msg.actingUserId,
+    suppressActingUserFallback: msg.suppressActingUserFallback,
+    mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
-    // Headless clients (SDK sessions, automation) opt out of tools that
-    // prompt the human mid-turn; the interactive set is owned by the harness.
+    // Honor explicit client exclusions; headless execution does not block questions.
     ...(msg.excludeInteractiveTools
       ? { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] }
       : {}),
@@ -290,8 +344,10 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
+    workspaceSandbox: runtime.workspaceSandbox,
+    executionSettings: runtime.executionSettings,
     cachedAgent,
-    modContext: createListenerAgentModContext(agentId),
+    ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });
@@ -301,7 +357,8 @@ export async function prepareListenerTurn(params: {
 
   const availableSkills = (
     await buildClientSkillsPayload({
-      agentId,
+      ...(agentId ? { agentId } : {}),
+      workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
     })
@@ -315,6 +372,40 @@ export async function prepareListenerTurn(params: {
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
   runtime.currentAvailableSkills = availableSkills;
+  const preloaded = await loadPreloadedSkills(
+    runtime.executionSettings?.preload_skills ?? [],
+    {
+      ...(agentId ? { agentId } : {}),
+      workingDirectory,
+      skillsDirectory: listenerOptions?.skillsDirectory,
+      skillSources: runtime.skillSources,
+    },
+  );
+  if (isInterrupted()) return { kind: "interrupted" };
+  if (preloaded) {
+    const index = turnInput.messages.findLastIndex(
+      (message) => "role" in message && message.role === "user",
+    );
+    turnInput = {
+      ...turnInput,
+      messages: turnInput.messages.map((message, i) =>
+        i === index && "content" in message
+          ? {
+              ...message,
+              content: [
+                { type: "text" as const, text: preloaded },
+                ...(typeof message.content === "string"
+                  ? [{ type: "text" as const, text: message.content }]
+                  : message.content),
+              ],
+            }
+          : message,
+      ),
+    };
+    inboundUserTranscriptLines = buildInboundUserTranscriptLines(
+      turnInput.messages,
+    );
+  }
   return {
     kind: "ready",
     getCachedAgent: () => cachedAgent,

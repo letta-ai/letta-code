@@ -1,3 +1,4 @@
+import { debugLog } from "@/utils/debug";
 import {
   buildChannelAccessDeniedMessage,
   evaluateChannelSenderAccess,
@@ -81,20 +82,15 @@ export function createChannelInboundRouter(deps: {
           buildDirectReplyOptions(msg),
         );
       } else {
-        console.log(
-          `[channels] Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
+        debugLog(
+          "channels",
+          `Dropped ${msg.channel} group message from unauthorized sender ${msg.senderId} in chat ${msg.chatId}`,
         );
       }
       return;
     }
 
     if (await deps.controls.tryHandleInbound(adapter, msg)) {
-      return;
-    }
-
-    if (
-      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
-    ) {
       return;
     }
 
@@ -139,6 +135,12 @@ export function createChannelInboundRouter(deps: {
               })
           : undefined,
       })
+    ) {
+      return;
+    }
+
+    if (
+      deps.commands.shouldDropUnroutedSlackThreadInput(msg, accountId, config)
     ) {
       return;
     }
@@ -234,8 +236,9 @@ export function createChannelInboundRouter(deps: {
         if (!isAllowed) {
           const resolvedParentId = msg.parentChannelId ?? null;
           const isThread = !!(msg.threadId && msg.threadId === msg.chatId);
-          console.log(
-            "[Discord] Delivery blocked by allowed_channels policy:",
+          debugLog(
+            "Discord",
+            "Delivery blocked by allowed_channels policy:",
             JSON.stringify({
               accountId: msg.accountId ?? config.accountId,
               chatId: msg.chatId,
@@ -248,6 +251,24 @@ export function createChannelInboundRouter(deps: {
           );
           return;
         }
+      }
+
+      // Route lookup and provisioning above must run before we consume this
+      // recovery signal. Do not turn the empty mention into an agent turn.
+      const isBareThreadMention =
+        msg.isMention === true &&
+        !!msg.threadId &&
+        msg.text.trim().length === 0 &&
+        (!msg.attachments || msg.attachments.length === 0);
+      if (isBareThreadMention) {
+        await adapter.sendDirectReply(
+          msg.chatId,
+          discordResult.isFirstRouteTurn
+            ? "This thread is connected now. Send a message here to continue."
+            : "This thread is already connected. Send a message here to continue.",
+          buildDirectReplyOptions(msg),
+        );
+        return;
       }
 
       const preparedMessage = adapter.prepareInboundMessage

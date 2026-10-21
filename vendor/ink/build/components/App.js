@@ -37,7 +37,7 @@ export default class App extends PureComponent {
         return this.props.stdin.isTTY;
     }
     render() {
-        return (React.createElement(AppContext.Provider, { value: { exit: this.handleExit } },
+        return (React.createElement(AppContext.Provider, { value: { exit: this.handleExit, resetStaticOutput: this.props.resetStaticOutput } },
             React.createElement(StdinContext.Provider, { value: { stdin: this.props.stdin, setRawMode: this.handleSetRawMode, isRawModeSupported: this.isRawModeSupported(), internal_exitOnCtrlC: this.props.exitOnCtrlC, internal_eventEmitter: this.internal_eventEmitter } },
                 React.createElement(StdoutContext.Provider, { value: { stdout: this.props.stdout, write: this.props.writeToStdout } },
                     React.createElement(StderrContext.Provider, { value: { stderr: this.props.stderr, write: this.props.writeToStderr } },
@@ -358,5 +358,4 @@ export default class App extends PureComponent {
     };
 }
 //# sourceMappingURL=App.js.map
-
 

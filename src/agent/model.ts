@@ -2,7 +2,12 @@
  * Model resolution and handling utilities
  */
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-constants";
-import { getDefaultModel, models, resolveModel } from "./model-catalog";
+import {
+  getDefaultModel,
+  models,
+  resolveCatalogModel,
+  resolveModel,
+} from "./model-catalog";
 import {
   CHATGPT_OAUTH_LLM_CONFIG_PROVIDER,
   LOCAL_CHATGPT_OAUTH_HANDLE_PREFIX,
@@ -12,9 +17,8 @@ import {
   normalizeModelHandleForRegistry,
 } from "./model-handles";
 
-// Pure catalog lookups live in model-catalog.ts (bundled into the
-// agent-presets package export); re-exported here so CLI code keeps a single
-// import surface for model utilities.
+// Pure lookups over the runtime-populated catalog live in model-catalog.ts;
+// re-exported here so CLI code keeps a single import surface for model utilities.
 export { getDefaultModel, models, resolveModel };
 export {
   mapModelHandleToLlmConfigPatch,
@@ -133,13 +137,17 @@ export function getReasoningTierOptionsForHandle(
   if (providerOptions.length > 0) return providerOptions;
 
   const byEffort = new Map<ModelReasoningEffort, string>();
-  const registryHandle =
+  const normalizedHandle =
     normalizeModelHandleForRegistry(modelHandle) ?? modelHandle;
+  const catalogHandle =
+    [...new Set([modelHandle, normalizedHandle])].find((candidate) =>
+      models.some((model) => model.handle === candidate),
+    ) ?? normalizedHandle;
   const effectiveContextWindow =
     contextWindow ??
     (() => {
       const contextWindows = models
-        .filter((model) => model.handle === registryHandle)
+        .filter((model) => model.handle === catalogHandle)
         .map(
           (model) =>
             (model.updateArgs as { context_window?: number } | null)
@@ -153,7 +161,7 @@ export function getReasoningTierOptionsForHandle(
     })();
 
   for (const model of models) {
-    if (model.handle !== registryHandle) continue;
+    if (model.handle !== catalogHandle) continue;
     if (effectiveContextWindow !== undefined) {
       const mCtx = (model.updateArgs as { context_window?: number } | null)
         ?.context_window;
@@ -167,10 +175,10 @@ export function getReasoningTierOptionsForHandle(
     }
   }
 
-  if (byEffort.size === 0 && isLocalModelHandle(registryHandle)) {
+  if (byEffort.size === 0 && isLocalModelHandle(catalogHandle)) {
     return LOCAL_REASONING_EFFORT_ORDER.map((effort) => ({
       effort,
-      modelId: registryHandle,
+      modelId: catalogHandle,
     }));
   }
 
@@ -276,14 +284,11 @@ export function formatAvailableModels(): string {
  * @returns The model info if found, null otherwise
  */
 export function getModelInfo(modelIdentifier: string) {
-  const byId = models.find((m) => m.id === modelIdentifier);
-  if (byId) return byId;
+  const direct = resolveCatalogModel(modelIdentifier);
+  if (direct) return direct;
 
   const normalizedHandle = normalizeModelHandleForRegistry(modelIdentifier);
-  const byHandle = models.find((m) => m.handle === normalizedHandle);
-  if (byHandle) return byHandle;
-
-  return null;
+  return normalizedHandle ? resolveCatalogModel(normalizedHandle) : null;
 }
 
 /**
@@ -543,10 +548,7 @@ export function getModelPresetUpdateForAgent(
  * auto-applied on resume and the comparison logic that decides
  * whether an update is needed.
  */
-const RESUME_REFRESH_FIELDS = [
-  "max_output_tokens",
-  "parallel_tool_calls",
-] as const;
+const RESUME_REFRESH_FIELDS = ["parallel_tool_calls"] as const;
 
 /**
  * Build the subset of preset updateArgs that should be synced on resume,
@@ -570,12 +572,7 @@ export function getResumeRefreshArgs(
   // Extract only the resume-scoped fields from the full preset
   for (const field of RESUME_REFRESH_FIELDS) {
     const value = presetUpdateArgs[field];
-    if (
-      field === "max_output_tokens" &&
-      (typeof value === "number" || value === null)
-    ) {
-      updateArgs[field] = value;
-    } else if (field === "parallel_tool_calls" && typeof value === "boolean") {
+    if (typeof value === "boolean") {
       updateArgs[field] = value;
     }
   }
@@ -585,20 +582,12 @@ export function getResumeRefreshArgs(
   }
 
   // Compare against the agent's current values
-  const currentMaxTokens = agent.llm_config?.max_tokens;
-  const wantMaxTokens = updateArgs.max_output_tokens as
-    | number
-    | null
-    | undefined;
   const currentParallel = agent.model_settings?.parallel_tool_calls;
   const wantParallel = updateArgs.parallel_tool_calls as boolean | undefined;
-
-  const maxTokensMatch =
-    wantMaxTokens === undefined || currentMaxTokens === wantMaxTokens;
   const parallelMatch =
     wantParallel === undefined || currentParallel === wantParallel;
 
-  return { updateArgs, needsUpdate: !(maxTokensMatch && parallelMatch) };
+  return { updateArgs, needsUpdate: !parallelMatch };
 }
 
 /**
@@ -630,13 +619,13 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
   if (exactMatch) return exactMatch;
 
   // For handles like "bedrock/claude-opus-4-5-20251101" where the API returns without
-  // vendor prefix or version suffix, but models.json has
+  // vendor prefix or version suffix, but the runtime catalog has
   // "bedrock/us.anthropic.claude-opus-4-5-20251101-v1:0", try fuzzy matching
   const [provider, ...rest] = registryHandle.split("/");
   if (provider && rest.length > 0) {
     const modelPortion = rest.join("/");
-    // Find models with the same provider where the model portion is contained
-    // in the models.json handle (handles vendor prefixes and version suffixes)
+    // Find catalog entries with the same provider where the model portion is
+    // contained in the catalog handle (handles vendor prefixes and version suffixes)
     const providerMatches = models.filter((m) => {
       if (!m.handle.startsWith(`${provider}/`)) return false;
       const mModelPortion = m.handle.slice(provider.length + 1);
@@ -650,7 +639,7 @@ function findModelByHandle(handle: string): (typeof models)[number] | null {
     if (providerMatch) return providerMatch;
 
     // Cross-provider fallback by model suffix. This helps when llm_config reports
-    // provider_type=openai for BYOK models that are represented in models.json
+    // provider_type=openai for BYOK models represented in the runtime catalog
     // under a different provider prefix (e.g. chatgpt-plus-pro/*).
     const suffixMatches = models.filter((m) =>
       m.handle.endsWith(`/${modelPortion}`),

@@ -6,9 +6,13 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { debugLog } from "@/utils/debug.js";
 import { expandFilePath } from "@/utils/file-path";
-import { resizeImageIfNeeded } from "@/utils/image-resize.js";
+import {
+  ImageWorkerMissingError,
+  resizeImageIfNeeded,
+} from "@/utils/image-resize.js";
 import { getUtf16Bom, readUtf8TextStrict } from "@/utils/text-files";
 import { OVERFLOW_CONFIG, writeOverflowFile } from "./overflow.js";
 import { LIMITS, truncateByChars } from "./truncation.js";
@@ -70,6 +74,13 @@ async function readImageFile(
   try {
     result = await resizeImageIfNeeded(buffer, mediaType);
   } catch (error) {
+    if (error instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error,
+        context: "read_tool_image",
+      });
+    }
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read image file: ${filePath} (${detail})`);
   }
@@ -147,19 +158,19 @@ function formatWithLineNumbers(
   // Apply per-line character limit (Claude Code: 2000 chars/line)
   let linesWereTruncatedInLength = false;
   const formattedLines = selectedLines.map((line, index) => {
+    // `cat -n`-style prefix: flush-left line number + tab, matching Claude
+    // Code. The separator must stay a literal tab so the Edit tool's
+    // documented "line number + tab" prefix contract holds.
     const lineNumber = actualStartLine + index + 1;
-    const maxLineNumber = actualStartLine + selectedLines.length;
-    const padding = Math.max(1, maxLineNumber.toString().length);
-    const paddedNumber = lineNumber.toString().padStart(padding);
 
     // Truncate long lines
     if (line.length > LIMITS.READ_MAX_CHARS_PER_LINE) {
       linesWereTruncatedInLength = true;
       const truncated = line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE);
-      return `${paddedNumber}→${truncated}... [line truncated]`;
+      return `${lineNumber}\t${truncated}... [line truncated]`;
     }
 
-    return `${paddedNumber}→${line}`;
+    return `${lineNumber}\t${line}`;
   });
 
   let result = formattedLines.join("\n");

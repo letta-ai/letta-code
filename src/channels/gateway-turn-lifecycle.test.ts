@@ -22,6 +22,7 @@ test("stream stop reason waits for turn_finished error detail", async () => {
       run_id: "run-1",
     }),
   );
+  await Bun.sleep(0);
   expect(progressEvents.length).toBeGreaterThan(0);
 
   client.emit(
@@ -42,6 +43,7 @@ test("stream stop reason waits for turn_finished error detail", async () => {
       error: "The usage limit has been reached.",
     }),
   );
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter(
     (event) => event.type === "finished",

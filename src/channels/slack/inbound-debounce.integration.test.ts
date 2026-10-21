@@ -73,6 +73,7 @@ test("inbound debounce: burst of 3 DMs collapse into a single dispatch", async (
       text: "hey\nquick question\nabout the plan",
       messageId: "1712800000.000003",
       chatType: "direct",
+      routedBy: "dm",
     }),
   );
 });
@@ -197,9 +198,17 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
     inboundDebounceMs: 40,
   });
 
-  const dispatched: Array<{ text: string; isMention: boolean }> = [];
+  const dispatched: Array<{
+    text: string;
+    isMention: boolean;
+    routedBy: string | undefined;
+  }> = [];
   adapter.onMessage = async (msg) => {
-    dispatched.push({ text: msg.text, isMention: msg.isMention === true });
+    dispatched.push({
+      text: msg.text,
+      isMention: msg.isMention === true,
+      routedBy: msg.routedBy,
+    });
   };
 
   await adapter.start();
@@ -238,7 +247,9 @@ test("inbound debounce: message arrives first, then app_mention for same ts → 
   // One dispatch; the duplicate message/app_mention events for the same Slack
   // message must not become `/model\n/model`, which would parse the second
   // command as a model handle.
-  expect(dispatched).toEqual([{ text: "/model", isMention: true }]);
+  expect(dispatched).toEqual([
+    { text: "/model", isMention: true, routedBy: "mention" },
+  ]);
 });
 
 test("inbound debounce: app_mention arrives first, message-for-same-ts is dropped by dedupe", async () => {

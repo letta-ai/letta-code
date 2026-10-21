@@ -38,6 +38,8 @@ import {
   resolvePiModelForAgent,
 } from "./pi-model-factory";
 import { LocalPiModelsRuntime } from "./pi-models-runtime";
+import { resolvePiRequestHeaders } from "./pi-request-headers";
+import { isPiModelOutputEvent } from "./pi-stream-output";
 import type {
   LlmEndErrorInfo,
   LlmEndInfo,
@@ -49,6 +51,7 @@ import type {
 import {
   contextTokensFromUsage,
   estimateProviderContextTokens,
+  estimateProviderPromptFloorTokens,
   providerLettaChunk,
   providerLocalMessage,
   providerStreamPart,
@@ -321,31 +324,6 @@ function withOpenAIResponsesReplayIdSanitizer(
   };
 }
 
-function withMidConversationSystemPrompt(
-  existing: SimpleStreamOptions["onPayload"] | undefined,
-  systemPrompt: string | undefined,
-): SimpleStreamOptions["onPayload"] {
-  if (!systemPrompt) return existing;
-  return async (payload, model) => {
-    let next = payload;
-    let upstreamChanged = false;
-    const upstream = await existing?.(payload, model);
-    if (upstream !== undefined) {
-      next = upstream;
-      upstreamChanged = true;
-    }
-    if (model.id !== "claude-opus-4-8" || !isRecord(next)) {
-      return upstreamChanged ? next : undefined;
-    }
-    const messages = Array.isArray(next.messages) ? next.messages : undefined;
-    if (!messages) return upstreamChanged ? next : undefined;
-    return {
-      ...next,
-      messages: [...messages, { role: "system", content: systemPrompt }],
-    };
-  };
-}
-
 function withAnthropicOutputEffort(
   existing: SimpleStreamOptions["onPayload"] | undefined,
   effort: string | undefined,
@@ -369,6 +347,48 @@ function withAnthropicOutputEffort(
       },
     };
   };
+}
+
+/**
+ * Reject a turn whose irreducible prompt cannot fit the serving context window.
+ *
+ * Local engines truncate oversized prompts silently rather than erroring, so
+ * the failure mode is an agent that answers with its memory and persona
+ * quietly missing. Compaction cannot help here — the system prompt and tool
+ * definitions are not history — so surface it as an actionable error instead of
+ * shipping a request we know will be clipped.
+ */
+function assertPromptFloorFitsContextWindow(
+  input: ProviderTurnInput,
+  model: { id: string; provider?: string; contextWindow?: number },
+): void {
+  const contextWindow = model.contextWindow;
+  if (
+    typeof contextWindow !== "number" ||
+    !Number.isFinite(contextWindow) ||
+    contextWindow <= 0
+  ) {
+    return;
+  }
+  const floorTokens = estimateProviderPromptFloorTokens(input);
+  if (floorTokens <= contextWindow) return;
+
+  const remedy =
+    model.provider === "ollama"
+      ? `Raise the served window (for example OLLAMA_CONTEXT_LENGTH=${nextPowerOfTwoAtLeast(floorTokens)} ollama serve)`
+      : "Raise the engine's context window";
+  throw new Error(
+    `The system prompt and tool definitions need about ${floorTokens.toLocaleString()} tokens, ` +
+      `but "${model.id}" is served with a ${contextWindow.toLocaleString()}-token context window. ` +
+      `The engine would silently truncate the prompt, dropping memory and persona before the model sees them. ` +
+      `${remedy}, or reduce what the prompt carries (fewer installed skills, a smaller toolset).`,
+  );
+}
+
+function nextPowerOfTwoAtLeast(value: number): number {
+  let size = 8192;
+  while (size < value && size < 1_048_576) size *= 2;
+  return size;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -438,19 +458,6 @@ function toLocalAssistantMessage(
       },
     },
   };
-}
-
-function isModelOutputEvent(event: ProviderStreamEvent): boolean {
-  if (event.type === "local-message") return true;
-  if (event.type !== "provider-part") return false;
-  switch (event.part.type) {
-    case "text_delta":
-    case "thinking_delta":
-    case "toolcall_end":
-      return true;
-    default:
-      return false;
-  }
 }
 
 function llmEndErrorFromError(error: unknown): {
@@ -548,6 +555,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
     const contextWindow = resolved.model.contextWindow;
@@ -579,25 +587,46 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       {
         localProviderAuthStorageDir: this.localProviderAuthStorageDir,
         modelsRuntime: this.modelsRuntime,
+        ...(this.abortSignal ? { abortSignal: this.abortSignal } : {}),
       },
     );
+    assertPromptFloorFitsContextWindow(input, resolved.model);
+    const messages = toPiMessages(input.uiMessages);
+    if (input.midConversationSystemPrompt) {
+      messages.push({
+        role: "system",
+        content: input.midConversationSystemPrompt,
+        timestamp: Date.now(),
+      });
+    }
     const context: Context = {
       systemPrompt: input.systemPrompt ?? input.agent.system,
-      messages: toPiMessages(input.uiMessages),
+      messages,
       ...(tools ? { tools } : {}),
     };
     const reasoning = reasoningForSettings(
       input.agent.model_settings,
       input.agent.model,
+      resolved.model,
     );
+    const headers = resolvePiRequestHeaders({
+      provider: resolved.model.provider,
+      configuredHeaders: resolved.headers,
+      conversationId: input.conversationId,
+    });
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(resolved.headers ? { headers: resolved.headers } : {}),
+      ...(headers ? { headers } : {}),
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
+      // streamSimple drops provider-specific named options; samplingParams is
+      // pi-ai's supported pass-through for explicit provider request overrides.
+      ...(isRecord(input.agent.model_settings.sampling_params)
+        ? { samplingParams: input.agent.model_settings.sampling_params }
+        : {}),
       ...(reasoning ? { reasoning } : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
@@ -628,10 +657,6 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       );
     }
     if (resolved.model.api === "anthropic-messages") {
-      options.onPayload = withMidConversationSystemPrompt(
-        options.onPayload,
-        input.midConversationSystemPrompt,
-      );
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
@@ -686,6 +711,11 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           ) {
             streamError = error;
             break;
+          }
+          if (part.error.content.length > 0) {
+            yield providerLocalMessage(
+              toLocalAssistantMessage(part.error, input),
+            );
           }
         }
         if (part.type === "done") {
@@ -784,9 +814,11 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       }
 
       let emittedModelOutput = false;
+      let emittedLocalMessage = false;
       try {
         for await (const event of this.streamOnce(activeInput)) {
-          if (isModelOutputEvent(event)) emittedModelOutput = true;
+          if (isPiModelOutputEvent(event)) emittedModelOutput = true;
+          if (event.type === "local-message") emittedLocalMessage = true;
           yield event;
         }
         return;
@@ -900,6 +932,16 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           transientRetries >= LOCAL_PROVIDER_MAX_RETRIES ||
           !retryableTransportError
         ) {
+          if (
+            emittedModelOutput &&
+            !emittedLocalMessage &&
+            error instanceof PiProviderError &&
+            error.assistant.content.length > 0
+          ) {
+            yield providerLocalMessage(
+              toLocalAssistantMessage(error.assistant, activeInput),
+            );
+          }
           throw error;
         }
 

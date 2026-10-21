@@ -61,13 +61,13 @@ describe("completePairing", () => {
   test("successful pairing creates route", () => {
     new ChannelRegistry();
 
-    const code = createPairingCode("telegram", "user-1", "chat-1", "john");
+    const code = createPairingCode("telegram", "user-1", "1", "john");
     const result = completePairing("telegram", code, "agent-a", "conv-1");
 
     expect(result.success).toBe(true);
-    expect(result.chatId).toBe("chat-1");
+    expect(result.chatId).toBe("1");
 
-    const route = getRoute("telegram", "chat-1");
+    const route = getRoute("telegram", "1");
     expect(route).not.toBeNull();
     expect(route?.agentId).toBe("agent-a");
     expect(route?.conversationId).toBe("conv-1");
@@ -84,7 +84,7 @@ describe("completePairing", () => {
   test("rolls back both in-memory route and pairing when disk write fails", () => {
     new ChannelRegistry();
 
-    const code = createPairingCode("telegram", "user-1", "chat-99", "john");
+    const code = createPairingCode("telegram", "user-1", "99", "john");
 
     // Make saveRoutes throw to simulate disk write failure.
     // addRoute() calls routesByKey.set() (succeeds) then saveRoutes() (throws).
@@ -103,7 +103,7 @@ describe("completePairing", () => {
     expect(result.error).toContain("EACCES");
 
     // In-memory route must NOT exist
-    expect(getRoute("telegram", "chat-99")).toBeNull();
+    expect(getRoute("telegram", "99")).toBeNull();
 
     // Pairing must be rolled back: user not approved, pending code restored
     expect(isUserApproved("telegram", "user-1")).toBe(false);
@@ -114,9 +114,9 @@ describe("completePairing", () => {
   test("restores pre-existing route when rebind fails", () => {
     new ChannelRegistry();
 
-    // Set up an existing route for chat-50
+    // Set up an existing route for 50
     addRoute("telegram", {
-      chatId: "chat-50",
+      chatId: "50",
       agentId: "agent-old",
       conversationId: "conv-old",
       enabled: true,
@@ -124,12 +124,12 @@ describe("completePairing", () => {
     });
 
     // Verify it exists
-    const before = getRoute("telegram", "chat-50");
+    const before = getRoute("telegram", "50");
     expect(before).not.toBeNull();
     expect(before?.agentId).toBe("agent-old");
 
     // Create a pairing for the same chat
-    const code = createPairingCode("telegram", "user-2", "chat-50", "jane");
+    const code = createPairingCode("telegram", "user-2", "50", "jane");
 
     // Make saveRoutes throw on the rebind attempt
     __testOverrideSaveRoutes(() => {
@@ -140,7 +140,7 @@ describe("completePairing", () => {
     expect(result.success).toBe(false);
 
     // The OLD route must still be in memory (restored from snapshot)
-    const after = getRoute("telegram", "chat-50");
+    const after = getRoute("telegram", "50");
     expect(after).not.toBeNull();
     expect(after?.agentId).toBe("agent-old");
     expect(after?.conversationId).toBe("conv-old");

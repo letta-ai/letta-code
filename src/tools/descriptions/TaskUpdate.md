@@ -1,51 +1,74 @@
-# TaskUpdate
+Use this tool to update a task in the task list.
 
-Partially update a single task. Only the fields you pass will change; everything else stays intact.
+## When to Use This Tool
 
-## Status transitions
+**Mark tasks as resolved:**
+- When you have completed the work described in a task
+- When a task is no longer needed or has been superseded
+- IMPORTANT: Always mark your assigned tasks as resolved when you finish them
+- After resolving, call TaskList to find your next task
 
-Use the `status` field to move a task through its lifecycle:
+- ONLY mark a task as completed when you have FULLY accomplished it
+- If you encounter errors, blockers, or cannot finish, keep the task as in_progress
+- When blocked, create a new task describing what needs to be resolved
+- Never mark a task as completed if:
+  - Tests are failing
+  - Implementation is partial
+  - You encountered unresolved errors
+  - You couldn't find necessary files or dependencies
 
-- `pending` — not started
-- `in_progress` — actively being worked on (keep only ONE task in this state at a time)
-- `completed` — finished
-- `deleted` — soft-delete; excluded from `TaskList` but still fetchable via `TaskGet`
+**Delete tasks:**
+- When a task is no longer relevant or was created in error
+- Setting status to `deleted` permanently removes the task
 
-Mark a task `completed` **only** when it's fully done — tests pass, implementation is complete, no unresolved errors. If blocked, leave it `in_progress` and create a new task for the blocker (then wire it up via `addBlockedBy`).
+**Update task details:**
+- When requirements change or become clearer
+- When establishing dependencies between tasks
 
-## Editable fields
+## Fields You Can Update
 
-- `subject`, `description`, `activeForm` — full replacements
-- `owner` — assign a string owner (free-form)
-- `addBlocks` — append task IDs that **this task blocks** (they can't start until this one finishes)
-- `addBlockedBy` — append task IDs that **block this task** (they must finish first)
-- `metadata` — merged into existing metadata (existing keys preserved; matching keys overwritten)
+- **status**: The task status (see Status Workflow below)
+- **subject**: Change the task title (imperative form, e.g., "Run tests")
+- **description**: Change the task description
+- **activeForm**: Present continuous form shown in spinner when in_progress (e.g., "Running tests")
+- **owner**: Change the task owner (agent name)
+- **metadata**: Merge metadata keys into the task (set a key to null to delete it)
+- **addBlocks**: Mark tasks that cannot start until this one completes
+- **addBlockedBy**: Mark tasks that must complete before this one can start
 
-## Best practices
+## Status Workflow
 
-- Update status in real-time as you work — don't batch status changes at the end
-- Exactly ONE task should be `in_progress` at any given time
-- Only use `status: "deleted"` when a task is no longer relevant; prefer completion when possible
-- When adding dependencies, call `TaskList` first to verify the referenced IDs exist
+Status progresses: `pending` → `in_progress` → `completed`
 
-## Example
+Use `deleted` to permanently remove a task.
 
+## Staleness
+
+Make sure to read a task's latest state using `TaskGet` before updating it.
+
+## Examples
+
+Mark task as in progress when starting work:
+```json
+{"taskId": "1", "status": "in_progress"}
 ```
-TaskUpdate({
-  taskId: "task_3",
-  status: "in_progress",
-  owner: "agent-abc123"
-})
 
-TaskUpdate({
-  taskId: "task_3",
-  addBlockedBy: ["task_1", "task_2"]
-})
-
-TaskUpdate({
-  taskId: "task_3",
-  status: "completed"
-})
+Mark task as completed after finishing work:
+```json
+{"taskId": "1", "status": "completed"}
 ```
 
-Returns the updated task record.
+Delete a task:
+```json
+{"taskId": "1", "status": "deleted"}
+```
+
+Claim a task by setting owner:
+```json
+{"taskId": "1", "owner": "my-name"}
+```
+
+Set up task dependencies:
+```json
+{"taskId": "2", "addBlockedBy": ["1"]}
+```

@@ -3,15 +3,14 @@
  * Centralizes tool name remapping logic used across the UI.
  */
 
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
-import { MEMORY_TOOL_NAMES } from "@/tools/toolset";
+// Retired memory tools; kept so saved transcripts still render them.
+const MEMORY_TOOL_NAMES = new Set(["memory", "memory_apply_patch"]);
 
 /**
  * Maps internal tool names to user-friendly display names.
  * Handles multiple tool naming conventions:
  * - Anthropic toolset (snake_case and camelCase)
  * - Codex toolset (snake_case and PascalCase)
- * - Gemini toolset (snake_case and PascalCase)
  */
 export function getDisplayToolName(rawName: string): string {
   if (MEMORY_TOOL_NAMES.has(rawName)) return "Memory";
@@ -20,7 +19,7 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "write") return "Write";
   if (rawName === "edit" || rawName === "multi_edit") return "Update";
   if (rawName === "read") return "Read";
-  if (rawName === "view_image" || rawName === "ViewImage") return "View Image";
+  if (rawName === "ViewImage") return "View Image";
   if (rawName === "bash") return "Bash";
   if (rawName === "grep" || rawName === "Grep") return "Search";
   if (rawName === "glob" || rawName === "Glob") return "Glob";
@@ -32,18 +31,16 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "TaskUpdate") return "Task Update";
   if (rawName === "AskUserQuestion") return "Question";
 
-  // Codex toolset (snake_case)
-  if (rawName === "update_plan") return "Planning";
+  // Codex tools
   if (rawName === "exec_command" || rawName === "write_stdin") return "Bash";
   if (rawName === "shell_command" || rawName === "shell") return "Bash";
   if (rawName === "read_file") return "Read";
   if (rawName === "list_dir") return "LS";
   if (rawName === "grep_files") return "Search";
-  if (rawName === "apply_patch") return "Patch";
   if (rawName === "web_search") return "Web Search";
   if (rawName === "fetch_webpage") return "Fetch Webpage";
 
-  // Codex toolset (PascalCase)
+  // Additional Codex tools
   if (rawName === "UpdatePlan") return "Planning";
   if (rawName === "ShellCommand" || rawName === "Shell") return "Bash";
   if (rawName === "ReadFile") return "Read";
@@ -53,30 +50,9 @@ export function getDisplayToolName(rawName: string): string {
   if (rawName === "WebSearch") return "Web Search";
   if (rawName === "FetchWebpage") return "Fetch Webpage";
 
-  // Gemini toolset (snake_case)
-  if (rawName === "run_shell_command") return "Bash";
-  if (rawName === "read_file_gemini") return "Read";
-  if (rawName === "list_directory") return "LS";
-  if (rawName === "glob_gemini") return "Glob";
-  if (rawName === "search_file_content") return "Search";
-  if (rawName === "write_file_gemini") return "Write";
-  if (rawName === "write_todos") return "TODO";
-  if (rawName === "read_many_files") return "Read Multiple";
-
-  // Gemini toolset (PascalCase)
-  if (rawName === "RunShellCommand") return "Bash";
-  if (rawName === "ReadFileGemini") return "Read";
-  if (rawName === "ListDirectory") return "LS";
-  if (rawName === "GlobGemini") return "Glob";
-  if (rawName === "SearchFileContent") return "Search";
-  if (rawName === "WriteFileGemini") return "Write";
-  if (rawName === "WriteTodos") return "TODO";
-  if (rawName === "ReadManyFiles") return "Read Multiple";
-
   // Additional tools
-  if (rawName === "Replace" || rawName === "replace") return "Update";
-  if (rawName === "WriteFile" || rawName === "write_file") return "Write";
   if (rawName === "KillBash") return "Kill Bash";
+  // Retired output pollers; kept so saved transcripts still render them.
   if (rawName === "BashOutput") return "Shell Output";
   if (rawName === "TaskOutput") return "Task Output";
   if (rawName === "MultiEdit") return "Update";
@@ -95,14 +71,19 @@ export function isTaskTool(name: string): boolean {
 }
 
 /**
+ * Checks if a tool name represents the background Workflow orchestration tool
+ */
+export function isWorkflowTool(name: string): boolean {
+  return name === "Workflow" || name === "workflow";
+}
+
+/**
  * Checks if a tool name represents a TODO/planning tool
  */
 export function isTodoTool(rawName: string, displayName?: string): boolean {
   return (
     rawName === "todo_write" ||
     rawName === "TodoWrite" ||
-    rawName === "write_todos" ||
-    rawName === "WriteTodos" ||
     displayName === "TODO"
   );
 }
@@ -124,11 +105,7 @@ export function isTaskCrudTool(rawName: string): boolean {
  * Checks if a tool name represents a plan update tool
  */
 export function isPlanTool(rawName: string, displayName?: string): boolean {
-  return (
-    rawName === "update_plan" ||
-    rawName === "UpdatePlan" ||
-    displayName === "Planning"
-  );
+  return rawName === "UpdatePlan" || displayName === "Planning";
 }
 
 /**
@@ -148,18 +125,7 @@ export function isFancyUITool(name: string): boolean {
 }
 
 /**
- * Checks if a tool always requires user interaction, even in unrestricted mode.
- * These are tools that fundamentally need user input to proceed:
- * - AskUserQuestion: needs user to answer questions
- *
- * Other tools (bash, file edits) should respect unrestricted mode and auto-approve.
- */
-export function alwaysRequiresUserInput(name: string): boolean {
-  return isInteractiveApprovalTool(name);
-}
-
-/**
- * Checks if a tool is a memory tool (server-side memory management)
+ * Checks if a tool is a memory tool (client-side MemFS memory editing)
  */
 export function isMemoryTool(name: string): boolean {
   return MEMORY_TOOL_NAMES.has(name);
@@ -173,9 +139,7 @@ export function isFileEditTool(name: string): boolean {
     name === "edit" ||
     name === "Edit" ||
     name === "multi_edit" ||
-    name === "MultiEdit" ||
-    name === "Replace" ||
-    name === "replace"
+    name === "MultiEdit"
   );
 }
 
@@ -183,14 +147,7 @@ export function isFileEditTool(name: string): boolean {
  * Checks if a tool is a file write tool (has file_path/content args)
  */
 export function isFileWriteTool(name: string): boolean {
-  return (
-    name === "write" ||
-    name === "Write" ||
-    name === "WriteFile" ||
-    name === "write_file" ||
-    name === "write_file_gemini" ||
-    name === "WriteFileGemini"
-  );
+  return name === "write" || name === "Write";
 }
 
 /**
@@ -200,14 +157,9 @@ export function isFileReadTool(name: string): boolean {
   return (
     name === "read" ||
     name === "Read" ||
-    name === "view_image" ||
     name === "ViewImage" ||
     name === "ReadFile" ||
-    name === "read_file" ||
-    name === "read_file_gemini" ||
-    name === "ReadFileGemini" ||
-    name === "read_many_files" ||
-    name === "ReadManyFiles"
+    name === "read_file"
   );
 }
 
@@ -215,7 +167,7 @@ export function isFileReadTool(name: string): boolean {
  * Checks if a tool is a patch tool (applies unified diffs)
  */
 export function isPatchTool(name: string): boolean {
-  return name === "apply_patch" || name === "ApplyPatch";
+  return name === "ApplyPatch";
 }
 
 /**
@@ -229,15 +181,14 @@ export function isShellTool(name: string): boolean {
     n === "shell_command" ||
     n === "shellcommand" ||
     n === "exec_command" ||
-    n === "write_stdin" ||
-    n === "run_shell_command" ||
-    n === "runshellcommand"
+    n === "write_stdin"
   );
 }
 
 /**
  * Checks if a tool should use shell-style streaming output rendering.
- * Includes shell command tools plus TaskOutput/BashOutput pollers.
+ * Includes shell command tools plus the retired TaskOutput/BashOutput pollers,
+ * which saved transcripts still contain.
  */
 export function isShellOutputTool(name: string): boolean {
   const n = name.toLowerCase();
@@ -252,9 +203,7 @@ export function isSearchTool(name: string): boolean {
     name === "grep" ||
     name === "Grep" ||
     name === "grep_files" ||
-    name === "GrepFiles" ||
-    name === "search_file_content" ||
-    name === "SearchFileContent"
+    name === "GrepFiles"
   );
 }
 
@@ -269,10 +218,5 @@ export function isWebSearchTool(name: string | undefined): boolean {
  * Checks if a tool is a glob tool
  */
 export function isGlobTool(name: string): boolean {
-  return (
-    name === "glob" ||
-    name === "Glob" ||
-    name === "glob_gemini" ||
-    name === "GlobGemini"
-  );
+  return name === "glob" || name === "Glob";
 }

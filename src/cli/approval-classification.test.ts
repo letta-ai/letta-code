@@ -82,6 +82,38 @@ describe("classifyApprovals", () => {
     }
   });
 
+  test.each([false, true])(
+    "auto-allows doctor evidence with treatAskAsDeny=%s",
+    async (treatAskAsDeny) => {
+      await loadTools();
+      permissionMode.setMode("standard");
+      const projectDir = await mkdtemp(
+        join(tmpdir(), "letta-doctor-approval-"),
+      );
+      tempDirs.push(projectDir);
+      const approvals = ["local", "api", "cloud"].map((backend) => ({
+        toolCallId: `call_evidence_${backend}`,
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: `letta --backend ${backend} messages list --agent agent-target --conversation conv-target --limit 30 --include-errors`,
+          description: "Retrieve conversation evidence",
+        }),
+      }));
+
+      const result = await classifyApprovals(approvals, {
+        requireArgsForAutoApprove: true,
+        treatAskAsDeny,
+        workingDirectory: projectDir,
+      });
+
+      expect(result.autoAllowed.map((entry) => entry.approval)).toEqual(
+        approvals,
+      );
+      expect(result.needsUserInput).toEqual([]);
+      expect(result.autoDenied).toEqual([]);
+    },
+  );
+
   test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
     permissionMode.setMode("unrestricted");
@@ -113,6 +145,88 @@ describe("classifyApprovals", () => {
       "Bash tool missing required parameter: command. Received parameters: description",
     );
     expect(denied?.permission.reason).toBe(denied?.denyReason);
+  });
+
+  test("lets Agent resume an existing conversation without subagent_type", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_agent_resume",
+          toolName: "Agent",
+          toolArgs: JSON.stringify({
+            agent_id: "agent-abc123",
+            conversation_id: "conv-xyz789",
+            description: "Continue implementation",
+            prompt: "Now implement the fix we discussed",
+          }),
+        },
+      ],
+      { requireArgsForAutoApprove: true },
+    );
+
+    expect(result.autoDenied).toHaveLength(0);
+    const [classified] = [...result.autoAllowed, ...result.needsUserInput];
+    expect(classified?.missingRequiredArgs ?? []).toEqual([]);
+  });
+
+  test("flags empty arguments as dropped in transit, not omitted by the model", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_empty_args",
+          toolName: "Bash",
+          toolArgs: "{}",
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.missingRequiredArgs).toEqual(["command", "description"]);
+    expect(denied?.denyReason).toContain("arrived with empty arguments");
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
+  });
+
+  test("flags unparseable arguments as truncated in transit", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+    process.env.MEMORY_DIR = "/Users/test/.letta/agents/agent-1/memory";
+
+    // Shape of a payload truncated mid-string on the way to the client.
+    const truncated = '{"command":"echo hello';
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_truncated_args",
+          toolName: "Bash",
+          toolArgs: truncated,
+        },
+      ],
+      {
+        requireArgsForAutoApprove: true,
+        workingDirectory: "/Users/test/.letta/agents/agent-1/memory",
+      },
+    );
+
+    expect(result.autoDenied).toHaveLength(1);
+    const [denied] = result.autoDenied;
+    expect(denied?.parsedArgs).toEqual({});
+    expect(denied?.denyReason).toContain(
+      `The raw arguments (${truncated.length} chars) were not valid JSON`,
+    );
+    expect(denied?.denyReason).toContain("Do not resend an identical call");
   });
 
   test("reports missing exec_command cmd as validation error before auto-allow", async () => {

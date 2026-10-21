@@ -1,580 +1,422 @@
-import { existsSync } from "node:fs";
+/**
+ * Memory() tool: progressive discovery of deferred MemFS v2 memory.
+ *
+ * Root memory files are already in the system prompt; everything beneath the
+ * root is deferred. Reading a directory returns its MEMORY.md plus the files
+ * and subdirectories directly beneath it; reading a file returns the file.
+ * Output limits mirror Read.
+ */
+import { execFileSync } from "node:child_process";
 import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  stat,
-  unlink,
-  writeFile,
-} from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+  closeSync,
+  existsSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import { extname, join, sep } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
-import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
-import {
-  assertMemoryRepoCleanForWrite,
-  commitMemoryWrite,
-  type MemoryWriteSyncMode,
-} from "@/agent/memory-git";
-import { validateRequiredParams } from "./validation";
+import { detectMemoryFormat } from "@/agent/memory-format";
+import { getActiveMemoryDirectory } from "@/agent/memory-runtime";
+import { parseFrontmatter } from "@/utils/frontmatter";
+import { LIMITS, truncateByChars } from "./truncation.js";
+import { validateRequiredParams } from "./validation.js";
 
-type MemoryCommand =
-  | "str_replace"
-  | "insert"
-  | "delete"
-  | "rename"
-  | "update_description"
-  | "create";
+const INDEX = "MEMORY.md";
 
 interface MemoryArgs {
-  command: MemoryCommand;
-  reason: string;
-  file_path?: string;
-  old_path?: string;
-  new_path?: string;
-  old_string?: string;
-  new_string?: string;
-  insert_line?: number;
-  insert_text?: string;
-  description?: string;
-  file_text?: string;
-}
-
-async function getMemoryWriteSyncMode(): Promise<MemoryWriteSyncMode> {
-  const { getBackend } = await import("@/backend");
-  return getBackend().capabilities.localMemfs ? "local" : "remote";
-}
-
-async function getAgentIdentity(): Promise<{
-  agentId: string;
-  agentName: string;
-}> {
-  const envAgentId = (
-    process.env.AGENT_ID ||
-    process.env.LETTA_AGENT_ID ||
-    ""
-  ).trim();
-  const contextAgentId = (() => {
-    try {
-      return getCurrentAgentId().trim();
-    } catch {
-      return "";
-    }
-  })();
-  const agentId = contextAgentId || envAgentId;
-
-  if (!agentId) {
-    throw new Error("memory: unable to resolve agent id for git author email");
-  }
-
-  let agentName = "";
-  try {
-    const { getBackend } = await import("@/backend");
-    const agent = await getBackend().retrieveAgent(agentId);
-    agentName = (agent.name || "").trim();
-  } catch {
-    // Keep best-effort fallback below
-  }
-
-  if (!agentName) {
-    agentName = (process.env.AGENT_NAME || "").trim() || agentId;
-  }
-
-  return { agentId, agentName };
-}
-
-interface MemoryResult {
-  message: string;
-}
-
-interface ParsedMemoryFile {
-  frontmatter: {
-    description: string;
-    read_only?: string;
-  };
-  body: string;
-}
-
-export async function memory(args: MemoryArgs): Promise<MemoryResult> {
-  validateRequiredParams(args, ["command", "reason"], "memory");
-
-  const reason = args.reason.trim();
-  if (!reason) {
-    throw new Error("memory: 'reason' must be a non-empty string");
-  }
-
-  const memoryDir = resolveMemoryDir();
-  ensureMemoryRepo(memoryDir);
-
-  const { agentId, agentName } = await getAgentIdentity();
-  const syncMode = await getMemoryWriteSyncMode();
-  await assertMemoryRepoCleanForWrite(memoryDir);
-
-  const affectedPaths = await applyMemoryCommand(memoryDir, args);
-  if (affectedPaths.length === 0) {
-    throw new Error(
-      `Memory ${args.command} made no changes: it produced no changed paths. ` +
-        "Verify the command targets the intended file(s) and actually modifies content.",
-    );
-  }
-
-  const commitResult = await commitMemoryWrite({
-    memoryDir,
-    pathspecs: affectedPaths,
-    reason,
-    author: {
-      agentId,
-      authorName: agentName.trim() || agentId,
-      authorEmail: `${agentId}@letta.com`,
-    },
-    syncMode,
-  });
-  if (!commitResult.committed) {
-    throw new Error(
-      syncMode === "local"
-        ? `Memory ${args.command} made no effective changes; nothing was committed. ` +
-            "The resulting content matched what was already on disk."
-        : `Memory ${args.command} made no effective changes; nothing was committed. ` +
-            "The resulting content matched what was already on disk.",
-    );
-  }
-
-  // Emit memory_updated push event so web UI auto-refreshes
-  emitMemoryUpdated(affectedPaths);
-
-  return {
-    message:
-      syncMode === "local"
-        ? `Memory ${args.command} committed locally (${commitResult.sha?.slice(0, 7) ?? "unknown"}).`
-        : `Memory ${args.command} committed (${commitResult.sha?.slice(0, 7) ?? "unknown"}); harness will sync after the turn.`,
-  };
-}
-
-async function applyMemoryCommand(
-  memoryDir: string,
-  args: MemoryArgs,
-): Promise<string[]> {
-  const command = args.command;
-
-  if (command === "create") {
-    const pathArg = requireString(args.file_path, "file_path", "create");
-    const description = requireString(
-      args.description,
-      "description",
-      "create",
-    );
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
-    const body = args.file_text ?? "";
-    const rendered = renderMemoryFile(
-      {
-        description,
-      },
-      body,
-    );
-
-    if (existsSync(filePath)) {
-      throw new Error(`memory create: block already exists at ${pathArg}`);
-    }
-
-    await mkdir(dirname(filePath), { recursive: true });
-    await writeFile(filePath, rendered, "utf8");
-    return [relPath];
-  }
-
-  if (command === "str_replace") {
-    const pathArg = requireString(args.file_path, "file_path", "str_replace");
-    const oldString = requireString(
-      args.old_string,
-      "old_string",
-      "str_replace",
-    );
-    const newString = requireString(
-      args.new_string,
-      "new_string",
-      "str_replace",
-    );
-
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
-
-    const idx = file.body.indexOf(oldString);
-    if (idx === -1) {
-      throw new Error(
-        "memory str_replace: old_string was not found in the target memory block",
-      );
-    }
-
-    const nextBody = `${file.body.slice(0, idx)}${newString}${file.body.slice(idx + oldString.length)}`;
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
-    await writeFile(filePath, rendered, "utf8");
-    return [relPath];
-  }
-
-  if (command === "insert") {
-    const pathArg = requireString(args.file_path, "file_path", "insert");
-    const insertText = requireString(args.insert_text, "insert_text", "insert");
-
-    if (
-      typeof args.insert_line !== "number" ||
-      Number.isNaN(args.insert_line)
-    ) {
-      throw new Error("memory insert: 'insert_line' must be a number");
-    }
-
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
-
-    const lineNumber = Math.max(1, Math.floor(args.insert_line));
-    const existingLines = file.body.length > 0 ? file.body.split("\n") : [];
-    const insertion = insertText.split("\n");
-    const insertionIndex = Math.min(
-      Math.max(lineNumber - 1, 0),
-      existingLines.length,
-    );
-
-    existingLines.splice(insertionIndex, 0, ...insertion);
-    const nextBody = existingLines.join("\n");
-
-    const rendered = renderMemoryFile(file.frontmatter, nextBody);
-    await writeFile(filePath, rendered, "utf8");
-    return [relPath];
-  }
-
-  if (command === "delete") {
-    const pathArg = requireString(args.file_path, "file_path", "delete");
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
-    const targetPath = resolveMemoryPath(memoryDir, label);
-
-    if (existsSync(targetPath) && (await stat(targetPath)).isDirectory()) {
-      const relPath = toRepoRelative(memoryDir, targetPath);
-      await rm(targetPath, { recursive: true, force: false });
-      return [relPath];
-    }
-
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
-
-    await loadEditableMemoryFile(filePath, pathArg);
-    await unlink(filePath);
-    return [relPath];
-  }
-
-  if (command === "rename") {
-    const oldPathArg = requireString(args.old_path, "old_path", "rename");
-    const newPathArg = requireString(args.new_path, "new_path", "rename");
-
-    const oldLabel = normalizeMemoryLabel(memoryDir, oldPathArg, "old_path");
-    const newLabel = normalizeMemoryLabel(memoryDir, newPathArg, "new_path");
-
-    const oldFilePath = resolveMemoryFilePath(memoryDir, oldLabel);
-    const newFilePath = resolveMemoryFilePath(memoryDir, newLabel);
-
-    const oldRelPath = toRepoRelative(memoryDir, oldFilePath);
-    const newRelPath = toRepoRelative(memoryDir, newFilePath);
-
-    if (existsSync(newFilePath)) {
-      throw new Error(
-        `memory rename: destination already exists at ${newPathArg}`,
-      );
-    }
-
-    await loadEditableMemoryFile(oldFilePath, oldPathArg);
-    await mkdir(dirname(newFilePath), { recursive: true });
-    await rename(oldFilePath, newFilePath);
-    return [oldRelPath, newRelPath];
-  }
-
-  if (command === "update_description") {
-    const pathArg = requireString(
-      args.file_path,
-      "file_path",
-      "update_description",
-    );
-    const newDescription = requireString(
-      args.description,
-      "description",
-      "update_description",
-    );
-
-    const label = normalizeMemoryLabel(memoryDir, pathArg, "file_path");
-    const filePath = resolveMemoryFilePath(memoryDir, label);
-    const relPath = toRepoRelative(memoryDir, filePath);
-    const file = await loadEditableMemoryFile(filePath, pathArg);
-
-    const rendered = renderMemoryFile(
-      {
-        ...file.frontmatter,
-        description: newDescription,
-      },
-      file.body,
-    );
-    await writeFile(filePath, rendered, "utf8");
-    return [relPath];
-  }
-
-  throw new Error(`Unsupported memory command: ${command}`);
-}
-
-function resolveMemoryDir(): string {
-  const scopedMemoryDir = resolveScopedMemoryDir();
-  if (scopedMemoryDir) {
-    return scopedMemoryDir;
-  }
-
-  throw new Error(
-    "memory: unable to resolve memory directory. Ensure MEMORY_DIR (or AGENT_ID) is available.",
-  );
-}
-
-function ensureMemoryRepo(memoryDir: string): void {
-  if (!existsSync(memoryDir)) {
-    throw new Error(`memory: memory directory does not exist: ${memoryDir}`);
-  }
-  if (!existsSync(resolve(memoryDir, ".git"))) {
-    throw new Error(
-      `memory: ${memoryDir} is not a git repository. This tool requires a git-backed memory filesystem.`,
-    );
-  }
-}
-
-function normalizeMemoryLabel(
-  memoryDir: string,
-  inputPath: string,
-  fieldName: string,
-): string {
-  const raw = inputPath.trim();
-  if (!raw) {
-    throw new Error(`memory: '${fieldName}' must be a non-empty string`);
-  }
-
-  if (raw.startsWith("~/") || raw.startsWith("$HOME/")) {
-    throw new Error(
-      `memory: '${fieldName}' must be a memory-relative file path, not a home-relative filesystem path`,
-    );
-  }
-
-  const isWindowsAbsolute = /^[a-zA-Z]:[\\/]/.test(raw);
-  if (isAbsolute(raw) || isWindowsAbsolute) {
-    const absolutePath = resolve(raw);
-    const relToMemory = relative(memoryDir, absolutePath);
-
-    if (
-      relToMemory &&
-      !relToMemory.startsWith("..") &&
-      !isAbsolute(relToMemory)
-    ) {
-      return normalizeRelativeMemoryLabel(relToMemory, fieldName);
-    }
-
-    throw new Error(memoryPrefixError(memoryDir));
-  }
-
-  return normalizeRelativeMemoryLabel(raw, fieldName);
-}
-
-function normalizeRelativeMemoryLabel(
-  inputPath: string,
-  fieldName: string,
-): string {
-  const raw = inputPath.trim();
-  if (!raw) {
-    throw new Error(`memory: '${fieldName}' must be a non-empty string`);
-  }
-
-  const normalized = raw.replace(/\\/g, "/");
-
-  if (normalized.startsWith("/")) {
-    throw new Error(
-      `memory: '${fieldName}' must be a relative path like system/contacts.md`,
-    );
-  }
-
-  let label = normalized;
-  // Accept optional leading `memory/` directory segment.
-  label = label.replace(/^memory\//, "");
-
-  // Normalize away a trailing .md extension for all input styles.
-  label = label.replace(/\.md$/, "");
-
-  if (!label) {
-    throw new Error(`memory: '${fieldName}' resolves to an empty memory label`);
-  }
-
-  const segments = label.split("/").filter(Boolean);
-  if (segments.length === 0) {
-    throw new Error(`memory: '${fieldName}' resolves to an empty memory label`);
-  }
-
-  for (const segment of segments) {
-    if (segment === "." || segment === "..") {
-      throw new Error(
-        `memory: '${fieldName}' contains invalid path traversal segment`,
-      );
-    }
-    if (segment.includes("\0")) {
-      throw new Error(`memory: '${fieldName}' contains invalid null bytes`);
-    }
-  }
-
-  return segments.join("/");
-}
-
-function memoryPrefixError(memoryDir: string): string {
-  return `The memory tool can only be used to modify files in {${memoryDir}} or provided as a relative path`;
-}
-
-function resolveMemoryFilePath(memoryDir: string, label: string): string {
-  const absolute = resolveMemoryPath(memoryDir, `${label}.md`);
-  return absolute;
-}
-
-function resolveMemoryPath(memoryDir: string, path: string): string {
-  const absolute = resolve(memoryDir, path);
-  const rel = relative(memoryDir, absolute);
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error("memory: resolved path escapes memory directory");
-  }
-  return absolute;
-}
-
-function toRepoRelative(memoryDir: string, absolutePath: string): string {
-  const rel = relative(memoryDir, absolutePath);
-  if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
-    throw new Error("memory: path is outside memory repository");
-  }
-  return rel.replace(/\\/g, "/");
-}
-
-async function loadEditableMemoryFile(
-  filePath: string,
-  sourcePath: string,
-): Promise<ParsedMemoryFile> {
-  const content = await readFile(filePath, "utf8").catch((error) => {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`memory: failed to read ${sourcePath}: ${message}`);
-  });
-
-  const parsed = parseMemoryFile(content);
-  if (parsed.frontmatter.read_only === "true") {
-    throw new Error(
-      `memory: ${sourcePath} is read_only and cannot be modified`,
-    );
-  }
-  return parsed;
-}
-
-function parseMemoryFile(content: string): ParsedMemoryFile {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
-  if (!match) {
-    throw new Error("memory: target file is missing required frontmatter");
-  }
-
-  const frontmatterText = match[1] ?? "";
-  const body = match[2] ?? "";
-
-  let description: string | undefined;
-  let readOnly: string | undefined;
-
-  for (const line of frontmatterText.split(/\r?\n/)) {
-    const idx = line.indexOf(":");
-    if (idx <= 0) continue;
-    const key = line.slice(0, idx).trim();
-    const value = line.slice(idx + 1).trim();
-
-    if (key === "description") {
-      description = value;
-    } else if (key === "read_only") {
-      readOnly = value;
-    }
-  }
-
-  if (!description || !description.trim()) {
-    throw new Error("memory: target file frontmatter is missing 'description'");
-  }
-  return {
-    frontmatter: {
-      description,
-      ...(readOnly !== undefined ? { read_only: readOnly } : {}),
-    },
-    body,
-  };
-}
-
-function renderMemoryFile(
-  frontmatter: { description: string; read_only?: string },
-  body: string,
-): string {
-  const description = frontmatter.description.trim();
-  if (!description) {
-    throw new Error("memory: 'description' must not be empty");
-  }
-  const lines = [
-    "---",
-    `description: ${sanitizeFrontmatterValue(description)}`,
-  ];
-
-  if (frontmatter.read_only !== undefined) {
-    lines.push(`read_only: ${frontmatter.read_only}`);
-  }
-
-  lines.push("---");
-
-  const header = lines.join("\n");
-  if (!body) {
-    return `${header}\n`;
-  }
-  return `${header}\n${body}`;
-}
-
-function sanitizeFrontmatterValue(value: string): string {
-  return value.replace(/\r?\n/g, " ").trim();
-}
-function requireString(
-  value: string | undefined,
-  field: string,
-  command: string,
-): string {
-  if (typeof value !== "string" || value.trim().length === 0) {
-    throw new Error(`memory ${command}: '${field}' must be a non-empty string`);
-  }
-  return value;
+  path: string;
 }
 
 /**
- * Emit a `memory_updated` push event over the WebSocket so the web UI
- * can auto-refresh its memory index without polling.
+ * The agent's memory directory when it uses the MemFS v2 layout (MemFS active
+ * and a root MEMORY.md), otherwise null. Gates both toolset inclusion and
+ * execution.
  */
-function emitMemoryUpdated(affectedPaths: string[]): void {
+export function resolveMemoryToolDirectory(
+  agentId?: string | null,
+): string | null {
   try {
-    // Lazy-import to avoid circular deps — this file is loaded before WS infra
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getActiveRuntime } =
-      require("../../websocket/listener/runtime") as {
-        getActiveRuntime: () => {
-          socket: { readyState: number; send: (data: string) => void } | null;
-        } | null;
-      };
-
-    const runtime = getActiveRuntime();
-    const socket = runtime?.socket;
-    if (!socket || socket.readyState !== 1 /* WebSocket.OPEN */) {
-      return;
-    }
-
-    socket.send(
-      JSON.stringify({
-        type: "memory_updated",
-        affected_paths: affectedPaths,
-        timestamp: Date.now(),
-      }),
-    );
+    // null means an agentless conversation; only undefined falls back to scope.
+    const id = agentId === undefined ? getCurrentAgentId() : agentId;
+    const memoryDir = id ? getActiveMemoryDirectory(id) : undefined;
+    return memoryDir && detectMemoryFormat(memoryDir, false) === "memfs-v2"
+      ? memoryDir
+      : null;
   } catch {
-    // Best-effort — never break tool execution for a push event
+    return null;
   }
+}
+
+function readDescription(path: string): string | undefined {
+  try {
+    const value = parseFrontmatter(readFileSync(path, "utf8")).frontmatter
+      .description;
+    return typeof value === "string" ? value.trim() || undefined : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Child MEMORY.md indexes are frontmatter-free in MemFS v2, so fall back to the
+ * index's first prose paragraph (after any frontmatter and headings).
+ */
+function readIndexDescription(path: string): string | undefined {
+  const fromFrontmatter = readDescription(path);
+  if (fromFrontmatter) return fromFrontmatter;
+  try {
+    const { body } = parseFrontmatter(readFileSync(path, "utf8"));
+    for (const block of body.split(/\n\s*\n/)) {
+      const text = block.trim();
+      if (!text || /^(#|[-*+] |\d+\. |\||```|<)/.test(text)) continue;
+      const paragraph = text
+        .replace(/\s*\n\s*/g, " ")
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
+      return paragraph.length > 300
+        ? `${paragraph.slice(0, 297)}...`
+        : paragraph;
+    }
+  } catch {
+    // No readable index.
+  }
+  return undefined;
+}
+
+function isHidden(name: string): boolean {
+  return name.startsWith(".");
+}
+
+/** Memory-root-relative paths of non-root files with this basename. */
+function findByBasename(
+  dir: string,
+  name: string,
+  root = dir,
+  found: string[] = [],
+): string[] {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (found.length >= 5) break;
+    if (isHidden(entry.name) || (dir === root && entry.name === "skills")) {
+      continue;
+    }
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) findByBasename(path, name, root, found);
+    else if (entry.isFile() && entry.name === name && dir !== root) {
+      found.push(
+        path
+          .slice(root.length + 1)
+          .split(sep)
+          .join("/"),
+      );
+    }
+  }
+  return found;
+}
+
+function escapeXmlText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function descriptionAttr(description: string | undefined): string {
+  return description
+    ? ` description="${escapeXmlText(description).replace(/"/g, "&quot;")}"`
+    : "";
+}
+
+/** Read's line, per-line, and total-character limits; notices in Read's order. */
+function clampContent(
+  content: string,
+  fullPath: string,
+  maxChars: number,
+): string {
+  const lines = content.split("\n");
+  const shown = lines.slice(0, LIMITS.READ_MAX_LINES);
+  let longLines = false;
+  let result = shown
+    .map((line) => {
+      if (line.length <= LIMITS.READ_MAX_CHARS_PER_LINE) return line;
+      longLines = true;
+      return `${line.slice(0, LIMITS.READ_MAX_CHARS_PER_LINE)}... [line truncated]`;
+    })
+    .join("\n");
+
+  const byTotal = result.length > maxChars;
+  if (byTotal) result = truncateByChars(result, maxChars, "Memory").content;
+
+  const byLines = shown.length < lines.length;
+  const notices: string[] = [];
+  if (byLines) {
+    notices.push(
+      `[File truncated: showing lines 1-${shown.length} of ${lines.length} total lines. Use Read with offset and limit on the full file to read other sections.]`,
+    );
+  }
+  if (longLines) {
+    notices.push(
+      `[Some lines exceeded ${LIMITS.READ_MAX_CHARS_PER_LINE.toLocaleString()} characters and were truncated.]`,
+    );
+  }
+  if (byTotal) {
+    notices.push(
+      "[Use Read with offset and limit on the full file to read it in smaller sections.]",
+    );
+  }
+  if (notices.length) notices.push(`[Full file: ${fullPath}]`);
+  return notices.length ? `${result}\n\n${notices.join("\n\n")}` : result;
+}
+
+/**
+ * Last-edited time (ms) for each direct child of `dir`. A directory's time is
+ * its most recent edit anywhere beneath it. Committed paths use their latest
+ * commit time, because checkouts reset mtimes; uncommitted or untracked paths
+ * (and memory outside git) use filesystem mtime.
+ */
+function lastEditedByChild(dir: string, names: string[]): Map<string, number> {
+  const edited = new Map<string, number>();
+  const bump = (name: string, time: number) => {
+    if (time > (edited.get(name) ?? 0)) edited.set(name, time);
+  };
+  const git = (args: string[]) =>
+    execFileSync("git", ["-C", dir, ...args], {
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  const walkMtime = (path: string, name: string) => {
+    try {
+      const stat = statSync(path);
+      if (stat.isFile()) return bump(name, stat.mtimeMs);
+      if (!stat.isDirectory()) return;
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        if (!isHidden(entry.name)) walkMtime(join(path, entry.name), name);
+      }
+    } catch {
+      // Unreadable entries sort last.
+    }
+  };
+
+  let dirty: string[];
+  try {
+    // Newest commit first; the first time seen per child is its latest commit.
+    let commitTime = 0;
+    for (const line of git([
+      "log",
+      "--format=%x00%ct",
+      "--name-only",
+      "--relative",
+      "--",
+      ".",
+    ]).split("\n")) {
+      const child = line.split("/")[0] ?? line;
+      if (line.startsWith("\0")) commitTime = Number(line.slice(1)) * 1000;
+      else if (line && !edited.has(child)) edited.set(child, commitTime);
+    }
+    const prefix = git(["rev-parse", "--show-prefix"]).trim();
+    dirty = git([
+      "status",
+      "--porcelain=v1",
+      "-z",
+      "--untracked-files=all",
+      "--",
+      ".",
+    ])
+      .split("\0")
+      .filter((record) => record.length > 3)
+      .map((record) => record.slice(3))
+      .filter((path) => path.startsWith(prefix))
+      .map((path) => path.slice(prefix.length));
+  } catch {
+    edited.clear();
+    dirty = names;
+  }
+  for (const path of dirty)
+    walkMtime(join(dir, path), path.split("/")[0] ?? path);
+  return edited;
+}
+
+function renderDirectory(
+  memoryDir: string,
+  relPath: string,
+  fullPath: string,
+): string {
+  const entries = readdirSync(fullPath, { withFileTypes: true }).filter(
+    (entry) =>
+      !isHidden(entry.name) &&
+      (entry.isDirectory() || (entry.isFile() && entry.name !== INDEX)),
+  );
+  const edited = lastEditedByChild(
+    fullPath,
+    entries.map((entry) => entry.name),
+  );
+  // Most recently edited first (files and subdirectories together), then by name.
+  const shown = entries
+    .sort(
+      (a, b) =>
+        (edited.get(b.name) ?? 0) - (edited.get(a.name) ?? 0) ||
+        a.name.localeCompare(b.name),
+    )
+    .slice(0, LIMITS.MEMORY_MAX_ENTRIES);
+
+  const fileLines = shown
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const description =
+        extname(entry.name) === ".md"
+          ? readDescription(join(fullPath, entry.name))
+          : undefined;
+      return `  <file${descriptionAttr(description)}>${escapeXmlText(`${relPath}/${entry.name}`)}</file>`;
+    });
+  const dirLines = shown
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => {
+      const description = readIndexDescription(
+        join(fullPath, entry.name, INDEX),
+      );
+      return `  <directory${descriptionAttr(description)}>${escapeXmlText(`${relPath}/${entry.name}`)}</directory>`;
+    });
+
+  const tail = [
+    `Memory directory: ${memoryDir}`,
+    "Paths in this memory are relative to the memory directory.",
+  ];
+  if (fileLines.length) {
+    tail.push("", "<memory_files>", ...fileLines, "</memory_files>");
+  }
+  if (dirLines.length) {
+    tail.push("", "<deferred-memory>", ...dirLines, "</deferred-memory>");
+  }
+  if (entries.length > LIMITS.MEMORY_MAX_ENTRIES) {
+    tail.push(
+      `[Output truncated: showing ${LIMITS.MEMORY_MAX_ENTRIES.toLocaleString()} of ${entries.length.toLocaleString()} entries.]`,
+      `[Full listing: ${fullPath}]`,
+    );
+  }
+  const tailText = tail.join("\n");
+
+  const indexPath = join(fullPath, INDEX);
+  const open = `<memory_content path="${escapeXmlText(relPath).replace(/"/g, "&quot;")}">`;
+  const close = "</memory_content>";
+  let head: string;
+  if (existsSync(indexPath)) {
+    // Keep the whole return within Read's budget so the listing survives the tool-return backstop.
+    const budget = Math.max(
+      2_000,
+      LIMITS.READ_OUTPUT_CHARS -
+        tailText.length -
+        open.length -
+        close.length -
+        16,
+    );
+    head = clampContent(
+      readFileSync(indexPath, "utf8").trimEnd(),
+      indexPath,
+      budget,
+    );
+  } else {
+    head = `<note>No ${INDEX} index in this directory.</note>`;
+  }
+  return `${open}\n${head}\n\n${tailText}\n${close}`;
+}
+
+/** Matches Read's text-file ceiling so oversized files are rejected before being loaded. */
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+
+function readPrefix(path: string, bytes: number): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(bytes);
+    return buffer.subarray(0, readSync(fd, buffer, 0, bytes, 0));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function renderFile(relPath: string, fullPath: string): string {
+  const content = readFileSync(fullPath, "utf8").trimEnd();
+  const open = `<memory_content path="${escapeXmlText(relPath).replace(/"/g, "&quot;")}"${descriptionAttr(readDescription(fullPath))}>`;
+  const close = "</memory_content>";
+  return `${open}\n${clampContent(content, fullPath, LIMITS.READ_OUTPUT_CHARS - open.length - close.length - 2)}\n${close}`;
+}
+
+export async function memory(args: MemoryArgs): Promise<{ content: string }> {
+  validateRequiredParams(args, ["path"], "Memory");
+  const memoryDir = resolveMemoryToolDirectory();
+  if (!memoryDir) {
+    throw new Error(
+      "Memory() is only available for agents with a MemFS v2 memory directory.",
+    );
+  }
+
+  const raw = String(args.path).trim();
+  const relPath = raw
+    .replace(/\\/g, "/")
+    .replace(/^(\.\/)+/, "")
+    .replace(/\/+$/, "");
+  if (!relPath || relPath === "." || relPath === INDEX) {
+    throw new Error(
+      "The memory root is already in your context. Pass a directory from <deferred-memory>.",
+    );
+  }
+  if (raw.startsWith("/") || /^[A-Za-z]:/.test(raw)) {
+    throw new Error(
+      'Paths are relative to the memory directory, e.g. "projects".',
+    );
+  }
+  const segments = relPath.split("/");
+  if (segments.some((s) => s === ".." || s === "" || isHidden(s))) {
+    throw new Error(`Invalid memory path: ${raw}`);
+  }
+  if (segments[0] === "skills") {
+    throw new Error(
+      `skills/ is reserved for skills. Use Skill("${segments[1] ?? "<name>"}").`,
+    );
+  }
+
+  const fullPath = join(memoryDir, ...segments);
+  if (!existsSync(fullPath)) {
+    // Suggest the root-relative path for legacy directory-relative links.
+    const candidates =
+      !relPath.endsWith(".md") && existsSync(`${fullPath}.md`)
+        ? [`${relPath}.md`]
+        : findByBasename(memoryDir, segments[segments.length - 1] ?? relPath);
+    const hint = candidates.length
+      ? ` Did you mean ${candidates.join(" or ")}? Paths are relative to the memory directory.`
+      : "";
+    throw new Error(`No memory at ${relPath}.${hint}`);
+  }
+  const realRoot = realpathSync(memoryDir);
+  const realTarget = realpathSync(fullPath);
+  if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
+    throw new Error(`Invalid memory path: ${raw}`);
+  }
+
+  const stat = statSync(fullPath);
+  if (segments.length === 1 && stat.isFile()) {
+    throw new Error(
+      `${relPath} is root core memory and is already in your context.`,
+    );
+  }
+  if (stat.isDirectory()) {
+    return { content: renderDirectory(memoryDir, relPath, fullPath) };
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Not a memory file or directory: ${relPath}`);
+  }
+  if (stat.size > MAX_FILE_BYTES) {
+    throw new Error(
+      `${relPath} is too large: ${stat.size} bytes (max ${MAX_FILE_BYTES} bytes).`,
+    );
+  }
+  if (readPrefix(fullPath, 8_000).includes(0)) {
+    throw new Error(
+      `${relPath} is not a text file. Use Read on ${fullPath} instead.`,
+    );
+  }
+  return { content: renderFile(relPath, fullPath) };
 }

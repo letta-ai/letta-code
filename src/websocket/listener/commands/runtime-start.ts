@@ -7,13 +7,23 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildCreatedAgentTags, MEMFS_DISABLED_TAG } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
+import {
+  createEphemeralConversation,
+  type EphemeralConversationCreateBody,
+} from "@/backend/api/ephemeral-conversations";
 import { migratePermissionMode } from "@/permissions/mode";
+import { canonicalizeRoot } from "@/permissions/sandbox-policy";
+import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -21,11 +31,16 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
-import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
+import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
+import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
+import { expectInboundTeleport } from "@/websocket/listener/teleport";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
   ListenerRuntime,
+  ProcessQueuedTurn,
+  StartListenerOptions,
 } from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
@@ -33,11 +48,17 @@ import type {
   SafeSocketSend,
 } from "./types";
 
+type RuntimeStartScope = RuntimeScope<string | null>;
+
 type ReplaySyncStateForRuntime = (
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
-  scope: RuntimeScope,
-  opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+  scope: RuntimeStartScope,
+  opts?: {
+    recoverApprovals?: boolean;
+    forceDeviceStatus?: boolean;
+    connectionId?: string;
+  },
 ) => Promise<void>;
 
 type RuntimeStartCommandContext = {
@@ -48,6 +69,10 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  queuePumpOptions?: StartListenerOptions;
+  processQueuedTurn?: ProcessQueuedTurn;
+  createEphemeralConversation?: typeof createEphemeralConversation;
+  retrieveConversation?: (conversationId: string) => Promise<Conversation>;
 };
 
 type CreatedResources = {
@@ -79,11 +104,11 @@ function hasString(value: unknown): value is string {
 }
 
 function buildRuntimeScope(
-  agent: AgentState,
+  agent: AgentState | null,
   conversation: Conversation,
-): RuntimeScope {
+): RuntimeStartScope {
   return {
-    agent_id: agent.id,
+    agent_id: agent?.id ?? null,
     conversation_id: conversation.id,
   };
 }
@@ -93,7 +118,7 @@ function sendRuntimeStartResponse(
   parsed: RuntimeStartCommand,
   response: {
     success: boolean;
-    runtime: RuntimeScope | null;
+    runtime: RuntimeStartScope | null;
     agent: AgentState | null;
     conversation: Conversation | null;
     created: CreatedResources;
@@ -106,6 +131,9 @@ function sendRuntimeStartResponse(
       type: "runtime_start_response",
       request_id: parsed.request_id,
       ...response,
+      ...(response.success && parsed.execution_settings !== undefined
+        ? { execution_settings: parsed.execution_settings }
+        : {}),
     },
     "listener_runtime_start_send_failed",
     "listener_runtime_start",
@@ -115,22 +143,29 @@ function sendRuntimeStartResponse(
 function validateRuntimeStartShape(parsed: RuntimeStartCommand): void {
   const hasAgentId = hasString(parsed.agent_id);
   const hasCreateAgent = parsed.create_agent !== undefined;
-  if (hasAgentId === hasCreateAgent) {
-    throw new Error(
-      "runtime_start requires exactly one of agent_id or create_agent",
-    );
-  }
+  const hasConversationId = hasString(parsed.conversation_id);
+  const hasCreateConversation = parsed.create_conversation !== undefined;
 
   if (parsed.agent_id !== undefined && !hasAgentId) {
     throw new Error("runtime_start agent_id must be a non-empty string");
   }
-
-  const hasConversationId = hasString(parsed.conversation_id);
   if (parsed.conversation_id !== undefined && !hasConversationId) {
     throw new Error("runtime_start conversation_id must be a non-empty string");
   }
-
-  if (hasConversationId && parsed.create_conversation !== undefined) {
+  if (hasAgentId && hasCreateAgent) {
+    throw new Error(
+      "runtime_start agent_id cannot be combined with create_agent",
+    );
+  }
+  if (
+    !hasAgentId &&
+    !hasCreateAgent &&
+    !hasConversationId &&
+    !hasCreateConversation
+  ) {
+    throw new Error("runtime_start requires an agent or conversation");
+  }
+  if (hasConversationId && hasCreateConversation) {
     throw new Error(
       "runtime_start conversation_id cannot be combined with create_conversation",
     );
@@ -163,7 +198,9 @@ export function applyCreatedAgentServerToolDefaults(
 async function resolveRuntimeStartAgent(
   parsed: RuntimeStartCommand,
   created: CreatedResources,
-): Promise<AgentState> {
+): Promise<AgentState | null> {
+  if (!parsed.create_agent && !hasString(parsed.agent_id)) return null;
+
   const backend = getBackend();
   if (parsed.create_agent) {
     const withMemfs = parsed.create_agent.memfs !== false;
@@ -172,11 +209,23 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const createBody = withMemfs
+      ? requestedBody
+      : {
+          ...requestedBody,
+          tags: buildCreatedAgentTags({
+            enableMemfs: false,
+            tags: [
+              ...(Array.isArray(requestedBody.tags) ? requestedBody.tags : []),
+              MEMFS_DISABLED_TAG,
+            ],
+          }),
+        };
     const appliedHarnessToolDefaults =
       requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
-      : requestedBody;
+      ? await prepareRawCreateAgentBodyForMemfs(createBody)
+      : createBody;
     const agent = appliedHarnessToolDefaults
       ? await createAgentWithBaseToolsRecovery(
           (tools) => backend.createAgent({ ...body, tools }),
@@ -205,30 +254,52 @@ async function resolveRuntimeStartAgent(
 
 async function resolveRuntimeStartConversation(
   parsed: RuntimeStartCommand,
-  agent: AgentState,
+  agent: AgentState | null,
   created: CreatedResources,
+  createEphemeral: (
+    body: EphemeralConversationCreateBody,
+  ) => Promise<
+    Conversation | Awaited<ReturnType<typeof createEphemeralConversation>>
+  >,
+  retrieveConversation: (conversationId: string) => Promise<Conversation>,
 ): Promise<Conversation> {
   const backend = getBackend();
   if (hasString(parsed.conversation_id)) {
     if (parsed.conversation_id === "default") {
+      if (!agent) {
+        throw new Error("Agent-free runtimes require a persisted conversation");
+      }
       return buildDefaultConversation(agent);
     }
-    const conversation = await backend.retrieveConversation(
-      parsed.conversation_id,
-    );
-    if (conversation.agent_id !== agent.id) {
+    const conversation = await retrieveConversation(parsed.conversation_id);
+    const conversationAgentId = conversation.agent_id ?? null;
+    if (conversationAgentId !== (agent?.id ?? null)) {
       throw new Error(
-        `Conversation ${conversation.id} belongs to ${conversation.agent_id}, not ${agent.id}`,
+        agent
+          ? `Conversation ${conversation.id} belongs to ${conversationAgentId}, not ${agent.id}`
+          : `Conversation ${conversation.id} is agent-backed; provide agent_id`,
       );
     }
     return conversation;
   }
 
-  const body = {
+  if (!agent) {
+    const body = parsed.create_conversation?.body as
+      | EphemeralConversationCreateBody
+      | undefined;
+    if (!body || !hasString(body.model) || typeof body.system !== "string") {
+      throw new Error(
+        "Agent-free conversation creation requires body.model and body.system",
+      );
+    }
+    const conversation = await createEphemeral(body);
+    created.conversation = true;
+    return conversation as unknown as Conversation;
+  }
+  const conversation = await backend.createConversation({
     ...(parsed.create_conversation?.body ?? {}),
     agent_id: agent.id,
-  } satisfies ConversationCreateParams;
-  const conversation = await backend.createConversation(body);
+  } as ConversationCreateParams);
   created.conversation = true;
   return conversation;
 }
@@ -287,9 +358,51 @@ async function applyRuntimeStartConversationSourceTags(
 async function applyRuntimeStartState(
   parsed: RuntimeStartCommand,
   context: RuntimeStartCommandContext,
-  scope: RuntimeScope,
+  scope: RuntimeStartScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.execution_settings !== undefined) {
+    if (
+      (scopedRuntime.turnLifecycle.kind !== "idle" ||
+        scopedRuntime.queueRuntime.length > 0) &&
+      JSON.stringify(scopedRuntime.executionSettings) !==
+        JSON.stringify(parsed.execution_settings)
+    ) {
+      throw new Error(
+        "Cannot change execution settings while the conversation has active or queued work",
+      );
+    }
+    scopedRuntime.executionSettings = structuredClone(
+      parsed.execution_settings,
+    );
+  }
+  const workspaceSandbox = parsed.workspace_sandbox
+    ? resolveWorkspaceSandbox({
+        root: parsed.workspace_sandbox.root,
+        isolationRoot: parsed.workspace_sandbox.isolation_root,
+      })
+    : undefined;
+  const requestedWorkingDirectory =
+    parsed.cwd ??
+    workspaceSandbox?.root ??
+    getBootWorkingDirectory(context.runtime);
+  const canonicalWorkingDirectory = canonicalizeRoot(requestedWorkingDirectory);
+  if (
+    workspaceSandbox &&
+    canonicalWorkingDirectory !== workspaceSandbox.root &&
+    !canonicalWorkingDirectory.startsWith(`${workspaceSandbox.root}/`)
+  ) {
+    throw new Error(
+      "runtime_start cwd must be inside the workspace sandbox root",
+    );
+  }
+  assertRuntimeWorkspaceSandboxChangeAllowed(
+    context.runtime,
+    scopedRuntime,
+    workspaceSandbox,
+  );
+  scopedRuntime.workspaceSandbox = workspaceSandbox;
+
   if (
     parsed.skill_sources === undefined &&
     parsed.preserve_skill_sources !== true
@@ -319,12 +432,12 @@ async function applyRuntimeStartState(
     persistPermissionModeMapForRuntime(context.runtime);
   }
 
-  if (parsed.cwd !== undefined) {
+  if (parsed.cwd !== undefined || workspaceSandbox) {
     await switchConversationWorkingDirectory({
       runtime: context.runtime,
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-      workingDirectory: parsed.cwd ?? getBootWorkingDirectory(context.runtime),
+      workingDirectory: requestedWorkingDirectory,
       emitStatus: false,
       statusRuntime: scopedRuntime,
       statusSocket: context.socket,
@@ -339,16 +452,26 @@ export async function handleRuntimeStartCommand(
   const created = { agent: false, conversation: false };
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
-  let runtimeScope: RuntimeScope | null = null;
+  let runtimeScope: RuntimeStartScope | null = null;
+  let scopedRuntime: ConversationRuntime | null = null;
   let shouldReplayState = false;
+  let startResponseSent = false;
 
   try {
     validateRuntimeStartShape(parsed);
     agent = await resolveRuntimeStartAgent(parsed, created);
+    const backend = getBackend();
+    const createEphemeral =
+      context.createEphemeralConversation ??
+      backend.createEphemeralConversation?.bind(backend) ??
+      createEphemeralConversation;
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
       created,
+      createEphemeral,
+      context.retrieveConversation ??
+        ((id) => backend.retrieveConversation(id)),
     );
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
@@ -367,12 +490,15 @@ export async function handleRuntimeStartCommand(
       }
     };
     assertConnectionOpen();
-    const scopedRuntime = context.getOrCreateScopedRuntime(
+    scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    if (parsed.teleport_id) {
+      expectInboundTeleport(scopedRuntime, parsed.teleport_id);
+    }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
@@ -390,17 +516,18 @@ export async function handleRuntimeStartCommand(
         {
           recoverApprovals: parsed.recover_approvals !== false,
           forceDeviceStatus: parsed.force_device_status !== false,
+          connectionId,
         },
       );
     }
-    const sent = sendRuntimeStartResponse(context, parsed, {
+    startResponseSent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
       agent,
       conversation,
       created,
     });
-    shouldReplayState = sent && !parsed.wait_for_replay;
+    shouldReplayState = startResponseSent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,
@@ -420,7 +547,25 @@ export async function handleRuntimeStartCommand(
       {
         recoverApprovals: parsed.recover_approvals !== false,
         forceDeviceStatus: parsed.force_device_status !== false,
+        connectionId: context.connectionId,
       },
+    );
+  }
+
+  // Startup can attempt the queue before a new connection has subscribed.
+  // Retry after this scope's initial replay so accepted work cannot interleave
+  // with approval recovery or execute after a failed runtime_start.
+  if (
+    startResponseSent &&
+    scopedRuntime?.queueRuntime?.isEmpty === false &&
+    context.queuePumpOptions &&
+    context.processQueuedTurn
+  ) {
+    scheduleQueuePump(
+      scopedRuntime,
+      getOrCreateProcessTransport(context.runtime),
+      context.queuePumpOptions,
+      context.processQueuedTurn,
     );
   }
 

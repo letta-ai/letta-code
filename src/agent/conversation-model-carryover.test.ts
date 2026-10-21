@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import { buildConversationModelCarryoverUpdate } from "@/agent/conversation-model-carryover";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
+
+setupRuntimeModelCatalogFixture();
 
 describe("conversation model carryover", () => {
   test("seeds new conversations with the model preset context window before stale llm_config", () => {
@@ -77,6 +80,22 @@ describe("conversation model carryover", () => {
     // the new conversation starts from the preset instead.
     expect(carryover?.contextWindowOverride).toBeUndefined();
     expect(carryover?.updateArgs?.context_window).not.toBe(128000);
+  });
+
+  test("rewrites carried-over minimal reasoning for GPT-5.6 Sol", () => {
+    const carryover = buildConversationModelCarryoverUpdate({
+      rawModelHandle: "chatgpt-plus-pro/gpt-5.6-sol",
+      currentLlmConfig: {
+        model: "gpt-5.6-sol",
+        model_endpoint_type: "chatgpt_oauth",
+        reasoning_effort: "minimal",
+      } as LlmConfig,
+      activeConversationContextWindowLimit: null,
+    });
+
+    expect(carryover?.updateArgs).toMatchObject({
+      reasoning_effort: "none",
+    });
   });
 
   test("uses centralized normalization for ChatGPT fast handles", () => {

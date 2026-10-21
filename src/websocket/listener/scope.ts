@@ -31,9 +31,8 @@ export function resolveScopedAgentId(
   if (!runtime) {
     return normalizeCwdAgentId(params?.agent_id) ?? null;
   }
-  const explicitAgentId = normalizeCwdAgentId(params?.agent_id);
-  if (explicitAgentId) {
-    return explicitAgentId;
+  if (params && "agent_id" in params) {
+    return normalizeCwdAgentId(params.agent_id);
   }
   return getOnlyConversationRuntime(runtime)?.agentId ?? null;
 }
@@ -62,12 +61,25 @@ export function resolveRuntimeScope(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): RuntimeScope | null {
+): RuntimeScope<string | null> | null {
   const resolvedAgentId = resolveScopedAgentId(runtime, params);
-  if (!resolvedAgentId) {
+  const resolvedConversationId = resolveScopedConversationId(runtime, params);
+  const explicitAgentFree =
+    params?.agent_id === null &&
+    [...(runtime?.conversationRuntimes.values() ?? [])].some(
+      (conversationRuntime) =>
+        conversationRuntime.agentId === null &&
+        conversationRuntime.conversationId === resolvedConversationId &&
+        (runtime?.connectionIdsByRuntimeKey.get(conversationRuntime.key)
+          ?.size ?? 0) > 0,
+    );
+  if (
+    !resolvedAgentId &&
+    resolvedConversationId === "default" &&
+    !explicitAgentFree
+  ) {
     return null;
   }
-  const resolvedConversationId = resolveScopedConversationId(runtime, params);
   return {
     agent_id: resolvedAgentId,
     conversation_id: resolvedConversationId,

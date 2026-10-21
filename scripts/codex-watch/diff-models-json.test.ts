@@ -70,6 +70,63 @@ describe("diffModelsJson", () => {
     expect(diff.added_models).toEqual(["gpt-5.6"]);
     expect(diff.removed_models).toEqual(["gpt-5.4"]);
   });
+
+  test("detects instruction content changes without tool mentions", () => {
+    const diff = diffModelsJson(
+      models(model("gpt-5.6")),
+      models(
+        model("gpt-5.6", {
+          base_instructions:
+            "Use apply_patch and multi_tool_use.parallel. The user may send a new message while you are still working. Treat it as steering the active task.",
+        }),
+      ),
+    );
+
+    expect(diff.has_tool_schema_change).toBe(false);
+    expect(diff.has_prompt_tool_change).toBe(false);
+    expect(diff.has_instruction_content_change).toBe(true);
+    expect(diff.instruction_content_deltas).toEqual(["gpt-5.6"]);
+  });
+
+  test("detects top-level instructions_template changes", () => {
+    const diff = diffModelsJson(
+      models(model("gpt-5.6")),
+      models(
+        model("gpt-5.6", {
+          instructions_template: "Answer briefly, then resume the active task.",
+        }),
+      ),
+    );
+
+    expect(diff.has_instruction_content_change).toBe(true);
+  });
+
+  test("flags added models that ship instructions", () => {
+    const diff = diffModelsJson(
+      models(model("gpt-5.5")),
+      models(
+        model("gpt-5.5"),
+        model("gpt-6-astra"),
+        model("gpt-5.6-bare", {
+          base_instructions: "",
+          model_messages: {},
+        }),
+      ),
+    );
+
+    expect(diff.added_models).toEqual(["gpt-6-astra", "gpt-5.6-bare"]);
+    expect(diff.added_models_with_instructions).toEqual(["gpt-6-astra"]);
+  });
+
+  test("no instruction change when text is identical", () => {
+    const diff = diffModelsJson(
+      models(model("gpt-5.5")),
+      models(model("gpt-5.5")),
+    );
+
+    expect(diff.has_instruction_content_change).toBe(false);
+    expect(diff.instruction_content_deltas).toEqual([]);
+  });
 });
 
 describe("decideVerdict", () => {
@@ -130,6 +187,43 @@ describe("decideVerdict", () => {
       decideVerdict({
         models_diff,
         prompt_md_changed: true,
+        tools_dir_changed: false,
+        apply_patch_dir_changed: false,
+        parse_error: false,
+      }),
+    ).toBe("prompt-only update");
+  });
+
+  test("returns prompt-only update for instruction content changes", () => {
+    const models_diff = diffModelsJson(
+      models(model("gpt-5.6")),
+      models(
+        model("gpt-5.6", {
+          base_instructions:
+            "The user may send a new message while you are still working.",
+        }),
+      ),
+    );
+    expect(
+      decideVerdict({
+        models_diff,
+        prompt_md_changed: false,
+        tools_dir_changed: false,
+        apply_patch_dir_changed: false,
+        parse_error: false,
+      }),
+    ).toBe("prompt-only update");
+  });
+
+  test("returns prompt-only update for added models with instructions", () => {
+    const models_diff = diffModelsJson(
+      models(model("gpt-5.5")),
+      models(model("gpt-5.5"), model("gpt-6-astra")),
+    );
+    expect(
+      decideVerdict({
+        models_diff,
+        prompt_md_changed: false,
         tools_dir_changed: false,
         apply_patch_dir_changed: false,
         parse_error: false,

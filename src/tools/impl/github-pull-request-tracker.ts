@@ -12,10 +12,14 @@ export type ShellSourceCommand = string | readonly string[];
 type OutputStream = "stdout" | "stderr";
 
 export type ConversationTagBackend = {
-  retrieveConversation(conversationId: string): Promise<unknown>;
+  retrieveConversation(
+    conversationId: string,
+    options?: { signal?: AbortSignal },
+  ): Promise<unknown>;
   updateConversation(
     conversationId: string,
     body: ConversationUpdateBody,
+    options?: { signal?: AbortSignal },
   ): Promise<unknown>;
 };
 
@@ -27,11 +31,36 @@ export interface GitHubPullRequestOutputTracker {
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=.*/;
 const GITHUB_PR_URL =
   /^https?:\/\/github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/([1-9]\d*)\/?$/i;
+const GITHUB_PR_TAG_PREFIX = "github:pull-request:";
+const HEREDOC_AT_LINE_END =
+  /<<(-?)\s*(?:'([^']+)'|"([^"]+)"|([^\s'"`<>|&;]+))\s*$/;
 const MAX_TRACKED_OUTPUT_CHARS = 30_000;
 
 const GH_GLOBAL_FLAGS_WITH_VALUES = new Set(["--hostname", "--repo", "-R"]);
+const TIMEOUT_FLAGS_WITH_VALUES = new Set([
+  "--kill-after",
+  "--signal",
+  "-k",
+  "-s",
+]);
+const TIMEOUT_FLAGS_WITHOUT_VALUES = new Set([
+  "--foreground",
+  "--preserve-status",
+  "--verbose",
+  "-v",
+]);
 
 const conversationTagUpdateTails = new Map<string, Promise<void>>();
+
+function conversationTags(conversation: unknown): string[] {
+  const tags =
+    typeof conversation === "object" && conversation !== null
+      ? Reflect.get(conversation, "tags")
+      : undefined;
+  return Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === "string")
+    : [];
+}
 
 function executableName(value: string): string {
   return value.replaceAll("\\", "/").split("/").pop()?.toLowerCase() ?? "";
@@ -72,6 +101,48 @@ function findExecutableIndex(tokens: readonly string[]): number {
   return index;
 }
 
+function unwrapTimeoutCommand(
+  tokens: readonly string[],
+  executableIndex: number,
+): number | undefined {
+  const executable = executableName(tokens[executableIndex] ?? "");
+  if (executable !== "timeout" && executable !== "gtimeout") {
+    return executableIndex;
+  }
+
+  let index = executableIndex + 1;
+  while (index < tokens.length) {
+    const token = tokens[index] ?? "";
+    if (token === "--") {
+      index += 1;
+      break;
+    }
+    if (TIMEOUT_FLAGS_WITH_VALUES.has(token)) {
+      index += 2;
+      continue;
+    }
+    if (
+      token.startsWith("--kill-after=") ||
+      token.startsWith("--signal=") ||
+      (/^-[ks].+/.test(token) && token !== "-k" && token !== "-s")
+    ) {
+      index += 1;
+      continue;
+    }
+    if (TIMEOUT_FLAGS_WITHOUT_VALUES.has(token)) {
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return undefined;
+    }
+    break;
+  }
+
+  // timeout requires a duration before the command it runs.
+  return index + 1 < tokens.length ? index + 1 : undefined;
+}
+
 function skipGhGlobalFlags(
   tokens: readonly string[],
   startIndex: number,
@@ -97,7 +168,13 @@ function skipGhGlobalFlags(
 }
 
 function tokensCreatePullRequest(tokens: readonly string[]): boolean {
-  const executableIndex = findExecutableIndex(tokens);
+  const executableIndex = unwrapTimeoutCommand(
+    tokens,
+    findExecutableIndex(tokens),
+  );
+  if (executableIndex === undefined) {
+    return false;
+  }
   if (executableName(tokens[executableIndex] ?? "") !== "gh") {
     return false;
   }
@@ -124,7 +201,13 @@ function isShellExecutable(value: string): boolean {
 }
 
 function shellScriptFromCommand(tokens: readonly string[]): string | undefined {
-  const executableIndex = findExecutableIndex(tokens);
+  const executableIndex = unwrapTimeoutCommand(
+    tokens,
+    findExecutableIndex(tokens),
+  );
+  if (executableIndex === undefined) {
+    return undefined;
+  }
   if (!isShellExecutable(tokens[executableIndex] ?? "")) {
     return undefined;
   }
@@ -143,6 +226,47 @@ function shellScriptFromCommand(tokens: readonly string[]): string | undefined {
   return undefined;
 }
 
+function commandLinesOutsideHeredocs(command: string): string[] {
+  const commandLines: string[] = [];
+  let delimiter: string | undefined;
+  let stripLeadingTabs = false;
+
+  for (const line of command.split(/\r\n|\n|\r/)) {
+    if (delimiter) {
+      const candidate = stripLeadingTabs ? line.replace(/^\t+/, "") : line;
+      if (candidate === delimiter) {
+        delimiter = undefined;
+        stripLeadingTabs = false;
+      }
+      continue;
+    }
+
+    commandLines.push(line);
+    const match = line.match(HEREDOC_AT_LINE_END);
+    const nextDelimiter = match?.[2] ?? match?.[3] ?? match?.[4];
+    if (nextDelimiter) {
+      delimiter = nextDelimiter;
+      stripLeadingTabs = match?.[1] === "-";
+    }
+  }
+
+  return commandLines;
+}
+
+function splitCommandForPullRequestDetection(command: string): string[] {
+  const segments = splitShellSegmentsAllowCommandSubstitution(command);
+  if (segments) {
+    return segments;
+  }
+
+  // The permission splitter rejects file redirects. PR commands commonly
+  // write a body with a heredoc first, so retry the executable lines without
+  // treating Markdown inside the heredoc as shell commands.
+  return commandLinesOutsideHeredocs(command).flatMap(
+    (line) => splitShellSegmentsAllowCommandSubstitution(line) ?? [line],
+  );
+}
+
 export function isGitHubPullRequestCreateCommand(
   command: ShellSourceCommand,
 ): boolean {
@@ -154,9 +278,7 @@ export function isGitHubPullRequestCreateCommand(
     return shellScript ? isGitHubPullRequestCreateCommand(shellScript) : false;
   }
 
-  const segments = splitShellSegmentsAllowCommandSubstitution(command) ?? [
-    command,
-  ];
+  const segments = splitCommandForPullRequestDetection(command);
   return segments.some((segment) =>
     tokensCreatePullRequest(tokenizeShellWords(segment)),
   );
@@ -171,7 +293,7 @@ function tagFromOutputLine(line: string): string | undefined {
   if (!owner || !repo || !number) {
     return undefined;
   }
-  return `github:pull-request:${owner.toLowerCase()}:${repo.toLowerCase()}:${number}`;
+  return `${GITHUB_PR_TAG_PREFIX}${owner.toLowerCase()}:${repo.toLowerCase()}:${number}`;
 }
 
 function appendOutputTail(
@@ -188,47 +310,103 @@ async function appendConversationTags(
   backend: ConversationTagBackend,
   conversationId: string,
   tags: readonly string[],
+  signal?: AbortSignal,
 ): Promise<void> {
-  const conversation = await backend.retrieveConversation(conversationId);
-  const currentTags =
-    typeof conversation === "object" && conversation !== null
-      ? Reflect.get(conversation, "tags")
-      : undefined;
-  const existingTags = Array.isArray(currentTags)
-    ? currentTags.filter((tag): tag is string => typeof tag === "string")
-    : [];
+  signal?.throwIfAborted();
+  const conversation = await backend.retrieveConversation(conversationId, {
+    signal,
+  });
+  const existingTags = conversationTags(conversation);
   const missingTags = tags.filter((tag) => !existingTags.includes(tag));
   if (missingTags.length === 0) {
     return;
   }
 
-  await backend.updateConversation(conversationId, {
-    tags: [...new Set([...existingTags, ...missingTags])],
-  } as ConversationUpdateBody);
+  await backend.updateConversation(
+    conversationId,
+    {
+      tags: [...new Set([...existingTags, ...missingTags])],
+    } as ConversationUpdateBody,
+    { signal },
+  );
 }
 
 function queueConversationTagUpdate(
   backend: ConversationTagBackend,
   conversationId: string,
   tags: readonly string[],
+  signal?: AbortSignal,
 ): Promise<void> {
   const previous = conversationTagUpdateTails.get(conversationId);
   const update = (previous ?? Promise.resolve())
-    .then(() => appendConversationTags(backend, conversationId, tags))
+    .then(() => appendConversationTags(backend, conversationId, tags, signal))
     .catch((error: unknown) => {
+      if (signal?.aborted) {
+        signal.throwIfAborted();
+      }
       debugLog(
         "github-pr-tracking",
         `Failed to tag conversation ${conversationId}`,
         error,
       );
     });
-  conversationTagUpdateTails.set(conversationId, update);
-  void update.finally(() => {
-    if (conversationTagUpdateTails.get(conversationId) === update) {
-      conversationTagUpdateTails.delete(conversationId);
-    }
-  });
+  const tail = update.catch(() => {});
+  conversationTagUpdateTails.set(conversationId, tail);
+  void tail
+    .finally(() => {
+      if (conversationTagUpdateTails.get(conversationId) === tail) {
+        conversationTagUpdateTails.delete(conversationId);
+      }
+    })
+    .catch(() => {});
   return update;
+}
+
+/** Copy PRs opened in an Agent conversation onto its launching conversation. */
+export async function copyGitHubPullRequestTags(
+  sourceConversationId: string | undefined,
+  targetConversationId: string | undefined,
+  backend?: ConversationTagBackend,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (
+    !sourceConversationId ||
+    !targetConversationId ||
+    sourceConversationId === "default" ||
+    targetConversationId === "default" ||
+    sourceConversationId === targetConversationId
+  ) {
+    return;
+  }
+
+  try {
+    const activeBackend = backend ?? getBackend();
+    const sourceConversation = await activeBackend.retrieveConversation(
+      sourceConversationId,
+      { signal },
+    );
+    const pullRequestTags = conversationTags(sourceConversation).filter((tag) =>
+      tag.startsWith(GITHUB_PR_TAG_PREFIX),
+    );
+    if (pullRequestTags.length === 0) {
+      return;
+    }
+    await queueConversationTagUpdate(
+      activeBackend,
+      targetConversationId,
+      pullRequestTags,
+      signal,
+    );
+  } catch (error) {
+    if (signal?.aborted) {
+      signal.throwIfAborted();
+    }
+    debugLog(
+      "github-pr-tracking",
+      `Failed to copy PR tags from ${sourceConversationId} to ${targetConversationId}`,
+      error,
+    );
+  }
 }
 
 export function createGitHubPullRequestOutputTracker(

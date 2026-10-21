@@ -1,11 +1,28 @@
 export type {
+  ChannelControlRequestCoordinatorOptions,
+  ChannelControlRequestInboundInput,
+  ChannelControlRequestResponseDeliveryResult,
+  PendingChannelControlRequest,
+} from "./channels/control-request-coordinator";
+export { ChannelControlRequestCoordinator } from "./channels/control-request-coordinator";
+export type {
   ChannelGatewayClient,
   ChannelGatewayDelivery,
+  ChannelGatewayHandoffDelivery,
   ChannelGatewayHooks,
   ChannelGatewayModelStatus,
   ChannelGatewayRichDraft,
 } from "./channels/gateway-core";
 export { ChannelGateway } from "./channels/gateway-core";
+export { formatChannelControlRequestPrompt } from "./channels/interactive";
+export type {
+  ChannelBindingLookup,
+  ChannelBindingSelection,
+  ChannelBindingUpdate,
+  ChannelConversationBinding,
+  ChannelSendBindingInfo,
+  MessageChannelBindingOperations,
+} from "./channels/message-channel-bindings";
 export type {
   ExecuteMessageChannelOptions,
   MessageChannelExecutionResolver,

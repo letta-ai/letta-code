@@ -157,27 +157,14 @@ export async function computeDiffPreviews(
         const resolvedFilePath = path.isAbsolute(filePath)
           ? filePath
           : path.resolve(workingDirectory, filePath);
-        if (toolArgs.edits && Array.isArray(toolArgs.edits)) {
-          const result = computeAdvancedDiff({
-            kind: "multi_edit",
-            filePath: resolvedFilePath,
-            edits: toolArgs.edits as Array<{
-              old_string: string;
-              new_string: string;
-              replace_all?: boolean;
-            }>,
-          });
-          previews.push(toDiffPreview(result, basename(filePath)));
-        } else {
-          const result = computeAdvancedDiff({
-            kind: "edit",
-            filePath: resolvedFilePath,
-            oldString: (toolArgs.old_string as string) || "",
-            newString: (toolArgs.new_string as string) || "",
-            replaceAll: toolArgs.replace_all as boolean | undefined,
-          });
-          previews.push(toDiffPreview(result, basename(filePath)));
-        }
+        const result = computeAdvancedDiff({
+          kind: "edit",
+          filePath: resolvedFilePath,
+          oldString: (toolArgs.old_string as string) || "",
+          newString: (toolArgs.new_string as string) || "",
+          replaceAll: toolArgs.replace_all as boolean | undefined,
+        });
+        previews.push(toDiffPreview(result, basename(filePath)));
       }
     } else if (isPatchTool(toolName) && toolArgs.input) {
       const operations = parsePatchOperations(toolArgs.input as string);
@@ -189,16 +176,6 @@ export async function computeDiffPreviews(
           }
         }
         // Delete operations don't produce diffs
-      }
-    } else if (toolName === "memory_apply_patch" && toolArgs.input) {
-      const operations = parsePatchOperations(toolArgs.input as string);
-      for (const op of operations) {
-        if (op.kind === "add" || op.kind === "update") {
-          const result = parsePatchToAdvancedDiff(op.patchLines, op.path);
-          if (result) {
-            previews.push(toDiffPreview(result, basename(op.path)));
-          }
-        }
       }
     }
   } catch {

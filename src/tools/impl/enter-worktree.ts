@@ -21,18 +21,13 @@ import {
   type WorktreeLockOwner,
 } from "@/utils/worktree-lock";
 import {
-  switchConversationWorkingDirectory,
-  switchCurrentRuntimeWorkingDirectory,
-  updateToolExecutionContextCwd,
-} from "@/websocket/listener/cwd-change";
-import { getActiveRuntime } from "@/websocket/listener/runtime";
-import { restartWorktreeWatcher } from "@/websocket/listener/worktree-watcher";
-import {
   buildCreatedWorktreeMessage,
   buildEnteredWorktreeMessage,
   readProjectInstructions,
 } from "./enter-worktree-messages.js";
+import { switchRuntimeWorkingDirectory } from "./runtime-working-directory";
 import {
+  addWorktreeSafely,
   formatGitFailure,
   gitRefExists,
   gitStdout,
@@ -578,27 +573,13 @@ export async function switchSessionToWorktree(params: {
   }
   const { worktreePath, runtimeContext } = params;
 
-  const listener = getActiveRuntime();
-  if (listener && runtimeContext?.conversationId) {
-    await switchConversationWorkingDirectory({
-      runtime: listener,
-      agentId: runtimeContext.agentId ?? null,
-      conversationId: runtimeContext.conversationId,
-      workingDirectory: worktreePath,
-      updateCurrentRuntimeContext: true,
-    });
-    restartWorktreeWatcher({
-      runtime: listener,
-      agentId: runtimeContext.agentId ?? null,
-      conversationId: runtimeContext.conversationId,
-    });
-  } else {
-    await switchCurrentRuntimeWorkingDirectory(worktreePath);
-  }
-  // Both paths must refresh the captured execution context: the in-flight
-  // turn resolves tool cwds from the snapshot taken at turn start, so
-  // skipping this leaves every remaining tool call in the previous cwd.
-  await updateToolExecutionContextCwd(params.executionContextId, worktreePath);
+  await switchRuntimeWorkingDirectory({
+    workingDirectory: worktreePath,
+    runtimeContext: {
+      ...runtimeContext,
+      toolContextId: params.executionContextId,
+    },
+  });
   return true;
 }
 
@@ -923,18 +904,7 @@ export async function enter_worktree(
     // `--no-track` keeps the new branch from adopting the base ref (e.g.
     // origin/main) as its upstream, which would otherwise produce misleading
     // ahead/behind status and risk an accidental push to the base branch.
-    await runGit(
-      [
-        "worktree",
-        "add",
-        "--no-track",
-        "-b",
-        branchName,
-        worktreePath,
-        baseRef,
-      ],
-      repoRoot,
-    );
+    await addWorktreeSafely({ repoRoot, branchName, worktreePath, baseRef });
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
 

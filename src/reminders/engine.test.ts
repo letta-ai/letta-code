@@ -8,11 +8,12 @@ import {
 } from "@/reminders/engine";
 import {
   createSharedReminderState,
+  markPostCompactionContextRemindersPending,
   markSecretsInfoReminderPending,
 } from "@/reminders/state";
 import {
+  __testSeedSecretsCache,
   clearSecretsCache,
-  initSecretsFromServer,
 } from "@/utils/secrets-store";
 
 const SECRETS_AGENT_ID = "agent-reminder-secrets";
@@ -107,8 +108,8 @@ describe("secrets info reminders", () => {
     const initial = await buildSecretsTestReminderParts(state);
     expect(initial.appliedReminderIds).not.toContain("secrets-info");
 
-    await initSecretsFromServer(SECRETS_AGENT_ID, {
-      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
     });
 
     const updated = await buildSecretsTestReminderParts(state);
@@ -118,10 +119,18 @@ describe("secrets info reminders", () => {
     expect(text).toContain("The agent secrets were updated");
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
     expect(text).toContain(
-      "The Letta Code harness secret manager injects only secrets referenced as `$NAME` in a shell command",
+      "the harness loads the matching secret into the child shell's environment",
     );
+    expect(text).toContain("it does not rewrite the command text");
+    expect(text).toContain("The shell expands `$NAME` at execution time");
     expect(text).toContain('os.environ["API_KEY"]');
     expect(text).toContain("process.env.API_KEY");
+    expect(text).toContain(
+      "Tool output shows `NAME=<REDACTED>` when a value was injected and then scrubbed",
+    );
+    expect(text).toContain(
+      "An empty direct `$NAME` expansion means that secret was not available to that invocation",
+    );
     if (process.platform === "win32") {
       expect(text).toContain("$env:API_KEY = $API_KEY; python script.py");
       expect(text).toContain("$env:API_KEY = $API_KEY; bun run script.ts");
@@ -132,8 +141,8 @@ describe("secrets info reminders", () => {
   });
 
   test("re-emits secret names after a secrets refresh", async () => {
-    await initSecretsFromServer(SECRETS_AGENT_ID, {
-      secrets: [{ key: "PLAYGROUND_AGENT_ID", value: "agent-123" }],
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
     });
     setCurrentAgentId(SECRETS_AGENT_ID);
     const state = createSharedReminderState();
@@ -150,5 +159,82 @@ describe("secrets info reminders", () => {
     expect(text).toContain("$PLAYGROUND_AGENT_ID");
     expect(state.hasSentSecretsInfo).toBe(true);
     expect(state.pendingSecretsInfoRefresh).toBe(false);
+  });
+
+  test("re-emits existing secret names after compaction", async () => {
+    __testSeedSecretsCache(SECRETS_AGENT_ID, {
+      PLAYGROUND_AGENT_ID: "agent-123",
+    });
+    const state = createSharedReminderState();
+    state.hasSentAgentInfo = true;
+    state.hasSentSessionContext = true;
+    state.hasSentSecretsInfo = true;
+    state.lastSentSecretNamesKey = "PLAYGROUND_AGENT_ID";
+    state.lastNotifiedPermissionMode = permissionMode.getMode();
+
+    markPostCompactionContextRemindersPending(state);
+
+    const result = await buildSecretsTestReminderParts(state);
+
+    const text = result.parts.map((part) => part.text).join("\n");
+    expect(result.appliedReminderIds).toContain("secrets-info");
+    expect(text).toContain(
+      "The following secrets are set on your agent and available for use",
+    );
+    expect(text).not.toContain("The agent secrets were updated");
+    expect(text).toContain("$PLAYGROUND_AGENT_ID");
+  });
+});
+
+describe("subagent secret names", () => {
+  test("a subagent lists the names it can use from its MCP parent's vault", async () => {
+    const { listAvailableSecretNames } = await import("@/reminders/engine");
+    const { runWithRuntimeContext } = await import("@/runtime-context");
+    __testSeedSecretsCache("agent-sub-secrets", { OWN_KEY: "own-value-123" });
+    __testSeedSecretsCache("agent-root-secrets", {
+      GITHUB_TOKEN: "root-value-123",
+      OWN_KEY: "root-own-value",
+    });
+    const parents: Record<string, string> = {
+      "agent-sub-secrets": "agent-root-secrets",
+    };
+    try {
+      const names = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            parent_agent_id: "agent-root-secrets",
+            agent_role: "subagent",
+          },
+        },
+        () =>
+          listAvailableSecretNames(
+            "agent-sub-secrets",
+            async (id) => parents[id],
+          ),
+      );
+      expect(names).toEqual(["GITHUB_TOKEN", "OWN_KEY"]);
+      // Without subagent linkage only the agent's own names are listed.
+      const ownOnly = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+          },
+        },
+        () =>
+          listAvailableSecretNames(
+            "agent-sub-secrets",
+            async (id) => parents[id],
+          ),
+      );
+      expect(ownOnly).toEqual(["OWN_KEY"]);
+    } finally {
+      clearSecretsCache("agent-sub-secrets");
+      clearSecretsCache("agent-root-secrets");
+    }
   });
 });

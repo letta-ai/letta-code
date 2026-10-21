@@ -1,9 +1,11 @@
 /**
  * Structured diff of openai/codex `codex-rs/models-manager/models.json`.
  *
- * We don't care about every field — only the ones that affect the tool/schema
- * surface exposed to the model. When any of these change, the letta-code
- * harness (src/agent/prompts/source_codex.md and src/tools/*) may need updating.
+ * We watch two surfaces: tool/schema fields that affect the tool surface
+ * exposed to the model (letta-code mirrors these in src/agent/prompts/source_codex.md
+ * and src/tools/*), and model instruction content (base_instructions /
+ * model_messages / instructions_template), whose behavioral guidance is worth
+ * reviewing even when no local mirror changes.
  */
 
 /** Tool-relevant fields lifted off each model entry in models.json. */
@@ -18,7 +20,7 @@ export interface ModelToolConfig {
   experimental_supported_tools?: string[];
   input_modalities?: string[];
   truncation_policy?: unknown;
-  /** Tool names mentioned anywhere in base_instructions / instructions_template. */
+  /** Tool names mentioned anywhere in the model instruction text. */
   prompt_tool_mentions: string[];
 }
 
@@ -48,10 +50,16 @@ export interface ModelsDiff {
   added_models: string[];
   removed_models: string[];
   field_deltas: ToolFieldDelta[];
+  /** Slugs of existing models whose instruction content changed. */
+  instruction_content_deltas: string[];
+  /** Added models that ship instruction content. */
+  added_models_with_instructions: string[];
   /** True if any field_delta is in TOOL_SCHEMA_FIELDS. */
   has_tool_schema_change: boolean;
   /** True if any prompt_tool_mentions added or removed. */
   has_prompt_tool_change: boolean;
+  /** True if any existing model's instruction content changed. */
+  has_instruction_content_change: boolean;
 }
 
 /** Fields whose change implies a tool-schema update may be needed in letta-code. */
@@ -74,16 +82,15 @@ function collectMentions(text: string): string[] {
   return Array.from(found).sort();
 }
 
+function slugOf(model: Record<string, unknown>): string {
+  return typeof model.slug === "string" ? model.slug : "<unknown>";
+}
+
 export function extractToolConfig(
   model: Record<string, unknown>,
 ): ModelToolConfig {
-  const slug = typeof model.slug === "string" ? model.slug : "<unknown>";
-  const promptText = [
-    typeof model.base_instructions === "string" ? model.base_instructions : "",
-    typeof model.model_messages === "object" && model.model_messages !== null
-      ? JSON.stringify(model.model_messages)
-      : "",
-  ].join("\n");
+  const slug = slugOf(model);
+  const promptText = extractInstructionText(model);
   return {
     slug,
     apply_patch_tool_type: model.apply_patch_tool_type as string | undefined,
@@ -107,6 +114,25 @@ export function extractToolConfig(
 
 function equal(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * Full model instruction text whose content we watch for behavioral prompt
+ * changes (e.g. steering or user-input guidance), not just tool mentions.
+ */
+export function extractInstructionText(model: Record<string, unknown>): string {
+  const parts = [
+    typeof model.base_instructions === "string" ? model.base_instructions : "",
+    typeof model.model_messages === "object" &&
+    model.model_messages !== null &&
+    Object.keys(model.model_messages).length > 0
+      ? JSON.stringify(model.model_messages)
+      : "",
+    typeof model.instructions_template === "string"
+      ? model.instructions_template
+      : "",
+  ];
+  return parts.filter((part) => part.length > 0).join("\n");
 }
 
 /** Compute the diff between two models.json payloads. */
@@ -135,6 +161,26 @@ export function diffModelsJson(prev: ModelsJson, curr: ModelsJson): ModelsDiff {
   let has_tool_schema_change = false;
   let has_prompt_tool_change = false;
 
+  const prevInstructions = new Map<string, string>();
+  const currInstructions = new Map<string, string>();
+  for (const m of prev.models) {
+    prevInstructions.set(slugOf(m), extractInstructionText(m));
+  }
+  for (const m of curr.models) {
+    currInstructions.set(slugOf(m), extractInstructionText(m));
+  }
+
+  const instruction_content_deltas: string[] = [];
+  for (const [slug, prevText] of prevInstructions) {
+    const currText = currInstructions.get(slug);
+    if (currText === undefined || prevText === currText) continue;
+    instruction_content_deltas.push(slug);
+  }
+
+  const added_models_with_instructions = added_models.filter(
+    (slug) => (currInstructions.get(slug) ?? "").length > 0,
+  );
+
   const fieldsToCompare = [
     ...TOOL_SCHEMA_FIELDS,
     "supports_image_detail_original",
@@ -159,8 +205,11 @@ export function diffModelsJson(prev: ModelsJson, curr: ModelsJson): ModelsDiff {
     added_models,
     removed_models,
     field_deltas,
+    instruction_content_deltas,
+    added_models_with_instructions,
     has_tool_schema_change,
     has_prompt_tool_change,
+    has_instruction_content_change: instruction_content_deltas.length > 0,
   };
 }
 
@@ -195,7 +244,12 @@ export function decideVerdict(input: VerdictInput): Verdict {
     return "tool-surface review needed";
   }
 
-  if (input.models_diff.has_prompt_tool_change || input.prompt_md_changed) {
+  if (
+    input.models_diff.has_prompt_tool_change ||
+    input.models_diff.has_instruction_content_change ||
+    input.models_diff.added_models_with_instructions.length > 0 ||
+    input.prompt_md_changed
+  ) {
     return "prompt-only update";
   }
 

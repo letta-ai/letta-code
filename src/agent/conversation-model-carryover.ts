@@ -4,6 +4,7 @@ import {
   preservableContextWindow,
 } from "@/agent/model";
 import { normalizeKnownModelHandle } from "@/agent/model-handles";
+import { normalizeReasoningEffortForModel } from "@/utils/openai-reasoning-effort";
 
 type CarryoverLlmConfig = LlmConfig & {
   enable_reasoner?: boolean | null;
@@ -52,7 +53,10 @@ export function buildConversationModelCarryoverUpdate(params: {
   const updateArgs: Record<string, unknown> = {
     ...((modelInfo?.updateArgs as Record<string, unknown> | undefined) ?? {}),
   };
-  const reasoningEffort = carryoverLlmConfig?.reasoning_effort;
+  const reasoningEffort = normalizeReasoningEffortForModel(
+    modelHandle,
+    carryoverLlmConfig?.reasoning_effort,
+  );
   if (
     typeof reasoningEffort === "string" &&
     updateArgs.reasoning_effort === undefined

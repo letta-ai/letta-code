@@ -3,7 +3,7 @@ import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { clearConversationRuntimeState } from "./runtime";
-import { resolveStaleApprovals } from "./send";
+import { resolveStaleApprovals, sendMessageStreamWithRetry } from "./send";
 import type { ListenerTransport } from "./transport";
 
 function createTransport(): ListenerTransport {
@@ -29,14 +29,42 @@ function createPreparedToolContext() {
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await Bun.sleep(1);
+    await Bun.sleep(5);
   }
   throw new Error("Timed out waiting for stale approval preparation");
 }
 
 describe("pre-stream recovery lease boundaries", () => {
+  test("lost recovery authority fences backend submission before entry", async () => {
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      "agent-1",
+      "conv-1",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+    });
+
+    await expect(
+      sendMessageStreamWithRetry(
+        "conv-1",
+        [{ role: "user", content: "must not submit" }],
+        {},
+        createTransport(),
+        runtime,
+        lease,
+        { authorityGuard: () => false },
+      ),
+    ).rejects.toThrow("Recovery ownership lost");
+    expect(runtime.turnLifecycle.snapshot().loopStatus).not.toBe(
+      "WAITING_FOR_API_RESPONSE",
+    );
+  });
+
   test("a reset during tool preparation cannot consume replacement input", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
@@ -96,4 +124,112 @@ describe("pre-stream recovery lease boundaries", () => {
     expect(runtime.queueRuntime.length).toBe(1);
     expect(runtime.queuedMessagesByItemId.size).toBe(1);
   });
+
+  test.each([
+    {
+      name: "attributed",
+      agentId: "agent-1",
+      queuedUser: "cloud-user-charles",
+      expectedActor: null,
+    },
+    {
+      name: "unattributed",
+      agentId: "agent-1",
+      queuedUser: undefined,
+      expectedActor: null,
+    },
+    {
+      name: "conversation-owned",
+      agentId: null,
+      queuedUser: undefined,
+      expectedActor: null,
+    },
+  ])(
+    "an $name queued user's work waits for a new turn after pre-stream approval recovery",
+    async ({ queuedUser, expectedActor, agentId }) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        agentId,
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "WAITING_FOR_API_RESPONSE",
+      });
+      enqueueInboundUserMessage(
+        runtime,
+        {
+          type: "message",
+          agentId,
+          conversationId: "conv-1",
+          mcpOriginatorSuperRunId: "queued-run",
+          mcpOriginatorTokenPresent: true,
+          messages: [
+            {
+              role: "user",
+              content: "message from Charles",
+              client_message_id: "cm-charles",
+            },
+          ],
+        },
+        queuedUser,
+      );
+      const approval = {
+        toolCallId: "call-1",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      let sentActingUserId: string | null | undefined;
+      let sentMessages: unknown;
+
+      const result = await resolveStaleApprovals(
+        runtime,
+        createTransport(),
+        turnLease,
+        {
+          retrieveAgent: async () => ({ id: "agent-1" }) as never,
+          retrieveConversation: async () =>
+            ({
+              id: "conv-1",
+              agent_id: null,
+              model: "openai/gpt-5.6-luna",
+            }) as never,
+          getResumeData: async () => ({
+            pendingApproval: approval,
+            pendingApprovals: [approval],
+            messageHistory: [],
+          }),
+          prepareToolExecutionContext: async () => createPreparedToolContext(),
+          sendApprovalContinuation: async (
+            _conversationId,
+            messages,
+            options,
+          ) => {
+            sentActingUserId = options?.actingUserId;
+            sentMessages = messages;
+            return { kind: "stream" as const, stream: {} as never };
+          },
+          drainRecoveryStream: async (_stream, _socket, _runtime, params) => {
+            params.turnCorrelation?.observeRun("run-recovery");
+            return { stopReason: "end_turn", apiDurationMs: 0 } as never;
+          },
+        },
+      );
+
+      expect(result?.stopReason).toBe("end_turn");
+      expect(sentActingUserId).toBe(expectedActor);
+      expect(JSON.stringify(sentMessages)).toContain("call-1");
+      expect(JSON.stringify(sentMessages)).not.toContain(
+        "message from Charles",
+      );
+      expect(runtime.queueRuntime.length).toBe(1);
+      expect(runtime.queuedMessagesByItemId.size).toBe(1);
+      expect(
+        runtime.listener.clientMessageIdsByRunIdByConversation
+          ?.get(runtime.key)
+          ?.get("run-recovery"),
+      ).toBeUndefined();
+    },
+  );
 });

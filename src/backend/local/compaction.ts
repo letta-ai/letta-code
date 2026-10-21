@@ -12,6 +12,7 @@ import {
   resolvePiModelForAgent,
 } from "@/backend/dev/pi-model-factory";
 import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
+import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
 import type { LocalMessage } from "./local-message";
@@ -48,6 +49,47 @@ export class LocalSlidingWindowCompactionPlanningError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "LocalSlidingWindowCompactionPlanningError";
+  }
+}
+
+export class LocalIrreducibleContextError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "LocalIrreducibleContextError";
+  }
+}
+
+export function assertLocalCompactionProgress(
+  stats: LocalCompactionStats,
+  mode: LocalCompactionMode,
+): void {
+  const hasProgress =
+    (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
+      (stats.messages_count_before ?? 0) ||
+    (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
+      (stats.context_tokens_before ?? 0);
+  if (hasProgress) return;
+  if (mode === "all") {
+    throw new LocalIrreducibleContextError(
+      "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
+    );
+  }
+  throw new LocalSlidingWindowCompactionPlanningError(
+    "Sliding-window compaction would not reduce the message count or estimated tokens.",
+  );
+}
+
+export async function runLocalPressureCompaction<T>(
+  compact: () => Promise<T>,
+): Promise<T | null> {
+  try {
+    return await compact();
+  } catch (error) {
+    // Pressure compaction is opportunistic: it must not fail a turn (or a
+    // completed response). A real overflow still surfaces this error via
+    // the provider overflow path.
+    if (error instanceof LocalIrreducibleContextError) return null;
+    throw error;
   }
 }
 
@@ -116,6 +158,7 @@ export type LocalCompleteFunction = (
 ) => Promise<AssistantMessage>;
 
 export interface LocalAllCompactionInput {
+  conversationId: string;
   agent: LocalAgentRecord;
   messages: LocalMessage[];
   complete?: LocalCompleteFunction;
@@ -459,12 +502,18 @@ async function runGenerateText(
   const reasoning = reasoningForSettings(
     localModel.modelSettings,
     localModel.model,
+    resolved.model,
   );
+  const headers = resolvePiRequestHeaders({
+    provider: resolved.model.provider,
+    configuredHeaders: resolved.headers,
+    conversationId: input.conversationId,
+  });
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-    ...(resolved.headers ? { headers: resolved.headers } : {}),
+    ...(headers ? { headers } : {}),
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
     // Mirrors Pi's createSummarizationOptions, which passes the session
     // thinking level into summarization requests. Required for adaptive
@@ -474,6 +523,7 @@ async function runGenerateText(
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
     maxRetries: 0,
+    sessionId: input.conversationId,
   };
   const restoreEnv = applyPiEnvOverrides(resolved.envOverrides);
   let result: AssistantMessage;

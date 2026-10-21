@@ -63,8 +63,34 @@ test("slack adapter start does not re-run bolt init", async () => {
 
   const app = FakeSlackApp.instances[0];
   expect(app).toBeDefined();
+  expect(app?.options).toEqual(
+    expect.objectContaining({
+      botUserId: "U0AS42PTEAX",
+      botId: "B0AS42PTEAX",
+    }),
+  );
   expect(app?.init).not.toHaveBeenCalled();
   expect(app?.start).toHaveBeenCalledTimes(1);
+});
+
+test("slack adapter consumes authorization failures before constructing Bolt", async () => {
+  const authorizationError = new Error("account_inactive");
+  FakeSlackWriteClient.authorizationError = authorizationError;
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await expect(adapter.start()).rejects.toBe(authorizationError);
+
+  expect(FakeSlackWriteClient.instances[0]?.auth.test).toHaveBeenCalledTimes(1);
+  expect(FakeSlackApp.instances).toHaveLength(0);
 });
 
 test("slack adapter forwards native channel slash commands as channel slash input", async () => {
@@ -460,6 +486,34 @@ test("slack adapter can add reactions to messages", async () => {
     timestamp: "1712800000.000100",
     name: "white_check_mark",
   });
+});
+
+test("slack adapter lists sorted workspace custom emoji names", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const writeClient = FakeSlackWriteClient.instances[0];
+  writeClient?.emoji.list.mockResolvedValueOnce({
+    emoji: {
+      party_parrot: "https://emoji.slack-edge.com/party_parrot.png",
+      blob_wave: "alias:wave",
+    },
+  });
+
+  expect(await adapter.listCustomEmojis()).toEqual([
+    "blob_wave",
+    "party_parrot",
+  ]);
+  expect(writeClient?.emoji.list).toHaveBeenCalledTimes(1);
 });
 
 test("slack adapter uploads local files through Slack's external upload flow", async () => {

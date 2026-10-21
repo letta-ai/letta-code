@@ -23,7 +23,10 @@ export interface MemoryGitSyncReminder {
   text: string;
 }
 
-export type SessionContextReason = "initial_attach" | "cwd_changed";
+export type SessionContextReason =
+  | "initial_attach"
+  | "cwd_changed"
+  | "post_compaction";
 
 export interface SharedReminderState {
   hasSentAgentInfo: boolean;
@@ -33,12 +36,18 @@ export interface SharedReminderState {
   hasSentSecretsInfo: boolean;
   pendingSecretsInfoRefresh: boolean;
   lastSentSecretNamesKey: string | null;
+  hasSentMcpServersInfo: boolean;
+  lastSentMcpServerNamesKey: string | null;
+  /** Counts may be cached, but attachment discovery must run every turn. */
+  mcpToolCounts: Map<string, { toolCount: number | null; fetchedAtMs: number }>;
   lastNotifiedPermissionMode: PermissionMode | null;
   turnCount: number;
   pendingReflectionTrigger: boolean;
   pendingMemoryGitSyncReminders: MemoryGitSyncReminder[];
   pendingCommandIoReminders: CommandIoReminder[];
   pendingToolsetChangeReminders: ToolsetChangeReminder[];
+  /** True once the current low-disk episode has been reported. */
+  hasNotifiedLowDiskSpace: boolean;
   /** When set, the next session-context reminder uses this reason for its intro text. */
   pendingSessionContextReason?: SessionContextReason;
 }
@@ -52,12 +61,16 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentSecretsInfo: false,
     pendingSecretsInfoRefresh: false,
     lastSentSecretNamesKey: null,
+    hasSentMcpServersInfo: false,
+    lastSentMcpServerNamesKey: null,
+    mcpToolCounts: new Map(),
     lastNotifiedPermissionMode: null,
     turnCount: 0,
     pendingReflectionTrigger: false,
     pendingMemoryGitSyncReminders: [],
     pendingCommandIoReminders: [],
     pendingToolsetChangeReminders: [],
+    hasNotifiedLowDiskSpace: false,
   };
 }
 
@@ -65,11 +78,29 @@ export function resetSharedReminderState(state: SharedReminderState): void {
   Object.assign(state, createSharedReminderState());
 }
 
+/**
+ * Re-arm one-shot execution-context reminders that compaction can evict.
+ * Preserve queued reminders and change-specific refresh state.
+ */
+export function markPostCompactionContextRemindersPending(
+  state: SharedReminderState,
+): void {
+  state.hasSentAgentInfo = false;
+  state.hasSentSessionContext = false;
+  state.pendingSessionContextReason ??= "post_compaction";
+  state.hasSentSecretsInfo = false;
+  state.hasSentMcpServersInfo = false;
+  state.mcpToolCounts.clear();
+  state.lastNotifiedPermissionMode = null;
+  state.hasNotifiedLowDiskSpace = false;
+}
+
 export function syncReminderStateFromContextTracker(
   state: SharedReminderState,
   contextTracker: ContextTracker,
 ): void {
   if (contextTracker.pendingReflectionTrigger) {
+    markPostCompactionContextRemindersPending(state);
     state.pendingReflectionTrigger = true;
     contextTracker.pendingReflectionTrigger = false;
   }

@@ -29,6 +29,9 @@ test("direct started input activates sources immediately", async () => {
   await gateway.submit(
     makeDelivery({ sources: [source], clientMessageId: "cm-1" }),
   );
+  expect(client.submittedInputs[0]?.payload).toMatchObject({
+    client_preferences: {},
+  });
 
   // Should emit queued lifecycle for each source
   expect(lifecycleEvents.filter((e) => e.type === "queued")).toHaveLength(1);
@@ -115,8 +118,14 @@ test("queued input activates when dequeued via update_queue", async () => {
     0,
   );
 
-  // Simulate dequeue: queue update where the item is no longer in the queue
-  client.emit(makeQueueUpdate([]) as unknown as WsProtocolMessage);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      {
+        client_message_id: "cm-queued-1",
+        disposition: "dequeued",
+      },
+    ]) as unknown as WsProtocolMessage,
+  );
 
   // Now processing should be activated
   expect(lifecycleEvents.filter((e) => e.type === "processing")).toHaveLength(
@@ -127,6 +136,258 @@ test("queued input activates when dequeued via update_queue", async () => {
     expect(processingEvent.sources).toEqual([source]);
   }
 
+  gateway.close();
+});
+
+test("adopts queued source metadata without submitting input again", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({
+    channel: "slack",
+    chatId: "C123",
+    messageId: "1700000000.000100",
+    threadId: "1700000000.000100",
+  });
+  const delivery = makeDelivery({
+    sources: [source],
+    clientMessageId: "cm-already-queued",
+  });
+
+  gateway.adoptQueuedDelivery(delivery);
+  gateway.adoptQueuedDelivery(delivery);
+  for (const changed of [
+    { chatType: "channel" },
+    { senderId: "U-other" },
+    { senderTeamId: "T-other" },
+  ] satisfies Array<Partial<ChannelTurnSource>>) {
+    expect(() =>
+      gateway.adoptQueuedDelivery({
+        ...delivery,
+        sources: [{ ...source, ...changed }],
+      }),
+    ).toThrow("conflicting metadata exists");
+  }
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(client.startedRuntimes).toHaveLength(0);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
+  expect(lifecycleEvents).toHaveLength(0);
+
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-already-queued", disposition: "dequeued" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  expect(client.submittedInputs).toHaveLength(0);
+  expect(lifecycleEvents).toEqual([
+    {
+      type: "processing",
+      batchId: "channel-cm-already-queued",
+      sources: [source],
+    },
+  ]);
+
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+  expect(lifecycleEvents.at(-1)).toMatchObject({
+    type: "finished",
+    batchId: "channel-cm-already-queued",
+    sources: [source],
+  });
+  gateway.close();
+});
+
+test("rejects queued adoption for an active ID after accepted history ages out", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const activeDelivery = makeDelivery({
+    clientMessageId: "cm-active-aged-out",
+  });
+
+  await gateway.submit(activeDelivery);
+  for (let index = 0; index < 2_048; index += 1) {
+    gateway.adoptQueuedDelivery(
+      makeDelivery({ clientMessageId: `cm-queued-${index}` }),
+    );
+  }
+
+  expect(() => gateway.adoptQueuedDelivery(activeDelivery)).toThrow(
+    "it is not queued",
+  );
+  gateway.close();
+});
+
+test("dequeue transition survives split-stream arrival before input acceptance", async () => {
+  let releaseInput!: () => void;
+  const inputWait = new Promise<void>((resolve) => {
+    releaseInput = resolve;
+  });
+  const client = new FakeClient({
+    inputResponse: { accepted: true, disposition: "queued" },
+    inputWait,
+  });
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const source = makeSource({ messageId: "early-dequeue" });
+
+  const submission = gateway.submit(
+    makeDelivery({ sources: [source], clientMessageId: "cm-early" }),
+  );
+  for (
+    let attempt = 0;
+    attempt < 20 && client.submittedInputs.length === 0;
+    attempt += 1
+  ) {
+    await Bun.sleep(0);
+  }
+  expect(client.submittedInputs).toHaveLength(1);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-early", disposition: "dequeued" },
+    ]),
+  );
+  releaseInput();
+  await submission;
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.map((event) => event.type)).toEqual([
+    "queued",
+    "processing",
+  ]);
+  expect(lifecycleEvents[1]).toMatchObject({
+    type: "processing",
+    sources: [source],
+  });
+  gateway.close();
+});
+
+test("removed queued input emits cancellation while another turn is active", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const queuedSource = makeSource({ messageId: "queued" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({ sources: [queuedSource], clientMessageId: "cm-queued" }),
+  );
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-queued", disposition: "cancelled" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  expect(lifecycleEvents.at(-1)).toEqual({
+    type: "finished",
+    batchId: "channel-cm-queued",
+    sources: [queuedSource],
+    remainingSources: [activeSource],
+    outcome: "cancelled",
+    stopReason: "cancelled",
+  });
+  gateway.close();
+});
+
+test("dequeue into an active continuation joins lifecycle ownership without cancellation", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const continuedSource = makeSource({ messageId: "continued" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({
+      sources: [continuedSource],
+      clientMessageId: "cm-continued",
+    }),
+  );
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-continued", disposition: "dequeued" },
+    ]),
+  );
+  await Bun.sleep(0);
+
+  const processing = lifecycleEvents.filter(
+    (event) => event.type === "processing",
+  );
+  expect(processing).toHaveLength(2);
+  expect(processing[1]).toMatchObject({
+    type: "processing",
+    batchId: "channel-cm-active",
+    sources: [continuedSource],
+  });
+  expect(
+    lifecycleEvents.some(
+      (event) => event.type === "finished" && event.outcome === "cancelled",
+    ),
+  ).toBe(false);
+
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+  const terminal = lifecycleEvents.at(-1);
+  expect(terminal).toMatchObject({
+    type: "finished",
+    sources: [activeSource, continuedSource],
+    outcome: "completed",
+  });
+  gateway.close();
+});
+
+test("coalesced same-target inputs retain every message-distinct lifecycle source", async () => {
+  const client = new FakeClient();
+  const { hooks, lifecycleEvents } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+  const activeSource = makeSource({ messageId: "active" });
+  const firstQueuedSource = makeSource({ messageId: "queued-1" });
+  const secondQueuedSource = makeSource({ messageId: "queued-2" });
+
+  await gateway.submit(
+    makeDelivery({ sources: [activeSource], clientMessageId: "cm-active" }),
+  );
+  client.inputResponse.disposition = "queued";
+  await gateway.submit(
+    makeDelivery({
+      sources: [firstQueuedSource],
+      clientMessageId: "cm-queued-1",
+    }),
+  );
+  await gateway.submit(
+    makeDelivery({
+      sources: [secondQueuedSource],
+      clientMessageId: "cm-queued-2",
+    }),
+  );
+
+  client.emit(makeTurnFinished("end_turn"));
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-queued-1", disposition: "dequeued" },
+      { client_message_id: "cm-queued-2", disposition: "dequeued" },
+    ]),
+  );
+  client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
+
+  const terminal = lifecycleEvents
+    .filter((event) => event.type === "finished")
+    .at(-1);
+  expect(terminal).toMatchObject({
+    type: "finished",
+    sources: [firstQueuedSource, secondQueuedSource],
+    outcome: "completed",
+  });
   gateway.close();
 });
 
@@ -163,7 +424,11 @@ test("source steering does not merge sources from a new turn into an active turn
   client.emit(makeTurnFinished("end_turn"));
 
   // Dequeue the second turn
-  client.emit(makeQueueUpdate([]) as unknown as WsProtocolMessage);
+  client.emit(
+    makeQueueUpdate([], TEST_RUNTIME, [
+      { client_message_id: "cm-b", disposition: "dequeued" },
+    ]) as unknown as WsProtocolMessage,
+  );
   await Bun.sleep(0);
 
   // Now the second turn should be processing with only source2 (not merged)
@@ -186,6 +451,7 @@ test("terminal turn_finished with end_turn emits finished with completed outcome
   await gateway.submit(makeDelivery({ clientMessageId: "cm-end" }));
 
   client.emit(makeTurnFinished("end_turn"));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -206,6 +472,7 @@ test("terminal turn_finished with cancelled emits finished with cancelled outcom
   await gateway.submit(makeDelivery({ clientMessageId: "cm-cancel" }));
 
   client.emit(makeTurnFinished("cancelled"));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -226,6 +493,7 @@ test("terminal turn_finished with error emits finished with error outcome and er
   await gateway.submit(makeDelivery({ clientMessageId: "cm-err" }));
 
   client.emit(makeTurnFinished("error", TEST_RUNTIME, { error: "API failed" }));
+  await Bun.sleep(0);
 
   const finishedEvents = lifecycleEvents.filter((e) => e.type === "finished");
   expect(finishedEvents).toHaveLength(1);
@@ -483,6 +751,91 @@ test("publishes hundreds of routed runtime tools without runtime_start", async (
   gateway.close();
 });
 
+test("publishes process-owned runtime tools without retaining gateway runtimes", async () => {
+  const client = new FakeClient();
+  const { hooks } = makeHooks();
+  const gateway = new ChannelGateway(client, hooks);
+
+  for (let index = 0; index < 350; index += 1) {
+    const runtime = {
+      agent_id: "agent-1",
+      conversation_id: `conv-schedule-${index}`,
+    };
+    expect(await gateway.publishRuntimeTools(runtime)).toBe(true);
+    await gateway.releaseRuntimeTools(runtime);
+  }
+
+  expect(client.runtimeToolUpdates).toHaveLength(700);
+  expect(
+    client.runtimeToolUpdates.filter(
+      (update) => update.external_tools.length === 0,
+    ),
+  ).toHaveLength(350);
+  expect(client.startedRuntimes).toHaveLength(0);
+  expect(gateway.getKnownRuntimes()).toHaveLength(0);
+  gateway.close();
+});
+
+test("idle runtime cleanup is explicit, guarded, and retryable", async () => {
+  const client = new FakeClient();
+  let failToolUpdate = true;
+  client.runtimeExternalToolsUpdate = async ({ updates }) => {
+    client.runtimeToolUpdates.push(...updates);
+    const shouldFail = failToolUpdate;
+    failToolUpdate = false;
+    return {
+      type: "runtime_external_tools_update_response",
+      request_id: "idle-cleanup",
+      success: !shouldFail,
+      ...(shouldFail ? { error: "tool update failed" } : {}),
+    };
+  };
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const clean = () =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, [], { cleanupIdleRuntime: true });
+  await gateway.registerRuntime(TEST_RUNTIME);
+  await gateway.releaseRuntimeTools(TEST_RUNTIME);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  await expect(clean()).rejects.toThrow("tool update failed");
+  expect(gateway.getKnownRuntimes()).toEqual([]);
+  await expect(clean()).resolves.toBeUndefined();
+  expect(client.runtimeToolUpdates).toHaveLength(2);
+  expect(client.runtimeToolUpdates[0]?.external_tools).toEqual([]);
+  expect(client.runtimeToolUpdates[1]?.external_tools).toEqual([]);
+  await gateway.adoptActiveDelivery(
+    makeDelivery({ sources: [], clientMessageId: "active" }),
+  );
+  await expect(clean()).rejects.toThrow("active channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.releaseActiveDelivery(TEST_RUNTIME, "active");
+  gateway.adoptQueuedDelivery(
+    makeDelivery({ sources: [], clientMessageId: "queued" }),
+  );
+  await expect(clean()).rejects.toThrow("queued channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.close();
+});
+
+test("routed sources block idle cleanup without clearing state or tools", async () => {
+  const client = new FakeClient();
+  const gateway = new ChannelGateway(client, makeHooks().hooks);
+  const source = makeSource();
+  const clean = (sources: ChannelTurnSource[] = []) =>
+    gateway.releaseRuntimeTools(TEST_RUNTIME, sources, {
+      cleanupIdleRuntime: true,
+    });
+
+  await gateway.registerRuntime(TEST_RUNTIME);
+  await expect(clean([source])).rejects.toThrow("routed channel runtime");
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  gateway.setRoutedSources(TEST_RUNTIME, [source]);
+  await expect(clean()).rejects.toThrow("routed channel runtime");
+  await gateway.releaseRuntimeTools(TEST_RUNTIME, [source]);
+  expect(gateway.getKnownRuntimes()).toEqual([TEST_RUNTIME]);
+  expect(client.runtimeToolUpdates).toHaveLength(0);
+  gateway.close();
+});
+
 test("runtime registration removes MessageChannel when no route remains", async () => {
   const client = new FakeClient();
   const { hooks } = makeHooks({ buildExternalTool: async () => null });
@@ -576,6 +929,7 @@ test("control request with single source dispatches to onControlRequest", async 
     agent_id: "agent-1",
     conversation_id: "conv-1",
   } as unknown as WsProtocolMessage);
+  await Bun.sleep(0);
 
   expect(controlRequestEvents).toHaveLength(1);
   const event = controlRequestEvents[0];

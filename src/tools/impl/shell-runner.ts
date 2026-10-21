@@ -1,6 +1,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
   createGitHubPullRequestOutputTracker,
@@ -32,6 +33,7 @@ export type ShellSpawnOptions = {
 
 export interface ShellProcessHandle {
   kill(signal?: string | number): unknown;
+  interrupt(): void;
   write(input: string): void;
 }
 
@@ -203,6 +205,15 @@ function killChildProcessTree(
   }
 }
 
+function interruptChildProcessTree(childProcess: ChildProcess): void {
+  if (process.platform === "win32") {
+    throw new ShellExecutionError(
+      "Process interrupt is not supported on Windows",
+    );
+  }
+  killChildProcessTree(childProcess, "SIGINT");
+}
+
 function spawnPipeProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -233,6 +244,9 @@ function spawnPipeProcess(
   return {
     kill(signal?: string | number) {
       killChildProcessTree(childProcess, signal);
+    },
+    interrupt() {
+      interruptChildProcessTree(childProcess);
     },
     write(_input: string) {
       // Pipe-mode shell processes deliberately keep stdin closed.
@@ -279,6 +293,9 @@ function spawnPtyBridgeProcess(
     kill(signal?: string | number) {
       killChildProcessTree(childProcess, signal);
     },
+    interrupt() {
+      interruptChildProcessTree(childProcess);
+    },
     write(input: string) {
       childProcess.stdin?.write(input);
     },
@@ -314,6 +331,9 @@ function spawnNativePtyProcess(
     kill(signal?: string | number) {
       ptyProcess.kill(typeof signal === "string" ? signal : undefined);
     },
+    interrupt() {
+      ptyProcess.kill("SIGINT");
+    },
     write(input: string) {
       ptyProcess.write(input);
     },
@@ -341,7 +361,10 @@ export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
 ): RunningShellProcess {
-  const [executable] = launcher;
+  const managedLauncher = wrapManagedWorkloadLauncher(launcher, {
+    env: options.env,
+  });
+  const [executable] = managedLauncher;
   if (!executable) {
     throw new ShellExecutionError("Executable is required");
   }
@@ -462,8 +485,8 @@ export function startShellProcess(
 
   try {
     processHandle = options.tty
-      ? spawnPtyProcess(launcher, options, events)
-      : spawnPipeProcess(launcher, options, events);
+      ? spawnPtyProcess(managedLauncher, options, events)
+      : spawnPipeProcess(managedLauncher, options, events);
   } catch (error) {
     completed = true;
     cleanup();

@@ -3,8 +3,12 @@
  */
 
 /**
- * Extract error message from unknown error type
+ * Extract an error message without letting hostile values throw during coercion.
  */
 export function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  try {
+    return error instanceof Error ? error.message : String(error);
+  } catch {
+    return "Unknown error";
+  }
 }

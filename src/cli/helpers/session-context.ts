@@ -3,9 +3,10 @@
 // Contains device/environment information only. Agent metadata is in agentMetadata.ts.
 
 import { platform } from "node:os";
+import { basename } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { SessionContextReason } from "@/reminders/state";
-import type { ShellContext } from "@/utils/shell-context";
+import { detectShellContext, type ShellContext } from "@/utils/shell-context";
 import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./git-context";
 
@@ -30,8 +31,7 @@ export function getLocalTime(): string {
 /**
  * Get device type based on platform
  */
-export function getDeviceType(): string {
-  const p = platform();
+export function getDeviceType(p: NodeJS.Platform = platform()): string {
   switch (p) {
     case "darwin":
       return "macOS";
@@ -81,6 +81,19 @@ export interface BuildSessionContextOptions {
   source?: SessionContextSource;
   reason?: SessionContextReason;
   shellContext?: ShellContext;
+  /** Override the host platform (tests). Defaults to `os.platform()`. */
+  platform?: NodeJS.Platform;
+}
+
+/**
+ * Name the shell Bash/Monitor spawn on macOS/Linux, mirroring Claude Code's
+ * `Shell:` env line and Codex's `<shell>` environment_context field.
+ * Windows keeps its dedicated shell notes instead.
+ */
+export function buildUnixShellLine(shellContext: ShellContext): string {
+  const shellName =
+    basename(shellContext.displayName) || shellContext.displayName;
+  return `- **Shell**: ${shellName}\n`;
 }
 
 function getIntroText(
@@ -89,6 +102,9 @@ function getIntroText(
 ): string {
   if (reason === "cwd_changed") {
     return "The working directory for this conversation has changed. Updated environment context follows.";
+  }
+  if (reason === "post_compaction") {
+    return "Conversation history was compacted. Refreshed environment context follows.";
   }
   switch (source) {
     case "listen":
@@ -121,6 +137,7 @@ export function buildWindowsShellNotes(shellContext?: ShellContext): string {
 ${shellLine}
 - HEREDOC syntax (e.g., \`$(cat <<'EOF'...EOF)\`) does NOT work on Windows
 - For multiline strings (git commits, PR bodies), use simple quoted strings instead
+- Windows PowerShell 5.1: Do NOT redirect native stderr (\`2>&1\`, \`2>$null\`) in Bash tool commands; that turns benign stderr (e.g. git's LF/CRLF warnings) into exit code 1. Leave native stderr unredirected; the Bash tool already captures stderr separately.
 `;
 }
 
@@ -136,6 +153,7 @@ export function buildSessionContext(
     const cwd = options?.cwd ?? process.cwd();
     const source = options?.source ?? "interactive-cli";
     const reason = options?.reason ?? "initial_attach";
+    const currentPlatform = options?.platform ?? platform();
 
     // Gather info with safe fallbacks
     let version = "unknown";
@@ -147,7 +165,7 @@ export function buildSessionContext(
 
     let deviceType = "unknown";
     try {
-      deviceType = getDeviceType();
+      deviceType = getDeviceType(currentPlatform);
     } catch {
       // deviceType stays "unknown"
     }
@@ -157,6 +175,18 @@ export function buildSessionContext(
       localTime = getLocalTime();
     } catch {
       // localTime stays "unknown"
+    }
+
+    let unixShellLine = "";
+    if (currentPlatform !== "win32") {
+      try {
+        unixShellLine = buildUnixShellLine(
+          options?.shellContext ??
+            detectShellContext(process.env, currentPlatform),
+        );
+      } catch {
+        // omit the shell line
+      }
     }
 
     const gitInfo = getGitInfo(cwd);
@@ -169,7 +199,7 @@ ${getIntroText(source, reason)}
 ## Device Information
 - **Local time**: ${localTime}
 - **Device type**: ${deviceType}
-- **Letta Code version**: ${version}
+${unixShellLine}- **Letta Code version**: ${version}
 - **Current working directory**: ${cwd}
 `;
 
@@ -194,7 +224,7 @@ ${gitInfo.status}
     }
 
     // Add Windows-specific shell guidance
-    if (platform() === "win32") {
+    if (currentPlatform === "win32") {
       context += buildWindowsShellNotes(options?.shellContext);
     }
 

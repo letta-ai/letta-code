@@ -30,6 +30,7 @@ import {
   removeChannelTarget,
   upsertChannelTarget,
 } from "./targets";
+import { normalizeTelegramChatId } from "./telegram/chat-id";
 import type {
   ChannelBindableTarget,
   ChannelRoute,
@@ -286,9 +287,15 @@ export function updateChannelRouteLive(
   accountId?: string,
 ): ChannelRouteSnapshot {
   assertSupportedChannelId(channelId);
+  const normalizedChatId =
+    channelId === "telegram" ? normalizeTelegramChatId(chatId) : chatId;
   loadRoutes(channelId);
 
-  const existingRoute = getSelectedRouteByChatId(channelId, chatId, accountId);
+  const existingRoute = getSelectedRouteByChatId(
+    channelId,
+    normalizedChatId,
+    accountId,
+  );
   const selectedAccount = existingRoute
     ? null
     : getSelectedChannelAccount(channelId, accountId);
@@ -326,7 +333,7 @@ export function updateChannelRouteLive(
   const updatedRoute: ChannelRoute = {
     ...(existingRoute ?? {
       accountId: resolvedAccountId,
-      chatId,
+      chatId: normalizedChatId,
       enabled: true,
       createdAt: new Date().toISOString(),
     }),
@@ -341,7 +348,7 @@ export function updateChannelRouteLive(
   } catch (error) {
     removeRouteInMemory(
       channelId,
-      chatId,
+      normalizedChatId,
       resolvedAccountId,
       existingRoute?.threadId,
     );

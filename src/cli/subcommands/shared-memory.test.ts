@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getRepositoryMountDir } from "@/agent/memory-git";
 import {
@@ -201,6 +201,11 @@ describe("runSharedMemorySubcommand", () => {
       failed: 0,
       summaries: [`agent-forum: ${mountDir}`],
     }));
+    const invalidateClientSkills = mock((agentId: string) => {
+      expect(agentId).toBe(MOUNT_AGENT_ID);
+      expect(syncRepositories).toHaveBeenCalledWith(MOUNT_AGENT_ID);
+      expect(existsSync(join(mountDir, ".git"))).toBe(true);
+    });
     const recompileAgent = mock(async () => {});
     const code = await runSharedMemorySubcommand(
       ["attach", "agent-forum", "--agent", MOUNT_AGENT_ID],
@@ -208,6 +213,7 @@ describe("runSharedMemorySubcommand", () => {
         initializeSettings: async () => {},
         request: request as never,
         syncRepositories: syncRepositories as never,
+        invalidateClientSkills,
         recompileAgent,
       },
     );
@@ -221,6 +227,7 @@ describe("runSharedMemorySubcommand", () => {
       ),
     ).toBe(true);
     expect(syncRepositories).toHaveBeenCalledWith(MOUNT_AGENT_ID);
+    expect(invalidateClientSkills).toHaveBeenCalledTimes(1);
     expect(recompileAgent).toHaveBeenCalledWith(MOUNT_AGENT_ID);
     const output = JSON.parse(logs.join("\n"));
     expect(output.attached).toBe(true);
@@ -238,16 +245,24 @@ describe("runSharedMemorySubcommand", () => {
       failed: 1,
       summaries: ["agent-forum: failed: network"],
     }));
+    const invalidateClientSkills = mock((agentId: string) => {
+      expect(agentId).toBe(MOUNT_AGENT_ID);
+      expect(syncRepositories).toHaveBeenCalledWith(MOUNT_AGENT_ID);
+    });
     const code = await runSharedMemorySubcommand(
       ["attach", "agent-forum", "--agent", MOUNT_AGENT_ID],
       {
         initializeSettings: async () => {},
         request: request as never,
         syncRepositories: syncRepositories as never,
+        invalidateClientSkills,
         recompileAgent: async () => {},
       },
     );
     expect(code).toBe(1);
+    // The server attachment exists even when its local checkout failed, so the
+    // old attachment-list snapshot must still be cleared.
+    expect(invalidateClientSkills).toHaveBeenCalledTimes(1);
     const output = JSON.parse(logs.join("\n"));
     expect(output.mount).toBeNull();
     expect(output.sync).toEqual(["agent-forum: failed: network"]);
@@ -316,16 +331,28 @@ describe("runSharedMemorySubcommand", () => {
 
   test("detach deletes the link and recompiles", async () => {
     const { request, calls } = makeRequest();
+    const invalidateClientSkills = mock((agentId: string) => {
+      expect(agentId).toBe("agent-xyz");
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "DELETE" &&
+            call.path === "/v1/agents/agent-xyz/repositories/repo-2",
+        ),
+      ).toBe(true);
+    });
     const recompileAgent = mock(async () => {});
     const code = await runSharedMemorySubcommand(
       ["detach", "repo-2", "--agent", "agent-xyz"],
       {
         initializeSettings: async () => {},
         request: request as never,
+        invalidateClientSkills,
         recompileAgent,
       },
     );
     expect(code).toBe(0);
+    expect(invalidateClientSkills).toHaveBeenCalledTimes(1);
     expect(
       calls.some(
         (call) =>

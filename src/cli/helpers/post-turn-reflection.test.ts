@@ -150,22 +150,33 @@ describe("maybeLaunchPostTurnReflection", () => {
     expect(launch).not.toHaveBeenCalled();
   });
 
-  test("never launches when memfs is disabled", async () => {
+  test("restores post-compaction reminders without launching when memfs is disabled", async () => {
     const launch = mock(async () => true);
+    const reminderState = createSharedReminderState();
+    reminderState.hasSentAgentInfo = true;
+    reminderState.hasSentSessionContext = true;
+    reminderState.hasSentSecretsInfo = true;
+    const contextTracker = createContextTracker();
+    contextTracker.pendingReflectionTrigger = true;
 
     const didLaunch = await maybeLaunchPostTurnReflection({
       agentId: "agent-1",
       conversationId: "conv-1",
       memfsEnabled: false,
       reflectionSettings: { trigger: "step-count", stepCount: 1 },
-      reminderState: createSharedReminderState(),
-      contextTracker: createContextTracker(),
+      reminderState,
+      contextTracker,
       getTranscriptState: transcriptStateWith(10),
       launch,
     });
 
     expect(didLaunch).toBe(false);
     expect(launch).not.toHaveBeenCalled();
+    expect(reminderState.hasSentAgentInfo).toBe(false);
+    expect(reminderState.hasSentSessionContext).toBe(false);
+    expect(reminderState.hasSentSecretsInfo).toBe(false);
+    expect(reminderState.pendingReflectionTrigger).toBe(false);
+    expect(contextTracker.pendingReflectionTrigger).toBe(false);
   });
 
   test("never launches without an agent id", async () => {

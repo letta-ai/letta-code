@@ -1,8 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
-import { basename, dirname, relative } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  isCoreMemoryPath,
+  isProjectedMemoryPath,
+  type LocalMemoryFormat,
+} from "@/agent/memory-format";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -76,10 +80,11 @@ export function getCommittedMemfsRevision(
 
 function collectCommittedMemoryFiles(memoryDir: string): {
   files: LocalMemoryFile[];
+  format: LocalMemoryFormat;
   revision?: string;
 } {
   const revision = getCommittedMemfsRevision(memoryDir);
-  if (!revision) return { files: [], revision };
+  if (!revision) return { files: [], format: "memfs-v1", revision };
 
   const files: LocalMemoryFile[] = [];
   let paths: string[] = [];
@@ -89,10 +94,29 @@ function collectCommittedMemoryFiles(memoryDir: string): {
       .map((path) => normalizePath(path.trim()))
       .filter((path) => path.length > 0 && path.endsWith(".md"));
   } catch {
-    return { files: [], revision };
+    return { files: [], format: "memfs-v1", revision };
   }
 
+  const format: LocalMemoryFormat = paths.includes("MEMORY.md")
+    ? "memfs-v2"
+    : "memfs-v1";
+  const allPaths = new Set(paths);
+
   for (const relativePath of paths) {
+    const shouldRead =
+      format === "memfs-v1" ||
+      isCoreMemoryPath(relativePath, format) ||
+      (/^[^/]+\/MEMORY\.md$/.test(relativePath) &&
+        isProjectedMemoryPath(relativePath, allPaths, format));
+    if (!shouldRead) {
+      files.push({
+        relativePath,
+        label: labelFromPath(relativePath),
+        value: "",
+        description: "",
+      });
+      continue;
+    }
     try {
       const raw = gitOutput(memoryDir, ["show", `HEAD:${relativePath}`]);
       const { frontmatter, body } = parseFrontmatter(raw);
@@ -113,8 +137,65 @@ function collectCommittedMemoryFiles(memoryDir: string): {
 
   return {
     files: files.sort((a, b) => a.label.localeCompare(b.label)),
+    format,
     revision,
   };
+}
+
+function escapeXmlAttribute(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#x27;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function renderRootMemoryProjection(files: LocalMemoryFile[]): string {
+  const allPaths = new Set(files.map((file) => file.relativePath));
+  const rootFiles = files
+    .filter((file) => isCoreMemoryPath(file.relativePath, "memfs-v2"))
+    .filter((file) => file.relativePath !== "MEMORY.md")
+    .sort((left, right) => left.label.localeCompare(right.label));
+  const rootIndex = files.find((file) => file.relativePath === "MEMORY.md");
+  const childIndexes = files
+    .filter(
+      (file) =>
+        /^[^/]+\/MEMORY\.md$/.test(file.relativePath) &&
+        !file.relativePath.startsWith("skills/") &&
+        isProjectedMemoryPath(file.relativePath, allPaths, "memfs-v2"),
+    )
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+  const blocks: string[] = [];
+
+  for (const file of rootFiles) {
+    const lines = [`<${file.label}>`];
+    const description = file.description.trim();
+    if (description) lines.push(`<description>${description}</description>`);
+    const value = file.value.trimEnd();
+    if (value) lines.push(value);
+    lines.push(`</${file.label}>`);
+    blocks.push(lines.join("\n"));
+  }
+
+  if (rootIndex) {
+    const lines = ["<memory>"];
+    const value = rootIndex.value.trimEnd();
+    if (value) lines.push(value);
+    if (childIndexes.length > 0) lines.push("<deferred-memory>");
+    for (const file of childIndexes) {
+      const directory = file.relativePath.slice(0, -"/MEMORY.md".length);
+      const escaped = escapeXmlAttribute(directory);
+      lines.push(
+        `<directory path="${escaped}/" index="${escaped}/MEMORY.md" />`,
+      );
+    }
+    if (childIndexes.length > 0) lines.push("</deferred-memory>");
+    lines.push("</memory>");
+    blocks.push(lines.join("\n"));
+  }
+
+  return blocks.join("\n\n");
 }
 
 function renderExternalProjection(files: LocalMemoryFile[]): string {
@@ -223,10 +304,14 @@ function renderSystemTree(files: LocalMemoryFile[]): string {
 
 function renderMemfsProjection(memoryDir: string): {
   content: string;
+  format: LocalMemoryFormat;
   revision?: string;
 } {
-  const { files, revision } = collectCommittedMemoryFiles(memoryDir);
-  if (files.length === 0) return { content: "", revision };
+  const { files, format, revision } = collectCommittedMemoryFiles(memoryDir);
+  if (files.length === 0) return { content: "", format, revision };
+  if (format === "memfs-v2") {
+    return { content: renderRootMemoryProjection(files), format, revision };
+  }
 
   const lines = [
     "Reminder: <projection> contains the local path of the memory file projection.",
@@ -262,7 +347,7 @@ function renderMemfsProjection(memoryDir: string): {
     lines.push("</memory>");
   }
 
-  return { content: lines.join("\n"), revision };
+  return { content: lines.join("\n"), format, revision };
 }
 
 function pad2(value: number): string {
@@ -303,37 +388,11 @@ function stringField(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function skillRootAndRelativePath(
-  name: string,
-  location: string,
-): {
-  root: string;
-  relativePath: string;
-} {
-  const normalized = normalizePath(location.trim());
-  if (normalized.endsWith("/SKILL.md")) {
-    const skillDir = dirname(normalized);
-    const root = dirname(skillDir);
-    const relativePath = normalizePath(relative(root, normalized));
-    if (basename(skillDir) === name.split("/").at(-1)) {
-      return { root: normalizePath(root), relativePath };
-    }
-  }
-  return {
-    root: normalizePath(dirname(normalized)),
-    relativePath: basename(normalized),
-  };
-}
-
 export function compileAvailableSkillsBlock(
   clientSkills: unknown[] = [],
 ): string {
   const seen = new Set<string>();
-  const entries: Array<{
-    root: string;
-    relativePath: string;
-    description: string;
-  }> = [];
+  const entries: Array<{ name: string; description: string }> = [];
 
   for (const skill of clientSkills) {
     if (!skill || typeof skill !== "object") continue;
@@ -341,80 +400,21 @@ export function compileAvailableSkillsBlock(
     const name = stringField(record.name);
     if (!name || seen.has(name)) continue;
     seen.add(name);
-    const description =
-      stringField(record.description)?.trim().split("\n")[0] ?? "";
-    const location =
-      stringField(record.location)?.trim() ||
-      `${MEMORY_DIR_PLACEHOLDER}/skills/${name}/SKILL.md`;
     entries.push({
-      ...skillRootAndRelativePath(name, location),
-      description,
+      name,
+      description: stringField(record.description)?.trim().split("\n")[0] ?? "",
     });
   }
 
   if (entries.length === 0) return "";
 
-  const grouped = new Map<
-    string,
-    Array<{ relativePath: string; description: string }>
-  >();
-  for (const entry of entries) {
-    const group = grouped.get(entry.root) ?? [];
-    group.push({
-      relativePath: entry.relativePath,
-      description: entry.description,
-    });
-    grouped.set(entry.root, group);
-  }
-
   const lines = ["<available_skills>"];
-  const roots = [...grouped.keys()].sort((a, b) => a.localeCompare(b));
-  for (const [rootIndex, root] of roots.entries()) {
-    lines.push(root);
-    type Tree = Map<string, Tree | string>;
-    const tree: Tree = new Map();
-    for (const entry of (grouped.get(root) ?? []).sort((a, b) =>
-      a.relativePath.localeCompare(b.relativePath),
-    )) {
-      const parts = entry.relativePath.split("/").filter(Boolean);
-      let node = tree;
-      for (const part of parts.slice(0, -1)) {
-        const existing = node.get(part);
-        if (existing instanceof Map) {
-          node = existing;
-        } else {
-          const child: Tree = new Map();
-          node.set(part, child);
-          node = child;
-        }
-      }
-      const leaf = parts.at(-1);
-      if (leaf) node.set(leaf, entry.description);
-    }
-
-    const render = (node: Tree, prefix = "") => {
-      const entries = [...node.entries()].sort(
-        ([aName, aValue], [bName, bValue]) => {
-          const aDir = aValue instanceof Map;
-          const bDir = bValue instanceof Map;
-          if (aDir !== bDir) return aDir ? -1 : 1;
-          return aName.localeCompare(bName);
-        },
-      );
-      for (const [index, [name, value]] of entries.entries()) {
-        const isLast = index === entries.length - 1;
-        const connector = isLast ? "└── " : "├── ";
-        if (value instanceof Map) {
-          lines.push(`${prefix}${connector}${name}/`);
-          render(value, `${prefix}${isLast ? "    " : "│   "}`);
-        } else {
-          const suffix = value.trim() ? ` (${value.trim()})` : "";
-          lines.push(`${prefix}${connector}${name}${suffix}`);
-        }
-      }
-    };
-    render(tree);
-    if (rootIndex !== roots.length - 1) lines.push("");
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name),
+  )) {
+    lines.push(
+      `- \`${entry.name}\`${entry.description ? `: ${entry.description}` : ""}`,
+    );
   }
   lines.push("</available_skills>");
   return lines.join("\n");
@@ -437,14 +437,17 @@ export function compileLocalSystemPrompt(
     options.memoryDir ?? getScopedMemoryFilesystemRoot(options.agent.id);
   const memfs =
     options.includeMemfs === false
-      ? { content: "", revision: undefined }
+      ? { content: "", format: undefined, revision: undefined }
       : renderMemfsProjection(memoryDir);
-  const metadata = compileMemoryMetadata({
-    agentId: options.agent.id,
-    conversationId: options.conversationId,
-    compiledAt,
-    previousMessageCount: options.previousMessageCount ?? 0,
-  });
+  const metadata =
+    memfs.format === "memfs-v2"
+      ? ""
+      : compileMemoryMetadata({
+          agentId: options.agent.id,
+          conversationId: options.conversationId,
+          compiledAt,
+          previousMessageCount: options.previousMessageCount ?? 0,
+        });
   const coreMemory = [memfs.content, metadata]
     .filter((part) => part.trim().length > 0)
     .join("\n\n");

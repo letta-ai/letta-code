@@ -5,6 +5,10 @@
  */
 
 import { getBalanceMetadata } from "@/backend/api/metadata";
+import type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+
+export type { ChatGPTOAuthConfig } from "@/types/chatgpt-oauth";
+
 import {
   createProvider,
   getProviderByName,
@@ -38,17 +42,6 @@ export function normalizeChatGPTOAuthProviderName(
     );
   }
   return normalized;
-}
-
-/**
- * ChatGPT OAuth configuration persisted by the active provider store.
- */
-export interface ChatGPTOAuthConfig {
-  access_token: string;
-  id_token: string;
-  refresh_token?: string;
-  account_id: string;
-  expires_at: number; // Unix timestamp in milliseconds
 }
 
 interface EligibilityCheckResult {

@@ -3,7 +3,15 @@ import {
   buildCrossAgentSandboxPolicy,
   deriveSelfAgentRootsForTrees,
 } from "@/permissions/sandbox-policy";
-import type { SandboxAvailability } from "@/sandbox/availability";
+import {
+  buildWorkspaceSandboxPolicy,
+  resolveWorkspaceSandbox,
+} from "@/permissions/workspace-sandbox";
+import { getRuntimeContext } from "@/runtime-context";
+import {
+  detectSandboxBackend,
+  type SandboxAvailability,
+} from "@/sandbox/availability";
 import { SANDBOX_ENV_VAR, type SandboxBackend } from "@/sandbox/policy";
 import { wrapLauncher } from "@/sandbox/wrap";
 
@@ -14,8 +22,7 @@ import { wrapLauncher } from "@/sandbox/wrap";
  * leaving the current agent's own directory, the repo, and temp writable.
  *
  * Shared by every shell executor — the `Bash` tool (`bash.ts`), the Codex
- * `exec_command`/`write_stdin` sessions (`exec-command.ts`), and the Gemini
- * `run_shell_command` path (`shell.ts`) — so the kernel owns the whole shell
+ * `exec_command`/`write_stdin` sessions (`exec-command.ts`) — so the kernel owns the whole shell
  * surface, not just one dialect.
  *
  * This is the SOLE cross-agent enforcement for spawned shells: the static
@@ -51,6 +58,37 @@ export function applyShellSandbox(
   availability?: SandboxAvailability,
 ): ShellSandboxResult {
   const unchanged: ShellSandboxResult = { launcher, env, backend: null };
+
+  const requestedWorkspaceSandbox = getRuntimeContext()?.workspaceSandbox;
+  if (requestedWorkspaceSandbox) {
+    const available = availability ?? detectSandboxBackend();
+    const backend = available.backend;
+    if (!backend) {
+      throw new Error(
+        `workspace sandbox requires a kernel sandbox backend (${available.reason})`,
+      );
+    }
+    const workspaceSandbox = resolveWorkspaceSandbox(
+      requestedWorkspaceSandbox,
+      { availability: available },
+    );
+    const wrapped = wrapLauncher(
+      launcher,
+      buildWorkspaceSandboxPolicy(workspaceSandbox),
+      {
+        backend,
+        bwrapPath: available.bwrapPath,
+      },
+    );
+    if (!wrapped || wrapped.length === 0) {
+      throw new Error("workspace sandbox failed to wrap shell command");
+    }
+    return {
+      launcher: wrapped,
+      env: { ...env, [SANDBOX_ENV_VAR]: backend },
+      backend,
+    };
+  }
 
   // The gate short-circuits on the flag before any host probe, so the
   // sandbox-off hot path stays a no-op. When it returns a context it has already

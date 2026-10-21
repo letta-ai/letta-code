@@ -77,7 +77,7 @@ describe("listen reflection runtime state", () => {
 
     expect(gatewaySource).toContain("registry.setReflectionHandler");
     expect(gatewaySource).toContain('executeRemoteCommand(runtime, "reflect")');
-    expect(commandsSource).toContain("launchReflectionSubagent({");
+    expect(commandsSource).toMatch(/launchReflectionSubagent\(\s*\{/);
     expect(commandsSource).not.toContain("buildReflectionSubagentPrompt({");
     expect(commandsSource).not.toContain("memoryDir: getMemoryFilesystemRoot");
     expect(commandsSource).not.toContain(

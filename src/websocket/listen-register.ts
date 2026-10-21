@@ -4,7 +4,9 @@
  */
 
 import { createHash } from "node:crypto";
+import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
+import { getMachineMetadata } from "@/utils/machine-metadata";
 import { getVersion } from "@/version.ts";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener/listener-constants";
 
@@ -12,6 +14,7 @@ export interface RegisterResult {
   connectionId: string;
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
+  supportsPairedListenerGenerations: boolean;
 }
 
 export interface RegisterOptions {
@@ -115,7 +118,7 @@ export async function registerWithCloud(
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${opts.apiKey}`,
+      Authorization: `Bearer ${getDesktopAccessToken() ?? opts.apiKey}`,
       "X-Letta-Source": "letta-code",
     },
     body: JSON.stringify({
@@ -128,8 +131,13 @@ export async function registerWithCloud(
         lettaCodeVersion: getVersion(),
         os: process.platform,
         nodeVersion: process.version,
+        machine: await getMachineMetadata(),
         environmentMessageProtocol: "v2-input",
+        supportsPairedListenerGenerations: true,
         supported_commands: SUPPORTED_REMOTE_COMMANDS,
+        // Mirrors app_server_info so callers can check before connecting.
+        launch_subagent_notify_caller: true,
+        subagent_message: true,
         self_update: getSelfUpdateStatus(),
       },
     }),
@@ -193,6 +201,8 @@ export async function registerWithCloud(
     connectionId: result.connectionId,
     wsUrl: result.wsUrl,
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
+    supportsPairedListenerGenerations:
+      result.supportsPairedListenerGenerations === true,
   };
 }
 

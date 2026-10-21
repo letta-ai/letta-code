@@ -11,10 +11,6 @@ export function firstNonEmptyString(...values: unknown[]): string | undefined {
   return values.find(isNonEmptyString);
 }
 
-export function normalizeSlackText(text: string): string {
-  return text.replace(/^(?:\s*<@[A-Z0-9]+>\s*)+/, "").trim();
-}
-
 export function resolveSlackChatType(chatId: string): "direct" | "channel" {
   return chatId.startsWith("D") ? "direct" : "channel";
 }

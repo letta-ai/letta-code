@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { normalizeMessageImageParts } from "@/utils/message-image-normalization";
 import {
+  createDeploymentRecoveryTurnInput,
   createTurnInputState,
   ensureTurnInputMessageOtids,
   rebuildTurnInputWithFreshDenials,
@@ -8,6 +9,27 @@ import {
 } from "./turn-input-state";
 
 describe("listener turn input state", () => {
+  test("deployment recovery replaces accepted work with fresh internal continuations", () => {
+    const first = createDeploymentRecoveryTurnInput();
+    const second = createDeploymentRecoveryTurnInput();
+
+    expect(first.messages).toHaveLength(1);
+    expect(first.messages[0]).toMatchObject({
+      type: "message",
+      role: "user",
+      content: [
+        {
+          type: "text",
+          text: expect.stringContaining("<system-reminder>"),
+        },
+      ],
+    });
+    expect(JSON.stringify(first.messages)).not.toContain("tool_call_id");
+    expect(JSON.stringify(first.messages)).not.toContain('"approvals"');
+    expect(first.messages[0]?.otid).toBeString();
+    expect(first.messages[0]?.otid).not.toBe(second.messages[0]?.otid);
+  });
+
   test("assigns identities to messages introduced by turn transforms", () => {
     const messages = ensureTurnInputMessageOtids([
       {
@@ -110,4 +132,40 @@ describe("listener turn input state", () => {
       [refreshedOtid as string]: "drop",
     });
   });
+  test.each([true, false])(
+    "pending-approval rejection preserves content OTIDs (server approvals=%s)",
+    (hasApprovals) => {
+      const state = rebuildTurnInputWithFreshDenials(
+        createTurnInputState(
+          [
+            { type: "approval", approvals: [], otid: "stale-approval" },
+            { role: "user", content: "hello", otid: "user-otid" },
+            { role: "system", content: "context", otid: "context-otid" },
+          ],
+          { "user-otid": "drop" },
+        ),
+        hasApprovals
+          ? [{ toolCallId: "pending-tool", toolName: "Bash", toolArgs: "{}" }]
+          : [],
+        "stale approval",
+        true,
+      );
+      expect(state.messages.filter((item) => item.type !== "approval")).toEqual(
+        [
+          { role: "user", content: "hello", otid: "user-otid" },
+          { role: "system", content: "context", otid: "context-otid" },
+        ],
+      );
+      expect(state.imageFailureModesByMessageOtid).toEqual({
+        "user-otid": "drop",
+      });
+      if (hasApprovals) {
+        expect(state.messages[0]).toMatchObject({ type: "approval" });
+        expect(state.messages[0]?.otid).toBeString();
+        expect(state.messages[0]?.otid).not.toBe("stale-approval");
+      } else {
+        expect(state.messages).toHaveLength(2);
+      }
+    },
+  );
 });

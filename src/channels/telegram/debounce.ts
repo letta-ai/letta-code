@@ -12,7 +12,10 @@ const TELEGRAM_DEBOUNCE_MAX_MS = 10000;
 export function resolveTelegramInboundDebounceMs(
   config: Pick<TelegramChannelAccount, "inboundDebounceMs">,
 ): number {
-  const raw = process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS;
+  const raw =
+    typeof process === "undefined"
+      ? undefined
+      : process.env.LETTA_TELEGRAM_INBOUND_DEBOUNCE_MS;
   if (typeof raw === "string" && raw.trim() !== "") {
     const envOverride = Number(raw);
     if (Number.isFinite(envOverride) && envOverride >= 0) {

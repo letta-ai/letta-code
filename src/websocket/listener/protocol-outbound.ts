@@ -1,15 +1,12 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getSubagents } from "@/agent/subagent-state";
-import { getGitContext } from "@/cli/helpers/git-context";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { getSystemPromptDoctorState } from "@/cli/helpers/system-prompt-warning";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import { permissionMode } from "@/permissions/mode";
 import type { DequeuedBatch } from "@/queue/queue-runtime";
-import { settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   DeviceStatus,
@@ -29,27 +26,39 @@ import type {
   SubagentStateUpdateMessage,
   WsProtocolMessage,
 } from "@/types/protocol_v2";
-import { isDebugEnabled } from "@/utils/debug";
+import type { QueueRemovalTransition } from "@/types/queue-update-protocol";
+import { debugLog, debugWarn } from "@/utils/debug";
 import { buildBackgroundProcessSnapshot } from "./background-process-snapshot";
 import {
   nextListenerConnectionEventSeq,
   resolveListenerConnectionTargets,
   TO_SUBSCRIBERS,
+  toListenerConnection,
 } from "./connection";
 import { SYSTEM_REMINDER_RE } from "./constants";
 import { getConversationWorkingDirectory, getExportedCwdMap } from "./cwd";
+import { deviceGitContextCache } from "./device-git-context";
 import {
   recordDeviceStatus,
   shouldEmitDeviceStatus,
 } from "./device-status-cache";
+import { buildDeviceToolsetStatus } from "./device-toolset-status";
+import { createLifecycleMessageBase } from "./lifecycle-message";
 import { SUPPORTED_REMOTE_COMMANDS } from "./listener-constants";
 import { listListenerModCommands } from "./mod-command-registry";
-import { enqueueOutboundFrame, type OutboundFrameClass } from "./outbound-wire";
+import {
+  createOutboundMessageDelivery,
+  type OutboundMessageDelivery,
+} from "./outbound-delivery";
+import { enqueueOutboundFrame } from "./outbound-wire";
 import { getConversationPermissionModeState } from "./permission-mode";
+import {
+  classifyOutboundFrame,
+  isStreamChannelMessage,
+} from "./protocol-outbound-routing";
 import {
   getConversationRuntime,
   getPendingControlRequests,
-  getRecoveredApprovalStateForScope,
   hasInterruptedCacheForScope,
   safeEmitWsEvent,
 } from "./runtime";
@@ -60,6 +69,7 @@ import {
 } from "./scope";
 import { notifyStreamObservers } from "./stream-observers";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import { buildTurnCorrelationSnapshot } from "./turn-correlation";
 import type {
   ConversationRuntime,
   IncomingMessage,
@@ -73,8 +83,6 @@ type PartialRuntimeScope = {
   conversation_id?: string | null;
 };
 
-const GIT_CONTEXT_CACHE_TTL_MS = 15_000;
-const MAX_GIT_CONTEXT_CACHE_ENTRIES = 64;
 /**
  * Frozen copy of the supported commands list. Avoids allocating it for every
  * device-status update. (LET-8948)
@@ -107,39 +115,6 @@ function getProtocolPerfKey(
   return message.type;
 }
 
-const gitContextCache = new Map<
-  string,
-  {
-    expiresAt: number;
-    value: ReturnType<typeof getGitContext>;
-  }
->();
-
-function getCachedDeviceGitContext(
-  cwd: string,
-): ReturnType<typeof getGitContext> {
-  const now = Date.now();
-  const cached = gitContextCache.get(cwd);
-  if (cached && cached.expiresAt > now) {
-    return cached.value;
-  }
-
-  const value = getGitContext(cwd);
-  gitContextCache.set(cwd, {
-    expiresAt: now + GIT_CONTEXT_CACHE_TTL_MS,
-    value,
-  });
-
-  if (gitContextCache.size > MAX_GIT_CONTEXT_CACHE_ENTRIES) {
-    const oldestKey = gitContextCache.keys().next().value;
-    if (oldestKey) {
-      gitContextCache.delete(oldestKey);
-    }
-  }
-
-  return value;
-}
-
 function getListenerRuntime(runtime: RuntimeCarrier): ListenerRuntime | null {
   if (!runtime) return null;
   return "listener" in runtime ? runtime.listener : runtime;
@@ -151,11 +126,44 @@ function getScopeForRuntime(
 ): PartialRuntimeScope {
   if (runtime && "listener" in runtime) {
     return {
-      agent_id: scope?.agent_id ?? runtime.agentId,
+      agent_id: scope && "agent_id" in scope ? scope.agent_id : runtime.agentId,
       conversation_id: scope?.conversation_id ?? runtime.conversationId,
     };
   }
   return scope ?? {};
+}
+
+function getDeviceStatusWorkingDirectory(
+  runtime: RuntimeCarrier,
+  params?: PartialRuntimeScope,
+): string {
+  const listener = getListenerRuntime(runtime);
+  if (!listener) {
+    return process.cwd();
+  }
+  const scope = getScopeForRuntime(runtime, params);
+  const conversationRuntime = getConversationRuntime(
+    listener,
+    resolveScopedAgentId(listener, scope),
+    resolveScopedConversationId(listener, scope),
+  );
+  return (
+    conversationRuntime?.activeWorkingDirectory ??
+    getConversationWorkingDirectory(
+      listener,
+      resolveScopedAgentId(listener, scope),
+      resolveScopedConversationId(listener, scope),
+    )
+  );
+}
+
+export async function refreshDeviceGitContext(
+  runtime: RuntimeCarrier,
+  params?: PartialRuntimeScope,
+): Promise<void> {
+  await deviceGitContextCache.refresh(
+    getDeviceStatusWorkingDirectory(runtime, params),
+  );
 }
 
 export function emitRuntimeStateUpdates(
@@ -183,10 +191,9 @@ export function buildDeviceStatus(
       is_processing: false,
       current_permission_mode: permissionMode.getMode(),
       current_working_directory: fallbackCwd,
-      git_context: getCachedDeviceGitContext(fallbackCwd),
+      git_context: deviceGitContextCache.read(fallbackCwd),
       letta_code_version: process.env.npm_package_version || null,
-      current_toolset: null,
-      current_toolset_preference: "auto",
+      ...buildDeviceToolsetStatus(null, null),
       current_loaded_tools: [],
       current_available_skills: [],
       background_processes: buildBackgroundProcessSnapshot(),
@@ -208,27 +215,15 @@ export function buildDeviceStatus(
     agentId,
     conversationId,
   );
-  const toolsetPreference = (() => {
-    if (!agentId) {
-      return "auto" as const;
-    }
-    try {
-      return settingsManager.getToolsetPreference(agentId, conversationId);
-    } catch {
-      return "auto" as const;
-    }
-  })();
   const conversationPermissionModeState = getConversationPermissionModeState(
     listener,
     agentId,
     conversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const resolvedCwd = getConversationWorkingDirectory(
-    listener,
-    agentId,
-    conversationId,
-  );
+  const resolvedCwd =
+    conversationRuntime?.activeWorkingDirectory ??
+    getConversationWorkingDirectory(listener, agentId, conversationId);
   const reflectionSettings = (() => {
     if (!agentId) {
       return null;
@@ -250,15 +245,9 @@ export function buildDeviceStatus(
     is_processing: !!conversationRuntime?.isProcessing,
     current_permission_mode: conversationPermissionModeState.mode,
     current_working_directory: resolvedCwd,
-    git_context: getCachedDeviceGitContext(resolvedCwd),
+    git_context: deviceGitContextCache.read(resolvedCwd),
     letta_code_version: process.env.npm_package_version || null,
-    current_toolset:
-      conversationRuntime?.currentToolset ??
-      (toolsetPreference === "auto" ? null : toolsetPreference),
-    current_toolset_preference:
-      conversationRuntime?.currentToolset === null
-        ? toolsetPreference
-        : (conversationRuntime?.currentToolsetPreference ?? toolsetPreference),
+    ...buildDeviceToolsetStatus(agentId, conversationId, conversationRuntime),
     current_loaded_tools: conversationRuntime?.currentLoadedTools ?? [],
     current_available_skills: conversationRuntime?.currentAvailableSkills ?? [],
     background_processes: buildBackgroundProcessSnapshot(
@@ -315,18 +304,13 @@ export function buildLoopStatus(
     scopedConversationId,
   );
   const interruptedCacheActive = hasInterruptedCacheForScope(listener, scope);
-  const recovered = getRecoveredApprovalStateForScope(listener, scope);
   const status = interruptedCacheActive
     ? !conversationRuntime?.isProcessing
       ? "WAITING_ON_INPUT"
       : conversationRuntime?.loopStatus === "WAITING_ON_APPROVAL"
         ? "WAITING_ON_INPUT"
         : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT")
-    : recovered &&
-        recovered.pendingRequestIds.size > 0 &&
-        conversationRuntime?.loopStatus === "WAITING_ON_INPUT"
-      ? "WAITING_ON_APPROVAL"
-      : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
+    : (conversationRuntime?.loopStatus ?? "WAITING_ON_INPUT");
   return {
     status,
     active_run_ids:
@@ -335,9 +319,13 @@ export function buildLoopStatus(
         : conversationRuntime?.activeRunId
           ? [conversationRuntime.activeRunId]
           : [],
-    // Gate on the *reported* status so downgrades (interrupted cache) also
-    // clear the executing set, and stale runtime state never leaks into
-    // frames emitted while the loop is not executing tools.
+    ...buildTurnCorrelationSnapshot(
+      listener,
+      scopedAgentId,
+      scopedConversationId,
+    ),
+    // Gate on the *reported* status so downgrades (interrupted cache) also clear
+    // the executing set and stale state never leaks into non-executing frames.
     executing_tool_call_ids:
       status === "EXECUTING_CLIENT_SIDE_TOOL" && conversationRuntime
         ? [...conversationRuntime.turnLifecycle.executingToolCallIds]
@@ -368,31 +356,9 @@ export function buildQueueSnapshot(
     source: item.source,
     content: item.kind === "message" ? item.content : item.text,
     enqueued_at: new Date(item.enqueuedAt).toISOString(),
+    ...(item.paused ? { paused: true } : {}),
   }));
 }
-
-/** Message types that belong on the stream channel.
- *  These are high-frequency runtime emissions that should be separated
- *  from control/command-response traffic on the control channel. */
-const STREAM_CHANNEL_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "stream_delta",
-  "update_device_status",
-  "update_loop_status",
-  "update_queue",
-  "update_subagent_state",
-]);
-
-function isStreamChannelMessage(type: string): boolean {
-  return STREAM_CHANNEL_MESSAGE_TYPES.has(type);
-}
-
-/** Snapshot-style messages: a newer frame for the same scope supersedes a queued one. */
-const COALESCABLE_STATUS_MESSAGE_TYPES: ReadonlySet<string> = new Set([
-  "update_device_status",
-  "update_loop_status",
-  "update_queue",
-  "update_subagent_state",
-]);
 
 type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
   ? TMessage extends WsProtocolMessage
@@ -400,13 +366,9 @@ type OutboundProtocolMessage = WsProtocolMessage extends infer TMessage
     : never
   : never;
 
-function classifyOutboundFrame(
-  message: OutboundProtocolMessage,
-): OutboundFrameClass {
-  return COALESCABLE_STATUS_MESSAGE_TYPES.has(message.type)
-    ? "status"
-    : "critical";
-}
+export { createLifecycleMessageBase } from "./lifecycle-message";
+export type { OutboundMessageDelivery } from "./outbound-delivery";
+
 export function emitProtocolV2Message(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -418,14 +380,30 @@ export function emitProtocolV2Message(
       }
     | undefined,
   routing: ListenerMessageRouting,
-): void {
+  notifyObservers = true,
+  envelope?: { idempotencyKey?: string },
+): OutboundMessageDelivery {
   const listener = getListenerRuntime(runtime);
   const runtimeScope = resolveRuntimeScope(
     listener,
     getScopeForRuntime(runtime, scope),
   );
-  if (!runtimeScope) return;
-  notifyStreamObservers(listener, message, runtimeScope);
+  const delivery = (
+    receipts: OutboundMessageDelivery["receipts"],
+  ): OutboundMessageDelivery =>
+    createOutboundMessageDelivery(receipts, (connectionId) =>
+      emitProtocolV2Message(
+        socket,
+        runtime,
+        message,
+        scope,
+        toListenerConnection(connectionId),
+        false,
+        envelope,
+      ),
+    );
+  if (!runtimeScope) return delivery([]);
+  if (notifyObservers) notifyStreamObservers(listener, message, runtimeScope);
   const frameClass = classifyOutboundFrame(message);
   const targets = resolveListenerConnectionTargets({
     runtime: listener,
@@ -434,9 +412,10 @@ export function emitProtocolV2Message(
     routing,
     streamMessage: isStreamChannelMessage(message.type),
   });
+  const receipts: OutboundMessageDelivery["receipts"] = [];
   for (const { connection, transport: targetSocket } of targets) {
     if (!isListenerTransportOpen(targetSocket)) continue;
-    enqueueOutboundFrame(targetSocket, {
+    const receipt = enqueueOutboundFrame(targetSocket, {
       typeLabel: message.type,
       frameClass,
       ...(frameClass === "status"
@@ -452,14 +431,17 @@ export function emitProtocolV2Message(
           runtime: runtimeScope,
           event_seq: eventSeq,
           emitted_at: new Date().toISOString(),
-          idempotency_key: `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
+          idempotency_key:
+            envelope?.idempotencyKey ??
+            `${message.type}:${eventSeq}:${crypto.randomUUID()}`,
         } as WsProtocolMessage;
         let payload: string;
         try {
           payload = JSON.stringify(outbound);
         } catch (error) {
-          console.error(
-            `[Listen V2] Failed to emit ${message.type} (seq=${eventSeq})`,
+          debugWarn(
+            "Listen V2",
+            `Failed to emit ${message.type} (seq=${eventSeq})`,
             error,
           );
           safeEmitWsEvent("send", "lifecycle", {
@@ -474,17 +456,13 @@ export function emitProtocolV2Message(
           payload,
           perfKey: getProtocolPerfKey(message),
           onSent: () => {
-            if (isDebugEnabled()) {
-              console.log(
-                `[Listen V2] Emitting ${message.type} (seq=${eventSeq})`,
-              );
-            }
+            debugLog("Listen V2", `Emitting ${message.type} (seq=${eventSeq})`);
             safeEmitWsEvent("send", "protocol", outbound);
           },
         };
       },
       onSendError: (error) => {
-        console.error(`[Listen V2] Failed to emit ${message.type}`, error);
+        debugWarn("Listen V2", `Failed to emit ${message.type}`, error);
         safeEmitWsEvent("send", "lifecycle", {
           type: "_ws_send_error",
           message_type: message.type,
@@ -492,7 +470,9 @@ export function emitProtocolV2Message(
         });
       },
     });
+    receipts.push({ connectionId: connection?.id ?? null, ...receipt });
   }
+  return delivery(receipts);
 }
 
 export function broadcastServiceProtocolMessage(
@@ -587,6 +567,7 @@ export function emitQueueUpdate(
     conversation_id?: string | null;
   },
   routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   if (!listener) {
@@ -599,6 +580,7 @@ export function emitQueueUpdate(
   > = {
     type: "update_queue",
     queue: buildQueueSnapshot(runtime, resolvedScope),
+    removed: [...removed],
   };
   emitProtocolV2Message(socket, runtime, message, resolvedScope, routing);
 }
@@ -687,9 +669,7 @@ export function emitDequeuedUserMessage(
   incoming: IncomingMessage,
   batch: DequeuedBatch,
 ): void {
-  // A mod-driven continue turn carries no real user input — suppress the
-  // optimistic echo so the follow-up stays seamless (matches TUI, where the
-  // continue is injected without rendering a user message).
+  // Mod-only continuations do not render optimistic user messages.
   if (
     batch.items.length > 0 &&
     batch.items.every((item) => item.kind === "mod_continue")
@@ -697,60 +677,59 @@ export function emitDequeuedUserMessage(
     return;
   }
 
-  const firstUserPayload = incoming.messages.find(
-    (payload): payload is MessageCreate & { client_message_id?: string } =>
-      "content" in payload,
-  );
-  if (!firstUserPayload) return;
+  for (const payload of incoming.messages) {
+    if (!("content" in payload) || payload.role !== "user") continue;
+    const rawContent = payload.content;
+    let content: MessageCreate["content"];
 
-  const rawContent = firstUserPayload.content;
-  let content: MessageCreate["content"];
-
-  if (typeof rawContent === "string") {
-    content = replaceCronPromptsForDisplay(rawContent, batch)
-      .replace(SYSTEM_REMINDER_RE, "")
-      .trim();
-  } else if (Array.isArray(rawContent)) {
-    content = rawContent.flatMap((part) => {
-      if (isTextContentPart(part)) {
-        const cronDisplay = getCronPromptDisplayForText(part.text, batch);
-        if (cronDisplay !== null) {
-          return [{ ...part, text: cronDisplay }];
+    if (typeof rawContent === "string") {
+      content = replaceCronPromptsForDisplay(rawContent, batch)
+        .replace(SYSTEM_REMINDER_RE, "")
+        .trim();
+    } else if (Array.isArray(rawContent)) {
+      content = rawContent.flatMap((part) => {
+        if (isTextContentPart(part)) {
+          const cronDisplay = getCronPromptDisplayForText(part.text, batch);
+          if (cronDisplay !== null) {
+            return [{ ...part, text: cronDisplay }];
+          }
         }
-      }
-      return isSystemReminderPart(part) ? [] : [part];
-    }) as MessageCreate["content"];
-  } else {
-    return;
+        return isSystemReminderPart(part) ? [] : [part];
+      }) as MessageCreate["content"];
+    } else {
+      continue;
+    }
+
+    const hasContent =
+      typeof content === "string"
+        ? content.length > 0
+        : Array.isArray(content) && content.length > 0;
+    if (!hasContent) continue;
+    // The outgoing request shares this payload; retain the echo's identity.
+    payload.otid ??= payload.client_message_id ?? crypto.randomUUID();
+    const otid = payload.otid;
+
+    emitCanonicalMessageDelta(
+      socket,
+      runtime,
+      {
+        type: "message",
+        id: `user-msg-${crypto.randomUUID()}`,
+        date: new Date().toISOString(),
+        message_type: "user_message",
+        content,
+        otid,
+        created_by_id:
+          payload.attribution === undefined
+            ? incoming.actingUserId
+            : payload.attribution.acting_user_id,
+      } as StreamDelta,
+      {
+        agent_id: incoming.agentId,
+        conversation_id: incoming.conversationId,
+      },
+    );
   }
-
-  const hasContent =
-    typeof content === "string"
-      ? content.length > 0
-      : Array.isArray(content) && content.length > 0;
-  if (!hasContent) return;
-  const otid =
-    firstUserPayload.otid ??
-    firstUserPayload.client_message_id ??
-    batch.batchId;
-
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      type: "message",
-      id: `user-msg-${crypto.randomUUID()}`,
-      date: new Date().toISOString(),
-      message_type: "user_message",
-      content,
-      otid,
-      created_by_id: incoming.actingUserId,
-    } as StreamDelta,
-    {
-      agent_id: incoming.agentId,
-      conversation_id: incoming.conversationId,
-    },
-  );
 }
 
 export function emitQueueUpdateIfOpen(
@@ -759,11 +738,12 @@ export function emitQueueUpdateIfOpen(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
+  removed: readonly QueueRemovalTransition[] = [],
 ): void {
   const listener = getListenerRuntime(runtime);
   const transport = listener?.transport ?? listener?.socket;
   if (transport && isListenerTransportOpen(transport)) {
-    emitQueueUpdate(transport, runtime, scope);
+    emitQueueUpdate(transport, runtime, scope, TO_SUBSCRIBERS, removed);
   }
 }
 
@@ -795,7 +775,7 @@ export function emitDeviceStatusUpdateIfChanged(
 export function emitStateSync(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
-  scope: RuntimeScope,
+  scope: RuntimeScope<string | null>,
   options?: {
     forceDeviceStatus?: boolean;
     routing?: ListenerMessageRouting;
@@ -815,9 +795,7 @@ export function emitStateSync(
   emitSubagentStateUpdate(socket, runtime, scope, routing);
 }
 
-// ─────────────────────────────────────────────
 // Subagent state
-// ─────────────────────────────────────────────
 
 function resolveSubagentScopeForSnapshot(
   runtime: RuntimeCarrier,
@@ -825,7 +803,7 @@ function resolveSubagentScopeForSnapshot(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): RuntimeScope | null {
+): RuntimeScope<string | null> | null {
   const listener = getListenerRuntime(runtime);
   return resolveRuntimeScope(listener, getScopeForRuntime(runtime, scope));
 }
@@ -841,9 +819,8 @@ export function buildSubagentSnapshot(
 
   return getSubagents()
     .filter((a) => {
-      // Include all statuses (pending, running, completed, error) so the
-      // web UI receives the final state with tool calls and agent URL
-      // before the subagent is cleaned up from the store.
+      // Include every status so the web UI gets the final state, tool calls
+      // and agent URL before the subagent is cleaned up from the store.
       if (a.silent && a.isBackground !== true) {
         return false;
       }
@@ -868,9 +845,12 @@ export function buildSubagentSnapshot(
       prompt: a.prompt,
       status: a.status,
       agent_url: a.agentURL,
+      agent_id: a.agentId ?? null,
       conversation_id: a.conversationId ?? null,
+      super_run_id: a.superRunId,
       model: a.model,
       is_background: a.isBackground,
+      claims_parent_runtime: a.claimsParentRuntime,
       silent: a.silent,
       tool_call_id: a.toolCallId,
       parent_agent_id: a.parentAgentId,
@@ -880,6 +860,7 @@ export function buildSubagentSnapshot(
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,
+      ...(a.result !== undefined ? { result: a.result } : {}),
     }));
 }
 
@@ -916,43 +897,6 @@ export function emitSubagentStateIfOpen(
   }
 }
 
-export function scheduleQueueEmit(
-  runtime: ListenerRuntime,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  runtime.pendingQueueEmitScope = scope;
-
-  if (runtime.queueEmitScheduled) return;
-  runtime.queueEmitScheduled = true;
-
-  queueMicrotask(() => {
-    runtime.queueEmitScheduled = false;
-    const emitScope = runtime.pendingQueueEmitScope;
-    runtime.pendingQueueEmitScope = undefined;
-    emitQueueUpdateIfOpen(runtime, emitScope);
-  });
-}
-
-export function createLifecycleMessageBase<TMessageType extends string>(
-  messageType: TMessageType,
-  runId?: string | null,
-): {
-  id: string;
-  date: string;
-  message_type: TMessageType;
-  run_id?: string;
-} {
-  return {
-    id: `lifecycle-${crypto.randomUUID()}`,
-    date: new Date().toISOString(),
-    message_type: messageType,
-    ...(runId ? { run_id: runId } : {}),
-  };
-}
-
 export function emitCanonicalMessageDelta(
   socket: ListenerTransport,
   runtime: RuntimeCarrier,
@@ -961,38 +905,9 @@ export function emitCanonicalMessageDelta(
     agent_id?: string | null;
     conversation_id?: string | null;
   },
-): void {
-  emitStreamDelta(socket, runtime, delta, scope);
-}
-
-export function emitLoopErrorDelta(
-  socket: ListenerTransport,
-  runtime: RuntimeCarrier,
-  params: {
-    message: string;
-    stopReason: StopReasonType;
-    isTerminal: boolean;
-    runId?: string | null;
-    agentId?: string | null;
-    conversationId?: string | null;
-    apiError?: LettaStreamingResponse.LettaErrorMessage;
-  },
-): void {
-  emitCanonicalMessageDelta(
-    socket,
-    runtime,
-    {
-      ...createLifecycleMessageBase("loop_error", params.runId),
-      message: params.message,
-      stop_reason: params.stopReason,
-      is_terminal: params.isTerminal,
-      ...(params.apiError ? { api_error: params.apiError } : {}),
-    } as StreamDelta,
-    {
-      agent_id: params.agentId,
-      conversation_id: params.conversationId,
-    },
-  );
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
+  return emitStreamDelta(socket, runtime, delta, scope, undefined, routing);
 }
 
 export function emitRetryDelta(
@@ -1058,8 +973,8 @@ export function emitInterruptedStatusDelta(
     message: "Interrupted",
     level: "warning",
     runId: params.runId,
-    agentId: params.agentId ?? undefined,
-    conversationId: params.conversationId ?? undefined,
+    agentId: params.agentId,
+    conversationId: params.conversationId,
   });
 }
 
@@ -1072,7 +987,8 @@ export function emitStreamDelta(
     conversation_id?: string | null;
   },
   subagentId?: string,
-): void {
+  routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+): OutboundMessageDelivery {
   const message: Omit<
     StreamDeltaMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
@@ -1081,5 +997,5 @@ export function emitStreamDelta(
     delta,
     ...(subagentId ? { subagent_id: subagentId } : {}),
   };
-  emitProtocolV2Message(socket, runtime, message, scope, TO_SUBSCRIBERS);
+  return emitProtocolV2Message(socket, runtime, message, scope, routing);
 }

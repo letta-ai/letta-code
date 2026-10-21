@@ -10,6 +10,15 @@
  * honoring it (see tryApplyActingUserOverride in cloud-api).
  */
 export const ACTING_USER_ID_HEADER = "X-Letta-Acting-User-Id";
+export const ACTING_USER_ID_ENV = "LETTA_ACTING_USER_ID";
+
+export function resolveActingUserId(
+  explicitActingUserId?: string,
+  runtimeActingUserId?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  return explicitActingUserId ?? runtimeActingUserId ?? env[ACTING_USER_ID_ENV];
+}
 
 /**
  * Build per-request options carrying the acting-user header, or
@@ -18,7 +27,25 @@ export const ACTING_USER_ID_HEADER = "X-Letta-Acting-User-Id";
  */
 export function actingUserRequestOptions(
   actingUserId: string | undefined,
-): { headers: Record<string, string> } | undefined {
+): { headers: Record<string, string> } | undefined;
+export function actingUserRequestOptions(actingUserId: null): {
+  actingUserId: null;
+};
+export function actingUserRequestOptions(
+  actingUserId: string | null | undefined,
+):
+  | { headers: Record<string, string>; actingUserId?: never }
+  | { actingUserId: null; headers?: never }
+  | undefined;
+export function actingUserRequestOptions(
+  actingUserId: string | null | undefined,
+):
+  | { headers: Record<string, string>; actingUserId?: never }
+  | { actingUserId: null; headers?: never }
+  | undefined {
+  if (actingUserId === null) {
+    return { actingUserId: null };
+  }
   if (!actingUserId) {
     return undefined;
   }

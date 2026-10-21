@@ -52,7 +52,7 @@ export function resetSandboxAvailabilityCache(): void {
 
 /**
  * Whether the memory-subagent filesystem sandbox is enabled. It is **on by
- * default**: memory subagents (reflection, memory, init, history-analyzer) run
+ * default**: memory subagents (reflection, memory, init) run
  * as whole confined processes with a scoped write surface, and there is no
  * interactive approve/deny flow that could stand in for it. Set
  * `LETTA_FS_SANDBOX=0` (or `false`) to opt out entirely. When no backend is

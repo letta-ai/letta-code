@@ -15,7 +15,7 @@
     },
     "run_in_background": {
       "type": "boolean",
-      "description": "Set to true to run this command in the background. Use TaskOutput to read the output later."
+      "description": "Set to true only when the command should return a task ID immediately. Ordinary commands already yield automatically if they are still running after a brief wait, and completion is delivered without polling."
     }
   },
   "required": ["command", "description"],

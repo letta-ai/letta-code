@@ -55,11 +55,13 @@ function stubClient(overrides: {
   attachCalls?: Array<{ toolId: string; agentId: string }>;
   detachCalls?: Array<{ toolId: string; agentId: string }>;
   postCalls?: string[];
+  postBodies?: unknown[];
 }): ServerMcpClient {
   return {
     get: async (path: string) => overrides.getResponses?.[path] ?? [],
-    post: async (path: string) => {
+    post: async (path: string, body?: unknown) => {
       overrides.postCalls?.push(path);
+      overrides.postBodies?.push(body);
       return overrides.postResponses?.[path] ?? {};
     },
     mcpServers: {

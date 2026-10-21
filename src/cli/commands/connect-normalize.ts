@@ -14,6 +14,7 @@ const ALIAS_TO_CANONICAL: Record<string, ConnectProviderCanonical> = {
   chatgpt: "chatgpt",
   codex: "chatgpt",
   "openai-codex": "chatgpt",
+  grok: "xai",
   ollama: "ollama",
   "ollama-cloud": "ollama-cloud",
   lmstudio: "lmstudio",
@@ -109,7 +110,8 @@ export function listConnectProvidersForHelp(
 export function listConnectProviderTokens(
   target: ProviderStorageTarget = defaultProviderStorageTarget(),
 ): string[] {
-  return [...listConnectProvidersForHelp(target), "codex"];
+  const help = listConnectProvidersForHelp(target);
+  return [...help, "codex", ...(help.includes("grok") ? [] : ["grok"])];
 }
 
 export function isConnectOAuthProvider(

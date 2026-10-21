@@ -369,7 +369,7 @@ test("slack adapter ignores live bot_message events as runnable input", async ()
   expect(resolveSlackInboundAttachmentsMock).not.toHaveBeenCalled();
 });
 
-test("slack adapter allows explicitly mentioned foreign bots when opted in", async () => {
+test("slack adapter lets app_mention own explicitly mentioned foreign bot messages", async () => {
   const adapter = createSlackAdapter({
     ...slackAccountDefaults,
     channel: "slack",
@@ -387,22 +387,24 @@ test("slack adapter allows explicitly mentioned foreign bots when opted in", asy
 
   await adapter.start();
   const app = FakeSlackApp.instances[0];
-  const handler = app?.messageHandler;
-  if (!handler) {
-    throw new Error("Expected Slack message handler");
+  const messageHandler = app?.messageHandler;
+  const mentionHandler = app?.eventHandlers.get("app_mention");
+  if (!messageHandler || !mentionHandler) {
+    throw new Error("Expected Slack message and app_mention handlers");
   }
 
-  await handler({
-    message: {
-      channel: "C123",
-      bot_id: "BDEPLOY",
-      text: "<@U0AS42PTEAX> deployment failed",
-      ts: "1712800000.000104",
-      thread_ts: "1712790000.000050",
-      subtype: "bot_message",
-    },
-  });
+  const event = {
+    channel: "C123",
+    bot_id: "BDEPLOY",
+    text: "<@U0AS42PTEAX> deployment failed",
+    ts: "1712800000.000104",
+    thread_ts: "1712790000.000050",
+    subtype: "bot_message",
+  };
+  await messageHandler({ message: event });
+  await mentionHandler({ event });
 
+  expect(onMessage).toHaveBeenCalledTimes(1);
   expect(onMessage).toHaveBeenCalledWith(
     expect.objectContaining({
       channel: "slack",
@@ -762,7 +764,7 @@ test("slack adapter preserves non-leading user mentions in app mention text", as
     event: {
       channel: "C123",
       user: "U123",
-      text: "<@U999> ask <@U555> for help",
+      text: "<@U0AS42PTEAX> ask <@U555> for help",
       ts: "1712800000.000100",
     },
   });

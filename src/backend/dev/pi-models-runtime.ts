@@ -33,8 +33,10 @@ import {
 import { createModPiProvider } from "./pi-mod-provider";
 import {
   createOllamaPiProvider,
+  normalizeOllamaModelId,
   OLLAMA_CLOUD_PI_PROVIDER_ID,
   OLLAMA_PI_PROVIDER_ID,
+  resolveOllamaServedContext,
 } from "./pi-ollama-provider";
 import { createOpenAICompatiblePiProvider } from "./pi-openai-compatible-provider";
 import {
@@ -173,6 +175,18 @@ function connectionSignature(connection: LocalEndpointConnection): string {
   ].join(" ");
 }
 
+function withOllamaServedContext(
+  model: Model<Api>,
+  servedContext: number,
+): Model<Api> {
+  const contextWindow = servedContext;
+  const maxTokens = Math.min(model.maxTokens, contextWindow);
+  if (model.contextWindow === contextWindow && model.maxTokens === maxTokens) {
+    return model;
+  }
+  return { ...model, contextWindow, maxTokens };
+}
+
 /**
  * Per-local-backend pi-ai Models runtime: the source of truth for provider
  * registration, model lookup, refresh, and stream dispatch in the local turn
@@ -300,16 +314,62 @@ export class LocalPiModelsRuntime {
     providerId: string,
     modelId: string,
     fallbackModelId?: string,
+    abortSignal?: AbortSignal,
   ): Promise<{ model: Model<Api> | undefined; auth: AuthResult | undefined }> {
     this.ensureManagedProviders(providerId);
     const lookup = () =>
       this.models.getModel(providerId, modelId) ??
+      (this.isBuiltInLocalOllamaProvider(providerId)
+        ? this.models.getModel(providerId, normalizeOllamaModelId(modelId))
+        : undefined) ??
       (fallbackModelId
         ? this.models.getModel(providerId, fallbackModelId)
         : undefined);
     for (let attempt = 0; ; attempt++) {
+      // Re-check connection-backed provider registration on every retry. This
+      // prevents native preflight against one endpoint from being paired with
+      // auth or a catalog built from another endpoint after a concurrent write.
+      this.ensureManagedProviders(providerId);
       await this.invalidateOnCredentialChange();
       const auth = await this.models.getAuth(providerId);
+      const isLocalOllama = this.isBuiltInLocalOllamaProvider(providerId);
+      const ollamaConnection = isLocalOllama
+        ? resolveLocalEndpointConnection(providerId, this.storageDir)
+        : undefined;
+      const expectedEndpointSignature = isLocalOllama
+        ? this.endpointSignatures.get(providerId)
+        : undefined;
+      if (
+        ollamaConnection &&
+        connectionSignature(ollamaConnection) !== expectedEndpointSignature
+      ) {
+        if (attempt >= MAX_TURN_RESOLUTION_RETRIES) {
+          throw new Error(
+            `Connection for provider "${providerId}" changed repeatedly during turn resolution; retry the request.`,
+          );
+        }
+        continue;
+      }
+
+      let ollamaServedContext: number | undefined;
+      if (ollamaConnection) {
+        ollamaServedContext = await resolveOllamaServedContext({
+          baseURL: ollamaConnection.baseURL,
+          modelId,
+          ...(ollamaConnection.apiKey
+            ? { apiKey: ollamaConnection.apiKey }
+            : {}),
+          ...(this.fetchImpl ? { fetchImpl: this.fetchImpl } : {}),
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+        try {
+          await this.refresh(providerId);
+        } catch {
+          // Exact serving truth is already known. Retained catalog capabilities
+          // remain usable, but their contextWindow does not.
+        }
+      }
+
       let model = lookup();
       if (!model) {
         try {
@@ -319,16 +379,31 @@ export class LocalPiModelsRuntime {
         }
         model = lookup();
       }
-      if (await this.credentialIdentityMovedSinceInvalidation(providerId)) {
+      const credentialMoved =
+        await this.credentialIdentityMovedSinceInvalidation(providerId);
+      const endpointMoved =
+        ollamaConnection !== undefined &&
+        (this.endpointSignatures.get(providerId) !==
+          expectedEndpointSignature ||
+          connectionSignature(
+            resolveLocalEndpointConnection(providerId, this.storageDir),
+          ) !== expectedEndpointSignature);
+      if (credentialMoved || endpointMoved) {
         if (attempt >= MAX_TURN_RESOLUTION_RETRIES) {
           throw new Error(
-            `Credentials for provider "${providerId}" changed repeatedly ` +
+            `${endpointMoved ? "Connection" : "Credentials"} for provider "${providerId}" changed repeatedly ` +
               "during turn resolution; retry the request.",
           );
         }
         continue;
       }
-      return { model, auth };
+      return {
+        model:
+          model && ollamaServedContext !== undefined
+            ? withOllamaServedContext(model, ollamaServedContext)
+            : model,
+        auth,
+      };
     }
   }
 
@@ -359,6 +434,14 @@ export class LocalPiModelsRuntime {
     return (
       getRegisteredPiProvider(providerId) !== undefined ||
       MANAGED_ENDPOINT_PROVIDERS.has(providerId)
+    );
+  }
+
+  /** Built-in local Ollama daemon, excluding mods that override its id. */
+  isBuiltInLocalOllamaProvider(providerId: string): boolean {
+    return (
+      providerId === OLLAMA_PI_PROVIDER_ID &&
+      getRegisteredPiProvider(providerId) === undefined
     );
   }
 

@@ -6,7 +6,13 @@ import {
   upsertChannelAccount,
 } from "@/channels/accounts";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import { clearAllRoutes, setRouteInMemory } from "@/channels/routing";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  clearAllRoutes,
+  getRouteRaw,
+  setRouteInMemory,
+} from "@/channels/routing";
 import {
   __testOverrideLoadTargetStore,
   __testOverrideSaveTargetStore,
@@ -29,6 +35,8 @@ describe("MessageChannel Slack", () => {
     __testOverrideSaveChannelAccounts(null);
     __testOverrideLoadTargetStore(null);
     __testOverrideSaveTargetStore(null);
+    __testOverrideLoadRoutes(null);
+    __testOverrideSaveRoutes(null);
   });
 
   function installChannelStateTestOverrides(): void {
@@ -36,6 +44,8 @@ describe("MessageChannel Slack", () => {
     __testOverrideSaveChannelAccounts(() => {});
     __testOverrideLoadTargetStore(() => {});
     __testOverrideSaveTargetStore(() => {});
+    __testOverrideLoadRoutes(() => null);
+    __testOverrideSaveRoutes(() => {});
   }
 
   test("uses the routed account adapter for multi-account channels", async () => {
@@ -657,18 +667,6 @@ describe("MessageChannel Slack", () => {
       throw new Error("explicit target path should not consult routes");
     });
 
-    setRouteInMemory("slack", {
-      accountId: "account-1",
-      chatId: "C123",
-      chatType: "channel",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "default",
-      enabled: true,
-      createdAt: "2026-04-11T00:00:00.000Z",
-      updatedAt: "2026-04-11T00:00:00.000Z",
-    });
-
     upsertChannelAccount("slack", {
       channel: "slack",
       accountId: "account-1",
@@ -701,7 +699,7 @@ describe("MessageChannel Slack", () => {
       message: "hello proactive slack",
       parentScope: {
         agentId: "agent-1",
-        conversationId: "default",
+        conversationId: "conv-schedule-1",
       },
     });
 
@@ -715,7 +713,14 @@ describe("MessageChannel Slack", () => {
       threadId: null,
       parseMode: undefined,
       agentId: "agent-1",
-      conversationId: "default",
+      conversationId: "conv-schedule-1",
+    });
+    expect(
+      getRouteRaw("slack", "C999", "account-1", "slack-msg-proactive-1"),
+    ).toMatchObject({
+      agentId: "agent-1",
+      conversationId: "conv-schedule-1",
+      threadId: "slack-msg-proactive-1",
     });
   });
 
@@ -752,29 +757,6 @@ describe("MessageChannel Slack", () => {
 
     registry.registerAdapter(adapter1);
     registry.registerAdapter(adapter2);
-
-    setRouteInMemory("slack", {
-      accountId: "account-1",
-      chatId: "C123",
-      chatType: "channel",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "default",
-      enabled: true,
-      createdAt: "2026-04-11T00:00:00.000Z",
-      updatedAt: "2026-04-11T00:00:00.000Z",
-    });
-    setRouteInMemory("slack", {
-      accountId: "account-2",
-      chatId: "C124",
-      chatType: "channel",
-      threadId: "1712790000.000051",
-      agentId: "agent-1",
-      conversationId: "default",
-      enabled: true,
-      createdAt: "2026-04-11T00:00:00.000Z",
-      updatedAt: "2026-04-11T00:00:00.000Z",
-    });
 
     upsertChannelAccount("slack", {
       channel: "slack",
@@ -846,18 +828,6 @@ describe("MessageChannel Slack", () => {
 
     registry.registerAdapter(adapter);
 
-    setRouteInMemory("slack", {
-      accountId: "account-1",
-      chatId: "C123",
-      chatType: "channel",
-      threadId: "1712790000.000050",
-      agentId: "agent-1",
-      conversationId: "default",
-      enabled: true,
-      createdAt: "2026-04-11T00:00:00.000Z",
-      updatedAt: "2026-04-11T00:00:00.000Z",
-    });
-
     upsertChannelAccount("slack", {
       channel: "slack",
       accountId: "account-1",
@@ -870,7 +840,7 @@ describe("MessageChannel Slack", () => {
       mode: "socket",
       botToken: "xoxb-test-token",
       appToken: "xapp-test-token",
-      agentId: "agent-1",
+      agentId: "agent-other",
       defaultPermissionMode: "standard",
     });
 
@@ -878,7 +848,7 @@ describe("MessageChannel Slack", () => {
       action: "send",
       channel: "slack",
       target: "#eng",
-      accountId: "other-account",
+      accountId: "account-1",
       message: "hello proactive slack",
       parentScope: {
         agentId: "agent-1",
@@ -887,7 +857,7 @@ describe("MessageChannel Slack", () => {
     });
 
     expect(result).toBe(
-      'Error: Slack account "other-account" is not available for proactive sends in this agent scope.',
+      'Error: Slack account "account-1" is not available for proactive sends in this agent scope.',
     );
     expect(sendMessage).not.toHaveBeenCalled();
   });

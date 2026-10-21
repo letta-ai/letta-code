@@ -13,8 +13,14 @@ import {
   updateAgentLLMConfig,
   updateConversationLLMConfig,
 } from "@/agent/modify";
+import {
+  catalogHasDistinctMaxTier,
+  formatXhighEffortLabel,
+} from "@/agent/reasoning-effort-label";
 import { refreshModelCatalog } from "@/agent/remote-model-catalog";
 import { getBackend } from "@/backend";
+import { isCloudServerUrl } from "@/backend/api/server-url";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import {
   buildByokProviderAliases,
   buildOpenAICompatibleProxyProviderNames,
@@ -22,7 +28,6 @@ import {
 } from "@/providers/byok-providers";
 import { settingsManager } from "@/settings-manager";
 import {
-  ensureCorrectMemoryTool,
   prepareToolExecutionContextForScope,
   type ToolsetName,
   type ToolsetPreference,
@@ -55,7 +60,9 @@ import type {
   ListenerRuntime,
 } from "@/websocket/listener/types";
 import {
+  availableModelUpdateArgs,
   buildListModelsEntries,
+  buildNativeModelEntry,
   findAvailableModelForPreset,
 } from "./model-catalog";
 import type {
@@ -134,25 +141,6 @@ function providerTypeFromModelSettings(
   return typeof providerType === "string" ? providerType : null;
 }
 
-function updateArgsFromAvailableModel(
-  model:
-    | {
-        openAICompatibleProxy?: boolean;
-        providerType?: string;
-      }
-    | null
-    | undefined,
-): Record<string, unknown> | undefined {
-  if (model?.providerType === "chatgpt_oauth") {
-    return { provider_type: model.providerType };
-  }
-  if (!model?.openAICompatibleProxy) return undefined;
-  return {
-    provider_type: "openai",
-    [OPENAI_COMPATIBLE_PROXY_UPDATE_ARG]: true,
-  };
-}
-
 function withContextWindow(
   baseConfig: ModelScopeSnapshot["llmConfig"],
   contextWindow?: number,
@@ -166,10 +154,26 @@ function withContextWindow(
 }
 
 async function getCurrentModelScopeSnapshot(params: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }): Promise<ModelScopeSnapshot> {
   const backend = getBackend();
+  if (!params.agentId) {
+    const conversation = await backend.retrieveConversation(
+      params.conversationId,
+    );
+    const record = conversation as unknown as Record<string, unknown>;
+    return {
+      modelHandle: typeof record.model === "string" ? record.model : null,
+      llmConfig: withContextWindow(
+        (record.model_settings as ModelScopeSnapshot["llmConfig"]) ?? null,
+        typeof record.context_window_limit === "number"
+          ? record.context_window_limit
+          : undefined,
+      ),
+    };
+  }
+
   const agent = await backend.retrieveAgent(params.agentId);
   const agentRecord = agent as unknown as Record<string, unknown>;
   const agentModelHandle =
@@ -218,7 +222,7 @@ async function getCurrentModelScopeSnapshot(params: {
 }
 
 export async function getCurrentModelStatusForRuntime(params: {
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
 }): Promise<CurrentModelStatus> {
   const snapshot = await getCurrentModelScopeSnapshot(params);
@@ -239,20 +243,21 @@ function resolveModelForUpdateBase(
   if (typeof payload.model_id === "string" && payload.model_id.length > 0) {
     const byId = getModelInfo(payload.model_id);
     if (byId) {
-      // When an explicit model_handle is also provided (e.g. BYOK tier
-      // changes), use the model_id entry for updateArgs/label but preserve
-      // the caller-specified handle so the BYOK identity is maintained
-      // end-to-end.
+      // Channels echo the picker ID into both fields. Resolve that ID through
+      // the catalog; preserve a distinct explicit handle for BYOK tier changes.
       const explicitHandle =
         typeof payload.model_handle === "string" &&
+        payload.model_handle !== byId.id &&
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
       const providerType = inferProviderTypeFromRegistryHandle(byId.handle);
       const availableModel = explicitHandle
         ? availableModels.find((model) => model.handle === explicitHandle)
-        : findAvailableModelForPreset(byId.handle, availableModels);
-      const availableUpdateArgs = updateArgsFromAvailableModel(availableModel);
+        : resolveBackendMode() === "api" && isCloudServerUrl()
+          ? undefined
+          : findAvailableModelForPreset(byId.handle, availableModels);
+      const availableUpdateArgs = availableModelUpdateArgs(availableModel);
       const updateArgs =
         byId.updateArgs || availableUpdateArgs
           ? {
@@ -287,11 +292,12 @@ function resolveModelForUpdateBase(
         payload.model_handle.length > 0
           ? payload.model_handle
           : null;
+      const entry = nativeModel ? buildNativeModelEntry(nativeModel) : null;
       return {
         id: payload.model_id,
         handle: explicitHandle ?? payload.model_id,
-        label: nativeModel?.label ?? payload.model_id,
-        updateArgs: updateArgsFromAvailableModel(nativeModel),
+        label: entry?.label ?? payload.model_id,
+        updateArgs: entry?.updateArgs,
       };
     }
   }
@@ -317,25 +323,50 @@ function resolveModelForUpdateBase(
     const nativeModel = availableModels.find(
       (model) => model.handle === payload.model_handle,
     );
+    const entry = nativeModel ? buildNativeModelEntry(nativeModel) : null;
     return {
       id: payload.model_handle,
       handle: payload.model_handle,
-      label: nativeModel?.label ?? payload.model_handle,
-      updateArgs: updateArgsFromAvailableModel(nativeModel),
+      label: entry?.label ?? payload.model_handle,
+      updateArgs: entry?.updateArgs,
     };
   }
 
   return null;
 }
 
+export async function resolveModelForUpdateWithInventory(
+  payload: UpdateModelPayload,
+): Promise<ResolvedModelForUpdate | null> {
+  const handle = payload.model_handle ?? payload.model_id;
+  // A first-contact /model <BYOK handle>, or a click after a listener restart,
+  // has not necessarily listed models. Load its provider identity before
+  // constructing settings; hosted catalog selections need no inventory probe.
+  if (
+    resolveBackendMode() === "api" &&
+    isCloudServerUrl() &&
+    handle?.includes("/") &&
+    !models.some((model) => model.handle === handle) &&
+    !getCachedAvailableModels()?.some((model) => model.handle === handle)
+  ) {
+    await getAvailableModelHandles();
+  }
+  return resolveModelForUpdate(payload);
+}
+
 export function resolveModelForUpdate(
   payload: UpdateModelPayload,
 ): ResolvedModelForUpdate | null {
   const resolved = resolveModelForUpdateBase(payload);
+  const acceptsDeviceReasoningEffort =
+    resolved?.updateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] === true ||
+    resolved?.updateArgs?.provider_type === "chatgpt_oauth" ||
+    (resolved !== null &&
+      inferProviderTypeFromRegistryHandle(resolved.handle) === "chatgpt_oauth");
   if (
     !resolved ||
     payload.reasoning_effort === undefined ||
-    resolved.updateArgs?.[OPENAI_COMPATIBLE_PROXY_UPDATE_ARG] !== true
+    !acceptsDeviceReasoningEffort
   ) {
     return resolved;
   }
@@ -351,22 +382,19 @@ export function resolveModelForUpdate(
 function formatEffortSuffix(
   modelLabel: string,
   updateArgs?: Record<string, unknown>,
+  modelHandle?: string,
 ): string {
   if (!updateArgs) return "";
   const effort = updateArgs.reasoning_effort;
   if (typeof effort !== "string" || effort.length === 0) return "";
-  const xhighLabel =
-    modelLabel.includes("Fable 5") ||
-    modelLabel.includes("Opus 4.7") ||
-    modelLabel.includes("Opus 4.8")
-      ? "Extra-High"
-      : "Max";
   const labels: Record<string, string> = {
     none: "No Reasoning",
     low: "Low",
     medium: "Medium",
     high: "High",
-    xhigh: xhighLabel,
+    xhigh: formatXhighEffortLabel(
+      catalogHasDistinctMaxTier({ modelLabel, modelHandle }),
+    ),
     max: "Max",
   };
   return ` (${labels[effort] ?? effort})`;
@@ -376,9 +404,10 @@ export function buildModelUpdateStatusMessage(params: {
   modelLabel: string;
   toolsetError: string | null;
   updateArgs?: Record<string, unknown>;
+  modelHandle?: string;
 }): { message: string; level: "info" | "warning" } {
-  const { modelLabel, toolsetError, updateArgs } = params;
-  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs)}.`;
+  const { modelLabel, toolsetError, updateArgs, modelHandle } = params;
+  let message = `Model updated to ${modelLabel}${formatEffortSuffix(modelLabel, updateArgs, modelHandle)}.`;
   if (toolsetError) {
     message += ` Warning: toolset switch failed (${toolsetError}).`;
     return { message, level: "warning" };
@@ -397,16 +426,15 @@ export async function applyModelUpdateForRuntime(params: {
   const agentId = scopedRuntime.agentId;
   const conversationId = scopedRuntime.conversationId;
 
-  if (!agentId) {
+  const isDefaultConversation = conversationId === "default";
+  if (isDefaultConversation && !agentId) {
     return {
       type: "update_model_response",
       request_id: requestId,
       success: false,
-      error: "Missing agent_id in runtime scope",
+      error: "Agent-free runtimes require a persisted conversation",
     };
   }
-
-  const isDefaultConversation = conversationId === "default";
 
   const updateArgs: Record<string, unknown> = {
     ...(model.updateArgs ?? {}),
@@ -451,7 +479,7 @@ export async function applyModelUpdateForRuntime(params: {
   let modelSettings: Record<string, unknown> | null = null;
   let appliedTo: "agent" | "conversation";
 
-  if (isDefaultConversation) {
+  if (isDefaultConversation && agentId) {
     const updatedAgent = await updateAgentLLMConfig(
       agentId,
       model.handle,
@@ -483,11 +511,9 @@ export async function applyModelUpdateForRuntime(params: {
   let toolsetError: string | null = null;
 
   try {
-    await ensureCorrectMemoryTool(agentId, model.handle);
-    const modAdapters = await ensureListenerModAdaptersForAgent(
-      listener,
-      agentId,
-    );
+    const modAdapters = agentId
+      ? await ensureListenerModAdaptersForAgent(listener, agentId)
+      : [];
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
@@ -496,7 +522,9 @@ export async function applyModelUpdateForRuntime(params: {
         providerTypeFromModelSettings(modelSettings) ??
         inferProviderTypeFromRegistryHandle(model.handle) ??
         null,
-      modContext: createListenerAgentModContext(agentId),
+      ...(agentId
+        ? { modContext: createListenerAgentModContext(agentId) }
+        : {}),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -515,6 +543,7 @@ export async function applyModelUpdateForRuntime(params: {
       modelLabel: model.label,
       toolsetError,
       updateArgs: model.updateArgs,
+      modelHandle: model.handle,
     });
 
   emitStatusDelta(socket, scopedRuntime, {
@@ -556,20 +585,15 @@ export async function applyToolsetUpdateForRuntime(params: {
   const agentId = scopedRuntime.agentId;
   const conversationId = scopedRuntime.conversationId;
 
-  if (!agentId) {
-    return {
-      type: "update_toolset_response",
-      request_id: requestId,
-      success: false,
-      error: "Missing agent_id in runtime scope",
-    };
-  }
-
+  const settingsScopeId = agentId ?? conversationId;
   const previousToolNames = scopedRuntime.currentLoadedTools;
   let nextToolset: ToolsetName;
   const previousToolsetPreference = (() => {
     try {
-      return settingsManager.getToolsetPreference(agentId, conversationId);
+      return settingsManager.getToolsetPreference(
+        settingsScopeId,
+        conversationId,
+      );
     } catch {
       return scopedRuntime.currentToolsetPreference;
     }
@@ -577,18 +601,19 @@ export async function applyToolsetUpdateForRuntime(params: {
 
   try {
     settingsManager.setToolsetPreference(
-      agentId,
+      settingsScopeId,
       toolsetPreference,
       conversationId,
     );
-    const modAdapters = await ensureListenerModAdaptersForAgent(
-      listener,
-      agentId,
-    );
+    const modAdapters = agentId
+      ? await ensureListenerModAdaptersForAgent(listener, agentId)
+      : [];
     const preparedToolContext = await prepareToolExecutionContextForScope({
       agentId,
       conversationId,
-      modContext: createListenerAgentModContext(agentId),
+      ...(agentId
+        ? { modContext: createListenerAgentModContext(agentId) }
+        : {}),
       modAdapters,
       modEvents: createListenerModEvents(modAdapters),
     });
@@ -600,7 +625,7 @@ export async function applyToolsetUpdateForRuntime(params: {
       preparedToolContext.preparedToolContext.loadedToolNames;
   } catch (error) {
     settingsManager.setToolsetPreference(
-      agentId,
+      settingsScopeId,
       previousToolsetPreference,
       conversationId,
     );
@@ -649,6 +674,7 @@ export async function buildListModelsResponse(
   requestId: string,
   options: { forceRefresh?: boolean } = {},
 ): Promise<ListModelsResponseMessage> {
+  const cloud = resolveBackendMode() === "api" && isCloudServerUrl();
   const [handlesResult, providersResult] = await Promise.allSettled([
     // User-initiated refreshes bypass the availability cache: within the
     // cache TTL a stale snapshot would otherwise make every "Refresh model
@@ -657,17 +683,13 @@ export async function buildListModelsResponse(
       options.forceRefresh === true ? { forceRefresh: true } : undefined,
     ),
     listProviders(),
-    // Refresh the curated catalog alongside availability so preset entries
-    // reflect cloud-canon data (best-effort; bundled snapshot on failure).
+    // Refresh the runtime catalog alongside availability. API mode keeps the
+    // persisted cloud catalog on temporary failures; local mode projects pi-ai.
     refreshModelCatalog(
       options.forceRefresh === true ? { force: true } : undefined,
     ),
   ]);
 
-  const availableHandles: string[] | null =
-    handlesResult.status === "fulfilled"
-      ? [...handlesResult.value.handles]
-      : null;
   // listProviders already degrades to [] on failure, but handle rejection too
   const providers =
     providersResult.status === "fulfilled" ? providersResult.value : [];
@@ -676,6 +698,7 @@ export async function buildListModelsResponse(
     buildOpenAICompatibleProxyProviderNames(providers);
   const entries = buildListModelsEntries(
     handlesResult.status === "fulfilled" ? handlesResult.value.models : [],
+    { cloud },
   ).map((entry) => {
     const providerName = entry.handle.split("/")[0];
     if (
@@ -693,6 +716,14 @@ export async function buildListModelsResponse(
       },
     };
   });
+
+  // Channel clients use this list as selectable inventory, not just a hint.
+  // In Cloud mode it must not reintroduce legacy hosted rows or gate presets.
+  const availableHandles: string[] | null = cloud
+    ? [...new Set(entries.map((entry) => entry.handle))]
+    : handlesResult.status === "fulfilled"
+      ? [...handlesResult.value.handles]
+      : null;
 
   return {
     type: "list_models_response",
@@ -755,25 +786,16 @@ export function handleModelToolsetCommand(
         parsed.runtime.conversation_id,
       );
 
-      const resolvedModel = resolveModelForUpdate(parsed.payload);
-      if (!resolvedModel) {
-        const failure: UpdateModelResponseMessage = {
-          type: "update_model_response",
-          request_id: parsed.request_id,
-          success: false,
-          error:
-            "Model not found. Provide a valid model_id from list_models or a model_handle.",
-        };
-        safeSocketSend(
-          socket,
-          failure,
-          "listener_update_model_send_failed",
-          "listener_update_model",
-        );
-        return;
-      }
-
+      let resolvedModel: ResolvedModelForUpdate | null = null;
       try {
+        resolvedModel = await resolveModelForUpdateWithInventory(
+          parsed.payload,
+        );
+        if (!resolvedModel) {
+          throw new Error(
+            "Model not found. Provide a valid model_id from list_models or a model_handle.",
+          );
+        }
         const response = await applyModelUpdateForRuntime({
           socket,
           listener: runtime,
@@ -797,8 +819,8 @@ export function handleModelToolsetCommand(
             agent_id: parsed.runtime.agent_id,
             conversation_id: parsed.runtime.conversation_id,
           },
-          model_id: resolvedModel.id,
-          model_handle: resolvedModel.handle,
+          model_id: resolvedModel?.id ?? parsed.payload.model_id,
+          model_handle: resolvedModel?.handle ?? parsed.payload.model_handle,
           error:
             error instanceof Error ? error.message : "Failed to update model",
         };

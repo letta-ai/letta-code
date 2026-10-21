@@ -38,6 +38,45 @@ export function trackBoundaryError(options: BoundaryErrorOptions): void {
   );
 }
 
+export function reportListenerStateWriteFailure(options: {
+  phase: "run_observed" | "before_tool_execution" | "after_tool_execution";
+  error: unknown;
+  agentId: string;
+  conversationId: string;
+  runId?: string;
+  toolCallId?: string;
+}): void {
+  // Filesystem messages contain paths; report only codes and opaque IDs.
+  try {
+    const safeId = (id: string | undefined) =>
+      id && /^[a-zA-Z0-9_-]{1,128}$/.test(id) ? id : undefined;
+    const { code, syscall } = (options.error ?? {}) as NodeJS.ErrnoException;
+    const errorCode =
+      typeof code === "string" && /^[A-Z0-9_]{1,32}$/.test(code)
+        ? code
+        : "UNKNOWN";
+    telemetry.trackError(
+      "listener_state_write_failed",
+      "Listener state write failed",
+      JSON.stringify({
+        phase: options.phase,
+        error_code: errorCode,
+        syscall:
+          typeof syscall === "string" && /^[a-z]{1,32}$/.test(syscall)
+            ? syscall
+            : undefined,
+        agent_id: safeId(options.agentId),
+        conversation_id: safeId(options.conversationId),
+        tool_call_id: safeId(options.toolCallId),
+      }),
+      { runId: safeId(options.runId), omitDebugLogTail: true },
+    );
+    void telemetry.flush().catch(() => {});
+  } catch {
+    // A diagnostic must never mask the original filesystem failure.
+  }
+}
+
 export function trackEndTurnNoAssistant(params: {
   fallbackKind: "reasoning" | "tool_call";
   modelHandle?: string;

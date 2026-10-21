@@ -1,20 +1,39 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Letta } from "@letta-ai/letta-client";
+import { ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import {
   getConversationId,
   getCurrentAgentId,
   setConversationId,
   setCurrentAgentId,
 } from "@/agent/context";
+import { sendMessageStreamWithBackend } from "@/agent/message";
+import { APIBackend } from "@/backend";
+import {
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
+} from "@/tools/manager";
+import { openListenerConnection } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+  recordedToolResults,
+} from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
+import { finishDrainedTeleport, handleTeleportRequest } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { handleApprovalStop } from "./turn-approval";
 import { releaseListenerTurnContext } from "./turn-context";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishListenerTurn } from "./turn-terminal";
 
 function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
   return {
@@ -23,6 +42,26 @@ function createOpenTransport(sentPayloads: string[] = []): ListenerTransport {
     isOpen: () => true,
     send: (payload: string) => sentPayloads.push(payload),
   };
+}
+
+function openTestConnection(
+  listener: ReturnType<typeof createRuntime>,
+  connectionId: string,
+): void {
+  openListenerConnection({
+    runtime: listener,
+    connectionId,
+    writer: createOpenTransport(),
+    options: {
+      connectionId,
+      wsUrl: "ws://test",
+      deviceId: "device-test",
+      connectionName: "Test",
+      onConnected: () => {},
+      onDisconnected: () => {},
+      onError: () => {},
+    },
+  });
 }
 
 async function waitForPendingApproval(
@@ -37,7 +76,7 @@ async function waitForPendingApproval(
   throw new Error("Approval request was not registered");
 }
 
-function startQuestionApproval(
+function startToolApproval(
   runtime: ReturnType<typeof getOrCreateScopedRuntime>,
   turnLease: TurnLease,
   overrides: Partial<Parameters<typeof handleApprovalStop>[0]> = {},
@@ -46,19 +85,10 @@ function startQuestionApproval(
     approvals: [
       {
         toolCallId: "call-1",
-        toolName: "AskUserQuestion",
+        toolName: "Write",
         toolArgs: JSON.stringify({
-          questions: [
-            {
-              question: "Continue?",
-              header: "Confirm",
-              options: [
-                { label: "Yes", description: "Continue the turn" },
-                { label: "No", description: "Stop the turn" },
-              ],
-              multiSelect: false,
-            },
-          ],
+          file_path: "/tmp/listener-approval-test.txt",
+          content: "requires permission",
         }),
       },
     ],
@@ -67,11 +97,7 @@ function startQuestionApproval(
     agentId: "agent-1",
     conversationId: "conv-1",
     turnWorkingDirectory: process.cwd(),
-    turnPermissionModeState: getOrCreateConversationPermissionModeStateRef(
-      runtime.listener,
-      "agent-1",
-      "conv-1",
-    ),
+    turnPermissionModeState: { mode: "strict" },
     dequeuedBatchId: "batch-1",
     msgRunIds: [],
     turnInput: { messages: [] },
@@ -95,6 +121,88 @@ describe("listener turn lifecycle integration", () => {
     setConversationId(null);
   });
 
+  test("lost recovery authority suppresses a pending classification result", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "approval_recovery",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    const sentPayloads: string[] = [];
+    let authoritative = true;
+    let resolveClassification!: (value: {
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }) => void;
+    const classification = new Promise<{
+      autoAllowed: never[];
+      autoDenied: never[];
+      needsUserInput: never[];
+    }>((resolve) => {
+      resolveClassification = resolve;
+    });
+
+    const result = startToolApproval(runtime, turnLease, {
+      socket: createOpenTransport(sentPayloads),
+      authorityGuard: () => authoritative,
+      dependencies: {
+        classifyApprovals: (() => classification) as never,
+      },
+    });
+    authoritative = false;
+    resolveClassification({
+      autoAllowed: [],
+      autoDenied: [],
+      needsUserInput: [],
+    });
+
+    expect((await result).kind).toBe("interrupted");
+    expect(sentPayloads).toEqual([]);
+  });
+
+  test("publishes classification outcome before waiting for user approval", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "PROCESSING_API_RESPONSE",
+    });
+    runtime.turnLifecycle.setRunId(turnLease, "run-1");
+    const sentPayloads: string[] = [];
+
+    const approvalResultPromise = startToolApproval(runtime, turnLease, {
+      socket: createOpenTransport(sentPayloads),
+      runId: "run-1",
+    });
+    await waitForPendingApproval(runtime);
+
+    const classificationEvents = sentPayloads
+      .map((payload) => JSON.parse(payload) as Record<string, unknown>)
+      .filter(
+        (message) =>
+          message.type === "stream_delta" &&
+          (message.delta as Record<string, unknown> | undefined)
+            ?.message_type === "approval_classification_end",
+      );
+    expect(classificationEvents).toEqual([
+      expect.objectContaining({
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        delta: expect.objectContaining({
+          run_id: "run-1",
+          auto_allowed_tool_call_ids: [],
+          auto_denied_tool_call_ids: [],
+          user_input_tool_call_ids: ["call-1"],
+        }),
+      }),
+    ]);
+
+    clearConversationRuntimeState(runtime);
+    expect((await approvalResultPromise).kind).toBe("interrupted");
+  });
+
   test("disconnect cleanup during a live approval cannot leave stale processing ownership", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
@@ -104,7 +212,7 @@ describe("listener turn lifecycle integration", () => {
       initialStatus: "PROCESSING_API_RESPONSE",
     });
 
-    const approvalResultPromise = startQuestionApproval(runtime, turnLease);
+    const approvalResultPromise = startToolApproval(runtime, turnLease);
 
     await waitForPendingApproval(runtime);
     clearConversationRuntimeState(runtime);
@@ -138,7 +246,7 @@ describe("listener turn lifecycle integration", () => {
       workingDirectory: process.cwd(),
       initialStatus: "PROCESSING_API_RESPONSE",
     });
-    const approvalResultPromise = startQuestionApproval(runtime, staleLease);
+    const approvalResultPromise = startToolApproval(runtime, staleLease);
 
     await waitForPendingApproval(runtime);
     clearConversationRuntimeState(runtime);
@@ -181,7 +289,7 @@ describe("listener turn lifecycle integration", () => {
       throw new Error("process transport should not wait for a remote client");
     });
 
-    const result = await startQuestionApproval(runtime, turnLease, {
+    const result = await startToolApproval(runtime, turnLease, {
       approvals: [approval],
       socket: {
         kind: "runtime",
@@ -215,10 +323,377 @@ describe("listener turn lifecycle integration", () => {
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
+  test.each([
+    ["user-a", "user-b"],
+    [undefined, "user-b"],
+    ["user-a", undefined],
+    ["user-a", "user-a"],
+    [undefined, undefined],
+  ])(
+    "active actor %s yields request attribution to queued author %s",
+    async (activeUser, queuedUser) => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          {
+            role: "user",
+            content: "scheduled reminder",
+            otid: "reminder-otid",
+            attribution: {},
+          },
+        ],
+      });
+      enqueueInboundUserMessage(
+        runtime,
+        {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          messages: [{ role: "user", content: "queued input" }],
+        },
+        queuedUser,
+      );
+      const approval = {
+        toolCallId: "call-monitor",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      const requests: Array<{ actor: string | undefined; body: unknown }> = [];
+      const server = Bun.serve({
+        port: 0,
+        async fetch(request) {
+          const actor = request.headers.get(ACTING_USER_ID_HEADER) ?? undefined;
+          requests.push({ actor, body: await request.json() });
+          if (actor !== queuedUser) {
+            return Response.json(
+              { message: "Conversation not found" },
+              { status: 404 },
+            );
+          }
+          return new Response(
+            'data: {"message_type":"stop_reason","stop_reason":"end_turn"}\n\n',
+            {
+              headers: { "Content-Type": "text/event-stream" },
+            },
+          );
+        },
+      });
+      const client = new Letta({
+        apiKey: "test-key",
+        baseURL: server.url.toString(),
+        maxRetries: 0,
+      });
+      const backend = new APIBackend({ getClient: async () => client });
+      const preparedToolContext =
+        await prepareToolExecutionContextForSpecificTools([]);
+
+      try {
+        const result = await startToolApproval(runtime, turnLease, {
+          approvals: [approval],
+          processOwnedTurn: true,
+          buildSendOptions: () =>
+            ({
+              agentId: "agent-1",
+              streamTokens: true,
+              background: true,
+              workingDirectory: process.cwd(),
+              actingUserId: activeUser,
+            }) as never,
+          dependencies: {
+            classifyApprovals: async () => ({
+              autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+              autoDenied: [],
+              needsUserInput: [],
+            }),
+            executeApprovalBatch: async () => [
+              {
+                type: "tool" as const,
+                tool_call_id: approval.toolCallId,
+                status: "success" as const,
+                tool_return: "/workspace",
+              },
+            ],
+            ensureSecretsHydrated: async () => {},
+            sendApprovalContinuation: async (
+              conversationId: string,
+              messages: Parameters<typeof sendMessageStreamWithBackend>[2],
+              options: Parameters<typeof sendMessageStreamWithBackend>[3],
+            ) => {
+              const stream = await sendMessageStreamWithBackend(
+                backend,
+                conversationId,
+                messages,
+                {
+                  ...options,
+                  preparedToolContext,
+                  skillSources: [],
+                },
+              );
+              for await (const _event of stream) {
+                /* Drain the real SDK stream. */
+              }
+              return {
+                kind: "terminal" as const,
+                drainResult: {
+                  stopReason: "end_turn" as const,
+                  apiDurationMs: 0,
+                },
+              };
+            },
+          } as never,
+        });
+
+        expect(result.kind).toBe("terminal");
+        expect(requests).toHaveLength(1);
+        expect(requests[0]?.actor).toBe(queuedUser);
+        expect(JSON.stringify(requests[0]?.body)).toContain("call-monitor");
+        expect(JSON.stringify(requests[0]?.body)).toContain(
+          "scheduled reminder",
+        );
+        expect(JSON.stringify(requests[0]?.body)).toContain('"attribution":{}');
+        expect(JSON.stringify(requests[0]?.body)).toContain("reminder-otid");
+        expect(JSON.stringify(requests[0]?.body)).toContain("queued input");
+        if (queuedUser) {
+          expect(JSON.stringify(requests[0]?.body)).toContain(
+            JSON.stringify({ acting_user_id: queuedUser }),
+          );
+        }
+        expect(runtime.queueRuntime.length).toBe(0);
+        runtime.turnLifecycle.finish(turnLease, "end_turn");
+      } finally {
+        server.stop(true);
+        releaseToolExecutionContext(preparedToolContext.contextId);
+      }
+    },
+  );
+
+  test("teleport yields after persisting the current tool result", async () => {
+    const listener = createRuntime();
+    const agentId = "agent-turn-teleport-fixture";
+    const conversationId = "conv-turn-teleport-fixture";
+    const runtime = getOrCreateScopedRuntime(listener, agentId, conversationId);
+    const turnLease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+      initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+    });
+    openTestConnection(listener, "cloud-relay");
+    handleTeleportRequest({
+      listener,
+      connectionId: "cloud-relay",
+      command: {
+        type: "teleport_request",
+        request_id: "teleport-1",
+        teleport_id: "teleport-1",
+        runtime: { agent_id: agentId, conversation_id: conversationId },
+        target: {
+          connection_id: "target-connection",
+          device_id: "target-device",
+          connection_name: "Cloud",
+        },
+      },
+    });
+    const approval = {
+      toolCallId: "call-teleport",
+      toolName: "Bash",
+      toolArgs: '{"command":"letta teleport cloud"}',
+    };
+    const sendApprovalContinuation = mock(async () => {
+      throw new Error("source must not start another model step");
+    });
+
+    const result = await startToolApproval(runtime, turnLease, {
+      agentId,
+      conversationId,
+      approvals: [approval],
+      processOwnedTurn: true,
+      dependencies: {
+        classifyApprovals: async () => ({
+          autoAllowed: [{ approval, parsedArgs: {}, context: null }],
+          autoDenied: [],
+          needsUserInput: [],
+        }),
+        executeApprovalBatch: async () => [
+          {
+            type: "tool" as const,
+            tool_call_id: approval.toolCallId,
+            status: "success" as const,
+            tool_return: '{"status":"waiting_for_source"}',
+          },
+        ],
+        ensureSecretsHydrated: async () => {},
+        sendApprovalContinuation,
+      } as never,
+    });
+
+    expect(result.kind).toBe("teleport");
+    if (result.kind === "teleport") {
+      expect(result.pendingTeleport.activeTurn).toBe(true);
+      expect(result.pendingTeleport.continuation?.approvals).toEqual([
+        {
+          type: "tool",
+          tool_call_id: "call-teleport",
+          status: "success",
+          tool_return: '{"status":"waiting_for_source"}',
+        },
+      ]);
+    }
+    expect(sendApprovalContinuation).toHaveBeenCalledTimes(0);
+  });
+
+  test("a text-only turn becomes ready at its end-turn boundary", () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
+    openTestConnection(listener, "cloud-relay");
+    handleTeleportRequest({
+      listener,
+      connectionId: "cloud-relay",
+      command: {
+        type: "teleport_request",
+        request_id: "teleport-text",
+        teleport_id: "teleport-text",
+        runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        target: {
+          connection_id: "target-connection",
+          device_id: "target-device",
+          connection_name: "Cloud",
+        },
+      },
+    });
+
+    finishDrainedTeleport(runtime, () =>
+      runtime.turnLifecycle.finish(lease, "end_turn"),
+    );
+
+    const pending = [...(listener.pendingTeleports?.values() ?? [])].find(
+      (teleport) => teleport.teleportId === "teleport-text",
+    );
+    expect(pending?.readyAt).toEqual(expect.any(Number));
+  });
+
+  test("checkpoints exact tool outcomes before waiting for replacement transport", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "approval-checkpoint-"));
+    try {
+      const store = createInterruptedTurnStore(directory);
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      const turnLease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+        initialStatus: "PROCESSING_API_RESPONSE",
+      });
+      runtime.turnLifecycle.setRunId(turnLease, "run-checkpoint");
+      const approval = {
+        toolCallId: "call-checkpoint",
+        toolName: "Bash",
+        toolArgs: '{"command":"pwd"}',
+      };
+      const exactResults = [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace/exact",
+        },
+      ];
+      let transportOpen = true;
+      let durableRecord: InterruptedTurnRecord = {
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        runId: "run-checkpoint",
+        toolCallIds: [],
+        results: [],
+        requestOtid: "initial-otid",
+        workingDirectory: process.cwd(),
+      };
+      let enterTransportWait!: () => void;
+      const transportWaitEntered = new Promise<void>((resolve) => {
+        enterTransportWait = resolve;
+      });
+      let releaseTransportWait!: (result: "interrupted") => void;
+      const transportWait = new Promise<"interrupted">((resolve) => {
+        releaseTransportWait = resolve;
+      });
+
+      const approvalPromise = startToolApproval(runtime, turnLease, {
+        approvals: [approval],
+        socket: {
+          kind: "runtime",
+          bufferedAmount: 0,
+          isOpen: () => transportOpen,
+          send: () => {},
+        },
+        dependencies: {
+          classifyApprovals: async () => ({
+            autoAllowed: [
+              { approval, parsedArgs: { command: "pwd" }, context: null },
+            ],
+            autoDenied: [],
+            needsUserInput: [],
+          }),
+          executeApprovalBatch: async () => {
+            transportOpen = false;
+            return exactResults;
+          },
+          ensureSecretsHydrated: async () => {},
+          recordListenerWork: (
+            _runtime: typeof runtime,
+            update: Partial<InterruptedTurnRecord>,
+          ) => {
+            durableRecord = { ...durableRecord, ...update };
+            store.write(durableRecord);
+          },
+          waitForApprovalTransportOpen: async () => {
+            enterTransportWait();
+            return transportWait;
+          },
+        } as never,
+      });
+
+      await transportWaitEntered;
+      // Simulate a crash/re-registration while terminal delivery is still
+      // blocked: a fresh store instance must recover the executed outcome, not
+      // synthesize the stale-denial fallback from the earlier empty checkpoint.
+      const recovered = createInterruptedTurnStore(directory).read(
+        "agent-1",
+        "conv-1",
+      );
+      expect(recovered?.results).toEqual(exactResults);
+      expect(
+        recovered && recordedToolResults(recovered, [approval.toolCallId]),
+      ).toEqual(exactResults);
+
+      runtime.turnLifecycle.requestCancellation({ cause: "transport" });
+      releaseTransportWait("interrupted");
+      expect((await approvalPromise).kind).toBe("interrupted");
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   // Guards the gate's polarity and its default. A relay turn's results must
   // reach the client that asked for them, so a closed transport still waits for
   // reconnect (#3522) — only an explicitly process-owned turn may skip it.
-  test("a relay-owned turn still waits for reconnect before executing tools", async () => {
+  test("a relay-owned turn waits for reconnect before execution and terminal emission", async () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -234,31 +709,34 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"pwd"}',
     };
-    const executeApprovalBatch = mock(async () => [
-      {
-        type: "tool" as const,
-        tool_call_id: approval.toolCallId,
-        status: "success" as const,
-        tool_return: "/workspace",
-      },
-    ]);
-    let waitedBeforeExecuting = false;
+    let transportOpen = false;
+    const executeApprovalBatch = mock(async () => {
+      transportOpen = false;
+      return [
+        {
+          type: "tool" as const,
+          tool_call_id: approval.toolCallId,
+          status: "success" as const,
+          tool_return: "/workspace",
+        },
+      ];
+    });
+    const executionStartedAtWait: boolean[] = [];
     const waitForApprovalTransportOpen = mock(async () => {
-      waitedBeforeExecuting = executeApprovalBatch.mock.calls.length === 0;
+      executionStartedAtWait.push(executeApprovalBatch.mock.calls.length > 0);
+      transportOpen = true;
       return "open" as const;
     });
 
     // processOwnedTurn is intentionally omitted: the default must preserve the
     // relay wait rather than opting every caller into the bypass.
-    const result = await startQuestionApproval(runtime, turnLease, {
+    const result = await startToolApproval(runtime, turnLease, {
       approvals: [approval],
       socket: {
         kind: "runtime",
         bufferedAmount: 0,
-        isOpen: () => false,
-        send: () => {
-          throw new Error("process transport cannot send implicitly");
-        },
+        isOpen: () => transportOpen,
+        send: () => {},
       },
       dependencies: {
         classifyApprovals: async () => ({
@@ -279,8 +757,8 @@ describe("listener turn lifecycle integration", () => {
     });
 
     expect(result.kind).toBe("terminal");
-    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(1);
-    expect(waitedBeforeExecuting).toBe(true);
+    expect(waitForApprovalTransportOpen).toHaveBeenCalledTimes(2);
+    expect(executionStartedAtWait).toEqual([false, true]);
     expect(executeApprovalBatch).toHaveBeenCalledTimes(1);
   });
 
@@ -322,7 +800,7 @@ describe("listener turn lifecycle integration", () => {
       toolName: "Bash",
       toolArgs: '{"command":"pwd"}',
     };
-    const owner = startQuestionApproval(runtime, staleLease, {
+    const owner = startToolApproval(runtime, staleLease, {
       approvals: [approval],
       socket: createOpenTransport(sentPayloads),
       dependencies: {
@@ -373,18 +851,19 @@ describe("listener turn lifecycle integration", () => {
       origin: "approval_recovery",
       workingDirectory: process.cwd(),
     });
+    runtime.turnLifecycle.setRunId(lease, "run-recovery-error");
     const sentPayloads: string[] = [];
 
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      lease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, lease, options),
     );
     const payloads = sentPayloads.map((payload) => JSON.parse(payload));
 
@@ -401,6 +880,9 @@ describe("listener turn lifecycle integration", () => {
     expect(JSON.stringify(payloads[0])).not.toContain(
       "Recovery continuation ended unexpectedly",
     );
+    expect(payloads[1]).toMatchObject({
+      delta: { run_id: "run-recovery-error" },
+    });
   });
 
   test("a stale recovery owner cannot finish or report errors for its replacement", () => {
@@ -421,13 +903,13 @@ describe("listener turn lifecycle integration", () => {
     const transition = finalizeHandledRecoveryTurn(
       runtime,
       createOpenTransport(sentPayloads),
-      staleLease,
       {
         drainResult: { stopReason: "error" } as never,
         agentId: "agent-1",
         conversationId: "conv-1",
         turnId: "test-turn-1",
       },
+      (options) => finishListenerTurn(runtime, staleLease, options),
     );
 
     expect(transition.finished).toBe(false);

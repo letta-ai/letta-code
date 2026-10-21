@@ -61,12 +61,10 @@ import {
 } from "./interrupts";
 import {
   createRuntime,
-  replaySyncStateForRuntime,
-  runDetachedListenerTask,
-  safeSocketSend,
   startConnectedListenerRuntime,
   stopRuntime,
 } from "./lifecycle";
+import { runDetachedListenerTask } from "./listener-task";
 import {
   buildDeviceStatus,
   buildLoopStatus,
@@ -94,6 +92,8 @@ import {
   markAwaitingAcceptedApprovalContinuationRunId,
   resolveStaleApprovals,
 } from "./send";
+import { safeSocketSend } from "./socket-send";
+import { replaySyncStateForRuntime } from "./sync-replay";
 import { handleIncomingMessage } from "./turn";
 import type {
   ConversationRuntime,
@@ -122,12 +122,15 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   connectionId: string | null;
   connectionName: string | null;
   sessionId: string;
+  nextConnectionAttempt: number;
   nextConnectionOrdinal: number;
   connections: ListenerRuntime["connections"];
   connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
   processTransport: ListenerRuntime["processTransport"];
   processServicesStarted: boolean;
   processServicesGeneration: number;
+  externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+  externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
   processServicesReady: Promise<void> | null;
   processServicesReadyGeneration: number | null;
   serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -148,6 +151,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
   hasSuccessfulConnection: boolean;
   everConnected: boolean;
   conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+  acceptedInputDispositionLedger: ListenerRuntime["acceptedInputDispositionLedger"];
+  pendingStartupFramesByLineage: ListenerRuntime["pendingStartupFramesByLineage"];
+  startupGenerationByLineage: ListenerRuntime["startupGenerationByLineage"];
   memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
   secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
   secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -173,12 +179,15 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     connectionId: string | null;
     connectionName: string | null;
     sessionId: string;
+    nextConnectionAttempt: number;
     nextConnectionOrdinal: number;
     connections: ListenerRuntime["connections"];
     connectionIdsByRuntimeKey: ListenerRuntime["connectionIdsByRuntimeKey"];
     processTransport: ListenerRuntime["processTransport"];
     processServicesStarted: boolean;
     processServicesGeneration: number;
+    externalToolNotificationEpochByConversation: ListenerRuntime["externalToolNotificationEpochByConversation"];
+    externalToolNotificationBarrierByConversation: ListenerRuntime["externalToolNotificationBarrierByConversation"];
     processServicesReady: Promise<void> | null;
     processServicesReadyGeneration: number | null;
     serviceCommandHandler: ListenerRuntime["serviceCommandHandler"];
@@ -199,6 +208,9 @@ function createLegacyTestRuntime(): ConversationRuntime & {
     hasSuccessfulConnection: boolean;
     everConnected: boolean;
     conversationRuntimes: ListenerRuntime["conversationRuntimes"];
+    acceptedInputDispositionLedger: ListenerRuntime["acceptedInputDispositionLedger"];
+    pendingStartupFramesByLineage: ListenerRuntime["pendingStartupFramesByLineage"];
+    startupGenerationByLineage: ListenerRuntime["startupGenerationByLineage"];
     memfsSyncedAgents: ListenerRuntime["memfsSyncedAgents"];
     secretsHydrationByAgent: ListenerRuntime["secretsHydrationByAgent"];
     secretsHydrationFreshnessByAgent: ListenerRuntime["secretsHydrationFreshnessByAgent"];
@@ -282,6 +294,12 @@ function createLegacyTestRuntime(): ConversationRuntime & {
         listener.sessionId = value;
       },
     },
+    nextConnectionAttempt: {
+      get: () => listener.nextConnectionAttempt,
+      set: (value: number) => {
+        listener.nextConnectionAttempt = value;
+      },
+    },
     nextConnectionOrdinal: {
       get: () => listener.nextConnectionOrdinal,
       set: (value: number) => {
@@ -316,6 +334,22 @@ function createLegacyTestRuntime(): ConversationRuntime & {
       get: () => listener.processServicesGeneration,
       set: (value: number) => {
         listener.processServicesGeneration = value;
+      },
+    },
+    externalToolNotificationEpochByConversation: {
+      get: () => listener.externalToolNotificationEpochByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationEpochByConversation"],
+      ) => {
+        listener.externalToolNotificationEpochByConversation = value;
+      },
+    },
+    externalToolNotificationBarrierByConversation: {
+      get: () => listener.externalToolNotificationBarrierByConversation,
+      set: (
+        value: ListenerRuntime["externalToolNotificationBarrierByConversation"],
+      ) => {
+        listener.externalToolNotificationBarrierByConversation = value;
       },
     },
     processServicesReady: {
@@ -651,16 +685,17 @@ export const __listenClientTestUtils = {
   replaySyncStateForRuntime: (
     runtime: ListenerRuntime,
     socket: WebSocket,
-    scope: { agent_id: string; conversation_id: string },
+    scope: { agent_id: string | null; conversation_id: string },
     opts?: {
       recoverApprovals?: boolean;
+      resumeInterruptedTurn?: boolean;
       recoverApprovalStateForSync?: (
         runtime: ConversationRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => Promise<void>;
       scheduleWarmupsAfterSync?: (
         runtime: ListenerRuntime,
-        scope: { agent_id: string; conversation_id: string },
+        scope: { agent_id: string | null; conversation_id: string },
       ) => void;
       forceDeviceStatus?: boolean;
     },

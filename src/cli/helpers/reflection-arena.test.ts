@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createReflectionMemoryWorktree } from "@/agent/memory-worktree";
 import { reflectionMemoryWorktreeHasNoChanges } from "@/cli/helpers/reflection-arena";
+import { isRetryableReflectionArenaModelError } from "@/cli/helpers/reflection-configuration-error";
 import { getReflectionFinalizationContext } from "@/cli/helpers/reflection-launcher";
 import { settingsManager } from "@/settings-manager";
 
@@ -47,6 +48,20 @@ afterEach(() => {
 });
 
 describe("reflection arena finalization", () => {
+  test("does not retry deterministic model configuration failures", () => {
+    expect(
+      isRetryableReflectionArenaModelError(
+        '400 {"error":"Model handle not found: openai-proxy/deepseek-v4-flash"}',
+      ),
+    ).toBe(false);
+    expect(
+      isRetryableReflectionArenaModelError(
+        'Model provider "openai-proxy" is not registered.',
+      ),
+    ).toBe(false);
+    expect(isRetryableReflectionArenaModelError("out of credits")).toBe(true);
+  });
+
   test("uses the owning agent's explicit merge settings", () => {
     (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
       ({

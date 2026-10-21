@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { buildChannelNotificationXml } from "@/channels/xml";
 import {
   createSlackAdapter,
   FakeSlackApp,
@@ -184,6 +185,65 @@ test("slack adapter rehydrates bot-authored Slack thread context on existing rou
     }),
   );
   expect(resolveSlackChannelHistoryMock).not.toHaveBeenCalled();
+});
+
+test("slack adapter resolves current-message mentions without hydrating thread context", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  if (!app) throw new Error("Expected Slack app instance");
+  app.client.users.info.mockResolvedValueOnce({
+    user: {
+      name: "alice",
+      profile: {
+        display_name: "Alice",
+        real_name: "",
+      },
+    },
+  });
+  app.client.users.info.mockResolvedValueOnce({
+    user: {
+      name: "bob",
+      profile: { display_name: "Bob", real_name: "" },
+    },
+  });
+
+  const prepared = await adapter.prepareInboundMessage?.({
+    channel: "slack",
+    accountId: "slack-test-account",
+    chatId: "D123",
+    senderId: "UCURRENT",
+    senderName: "Current User",
+    text: "Ask <@UALICE> and <@UBOB> then <@UALICE>",
+    timestamp: 1712800000100,
+    messageId: "1712800000.000100",
+    threadId: null,
+    chatType: "direct",
+    isMention: false,
+  });
+
+  expect(prepared?.userMentions).toEqual([
+    { start: 4, end: 13, userId: "UALICE", displayName: "Alice" },
+    { start: 18, end: 25, userId: "UBOB", displayName: "Bob" },
+    { start: 31, end: 40, userId: "UALICE", displayName: "Alice" },
+  ]);
+  if (!prepared) throw new Error("Expected prepared Slack message");
+  const xml = buildChannelNotificationXml(prepared);
+  expect(xml).toContain('<mention id="UALICE">@Alice</mention>');
+  expect(xml).toContain('<mention id="UBOB">@Bob</mention>');
+  expect(xml.match(/<mention id="UALICE">/g)).toHaveLength(2);
+  expect(app.client.users.info).toHaveBeenCalledTimes(2);
+  expect(resolveSlackThreadHistoryMock).not.toHaveBeenCalled();
 });
 
 test("slack adapter hydrates recent channel context, including bot-authored entries, when a mention creates a new thread", async () => {

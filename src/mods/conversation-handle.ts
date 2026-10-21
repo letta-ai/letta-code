@@ -1,6 +1,7 @@
 import { updateModelConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { loadModConversationHistoryFromBackend } from "@/mods/conversation-history";
+import { publishConversationTitleChange } from "@/mods/conversation-title-events";
 import type {
   ModConversationHandle,
   ModConversationMessage,
@@ -53,6 +54,20 @@ export function createModConversationHandle(options: {
         },
         historyOptions,
       );
+    },
+    async updateTitle(title) {
+      if (!options.conversationId) {
+        throw new Error(
+          "Mod updateTitle: conversationId is not available for this conversation",
+        );
+      }
+      await requireBackend().updateConversation(options.conversationId, {
+        summary: title,
+      });
+      publishConversationTitleChange({
+        conversationId: options.conversationId,
+        title,
+      });
     },
     sendMessageStream(messages, sendOptions, requestOptions) {
       return options.sendMessageStream(

@@ -5,6 +5,7 @@ import {
   isConnectBedrockProvider,
   isConnectOAuthProvider,
   listConnectProvidersForHelp,
+  listConnectProviderTokens,
   resolveConnectProvider,
 } from "@/cli/commands/connect-normalize";
 
@@ -36,6 +37,24 @@ function withEnv<T>(
 }
 
 describe("connect provider normalization", () => {
+  test("resolves Grok as cloud xAI OAuth", () => {
+    const resolved = resolveConnectProvider("grok", "api");
+
+    if (!resolved) {
+      throw new Error("Expected Grok cloud provider to resolve");
+    }
+    expect(resolved.canonical).toBe("xai");
+    expect(resolved.byokId).toBe("grok");
+    expect(resolved.byokProvider).toMatchObject({
+      providerType: "xai",
+      providerName: "lc-xai",
+      oauthProviderId: "xai",
+      isOAuth: true,
+    });
+    expect(isConnectOAuthProvider(resolved)).toBe(true);
+    expect(listConnectProviderTokens("api")).toContain("grok");
+  });
+
   test("normalizes codex alias to chatgpt provider", () => {
     const resolved = resolveConnectProvider("codex", "api");
 
@@ -47,6 +66,25 @@ describe("connect provider normalization", () => {
     expect(resolved?.byokId).toBe("codex");
     expect(resolved?.byokProvider.providerName).toBe("chatgpt-plus-pro");
     expect(isConnectOAuthProvider(resolved)).toBe(true);
+  });
+
+  test("resolves OpenRouter API-key and OAuth cloud providers separately", () => {
+    const apiKey = resolveConnectProvider("openrouter", "api");
+    const oauth = resolveConnectProvider("openrouter-oauth", "api");
+
+    expect(apiKey?.byokProvider).toMatchObject({
+      id: "openrouter",
+      providerType: "openrouter",
+      providerName: "lc-openrouter",
+    });
+    expect(apiKey?.byokProvider.isOAuth).not.toBe(true);
+    expect(oauth?.byokProvider).toMatchObject({
+      id: "openrouter-oauth",
+      providerType: "openrouter",
+      providerName: "openrouter-oauth",
+      isOAuth: true,
+      oauthProviderId: "openrouter",
+    });
   });
 
   test("resolves standard api-key providers", () => {
@@ -147,8 +185,9 @@ describe("connect provider normalization", () => {
   test("resolves local subscription providers from the pi OAuth catalog", () => {
     const anthropicOAuth = resolveConnectProvider("anthropic-oauth", "local");
     const githubCopilot = resolveConnectProvider("github-copilot", "local");
+    const grok = resolveConnectProvider("grok", "local");
 
-    if (!anthropicOAuth || !githubCopilot) {
+    if (!anthropicOAuth || !githubCopilot || !grok) {
       throw new Error("Expected local OAuth providers to resolve");
     }
 
@@ -156,6 +195,16 @@ describe("connect provider normalization", () => {
     expect(anthropicOAuth.byokProvider.oauthProviderId).toBe("anthropic");
     expect(isConnectOAuthProvider(githubCopilot)).toBe(true);
     expect(githubCopilot.byokProvider.oauthProviderId).toBe("github-copilot");
+    expect(grok.canonical).toBe("xai");
+    expect(grok.byokProvider).toMatchObject({
+      displayName: "xAI (Grok/X subscription)",
+      providerType: "xai",
+      providerName: "xai",
+      isOAuth: true,
+      oauthProviderId: "xai",
+    });
+    expect(listConnectProviderTokens("local")).toContain("grok");
+    expect(listConnectProviderTokens("api")).toContain("grok");
   });
 
   test("uses environment keys before API-key optional defaults", () => {

@@ -45,12 +45,18 @@ export interface McpToolDefinition {
   title?: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: Record<string, unknown>;
+  execution?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
+  icons?: Array<Record<string, unknown>>;
 }
 
 export interface McpToolResult {
   content: unknown[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
+  _meta?: Record<string, unknown>;
 }
 
 export interface ConnectedMcpServer {
@@ -67,13 +73,23 @@ export interface ConnectedMcpServer {
 export interface McpOAuthConnection {
   authProvider: OAuthClientProvider;
   waitForAuthorizationCode?: () => Promise<string>;
+  closeCallback?(): Promise<void>;
   close(): Promise<void>;
 }
 
+/** Package-owned structural fetch shape for MCP network requests. */
+export type McpFetch = (
+  url: string | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
 export interface ConnectMcpServerOptions {
   clientInfo?: { name: string; version: string };
+  /** Custom fetch used for MCP transport and every SDK OAuth request. */
+  fetch?: McpFetch;
   stderr?: "inherit" | "pipe";
   oauth?: McpOAuthConnection;
+  signal?: AbortSignal;
 }
 
 declare const LETTA_VERSION: string | undefined;
@@ -93,9 +109,13 @@ export async function connectMcpServer(
 ): Promise<ConnectedMcpServer> {
   let client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
   try {
+    options.signal?.throwIfAborted();
     const transport = createTransport(config, options);
     try {
-      await client.connect(transport);
+      await client.connect(
+        transport,
+        options.signal ? { signal: options.signal } : undefined,
+      );
     } catch (error) {
       if (
         !(error instanceof UnauthorizedError) ||
@@ -104,21 +124,38 @@ export async function connectMcpServer(
       ) {
         throw error;
       }
-      const authorizationCode = await options.oauth.waitForAuthorizationCode();
-      await transport.finishAuth(authorizationCode);
+      const authorizationCode = await withAbort(
+        options.oauth.waitForAuthorizationCode(),
+        options.signal,
+        () => options.oauth?.close(),
+      );
+      await withAbort(
+        transport.finishAuth(authorizationCode),
+        options.signal,
+        () => transport.close(),
+      );
       await client
         .close()
         .catch(() => transport.close().catch(() => undefined));
       client = new Client(options.clientInfo ?? DEFAULT_CLIENT_INFO);
-      await client.connect(createTransport(config, options));
+      await client.connect(
+        createTransport(config, options),
+        options.signal ? { signal: options.signal } : undefined,
+      );
     }
-    await options.oauth?.close();
-    const response = await client.listTools();
+    await (options.oauth?.closeCallback?.() ??
+      options.oauth?.close() ??
+      Promise.resolve());
+    const response = await client.listTools(
+      undefined,
+      options.signal ? { signal: options.signal } : undefined,
+    );
     const tools = response.tools.map((tool) => ({
-      name: tool.name,
-      ...(tool.title ? { title: tool.title } : {}),
-      ...(tool.description ? { description: tool.description } : {}),
+      ...tool,
       inputSchema: normalizeInputSchema(tool.inputSchema),
+      ...(tool.outputSchema
+        ? { outputSchema: normalizeInputSchema(tool.outputSchema) }
+        : {}),
     }));
 
     let closed = false;
@@ -133,22 +170,57 @@ export async function connectMcpServer(
         );
         return {
           content: Array.isArray(result.content) ? result.content : [],
-          ...(result.isError === true ? { isError: true } : {}),
+          ...(typeof result.isError === "boolean"
+            ? { isError: result.isError }
+            : {}),
           ...(isRecord(result.structuredContent)
             ? { structuredContent: result.structuredContent }
             : {}),
+          ...(isRecord(result._meta) ? { _meta: result._meta } : {}),
         };
       },
       close: async () => {
         if (closed) return;
         closed = true;
-        await client.close();
+        const results = await Promise.allSettled([
+          client.close(),
+          options.oauth?.close(),
+        ]);
+        const failure = results.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
+        );
+        if (failure) throw failure.reason;
       },
     };
   } catch (error) {
     await options.oauth?.close();
     await client.close().catch(() => undefined);
     throw error;
+  }
+}
+
+async function withAbort<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  onAbort?: () => Promise<unknown> | unknown,
+): Promise<T> {
+  if (!signal) return operation;
+  signal.throwIfAborted();
+  let abort: (() => void) | undefined;
+  const cancellation = new Promise<never>((_resolve, reject) => {
+    abort = () => {
+      void Promise.resolve(onAbort?.()).catch(() => undefined);
+      reject(
+        signal.reason ?? new DOMException("Operation aborted", "AbortError"),
+      );
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    return await Promise.race([operation, cancellation]);
+  } finally {
+    if (abort) signal.removeEventListener("abort", abort);
   }
 }
 
@@ -169,6 +241,7 @@ function createTransport(
     return new StreamableHTTPClientTransport(new URL(config.url), {
       requestInit: headersRequestInit(headers),
       authProvider: options.oauth?.authProvider,
+      fetch: abortAwareFetch(options.signal, undefined, options.fetch),
     });
   }
   if (config.transport === "sse") {
@@ -177,9 +250,7 @@ function createTransport(
     return new SSEClientTransport(new URL(config.url), {
       requestInit,
       authProvider: options.oauth?.authProvider,
-      fetch: headers
-        ? (url, init) => fetch(url, mergeHeaders(init, headers))
-        : undefined,
+      fetch: abortAwareFetch(options.signal, headers, options.fetch),
     });
   }
   return new StdioClientTransport({
@@ -189,6 +260,26 @@ function createTransport(
     ...(config.cwd ? { cwd: config.cwd } : {}),
     stderr: options.stderr ?? "inherit",
   });
+}
+
+function abortAwareFetch(
+  operationSignal?: AbortSignal,
+  headers?: Record<string, string>,
+  fetchFn?: McpFetch,
+): McpFetch | undefined {
+  if (!operationSignal && !headers) return fetchFn;
+  const request = fetchFn ?? fetch;
+  return (url, init) => {
+    const requestInit = headers ? mergeHeaders(init, headers) : { ...init };
+    const requestSignal = requestInit.signal ?? undefined;
+    return request(url, {
+      ...requestInit,
+      signal:
+        operationSignal && requestSignal
+          ? AbortSignal.any([operationSignal, requestSignal])
+          : (operationSignal ?? requestSignal),
+    });
+  };
 }
 
 function supportsOAuthCompletion(

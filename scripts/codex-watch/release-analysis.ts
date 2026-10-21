@@ -9,7 +9,6 @@ import {
   type ModelsJson,
   type Verdict,
 } from "./diff-models-json.ts";
-import type { PathChangeSummary, RenderInput } from "./render-issue.ts";
 
 export const CODEX_REPO = "openai/codex";
 export const DEFAULT_TARGET_REPO =
@@ -22,6 +21,8 @@ export const WATCHED_PATHS = [
 ];
 
 const MAX_COMMITS_PER_PATH = 8;
+const GITHUB_RELEASES_FETCH_ATTEMPTS = 3;
+const GITHUB_RELEASES_RETRY_DELAY_MS = 1_000;
 
 export interface Release {
   tag_name: string;
@@ -35,11 +36,26 @@ export interface Release {
 export interface AnalyzeCodexReleaseOptions {
   sinceTag: string | null;
   currentTag: string | null;
+  stableReleases?: Release[];
 }
 
-export interface CodexWatchAnalysis extends RenderInput {
+export interface PathChangeSummary {
+  path: string;
+  commits: string[];
+}
+
+export interface CodexWatchAnalysis {
+  previous_tag: string;
+  current_tag: string;
+  is_latest_release: boolean;
+  release_url: string;
+  release_notes_md: string;
   verdict: Verdict;
   models_diff: ModelsDiff | null;
+  prompt_md_changed: boolean;
+  prompt_md_diff_preview: string | null;
+  path_changes: PathChangeSummary[];
+  workflow_run_url: string;
   compare_url: string;
   changed_files: string[];
 }
@@ -47,7 +63,7 @@ export interface CodexWatchAnalysis extends RenderInput {
 export async function analyzeCodexRelease(
   options: AnalyzeCodexReleaseOptions,
 ): Promise<CodexWatchAnalysis> {
-  const stables = await listStableReleases();
+  const stables = options.stableReleases ?? (await listStableReleases());
   if (stables.length === 0) throw new Error("No stable Codex releases found");
 
   const current = options.currentTag
@@ -125,8 +141,13 @@ export async function analyzeCodexRelease(
     return {
       previous_tag: previous.tag_name,
       current_tag: current.tag_name,
+      is_latest_release: current.tag_name === stables.at(-1)?.tag_name,
       release_url: current.html_url,
-      release_notes_md: current.body ?? "",
+      release_notes_md: releaseNotesForRange(
+        stables,
+        previous.tag_name,
+        current.tag_name,
+      ),
       verdict,
       models_diff: modelsDiff,
       prompt_md_changed: promptMdChanged,
@@ -148,7 +169,12 @@ export async function analyzeCodexRelease(
   }
 }
 
-export async function listStableReleases(): Promise<Release[]> {
+export async function listStableReleases(
+  options: {
+    fetchImpl?: typeof fetch;
+    sleep?: (delayMs: number) => Promise<void>;
+  } = {},
+): Promise<Release[]> {
   const releases: Release[] = [];
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
@@ -156,15 +182,15 @@ export async function listStableReleases(): Promise<Release[]> {
   };
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sleep =
+    options.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
 
   for (let page = 1; page <= 10; page++) {
     const url = `https://api.github.com/repos/${CODEX_REPO}/releases?per_page=100&page=${page}`;
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(
-        `GitHub releases API failed (${res.status}): ${await res.text()}`,
-      );
-    }
+    const res = await fetchGitHubReleasesPage(url, headers, fetchImpl, sleep);
     const batch = (await res.json()) as Release[];
     releases.push(...batch);
     if (batch.length < 100) break;
@@ -172,6 +198,49 @@ export async function listStableReleases(): Promise<Release[]> {
   return releases
     .filter(isStableRelease)
     .sort((a, b) => (a.published_at ?? "").localeCompare(b.published_at ?? ""));
+}
+
+async function fetchGitHubReleasesPage(
+  url: string,
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleep: (delayMs: number) => Promise<void>,
+): Promise<Response> {
+  for (let attempt = 1; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { headers });
+    } catch (error) {
+      if (attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
+        throw new Error(
+          `GitHub releases API request failed after ${attempt} attempts: ${String(error)}`,
+          { cause: error },
+        );
+      }
+      await retryGitHubReleasesFetch(attempt, String(error), sleep);
+      continue;
+    }
+
+    if (response.ok) return response;
+
+    const message = `GitHub releases API failed (${response.status}): ${await response.text()}`;
+    if (response.status < 500 || attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
+      throw new Error(message);
+    }
+    await retryGitHubReleasesFetch(attempt, message, sleep);
+  }
+}
+
+async function retryGitHubReleasesFetch(
+  attempt: number,
+  error: string,
+  sleep: (delayMs: number) => Promise<void>,
+): Promise<void> {
+  const delayMs = GITHUB_RELEASES_RETRY_DELAY_MS * 2 ** (attempt - 1);
+  console.warn(
+    `${error}; retrying GitHub releases request in ${delayMs}ms (${attempt}/${GITHUB_RELEASES_FETCH_ATTEMPTS})`,
+  );
+  await sleep(delayMs);
 }
 
 function isStableRelease(release: Release): boolean {
@@ -186,6 +255,49 @@ function findPreviousStable(
   const idx = stables.findIndex((r) => r.tag_name === currentTag);
   if (idx <= 0) return null;
   return stables[idx - 1] ?? null;
+}
+
+export function releaseNotesForRange(
+  stables: Release[],
+  previousTag: string,
+  currentTag: string,
+): string {
+  const currentIndex = stables.findIndex(
+    (release) => release.tag_name === currentTag,
+  );
+  if (currentIndex < 0) {
+    throw new Error(`Could not find current release ${currentTag}`);
+  }
+  const previousIndex = stables.findIndex(
+    (release) => release.tag_name === previousTag,
+  );
+  if (previousIndex >= currentIndex) {
+    throw new Error(
+      `Previous release ${previousTag} must precede ${currentTag}`,
+    );
+  }
+  const firstIncludedIndex =
+    previousIndex < 0 ? currentIndex : previousIndex + 1;
+  return stables
+    .slice(firstIncludedIndex, currentIndex + 1)
+    .map(
+      (release) =>
+        `## [${release.tag_name}](${release.html_url})\n\n${release.body?.trim() || "_No release notes._"}`,
+    )
+    .join("\n\n");
+}
+
+export function findLatestStableReleaseAfter(
+  stables: Release[],
+  terminalTag: string,
+): Release | null {
+  const terminalIndex = stables.findIndex(
+    (release) => release.tag_name === terminalTag,
+  );
+  if (terminalIndex < 0) {
+    throw new Error(`Could not find terminal release ${terminalTag}`);
+  }
+  return terminalIndex === stables.length - 1 ? null : (stables.at(-1) ?? null);
 }
 
 function cloneCodex(tmp: string): string {

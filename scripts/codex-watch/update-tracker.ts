@@ -7,7 +7,7 @@
  */
 
 import { readFileSync } from "node:fs";
-import { editIssueBody, getIssueBody } from "./github.ts";
+import { editIssueBody, getIssueBody, ghJson } from "./github.ts";
 import {
   type CodexWatchAnalysis,
   DEFAULT_TARGET_REPO,
@@ -26,10 +26,11 @@ interface Args {
   outcome: TrackerOutcome | null;
   notes: string;
   prUrl: string | null;
+  expectedGithubLogin: string | null;
   dryRun: boolean;
 }
 
-function parseArgs(argv: string[]): Args {
+export function parseArgs(argv: string[]): Args {
   const args: Args = {
     repo: DEFAULT_TARGET_REPO,
     trackerIssue: null,
@@ -37,6 +38,7 @@ function parseArgs(argv: string[]): Args {
     outcome: null,
     notes: "",
     prUrl: null,
+    expectedGithubLogin: null,
     dryRun: false,
   };
 
@@ -49,10 +51,12 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--outcome") args.outcome = parseOutcome(argv[++i]);
     else if (a === "--notes") args.notes = argv[++i] ?? "";
     else if (a === "--pr-url") args.prUrl = argv[++i] ?? null;
-    else if (a === "--dry-run") args.dryRun = true;
+    else if (a === "--expected-github-login") {
+      args.expectedGithubLogin = argv[++i] ?? null;
+    } else if (a === "--dry-run") args.dryRun = true;
     else if (a === "--help" || a === "-h") {
       console.log(
-        "Usage: bun scripts/codex-watch/update-tracker.ts --tracker-issue ISSUE --analysis-file FILE --outcome OUTCOME [--notes TEXT] [--pr-url URL] [--repo OWNER/REPO] [--dry-run]",
+        "Usage: bun scripts/codex-watch/update-tracker.ts --tracker-issue ISSUE --analysis-file FILE --outcome OUTCOME [--notes TEXT] [--pr-url URL --expected-github-login LOGIN] [--repo OWNER/REPO] [--dry-run]",
       );
       process.exit(0);
     } else {
@@ -65,8 +69,13 @@ function parseArgs(argv: string[]): Args {
   }
   if (!args.analysisFile) throw new Error("--analysis-file is required");
   if (!args.outcome) throw new Error("--outcome is required");
-  if (args.outcome === "pr_created" && !args.prUrl) {
-    throw new Error("--pr-url is required when --outcome pr_created");
+  if (args.outcome === "pr_created") {
+    if (!args.prUrl) {
+      throw new Error("--pr-url is required when --outcome pr_created");
+    }
+    if (!args.expectedGithubLogin) {
+      throw new Error("--expected-github-login is required for pr_created");
+    }
   }
 
   return args;
@@ -94,6 +103,14 @@ function main() {
   const analysis = readAnalysis(args.analysisFile as string);
   const body = getIssueBody(args.repo, args.trackerIssue as number);
   const state = parseTrackerState(body);
+  if (args.outcome === "pr_created") {
+    verifyParityPr(
+      args.repo,
+      args.prUrl as string,
+      args.expectedGithubLogin as string,
+      analysis.current_tag,
+    );
+  }
   const next = recordAnalysis(state, {
     analysis,
     outcome: args.outcome as TrackerOutcome,
@@ -113,6 +130,41 @@ function main() {
   );
 }
 
+function verifyParityPr(
+  repo: string,
+  prUrl: string,
+  expectedGithubLogin: string,
+  currentTag: string,
+): void {
+  const pullRequest = ghJson<{
+    author: { login: string };
+    body: string | null;
+    isDraft: boolean;
+    state: string;
+  }>([
+    "pr",
+    "view",
+    prUrl,
+    "--repo",
+    repo,
+    "--json",
+    "author,body,isDraft,state",
+  ]);
+  if (
+    pullRequest.author.login !== expectedGithubLogin ||
+    !pullRequest.isDraft ||
+    pullRequest.state !== "OPEN"
+  ) {
+    throw new Error(
+      `Codex PR must be an open draft authored by ${expectedGithubLogin} (got author=${pullRequest.author.login}, draft=${pullRequest.isDraft}, state=${pullRequest.state})`,
+    );
+  }
+  const marker = `Codex-watch: openai/codex ${currentTag}`;
+  if (!pullRequest.body?.includes(marker)) {
+    throw new Error(`Codex PR body is missing marker: ${marker}`);
+  }
+}
+
 function defaultNotes(outcome: TrackerOutcome): string {
   switch (outcome) {
     case "recorded_noop":
@@ -128,4 +180,4 @@ function defaultNotes(outcome: TrackerOutcome): string {
   }
 }
 
-main();
+if (import.meta.main) main();

@@ -7,7 +7,7 @@ description: Create and manage shared memory — git-tracked repositories hosted
 
 Shared memory is memory created independently of any single agent, designed to be dynamically attached to or detached from multiple agents. Each unit of shared memory is a **shared memory repository**: a git repository hosted on Letta Cloud, owned by your organization rather than by one agent, reachable from any environment (sandboxes, remote machines, sessions).
 
-Shared memory works exactly like your MemFS: attached repositories are real git checkouts on disk, and you read, edit, commit, and push them with ordinary git. The only differences are that each repository has its own projection root (next to your memory directory, not inside it) and its own remote origin, and other agents may be writing to it too.
+Shared memory works like your MemFS: attached repositories are real git checkouts on disk, and you read, edit, and commit with ordinary git. The harness pushes clean committed changes after each turn. Each repository has its own projection root (next to your memory directory, not inside it) and its own remote origin, and other agents may be writing to it too.
 
 Create a shared memory repository when:
 - You have context an agent should be able to access that doesn't belong in its own MemFS (input files, datasets, docs, working artifacts)
@@ -23,16 +23,15 @@ ls "$MEMORY_DIR/../"                      # attached repositories appear here by
 cat "$MEMORY_DIR/../<repo-name>/<path>"   # read like any file
 ```
 
-Edit files with your normal file tools, then commit and push with git — the mount's origin and credentials are already configured:
+Edit files with your normal file tools, then commit with git. The mount's origin and credentials are already configured:
 
 ```bash
 cd "$MEMORY_DIR/../<repo-name>"
 git add <files>
 git commit -m "describe the change"
-git push
 ```
 
-Unlike MemFS, the harness does not auto-push shared memory after turns — a commit you don't push is not visible to other agents or environments. Always push after committing.
+The harness pushes clean commits from read/write attached repositories after the turn. If a push collides with another agent's work, it pulls with rebase and retries once. Dirty files and conflicts are not changed automatically; the harness adds a reminder to the next turn instead.
 
 To pick up other agents' changes:
 
@@ -84,7 +83,7 @@ letta shared-memory history shared-notes --path docs/plan.md
 - **`sync` reports "mount path already exists and is not a git repository"** — a plain directory (usually created by hand before the mount existed) is occupying the mount path. Inspect it, salvage anything worth keeping, move or delete it, then re-run `letta shared-memory sync`.
 - **Never hand-clone the repository to another location (e.g. /tmp) to work around a broken mount** — fix the mount with `letta shared-memory sync` so every session and other agents see the same checkout.
 - **Permission denied under another agent's directory** — shared repositories mount per-agent. Only your own mount (under your agent directory) is accessible; another agent's mount of the same repository is walled off by the cross-agent guard. Run `letta shared-memory sync` to get your own mount.
-- **Push rejected (non-fast-forward)** — another agent pushed first: `git pull --rebase`, resolve any conflicts, push again.
+- **Shared-memory conflict reminder** — resolve the conflict in the named repository, finish the rebase or commit, and leave the repository clean. The harness retries the push after a future turn.
 
 ## Notes and Limits
 

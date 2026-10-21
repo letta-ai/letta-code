@@ -45,9 +45,32 @@ describe("Read tool", () => {
 
     const result = await read({ file_path: file });
 
-    expect(result.content).toContain("1→Line 1");
-    expect(result.content).toContain("2→Line 2");
-    expect(result.content).toContain("3→Line 3");
+    expect(result.content).toContain("1\tLine 1");
+    expect(result.content).toContain("2\tLine 2");
+    expect(result.content).toContain("3\tLine 3");
+  });
+
+  test("separates line numbers from content with a tab, not an arrow", async () => {
+    testDir = new TestDirectory();
+    const file = testDir.createFile("separator.txt", "alpha\nbravo");
+
+    const result = await read({ file_path: file });
+
+    expect(result.content).not.toContain("→");
+    expect(result.content).toContain("1\talpha");
+  });
+
+  test("keeps line numbers flush-left without padding past nine lines", async () => {
+    testDir = new TestDirectory();
+    const lines = Array.from({ length: 12 }, (_, i) => `line${i + 1}`);
+    const file = testDir.createFile("padding.txt", lines.join("\n"));
+
+    const result = await read({ file_path: file });
+
+    // Claude Code emits `9\tline9` and `10\tline10` with no alignment padding.
+    expect(result.content).toContain("\n9\tline9");
+    expect(result.content).toContain("\n10\tline10");
+    expect(result.content).not.toContain(" 9\tline9");
   });
 
   test("respects offset parameter", async () => {

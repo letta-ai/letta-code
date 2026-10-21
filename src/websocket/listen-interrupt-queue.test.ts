@@ -902,7 +902,7 @@ describe("cancel-induced stop reason reclassification", () => {
       origin: "message",
       workingDirectory: "/tmp/worktree",
     });
-    runtime.turnLifecycle.requestCancellation();
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     runtime.turnLifecycle.finish(lease, "cancelled");
 
     expect(runtime.lastStopReason).toBe("cancelled");

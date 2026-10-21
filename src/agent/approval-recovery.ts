@@ -17,8 +17,12 @@ import {
 
 export interface RunErrorInfo {
   error_type?: string;
+  error_code?: string;
+  status_code?: number;
+  retryable?: boolean;
   message?: string;
   detail?: string;
+  raw?: unknown;
   run_id?: string;
 }
 
@@ -61,14 +65,24 @@ type RunErrorMetadata =
   | {
       type?: string;
       error_type?: string;
+      errorCode?: string;
+      error_code?: string;
+      status_code?: number;
+      retryable?: boolean;
       message?: string;
       detail?: string;
+      raw?: unknown;
       run_id?: string;
       error?: {
         type?: string;
         error_type?: string;
+        errorCode?: string;
+        error_code?: string;
+        status_code?: number;
+        retryable?: boolean;
         message?: string;
         detail?: string;
+        raw?: unknown;
         run_id?: string;
       };
     }
@@ -89,12 +103,23 @@ export async function fetchRunErrorInfo(
         metaError?.type ??
         nestedError?.error_type ??
         nestedError?.type,
+      error_code:
+        metaError?.errorCode ??
+        metaError?.error_code ??
+        nestedError?.errorCode ??
+        nestedError?.error_code,
+      status_code: metaError?.status_code ?? nestedError?.status_code,
+      retryable: metaError?.retryable ?? nestedError?.retryable,
       message: metaError?.message ?? nestedError?.message,
       detail: metaError?.detail ?? nestedError?.detail,
+      raw: metaError?.raw ?? nestedError?.raw,
       run_id: metaError?.run_id ?? nestedError?.run_id ?? runId,
     };
 
-    return errorInfo.error_type || errorInfo.message || errorInfo.detail
+    return errorInfo.error_type ||
+      errorInfo.error_code ||
+      errorInfo.message ||
+      errorInfo.detail
       ? errorInfo
       : null;
   } catch {

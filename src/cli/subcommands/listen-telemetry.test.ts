@@ -127,7 +127,7 @@ describe("listen subcommand telemetry", () => {
     telemetry.flush = flushMock as typeof telemetry.flush;
     process.env.LETTA_BASE_URL = "https://self-hosted.example.com";
 
-    const exitCode = await runListenSubcommand(["--env-name", "ci-env"]);
+    const exitCode = await runListenSubcommand(["--computer-name", "ci-env"]);
 
     expect(exitCode).toBe(1);
     expect(trackSessionEndMock).toHaveBeenCalledWith(

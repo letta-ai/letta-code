@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { ask_user_question } from "./ask-user-question";
+import { ask_user_question_async } from "./ask-user-question";
 
-describe("ask_user_question", () => {
+describe("ask_user_question_async", () => {
   const baseQuestion = {
     question: "Which approach should we use?",
     header: "Approach",
@@ -17,22 +17,24 @@ describe("ask_user_question", () => {
     ],
   };
 
-  test("defaults missing multiSelect to single-select for answered questions", async () => {
-    const result = await ask_user_question({
+  test("returns a receipt without waiting for an answer", async () => {
+    const result = await ask_user_question_async({
       questions: [baseQuestion],
-      answers: {
-        "Which approach should we use?": "Recommended",
-      },
+      toolCallId: "call-question",
     });
-
-    expect(result.message).toBe(
-      'User has answered your questions: "Which approach should we use?"="Recommended". You can now continue with the user\'s answers in mind.',
-    );
+    expect(result).toMatchObject({
+      type: "ask_user_question",
+      version: 2,
+      toolCallId: "call-question",
+      questions: [baseQuestion],
+    });
+    expect(result.message).toContain("Answers or dismissal will arrive later");
   });
 
   test("rejects non-boolean multiSelect values", async () => {
     await expect(
-      ask_user_question({
+      ask_user_question_async({
+        toolCallId: "call-question",
         questions: [
           {
             ...baseQuestion,
@@ -40,6 +42,18 @@ describe("ask_user_question", () => {
           },
         ],
       }),
-    ).rejects.toThrow("Each question's multiSelect must be a boolean");
+    ).rejects.toThrow("optional boolean multiSelect");
+  });
+
+  test("rejects missing executor identity and duplicate question keys", async () => {
+    await expect(
+      ask_user_question_async({ questions: [baseQuestion], toolCallId: "" }),
+    ).rejects.toThrow("executor-provided");
+    await expect(
+      ask_user_question_async({
+        questions: [baseQuestion, baseQuestion],
+        toolCallId: "call-question",
+      }),
+    ).rejects.toThrow("distinct questions");
   });
 });

@@ -28,15 +28,16 @@ describe("local model catalog", () => {
 
       const entry = (
         await listLocalModels(storageDir, { fetch: fetchImpl })
-      ).find((model) => model.handle === "opencode/deepseek-v4-flash-free");
+      ).find((model) => model.handle === "opencode/kimi-k2.6");
 
       expect(entry).toMatchObject({
-        display_name: "DeepSeek V4 Flash Free",
-        handle: "opencode/deepseek-v4-flash-free",
-        max_context_window: 200000,
-        max_tokens: 128000,
+        display_name: "Kimi K2.6",
+        handle: "opencode/kimi-k2.6",
+        max_context_window: 262144,
+        max_tokens: 65536,
+        model_id: "kimi-k2.6",
         model_endpoint_type: "opencode",
-        name: "DeepSeek V4 Flash Free",
+        name: "Kimi K2.6",
         provider_type: "opencode",
       });
     } finally {
@@ -86,8 +87,10 @@ describe("local model catalog", () => {
           handle: "lmstudio/gemma-4-26B-A4B-it-oQ6",
           max_context_window: 256000,
           max_tokens: 8192,
+          model_id: "gemma-4-26B-A4B-it-oQ6",
           model_endpoint_type: "lmstudio",
           provider_type: "lmstudio",
+          reasoning_levels: ["off", "minimal", "low", "medium", "high"],
         }),
       );
       expect(models.map((model) => model.handle)).not.toContain(

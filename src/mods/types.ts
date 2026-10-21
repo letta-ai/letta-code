@@ -141,6 +141,8 @@ export interface ModConversationHandle {
     options?: ModConversationForkOptions,
   ) => Promise<ModConversationHandle>;
   getHistory: (options?: ModConversationHistoryOptions) => Promise<Message[]>;
+  /** Persist a new conversation title and refresh active local UI consumers. */
+  updateTitle?: (title: string) => Promise<void>;
   sendMessageStream: (
     messages: ModConversationMessage[],
     options?: ModConversationSendMessageOptions,

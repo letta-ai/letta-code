@@ -109,12 +109,13 @@ test("telegram channel starts through service and routes inbound topic messages 
   });
   const content = (deliveries[0] as { content: Array<{ text: string }> })
     .content;
-  expect(content[0]?.text).toContain("External telegram turn");
-  expect(content[1]?.text).toContain('source="telegram"');
-  expect(content[1]?.text).toContain('chat_id="-100123"');
-  expect(content[1]?.text).toContain('account_id="telegram-e2e"');
-  expect(content[1]?.text).toContain('thread_id="42"');
-  expect(content[1]?.text).toContain("Hello from a Telegram topic");
+  expect(content).toHaveLength(1);
+  expect(content[0]?.text).not.toContain("<system-reminder>");
+  expect(content[0]?.text).toContain('source="telegram"');
+  expect(content[0]?.text).toContain('chat_id="-100123"');
+  expect(content[0]?.text).toContain('account_id="telegram-e2e"');
+  expect(content[0]?.text).toContain('thread_id="42"');
+  expect(content[0]?.text).toContain("Hello from a Telegram topic");
 });
 
 test("telegram channel account start rolls back enabled state when adapter startup fails", async () => {
@@ -744,6 +745,30 @@ test("telegram adapter does not fallback on ambiguous rich send failures", async
       richMessage: { markdown: "# Title" },
     }),
   ).rejects.toThrow("network timeout after request dispatch");
+
+  expect(bot?.api.sendMessage).not.toHaveBeenCalled();
+});
+
+test("telegram adapter rejects malformed stored Chat IDs before sending", async () => {
+  const adapter = createTelegramAdapter({
+    ...telegramAccountDefaults,
+    channel: "telegram",
+    enabled: true,
+    token: "test-token",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  await adapter.start();
+  const bot = FakeBot.instances[0];
+
+  await expect(
+    adapter.sendMessage({
+      channel: "telegram",
+      chatId: "Chat ID: 7945451305",
+      text: "Hello",
+    }),
+  ).rejects.toThrow("Paste only the numeric Telegram Chat ID");
 
   expect(bot?.api.sendMessage).not.toHaveBeenCalled();
 });

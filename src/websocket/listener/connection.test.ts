@@ -7,6 +7,7 @@ import {
   markListenerConnectionInitialized,
   openListenerConnection,
   resolveListenerConnectionTargets,
+  resolveTurnExecutionConnectionId,
   subscribeListenerConnection,
   TO_SUBSCRIBERS,
   toListenerConnection,
@@ -167,5 +168,34 @@ describe("listener connection identity", () => {
       streamMessage: false,
     });
     expect(targets).toEqual([]);
+  });
+
+  test("a process-originated turn executes on the listener connection", () => {
+    // Task notifications and cron turns carry no submitting connection. Their
+    // tools (including Agent launches) still run on this listener.
+    const { runtime } = addConnection("conn-sandbox");
+    const scope = { agent_id: "agent-1", conversation_id: "conversation-1" };
+
+    expect(resolveTurnExecutionConnectionId(runtime, scope)).toBe(
+      "conn-sandbox",
+    );
+
+    addConnection("conn-other", runtime);
+    subscribeListenerConnection(runtime, "conn-other", scope);
+    expect(resolveTurnExecutionConnectionId(runtime, scope)).toBe("conn-other");
+    expect(
+      resolveTurnExecutionConnectionId(runtime, scope, "conn-sandbox"),
+    ).toBe("conn-sandbox");
+  });
+
+  test("an ambiguous process turn does not guess a connection", () => {
+    const { runtime } = addConnection("conn-a");
+    addConnection("conn-b", runtime);
+    expect(
+      resolveTurnExecutionConnectionId(runtime, {
+        agent_id: "agent-1",
+        conversation_id: "conversation-1",
+      }),
+    ).toBeUndefined();
   });
 });

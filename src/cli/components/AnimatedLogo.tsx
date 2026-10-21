@@ -1,3 +1,4 @@
+import type { ChalkInstance } from "chalk";
 import { useSyncExternalStore } from "react";
 import { colors } from "./colors";
 import { Text } from "./Text";
@@ -162,6 +163,28 @@ function renderLogoLine(line: string, faceColor: string) {
       </Text>
     );
   });
+}
+
+/**
+ * Static logo (frame 1, with shadow) as plain strings for one-shot console
+ * output outside Ink. Cells are painted with the given chalk instance so the
+ * logo follows the same color-level detection as the rest of the CLI:
+ * 24-bit where supported, 256-color on terminals like Terminal.app, and no
+ * escape sequences at all when chalk reports level 0.
+ */
+export function staticLogoLines(
+  paint: ChalkInstance,
+  faceColor: string = colors.welcome.accent,
+): string[] {
+  const lines = normalizedLogoFrames[1]?.split("\n") ?? [];
+  return lines.map((line) =>
+    Array.from(line)
+      .map((token) => {
+        const bg = logoCellColor(token, faceColor);
+        return bg ? paint.bgHex(bg)(" ") : " ";
+      })
+      .join(""),
+  );
 }
 
 interface AnimatedLogoProps {

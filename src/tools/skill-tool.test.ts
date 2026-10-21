@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getRepositoryMountDir } from "@/agent/memory-git";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { consumeQueuedSkillContent } from "@/tools/impl/skill-content-registry";
 import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
@@ -105,6 +106,37 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
+  test("init loads the bundled v2 memory guidance", async () => {
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+    writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
+
+    const skillId = "initializing-memory";
+    const loaded = await readSkillContent(
+      skillId,
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    expect(loaded.path).toEndWith(join(skillId, "SKILL.md"));
+
+    const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
+    expect(rendered).toContain("root `MEMORY.md`");
+    expect(rendered).toContain("## Harness Constraints");
+    expect(rendered).toContain("including quota");
+    expect(rendered).toContain("agent(historyPrompt, {label:");
+    expect(rendered).toContain("agent(codePrompt, {label:");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("schema: codeSchema");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
+  });
+
   test("loads skills from MEMORY_DIR/skills", async () => {
     const skillName = "memfs-only-skill";
     const memoryDir = join(tempRoot, "memory");
@@ -128,6 +160,8 @@ describe("Skill tool memory filesystem lookup", () => {
 
     const queued = consumeQueuedSkillContent();
     expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain(`<skill_content name="${skillName}">`);
+    expect(queued[0]?.content).toContain(`Skill directory: ${skillDir}`);
     expect(queued[0]?.content).toContain("Loaded from MEMORY_DIR.");
   });
 
@@ -243,6 +277,46 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).toContain("Loaded from agent memory fallback.");
   });
 
+  test("loads and queues an attached shared-memory skill", async () => {
+    const skillName = "attached-shared-skill";
+    const repositoryName = "shared-team";
+    process.env.HOME = tempRoot;
+    delete process.env.MEMORY_DIR;
+    delete process.env.LETTA_MEMORY_DIR;
+
+    const repositoryMount = getRepositoryMountDir(
+      TEST_AGENT_ID,
+      repositoryName,
+    );
+    const skillDir = join(repositoryMount, "skills", skillName);
+    mkdirSync(join(repositoryMount, ".git"), { recursive: true });
+    mkdirSync(skillDir, { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: attached-shared-skill\ndescription: test\n---\n\nLoaded from attached shared memory.",
+      "utf8",
+    );
+
+    const result = await withSkillContext(() =>
+      skill(
+        { skill: skillName, toolCallId: "tc-attached-shared" },
+        {
+          attachedRepositories: [
+            { id: "repo-shared-team", name: repositoryName },
+          ],
+        },
+      ),
+    );
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toEqual({
+      toolCallId: "tc-attached-shared",
+      content: expect.stringContaining("Loaded from attached shared memory."),
+    });
+  });
+
   test("does not load legacy ~/.letta/agents/<id>/skills entries", async () => {
     const skillName = "legacy-agent-skill";
     const skillDir = join(
@@ -342,6 +416,37 @@ describe("Skill tool memory filesystem lookup", () => {
     );
   });
 
+  test("loads a nested skill by its frontmatter name", async () => {
+    const projectRoot = join(tempRoot, "project-root");
+    const skillsRoot = join(projectRoot, ".skills");
+    const computerUseDir = join(skillsRoot, "computer-use");
+    const cuaDriverDir = join(computerUseDir, "references", "cua-driver");
+
+    currentSkillsDirectory = skillsRoot;
+    mkdirSync(cuaDriverDir, { recursive: true });
+    writeFileSync(
+      join(computerUseDir, "SKILL.md"),
+      "---\nname: computer-use\ndescription: managed computer use\n---\n",
+      "utf8",
+    );
+    writeFileSync(
+      join(cuaDriverDir, "SKILL.md"),
+      "---\nname: cua-driver\ndescription: Cua Driver reference\n---\n\nLoaded by frontmatter name.",
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: "cua-driver",
+      toolCallId: "tc-nested-frontmatter-name",
+    });
+
+    expect(result.message).toBe("Launching skill: cua-driver");
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded by frontmatter name.");
+  });
+
   test("loads canonical .agents/skills project skills before legacy .skills", async () => {
     const skillName = "canonical-project-skill";
     const projectRoot = join(tempRoot, "project-root");
@@ -376,6 +481,39 @@ describe("Skill tool memory filesystem lookup", () => {
     expect(queued[0]?.content).not.toContain("Loaded from .skills.");
   });
 
+  test("loads a project skill instead of a bundled skill with the same name", async () => {
+    const skillName = "browser-use";
+    const projectRoot = join(tempRoot, "project-root");
+    const projectSkillDir = join(projectRoot, ".agents", "skills", skillName);
+
+    currentSkillsDirectory = join(projectRoot, ".skills");
+    mkdirSync(projectSkillDir, { recursive: true });
+    writeFileSync(
+      join(projectSkillDir, "SKILL.md"),
+      [
+        "---",
+        "name: browser-use",
+        "description: project browser controller",
+        "---",
+        "",
+        "Loaded from the project override.",
+      ].join("\n"),
+      "utf8",
+    );
+    process.env.USER_CWD = projectRoot;
+
+    const result = await runScopedSkill({
+      skill: skillName,
+      toolCallId: "tc-bundled-override",
+    });
+
+    expect(result.message).toBe(`Launching skill: ${skillName}`);
+    const queued = consumeQueuedSkillContent();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.content).toContain("Loaded from the project override.");
+    expect(queued[0]?.content).not.toContain("# Browser Use\n");
+  });
+
   test("renders skill directory substitutions", () => {
     const rendered = renderSkillContent(
       "deploy",
@@ -392,6 +530,43 @@ describe("Skill tool memory filesystem lookup", () => {
 
     const skillDir = join(tempRoot, "deploy");
     expect(rendered).toContain(`Deploy from ${skillDir} and ${skillDir}.`);
+  });
+
+  test("includes the skill directory and bundled resource paths without loading them", () => {
+    const skillDir = join(tempRoot, "pdf-processing");
+    mkdirSync(join(skillDir, "scripts"), { recursive: true });
+    mkdirSync(join(skillDir, "references"), { recursive: true });
+    writeFileSync(
+      join(skillDir, "SKILL.md"),
+      "---\nname: pdf-processing\ndescription: PDFs\n---\n\nProcess PDFs.",
+      "utf8",
+    );
+    writeFileSync(
+      join(skillDir, "scripts", "extract.py"),
+      "SECRET_SCRIPT_BODY",
+      "utf8",
+    );
+    writeFileSync(
+      join(skillDir, "references", "pdf-spec.md"),
+      "SECRET_REFERENCE_BODY",
+      "utf8",
+    );
+
+    const rendered = renderSkillContent(
+      "pdf-processing",
+      "Process PDFs.",
+      join(skillDir, "SKILL.md"),
+    );
+
+    expect(rendered).toContain(`Skill directory: ${skillDir}`);
+    expect(rendered).toContain(
+      "Relative paths in this skill are relative to the skill directory.",
+    );
+    expect(rendered).toContain("<file>scripts/extract.py</file>");
+    expect(rendered).toContain("<file>references/pdf-spec.md</file>");
+    expect(rendered).not.toContain("SECRET_SCRIPT_BODY");
+    expect(rendered).not.toContain("SECRET_REFERENCE_BODY");
+    expect(rendered).not.toContain("<file>SKILL.md</file>");
   });
 
   test("blocks model invocation for manual-only skills unless explicitly allowed", () => {
@@ -417,14 +592,15 @@ describe("Skill tool memory filesystem lookup", () => {
     ).toContain("Deploy.");
   });
 
-  test("wraps slash-containing skill names in a safe XML envelope", () => {
+  test("wraps skill instructions in a stable structured envelope", () => {
     const wrapped = wrapSkillContent(
       "integrations/oauth/letta-oauth",
       "Use OAuth.",
     );
 
-    expect(wrapped).toContain('<skill name="integrations/oauth/letta-oauth">');
-    expect(wrapped).toContain("Use OAuth.");
+    expect(wrapped).toBe(
+      '<skill_content name="integrations/oauth/letta-oauth">\nUse OAuth.\n</skill_content>',
+    );
   });
 
   test("keeps direct invocation context outside the skill instructions", () => {
@@ -435,7 +611,7 @@ describe("Skill tool memory filesystem lookup", () => {
     );
 
     expect(wrapped).toBe(
-      "<review>\nReview the code.\n</review>\n\nsrc/index.ts",
+      '<skill_content name="review">\nReview the code.\n</skill_content>\n\nsrc/index.ts',
     );
   });
 

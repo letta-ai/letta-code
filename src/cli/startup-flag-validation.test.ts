@@ -3,7 +3,6 @@ import {
   validateConversationDefaultRequiresAgent,
   validateFlagConflicts,
   validatePrimaryStartupFlagConflicts,
-  validateRegistryHandleOrThrow,
 } from "@/cli/startup-flag-validation";
 
 describe("startup flag validation helpers", () => {
@@ -51,21 +50,12 @@ describe("startup flag validation helpers", () => {
     ).toThrow("import conflict");
   });
 
-  test("registry handle validator accepts valid handles and rejects invalid ones", () => {
-    expect(() => validateRegistryHandleOrThrow("@author/agent")).not.toThrow();
-    expect(() => validateRegistryHandleOrThrow("author/agent")).not.toThrow();
-    expect(() => validateRegistryHandleOrThrow("@author")).toThrow(
-      'Invalid registry handle "@author"',
-    );
-  });
-
   test("stateless startup requires an existing agent in headless mode", () => {
     const baseOptions = {
       specifiedConversationId: null,
       specifiedAgentId: "agent-123",
       specifiedAgentName: null,
       forceNewConversation: false,
-      importFile: null,
       stateless: true,
       isHeadless: true,
       memfs: false,
@@ -105,6 +95,34 @@ describe("startup flag validation helpers", () => {
     ).toThrow("--stateless requires --agent");
   });
 
+  test("ephemeral startup rejects agent-backed and memory-backed modes", () => {
+    const baseOptions = {
+      specifiedConversationId: null,
+      specifiedAgentId: null,
+      specifiedAgentName: null,
+      forceNewAgent: false,
+      forceNewConversation: false,
+      stateless: false,
+      ephemeral: true,
+      isHeadless: true,
+      memfs: false,
+      memfsStartup: undefined,
+    };
+
+    expect(() =>
+      validatePrimaryStartupFlagConflicts(baseOptions),
+    ).not.toThrow();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        ...baseOptions,
+        specifiedAgentId: "agent-123",
+      }),
+    ).toThrow("--ephemeral cannot be used with --agent");
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({ ...baseOptions, memfs: true }),
+    ).toThrow("--ephemeral cannot be used with --stateless, --memfs");
+  });
+
   test("primary startup validation preserves conversation conflict behavior", () => {
     expect(() =>
       validatePrimaryStartupFlagConflicts({
@@ -113,7 +131,6 @@ describe("startup flag validation helpers", () => {
         specifiedAgentName: null,
         forceNewAgent: false,
         forceNewConversation: false,
-        importFile: null,
         stateless: false,
         isHeadless: true,
         memfs: false,

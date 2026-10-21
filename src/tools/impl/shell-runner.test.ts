@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
   __testSetBackend,
@@ -35,18 +36,32 @@ function isProcessStillRunning(pid: number): boolean {
     return false;
   }
 
-  if (process.platform !== "linux") return true;
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const endCommand = stat.lastIndexOf(")");
-    const state =
-      endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
-    // kill(pid, 0) succeeds for a zombie until it is reaped, but the
-    // process has exited and can no longer keep inherited stdio open.
-    return state !== "Z" && state !== "X";
-  } catch {
-    return false;
+  if (process.platform === "linux") {
+    try {
+      const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+      const endCommand = stat.lastIndexOf(")");
+      const state =
+        endCommand === -1 ? "" : stat.slice(endCommand + 2, endCommand + 3);
+      // kill(pid, 0) succeeds for a zombie until it is reaped, but the
+      // process has exited and can no longer keep inherited stdio open.
+      return state !== "Z" && state !== "X";
+    } catch {
+      return false;
+    }
   }
+
+  if (process.platform === "darwin") {
+    try {
+      const state = execFileSync("ps", ["-o", "state=", "-p", String(pid)], {
+        encoding: "utf8",
+      }).trim();
+      return state !== "" && !state.startsWith("Z");
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function expectProcessExited(pid: number): void {

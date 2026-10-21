@@ -71,6 +71,7 @@ export {
   normalizeChannelLifecycleErrorMessage,
   sanitizeChannelLifecycleErrorText,
 } from "./channels/lifecycle-error";
+export type { ChannelUserMention } from "./channels/message-references";
 export type {
   ChannelMessageActionAdapter,
   ChannelMessageActionContext,
@@ -96,6 +97,11 @@ export {
   type ChannelTurnProgressBuilder,
   createChannelTurnProgressBuilder,
 } from "./channels/progress-builder";
+export {
+  CHANNEL_ROOT_THREAD_KEY,
+  channelRouteThreadIdFromKey,
+  resolveChannelRouteThreadKey,
+} from "./channels/route-thread-key";
 export type {
   ChannelAdapter,
   ChannelChatType,

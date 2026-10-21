@@ -9,13 +9,13 @@ import {
 /**
  * Attribution contract for listener-created conversations.
  *
- * Cloud-api stamps `acting_user_id` onto relayed `conversation_create`,
- * `conversation_fork`, and `execute_command` frames; the listener must
- * echo it back as the `X-Letta-Acting-User-Id` header on the outbound
- * create/fork HTTP calls so cloud attributes the new conversation to
- * the human who actually created it (see tryApplyActingUserOverride in
- * cloud-api). Without the echo, conversations created via `/clear` or
- * the sidebar are stamped as the sandbox/API-key owner.
+ * Cloud-api stamps `acting_user_id` onto relayed `conversation_create` and
+ * `conversation_fork` frames; the listener must echo it back as the
+ * `X-Letta-Acting-User-Id` header on the outbound create/fork HTTP calls so
+ * cloud attributes the new conversation to the human who actually created it
+ * (see tryApplyActingUserOverride in cloud-api). Without the echo,
+ * conversations created from the sidebar are stamped as the sandbox/API-key
+ * owner.
  *
  * Source-level pins are used for the handler wiring (matching the
  * existing `send-message-stream-acting-user.test.ts` convention, and
@@ -62,12 +62,9 @@ describe("listener conversation-create attribution wiring (contract)", () => {
     );
   });
 
-  test("/clear passes the frame's acting user into its conversation create", () => {
-    expect(commandsSource).toMatch(
-      /handleClearCommand\(socket, conversationRuntime, \{\s*\.\.\.opts,\s*actingUserId: command\.runtime\.acting_user_id,\s*\}\)/,
-    );
-    expect(commandsSource).toMatch(
-      /backend\.createConversation\(\s*\{\s*agent_id: agentId,\s*\},\s*actingUserRequestOptions\(opts\.actingUserId\),\s*\)/,
-    );
+  test("the listener command dispatcher creates no conversations of its own", () => {
+    // Remote /clear was the only execute_command that created a conversation,
+    // and it is gone. Anything new here needs its own attribution pin above.
+    expect(commandsSource).not.toContain("createConversation");
   });
 });

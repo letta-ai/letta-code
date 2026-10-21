@@ -464,6 +464,9 @@ export interface PendingApprovalInfo {
 export const STALE_APPROVAL_RECOVERY_DENIAL_REASON =
   "The agent harness automatically closed this stale pending tool call to recover from a client/server state desync: the server was still waiting on a result for it, but the harness had no matching tool execution in flight and no result was ever recorded. It was not denied by the user or a permissions policy. Re-issue the tool call if you still need it.";
 
+export const STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON =
+  "The agent harness closed this pending tool call while recovering from an interrupted turn. The call had started, but its result was not recorded, so it may or may not have run. Check whether its effect already happened before running it again.";
+
 export function buildFreshDenialApprovals(
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
@@ -496,10 +499,13 @@ export function rebuildInputWithFreshDenials(
   currentInput: Array<MessageCreate | ApprovalCreate>,
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
+  preserveMessageOtids = false,
 ): Array<MessageCreate | ApprovalCreate> {
-  const stripped = refreshInputOtidsForNewRequest(
-    currentInput.filter((item) => item?.type !== "approval"),
-  );
+  const content = currentInput.filter((item) => item?.type !== "approval");
+  // Only pre-persistence pending-approval rejections can reuse message identity.
+  const stripped = preserveMessageOtids
+    ? content
+    : refreshInputOtidsForNewRequest(content);
 
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {
@@ -525,4 +531,174 @@ export function shouldAttemptApprovalRecovery(opts: {
   maxRetries: number;
 }): boolean {
   return opts.approvalPendingDetected && opts.retries < opts.maxRetries;
+}
+
+// ── ChatGPT plan quota rotation ─────────────────────────────────────
+
+const CHATGPT_USAGE_LIMIT_FRAGMENT = "usage_limit_reached";
+const CHATGPT_OAUTH_PROVIDER_TYPE = "chatgpt_oauth";
+const BYOK_PROVIDER_CATEGORY = "byok";
+
+export interface ChatGPTUsageLimitDetail {
+  planType: string | null;
+  /** Absolute reset time in ms since epoch, when the server reported one. */
+  resetsAt: number | null;
+}
+
+export interface ChatGPTUsageLimitErrorInput {
+  message?: unknown;
+  detail?: unknown;
+  errorCode?: unknown;
+  error_code?: unknown;
+  raw?: unknown;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUsageLimitCode(value: unknown): boolean {
+  return (
+    typeof value === "string" &&
+    value.toLowerCase() === CHATGPT_USAGE_LIMIT_FRAGMENT
+  );
+}
+
+function parseUsageLimitRecord(value: unknown): ChatGPTUsageLimitDetail | null {
+  if (!isRecord(value)) return null;
+
+  const errorObj = isRecord(value.error) ? value.error : value;
+  if (
+    !isUsageLimitCode(errorObj.type) &&
+    !isUsageLimitCode(errorObj.errorCode) &&
+    !isUsageLimitCode(errorObj.error_code)
+  ) {
+    return null;
+  }
+
+  const planType =
+    typeof errorObj.plan_type === "string" && errorObj.plan_type.length > 0
+      ? errorObj.plan_type
+      : null;
+
+  let resetsAt: number | null = null;
+  if (typeof errorObj.resets_at === "number" && errorObj.resets_at > 0) {
+    resetsAt = errorObj.resets_at * 1000;
+  } else if (
+    typeof errorObj.resets_in_seconds === "number" &&
+    errorObj.resets_in_seconds > 0
+  ) {
+    resetsAt = Date.now() + errorObj.resets_in_seconds * 1000;
+  }
+
+  return { planType, resetsAt };
+}
+
+function parseUsageLimitString(value: unknown): ChatGPTUsageLimitDetail | null {
+  if (typeof value !== "string") return null;
+  if (!value.toLowerCase().includes(CHATGPT_USAGE_LIMIT_FRAGMENT)) return null;
+
+  const fallback: ChatGPTUsageLimitDetail = { planType: null, resetsAt: null };
+  const jsonStart = value.indexOf("{");
+  const jsonEnd = value.lastIndexOf("}");
+  if (jsonStart === -1 || jsonEnd <= jsonStart) return fallback;
+
+  try {
+    return (
+      parseUsageLimitRecord(JSON.parse(value.slice(jsonStart, jsonEnd + 1))) ??
+      fallback
+    );
+  } catch {
+    return fallback;
+  }
+}
+
+/**
+ * Parse a ChatGPT usage-limit error from the structured Cloud error event or
+ * from the older embedded-JSON detail string. Reset fields are best-effort.
+ */
+export function parseChatGPTUsageLimitDetail(
+  error: unknown,
+): ChatGPTUsageLimitDetail | null {
+  const stringDetail = parseUsageLimitString(error);
+  if (stringDetail) return stringDetail;
+  if (!isRecord(error)) return null;
+
+  const structured = error as ChatGPTUsageLimitErrorInput;
+  const rawDetail =
+    parseUsageLimitRecord(structured.raw) ??
+    parseUsageLimitString(structured.raw);
+  if (rawDetail) return rawDetail;
+
+  const detail = parseUsageLimitString(structured.detail);
+  if (detail) return detail;
+  const message = parseUsageLimitString(structured.message);
+  if (message) return message;
+
+  if (
+    isUsageLimitCode(structured.errorCode) ||
+    isUsageLimitCode(structured.error_code)
+  ) {
+    return { planType: null, resetsAt: null };
+  }
+
+  return null;
+}
+
+export interface ChatGPTFailoverModelEntry {
+  handle: string;
+  providerType?: string;
+  providerCategory?: string;
+}
+
+function isChatGPTByokModel(model: ChatGPTFailoverModelEntry): boolean {
+  return (
+    model.providerType === CHATGPT_OAUTH_PROVIDER_TYPE &&
+    model.providerCategory === BYOK_PROVIDER_CATEGORY
+  );
+}
+
+/**
+ * Pick a sibling ChatGPT plan handle to fail over to when the current plan
+ * hits its usage limit. The current handle must itself resolve to a
+ * chatgpt_oauth BYOK model in `models` (otherwise returns null). Siblings
+ * share the same model suffix (after the first `/`) under a different
+ * provider prefix, are chatgpt_oauth + byok, and are not in
+ * `exhaustedProviders`. One sibling is chosen uniformly at random.
+ */
+export function selectChatGPTQuotaFailoverHandle(params: {
+  currentHandle: string;
+  models: ChatGPTFailoverModelEntry[];
+  exhaustedProviders: ReadonlySet<string>;
+  random?: () => number;
+}): string | null {
+  const { currentHandle, models, exhaustedProviders } = params;
+  const random = params.random ?? Math.random;
+
+  const slashIndex = currentHandle.indexOf("/");
+  if (slashIndex <= 0) return null;
+  const currentProvider = currentHandle.slice(0, slashIndex);
+  const modelSuffix = currentHandle.slice(slashIndex + 1);
+  if (!modelSuffix) return null;
+
+  const currentEntry = models.find((m) => m.handle === currentHandle);
+  if (!currentEntry || !isChatGPTByokModel(currentEntry)) return null;
+
+  const candidates = models.filter((m) => {
+    if (!isChatGPTByokModel(m)) return false;
+    const idx = m.handle.indexOf("/");
+    if (idx <= 0) return false;
+    const provider = m.handle.slice(0, idx);
+    if (provider === currentProvider) return false;
+    if (exhaustedProviders.has(provider)) return false;
+    return m.handle.slice(idx + 1) === modelSuffix;
+  });
+
+  if (candidates.length === 0) return null;
+
+  const index = Math.min(
+    Math.floor(random() * candidates.length),
+    candidates.length - 1,
+  );
+  return candidates[index]?.handle ?? null;
 }

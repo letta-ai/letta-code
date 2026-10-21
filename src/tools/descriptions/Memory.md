@@ -1,46 +1,13 @@
-# Memory
-A convenience tool for memories stored in the memory directory (`$MEMORY_DIR`) that automatically commits changes. The harness pushes clean committed memory changes after the turn for remote MemFS agents.
+Read deferred memory from your memory filesystem.
 
-Files stored inside of `system/` eventually become part of the agent's system prompt, so are always in the context window and do not need to be re-read. Other files only have metadata in the system prompt, so may need to be explicitly read to be updated. 
+Your root memory files are already in your system prompt. Everything else is deferred: the <deferred-memory> section lists directories you have not opened. Use this tool to open them progressively instead of guessing what they contain.
 
-Supported operations on memory files:  
-- `str_replace`
-- `insert`
-- `delete` (files, or directories recursively)
-- `rename` (path rename only)
-- `update_description`
-- `create`
-For larger reorganizations, edit the projected files directly and commit the changes yourself (see the syncing instructions in your system prompt).
+- Memory("projects") returns projects/MEMORY.md, then the files (<memory_files>) and subdirectories (<deferred-memory>) directly beneath it, with their descriptions.
+- Memory("projects/code") opens a subdirectory the same way.
+- Memory("projects/example.md") returns that file.
 
-Path formats accepted:
-- relative memory file paths (e.g. `system/contacts.md`, `reference/project/team.md`)
-- absolute paths only when they are inside `$MEMORY_DIR`
+Entries are listed most recently edited first, up to 10 per directory.
 
-Note: absolute paths outside `$MEMORY_DIR` are rejected.
+Paths are relative to your memory directory. Before acting on a person, project, channel, or topic that your memory index points to, open the matching memory rather than working from assumptions. Open one level at a time and only what the task needs.
 
-When creating or deleting files, check for `[[path]]` references in other memory files that may need to be added or updated. Keeping references consistent ensures future discoverability.
-
-Examples:
-
-```python
-# Replace text in a memory file 
-memory(command="str_replace", reason="Update theme preference", file_path="system/human/preferences.md", old_string="theme: dark", new_string="theme: light")
-
-# Insert text at line 5
-memory(command="insert", reason="Add note about meeting", file_path="reference/history/meeting-notes.md", insert_line=5, insert_text="New note here")
-
-# Delete a memory file 
-memory(command="delete", reason="Remove stale notes", file_path="reference/history/old_notes.md")
-
-# Rename a memory file 
-memory(command="rename", reason="Promote temp notes", old_path="reference/history/temp.md", new_path="reference/history/permanent.md")
-
-# Update a block description
-memory(command="update_description", reason="Clarify coding prefs block", file_path="system/human/prefs/coding.md", description="The user's coding preferences.")
-
-# Create a block with starting text
-memory(command="create", reason="Track coding preferences", file_path="system/human/prefs/coding.md", description="The user's coding preferences.", file_text="The user seems to add type hints to all of their Python code.")
-
-# Create an empty block
-memory(command="create", reason="Create coding preferences block", file_path="reference/history/coding_preferences.md", description="The user's coding preferences.")
-```
+Do not use this tool for root memory files (already loaded) or skills/ (use Skill).

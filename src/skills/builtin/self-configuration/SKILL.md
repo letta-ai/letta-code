@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, and local runtime settings. Use when the user asks how this agent or conversation is configured, or asks you to change how you behave or how the harness runs you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage, remaining credits, or model quota, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -14,20 +14,21 @@ The important part is choosing the right layer. Do not smear a preference into d
 
 | Layer | Use it for | How to change it |
 | --- | --- | --- |
-| Memory and identity | Durable facts, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
-| Server agent fields | Default model, model settings, context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
-| Server conversation fields | Temporary model/context experiments for one conversation | Patch `/v1/conversations/{conversation_id}` |
+| Memory and identity | Facts worth retaining, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
+| Server agent fields | Agent default model (only on explicit request), context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
+| Server conversation fields | Model/context changes for the current conversation (the normal target) | Patch `/v1/conversations/{conversation_id}` |
 | Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
 | Mods | New deterministic tools, slash commands, providers, statusline behavior, or lightweight UI | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
 
 ## Safe workflow
 
-1. Identify scope: current conversation, current agent, project, or global user config.
+1. Identify scope: current conversation, current agent, project, or global user config. Model changes target the current conversation unless the user asks about the agent default.
 2. Inspect current state first and save the relevant safe fields as a rollback patch. Do not copy secrets or full compiled prompts into backups.
 3. Prefer a dry run for API patches and scripts.
 4. Apply the smallest change that satisfies the request.
@@ -48,20 +49,29 @@ If a broken model or prompt prevents the agent from completing a turn, recover o
 
 Local settings, server state, and the current process are different sources of truth. Inspect the layer you intend to change before writing it.
 
-Start with the authenticated, backend-aware active configuration report:
+- `letta model list [--byok | --hosted]` lists available models.
+- `letta model set [model_handle] [--reasoning <reasoning-option>] [--model-settings <json>] [--default]` changes the current conversation's model, reasoning, or individual `model_settings` fields; add `--default` only when the user asks for the agent default.
+- `letta model get [--default]` gets the current model configuration, including the full redacted `model_settings`; `--default` gets the agent's default configuration.
 
-```bash
-letta agents config
-```
+`letta model` reads and writes through the active backend, so it works the same on every backend. Prefer it over the REST helper scripts for anything model-related.
 
-With no arguments it uses `AGENT_ID` and `CONVERSATION_ID` from the current session. To inspect an explicit scope:
+### Account credits and model quota
 
-```bash
-letta agents config --agent "$AGENT_ID"
-letta agents config --conversation "$CONVERSATION_ID"
-```
+Run `letta usage` for a Markdown overview of the current plan, credit balance, and `letta/*` model quota (`lettaTier` only). Report the server's bucket (`full`, `high`, `medium`, `low`, or `empty`) and quota/daily reset timestamps as-is; do not infer exact requests or percentages. Amounts are credits, not dollars; preserve negative balances. An omitted daily reset is shown as unavailable.
 
-The conversation form retrieves its parent agent automatically and reports both scopes plus the effective configured model. It works through the active API or local backend; do not read auth files, call REST directly, or decode local persistence paths yourself. A configured router handle such as `letta/auto` does not identify the underlying model selected for one inference.
+The command uses CLI auth and respects `LETTA_API_KEY`/`LETTA_BASE_URL`, not agent or conversation selectors. Credits belong to the organization; user-scoped quota belongs to the authenticated user, not necessarily the person chatting with the agent. In local mode, use `letta --backend cloud usage` only when the user wants Cloud account usage.
+
+Use `letta model list` for available models; credits and quota buckets do not guarantee inference availability. `letta usage` does not include session token statistics; the interactive `/usage` command is a separate surface. If either lookup fails, the command exits nonzero without partial usage. Treat that as unavailable data, not zero credits or exhausted quota.
+
+### Billing path when changing models
+
+The same model can often be reached through more than one route: a connected subscription (for example a ChatGPT or Grok plan), the Letta plan (`letta/*`), or per-token billing against organization credits or the user's own API key. Users choose provider names, so a handle's prefix does not reliably show which route it bills through.
+
+Before switching models, consider how the current model is billed and keep the user on that route unless they asked to change it. Use the current handle, the labels in `letta model list`, and anything the user has said about billing as evidence. If several available handles serve the requested model and you cannot tell which one uses the user's subscription, list the candidates and ask before switching. Do not silently move a user from a subscription to per-token billing.
+
+`letta model list --byok` includes both connected subscriptions and user API keys, so it does not separate the two. `letta usage` covers only Letta credits and `letta/*` quota, not connected subscriptions.
+
+### Harness and server settings
 
 Use the secret-safe local/runtime report for harness settings, permissions, and backend diagnostics:
 
@@ -69,14 +79,12 @@ Use the secret-safe local/runtime report for harness settings, permissions, and 
 python3 <SKILL_DIR>/scripts/show_config.py --cwd "$PWD"
 ```
 
-Before changing server state, the targeted helper can also read either scope without printing full system prompts or credentials:
+Read each model scope with `letta model get` before changing it:
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target agent --agent-id "$AGENT_ID" --show
-
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target conversation --conversation-id "$CONVERSATION_ID" --show
+letta model get                               # current conversation (or agent if none)
+letta model get --default                     # agent default
+letta model get --conversation "$CONVERSATION_ID"
 ```
 
 Do not infer an agent default from one conversation or infer a conversation override from the agent. Report both when diagnosing model or context differences.
@@ -87,28 +95,48 @@ If CLI behavior does not match the docs, stop and inspect `command -v letta`, `t
 
 Use memory when the user wants you to remember, prefer, learn, or change your identity/personality.
 
-Common files:
+Inspect the projected memory tree in the system prompt before choosing paths.
+Letta Code supports two layouts:
 
-| Path | Purpose |
-| --- | --- |
-| `$MEMORY_DIR/system/persona.md` | Identity, voice, behavioral defaults |
-| `$MEMORY_DIR/system/human.md` | Durable notes about the person you work with |
-| `$MEMORY_DIR/projects/` | Project-specific long-term context |
-| `$MEMORY_DIR/skills/` | Agent-owned reusable skills |
-| `$MEMORY_DIR/relationships/` | Durable relationship and collaboration notes |
+| Purpose | Root layout | Existing layout |
+| --- | --- | --- |
+| Identity and voice | `$MEMORY_DIR/persona.md` or another root persona file | `$MEMORY_DIR/system/persona.md` |
+| Notes about the user | `$MEMORY_DIR/human.md` or another root human file | `$MEMORY_DIR/system/human.md` |
+| Core memory | Other root Markdown files indexed by `MEMORY.md` | Markdown files under `$MEMORY_DIR/system/` |
+| Deferred memory | Directories with their own `MEMORY.md` | Files outside `$MEMORY_DIR/system/` |
+| Agent-owned skills | `$MEMORY_DIR/skills/` | `$MEMORY_DIR/skills/` |
 
-After changing memory, inspect and commit the exact changed files. Push/sync according to the current harness reminder or the `syncing-memory-filesystem` skill; some environments sync committed memory automatically.
+Use the active layout shown by the prompt and memory files. Do not create a
+`system/` directory in a root-layout repository or move existing-layout memory
+to the root as part of an unrelated self-configuration request.
 
-```bash
-cd "$MEMORY_DIR" && git status
-cd "$MEMORY_DIR" && git add <changed-files> && git commit --author="$AGENT_NAME <$AGENT_ID@letta.com>" -m "memory: <summary>"
-```
+A requested memory or identity change is memory as the main task: make the edit directly with ordinary file tools, preserve the active layout, stage only the files you changed by explicit path, commit in the same shell call, and verify the result before reporting success. If a memory worker you launched may still be running, read its output file first (it ends with `[Task completed]` or `[Task failed]`) and reread the files before editing what it was asked to change. Delegate to the background `memory` subagent only when the change is incidental to another task the user is waiting on.
 
-Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit memory instead.
+Do not use API system-prompt replacement for ordinary learning. That can clobber the compiled prompt. Edit the memory files instead.
 
 ## Server-side agent and conversation settings
 
-Server fields control model execution and agent metadata. Use the agent endpoint for persistent defaults. Use the conversation endpoint for scoped experiments.
+Server fields control model execution and agent metadata. Change the current conversation for model changes. Change the agent default only when the user asks for it.
+
+### Model and model settings
+
+Use `letta model` for the model handle, reasoning level, and any `model_settings` field (for example the output-token limit, `temperature`, or `parallel_tool_calls`). It goes through the active backend, so it needs no extra credentials or base URL.
+
+```bash
+letta model set "openai/gpt-5.2"                          # select a model (applies its defaults)
+letta model set --reasoning high                          # change reasoning only
+letta model set --model-settings '{"max_tokens":16384}'          # use the key `letta model get` shows
+letta model set --model-settings '{"temperature":0.2}' --default   # agent default
+letta model get                                           # verify
+```
+
+`--model-settings` takes a JSON object and shallow-merges it into the target's current `model_settings` (the conversation override when a conversation is targeted, otherwise the agent default). It keeps the model and every field you do not name. Keys are written as given, so use the field names that `letta model get` shows for the target; for example the output-token limit is stored as `max_tokens` on some backends and `max_output_tokens` on others. Nested objects such as `reasoning` are replaced as a whole, so include every nested key you want to keep. With a handle or `--reasoning`, the model selection is applied first and the given fields are merged on top. Selecting a new handle resets settings to that model's defaults, so reapply custom fields in the same command if needed.
+
+Provider reasoning fields differ. Read [`references/model-settings.md`](references/model-settings.md) before changing reasoning or provider-specific settings.
+
+### REST helper for other fields
+
+`scripts/update-agent-settings.ts` covers fields `letta model` does not: `context_window_limit`, name, description, and system prompt replacement. It talks to the REST API at `LETTA_BASE_URL` and requires `LETTA_API_KEY`, so it only works against a server that exposes the REST API; it does not work on the embedded local backend.
 
 Required environment for live API writes:
 
@@ -127,30 +155,30 @@ The scripts in this skill default to `AGENT_ID`, `CONVERSATION_ID`, and `LETTA_B
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts --help
 ```
 
-Patch the current conversation first when testing a risky model/settings change:
+Patch the current conversation's context window limit:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target conversation \
   --conversation-id "$CONVERSATION_ID" \
-  --model "openai/gpt-5.2" \
   --context-window-limit 64000 \
   --dry-run
 ```
 
-Patch the agent default after the user confirms the change should persist:
+Patch the agent default only when the user asks for it:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --target agent \
   --agent-id "$AGENT_ID" \
-  --model "openai/gpt-5.2" \
   --context-window-limit 64000
 ```
 
 ### Name and description
 
 Name and description are agent-level metadata. Do not pass them with `--target conversation`. Values must be non-empty; the helper does not clear metadata by accident.
+
+When the user renames you, this patch is the authoritative change — editing a name written in persona memory does not change the agent's actual name. Do both: patch the agent name here, then update any memory file that states your name so they agree.
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
@@ -166,31 +194,7 @@ npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
   --dry-run
 ```
 
-Do not patch `llm_config` directly. Use `model`, `context_window_limit`, and `model_settings`. For metadata, use `name` and `description`. Then read back the agent or conversation and verify the returned `llm_config.context_window`, `model_settings`, and metadata fields.
-
-### Model settings
-
-`model_settings` is usually replacement-style. Fetch the current object first and preserve fields you still need, or pass `--merge-model-settings`. Merge dry runs fetch current state and require `LETTA_API_KEY` because they preview preserved fields, not just the local patch fragment.
-
-```bash
-cat > /tmp/model-settings.json <<'JSON'
-{
-  "provider_type": "openai",
-  "parallel_tool_calls": true,
-  "reasoning": { "reasoning_effort": "medium" }
-}
-JSON
-
-npx tsx <SKILL_DIR>/scripts/update-agent-settings.ts \
-  --target agent \
-  --agent-id "$AGENT_ID" \
-  --model "openai/gpt-5.2" \
-  --model-settings-file /tmp/model-settings.json \
-  --merge-model-settings \
-  --dry-run
-```
-
-Provider reasoning fields differ. Read [`references/model-settings.md`](references/model-settings.md) before changing reasoning or provider-specific settings.
+Do not patch `llm_config` directly. Use `letta model` for the model and `model_settings`, `context_window_limit` for the context limit, and `name`/`description` for metadata. Then read back the agent or conversation (`letta model get` for model fields) and verify the result.
 
 ### Compaction settings
 
@@ -256,7 +260,11 @@ Selected global settings keys:
 | `preferredBackendMode` | Startup backend preference, `api` or `local` |
 | `channelCredentialsStore` | Channel token storage, `file`, `keyring`, or `auto` |
 | `reflectionTrigger` / `reflectionStepCount` | Default reflection cadence |
+| `reflectionMerge` / `reflectionMergeInstructions` | Reflection change integration policy |
 | `reflectionSettingsByAgent` | Per-agent reflection cadence |
+| `conversationSwitchAlertEnabled` | Send system-reminder when switching conversations/agents |
+| `createDefaultAgents` | Create Memo/Incognito default agents on startup (default: true) |
+| `windowTitle` | Configurable terminal window title fields |
 | `permissions` | Allow/deny/ask/alwaysAsk rules |
 | `env` | User-wide environment variables for Letta Code |
 | `experiments` | Feature flags |
@@ -266,11 +274,11 @@ Per-agent `agents[]` entries are keyed by `agentId` plus server. For api.letta.c
 
 Base URL resolution is split between runtime API calls and settings lookup. Runtime API calls require `LETTA_BASE_URL` or an explicit script `--base-url`; do not replace it with a hard-coded Cloud URL. Settings server keys resolve from `LETTA_SETTINGS_BASE_URL`, `env.LETTA_SETTINGS_BASE_URL`, `LETTA_BASE_URL`, `env.LETTA_BASE_URL`, then api.letta.com. Do not move `agents[]` entries across base URLs unless the user is deliberately migrating servers.
 
-Toolset values currently include `auto`, `default`, `codex`, `codex_snake`, `gemini`, `gemini_snake`, and `none`. Use `auto` unless the user explicitly wants a manual override.
+Toolset values currently include `auto`, `letta`, `default`, `codex`, and `none`. Use `auto` unless the user explicitly wants a manual override.
 
 ## Permissions
 
-Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, and `unrestricted`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
+Permissions decide whether tool calls are allowed, denied, or require approval. User/global permission rules affect all agents using that settings file: `allow` can weaken review, while `deny` and `alwaysAsk` can brick workflows. Valid modes are `standard`, `acceptEdits`, `unrestricted`, and `strict`; legacy `default` maps to `standard`, while `bypassPermissions` and `fullAccess` map to `unrestricted`. The default mode is `unrestricted` unless startup flags or settings override it.
 
 The removed `memory` mode is invalid; memory access is governed by normal tool permissions plus the server/filesystem checks on the path used. These helper guardrails do not restrict raw Bash/API access. `permissions.mode` supplies a persisted startup default, rule lists still take precedence, and channel accounts have their own `defaultPermissionMode`. Inspect all three when channel approvals differ from the interactive CLI.
 
@@ -344,31 +352,23 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
 
-## Provider connections
+## Agent secrets
 
-Provider connection is agent-executable through `letta connect`. This is separate from `LETTA_API_KEY`, which authenticates Letta API requests. Provider connections may be visible to the same account/server; treat that as credential scope to verify, not as a critical exploit by itself.
-
-Inspect the installed command shape first:
+Agent-scoped secrets hold credential values that are referenced as `$NAME` in shell commands. Cloud agents store them server-side on the agent; local agents use OS secure storage. The harness substitutes `$NAME` at exec time and scrubs values from tool output, so values never enter agent context.
 
 ```bash
-letta connect --help
-letta connect <provider> --help
+letta secret list                                   # names only, never values
+letta secret set GITHUB_TOKEN --env GITHUB_TOKEN    # ingest from the environment
+openssl rand -hex 32 | letta secret set WEBHOOK_TOKEN --stdin   # generate without seeing the value
+letta secret unset GITHUB_TOKEN                     # aliases: delete | remove | rm
 ```
 
-Use the provider-specific command supported by the installed binary. Current examples include:
+Rules:
 
-```bash
-letta connect chatgpt
-letta connect codex --method device-code
-letta connect lmstudio --base-url http://127.0.0.1:1234/v1 --timeout 600s
-letta connect bedrock --method profile --profile "$AWS_PROFILE" --region "$AWS_REGION"
-```
-
-Before connecting, verify whether the target agent/backend is Letta Cloud or local. A provider saved to the wrong backend does not configure the current agent.
-
-Never print provider keys. Shell expansion such as `--api-key "$OPENAI_API_KEY"` still puts the resolved secret in process argv, where process listings may expose it. Prefer the command's interactive secret prompt in a trusted TTY. If no safer input path exists, stop for explicit user approval rather than passing a provider secret autonomously. Browser login, device-code confirmation, or account consent also requires human consent; do not claim success before it completes.
-
-After connecting, verify the provider/model from the same backend and process that will run the agent. Do not infer success from a saved credential alone.
+- Pass the source variable *name* to `--env`, not `$NAME`. `--env $GITHUB_TOKEN` triggers harness substitution and places the resolved value in process arguments; `--env GITHUB_TOKEN` reads it from the CLI process environment without exposure.
+- Never echo secret values into tool output. Pipe generated credentials straight into `--stdin`.
+- Inside a session, `AGENT_ID`/`LETTA_AGENT_ID` resolves the target automatically; pass `--agent <agent-id>` otherwise.
+- A running session loads its secret cache at startup; CLI-side changes apply to new sessions. The `/secret` slash command manages the same store interactively and refreshes the live cache.
 
 ## Channels
 
@@ -423,7 +423,7 @@ letta --backend local
 letta --memfs
 ```
 
-Startup flags affect a new process only. They do not rewrite an already-running listener. Persist durable defaults in settings or server fields instead.
+Startup flags affect a new process only. They do not rewrite an already-running listener. Persist long-term defaults in settings or server fields instead.
 
 ### Existing listeners and long-running processes
 
@@ -441,7 +441,7 @@ Do not start a second listener for the same channel accounts merely to apply new
 
 | Script | Purpose |
 | --- | --- |
-| `scripts/update-agent-settings.ts` | Show or patch agent/conversation server settings safely |
+| `scripts/update-agent-settings.ts` | Show or patch REST-only agent/conversation fields (context limit, name, description, system prompt); needs a REST server and `LETTA_API_KEY` |
 | `scripts/update-compaction-prompt.ts` | Preserve existing compaction settings while replacing the prompt |
 | `scripts/add_permission.py` | Add allow/deny/ask/alwaysAsk rules to a chosen settings scope |
 | `scripts/show_config.py` | Show runtime/local settings without dumping secret values |

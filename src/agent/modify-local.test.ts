@@ -48,6 +48,17 @@ describe("local model updates", () => {
     });
   });
 
+  test("preserves the selected Grok reasoning effort for xAI handles", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("xai/grok-4.7", {
+        reasoning_effort: "xhigh",
+      }),
+    ).toMatchObject({
+      provider_type: "xai",
+      reasoning: { reasoning_effort: "xhigh" },
+    });
+  });
+
   test("builds direct Moonshot K3 settings without client reasoning controls", () => {
     expect(
       __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {
@@ -57,6 +68,18 @@ describe("local model updates", () => {
       provider_type: "moonshot",
       parallel_tool_calls: true,
       max_output_tokens: 131072,
+    });
+  });
+
+  test("rewrites unsupported minimal reasoning to none for GPT-5.6 Sol", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("openai-codex/gpt-5.6-sol", {
+        provider_type: "chatgpt_oauth",
+        reasoning_effort: "minimal",
+      }),
+    ).toMatchObject({
+      provider_type: "chatgpt_oauth",
+      reasoning: { reasoning_effort: "none" },
     });
   });
 

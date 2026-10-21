@@ -58,6 +58,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
       "send-rich",
@@ -118,7 +119,10 @@ describe("buildDynamicMessageChannelSchema", () => {
       "Currently active channels: Slack, Telegram.",
     );
     expect(resolved.description).toContain(
-      "Available actions across the active channels: send, react, upload-file, download-file, send-rich.",
+      "Available actions across the active channels: send, react, list-custom-emojis, upload-file, download-file, send-rich.",
+    );
+    expect(resolved.description).not.toContain(
+      "finish with only `Sent.` as the internal confirmation",
     );
     expect(resolved.description).toContain(
       SLACK_WORK_ACKNOWLEDGEMENT_GUIDANCE_PREFIX,
@@ -127,15 +131,19 @@ describe("buildDynamicMessageChannelSchema", () => {
       'On Slack, this tool also supports action="react"',
     );
     expect(resolved.description).toContain(
+      'action="list-custom-emojis" to discover the workspace custom emoji names',
+    );
+    expect(resolved.description).toContain(
       'Use action="download-file" with channel, chat_id, attachmentId, and messageId',
     );
     expect(resolved.description).toContain(
-      "TaskOutput (block: true, timeout: 600000)",
+      "a task notification delivers the local_path",
     );
     expect(properties.channel?.enum).toEqual(["slack", "telegram"]);
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
       "send-rich",
@@ -176,6 +184,12 @@ describe("buildDynamicMessageChannelSchema", () => {
       "If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call",
     );
     expect(resolved.description).toContain(
+      "After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation.",
+    );
+    expect(resolved.description).toContain(
+      "This does not apply to a short acknowledgement sent before continuing substantive work.",
+    );
+    expect(resolved.description).toContain(
       "If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement.",
     );
     expect(resolved.description).toContain(
@@ -195,6 +209,7 @@ describe("buildDynamicMessageChannelSchema", () => {
     expect(properties.action?.enum).toEqual([
       "send",
       "react",
+      "list-custom-emojis",
       "upload-file",
       "download-file",
     ]);

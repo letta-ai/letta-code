@@ -6,7 +6,11 @@ import {
   clearPendingControlRequestStore,
 } from "@/channels/pending-control-requests";
 import { ChannelRegistry, getChannelRegistry } from "@/channels/registry";
-import { addRoute } from "@/channels/routing";
+import {
+  __testOverrideLoadRoutes,
+  __testOverrideSaveRoutes,
+  addRoute,
+} from "@/channels/routing";
 import type {
   ChannelAdapter,
   ChannelControlRequestEvent,
@@ -14,6 +18,10 @@ import type {
 } from "@/channels/types";
 
 beforeEach(() => {
+  // These tests exercise dispatch, not persistence. Keep their routes in memory
+  // so another suite cannot reload them after the preload clears the route map.
+  __testOverrideLoadRoutes(() => null);
+  __testOverrideSaveRoutes(() => {});
   __testOverrideLoadPendingControlRequestStore(null);
   __testOverrideSavePendingControlRequestStore(null);
   clearPendingControlRequestStore();

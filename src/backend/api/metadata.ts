@@ -7,10 +7,50 @@ export interface BalanceMetadata {
   monthly_credit_balance: number;
   purchased_credit_balance: number;
   billing_tier: string;
+  /** The caller's organization (newer servers). */
+  organization_id?: string;
 }
 
-export async function getBalanceMetadata(): Promise<BalanceMetadata> {
-  return apiRequest<BalanceMetadata>("GET", "/v1/metadata/balance");
+type QuotaBucket = "empty" | "low" | "medium" | "high" | "full";
+
+interface ModelTierQuota {
+  bucket: QuotaBucket;
+  dailyBucket?: QuotaBucket;
+}
+
+export interface ModelQuotaMetadata {
+  lettaTier: ModelTierQuota;
+  quotaWindowEnd: string;
+  dailyQuotaWindowEnd?: string;
+}
+
+export type FeedbackClientType = "desktop" | "chat.letta.com" | "cli";
+
+export function getFeedbackClientType(
+  env: NodeJS.ProcessEnv = process.env,
+): FeedbackClientType {
+  if (env.LETTA_DESKTOP_MODE === "1") {
+    return "desktop";
+  }
+  if (env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID) {
+    return "chat.letta.com";
+  }
+  return "cli";
+}
+
+export async function getBalanceMetadata(
+  options: { signal?: AbortSignal } = {},
+): Promise<BalanceMetadata> {
+  return apiRequest<BalanceMetadata>(
+    "GET",
+    "/v1/metadata/balance",
+    undefined,
+    options.signal ? { signal: options.signal } : {},
+  );
+}
+
+export async function getModelQuotaMetadata(): Promise<ModelQuotaMetadata> {
+  return apiRequest<ModelQuotaMetadata>("GET", "/v1/organizations/self/quotas");
 }
 
 export async function getBillingTier(): Promise<string | null> {
@@ -63,11 +103,14 @@ export async function submitTelemetryMetadata(
   apiKey: string | undefined,
   deviceId: string,
   payload: Record<string, unknown>,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal; actingUserId?: string | null },
 ): Promise<void> {
   const config = await getMetadataRequestConfig(apiKey);
   await apiRequest<void>("POST", "/v1/metadata/telemetry", payload, {
     ...config,
+    // Telemetry snapshots the acting user when the event is created. `null`
+    // prevents a later headless env value from replacing an empty snapshot.
+    actingUserId: options?.actingUserId ?? null,
     headers: {
       "X-Letta-Code-Device-ID": deviceId,
     },

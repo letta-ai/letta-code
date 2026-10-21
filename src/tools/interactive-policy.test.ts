@@ -11,7 +11,7 @@ describe("interactive user-input tool policy", () => {
     clearExternalTools();
   });
 
-  test("headless exclusion removes interactive built-ins without filtering external tools", async () => {
+  test("explicit exclusion overrides async question inclusion without filtering external tools", async () => {
     registerExternalTools([
       {
         name: "get_weather",
@@ -22,7 +22,10 @@ describe("interactive user-input tool policy", () => {
 
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
-      { exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES] },
+      {
+        include: ["AskUserQuestionAsync"],
+        exclude: [...INTERACTIVE_USER_INPUT_TOOL_NAMES],
+      },
     );
     const names = prepared.clientTools.map((tool) => tool.name);
 
@@ -31,9 +34,10 @@ describe("interactive user-input tool policy", () => {
     expect(names).not.toContain("AskUserQuestion");
   });
 
-  test("interactive tools remain available when exclusion is omitted", async () => {
+  test("questions are available only when explicitly included", async () => {
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
+      { include: ["AskUserQuestionAsync"] },
     );
 
     expect(prepared.clientTools.map((tool) => tool.name)).toContain(

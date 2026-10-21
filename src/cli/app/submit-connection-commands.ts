@@ -165,7 +165,7 @@ export async function handleConnectionCommand(
     for (let i = 1; i < parts.length; i++) {
       const part = parts[i];
       const nextPart = parts[i + 1];
-      if (part === "--env-name" && nextPart) {
+      if ((part === "--computer-name" || part === "--env-name") && nextPart) {
         name = nextPart;
         i++;
       }

@@ -5,13 +5,23 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { isActiveMemfsEnabled } from "@/agent/memory-runtime";
-import { debugWarn } from "@/utils/debug";
 import {
   estimateSystemPromptTokensFromMemoryDir,
   estimateSystemTokens,
-} from "@/utils/system-prompt-size";
+} from "@/agent/system-prompt-size";
+import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { debugWarn } from "@/utils/debug";
 
 export { estimateSystemPromptTokensFromMemoryDir, estimateSystemTokens };
+
+export function estimateActiveMemorySystemPromptTokens(
+  memoryDir: string,
+): number {
+  return estimateSystemPromptTokensFromMemoryDir(
+    memoryDir,
+    isLocalBackendEnvEnabled(),
+  );
+}
 
 const STARTUP_SYSTEM_PROMPT_WARNING_THRESHOLD_TOKENS = 30000;
 
@@ -56,7 +66,7 @@ export function refreshSystemPromptDoctorState(
     if (isActiveMemfsEnabled(agentId)) {
       const memoryDir = getScopedMemoryFilesystemRoot(agentId);
       estimatedSystemPromptTokens =
-        estimateSystemPromptTokensFromMemoryDir(memoryDir);
+        estimateActiveMemorySystemPromptTokens(memoryDir);
     } else {
       // non-memfs
       const systemPrompt = (

@@ -19,7 +19,7 @@ import { settingsManager } from "@/settings-manager";
 import { enter_worktree } from "@/tools/impl/enter-worktree";
 import { addWindowsPathLengthHint } from "@/tools/impl/worktree-git";
 import {
-  clearToolsWithLock,
+  clearTools,
   executeTool,
   loadSpecificTools,
   prepareCurrentToolExecutionContext,
@@ -88,7 +88,7 @@ describe("EnterWorktree tool", () => {
 
   beforeEach(async () => {
     tempDirs = [];
-    clearToolsWithLock();
+    clearTools();
     resetRemoteSettingsCache();
     setActiveRuntime(null);
     const fakeHome = await mkdtemp(
@@ -102,7 +102,7 @@ describe("EnterWorktree tool", () => {
 
   afterEach(async () => {
     setActiveRuntime(null);
-    clearToolsWithLock();
+    clearTools();
     resetRemoteSettingsCache();
     await settingsManager.reset();
     process.chdir(originalCwd);

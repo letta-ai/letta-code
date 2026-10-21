@@ -32,9 +32,17 @@ type QueueItemBase = {
    * Undefined for self-hosted, single-user, or pre-channel-split
    * flows where cloud doesn't stamp the field.
    */
-  actingUserId?: string;
+  /** Null explicitly suppresses fallback to the runtime owner's identity. */
+  actingUserId?: string | null;
   source: QueueItemSource;
   enqueuedAt: number;
+  /**
+   * Parked by a user interrupt. Paused items stay visible in the queue but
+   * are skipped by every dequeue path until `resume()` clears the flag.
+   * Only user-authored messages are ever paused; system-originated items
+   * (task notifications, cron prompts, mod continuations) keep flowing.
+   */
+  paused?: boolean;
 };
 
 export type MessageQueueItem = QueueItemBase & {
@@ -53,6 +61,8 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   kind: "task_notification";
   /** XML notification string. */
   text: string;
+  /** Original tool content, including image parts, delivered after the XML header. */
+  content?: MessageCreate["content"];
 };
 
 export type ApprovalResultQueueItem = QueueItemBase & {
@@ -121,6 +131,14 @@ export interface DequeuedBatch {
 }
 
 export interface QueueCallbacks {
+  /** Durable ownership guards run synchronously before volatile mutation. */
+  beforeDequeued?: (items: readonly QueueItem[]) => boolean;
+  beforeDropped?: (item: QueueItem) => boolean;
+  beforeRemoved?: (item: QueueItem) => boolean;
+  beforeCleared?: (
+    reason: QueueClearedReason,
+    items: readonly QueueItem[],
+  ) => boolean;
   onEnqueued?: (item: QueueItem, queueLen: number) => void;
   onDequeued?: (batch: DequeuedBatch) => void;
   /**
@@ -149,6 +167,11 @@ export interface QueueCallbacks {
    * queueLen is the post-removal queue depth.
    */
   onRemoved?: (item: QueueItem, queueLen: number) => void;
+  /**
+   * Fired when pause()/resume() changes which items are parked.
+   * pausedCount is the number of items still paused afterwards.
+   */
+  onPauseChanged?: (pausedCount: number, queueLen: number) => void;
 }
 
 // ── Options ──────────────────────────────────────────────────────
@@ -203,10 +226,23 @@ export class QueueRuntime {
    *   applies to coalescable items).
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
-  enqueue(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem | null {
+  enqueue(
+    input: Omit<QueueItem, "id" | "enqueuedAt">,
+    options: { preserveExisting?: boolean } = {},
+  ): QueueItem | null {
+    // Durable rehydration must be observational on rejection: its payload remains
+    // in the disposition store and no queued item may be evicted to make room.
+    if (
+      options.preserveExisting &&
+      (this.store.length >= this.hardMaxItems ||
+        (this.store.length >= this.maxItems && isCoalescable(input.kind)))
+    ) {
+      return null;
+    }
     // Hard ceiling check
     if (this.store.length >= this.hardMaxItems) {
       const phantom = this.makeItem(input);
+      if (!this.mutationAllowed("beforeDropped", phantom)) return null;
       this.safeCallback(
         "onDropped",
         phantom,
@@ -219,9 +255,20 @@ export class QueueRuntime {
     // Soft limit: only drop coalescable items
     if (this.store.length >= this.maxItems && isCoalescable(input.kind)) {
       const dropIdx = this.store.findIndex((i) => isCoalescable(i.kind));
-      const dropped =
-        dropIdx !== -1 ? this.store.splice(dropIdx, 1)[0] : undefined;
+      const dropped = dropIdx !== -1 ? this.store[dropIdx] : undefined;
       if (dropped !== undefined) {
+        if (!this.mutationAllowed("beforeDropped", dropped)) {
+          const rejected = this.makeItem(input);
+          if (!this.mutationAllowed("beforeDropped", rejected)) return null;
+          this.safeCallback(
+            "onDropped",
+            rejected,
+            "buffer_limit",
+            this.store.length,
+          );
+          return null;
+        }
+        this.store.splice(dropIdx, 1);
         const item = this.makeItem(input);
         this.store.push(item);
         // queueLen after: same as before (one dropped, one added)
@@ -276,6 +323,12 @@ export class QueueRuntime {
       return null;
     }
 
+    if (this.store.length > 0 && this.readyLength === 0) {
+      // Only parked user messages remain: report that as the blocked reason
+      // (transition-deduplicated like every other reason) and dequeue nothing.
+      return this.tryDequeue("paused_by_user");
+    }
+
     // Unblocked — reset tracking
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
@@ -284,28 +337,26 @@ export class QueueRuntime {
       return null;
     }
 
-    // Drain contiguous coalescable items from head
+    // Drain coalescable ready items from the first ready item onward. Paused
+    // items are skipped, never consumed; a ready barrier ends the batch.
     const batch: QueueItem[] = [];
-    const first = this.store[0];
-    while (
-      first !== undefined &&
-      this.store.length > 0 &&
-      isCoalescable(this.store[0]?.kind ?? "approval_result") &&
-      hasSameScope(first, this.store[0] as QueueItem)
-    ) {
-      const item = this.store.shift();
-      if (item) batch.push(item);
-    }
-
-    // If head was a barrier (no coalescables found), dequeue it alone
-    if (batch.length === 0 && this.store.length > 0) {
-      const item = this.store.shift();
-      if (item) batch.push(item);
+    const first = this.store.find((item) => !item.paused);
+    if (first && isCoalescable(first.kind)) {
+      for (const item of this.store) {
+        if (item.paused) continue;
+        if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        batch.push(item);
+      }
+    } else if (first) {
+      // First ready item is a barrier: dequeue it alone
+      batch.push(first);
     }
 
     if (batch.length === 0) {
       return null;
     }
+    if (!this.mutationAllowed("beforeDequeued", batch)) return null;
+    this.removeAll(batch);
 
     // When queue becomes empty after dequeue, reset blocked epoch tracking
     if (this.store.length === 0) {
@@ -332,8 +383,12 @@ export class QueueRuntime {
    */
   consumeItems(n: number): DequeuedBatch | null {
     if (this.store.length === 0 || n <= 0) return null;
-    const count = Math.min(n, this.store.length);
-    const batch = this.store.splice(0, count);
+    // Paused items are skipped: the first `n` ready items are consumed.
+    const batch = this.store.filter((item) => !item.paused).slice(0, n);
+    const count = batch.length;
+    if (count === 0) return null;
+    if (!this.mutationAllowed("beforeDequeued", batch)) return null;
+    this.removeAll(batch);
     if (this.store.length === 0) {
       this.blockedEmittedForNonEmpty = false;
     }
@@ -367,6 +422,10 @@ export class QueueRuntime {
   removeItem(id: string): QueueItem | null {
     const idx = this.store.findIndex((item) => item.id === id);
     if (idx === -1) return null;
+    const candidate = this.store[idx];
+    if (!candidate || !this.mutationAllowed("beforeRemoved", candidate)) {
+      return null;
+    }
     const removed = this.store.splice(idx, 1)[0];
     if (!removed) return null;
     if (this.store.length === 0) {
@@ -376,12 +435,54 @@ export class QueueRuntime {
     return removed;
   }
 
+  // ── Pause / resume ─────────────────────────────────────────────
+
+  /**
+   * Park every queued user message. Called when the user interrupts: the
+   * interrupted turn stops, and the messages the user queued behind it wait
+   * for an explicit resume or for the user's next message instead of
+   * starting the next turn on their own. System-originated items are not
+   * affected. Returns the number of items newly paused.
+   */
+  pause(): number {
+    let changed = 0;
+    for (const item of this.store) {
+      if (item.kind === "message" && item.source === "user" && !item.paused) {
+        item.paused = true;
+        changed += 1;
+      }
+    }
+    if (changed > 0) {
+      this.blockedEmittedForNonEmpty = false;
+      this.safeCallback("onPauseChanged", this.pausedCount, this.store.length);
+    }
+    return changed;
+  }
+
+  /** Release every paused item. Returns the number of items resumed. */
+  resume(): number {
+    let changed = 0;
+    for (const item of this.store) {
+      if (item.paused) {
+        delete item.paused;
+        changed += 1;
+      }
+    }
+    if (changed > 0) {
+      this.lastEmittedBlockedReason = null;
+      this.blockedEmittedForNonEmpty = false;
+      this.safeCallback("onPauseChanged", 0, this.store.length);
+    }
+    return changed;
+  }
+
   // ── Clear ──────────────────────────────────────────────────────
 
   /** Remove all items and fire onCleared. */
   clear(reason: QueueClearedReason): void {
     const count = this.store.length;
     const clearedItems = this.store.slice();
+    if (!this.mutationAllowed("beforeCleared", reason, clearedItems)) return;
     this.store.length = 0;
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
@@ -398,6 +499,15 @@ export class QueueRuntime {
     return this.store.length === 0;
   }
 
+  /** Items a dequeue may take right now (everything that is not paused). */
+  get readyLength(): number {
+    return this.store.reduce((n, item) => (item.paused ? n : n + 1), 0);
+  }
+
+  get pausedCount(): number {
+    return this.store.length - this.readyLength;
+  }
+
   get items(): readonly QueueItem[] {
     return this.store.slice();
   }
@@ -406,7 +516,22 @@ export class QueueRuntime {
     return this.store.slice();
   }
 
+  /** Like peek(), without paused items. Dequeue planners must use this. */
+  peekReady(): readonly QueueItem[] {
+    return this.store.filter((item) => !item.paused);
+  }
+
   // ── Internals ──────────────────────────────────────────────────
+
+  /** Remove the given items (by identity) from the store, preserving order. */
+  private removeAll(items: readonly QueueItem[]): void {
+    const removing = new Set(items);
+    let write = 0;
+    for (const item of this.store) {
+      if (!removing.has(item)) this.store[write++] = item;
+    }
+    this.store.length = write;
+  }
 
   private makeItem(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem {
     return {
@@ -414,6 +539,18 @@ export class QueueRuntime {
       id: `q-${++this.nextId}`,
       enqueuedAt: Date.now(),
     } as QueueItem;
+  }
+
+  private mutationAllowed<
+    K extends keyof Pick<
+      QueueCallbacks,
+      "beforeDequeued" | "beforeDropped" | "beforeRemoved" | "beforeCleared"
+    >,
+  >(name: K, ...args: Parameters<NonNullable<QueueCallbacks[K]>>): boolean {
+    const callback = this.callbacks[name] as
+      | ((...values: Parameters<NonNullable<QueueCallbacks[K]>>) => boolean)
+      | undefined;
+    return callback?.(...args) ?? true;
   }
 
   private safeCallback<K extends keyof QueueCallbacks>(

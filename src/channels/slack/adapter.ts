@@ -19,7 +19,7 @@ import {
 } from "./agent-thread-tracker";
 import { createSlackApprovalController } from "./approval-controller";
 import { downloadSlackAttachmentById } from "./attachment-download";
-import type { SlackAttachmentReadClient } from "./attachment-types";
+import type { SlackAttachmentReadClient } from "./attachment-primitives";
 import { uploadSlackFile } from "./file-upload";
 import {
   createSlackInboundDebounceController,
@@ -33,7 +33,6 @@ import {
   formatSlackControlRequestBlocks,
   formatSlackLifecycleErrorMessage,
   resolveSlackConcreteActivity,
-  SLACK_ASSISTANT_STARTUP_STATUS,
   SLACK_ASSISTANT_WORKING_STATUS,
   shouldPostSlackTerminalError,
 } from "./presentation";
@@ -53,6 +52,7 @@ import {
 import { createSlackWebApiClient } from "./web-api-client";
 
 export interface SlackChannelAdapter extends ChannelAdapter {
+  listCustomEmojis(): Promise<string[]>;
   downloadAttachment(params: {
     attachmentId: string;
     chatId: string;
@@ -61,6 +61,12 @@ export interface SlackChannelAdapter extends ChannelAdapter {
     signal?: AbortSignal;
   }): Promise<ChannelMessageAttachment>;
 }
+
+type SlackAuthClient = {
+  auth: {
+    test(): Promise<{ team?: string; user_id?: string; bot_id?: string }>;
+  };
+};
 
 export function createSlackAdapter(
   config: SlackChannelAccount,
@@ -71,6 +77,7 @@ export function createSlackAdapter(
   let running = false;
   let botUserId: string | null = null;
   let botId: string | null = null;
+  let workspaceName: string | null = null;
   let adapter: SlackChannelAdapter;
 
   const agentThreadTracker: AgentThreadTracker = createAgentThreadTracker();
@@ -100,12 +107,24 @@ export function createSlackAdapter(
 
   async function ensureApp(): Promise<SlackApp> {
     if (app) return app;
+    const auth = await (
+      (await ensureWriteClient()) as SlackWriteClient & SlackAuthClient
+    ).auth.test();
+    if (!isNonEmptyString(auth.user_id) || !isNonEmptyString(auth.bot_id)) {
+      throw new Error("Slack auth.test did not return bot identity fields");
+    }
+    botUserId = auth.user_id;
+    botId = auth.bot_id;
+    workspaceName = isNonEmptyString(auth.team) ? auth.team : null;
+
     const bolt = await loadSlackBoltModule();
     const App = resolveSlackAppConstructor(bolt);
     const instance = new App({
       token: config.botToken,
       appToken: config.appToken,
       socketMode: true,
+      botUserId,
+      botId,
     });
     instance.error(async (error) => {
       console.error("[Slack] Unhandled app error:", error);
@@ -131,6 +150,14 @@ export function createSlackAdapter(
       writeClientPromise = null;
       throw error;
     }
+  }
+
+  async function listCustomEmojis(): Promise<string[]> {
+    const client = await ensureWriteClient();
+    const response = await client.emoji.list();
+    return Object.keys(response.emoji ?? {}).sort((left, right) =>
+      left.localeCompare(right),
+    );
   }
 
   async function downloadAttachment(params: {
@@ -179,28 +206,23 @@ export function createSlackAdapter(
   ): Promise<void> {
     if (!running) return;
     if (event.type === "queued") {
-      if (
-        isSlackFlatChannelThreadOpener(event.source) &&
-        isNonEmptyString(event.source.messageId) &&
-        !agentThreadTracker.has(event.source.chatId, event.source.messageId)
-      ) {
-        await status.activate(
-          event.source,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-        );
-      }
+      const showStartupStatus =
+        event.source.showStartupStatus ||
+        (isSlackFlatChannelThreadOpener(event.source) &&
+          isNonEmptyString(event.source.messageId) &&
+          !agentThreadTracker.has(event.source.chatId, event.source.messageId));
+      await status.handleLifecycle({
+        ...event,
+        source: { ...event.source, showStartupStatus },
+      });
       return;
     }
 
     const sources = status.getUniqueSources(event.sources);
-    if (event.type === "processing") {
-      await Promise.all(sources.map(status.clearStale));
-      return;
-    }
+    await status.handleLifecycle(event);
+    if (event.type === "processing") return;
     if (event.stopReason === "requires_approval") return;
 
-    await Promise.all(sources.map(status.deactivate));
     if (!shouldPostSlackTerminalError(event.stopReason)) return;
     const errorText = event.error?.trim() ?? "";
     trackBoundaryError({
@@ -388,16 +410,10 @@ export function createSlackAdapter(
     async start(): Promise<void> {
       if (running) return;
       const slackApp = await ensureApp();
-      const auth = await slackApp.client.auth.test();
-      const authRecord = auth as unknown as Record<string, unknown>;
-      botUserId = isNonEmptyString(authRecord.user_id)
-        ? authRecord.user_id
-        : null;
-      botId = isNonEmptyString(authRecord.bot_id) ? authRecord.bot_id : null;
       await slackApp.start();
       running = true;
       console.log(
-        `[Slack] App started for workspace ${auth.team ?? "unknown"} (dm_policy: ${config.dmPolicy})`,
+        `[Slack] App started for workspace ${workspaceName ?? "unknown"} (dm_policy: ${config.dmPolicy})`,
       );
     },
     async stop(): Promise<void> {
@@ -412,6 +428,7 @@ export function createSlackAdapter(
       writeClientPromise = null;
       botUserId = null;
       botId = null;
+      workspaceName = null;
       status.clear();
       approvals.clear();
       debounce.clear();
@@ -436,6 +453,7 @@ export function createSlackAdapter(
       );
     },
     sendMessage,
+    listCustomEmojis,
     downloadAttachment,
     sendDirectReply,
     handleControlRequestEvent,

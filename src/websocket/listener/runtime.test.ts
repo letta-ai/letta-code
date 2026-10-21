@@ -108,4 +108,23 @@ describe("conversation runtime eviction and worktree watcher idle stop", () => {
     expect(evictConversationRuntimeIfIdle(runtime)).toBe(false);
     expect(listener.conversationRuntimes.has(runtime.key)).toBe(true);
   });
+
+  test("a subscribed workspace sandbox survives between session turns", () => {
+    const listener = __listenClientTestUtils.createListenerRuntime();
+    const runtime = createConversationRuntime(
+      listener,
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    runtime.workspaceSandbox = {
+      root: "/tmp/runs/run-a",
+      isolationRoot: "/tmp/runs",
+    };
+    listener.connectionIdsByRuntimeKey.set(runtime.key, new Set(["sdk-1"]));
+
+    expect(evictConversationRuntimeIfIdle(runtime)).toBe(false);
+
+    listener.connectionIdsByRuntimeKey.delete(runtime.key);
+    expect(evictConversationRuntimeIfIdle(runtime)).toBe(true);
+  });
 });

@@ -821,6 +821,45 @@ describe("channel account list responses", () => {
     }
   });
 
+  test("Telegram route update rejects a labeled Chat ID", async () => {
+    setupInMemoryChannelStores();
+    const socket = new MockSocket(WebSocket.OPEN);
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    try {
+      await sendChannelCommand(
+        {
+          type: "channel_route_update",
+          request_id: "telegram-route-invalid",
+          channel_id: "telegram",
+          account_id: "telegram-bot",
+          chat_id: "Chat ID: 7945451305",
+          runtime: {
+            agent_id: "agent-telegram",
+            conversation_id: "default",
+          },
+        },
+        socket,
+        runtime,
+      );
+
+      expect(
+        findMessage(socket, "channel_route_update_response"),
+      ).toMatchObject({
+        type: "channel_route_update_response",
+        request_id: "telegram-route-invalid",
+        success: false,
+        chat_id: "Chat ID: 7945451305",
+        route: null,
+        error: expect.stringContaining(
+          "Paste only the numeric Telegram Chat ID",
+        ),
+      });
+    } finally {
+      __listenClientTestUtils.stopRuntime(runtime, true);
+    }
+  });
+
   test("Telegram channel_set_config manages and modifies channel config through the protocol", async () => {
     setupInMemoryChannelStores();
     __setActiveChannelCredentialsStoreModeForTests("file");

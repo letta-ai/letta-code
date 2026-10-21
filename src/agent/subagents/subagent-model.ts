@@ -9,6 +9,7 @@
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
+import { resolveCatalogModel } from "@/agent/model-catalog";
 import { type BackendMode, getBackend } from "@/backend";
 import { getBillingTier } from "@/backend/api/metadata";
 
@@ -108,6 +109,89 @@ function isInheritModel(model: string | null | undefined): boolean {
   return model?.trim().toLowerCase() === "inherit";
 }
 
+export interface ForkModelOverride {
+  modelHandle: string;
+  updateArgs?: Record<string, unknown>;
+}
+
+/**
+ * Resolve a model override for a forked conversation.
+ *
+ * Fresh subagents receive their model through headless startup. Forks instead
+ * deploy the parent agent into an existing forked conversation, so their model
+ * must be applied as a conversation-scoped override before that deployment.
+ * Catalog IDs preserve tier-specific settings such as reasoning effort.
+ */
+export async function resolveForkModelOverride(options: {
+  userModel?: string;
+  recommendedModel?: string;
+  recommendedModelSource?: "builtin" | "user";
+  parentModelHandle?: string | null;
+  availableModels?: Awaited<ReturnType<typeof getAvailableModelHandles>>;
+}): Promise<ForkModelOverride | null> {
+  const requestedModel =
+    options.userModel !== undefined
+      ? options.userModel
+      : options.recommendedModelSource === "user"
+        ? options.recommendedModel
+        : undefined;
+  if (!requestedModel || isInheritModel(requestedModel)) return null;
+
+  const catalogModel = resolveCatalogModel(requestedModel);
+  const resolvedHandle = catalogModel?.handle ?? resolveModel(requestedModel);
+  if (!resolvedHandle) {
+    throw new Error(`Unknown fork model: ${requestedModel}`);
+  }
+
+  const available =
+    options.availableModels ?? (await getAvailableModelHandles());
+  let modelHandle = resolvedHandle;
+  const catalogProviderType = catalogModel?.updateArgs?.provider_type;
+  let providerType =
+    (typeof catalogProviderType === "string" && catalogProviderType) ||
+    available.providerTypes.get(resolvedHandle) ||
+    getProviderPrefix(resolvedHandle) ||
+    undefined;
+
+  // A catalog ID names the base provider (for example openai/gpt-5.6-sol),
+  // while the parent may use an organization-specific BYOK alias. Keep that
+  // provider when it exposes the requested model through the same provider
+  // type, so a fork does not unexpectedly switch from BYOK to hosted credits.
+  if (catalogModel && options.parentModelHandle) {
+    const parentProviderType = available.providerTypes.get(
+      options.parentModelHandle,
+    );
+    const parentProvider = getProviderPrefix(options.parentModelHandle);
+    const modelPortion = resolvedHandle.slice(resolvedHandle.indexOf("/") + 1);
+    if (
+      parentProviderType &&
+      parentProviderType === providerType &&
+      parentProvider
+    ) {
+      const byokHandle = `${parentProvider}/${modelPortion}`;
+      if (available.handles.has(byokHandle)) {
+        modelHandle = byokHandle;
+        providerType = parentProviderType;
+      }
+    }
+  }
+
+  if (!available.handles.has(modelHandle)) {
+    throw new Error(`Fork model is not available: ${requestedModel}`);
+  }
+
+  const updateArgs = catalogModel?.updateArgs
+    ? {
+        ...catalogModel.updateArgs,
+        ...(providerType ? { provider_type: providerType } : {}),
+      }
+    : providerType
+      ? { provider_type: providerType }
+      : undefined;
+
+  return { modelHandle, ...(updateArgs ? { updateArgs } : {}) };
+}
+
 export async function resolveSubagentModel(options: {
   userModel?: string;
   recommendedModel?: string;
@@ -126,6 +210,19 @@ export async function resolveSubagentModel(options: {
     ? "inherit"
     : recommendedModel;
 
+  // When the recommended pin is a catalog ID (e.g. gpt-5.6-sol-plus-pro-high),
+  // return the identifier itself rather than the bare handle: the spawned
+  // child's createAgent re-resolves the ID and applies the catalog entry's
+  // updateArgs (reasoning_effort, verbosity, ...). Returning the bare handle
+  // would silently spawn the base effort tier instead.
+  const recommendedSelection = (handle: string): string => {
+    if (!effectiveRecommendedModel) return handle;
+    const entry = resolveCatalogModel(effectiveRecommendedModel);
+    return entry && entry.handle === handle
+      ? effectiveRecommendedModel
+      : handle;
+  };
+
   if (userModel && !userRequestedInheritance) return userModel;
 
   if (
@@ -135,7 +232,7 @@ export async function resolveSubagentModel(options: {
   ) {
     const recommendedHandle = resolveModel(effectiveRecommendedModel);
     if (recommendedHandle) {
-      return recommendedHandle;
+      return recommendedSelection(recommendedHandle);
     }
   }
 
@@ -154,7 +251,7 @@ export async function resolveSubagentModel(options: {
     ) {
       const recommendedHandle = resolveModel(effectiveRecommendedModel);
       if (recommendedHandle) {
-        return recommendedHandle;
+        return recommendedSelection(recommendedHandle);
       }
     }
 
@@ -213,7 +310,7 @@ export async function resolveSubagentModel(options: {
       if (parentIsByok) {
         if (recommendedProvider === parentProvider) {
           if (await isAvailable(recommendedHandle)) {
-            return recommendedHandle;
+            return recommendedSelection(recommendedHandle);
           }
         } else {
           const swapped = swapProviderPrefix(
@@ -229,7 +326,7 @@ export async function resolveSubagentModel(options: {
       }
 
       if (await isAvailable(recommendedHandle)) {
-        return recommendedHandle;
+        return recommendedSelection(recommendedHandle);
       }
     }
 
@@ -237,7 +334,7 @@ export async function resolveSubagentModel(options: {
   }
 
   if (recommendedHandle && (await isAvailable(recommendedHandle))) {
-    return recommendedHandle;
+    return recommendedSelection(recommendedHandle);
   }
 
   // Non-free fallback default: auto, when available.
@@ -246,5 +343,5 @@ export async function resolveSubagentModel(options: {
     return defaultHandle;
   }
 
-  return recommendedHandle;
+  return recommendedHandle ? recommendedSelection(recommendedHandle) : null;
 }

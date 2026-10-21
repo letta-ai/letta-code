@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import WebSocket from "ws";
@@ -28,6 +26,7 @@ import { appendCronRunLog, getCronRunLogPath } from "@/cron";
 import type { MessageQueueItem } from "@/queue/queue-runtime";
 import type { LocalProjectSettings, Settings } from "@/settings-manager";
 import { settingsManager } from "@/settings-manager";
+import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import {
   backgroundProcesses,
   backgroundTasks,
@@ -120,6 +119,7 @@ class MockSocket {
   }
 }
 
+setupRuntimeModelCatalogFixture();
 afterEach(() => {
   __testSetBackend(null);
   clearExternalTools();
@@ -1528,7 +1528,7 @@ describe("listen-client parseServerMessage", () => {
           type: "update_toolset",
           request_id: "update-toolset-1",
           runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-          toolset_preference: "gemini",
+          toolset_preference: "letta",
         }),
       ),
     );
@@ -1942,49 +1942,6 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("runs remote clear execute_command against local backend", async () => {
-    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-clear-local-"));
-    try {
-      const backend = new LocalBackend({
-        storageDir,
-        executionMode: "deterministic",
-      });
-      __testSetBackend(backend);
-      const agent = await backend.createAgent({
-        name: "WS Clear Local Agent",
-      } as AgentCreateBody);
-      const listener = __listenClientTestUtils.createListenerRuntime();
-      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-        listener,
-        agent.id,
-        "default",
-      );
-      const socket = new MockSocket(WebSocket.OPEN);
-
-      await handleExecuteCommand(
-        {
-          type: "execute_command",
-          command_id: "clear",
-          request_id: "clear-local-run-1",
-          runtime: { agent_id: agent.id, conversation_id: "default" },
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {},
-      );
-
-      expect(runtime.conversationId).toStartWith("local-conv-");
-      await expect(
-        backend.retrieveConversation(runtime.conversationId),
-      ).resolves.toMatchObject({ agent_id: agent.id });
-      expect(socket.sentPayloads.join("\n")).toContain(
-        "Agent's in-context messages cleared",
-      );
-    } finally {
-      await rm(storageDir, { recursive: true, force: true });
-    }
-  });
-
   test("runs remote reload execute_command", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const adapter = ensureListenerModAdapter(listener);
@@ -2039,7 +1996,7 @@ describe("listen-client parseServerMessage", () => {
 });
 
 describe("listen-client model command helpers", () => {
-  test("buildListModelsEntries reflects models.json metadata", () => {
+  test("buildListModelsEntries reflects runtime catalog metadata", () => {
     const entries = __listenClientTestUtils.buildListModelsEntries();
 
     expect(entries.length).toBe(models.length);
@@ -2088,9 +2045,7 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Handle must be the explicit BYOK handle, not the base static handle
     expect(resolved?.handle).toBe(byokHandle);
-    // But id/label/updateArgs still come from the model_id entry
     expect(resolved?.id).toBe(models[0]?.id);
     expect(resolved?.label).toBe(models[0]?.label);
   });
@@ -2102,7 +2057,6 @@ describe("listen-client model command helpers", () => {
     });
 
     expect(resolved).not.toBeNull();
-    // Should resolve handle from the static entry, not from an explicit override
     expect(resolved?.handle).toBe(models[0]?.handle);
   });
 });
@@ -3167,7 +3121,6 @@ describe("listen-client v2 status builders", () => {
         stderr: [],
         status: "running",
         exitCode: null,
-        lastReadIndex: { stdout: 0, stderr: 0 },
         startTime: new Date("2026-03-27T12:00:00.000Z"),
       });
       backgroundTasks.set("task_1", {
@@ -3175,7 +3128,6 @@ describe("listen-client v2 status builders", () => {
         subagentType: "review",
         subagentId: "subagent-1",
         status: "running",
-        output: [],
         startTime: new Date("2026-03-27T12:01:00.000Z"),
         outputFile: "/tmp/task_1.log",
       });
@@ -3184,7 +3136,6 @@ describe("listen-client v2 status builders", () => {
         subagentType: "reflection",
         subagentId: "subagent-2",
         status: "completed",
-        output: [],
         startTime: new Date("2026-03-27T12:02:00.000Z"),
         outputFile: "/tmp/task_2.log",
       });
@@ -3431,41 +3382,6 @@ describe("listen-client v2 status builders", () => {
     ).toBe(false);
   });
 
-  test("sync replay can skip backend approval recovery for lightweight state sync", async () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "default",
-    );
-    const socket = new MockSocket(WebSocket.OPEN);
-    const recoverApprovalStateForSync = mock(async () => {});
-
-    await __listenClientTestUtils.replaySyncStateForRuntime(
-      listener,
-      socket as unknown as WebSocket,
-      {
-        agent_id: "agent-1",
-        conversation_id: "default",
-      },
-      {
-        recoverApprovals: false,
-        recoverApprovalStateForSync,
-      },
-    );
-
-    expect(recoverApprovalStateForSync).not.toHaveBeenCalled();
-    const outbound = socket.sentPayloads.map((payload) =>
-      JSON.parse(payload as string),
-    );
-    expect(outbound.map((message) => message.type)).toEqual([
-      "update_device_status",
-      "update_loop_status",
-      "update_queue",
-      "update_subagent_state",
-    ]);
-  });
-
   test("sync replay schedules background warmups after state sync", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.getOrCreateScopedRuntime(
@@ -3608,7 +3524,7 @@ describe("listen-client v2 status builders", () => {
     }
   });
 
-  test("recovered approvals surface as pending control requests and WAITING_ON_APPROVAL", () => {
+  test("stale recovered approvals do not surface control requests or approval gates", () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
       listener,
@@ -3616,23 +3532,27 @@ describe("listen-client v2 status builders", () => {
       "default",
     );
     const socket = new MockSocket(WebSocket.OPEN);
-    const requestId = "perm-tool-call-1";
-
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          requestId,
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest(requestId),
+      allApprovals: [
+        {
+          toolCallId: "tool-call-1",
+          toolName: "AskUserQuestion",
+          toolArgs: '{"questions":[]}',
+        },
+      ],
+      autoDecisions: [
+        {
+          type: "deny",
+          approval: {
+            toolCallId: "tool-call-1",
+            toolName: "AskUserQuestion",
+            toolArgs: '{"questions":[]}',
           },
-        ],
-      ]),
-      pendingRequestIds: new Set([requestId]),
-      responsesByRequestId: new Map(),
+          reason: "Stale approval recovered after reconnect",
+        },
+      ],
     };
 
     __listenClientTestUtils.emitStateSync(
@@ -3647,37 +3567,12 @@ describe("listen-client v2 status builders", () => {
     const outbound = socket.sentPayloads.map((payload) =>
       JSON.parse(payload as string),
     );
-    expect(outbound[0].device_status.pending_control_requests).toEqual([
-      {
-        request_id: requestId,
-        request: makeControlRequest(requestId).request,
-      },
-    ]);
+    expect(outbound[0].device_status.pending_control_requests).toEqual([]);
     expect(outbound[1].loop_status).toEqual({
-      status: "WAITING_ON_APPROVAL",
+      status: "WAITING_ON_INPUT",
       active_run_ids: [],
       executing_tool_call_ids: [],
     });
-  });
-
-  test("sync wiring denies recovered stale approvals and never auto-runs them", () => {
-    const recoveryPath = fileURLToPath(
-      new URL("../websocket/listener/recovery-sync.ts", import.meta.url),
-    );
-    const source = readFileSync(recoveryPath, "utf-8");
-
-    // Replay-unsafe tools become stale denials; interactive tools are
-    // re-presented as recovered control requests (LET-10821). Neither path
-    // may classify or auto-execute restored approvals (#1876).
-    expect(source).toContain(
-      "runtime.pendingInterruptedResults = buildFreshDenialApprovals(",
-    );
-    expect(source).toContain("STALE_APPROVAL_RECOVERY_DENIAL_REASON");
-    expect(source).toContain("clearRecoveredApprovalState(runtime);");
-    expect(source).toContain("isInteractiveApprovalTool");
-    expect(source).not.toContain("classifyApprovalsWithSuggestions(");
-    expect(source).not.toContain("buildRecoveredAutoDecisions(");
-    expect(source).not.toContain("executeApprovalBatch");
   });
 
   test("sync ignores backend recovered approvals while a live turn is already processing", async () => {
@@ -3688,18 +3583,13 @@ describe("listen-client v2 status builders", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-stale",
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-stale"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-stale"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-stale",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     await __listenClientTestUtils.recoverApprovalStateForSync?.(runtime, {
@@ -3720,18 +3610,13 @@ describe("listen-client v2 status builders", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-stale",
-          {
-            approval: {} as never,
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-stale"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-stale"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-stale",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     __listenClientTestUtils.clearRecoveredApprovalStateForScope(runtime, {
@@ -4015,34 +3900,18 @@ describe("listen-client interrupt queue projection", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "conv-1",
-      approvalsByRequestId: new Map([
-        [
-          "perm-tool-1",
-          {
-            approval: {
-              toolCallId: "tool-1",
-              toolName: "Bash",
-              toolArgs: '{"command":"ls"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-tool-1"),
-          },
-        ],
-        [
-          "perm-tool-2",
-          {
-            approval: {
-              toolCallId: "tool-2",
-              toolName: "Bash",
-              toolArgs: '{"command":"pwd"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-tool-2"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-tool-1", "perm-tool-2"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "tool-1",
+          toolName: "Bash",
+          toolArgs: '{"command":"ls"}',
+        },
+        {
+          toolCallId: "tool-2",
+          toolName: "Bash",
+          toolArgs: '{"command":"pwd"}',
+        },
+      ],
     };
 
     const stashed = __listenClientTestUtils.stashRecoveredApprovalInterrupts(
@@ -4279,7 +4148,7 @@ describe("listen-client capability-gated approval flow", () => {
     rejectPendingApprovalResolvers(runtime, "test cleanup");
   });
 
-  test("handled recovered approval responses reschedule queue pumping for the fallback scoped runtime", async () => {
+  test("handled live approval responses reschedule queue pumping for the scoped runtime", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const targetRuntime =
       __listenClientTestUtils.getOrCreateConversationRuntime(
@@ -4289,14 +4158,14 @@ describe("listen-client capability-gated approval flow", () => {
       );
     const socket = new MockSocket(WebSocket.OPEN);
     const scheduleQueuePumpMock = mock(() => {});
-    const resolveRecoveredApprovalResponseMock = mock(async () => true);
+    const resolvePendingApprovalResolverMock = mock(() => true);
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
       {
         runtime: { agent_id: "agent-1", conversation_id: "default" },
         response: {
-          request_id: "perm-recovered",
+          request_id: "perm-live",
           decision: { behavior: "allow" },
         },
         socket: socket as unknown as WebSocket,
@@ -4307,27 +4176,20 @@ describe("listen-client capability-gated approval flow", () => {
         processQueuedTurn: async () => {},
       },
       {
-        resolveRuntimeForApprovalRequest: () => null,
-        resolvePendingApprovalResolver: () => false,
-        getOrCreateScopedRuntime: () => targetRuntime,
-        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        resolveRuntimeForApprovalRequest: () => targetRuntime,
+        resolvePendingApprovalResolver: resolvePendingApprovalResolverMock,
         scheduleQueuePump: scheduleQueuePumpMock,
       },
     );
 
     expect(handled).toBe(true);
-    expect(resolveRecoveredApprovalResponseMock).toHaveBeenCalledWith(
+    expect(resolvePendingApprovalResolverMock).toHaveBeenCalledWith(
       targetRuntime,
-      socket,
       {
-        request_id: "perm-recovered",
+        request_id: "perm-live",
         decision: { behavior: "allow" },
       },
-      expect.any(Function),
-      {
-        onStatusChange: undefined,
-        connectionId: "conn-1",
-      },
+      undefined,
     );
     expect(scheduleQueuePumpMock).toHaveBeenCalledWith(
       targetRuntime,
@@ -4347,10 +4209,10 @@ describe("listen-client capability-gated approval flow", () => {
       );
     const socket = new MockSocket(WebSocket.OPEN);
     const scheduleQueuePumpMock = mock(() => {});
-    const resolveRecoveredApprovalResponseMock = mock(async () => false);
+    const resolvePendingApprovalResolverMock = mock(() => false);
 
     beginTestTurn(targetRuntime);
-    targetRuntime.turnLifecycle.requestCancellation();
+    targetRuntime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
 
     const handled = await __listenClientTestUtils.handleApprovalResponseInput(
       listener,
@@ -4368,17 +4230,22 @@ describe("listen-client capability-gated approval flow", () => {
         processQueuedTurn: async () => {},
       },
       {
-        resolveRuntimeForApprovalRequest: () => null,
-        resolvePendingApprovalResolver: () => false,
-        getOrCreateScopedRuntime: () => targetRuntime,
-        resolveRecoveredApprovalResponse: resolveRecoveredApprovalResponseMock,
+        resolveRuntimeForApprovalRequest: () => targetRuntime,
+        resolvePendingApprovalResolver: resolvePendingApprovalResolverMock,
         scheduleQueuePump: scheduleQueuePumpMock,
       },
     );
 
     expect(handled).toBe(false);
     expect(targetRuntime.cancelRequested).toBe(true);
-    expect(resolveRecoveredApprovalResponseMock).not.toHaveBeenCalled();
+    expect(resolvePendingApprovalResolverMock).toHaveBeenCalledWith(
+      targetRuntime,
+      {
+        request_id: "perm-stale",
+        decision: { behavior: "allow" },
+      },
+      undefined,
+    );
     expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
   });
 
@@ -4507,7 +4374,7 @@ describe("listen-client capability-gated approval flow", () => {
     __listenClientTestUtils.setActiveRuntime(null);
   });
 
-  test("abort_message preserves recovered approval denials instead of clobbering them to empty", async () => {
+  test("abort_message ignores stale recovery without a live turn or approval gate", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const socket = new MockSocket(WebSocket.OPEN);
     listener.socket = socket as unknown as WebSocket;
@@ -4524,22 +4391,13 @@ describe("listen-client capability-gated approval flow", () => {
     runtime.recoveredApprovalState = {
       agentId: "agent-1",
       conversationId: "default",
-      approvalsByRequestId: new Map([
-        [
-          "perm-recovered",
-          {
-            approval: {
-              toolCallId: "call-1",
-              toolName: "Write",
-              toolArgs: '{"path":"foo.txt"}',
-            },
-            approvalContext: null,
-            controlRequest: makeControlRequest("perm-recovered"),
-          },
-        ],
-      ]),
-      pendingRequestIds: new Set(["perm-recovered"]),
-      responsesByRequestId: new Map(),
+      allApprovals: [
+        {
+          toolCallId: "call-1",
+          toolName: "Write",
+          toolArgs: '{"path":"foo.txt"}',
+        },
+      ],
     };
 
     const handled = await __listenClientTestUtils.handleAbortMessageInput(
@@ -4562,32 +4420,18 @@ describe("listen-client capability-gated approval flow", () => {
       },
     );
 
-    expect(handled).toBe(true);
+    expect(handled).toBe(false);
     expect(runtime.cancelRequested).toBe(false);
-    expect(runtime.pendingInterruptedResults).toEqual([
+    expect(runtime.pendingInterruptedResults).toBeNull();
+    expect(runtime.recoveredApprovalState?.allApprovals).toEqual([
       {
-        type: "approval",
-        tool_call_id: "call-1",
-        approve: false,
-        reason: "User interrupted the stream",
+        toolCallId: "call-1",
+        toolName: "Write",
+        toolArgs: '{"path":"foo.txt"}',
       },
     ]);
-
-    const consumed = __listenClientTestUtils.consumeInterruptQueue(
-      runtime,
-      "agent-1",
-      "default",
-    );
-    expect(consumed?.approvalMessage.approvals).toEqual([
-      {
-        type: "approval",
-        tool_call_id: "call-1",
-        approve: false,
-        reason: "User interrupted the stream",
-      },
-    ]);
-    expect(scheduleQueuePumpMock).toHaveBeenCalled();
-    expect(cancelConversationMock).toHaveBeenCalledWith("agent-1", "default");
+    expect(scheduleQueuePumpMock).not.toHaveBeenCalled();
+    expect(cancelConversationMock).not.toHaveBeenCalled();
 
     __listenClientTestUtils.setActiveRuntime(null);
   });
@@ -5268,12 +5112,12 @@ describe("listen-client approval continuation run handoff", () => {
 describe("listen-client interrupt persistence normalization", () => {
   test("forces interrupted in-flight tool results to status=error when cancelRequested", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-    beginTestTurn(runtime);
-    runtime.turnLifecycle.requestCancellation();
-
+    const lease = beginTestTurn(runtime);
+    runtime.turnLifecycle.requestCancellation({ cause: "explicit_user" });
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
         runtime,
+        lease,
         [
           {
             type: "tool",
@@ -5294,13 +5138,13 @@ describe("listen-client interrupt persistence normalization", () => {
       },
     ]);
   });
-
   test("leaves tool status unchanged when not in cancel flow", () => {
     const runtime = __listenClientTestUtils.createRuntime();
-
+    const lease = beginTestTurn(runtime);
     const normalized =
       __listenClientTestUtils.normalizeExecutionResultsForInterruptParity(
         runtime,
+        lease,
         [
           {
             type: "tool",

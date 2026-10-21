@@ -31,16 +31,19 @@ import type {
 export interface FakeClientOptions {
   startResponse?: Partial<RuntimeStartResponseMessage>;
   inputResponse?: Partial<InputAcceptedResponseMessage>;
+  inputWait?: Promise<void>;
   toolUpdateWait?: Promise<void>;
 }
 
 export class FakeClient implements ChannelGatewayClient {
-  private messageListeners: Array<(message: WsProtocolMessage) => void> = [];
+  private messageListeners: Array<
+    (message: WsProtocolMessage) => Promise<void> | void
+  > = [];
   private externalToolListeners: Array<
     (request: ExternalToolCallRequestMessage) => unknown
   > = [];
   readonly submittedInputs: Array<{
-    runtime: RuntimeScope;
+    runtime: RuntimeScope<string | null>;
     payload: unknown;
   }> = [];
   readonly startedRuntimes: Array<{
@@ -63,7 +66,9 @@ export class FakeClient implements ChannelGatewayClient {
     };
   }
 
-  onMessage(listener: (message: WsProtocolMessage) => void): () => void {
+  onMessage(
+    listener: (message: WsProtocolMessage) => Promise<void> | void,
+  ): () => void {
     this.messageListeners.push(listener);
     return () => {
       const idx = this.messageListeners.indexOf(listener);
@@ -90,6 +95,7 @@ export class FakeClient implements ChannelGatewayClient {
       runtime: command.runtime,
       payload: command.payload,
     });
+    await this.options.inputWait;
     return {
       type: "input_accepted",
       request_id: "test-req",
@@ -250,6 +256,7 @@ export function makeStreamDelta(
 export function makeQueueUpdate(
   queue: Array<{ client_message_id: string }>,
   runtime: RuntimeScope = TEST_RUNTIME,
+  removed: QueueUpdateMessage["removed"] = [],
 ): QueueUpdateMessage {
   return {
     type: "update_queue",
@@ -258,6 +265,7 @@ export function makeQueueUpdate(
     emitted_at: new Date().toISOString(),
     idempotency_key: "key-1",
     queue: queue as unknown as QueueUpdateMessage["queue"],
+    removed,
   };
 }
 

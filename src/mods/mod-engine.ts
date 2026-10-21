@@ -33,6 +33,7 @@ import {
 } from "@/mods/deprecated-api";
 import { isTypeScriptModFileExtension } from "@/mods/file-extensions";
 import * as modInvocationContext from "@/mods/invocation-context";
+import { createModChangeBatcher } from "@/mods/mod-change-batcher";
 import {
   appendModDiagnostic,
   recordModDiagnostic,
@@ -63,7 +64,12 @@ import {
   unregisterModTool,
   unregisterModToolsForOwner,
 } from "@/mods/tool-registry";
-import { normalizeTurnStartCancelReason } from "@/mods/turn-start-cancel";
+import {
+  applyTurnStartCancel,
+  createTurnStartCancelRecord,
+  type ModTurnStartCancelRecord,
+  normalizeTurnStartCancelReason,
+} from "@/mods/turn-start-cancel";
 import {
   cloneTurnStartInput,
   isTurnStartInput,
@@ -1453,31 +1459,30 @@ export async function loadLocalMods(
         )) as LocalModModule;
         const factory = getModFactory(module);
         failurePhase = "activate";
-
         if (typeof factory !== "function") {
           throw new Error(
             "Mod must export a default function or activate() function",
           );
         }
-
-        const dispose = await (factory as LettaModFactory)(
-          createLettaModApi(
-            registry,
-            owner,
-            capabilities,
-            getConfiguredClient,
-            onChange,
-            options.onDiagnostic,
-            options.onNotification,
-            builtinCommandIds,
-            reservedToolNames,
-            abortController.signal,
-          ),
+        const changes = createModChangeBatcher(onChange);
+        const api = createLettaModApi(
+          registry,
+          owner,
+          capabilities,
+          getConfiguredClient,
+          changes.notify,
+          options.onDiagnostic,
+          options.onNotification,
+          builtinCommandIds,
+          reservedToolNames,
+          abortController.signal,
         );
+        const activate = factory as LettaModFactory;
+        const dispose = await changes.run(() => activate(api));
         if (typeof dispose === "function") {
           registry.disposers.push({
             abortController,
-            dispose,
+            dispose: () => changes.runSync(dispose),
             owner,
           });
         }
@@ -1518,7 +1523,7 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   const registrations = [...(registry.events[name] ?? [])];
   const diagnostics: ModDiagnostic[] = [];
   const results: Array<NonNullable<ModEventResultMap[TName]>> = [];
-  let turnStartCancel: ModTurnStartCancelResult | undefined;
+  let turnStartCancel: ModTurnStartCancelRecord | undefined;
   const turnStartHadApproval =
     name === "turn_start" &&
     (event as ModTurnStartEvent).input.some((item) => item.type === "approval");
@@ -1586,8 +1591,7 @@ export async function emitLocalModEvent<TName extends ModEventName>(
         (event as ModTurnStartEvent).input = result.input;
       }
       if (!turnStartCancel && isTurnStartResultWithCancel(name, result)) {
-        const reason = normalizeTurnStartCancelReason(result.cancel.reason);
-        if (reason) turnStartCancel = { reason };
+        turnStartCancel = createTurnStartCancelRecord(result, registration);
       }
       if (isToolStartResultWithArgs(name, result)) {
         (event as ModToolStartEvent).args = result.args;
@@ -1658,18 +1662,12 @@ export async function emitLocalModEvent<TName extends ModEventName>(
   }
 
   if (name === "turn_start") {
-    const turnStartEventWithCancel = event as ModTurnStartEvent & {
-      cancel?: ModTurnStartCancelResult;
-    };
-    turnStartEventWithCancel.input = preserveApprovalFirstOrdering(
+    const turnStartEvent = event as ModTurnStartEvent;
+    turnStartEvent.input = preserveApprovalFirstOrdering(
       turnStartHadApproval,
-      turnStartEventWithCancel.input,
+      turnStartEvent.input,
     );
-    if (turnStartCancel) {
-      turnStartEventWithCancel.cancel = { ...turnStartCancel };
-    } else {
-      delete turnStartEventWithCancel.cancel;
-    }
+    applyTurnStartCancel(turnStartEvent, turnStartCancel);
   }
 
   return { diagnostics, handlerCount: registrations.length, name, results };

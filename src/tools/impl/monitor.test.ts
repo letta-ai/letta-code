@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -9,13 +10,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
+import { runWithRuntimeContext } from "@/runtime-context";
 import {
-  ANTHROPIC_DEFAULT_TOOLS,
-  GEMINI_DEFAULT_TOOLS,
-  OPENAI_DEFAULT_TOOLS,
-  OPENAI_PASCAL_TOOLS,
+  executeTool,
+  prepareToolExecutionContextForSpecificTools,
+  releaseToolExecutionContext,
 } from "@/tools/manager";
 import MonitorSchema from "@/tools/schemas/Monitor.json";
+import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import {
   clearPendingMessages,
   type QueuedMessage,
@@ -28,7 +30,6 @@ import {
 } from "./monitor";
 import { MONITOR_EVENT_BUFFER_CHARS } from "./monitor-event-stream";
 import { backgroundProcesses } from "./process_manager";
-import { task_output } from "./task-output";
 import { task_stop } from "./task-stop";
 
 async function waitFor(
@@ -44,9 +45,17 @@ async function waitFor(
   }
 }
 
+/** The output file path as the model sees it in the Monitor tool result. */
+function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
+  const outputFile = result.content[0]?.text.match(/^Output file: (.+)$/m)?.[1];
+  if (!outputFile) throw new Error("Monitor result omitted its output file");
+  return outputFile;
+}
+
 describe("Monitor", () => {
   let scratchpad: string;
   let previousScratchpad: string | undefined;
+  let previousManagedCloud: string | undefined;
   let queuedMessages: QueuedMessage[];
   let childScriptIndex: number;
 
@@ -64,6 +73,8 @@ describe("Monitor", () => {
   }
 
   beforeEach(() => {
+    previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
     scratchpad = mkdtempSync(join(tmpdir(), "monitor-test-"));
     process.env.LETTA_SCRATCHPAD = scratchpad;
@@ -74,6 +85,11 @@ describe("Monitor", () => {
   });
 
   afterEach(() => {
+    if (previousManagedCloud === undefined) {
+      delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    } else {
+      process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
+    }
     for (const processState of backgroundProcesses.values()) {
       processState.completionNotificationSuppressed = true;
       try {
@@ -94,17 +110,15 @@ describe("Monitor", () => {
   });
 
   test("is exposed in the Anthropic and Codex toolsets", () => {
-    expect(ANTHROPIC_DEFAULT_TOOLS).toContain("Monitor");
-    expect(OPENAI_PASCAL_TOOLS).toContain("Monitor");
-    expect(OPENAI_DEFAULT_TOOLS).not.toContain("Monitor");
-    expect(GEMINI_DEFAULT_TOOLS).not.toContain("Monitor");
+    expect(TOOLSET_CATALOG.default.tools).toContain("Monitor");
+    expect(TOOLSET_CATALOG.codex.tools).toContain("Monitor");
   });
 
   test("matches the reference schema defaults and descriptions", () => {
     expect(MonitorSchema.required).toEqual(["description"]);
     expect(MonitorSchema).not.toHaveProperty("oneOf");
     expect(MonitorSchema.properties.description.description).toBe(
-      "Short human-readable description of what you are monitoring (shown in notifications).",
+      "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`.",
     );
     expect(MonitorSchema.properties.timeout_ms).toMatchObject({
       minimum: 1000,
@@ -115,11 +129,81 @@ describe("Monitor", () => {
     expect(MonitorSchema.properties.persistent).toMatchObject({
       default: false,
       description:
-        "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
+        "Run until TaskStop or session end. In managed Cloud sandboxes, a hard 1-hour limit still applies; elsewhere there is no timeout. For longer waits in Cloud, use Wake/cron rather than keeping a monitor running.",
     });
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",
     );
+  });
+
+  test.each(["command", "websocket"] as const)(
+    "caps persistent %s monitors in Cloud and notifies once",
+    async (source) => {
+      process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+      const realSetTimeout = globalThis.setTimeout;
+      const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+        Object.assign(
+          (...[callback, ms, ...args]: Parameters<typeof setTimeout>) =>
+            realSetTimeout(callback, ms === 3_600_000 ? 50 : ms, ...args),
+          { __promisify__: realSetTimeout.__promisify__ },
+        ),
+      );
+      const server =
+        source === "websocket" ? new WebSocketServer({ port: 0 }) : undefined;
+      try {
+        const address = server?.address();
+        const result = await monitor({
+          description: "Cloud lifetime test",
+          persistent: true,
+          timeout_ms: 1000, // Persistent still ignores this, but not the Cloud cap.
+          parentScope: { agentId: "agent-cloud", conversationId: "conv-cloud" },
+          ...(source === "command"
+            ? { command: nodeCommand("setInterval(() => {}, 1000)") }
+            : {
+                ws: {
+                  url: `ws://127.0.0.1:${typeof address === "object" ? address?.port : 0}`,
+                },
+              }),
+        });
+        expect(result).toMatchObject({
+          timeoutMs: 3_600_000,
+          persistent: false,
+        });
+        expect(timers.mock.calls.some(([, ms]) => ms === 3_600_000)).toBe(true);
+        await waitFor(
+          () => backgroundProcesses.get(result.taskId)?.status === "failed",
+        );
+        const notifications = queuedMessages.filter((message) =>
+          message.text.includes("1-hour"),
+        );
+        expect(notifications).toHaveLength(1);
+        expect(notifications[0]).toMatchObject({
+          agentId: "agent-cloud",
+          conversationId: "conv-cloud",
+        });
+        expect(notifications[0]?.text).toContain("Wake or cron");
+        if (server) await waitFor(() => server.clients.size === 0);
+      } finally {
+        timers.mockRestore();
+        server?.close();
+      }
+    },
+  );
+
+  test("preserves shorter Cloud monitor deadlines", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const result = await monitor({
+      description: "short Cloud watch",
+      command: nodeCommand("setInterval(() => {}, 1000)"),
+      timeout_ms: 1000,
+    });
+    expect(result).toMatchObject({ timeoutMs: 1000, persistent: false });
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "failed",
+    );
+    expect(
+      queuedMessages.some((message) => message.text.includes("1-hour")),
+    ).toBe(false);
   });
 
   test("validates source, timeout, and WebSocket inputs", async () => {
@@ -175,6 +259,135 @@ describe("Monitor", () => {
     ).rejects.toThrow("control characters");
   });
 
+  test("does not start either source after its tool execution was interrupted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const size = backgroundProcesses.size;
+    for (const source of [
+      { command: nodeCommand("setInterval(() => {}, 1000)") },
+      { ws: { url: "ws://127.0.0.1:1" } },
+    ]) {
+      await expect(
+        monitor({
+          ...source,
+          description: "Interrupted before startup",
+          persistent: true,
+          signal: controller.signal,
+        }),
+      ).rejects.toMatchObject({ name: "AbortError" });
+    }
+    expect(backgroundProcesses.size).toBe(size);
+    expect(queuedMessages).toEqual([]);
+  });
+
+  test("a pending tool-start handler cannot launch a monitor after interruption", async () => {
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Monitor"],
+      {
+        modEvents: {
+          async emit(name) {
+            if (name === "tool_start") {
+              entered.resolve();
+              await release.promise;
+            }
+            return { diagnostics: [], handlerCount: 1, name, results: [] };
+          },
+        },
+      },
+    );
+    const size = backgroundProcesses.size;
+    try {
+      const execution = executeTool(
+        "Monitor",
+        {
+          description: "Delayed startup",
+          command: nodeCommand("setInterval(() => {}, 1000)"),
+          persistent: true,
+        },
+        { toolContextId: prepared.contextId, signal: controller.signal },
+      );
+      await entered.promise;
+      controller.abort();
+      release.resolve();
+      expect((await execution).status).toBe("error");
+      expect(backgroundProcesses.size).toBe(size);
+      expect(queuedMessages).toEqual([]);
+    } finally {
+      release.resolve();
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  test("manager-created monitors keep the captured turn identity", async () => {
+    const scope = {
+      agentId: "agent-captured",
+      conversationId: "conv-captured",
+      actingUserId: "user-captured",
+    };
+    const prepared = await prepareToolExecutionContextForSpecificTools(
+      ["Monitor"],
+      { runtimeContext: scope },
+    );
+    try {
+      const result = await runWithRuntimeContext(
+        {
+          agentId: "agent-other",
+          conversationId: "conv-other",
+          actingUserId: "user-other",
+        },
+        () =>
+          executeTool(
+            "Monitor",
+            {
+              description: "Captured owner",
+              command: nodeCommand('console.log("captured event")'),
+              timeout_ms: 5000,
+            },
+            { toolContextId: prepared.contextId },
+          ),
+      );
+      expect(result.status).toBe("success");
+      await waitFor(() => queuedMessages.length > 0);
+      expect(
+        queuedMessages.every(
+          (message) =>
+            message.agentId === scope.agentId &&
+            message.conversationId === scope.conversationId &&
+            message.actingUserId === scope.actingUserId,
+        ),
+      ).toBe(true);
+    } finally {
+      releaseToolExecutionContext(prepared.contextId);
+    }
+  });
+
+  test("preserves explicit actor suppression for delayed events", async () => {
+    const result = await runWithRuntimeContext(
+      {
+        actingUserId: "ambient-user",
+        suppressActingUserFallback: true,
+      },
+      () =>
+        monitor({
+          description: "Suppressed owner",
+          command: nodeCommand('console.log("suppressed event")'),
+          timeout_ms: 5000,
+          parentScope: {
+            agentId: "agent-suppressed",
+            conversationId: "conv-suppressed",
+          },
+        }),
+    );
+    await waitFor(() => queuedMessages.length > 0);
+    expect(result.taskId).toMatch(/^monitor_/);
+    expect(
+      queuedMessages.every((message) => message.actingUserId === null),
+    ).toBe(true);
+  });
+
   test("accepts an empty ws placeholder and uses the reference defaults", async () => {
     const result = await monitor({
       description: "defaults",
@@ -219,14 +432,37 @@ describe("Monitor", () => {
     expect(event?.text).toContain("first\nsecond");
     expect(event?.text).not.toContain("warning");
 
-    const output = await task_output({
-      task_id: result.taskId,
-      block: false,
-      timeout: 1000,
+    const outputFile = outputFileOf(result);
+    expect(outputFile).toBe(
+      backgroundProcesses.get(result.taskId)?.outputFile as string,
+    );
+    const output = readFileSync(outputFile, "utf8");
+    expect(output).toContain("first");
+    expect(output).toContain("warning");
+  });
+
+  test("redacts split invocation secrets from notifications and stored output", async () => {
+    const secret = "he$$o";
+    const result = await monitor({
+      description: "secret output",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand(
+        "const value = process.env.PASSWORD ?? ''; process.stdout.write(value.slice(0, 2)); setTimeout(() => process.stdout.write(value.slice(2) + '\\n'), 25)",
+      ),
+      secretEnv: { PASSWORD: secret },
     });
-    expect(output.status).toBe("completed");
-    expect(output.message).toContain("first");
-    expect(output.message).toContain("warning");
+
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "completed",
+    );
+    const eventText = queuedMessages.map((message) => message.text).join("\n");
+    expect(eventText).toContain("PASSWORD=&lt;REDACTED&gt;");
+    expect(eventText).not.toContain(secret);
+
+    const output = readFileSync(outputFileOf(result), "utf8");
+    expect(output).toContain("PASSWORD=<REDACTED>");
+    expect(output).not.toContain(secret);
   });
 
   test("persistent command monitors can be stopped with TaskStop", async () => {
@@ -243,26 +479,73 @@ describe("Monitor", () => {
       timeoutMs: 0,
       persistent: true,
     });
-    await waitFor(
-      () => (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+    await waitFor(() =>
+      readFileSync(outputFileOf(result), "utf8").includes("pending"),
     );
     expect(await task_stop({ task_id: result.taskId })).toEqual({
       killed: true,
     });
     expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
-    expect(
-      (
-        await task_output({
-          task_id: result.taskId,
-          block: false,
-          timeout: 1000,
-        })
-      ).message,
-    ).toContain("pending");
+    expect(readFileSync(outputFileOf(result), "utf8")).toContain("pending");
     await Bun.sleep(250);
     expect(
       queuedMessages.some((message) => message.text.includes("Monitor event")),
     ).toBe(false);
+  });
+
+  test("reports whether a finished command monitor printed anything to stdout", async () => {
+    const quiet = await monitor({
+      description: "quiet source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand(
+        'process.stderr.write("only stderr\\n"); process.stdout.write("\\n")',
+      ),
+    });
+    const chatty = await monitor({
+      description: "chatty source",
+      timeout_ms: 5000,
+      persistent: false,
+      command: nodeCommand('process.stdout.write("line\\n")'),
+    });
+    await waitFor(() =>
+      [quiet, chatty].every(
+        (result) =>
+          backgroundProcesses.get(result.taskId)?.status === "completed",
+      ),
+    );
+
+    const summaryOf = (taskId: string) =>
+      queuedMessages
+        .find((message) =>
+          message.text.includes(`<task-id>${taskId}</task-id>\n<status>`),
+        )
+        ?.text.match(/<summary>(.*)<\/summary>/)?.[1];
+    expect(summaryOf(quiet.taskId)).toBe(
+      'Monitor "quiet source" ended without producing output (exit 0)',
+    );
+    expect(summaryOf(chatty.taskId)).toBe(
+      'Monitor "chatty source" stream ended',
+    );
+  });
+
+  test("fails a command monitor when its output file cannot be written", async () => {
+    const result = await monitor({
+      description: "output write failure",
+      timeout_ms: 5_000,
+      persistent: false,
+      command: nodeCommand(
+        'process.stdout.write("start\\n"); setTimeout(() => process.stdout.write("after\\n"), 1000); setTimeout(() => {}, 30000)',
+      ),
+    });
+    const processState = backgroundProcesses.get(result.taskId);
+    expect(processState?.outputFile).toBeDefined();
+    rmSync(processState?.outputFile ?? "", { force: true });
+    mkdirSync(processState?.outputFile ?? "");
+
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "failed",
+    );
   });
 
   test("caps captured output files", async () => {
@@ -319,15 +602,19 @@ describe("Monitor", () => {
     });
 
     try {
-      const result = await monitor({
-        description: "socket events",
-        timeout_ms: 5000,
-        persistent: false,
-        command: "",
-        ws: {
-          url: `ws://127.0.0.1:${address.port}/events?token=secret`,
-        },
-      });
+      const result = await runWithRuntimeContext(
+        { actingUserId: "user-socket" },
+        () =>
+          monitor({
+            description: "socket events",
+            timeout_ms: 5000,
+            persistent: false,
+            command: "",
+            ws: {
+              url: `ws://127.0.0.1:${address.port}/events?token=secret`,
+            },
+          }),
+      );
       await waitFor(
         () => backgroundProcesses.get(result.taskId)?.status === "completed",
       );
@@ -338,19 +625,59 @@ describe("Monitor", () => {
       expect(eventText).toContain("first\nsecond");
       expect(eventText).toContain("[binary frame, 3 bytes]");
       expect(eventText).toContain("[WebSocket closed: 1000 done]");
+      expect(
+        queuedMessages.every(
+          (message) => message.actingUserId === "user-socket",
+        ),
+      ).toBe(true);
       expect(backgroundProcesses.get(result.taskId)?.command).toBe(
         `ws://127.0.0.1:${address.port}/events`,
       );
 
-      const output = await task_output({
-        task_id: result.taskId,
-        block: false,
-        timeout: 1000,
+      const output = readFileSync(outputFileOf(result), "utf8");
+      expect(output).toContain("first");
+      expect(output).toContain("binary frame, 3 bytes");
+      expect(output).toContain("[WebSocket closed: 1000 done]");
+      expect(output).not.toContain("\u001b[31m");
+    } finally {
+      for (const client of server.clients) {
+        client.terminate();
+      }
+      server.close();
+    }
+  });
+
+  test("fails a WebSocket monitor when its output file cannot be written", async () => {
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await new Promise<void>((resolve) => server.once("listening", resolve));
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("WebSocket test server did not expose a TCP port");
+    }
+    let sendFrame = (): void => {};
+    const connected = new Promise<void>((resolve) => {
+      server.once("connection", (socket) => {
+        sendFrame = () => socket.send("frame");
+        resolve();
       });
-      expect(output.message).toContain("first");
-      expect(output.message).toContain("binary frame, 3 bytes");
-      expect(output.message).toContain("[WebSocket closed: 1000 done]");
-      expect(output.message).not.toContain("\u001b[31m");
+    });
+
+    try {
+      const result = await monitor({
+        description: "socket output write failure",
+        ws: { url: `ws://127.0.0.1:${address.port}` },
+      });
+      await connected;
+      const processState = backgroundProcesses.get(result.taskId);
+      expect(processState?.outputFile).toBeDefined();
+      rmSync(processState?.outputFile ?? "", { force: true });
+      mkdirSync(processState?.outputFile ?? "");
+
+      sendFrame();
+
+      await waitFor(
+        () => backgroundProcesses.get(result.taskId)?.status === "failed",
+      );
     } finally {
       for (const client of server.clients) {
         client.terminate();
@@ -409,9 +736,8 @@ describe("Monitor", () => {
         persistent: true,
         ws: { url: `ws://127.0.0.1:${address.port}` },
       });
-      await waitFor(
-        () =>
-          (backgroundProcesses.get(result.taskId)?.totalStdoutLines ?? 0) > 0,
+      await waitFor(() =>
+        readFileSync(outputFileOf(result), "utf8").includes("pending"),
       );
       expect(await task_stop({ task_id: result.taskId })).toEqual({
         killed: true,
@@ -444,7 +770,6 @@ describe("Monitor", () => {
       stderr: [],
       status: "running",
       exitCode: null,
-      lastReadIndex: { stdout: 0, stderr: 0 },
       kind: "monitor",
     });
 

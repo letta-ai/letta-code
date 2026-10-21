@@ -2,6 +2,7 @@ import { APIError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
+import { actingUserRequestOptions } from "@/agent/acting-user";
 import {
   getStreamRequestContext,
   getStreamRequestStartTime,
@@ -10,6 +11,7 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
   type RunMessageStreamBody,
+  type RunRetrieveOptions,
 } from "@/backend";
 import {
   clearLastSDKDiagnostic,
@@ -34,8 +36,20 @@ import {
 } from "./accumulator";
 import { chunkLog } from "./chunk-log";
 import type { ContextTracker } from "./context-tracker";
-import type { ApprovalRequest, ErrorInfo } from "./stream-processor";
-import { StreamProcessor } from "./stream-processor";
+import {
+  abortStreamController,
+  summarizeChunkForDebug,
+  summarizeStreamForDebug,
+} from "./stream-debug";
+import type {
+  ApprovalRequest,
+  ErrorInfo,
+  StreamSequenceCursor,
+} from "./stream-processor";
+import {
+  advanceStreamSequenceCursor,
+  StreamProcessor,
+} from "./stream-processor";
 import {
   discoverFallbackRunIdWithTimeout,
   isReplayableRun,
@@ -43,9 +57,23 @@ import {
   type StreamResumePolicy,
   waitForResumeRetry,
 } from "./stream-resume";
+import { createStreamStallReconciler } from "./stream-stall-reconciler";
 import { createTerminalEofGuard } from "./stream-terminal-eof-guard";
 
-export type { ApprovalRequest } from "./stream-processor";
+export { advanceStreamSequenceCursor };
+export type { ApprovalRequest, StreamSequenceCursor } from "./stream-processor";
+
+export function recordEmptyApprovalTelemetry(
+  runId: string | null | undefined,
+  cursor: StreamSequenceCursor | null,
+): void {
+  telemetry.trackError(
+    "stream_requires_approval_without_approvals",
+    `requires_approval stop returned no approvals (cursor=${cursor?.runId ?? "none"}:${cursor?.seqId ?? "none"})`,
+    "message_stream",
+    { runId: runId ?? undefined },
+  );
+}
 
 export type DrainStreamHookContext = {
   chunk: LettaStreamingResponse;
@@ -77,91 +105,10 @@ export type DrainResult = {
   approvals?: ApprovalRequest[]; // NEW: supports parallel approvals
   apiDurationMs: number; // time spent in API call
   fallbackError?: string | null; // Error message for when we can't fetch details from server (no run_id)
+  errorInfo?: ErrorInfo; // Structured stream error, including SDK-thrown SSE errors
   terminalEofGuardFired?: boolean; // HTTP body never ended after the terminal SSE sequence; guard aborted the read
+  stallReconcilerFired?: boolean; // Stream went silent mid-run; reconciler aborted the dead read to reconnect
 };
-
-function summarizeStreamForDebug(stream: unknown): string {
-  if (!stream || typeof stream !== "object") {
-    return `type=${typeof stream}`;
-  }
-  const record = stream as Record<PropertyKey, unknown>;
-  const ctor = (stream as { constructor?: { name?: string } }).constructor
-    ?.name;
-  const controller =
-    record.controller && typeof record.controller === "object"
-      ? (record.controller as Record<string, unknown>)
-      : null;
-  const keys = Object.keys(record).slice(0, 8);
-  return [
-    `ctor=${ctor ?? "unknown"}`,
-    `asyncIterator=${typeof record[Symbol.asyncIterator]}`,
-    `controller=${typeof record.controller}`,
-    `controllerAbort=${typeof controller?.abort}`,
-    `controllerSignal=${typeof controller?.signal}`,
-    keys.length > 0 ? `keys=${keys.join(",")}` : "keys=(none)",
-  ].join(" ");
-}
-
-function summarizeChunkForDebug(chunk: LettaStreamingResponse | null): string {
-  if (!chunk) {
-    return "none";
-  }
-  const record = chunk as unknown as Record<string, unknown>;
-  const parts = [`message_type=${chunk.message_type ?? "unknown"}`];
-  for (const key of ["run_id", "seq_id", "id", "otid", "tool_call_id"]) {
-    const value = record[key];
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      parts.push(`${key}=${value}`);
-    }
-  }
-  if (chunk.message_type === "stop_reason") {
-    parts.push(`stop_reason=${String(record.stop_reason ?? "unknown")}`);
-  }
-  const toolCalls = record.tool_calls;
-  if (Array.isArray(toolCalls)) {
-    parts.push(`tool_calls=${toolCalls.length}`);
-  }
-  return parts.join(" ");
-}
-
-function abortStreamController(
-  stream: Stream<LettaStreamingResponse>,
-  reason: string,
-): void {
-  const controller = (stream as unknown as { controller?: unknown }).controller;
-  if (!controller || typeof controller !== "object") {
-    debugWarn(
-      "drainStream",
-      "stream.controller is unavailable during %s - cannot abort HTTP request (%s)",
-      reason,
-      summarizeStreamForDebug(stream),
-    );
-    return;
-  }
-
-  const controllerRecord = controller as {
-    abort?: () => void;
-    signal?: { aborted?: boolean };
-  };
-  if (controllerRecord.signal?.aborted) {
-    return;
-  }
-  if (typeof controllerRecord.abort !== "function") {
-    debugWarn(
-      "drainStream",
-      "stream.controller.abort is unavailable during %s - cannot abort HTTP request (%s)",
-      reason,
-      summarizeStreamForDebug(stream),
-    );
-    return;
-  }
-
-  controllerRecord.abort();
-}
 
 export async function drainStream(
   stream: Stream<LettaStreamingResponse>,
@@ -171,15 +118,16 @@ export async function drainStream(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   isResumeStream?: boolean,
   skipCancelToolsOnError?: boolean,
+  actingUserId?: string,
 ): Promise<DrainResult> {
   const startTime = performance.now();
   const requestStartTime = getStreamRequestStartTime(stream) ?? startTime;
   let hasLoggedTTFT = false;
 
-  const streamProcessor = new StreamProcessor(seenSeqIdThreshold ?? null);
+  const streamProcessor = new StreamProcessor(seenSequenceCursor ?? null);
 
   let stopReason: StopReasonType | null = null;
   let hasCalledFirstMessage = false;
@@ -195,6 +143,26 @@ export async function drainStream(
     getStopReason: () => streamProcessor.stopReason,
     getRunId: () => streamProcessor.lastRunId,
     abortHttpRead: () => abortStreamController(stream, "terminal_eof_guard"),
+  });
+
+  // Stall reconciler: if the stream goes silent mid-run (server pings every
+  // ~20s, so silence means a dead read, not a slow model), then abort the dead
+  // read so the resume path can replay the lost tail. A server-side status
+  // check avoids reconnecting an active run when it is available.
+  const requestContext = getStreamRequestContext(stream);
+  const recoveryActingUserId = actingUserId ?? requestContext?.actingUserId;
+  const stallReconciler = createStreamStallReconciler({
+    getRunId: () => streamProcessor.lastRunId,
+    getStopReason: () => streamProcessor.stopReason,
+    canResumeWithoutRunId: () => Boolean(requestContext?.otid),
+    retrieveRunStatus: async (runId, signal) =>
+      (
+        await getBackend().retrieveRun(runId, {
+          ...(actingUserRequestOptions(recoveryActingUserId) ?? {}),
+          signal,
+        } as RunRetrieveOptions)
+      ).status,
+    abortHttpRead: () => abortStreamController(stream, "stall_reconciler"),
   });
 
   // Capture the abort generation at stream start to detect if handleInterrupt ran
@@ -225,7 +193,9 @@ export async function drainStream(
       );
     }
 
+    stallReconciler.arm();
     for await (const chunk of stream) {
+      stallReconciler.arm();
       lastChunkDebugSummary = summarizeChunkForDebug(chunk);
       recordTuiJsonPayload(
         `stream_chunk:${chunk.message_type ?? "unknown"}`,
@@ -356,10 +326,16 @@ export async function drainStream(
       debugWarn("drainStream", "Stream error stack: %s", e.stack);
     }
 
-    // Try to extract run_id from APIError if we don't have one yet
-    if (!streamProcessor.lastRunId && e instanceof APIError && e.error) {
+    // The SDK throws event:error payloads instead of yielding them as chunks.
+    // Preserve their structured fields before falling back to the message text.
+    if (e instanceof APIError && e.error) {
       const errorObj = e.error as Record<string, unknown>;
-      if ("run_id" in errorObj && typeof errorObj.run_id === "string") {
+      if (errorObj.message_type === "error_message") {
+        streamProcessor.processChunk(
+          errorObj as unknown as LettaStreamingResponse,
+        );
+      }
+      if (!streamProcessor.lastRunId && typeof errorObj.run_id === "string") {
         streamProcessor.lastRunId = errorObj.run_id;
         debugWarn(
           "drainStream",
@@ -411,6 +387,7 @@ export async function drainStream(
     queueMicrotask(refresh);
   } finally {
     terminalEofGuard.clear();
+    stallReconciler.clear();
 
     // Persist chunk log to disk (one write per stream, not per chunk)
     try {
@@ -441,6 +418,11 @@ export async function drainStream(
   if (terminalEofGuard.fired()) {
     upsertStatusLine(buffers, `terminal-eof-${startTime}`, [
       "Stream did not close after completing, continued without waiting",
+    ]);
+  }
+  if (stallReconciler.fired()) {
+    upsertStatusLine(buffers, `stall-reconcile-${startTime}`, [
+      "Stream went silent, reconnecting to recover the missed tail",
     ]);
   }
 
@@ -546,7 +528,9 @@ export async function drainStream(
     lastSeqId: streamProcessor.lastSeqId,
     apiDurationMs,
     fallbackError,
+    errorInfo: streamProcessor.lastErrorInfo,
     terminalEofGuardFired: terminalEofGuard.fired(),
+    stallReconcilerFired: stallReconciler.fired(),
   };
 }
 
@@ -573,12 +557,15 @@ export async function drainStreamWithResume(
   onFirstMessage?: () => void,
   onChunkProcessed?: DrainStreamHook,
   contextTracker?: ContextTracker,
-  seenSeqIdThreshold?: number | null,
+  seenSequenceCursor?: StreamSequenceCursor | null,
   resumePolicy?: StreamResumePolicy,
 ): Promise<DrainResult> {
   const overallStartTime = performance.now();
   recordTuiPerf("stream_lifecycle:start");
   const streamRequestContext = getStreamRequestContext(stream);
+  const recoveryRequestOptions = actingUserRequestOptions(
+    streamRequestContext?.actingUserId,
+  );
   // Use the message OTID stored in the request context (set from messages[0].otid).
   // This is the real UUID OTID — distinct from the tool execution context ID
   // returned by getStreamToolContextId (which is ctx-{ts}-N, not meaningful for resume).
@@ -596,7 +583,7 @@ export async function drainStreamWithResume(
     onFirstMessage,
     onChunkProcessed,
     contextTracker,
-    seenSeqIdThreshold,
+    seenSequenceCursor,
     false, // isResumeStream
     true, // skipCancelToolsOnError
   );
@@ -685,7 +672,7 @@ export async function drainStreamWithResume(
   ) {
     try {
       replayGenericError = isReplayableRun(
-        await getBackend().retrieveRun(runIdToResume),
+        await getBackend().retrieveRun(runIdToResume, recoveryRequestOptions),
       );
     } catch {
       // If status cannot be checked, keep the streamed stop reason authoritative.
@@ -758,9 +745,12 @@ export async function drainStreamWithResume(
                       starting_after: nextSeqId,
                       batch_size: 1000,
                     } as unknown as ConversationMessageStreamBody,
-                    resumeAbortRelay
-                      ? { signal: resumeAbortRelay.signal }
-                      : undefined,
+                    {
+                      ...(recoveryRequestOptions ?? {}),
+                      ...(resumeAbortRelay
+                        ? { signal: resumeAbortRelay.signal }
+                        : {}),
+                    },
                   )
                 : await backend.streamRunMessages(
                     runIdToResume as string,
@@ -768,9 +758,12 @@ export async function drainStreamWithResume(
                       starting_after: nextSeqId,
                       batch_size: 1000,
                     } as unknown as RunMessageStreamBody,
-                    resumeAbortRelay
-                      ? { signal: resumeAbortRelay.signal }
-                      : undefined,
+                    {
+                      ...(recoveryRequestOptions ?? {}),
+                      ...(resumeAbortRelay
+                        ? { signal: resumeAbortRelay.signal }
+                        : {}),
+                    },
                   );
           } catch (resumeError) {
             resumeAbortRelay?.cleanup();
@@ -786,15 +779,17 @@ export async function drainStreamWithResume(
             undefined,
             onChunkProcessed,
             contextTracker,
-            seenSeqIdThreshold,
+            runIdToResume ? { runId: runIdToResume, seqId: nextSeqId } : null,
             true,
             true,
+            streamRequestContext?.actingUserId,
           );
           candidate.lastRunId ??= runIdToResume;
           candidate.lastSeqId ??= nextSeqId;
           runIdToResume = candidate.lastRunId ?? runIdToResume;
           result.lastRunId = runIdToResume;
           result.lastSeqId = candidate.lastSeqId;
+          result.errorInfo = candidate.errorInfo ?? result.errorInfo;
 
           if (candidate.stopReason !== "error") {
             resumeResult = candidate;
@@ -812,14 +807,20 @@ export async function drainStreamWithResume(
           originalApproval = originalApprovals[0] ?? null;
 
           if (candidate.sawStopReasonChunk && runIdToResume) {
-            const run = await backend.retrieveRun(runIdToResume);
+            const run = await backend.retrieveRun(
+              runIdToResume,
+              recoveryRequestOptions,
+            );
             if (!isReplayableRun(run)) break;
           }
         } catch (resumeError) {
           lastResumeError = resumeError;
           if (runIdToResume) {
             try {
-              const run = await backend.retrieveRun(runIdToResume);
+              const run = await backend.retrieveRun(
+                runIdToResume,
+                recoveryRequestOptions,
+              );
               if (!isReplayableRun(run)) break;
             } catch {
               // A failed status check should not hide a recoverable stream drop.

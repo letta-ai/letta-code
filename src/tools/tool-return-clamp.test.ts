@@ -4,7 +4,10 @@ import type {
   ImageContent,
   TextContent,
 } from "@letta-ai/letta-client/resources/agents/messages";
-import { clampToolReturnContent } from "@/tools/impl/tool-return-clamp";
+import {
+  clampRawToolReturn,
+  clampToolReturnContent,
+} from "@/tools/impl/tool-return-clamp";
 import { LIMITS } from "@/tools/impl/truncation";
 
 function cleanupOverflowFile(clamped: string): void {
@@ -66,5 +69,40 @@ describe("clampToolReturnContent", () => {
       expect(img).toEqual(image);
       cleanupOverflowFile(text.text);
     }
+  });
+});
+
+describe("clampRawToolReturn", () => {
+  test("passes short strings through unchanged", () => {
+    expect(clampRawToolReturn("regular tool output", "SomeTool")).toBe(
+      "regular tool output",
+    );
+  });
+
+  test("stringifies non-string payloads and maps nullish to empty string", () => {
+    expect(clampRawToolReturn({ stdout: "hi" }, "SomeTool")).toBe(
+      '{"stdout":"hi"}',
+    );
+    expect(clampRawToolReturn(null, "SomeTool")).toBe("");
+    expect(clampRawToolReturn(undefined, "SomeTool")).toBe("");
+  });
+
+  test("clamps oversized payloads, keeping beginning and end", () => {
+    const big = `START-${"a".repeat(LIMITS.TOOL_RETURN_MAX_CHARS + 50_000)}-END`;
+    const clamped = clampRawToolReturn(big, "SomeCloudTool");
+
+    expect(clamped.length).toBeLessThan(LIMITS.TOOL_RETURN_MAX_CHARS + 1_000);
+    expect(clamped).toContain("[Output truncated: showing");
+    expect(clamped.startsWith("START-")).toBe(true);
+    expect(clamped).toContain("-END");
+    cleanupOverflowFile(clamped);
+  });
+
+  test("passes through returns already clamped by the tool manager", () => {
+    // The manager's backstop appends a notice (and overflow path) on top of
+    // the TOOL_RETURN_MAX_CHARS excerpt; the transcript clamp must not
+    // truncate that a second time.
+    const alreadyClamped = `${"a".repeat(LIMITS.TOOL_RETURN_MAX_CHARS)}\n\n[Output truncated: showing 32,000 of 100,000 characters.]\n[Full output written to: /tmp/overflow.txt]`;
+    expect(clampRawToolReturn(alreadyClamped, "SomeTool")).toBe(alreadyClamped);
   });
 });

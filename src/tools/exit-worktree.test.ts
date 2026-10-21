@@ -14,7 +14,7 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { enter_worktree } from "@/tools/impl/enter-worktree";
 import { exit_worktree } from "@/tools/impl/exit-worktree";
-import { clearToolsWithLock } from "@/tools/manager";
+import { clearTools } from "@/tools/manager";
 import { acquireWorktreeLock, LOCK_FILENAME } from "@/utils/worktree-lock";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
 import { setActiveRuntime } from "@/websocket/listener/runtime";
@@ -64,7 +64,7 @@ describe("ExitWorktree tool", () => {
 
   beforeEach(async () => {
     tempDirs = [];
-    clearToolsWithLock();
+    clearTools();
     resetRemoteSettingsCache();
     setActiveRuntime(null);
     const fakeHome = await mkdtemp(
@@ -78,7 +78,7 @@ describe("ExitWorktree tool", () => {
 
   afterEach(async () => {
     setActiveRuntime(null);
-    clearToolsWithLock();
+    clearTools();
     resetRemoteSettingsCache();
     await settingsManager.reset();
     process.chdir(originalCwd);

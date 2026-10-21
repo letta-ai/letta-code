@@ -5,6 +5,10 @@ export interface ExternalToolDefinitionPayload {
   label?: string;
   description: string;
   parameters: Record<string, unknown>;
+  /** Controller-requested wait for a result; expiry does not cancel remote work. */
+  timeout_ms?: number;
+  /** Yield to a scoped task notification after 10s by default; false waits inline. */
+  auto_background?: boolean;
 }
 
 export interface RuntimeStartExternalToolsGroup {
@@ -18,7 +22,7 @@ export interface RuntimeStartExternalToolsGroup {
  * Empty external_tools removes the controller's tools for those runtimes.
  */
 export interface RuntimeExternalToolsUpdateGroup {
-  runtimes: readonly RuntimeScope[];
+  runtimes: readonly RuntimeScope<string | null>[];
   external_tools: readonly RuntimeStartExternalToolsGroup[];
 }
 
@@ -42,7 +46,7 @@ export interface RuntimeExternalToolsUpdateResponseMessage {
 export interface ExternalToolCallRequestMessage {
   type: "external_tool_call_request";
   request_id: string;
-  runtime?: RuntimeScope;
+  runtime?: RuntimeScope<string | null>;
   scope_id?: string;
   tool_call_id: string;
   tool_name: string;

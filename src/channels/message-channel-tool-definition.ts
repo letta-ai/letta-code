@@ -230,14 +230,14 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const hasAction = (action: string): boolean =>
     discovery.actions.includes(action);
   const scopedReplyContract = scoped
-    ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
+    ? '\n\nThis tool is currently scoped to a routed external channel turn. Plain assistant text is not delivered to that external user. If a user-visible reply is appropriate, your final action for the turn must be one MessageChannel call with action="send", channel from the notification, chat_id from the notification, and message containing the reply. After that final send succeeds, do not repeat or paraphrase the sent message in assistant text; finish with only `Sent.` as the internal confirmation. This does not apply to a short acknowledgement sent before continuing substantive work. If no user-visible response is appropriate, do not call MessageChannel and do not send an empty acknowledgement. For lightweight acknowledgement, prefer action="react" when supported. If the useful response belongs later, schedule the follow-up instead of sending a placeholder.'
     : "";
   const slackWorkAcknowledgement = discovery.activeChannels.includes("slack")
     ? '\n\nFor Slack requests that require nontrivial work or several tool calls, send one short MessageChannel call with action="send" before starting other tools. This gives the Slack user verbal acknowledgement and a View in web link. Do not do this for no-ops, reaction-only responses, or simple no-tool answers.'
     : "";
   const slackAttachmentDownload =
     discovery.activeChannels.includes("slack") && hasAction("download-file")
-      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id instead; wait for the local_path with TaskOutput (block: true, timeout: 600000) or cancel with TaskStop.'
+      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window continue in the background and return a task_id; a task notification delivers the local_path when the download finishes. Cancel with TaskStop.'
       : "";
   const slackThreadGuidance =
     scoped && discovery.activeChannels.includes("slack")
@@ -250,9 +250,18 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const slackCapabilities = discovery.activeChannels.includes("slack")
     ? [
         hasAction("react") ? 'action="react" with emoji + messageId' : "",
+        hasAction("list-custom-emojis")
+          ? 'action="list-custom-emojis" to discover the workspace custom emoji names available for reactions'
+          : "",
         hasAction("upload-file") ? 'action="upload-file" with media' : "",
         hasAction("download-file")
           ? 'action="download-file" with attachmentId + messageId'
+          : "",
+        hasAction("get-binding")
+          ? 'action="get-binding" with chat_id and an explicit threadId (null for an unthreaded DM) to inspect the persisted incoming-message destination without sending'
+          : "",
+        hasAction("update-binding")
+          ? 'action="update-binding" with the same exact thread, conversationId, and expectedConversationId to reassign an existing binding within this agent. It does not send a message, copy history, move queued inputs, change computers, or alter pause/detach settings. Outbound sends never take over an existing binding'
           : "",
       ].filter(Boolean)
     : [];
@@ -314,5 +323,6 @@ export function buildMessageChannelExternalToolDefinition(
     label: "Message Channel",
     description: resolved.description,
     parameters: resolved.schema,
+    auto_background: false,
   };
 }

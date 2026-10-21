@@ -3,6 +3,7 @@
  **/
 
 import { Buffer } from "node:buffer";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -10,8 +11,12 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
+import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
+import { getRuntimeContext } from "@/runtime-context";
+import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,
   getExecutionContextById,
@@ -20,7 +25,10 @@ import {
   waitForToolsetReady,
 } from "@/tools/manager";
 import type { PermissionModeState } from "@/tools/permission-mode-state";
+import { scrubOutgoingMessageContent } from "@/tools/secret-substitution";
+import { isCloudApiShutdownRejection } from "@/utils/cloud-api-shutdown";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
+import { ImageWorkerMissingError } from "@/utils/image-resize";
 import {
   assertSupportedBase64ImageMediaTypes,
   type ImageFailureModesByMessageOtid,
@@ -32,19 +40,65 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import { buildClientSkillsPayload } from "./client-skills";
+import {
+  buildClientSkillsPayload,
+  buildClientSkillsUpdateReminder,
+} from "./client-skills";
 import { getSkillSources } from "./context";
+import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
 
 const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
 const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
 const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
+const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
+const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
+// Backend identity and agent/default-conversation scope must not share a
+// notification baseline. Discovery cache invalidation must not clear it either.
+const sentClientSkillsByBackend = new WeakMap<
+  Backend,
+  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
+>();
+
+function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
+  const headers = error.headers;
+  if (!(headers instanceof Headers)) {
+    return CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS;
+  }
+
+  return (
+    parseRetryAfterHeaderMs(headers.get("Retry-After")) ??
+    CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS
+  );
+}
+
+async function waitForRetryDelay(
+  delayMs: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (signal?.aborted) {
+    throw signal.reason;
+  }
+
+  await new Promise<void>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, delayMs);
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(signal?.reason);
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 export type StreamRequestContext = {
   conversationId: string;
   resolvedConversationId: string;
   agentId: string | null;
+  actingUserId?: string;
   requestStartedAtMs: number;
   otid?: string;
 };
@@ -199,6 +253,8 @@ export type SendMessageStreamOptions = {
    * does not mutate agent/conversation persisted model configuration.
    */
   overrideModel?: string;
+  /** Request-scoped Messages API response format. */
+  responseFormat?: Record<string, unknown>;
   /** Explicit turn-scoped tool snapshot. When present, bypasses the global registry. */
   preparedToolContext?: PreparedToolExecutionContext;
   /**
@@ -224,8 +280,10 @@ export type SendMessageStreamOptions = {
    * Set by the listener after reading
    * `runtime.acting_user_id` from cloud's status WS frame; absent
    * for self-hosted / single-user / pre-channel-split flows.
+   * Pass `null` when a queued system/unattributed input must explicitly suppress
+   * an actor inherited from the execution context or process environment.
    */
-  actingUserId?: string;
+  actingUserId?: string | null;
 };
 
 export type SendMessageStreamRequestOptions = {
@@ -276,6 +334,7 @@ function buildRequestBodyFromPreparedMessages(
     client_tools: clientTools,
     include_compaction_messages: true,
     ...(opts.overrideModel ? { override_model: opts.overrideModel } : {}),
+    ...(opts.responseFormat ? { response_format: opts.responseFormat } : {}),
     ...(isDefaultConversation ? { agent_id: opts.agentId } : {}),
   };
 }
@@ -327,12 +386,34 @@ export async function sendMessageStreamWithBackend(
     messages,
     opts.approvalNormalization,
   );
-  const normalizedMessages = await normalizeMessageImageParts(
-    canonicalMessages,
-    {
+  // Scrub vault and ambient secret values from outgoing message text before
+  // they enter the conversation transcript. ApprovalCreate carries tool-call
+  // payloads, not user text, and has no `role` field — so `role` presence
+  // discriminates the union.
+  const scrubbedMessages = canonicalMessages.map((message) => {
+    if (!("role" in message) || message.role !== "user") {
+      return message;
+    }
+    return {
+      ...message,
+      content: scrubOutgoingMessageContent(message.content, opts.agentId),
+    };
+  });
+  let normalizedMessages: Array<MessageCreate | ApprovalCreate>;
+  try {
+    normalizedMessages = await normalizeMessageImageParts(scrubbedMessages, {
       failureModesByMessageOtid: opts.imageFailureModesByMessageOtid,
-    },
-  );
+    });
+  } catch (error) {
+    if (error instanceof ImageWorkerMissingError) {
+      trackBoundaryError({
+        errorType: "image_worker_missing",
+        error,
+        context: "send_message_image_normalization",
+      });
+    }
+    throw error;
+  }
   assertSupportedBase64ImageMediaTypes(normalizedMessages);
 
   const preparedToolContext = opts.preparedToolContext
@@ -347,11 +428,17 @@ export async function sendMessageStreamWithBackend(
         });
       })();
   const { clientTools, contextId } = preparedToolContext;
+  const executionRuntimeContext = getExecutionContextById(
+    preparedToolContext.contextId,
+  )?.runtimeContext;
   const { clientSkills, errors: clientSkillDiscoveryErrors } =
     await buildClientSkillsPayload({
       agentId: opts.agentId,
-      skillsDirectory: getExecutionContextById(preparedToolContext.contextId)
-        ?.runtimeContext.skillsDirectory,
+      workingDirectory:
+        opts.workingDirectory ??
+        executionRuntimeContext?.workingDirectory ??
+        undefined,
+      skillsDirectory: executionRuntimeContext?.skillsDirectory,
       skillSources: opts.skillSources ?? getSkillSources(),
     });
 
@@ -360,19 +447,52 @@ export async function sendMessageStreamWithBackend(
     resolvedConversationId,
     opts.agentId ?? null,
   );
+  const skillScope = buildResponseStateScope(
+    resolvedConversationId,
+    conversationId === "default" ? opts.agentId : null,
+  );
+  let sentClientSkills = sentClientSkillsByBackend.get(backend);
+  if (!sentClientSkills) {
+    sentClientSkills = new Map();
+    sentClientSkillsByBackend.set(backend, sentClientSkills);
+  }
+  const skillReminder = buildClientSkillsUpdateReminder(
+    sentClientSkills.get(skillScope),
+    clientSkills,
+  );
+  // Deliver at the next model boundary (including tool continuations), not by
+  // launching an unsolicited run from a filesystem watcher. Keep approvals and
+  // the original input/otid in place, then append the runtime reminder.
+  // A low-disk alert held for a loop with no queue (e.g. a subagent) rides
+  // this same boundary.
+  const diskReminder = takePendingDiskSpaceReminder();
+  const runtimeReminders = [skillReminder, diskReminder].filter(
+    (text): text is string => Boolean(text),
+  );
+  const requestMessages = [
+    ...normalizedMessages,
+    ...runtimeReminders.map((content) => ({
+      type: "message" as const,
+      role: "user" as const,
+      content,
+    })),
+  ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
   // auto-handled by the client. If a human reviewed any approval, the pause can
   // allow visible agent/conversation state to change, so use the full server path.
+  // A changed skill catalog also needs that path, rather than a cached prompt.
   const canUsePreviousResponseState =
-    isApprovalContinuation && opts.allowResponseStateReuse === true;
+    isApprovalContinuation &&
+    opts.allowResponseStateReuse === true &&
+    runtimeReminders.length === 0;
   const previousResponseId = canUsePreviousResponseState
     ? responseStateIdsByScope.get(responseStateScope)
     : undefined;
   const requestBody = buildRequestBodyFromPreparedMessages(
     conversationId,
-    normalizedMessages,
+    requestMessages,
     opts,
     clientTools,
     clientSkills,
@@ -408,6 +528,13 @@ export async function sendMessageStreamWithBackend(
     }
   }
 
+  const actingUserId =
+    opts.actingUserId === null
+      ? undefined
+      : (opts.actingUserId ??
+        executionRuntimeContext?.actingUserId ??
+        getRuntimeContext()?.actingUserId ??
+        process.env[ACTING_USER_ID_ENV]);
   const extraHeaders: Record<string, string> = {};
   if (previousResponseId) {
     extraHeaders[RESPONSE_STATE_HEADER] = encodeResponseStateHeader({
@@ -430,8 +557,8 @@ export async function sendMessageStreamWithBackend(
   // Echo the cloud user id back to cloud-api so it can re-attribute
   // credits + rate limits on multi-user sandboxes. See
   // SendMessageStreamOptions.actingUserId for full context.
-  if (opts.actingUserId) {
-    extraHeaders["X-Letta-Acting-User-Id"] = opts.actingUserId;
+  if (actingUserId) {
+    extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
   }
 
   const messageSummary = normalizedMessages
@@ -466,35 +593,71 @@ export async function sendMessageStreamWithBackend(
 
   let stream: Stream<LettaStreamingResponse>;
   const abortRelay = createStreamAbortRelay(requestOptions.signal);
-  try {
-    stream = await backend.createConversationMessageStream(
-      resolvedConversationId,
-      requestBody,
-      {
-        ...requestOptions,
-        ...(abortRelay ? { signal: abortRelay.signal } : {}),
-        headers: {
-          ...((requestOptions.headers as Record<string, string>) ?? {}),
-          ...extraHeaders,
+  let cloudApiShutdownRetries = 0;
+  while (true) {
+    try {
+      stream = await backend.createConversationMessageStream(
+        resolvedConversationId,
+        requestBody,
+        {
+          ...requestOptions,
+          ...(abortRelay ? { signal: abortRelay.signal } : {}),
+          headers: {
+            ...((requestOptions.headers as Record<string, string>) ?? {}),
+            ...extraHeaders,
+          },
         },
-      },
-    );
-    stream = attachResponseStateTracking(stream, {
-      scope: responseStateScope,
-      conversationId: resolvedConversationId,
-      agentId: opts.agentId ?? null,
-    });
-  } catch (error) {
-    abortRelay?.cleanup();
-    debugWarn(
-      "send-message-stream",
-      "request_error conversation_id=%s otid=%s status=%s error=%s",
-      resolvedConversationId,
-      firstOtid ?? "none",
-      (error as { status?: number })?.status ?? "none",
-      error instanceof Error ? error.message : String(error),
-    );
-    throw error;
+      );
+      // A rejected request must not consume the notification; retries need it.
+      sentClientSkills.set(skillScope, clientSkills);
+      stream = attachResponseStateTracking(stream, {
+        scope: responseStateScope,
+        conversationId: resolvedConversationId,
+        agentId: opts.agentId ?? null,
+      });
+      break;
+    } catch (error) {
+      if (
+        isCloudApiShutdownRejection(error) &&
+        cloudApiShutdownRetries < CLOUD_API_SHUTDOWN_MAX_RETRIES
+      ) {
+        cloudApiShutdownRetries += 1;
+        const delayMs = getCloudApiShutdownRetryDelayMs(error);
+        debugWarn(
+          "send-message-stream",
+          "request_retry conversation_id=%s otid=%s reason=cloud_api_shutting_down attempt=%d delay_ms=%d",
+          resolvedConversationId,
+          firstOtid ?? "none",
+          cloudApiShutdownRetries,
+          delayMs,
+        );
+        try {
+          await waitForRetryDelay(
+            delayMs,
+            abortRelay?.signal ?? requestOptions.signal,
+          );
+        } catch (abortError) {
+          abortRelay?.cleanup();
+          // Classify the interrupt as a user abort so callers unwind silently
+          // instead of reporting a stream error and clearing queued work.
+          throw abortError instanceof APIUserAbortError
+            ? abortError
+            : new APIUserAbortError();
+        }
+        continue;
+      }
+
+      abortRelay?.cleanup();
+      debugWarn(
+        "send-message-stream",
+        "request_error conversation_id=%s otid=%s status=%s error=%s",
+        resolvedConversationId,
+        firstOtid ?? "none",
+        (error as { status?: number })?.status ?? "none",
+        error instanceof Error ? error.message : String(error),
+      );
+      throw error;
+    }
   }
 
   debugLog(
@@ -514,6 +677,7 @@ export async function sendMessageStreamWithBackend(
     conversationId,
     resolvedConversationId,
     agentId: opts.agentId ?? null,
+    ...(actingUserId ? { actingUserId } : {}),
     requestStartedAtMs,
     otid: firstOtid,
   });

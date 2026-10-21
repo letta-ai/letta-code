@@ -3,7 +3,6 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { bash_output } from "@/tools/impl/bash-output";
 import { glob } from "@/tools/impl/glob";
 import { grep } from "@/tools/impl/grep";
 import { ls } from "@/tools/impl/ls";
@@ -41,8 +40,8 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated: showing 30,000");
-        expect(output.length).toBeLessThan(35000); // Truncated + notice
+        expect(output).toContain("[Output truncated: showing 2,000");
+        expect(output.length).toBeLessThan(LIMITS.OVERFLOW_PREVIEW_CHARS + 500); // Preview + notice
       },
     );
 
@@ -64,7 +63,8 @@ describe("tool truncation integration tests", () => {
         });
 
         const output = result.content[0]?.text || "";
-        expect(output).toContain("[Output truncated: showing 30,000");
+        expect(output).toContain("[Output truncated: showing 10,000");
+        expect(output).toContain("[Full output written to:");
         expect(result.status).toBe("error");
       },
     );
@@ -252,36 +252,5 @@ describe("tool truncation integration tests", () => {
       expect(output).toContain("file1.txt");
       expect(output).toContain("file5.txt");
     });
-  });
-
-  describe("BashOutput tool truncation", () => {
-    test.skipIf(process.platform === "win32")(
-      "truncates accumulated output exceeding 30K characters",
-      async () => {
-        // Start a background process that generates lots of output
-        const startResult = await bash({
-          command: `for i in {1..1000}; do echo "$(printf 'x%.0s' {1..100})"; done`,
-          run_in_background: true,
-        });
-
-        const message = startResult.content[0]?.text || "";
-        const bashIdMatch = message.match(/with ID: (.+)/);
-        expect(bashIdMatch).toBeTruthy();
-        const bashId = bashIdMatch?.[1];
-        if (!bashId) throw new Error("bashId not found");
-
-        // Wait a bit for output to accumulate
-        await new Promise((resolve) => setTimeout(resolve, 100));
-
-        const outputResult = await bash_output({ shell_id: bashId });
-
-        expect(outputResult.message.length).toBeLessThan(35000); // 30K + notice
-        if (outputResult.message.length > 30000) {
-          expect(outputResult.message).toContain(
-            "[Output truncated: showing 30,000",
-          );
-        }
-      },
-    );
   });
 });

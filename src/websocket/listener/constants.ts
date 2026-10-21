@@ -1,6 +1,9 @@
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+export const MAX_RETRY_ATTEMPTS = Math.ceil(
+  Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
+);
 // Split listener pairs are only usable once both control and stream sockets
 // complete their opening handshake. If the stream upgrade makes no progress,
 // tear down the incomplete pair and let the normal reconnect path build a
@@ -40,41 +43,23 @@ export function isListenerPongStale(
 export const SYSTEM_REMINDER_RE =
   /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
+// Mid-stream resume policy for listener turns. When the socket carrying a
+// run's stream dies (for example the cloud-api process that owned the run was
+// killed during a rolling restart), the listener re-attaches to the run stream
+// with `starting_after` the last seq_id. Without a policy the resume is one
+// immediate attempt, which cannot succeed while cloud-api is still down. The
+// policy must outlast a rolling restart (minutes), and once reconnected the
+// server itself waits 90 s of producer-heartbeat silence before replay reports
+// RUN_STREAM_PRODUCER_LOST, so the ceiling is sized in minutes: 0.5 + 1 + 2 +
+// 4 s, then 56 attempts at 5 s = 287.5 s, about 5 minutes of waiting.
+export const LISTENER_STREAM_RESUME_POLICY = {
+  initialDelayMs: 500,
+  maxAttempts: 60,
+  maxDelayMs: 5_000,
+};
+
 export const LLM_API_ERROR_MAX_RETRIES = 3;
+export const CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS = 3;
 export const EMPTY_RESPONSE_MAX_RETRIES = 2;
 export const MAX_PRE_STREAM_RECOVERY = 2;
 export const MAX_POST_STOP_APPROVAL_RECOVERY = 2;
-
-// Provider fallback: Anthropic model ID -> Bedrock model ID.
-// Mirrors the headless recovery path: after one failed retry against
-// Anthropic, retry the same turn using the Bedrock equivalent. Do not map
-// generic/latest aliases unless the Bedrock target is the same model family.
-export const PROVIDER_FALLBACK_MAP: Record<string, string> = {
-  // Opus 4.7 variants -> Bedrock Opus 4.7.
-  "opus-4.7-low": "bedrock-opus-4.7",
-  "opus-4.7-medium": "bedrock-opus-4.7",
-  "opus-4.7-high": "bedrock-opus-4.7",
-  "opus-4.7-xhigh": "bedrock-opus-4.7",
-  "opus-4.7-max": "bedrock-opus-4.7",
-  // Opus 4.6 variants -> Bedrock Opus 4.6.
-  "opus-4.6-no-reasoning": "bedrock-opus-4.6",
-  "opus-4.6-low": "bedrock-opus-4.6",
-  "opus-4.6-medium": "bedrock-opus-4.6",
-  "opus-4.6-high": "bedrock-opus-4.6",
-  "opus-4.6-xhigh": "bedrock-opus-4.6",
-  // Sonnet 5 variants -> Bedrock Sonnet 5; Sonnet 4.6 variants -> Bedrock Sonnet 4.6
-  sonnet: "bedrock-sonnet-5",
-  "sonnet-5-no-reasoning": "bedrock-sonnet-5",
-  "sonnet-5-low": "bedrock-sonnet-5",
-  "sonnet-5-medium": "bedrock-sonnet-5",
-  "sonnet-5-xhigh": "bedrock-sonnet-5",
-  "sonnet-4.6": "bedrock-sonnet-4.6",
-  "sonnet-1m": "bedrock-sonnet-4.6",
-  "sonnet-4.6-no-reasoning": "bedrock-sonnet-4.6",
-  "sonnet-4.6-low": "bedrock-sonnet-4.6",
-  "sonnet-4.6-medium": "bedrock-sonnet-4.6",
-  "sonnet-4.6-xhigh": "bedrock-sonnet-4.6",
-};
-
-export const PROVIDER_FALLBACK_NOTICE =
-  "Anthropic API error; falling back to Bedrock...";

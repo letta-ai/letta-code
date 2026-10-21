@@ -1,9 +1,9 @@
 import {
   firstNonEmptyString,
   isNonEmptyString,
-  normalizeSlackText,
   resolveSlackChatType,
 } from "./public-utils";
+import { stripSlackBotMention } from "./user-mentions";
 
 const IGNORED_SLACK_MESSAGE_SUBTYPES = new Set([
   "assistant_app_thread",
@@ -71,10 +71,12 @@ export interface ResolveSlackMessageIngressPolicyParams {
   message: SlackInboundMessageEventLike;
   botUserId?: string | null;
   isAgentThread?: boolean;
+  appMentionEventWillHandleMentions?: boolean;
 }
 
 export interface ResolveSlackAppMentionIngressPolicyParams {
   event: SlackAppMentionEventLike;
+  botUserId?: string | null;
 }
 
 export interface ResolveSlackReactionIngressPolicyParams {
@@ -99,6 +101,7 @@ export interface SlackMessageIngressAccepted {
   wasMentioned: boolean;
   effectiveMention: boolean;
   isAgentThread: boolean;
+  routedBy: "mention" | "dm" | "thread";
 }
 
 export interface SlackAppMentionIngressAccepted {
@@ -115,6 +118,7 @@ export interface SlackAppMentionIngressAccepted {
   wasMentioned: true;
   effectiveMention: true;
   isAgentThread: false;
+  routedBy: "mention";
 }
 
 export interface SlackReactionIngressAccepted {
@@ -141,6 +145,7 @@ export type SlackIngressIgnoreReason =
   | "ignored_subtype"
   | "wrapper_message"
   | "top_level_channel_message"
+  | "handled_by_app_mention"
   | "invalid_reaction_item"
   | "missing_reaction"
   | "own_bot_reaction"
@@ -258,6 +263,13 @@ export function resolveSlackMessageIngressPolicy(
 
   const rawText = isNonEmptyString(message.text) ? message.text : "";
   const wasMentioned = hasSlackMention(rawText, params.botUserId);
+  if (
+    chatType === "channel" &&
+    wasMentioned &&
+    params.appMentionEventWillHandleMentions === true
+  ) {
+    return { shouldRoute: false, reason: "handled_by_app_mention" };
+  }
   const isAgentThread = params.isAgentThread === true;
   const effectiveMention = isBotAuthoredMessage(message)
     ? wasMentioned
@@ -274,11 +286,18 @@ export function resolveSlackMessageIngressPolicy(
     messageId: message.ts,
     threadId,
     chatType,
-    text: wasMentioned ? normalizeSlackText(rawText) : rawText,
+    text: wasMentioned
+      ? stripSlackBotMention(rawText, params.botUserId)
+      : rawText,
     rawText,
     wasMentioned,
     effectiveMention,
     isAgentThread,
+    routedBy: wasMentioned
+      ? "mention"
+      : chatType === "direct"
+        ? "dm"
+        : "thread",
   };
 }
 
@@ -307,11 +326,12 @@ export function resolveSlackAppMentionIngressPolicy(
     messageId: event.ts,
     threadId: firstNonEmptyString(event.thread_ts, event.ts) ?? event.ts,
     chatType: "channel",
-    text: normalizeSlackText(rawText),
+    text: stripSlackBotMention(rawText, params.botUserId),
     rawText,
     wasMentioned: true,
     effectiveMention: true,
     isAgentThread: false,
+    routedBy: "mention",
   };
 }
 
