@@ -20,6 +20,10 @@ If you haven't built anything with the SDK yet, start with one of these before a
 
 The applications in [`claude-agent-sdk-demos`](https://github.com/anthropics/claude-agent-sdk-demos) are demos for local development, from an email client to a multi-agent research system. Clone the demo whose shape matches what you're building.
 
+## Fork a complete project
+
+To build a shopping agent or a merchant agent with the Python SDK, start from the [Claude for commerce reference implementation](https://platform.claude.com/docs/en/about-claude/use-case-guides/commerce-agents).
+
 ## Work through a Python recipe
 
 The Claude Cookbook's Agent SDK series is a sequence of recipes, each a Python notebook, that progresses from a simple research agent to sophisticated multi-agent systems. Each notebook builds on the previous one, introducing new concepts and capabilities. Start with [the one-liner research agent](https://platform.claude.com/cookbook/claude-agent-sdk-00-the-one-liner-research-agent) and work forward.

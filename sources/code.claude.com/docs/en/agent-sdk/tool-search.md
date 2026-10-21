@@ -36,12 +36,16 @@ Tool search is on by default. For models on the SDK's unsupported-model list, th
 
 Before Claude Code v2.1.221, the SDK disabled tool search for all models on Google Cloud's Agent Platform unless you set `ENABLE_TOOL_SEARCH`.
 
-The SDK also disables tool search when `ANTHROPIC_BASE_URL` points to a non-first-party host, since most proxies don't forward `tool_reference` blocks. You can override that default with the `ENABLE_TOOL_SEARCH` environment variable:
+> [!NOTE]
+>
+> Tool search is on by default behind an `ANTHROPIC_BASE_URL` gateway, with nothing to set. If the gateway rejects it, see [Tool search through an LLM gateway](/docs/en/mcp#tool-search-through-a-gateway). Before Claude Code v2.1.304, the SDK disabled tool search behind such a gateway unless `ENABLE_TOOL_SEARCH` was `true`, `auto`, or `auto:N`.
+
+You control whether and when tool definitions are deferred with the `ENABLE_TOOL_SEARCH` environment variable, which takes these values:
 
 | Value | Behavior |
 | :- | :- |
-| (unset) | Tool search is on. Tool definitions are deferred and discovered on demand. Falls back to loading upfront on models earlier than Opus 4 and Sonnet 4, Google Cloud's Agent Platform models earlier than Opus 4.5, Sonnet 4.5, and Haiku 4.5, a non-first-party `ANTHROPIC_BASE_URL`, or a Microsoft Foundry deployment hosted on Azure. |
-| `true` | Tool search stays on with a non-first-party `ANTHROPIC_BASE_URL`. The other (unset) fallbacks still apply. The SDK sends the beta header through proxies, and requests fail on proxies that don't support `tool_reference` blocks. |
+| (unset) | Tool search is on, with tool definitions deferred and discovered on demand. Falls back to loading upfront on models earlier than Opus 4 and Sonnet 4, on the [earlier Agent Platform models](#configure-tool-search), and on Microsoft Foundry deployments hosted on Azure. |
+| `true` | Tool search is on, with the same fallbacks as (unset). |
 | `auto` | Counts the tokens in the tool definitions that tool search can defer and compares the total against the model's context window. When the total reaches 10% of the window, tool search activates. Below that, the SDK loads every tool definition into context upfront. |
 | `auto:N` | Same as `auto` with a custom percentage. `auto:5` activates when those definitions reach 5% of the context window. Lower values activate sooner. |
 | `false` | Tool search is off. All tool definitions are loaded into context on every turn. |
