@@ -50,7 +50,7 @@ class FakeComputer {
   readonly messages: SubagentMessageCommand[] = [];
   readonly stops: SubagentStopCommand[] = [];
   readonly acks: number[] = [];
-  syncs = 0;
+  readonly syncs: Array<Parameters<AppServerClient["sync"]>[0]> = [];
   closed = false;
   private readonly messageHandlers = new Set<AppServerMessageHandler>();
   private readonly disconnectHandlers = new Set<AppServerDisconnectHandler>();
@@ -60,6 +60,7 @@ class FakeComputer {
       command: LaunchSubagentCommand,
     ) => Partial<LaunchSubagentResponse>,
     private readonly onSync: (computer: FakeComputer) => void = () => {},
+    private readonly scopedRuntime = runtime,
   ) {}
 
   asClient(): AppServerClient {
@@ -88,7 +89,7 @@ class FakeComputer {
     return {
       type: "launch_subagent_response",
       request_id: command.request_id,
-      runtime,
+      runtime: this.scopedRuntime,
       ...this.respond(command),
     } as LaunchSubagentResponse;
   }
@@ -100,7 +101,7 @@ class FakeComputer {
     return {
       type: "subagent_message_response" as const,
       request_id: command.request_id,
-      runtime,
+      runtime: this.scopedRuntime,
       success: true as const,
       delivery: "steered" as const,
     };
@@ -111,15 +112,15 @@ class FakeComputer {
     return {
       type: "subagent_stop_response" as const,
       request_id: command.request_id,
-      runtime,
+      runtime: this.scopedRuntime,
       agent_id: command.agent_id,
       success: true,
       stopped: true,
     };
   }
 
-  async sync() {
-    this.syncs += 1;
+  async sync(command: Parameters<AppServerClient["sync"]>[0]) {
+    this.syncs.push(command);
     this.onSync(this);
     return { type: "sync_response" };
   }
@@ -133,7 +134,7 @@ class FakeComputer {
       handler(
         {
           type: "update_subagent_state",
-          runtime,
+          runtime: this.scopedRuntime,
           seq,
           subagents: [
             {
@@ -159,7 +160,12 @@ class FakeComputer {
   emptySnapshot(seq = 1) {
     for (const handler of this.messageHandlers)
       handler(
-        { type: "update_subagent_state", runtime, seq, subagents: [] } as never,
+        {
+          type: "update_subagent_state",
+          runtime: this.scopedRuntime,
+          seq,
+          subagents: [],
+        } as never,
         "control",
       );
   }
@@ -327,9 +333,29 @@ describe("launchRemoteExternalCodingAgent", () => {
       });
 
       for (const worker of [1, 2]) {
-        const computer = new FakeComputer(() => accepted);
+        const workerRuntime = {
+          agent_id: scope.agentId,
+          conversation_id: `conv-worker-${worker}`,
+        };
+        const computer = new FakeComputer(
+          () => accepted,
+          () => {},
+          workerRuntime,
+        );
+        const reconnected = new FakeComputer(
+          () => accepted,
+          (target) => target.snapshot({ status: "completed", result: "Done" }),
+          workerRuntime,
+        );
+        const clients = [computer, reconnected];
         const connect = spyOn(
-          { connect: async () => computer.asClient() },
+          {
+            connect: async () => {
+              const target = clients.shift();
+              if (!target) throw new Error("no more computers");
+              return target.asClient();
+            },
+          },
           "connect",
         );
         const result = await launchRemoteExternalCodingAgent(
@@ -340,13 +366,20 @@ describe("launchRemoteExternalCodingAgent", () => {
             description: "Fix the bug",
             parentScope: scope,
           },
-          { spawn, connect },
+          { spawn, connect, reconnectDelayMs: 1 },
         );
         if (!result.success) throw new Error(result.error);
         expect(result.success).toBe(true);
-        expect(connect).toHaveBeenCalledWith(`conn-${worker}`, scope);
+        const workerScope = {
+          ...scope,
+          conversationId: `conv-worker-${worker}`,
+        };
+        expect(connect).toHaveBeenCalledWith(`conn-${worker}`, workerScope);
         expect(computer.launches[0]).toMatchObject({
-          runtime,
+          runtime: {
+            agent_id: scope.agentId,
+            conversation_id: `conv-worker-${worker}`,
+          },
           notify: "caller",
         });
         expect(requests.slice((worker - 1) * 3, worker * 3)).toEqual([
@@ -366,11 +399,14 @@ describe("launchRemoteExternalCodingAgent", () => {
             body: null,
           },
         ]);
-        computer.snapshot({ status: "completed", result: "Done" });
+        computer.drop();
         expect(await notified()).toMatchObject({
           agentId: scope.agentId,
           conversationId: scope.conversationId,
         });
+        expect(reconnected.syncs).toEqual([
+          { runtime: workerRuntime, recover_approvals: false },
+        ]);
         queued.length = 0;
       }
     },
@@ -532,7 +568,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     first.snapshot({ status: "running" });
     first.drop();
     const message = await notified();
-    expect(second.syncs).toBe(1);
+    expect(second.syncs).toEqual([{ runtime, recover_approvals: false }]);
     expect(message.text).toContain("Done after drop");
   });
 
@@ -548,7 +584,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     // Drop before any progress snapshot: the accepted launch alone must count.
     first.drop();
     const message = await notified();
-    expect(second.syncs).toBe(1);
+    expect(second.syncs).toEqual([{ runtime, recover_approvals: false }]);
     expect(message.text).toContain("<status>failed</status>");
     expect(message.text).toContain(
       "The claude-code worker on brad-box is no longer listed",

@@ -75,7 +75,11 @@ export interface RemoteExternalCodingAgentDeps {
   resolveComputer?: (
     computer: string,
     parentScope: ParentScope,
-  ) => Promise<{ connectionId: string; environment: EnvironmentConnection }>;
+  ) => Promise<{
+    connectionId: string;
+    environment: EnvironmentConnection;
+    conversationId?: string;
+  }>;
   connect?: (
     connectionId: string,
     parentScope: ParentScope,
@@ -119,9 +123,10 @@ async function defaultResolveComputer(computer: string, scope: ParentScope) {
   const client = await getClient();
   const createParams = { agent_id: scope.agentId, hidden: true };
   const conversation = await client.conversations.create(createParams);
-  return resolveAgentSandboxConnectionId(scope.agentId, {
+  const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
     conversationId: conversation.id,
   });
+  return { ...resolved, conversationId: conversation.id };
 }
 
 async function defaultConnect(connectionId: string, scope: ParentScope) {
@@ -300,6 +305,7 @@ export async function launchRemoteExternalCodingAgent(
   let connectionId: string;
   let deviceId: string;
   let supportsSteering: boolean;
+  let runtimeScope: ParentScope;
   try {
     const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
       computer,
@@ -313,13 +319,19 @@ export async function launchRemoteExternalCodingAgent(
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
+    runtimeScope = {
+      ...parentScope,
+      conversationId:
+        ("conversationId" in resolved ? resolved.conversationId : undefined) ??
+        parentScope.conversationId,
+    };
   } catch (error) {
     return { success: false, error: errorMessage(error) };
   }
   params.signal?.throwIfAborted();
 
   const connect = () =>
-    (deps.connect ?? defaultConnect)(connectionId, parentScope);
+    (deps.connect ?? defaultConnect)(connectionId, runtimeScope);
   const toolCallId = params.toolCallId ?? `remote-${randomUUID()}`;
   let client: AppServerClient;
   try {
@@ -331,7 +343,7 @@ export async function launchRemoteExternalCodingAgent(
     };
   }
   const follower = new RemoteSubagentFollower(
-    parentScope,
+    runtimeScope,
     toolCallId,
     connect,
     deps.reconnectDelayMs ?? 2_000,
@@ -343,10 +355,10 @@ export async function launchRemoteExternalCodingAgent(
     launched = await client.launchSubagent({
       request_id: `launch-subagent-${randomUUID()}`,
       runtime: {
-        agent_id: parentScope.agentId,
-        conversation_id: parentScope.conversationId,
-        ...(parentScope.actingUserId
-          ? { acting_user_id: parentScope.actingUserId }
+        agent_id: runtimeScope.agentId,
+        conversation_id: runtimeScope.conversationId,
+        ...(runtimeScope.actingUserId
+          ? { acting_user_id: runtimeScope.actingUserId }
           : {}),
       },
       args: {
