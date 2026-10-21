@@ -15,7 +15,10 @@ import {
 import { loadTools } from "@/tools/manager";
 import { isDebugEnabled } from "@/utils/debug";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
-import { killAllTerminals } from "@/websocket/terminal-handler";
+import {
+  killAllTerminals,
+  killListenerConnectionTerminals,
+} from "@/websocket/terminal-handler";
 import {
   rejectPendingApprovalResolvers,
   rejectPendingApprovalResolversForConnection,
@@ -548,9 +551,7 @@ export async function attachOpenListenerSocket(
   );
 }
 
-/**
- * Start the listener WebSocket client with automatic retry.
- */
+/** Start the listener WebSocket client with automatic retry. */
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
@@ -663,6 +664,7 @@ async function connectWithRetry(
           opts.connectionId,
           "Listener connection re-registered",
         );
+        killListenerConnectionTerminals(opts.connectionId);
         revokeRecoveryClaims(runtime, opts.connectionId);
         opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
         return;
@@ -936,6 +938,7 @@ async function connectWithRetry(
         opts.connectionId,
         "Listener connection re-registered",
       );
+      killListenerConnectionTerminals(opts.connectionId);
       revokeRecoveryClaims(runtime, opts.connectionId);
       opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
       return;
