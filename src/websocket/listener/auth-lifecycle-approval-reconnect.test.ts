@@ -20,6 +20,7 @@ import {
   openListenerConnection,
   subscribeListenerConnection,
 } from "@/websocket/listener/connection";
+import { CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON } from "@/websocket/listener/constants";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
 import { handleExternalToolCallResponseCommand } from "@/websocket/listener/external-tools";
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
@@ -516,7 +517,7 @@ describe("listener approval reconnect timing", () => {
       "listener did not reconnect after service restart",
     );
     await replacementStartup;
-    if (reason !== "Environment not found") {
+    if (reason !== CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON) {
       const replacement = getActiveRuntime();
       expect(replacement).not.toBe(listener);
       expect(listener.intentionallyClosed).toBe(true);

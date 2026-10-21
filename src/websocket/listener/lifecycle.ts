@@ -39,6 +39,7 @@ import {
 } from "./connection-lifecycle";
 import { completeInitialConnectionStartup } from "./connection-state-sync";
 import {
+  CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_ATTEMPTS,
   MAX_RETRY_DELAY_MS,
@@ -654,7 +655,6 @@ async function connectWithRetry(
   }
 
   const elapsedTime = Date.now() - startTime;
-
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
       // Established sessions re-register after the retry window expires.
@@ -883,7 +883,8 @@ async function connectWithRetry(
     // Fencing 1008s can supersede us without a prior replacement close.
     const terminalClose =
       runtime.intentionallyClosed ||
-      (code === 1008 && reasonText !== "Environment not found") ||
+      (code === 1008 &&
+        reasonText !== CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON) ||
       (code === 1000 && reasonText === "Replaced by new connection");
 
     if (!terminalClose && runtime.hasSuccessfulConnection) {
