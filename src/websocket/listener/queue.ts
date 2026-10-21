@@ -24,6 +24,11 @@ import {
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
 import {
+  getMcpOriginatorScope,
+  type McpOriginatorScope,
+  sameMcpOriginatorScope,
+} from "./mcp-originator-scope";
+import {
   emitDequeuedUserMessage,
   emitLoopStatusUpdate,
   emitQueueUpdate,
@@ -289,7 +294,10 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(runtime: ConversationRuntime): {
+export function consumeQueuedTurn(
+  runtime: ConversationRuntime,
+  activeScope?: McpOriginatorScope,
+): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
@@ -298,6 +306,18 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
     return null;
   }
+
+  const firstScope = getMcpOriginatorScope(
+    firstQueuedItem.kind === "message"
+      ? runtime.queuedMessagesByItemId.get(firstQueuedItem.id)
+      : undefined,
+  );
+  // Omitted means a new turn; null explicitly constrains an unattributed continuation.
+  if (
+    activeScope !== undefined &&
+    !sameMcpOriginatorScope(firstScope, activeScope)
+  )
+    return null;
 
   let queueLen = 0;
   let hasMessage = false;
@@ -314,7 +334,15 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   for (const item of queuedItems) {
     if (
       !isCoalescable(item.kind) ||
-      !hasSameQueueScope(firstQueuedItem, item)
+      !hasSameQueueScope(firstQueuedItem, item) ||
+      !sameMcpOriginatorScope(
+        firstScope,
+        getMcpOriginatorScope(
+          item.kind === "message"
+            ? runtime.queuedMessagesByItemId.get(item.id)
+            : undefined,
+        ),
+      )
     ) {
       break;
     }

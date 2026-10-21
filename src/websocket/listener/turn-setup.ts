@@ -28,6 +28,7 @@ import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
+import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
@@ -331,7 +332,7 @@ export async function prepareListenerTurn(params: {
     conversationId,
     actingUserId: msg.actingUserId,
     suppressActingUserFallback: msg.suppressActingUserFallback,
-    mcpOriginatorSuperRunId: msg.mcpOriginatorSuperRunId,
+    mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.

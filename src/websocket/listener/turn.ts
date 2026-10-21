@@ -787,7 +787,7 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
-        onConsumeQueuedTurn: createQueuedTurnConsumer({
+        ...createQueuedTurnConsumer({
           parkedInput: msg,
           turnToolContextId,
           runtime,

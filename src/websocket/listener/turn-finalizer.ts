@@ -5,6 +5,10 @@ import {
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
+import {
+  getEffectiveMcpOriginatorId,
+  getMcpOriginatorScope,
+} from "./mcp-originator-scope";
 import type {
   RecoveryAuthorityStore,
   RecoveryEvidenceWriter,
@@ -23,7 +27,10 @@ import type { TurnLease } from "./turn-lifecycle";
 import { buildTurnUsage, finishListenerTurn } from "./turn-terminal";
 import type { ConversationRuntime, IncomingMessage } from "./types";
 
-type OriginCarrying = { mcpOriginatorSuperRunId?: string };
+type OriginCarrying = Pick<
+  IncomingMessage,
+  "mcpOriginatorSuperRunId" | "mcpOriginatorTokenPresent"
+>;
 
 /**
  * Apply an origin swap when a parked turn consumes a queued turn from
@@ -45,41 +52,46 @@ export function applyTurnOriginSwap(
   );
   rebindTurnToolContextMcpOriginator(
     turnToolContextId,
-    consumedTurn.mcpOriginatorSuperRunId,
+    getEffectiveMcpOriginatorId(consumedTurn),
   );
 }
 
 /**
- * Build the onConsumeQueuedTurn callback for a parked turn: apply the origin
- * swap first, then record the consumed input and checkpoint ownership. The
- * factory lives here (not inline in turn.ts) so the swap cannot drift from
- * the durability checkpoint it must precede — and so turn.ts stays under
- * the source-size cap.
+ * Bind queue eligibility to the ORIGINAL input alongside the ownership callback.
+ * Recovery inputs contain only approval results and cannot prove an origin.
+ * Consumed compatible inputs are rebound and checkpointed before continuation.
  */
 export function createQueuedTurnConsumer(params: {
-  parkedInput: OriginCarrying;
+  parkedInput: IncomingMessage;
   turnToolContextId: string | null;
   runtime: ConversationRuntime;
   ownership: ReturnType<typeof createTurnDurabilityOwnership>;
   interruptedRevisionRef: { current: string | undefined };
   recoveryLineageId?: string;
   recoveryEvidenceWriter?: RecoveryEvidenceWriter;
-}): (queuedTurn: IncomingMessage) => Promise<void> {
-  return async (queuedTurn) => {
-    applyTurnOriginSwap(
-      params.parkedInput,
-      queuedTurn,
-      params.turnToolContextId,
-    );
-    params.ownership.recordInput(queuedTurn);
-    params.interruptedRevisionRef.current = await checkpointTurnInputOwnership(
-      params.runtime,
-      params.ownership,
-      params.interruptedRevisionRef.current,
-      queuedTurn.actingUserId,
-      params.recoveryLineageId,
-      params.recoveryEvidenceWriter,
-    );
+}) {
+  return {
+    activeOriginatorScope: getMcpOriginatorScope(params.parkedInput),
+    allowQueuedContinuation: params.parkedInput.messages.some(
+      (message) => "content" in message,
+    ),
+    onConsumeQueuedTurn: async (queuedTurn: IncomingMessage) => {
+      applyTurnOriginSwap(
+        params.parkedInput,
+        queuedTurn,
+        params.turnToolContextId,
+      );
+      params.ownership.recordInput(queuedTurn);
+      params.interruptedRevisionRef.current =
+        await checkpointTurnInputOwnership(
+          params.runtime,
+          params.ownership,
+          params.interruptedRevisionRef.current,
+          queuedTurn.actingUserId,
+          params.recoveryLineageId,
+          params.recoveryEvidenceWriter,
+        );
+    },
   };
 }
 

@@ -130,7 +130,7 @@ describe("pre-stream recovery lease boundaries", () => {
       name: "attributed",
       agentId: "agent-1",
       queuedUser: "cloud-user-charles",
-      expectedActor: "cloud-user-charles",
+      expectedActor: null,
     },
     {
       name: "unattributed",
@@ -145,7 +145,7 @@ describe("pre-stream recovery lease boundaries", () => {
       expectedActor: null,
     },
   ])(
-    "an $name queued user's identity survives pre-stream approval recovery",
+    "an $name queued user's work waits for a new turn after pre-stream approval recovery",
     async ({ queuedUser, expectedActor, agentId }) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
@@ -163,6 +163,8 @@ describe("pre-stream recovery lease boundaries", () => {
           type: "message",
           agentId,
           conversationId: "conv-1",
+          mcpOriginatorSuperRunId: "queued-run",
+          mcpOriginatorTokenPresent: true,
           messages: [
             {
               role: "user",
@@ -217,18 +219,17 @@ describe("pre-stream recovery lease boundaries", () => {
 
       expect(result?.stopReason).toBe("end_turn");
       expect(sentActingUserId).toBe(expectedActor);
-      if (queuedUser) {
-        expect(JSON.stringify(sentMessages)).toContain(
-          '"attribution":{"acting_user_id":"cloud-user-charles"}',
-        );
-      } else {
-        expect(JSON.stringify(sentMessages)).not.toContain("acting_user_id");
-      }
+      expect(JSON.stringify(sentMessages)).toContain("call-1");
+      expect(JSON.stringify(sentMessages)).not.toContain(
+        "message from Charles",
+      );
+      expect(runtime.queueRuntime.length).toBe(1);
+      expect(runtime.queuedMessagesByItemId.size).toBe(1);
       expect(
         runtime.listener.clientMessageIdsByRunIdByConversation
           ?.get(runtime.key)
           ?.get("run-recovery"),
-      ).toEqual(["cm-charles"]);
+      ).toBeUndefined();
     },
   );
 });
