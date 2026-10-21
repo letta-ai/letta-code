@@ -318,7 +318,7 @@ for await (const message of query({
 
 ## Known limitations
 
-* **Structured output**: with partial messages enabled, the JSON streams as a tool call's unvalidated `input_json_delta` chunks, and only the validated result reaches the final `ResultMessage.structured_output`. See [structured outputs](/docs/en/agent-sdk/structured-outputs) for details.
+* **Structured output**: with partial messages enabled, the JSON streams as a tool call's unvalidated `input_json_delta` chunks, and only the validated result reaches the final `ResultMessage.structured_output`. [Recognize the StructuredOutput tool call](/docs/en/agent-sdk/structured-outputs#recognize-the-structuredoutput-tool-call) covers how that call appears in your stream.
 
 ## Next steps
 

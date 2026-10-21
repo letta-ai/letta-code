@@ -638,6 +638,7 @@ Use `Notification` hooks to receive system notifications from the agent and forw
 
 * [`permission_prompt`](/docs/en/hooks#notification) once a permission request has waited about six seconds on your [`canUseTool` callback](/docs/en/agent-sdk/user-input). Requires TypeScript Agent SDK v0.3.233 or later, or Python Agent SDK v0.2.139 or later
 * `elicitation_complete` and `elicitation_response` for user-prompt elicitation flows
+* `plugin_notification` when a [mod](/docs/en/plugins/mods/api#show-something-without-starting-a-turn) calls `$.ui.notify`
 
 Claude Code emits the other types, such as `idle_prompt`, `auth_success`, and `elicitation_dialog`, from interactive UI that SDK sessions don't run.
 

@@ -368,6 +368,17 @@ async def main():
 asyncio.run(main())
 ```
 
+## Recognize the StructuredOutput tool call
+
+When you set `outputFormat` in TypeScript or `output_format` in Python, your message stream carries a tool call named `StructuredOutput` that you never defined. Claude Code adds this tool to the session, and the agent calls it to return its answer. The [system init message](/docs/en/agent-sdk/typescript#sdksystemmessage) lists it in the `tools` array, and each call arrives as two blocks:
+
+* A `tool_use` block named `StructuredOutput`, whose input is the object the agent produced for your schema
+* A `tool_result` block reading `Structured output provided successfully`
+
+When that object doesn't match your schema, the `tool_result` carries `is_error: true` instead and the agent calls `StructuredOutput` again, so your stream can hold several calls for one query. Read the validated data from `structured_output` on the result message rather than from a `tool_use` block, and see [Error handling](#error-handling) for the result you get when no attempt succeeds.
+
+If your application shows or logs tool calls, skip the ones named `StructuredOutput` so the mechanism doesn't appear as a step the agent chose. A `tool_result` block carries no tool name, only the `tool_use_id` of the call it answers, so match that against the `id` of each call you skipped.
+
 ## Error handling
 
 Structured output generation can fail when the agent cannot produce valid JSON matching your schema. This typically happens when the schema is too complex for the task, the task itself is ambiguous, or the agent hits its retry limit trying to fix validation errors. It can also happen without any validation failure: a [model fallback](/docs/en/model-config#automatic-model-fallback) can retract an already-completed output mid-stream, and if no retry replaces it the run ends with the same error. Check the `errors` list on the error result message to tell the two causes apart before debugging your schema.
