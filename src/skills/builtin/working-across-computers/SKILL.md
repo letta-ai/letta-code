@@ -64,12 +64,6 @@ Have a remote subagent download any needed files and verify completion before mo
 letta teleport <computer>
 ```
 
-With exactly one online Desktop, open with Remote Access enabled, you can use the shortcut:
-
-```bash
-letta teleport local
-```
-
 ## Transfer files to or from Cloud
 
 Run upload where the local file exists; run download where the local copy should be saved.
