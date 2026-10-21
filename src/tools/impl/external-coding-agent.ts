@@ -478,15 +478,17 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
-  const skillsReminder = await (
-    deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
-  )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
-  options = {
-    ...options,
-    mcpReminder:
-      [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
-      undefined,
-  };
+  if (options.type === "claude-code" || options.type === "codex") {
+    const skillsReminder = await (
+      deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
+    )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
+    options = {
+      ...options,
+      mcpReminder:
+        [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
+        undefined,
+    };
+  }
   const startedAt = Date.now();
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
