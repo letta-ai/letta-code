@@ -26,6 +26,7 @@ import {
   getOrCreateProcessTransport,
   isCurrentInitializedListenerConnection,
   openListenerConnection,
+  resumeListenerConnectionIdentity,
   suspendListenerConnection,
 } from "./connection";
 import {
@@ -56,6 +57,7 @@ import {
   createExternalToolNotificationState,
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
+  rejectPendingExternalToolCallsForConnection,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
 import { startListenerPongHeartbeat } from "./heartbeat";
@@ -66,7 +68,6 @@ import {
 import { createAcceptedInputDispositionLedger } from "./input-disposition";
 import {
   adoptListenerClientReplacement,
-  assertAdoptableListenerClientReplacement,
   createListenerClientReplacement,
 } from "./listener-replacement";
 import { runDetachedListenerTask, trackListenerError } from "./listener-task";
@@ -553,17 +554,18 @@ export async function attachOpenListenerSocket(
 export async function startListenerClient(
   opts: StartListenerOptions,
 ): Promise<void> {
-  // Fence replacement provenance before tearing down its predecessor.
-  assertAdoptableListenerClientReplacement(opts);
-
-  // Replace any existing runtime without stale callback leakage.
+  const resumedRuntime = adoptListenerClientReplacement(opts);
   const existingRuntime = getActiveRuntime();
-  if (existingRuntime) {
-    stopRuntime(existingRuntime, true);
+  if (existingRuntime && !resumedRuntime) stopRuntime(existingRuntime, true);
+  const runtime = resumedRuntime ?? createRuntime();
+  if (resumedRuntime && runtime.connectionId) {
+    revokeRecoveryClaims(runtime, runtime.connectionId);
+    resumeListenerConnectionIdentity(
+      runtime,
+      runtime.connectionId,
+      opts.connectionId,
+    );
   }
-
-  const runtime = createRuntime();
-  adoptListenerClientReplacement(runtime, opts);
   runtime.onWsEvent = opts.onWsEvent;
   runtime.connectionId = opts.connectionId;
   runtime.connectionName = opts.connectionName;
@@ -572,7 +574,7 @@ export async function startListenerClient(
   telemetry.init();
   setExplicitOrganizationId(opts.organizationId);
 
-  await reloadListenerModAdapter(runtime);
+  if (!resumedRuntime) await reloadListenerModAdapter(runtime);
   await connectWithRetry(runtime, opts);
 }
 
@@ -654,10 +656,14 @@ async function connectWithRetry(
 
   if (attempt > 0) {
     if (elapsedTime >= MAX_RETRY_DURATION_MS) {
-      // If we ever had a successful connection, try to re-register instead
-      // of giving up. This keeps established sessions alive through transient
-      // outages (e.g. Cloudflare 521, server deploys).
+      // Established sessions re-register after the retry window expires.
       if (runtime.everConnected && opts.onNeedsReregister) {
+        rejectPendingExternalToolCallsForConnection(
+          runtime,
+          opts.connectionId,
+          "Listener connection re-registered",
+        );
+        revokeRecoveryClaims(runtime, opts.connectionId);
         opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
         return;
       }
@@ -729,8 +735,7 @@ async function connectWithRetry(
   runtime.streamSocket = streamSocket;
   const transport = socket;
   const processQueuedTurn = createConnectionTurnProcessor(runtime);
-  // Reserve before constructing the handler so re-registered connection IDs use
-  // the inherited replacement lineage from their first accepted frame onward.
+  // Reserve the lineage before accepting frames.
   const startupOwner = reserveStartupIngressOwner(runtime, opts);
   const handleMessage = createListenerMessageHandler({
     runtime,
@@ -855,6 +860,7 @@ async function connectWithRetry(
       if (runtime.socket === socket) runtime.lastPongAt = Date.now();
       return;
     }
+    if (!isCurrentSocketPair(runtime, socket, streamSocket)) return;
     pendingStartupFrames.accept(data, handleMessage);
   });
 
@@ -874,7 +880,6 @@ async function connectWithRetry(
     const reasonText = reason.toString();
     const terminalClose =
       runtime.intentionallyClosed ||
-      code === 1008 ||
       (code === 1000 && reasonText === "Replaced by new connection");
 
     if (!terminalClose && runtime.hasSuccessfulConnection) {
@@ -908,7 +913,7 @@ async function connectWithRetry(
       revokeRecoveryClaims(runtime, undefined, closingGeneration);
     }
     suspendListenerConnection(runtime, opts.connectionId);
-    killAllTerminals();
+    if (terminalClose) killAllTerminals();
     clearListenerWarmState(runtime);
     if (streamSocket) {
       streamSocket.removeAllListeners("message");
@@ -924,29 +929,20 @@ async function connectWithRetry(
     runtime.socket = null;
     runtime.streamSocket = null;
     runtime.streamTransport = null;
-    if (terminalClose) {
-      const replacement =
-        code === 1008 ? createListenerClientReplacement(runtime, opts) : null;
-      if (getActiveRuntime() === runtime) {
-        setActiveRuntime(null);
-      }
+    if (code === 1008 && !terminalClose && opts.onNeedsReregister) {
+      // Cloud external responses are routed to the old connection generation server-side.
+      rejectPendingExternalToolCallsForConnection(
+        runtime,
+        opts.connectionId,
+        "Listener connection re-registered",
+      );
+      revokeRecoveryClaims(runtime, opts.connectionId);
+      opts.onNeedsReregister(createListenerClientReplacement(runtime, opts));
+      return;
+    }
+    if (terminalClose || code === 1008) {
+      if (getActiveRuntime() === runtime) setActiveRuntime(null);
       stopRuntime(runtime, true);
-
-      if (code === 1008) {
-        if (isDebugEnabled()) {
-          console.log("[Listen] Environment not found, re-registering...");
-        }
-        if (opts.onNeedsReregister) {
-          if (!replacement) {
-            throw new Error("Missing listener replacement lineage");
-          }
-          opts.onNeedsReregister(replacement);
-        } else {
-          opts.onDisconnected();
-        }
-        return;
-      }
-
       opts.onDisconnected();
       return;
     }
@@ -966,6 +962,7 @@ async function connectWithRetry(
   });
 
   socket.on("error", (error: Error) => {
+    if (runtime.socket !== socket) return;
     trackListenerError("listener_websocket_error", error, "listener_socket");
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_error",
