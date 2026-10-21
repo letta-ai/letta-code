@@ -161,7 +161,11 @@ Servers from [settings files](#from-a-config-file) such as `.mcp.json`, or from 
 * **Otherwise, with [tool search](/docs/en/agent-sdk/tool-search) on, which is the default**: the first turn waits up to 2 seconds, and only for pending servers that set [`alwaysLoad: true`](/docs/en/mcp#exempt-a-server-from-deferral) or that you [named](#named-servers). The rest keep connecting in the background, and Claude [reaches their tools](/docs/en/mcp#tool-availability) once they connect.
 * **Otherwise, with tool search off**: the first turn waits up to 2 seconds for every pending settings-file and plugin server. Tool search is off when your [`ENABLE_TOOL_SEARCH` value or model](/docs/en/agent-sdk/tool-search#configure-tool-search) turns it off, or when you exclude the `ToolSearch` tool, for example through `disallowedTools`.
 
+### Named servers
+
 You name a server by listing any of its tools, such as `mcp__github__list_issues` or `mcp__github__*`, in [`allowedTools`](#allow-mcp-tools) or in a `permissions.allow` rule in the `settings` option. An [`mcp_tool` hook](/docs/en/hooks#mcp-tool-hook-fields) also names the server it calls when you configure it on a prompt-submission, tool-use, permission, subagent, task, elicitation, or worktree event. Before v2.1.284, naming a server had no effect on the first-turn wait.
+
+### Set the first-turn wait yourself
 
 To choose the first-turn wait yourself, set `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` in the [`env` option](/docs/en/agent-sdk/configuration#set-environment-variables), for example `CLAUDE_CODE_MCP_STARTUP_WAIT_MS: "5000"`. The first turn then waits up to that many milliseconds for pending settings-file and plugin servers, whether or not tool search is on. The same limit replaces the `MCP_TIMEOUT` wait for the stdio, HTTP, and SSE servers in `options.mcpServers`.
 
@@ -172,6 +176,8 @@ Three waits apply whatever value you set, including `0`:
 * **A still-connecting [named server](#named-servers)**: at least up to 2 seconds, so a value below `2000` doesn't shorten its wait.
 
 Set the variable to `0` to skip the wait for every other server. Servers still pending when the wait ends keep connecting in the background. `CLAUDE_CODE_MCP_STARTUP_WAIT_MS` requires Claude Code v2.1.274 or later.
+
+### Make startup wait for servers
 
 Two settings make startup itself wait, before Claude Code sends the init message:
 

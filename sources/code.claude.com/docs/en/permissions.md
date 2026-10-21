@@ -241,7 +241,7 @@ This wrapper list is built in and is not configurable. Development environment r
 A prefix rule like `Bash(watch *)` or `Bash(find *)` can't auto-approve the following commands, so in Manual mode they prompt:
 
 * **Exec wrappers**: such as `watch`, `setsid`, `ionice`, and `flock`
-* **`find`**: with an action that runs commands, deletes files, or writes files, such as `-exec`, `-delete`, or `-fprint`, or with `-files0-from`, which takes the paths to search from a file
+* **`find`**: with an action that runs commands, deletes files, or writes files, such as `-exec`, `-delete`, `-rm`, or `-fprint`, or with `-files0-from`, which takes the paths to search from a file
 
 To approve a specific invocation that has no `*` in it, write an exact-match rule for the full command string, such as `Bash(find build -type f -delete)`.
 
@@ -460,6 +460,27 @@ On macOS and Linux, a deny or ask rule written through a symlinked directory wit
 
 Grep and Glob search the directory the `path` argument resolves to. Claude Code applies `Read` deny rules to that directory.
 
+##### Attachments through a symlink
+
+A `Read` deny rule also covers these attachments, matching each one on either the named path or the file it resolves to. Claude Code leaves an attachment out of the conversation when a rule matches it:
+
+* **`@`-mentions**: a file or directory you mention in your prompt. A refused file leaves nothing in the conversation, and a [directory's listing](#read-and-edit) leaves out the names a rule covers.
+* **Pasted images**: an image whose path you paste or drag into the prompt in the terminal
+* **Changed files**: a file Claude Code re-reads after it changes on disk
+* **IDE context**: the selection and open-file context a connected IDE shares
+
+With [`permissions.blockReadsOutsideWorkingDirectories`](/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) on, or in a [`--restricted`](/docs/en/cli-reference#cli-flags) session, these attachments are also left out when they come from a path where that setting or flag refuses Claude's file reads.
+
+This line in place of a file you `@`-mentioned means Claude Code couldn't work out where the path leads, for example because its symlinks form a loop:
+
+```text theme={null}
+Referenced <path> (not read: could not be examined)
+```
+
+Claude is told to read the path with its file tools instead, which can succeed when Claude Code only ran out of time to examine the path.
+
+When the path's symlinks don't resolve, that read is [refused](/docs/en/errors#refusing-after-a-symlink-changed) too, so fix the link on disk or `@`-mention the file by a path that resolves.
+
 ##### Writes through a symlink
 
 If the path Claude asks to edit or write is itself a symlink, the Edit and Write tools [refuse the write and direct Claude to the link's target](/docs/en/errors#refusing-after-a-symlink-changed).
@@ -489,7 +510,7 @@ In `dontAsk` mode, Claude Code denies the read instead of prompting. In `bypassP
 
 To read files on a network share without this prompt, give the share a local path first:
 
-* **Windows**: map the share to a drive letter and pass the drive with `--add-dir` when you launch Claude Code, as [Working directories](#working-directories) describes
+* **Windows**: map the share to a drive letter and pass the drive with `--add-dir` when you launch Claude Code, as [Working directories](#working-directories) describes. Reads under a drive you add later with `/add-dir`, or list in `additionalDirectories` in a settings file, still prompt. To stop those prompts for a share mapped to `Z:`, start a new session in PowerShell with `claude --add-dir Z:\`.
 * **macOS and Linux**: mount the share at a local path, such as a directory under `/mnt` or `/Volumes`, and read the files from there, as [Working directory is a network path](/docs/en/errors#working-directory-is-a-network-path) describes
 
 ### WebFetch
@@ -545,7 +566,9 @@ For `<server>`, write the server's name the way it appears in that server's tool
 
 * **Names with characters such as `.` or spaces**: those characters become `_`, so for a server you configured as `my.server`, write `mcp__my_server__*`
 * **Servers that a plugin provides**: `<server>` takes the [plugin-scoped form](/docs/en/mcp#plugin-provided-mcp-servers), so for the `database-tools` server in a plugin named `my-plugin`, write `mcp__plugin_my-plugin_database-tools__*`
-* **A `<server>` that contains `__` or ends in `_`**: write the wildcard form, `mcp__<server>__*`, with the whole name. For a server named `reports__v2`, write `mcp__reports__v2__*`. The bare `mcp__reports__v2` and the shorter `mcp__reports` don't match its tools as allow rules, because Claude Code reads both as rules for a server named `reports`
+* **A `<server>` that contains `__` or ends in `_`**: write the wildcard form, `mcp__<server>__*`, with the whole name. For a server named `reports__v2`, write `mcp__reports__v2__*`. The bare `mcp__reports__v2` and the shorter `mcp__reports` don't match its tools as allow rules, because Claude Code reads both as rules for a server named `reports`.
+
+  As a deny or ask rule, though, each of those two names also covers every tool of the `reports__v2` server. To cover a server named `reports` alone, write one rule per tool in the `mcp__reports__<tool>` form, or rename one of the servers.
 
 If your organization has set a [claude.ai connector](/docs/en/mcp#organization-controls-on-connector-tools) tool to `ask` and that setting reaches Claude Code in your session, allow rules for that tool don't take effect: Claude Code prompts on every call, even in `auto` and `bypassPermissions` modes. In `dontAsk` mode, which never prompts, Claude Code denies the call instead. Tools from connectors Claude Code fetches itself appear as `mcp__claude_ai_<server>__<tool>`.
 
