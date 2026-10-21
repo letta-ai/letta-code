@@ -35,6 +35,7 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import { backgroundTasks } from "./process_manager";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
@@ -456,6 +457,12 @@ export async function launchRemoteExternalCodingAgent(
       },
     },
   });
+  const task = backgroundTasks.get(taskId);
+  if (task)
+    task.runtimeScope = {
+      agentId: runtimeScope.agentId,
+      conversationId: runtimeScope.conversationId,
+    };
   if (qualifiedAgentId)
     updateSubagent(subagentId, { agentId: qualifiedAgentId });
   return {

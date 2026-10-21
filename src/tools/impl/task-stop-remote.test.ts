@@ -129,7 +129,7 @@ describe("TaskStop for remote subagents", () => {
       completion: Promise.resolve(),
       runtimeScope: {
         agentId: "agent-parent",
-        conversationId: "conv-parent",
+        conversationId: "conv-cloud-child",
       },
     });
     let received: unknown;
@@ -144,7 +144,13 @@ describe("TaskStop for remote subagents", () => {
         },
       ),
     ).toMatchObject({ killed: true });
-    expect(received).toMatchObject({ agentId });
+    expect(received).toMatchObject({
+      agentId,
+      parentScope: {
+        agentId: "agent-parent",
+        conversationId: "conv-cloud-child",
+      },
+    });
     expect(abortController.signal.aborted).toBe(true);
   });
 });

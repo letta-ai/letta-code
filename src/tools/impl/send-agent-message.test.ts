@@ -1,9 +1,15 @@
-import { expect, spyOn, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
+import {
+  clearAllSubagents,
+  registerSubagent,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
 import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
+import { backgroundTasks } from "./process_manager";
 import { send_agent_message } from "./send-agent-message";
 
 const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
@@ -60,6 +66,11 @@ const message = {
   conversation_id: TARGET_CONV,
   message: "Please check the tests.",
 };
+
+afterEach(() => {
+  backgroundTasks.clear();
+  clearAllSubagents();
+});
 
 test.each([false, true])(
   "missing acting user diagnostic respects debug mode: %s",
@@ -189,6 +200,51 @@ test("routes a computer-qualified external ID remotely", async () => {
   expect(JSON.parse(result.content)).toMatchObject({
     agent_id: qualified,
     delivery: "remote/steer",
+  });
+});
+
+test("routes a cloud external worker message with its stored child scope", async () => {
+  const f = fixture();
+  const qualified = `${CLAUDE_AGENT_ID}@device-cloud`;
+  registerSubagent(
+    "sub-cloud",
+    "claude-code",
+    "cloud external",
+    undefined,
+    true,
+  );
+  updateSubagent("sub-cloud", { agentId: qualified });
+  backgroundTasks.set("task-cloud", {
+    description: "cloud external",
+    subagentType: "claude-code",
+    subagentId: "sub-cloud",
+    status: "running",
+    startTime: new Date(),
+    outputFile: "/tmp/cloud-external",
+    runtimeScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-cloud-child",
+    },
+  });
+  let received: unknown;
+  await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { agent_id: qualified, message: "Change course" },
+      {
+        ...f,
+        sendRemoteExternalMessage: async (input) => {
+          received = input;
+          return { delivery: "steered" };
+        },
+      },
+    ),
+  );
+  expect(received).toMatchObject({
+    parentScope: {
+      agentId: "agent-caller",
+      conversationId: "conv-cloud-child",
+      actingUserId: "user-caller",
+    },
   });
 });
 

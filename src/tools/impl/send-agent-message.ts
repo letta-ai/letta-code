@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { getSubagents } from "@/agent/subagent-state";
 import {
   resolveChildSubagent,
   trackChildSend,
@@ -36,6 +37,7 @@ import {
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { sendOpenCodeMessage } from "./opencode-session";
+import { backgroundTasks } from "./process_manager";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
@@ -164,6 +166,14 @@ export async function send_agent_message(
       args.signal?.throwIfAborted();
       const parentScope = sender;
       if (externalTarget.computer) {
+        const subagent = getSubagents().find(
+          (entry) => entry.agentId === args.agent_id,
+        );
+        const runtimeScope = subagent
+          ? [...backgroundTasks.values()].find(
+              (task) => task.subagentId === subagent.id,
+            )?.runtimeScope
+          : undefined;
         const receipt = await (
           deps.sendRemoteExternalMessage ?? sendRemoteExternalCodingAgentMessage
         )(
@@ -171,7 +181,7 @@ export async function send_agent_message(
             agentId: args.agent_id as string,
             message: args.message,
             parentScope: {
-              ...parentScope,
+              ...(runtimeScope ?? parentScope),
               actingUserId: getRuntimeActingUserAttribution(),
             },
           },

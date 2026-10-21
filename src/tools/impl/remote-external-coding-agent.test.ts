@@ -407,6 +407,10 @@ describe("launchRemoteExternalCodingAgent", () => {
         expect(reconnected.syncs).toEqual([
           { runtime: workerRuntime, recover_approvals: false },
         ]);
+        expect(backgroundTasks.get(result.task_id)?.runtimeScope).toEqual({
+          agentId: scope.agentId,
+          conversationId: `conv-worker-${worker}`,
+        });
         queued.length = 0;
       }
     },
@@ -444,6 +448,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(connect).toHaveBeenCalledWith("conn-1", scope);
     expect(computer.launches[0]).toMatchObject({ runtime, notify: "caller" });
+    expect(backgroundTasks.get(result.task_id)?.runtimeScope).toEqual(scope);
     computer.snapshot({ status: "completed", result: "Done" });
     await notified();
   });
