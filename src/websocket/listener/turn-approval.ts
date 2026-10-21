@@ -46,6 +46,7 @@ import {
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
+import type { McpOriginatorScope } from "./mcp-originator-scope";
 import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import {
@@ -156,6 +157,8 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
+  activeOriginatorScope?: McpOriginatorScope;
+  allowQueuedContinuation?: boolean;
   onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void | Promise<void>;
   /** This turn's output is owned by an in-process caller, not a relay client. */
   processOwnedTurn?: boolean;
@@ -588,9 +591,7 @@ export async function handleApprovalStop(params: {
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
 
-  // A process-owned turn's results are consumed in-process, so there is no
-  // client whose reconnect is worth waiting for. Relay-originated turns still
-  // wait through transient disconnects so their output is not lost (#3522).
+  // Only relay-owned output waits for client reconnect (#3522).
   if (approvedDecisions.length > 0 && !processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
       isDeliveryReady,
@@ -667,8 +668,7 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  // Broadcast new file content to web clients when a file-mutating tool
-  // (Edit, Write) writes to disk, so all windows update immediately.
+  // Broadcast file writes to all windows.
   const onFileWrite = (filePath: string, content: string) => {
     if (!runtime.turnLifecycle.isCurrent(turnLease) || !authorityGuard())
       return;
@@ -711,10 +711,8 @@ export async function handleApprovalStop(params: {
       afterToolExecution: effectBoundary.afterToolExecution,
     });
   } catch (error) {
-    // The batch boundary may throw after one or more tools committed side
-    // effects. Persist every reported partial result and conservatively mark
-    // every unknown outcome failed before transport readiness or delivery can
-    // block. Recovery must never execute this batch again after a crash.
+    // Persist partial results and fail unknown outcomes before delivery waits;
+    // recovery must never execute committed effects again.
     const boundaryResults = effectBoundary.results;
     const failureResults = [
       ...boundaryResults,
@@ -734,10 +732,8 @@ export async function handleApprovalStop(params: {
       "after_tool_execution",
     );
 
-    // Execution threw before normal finished-event emission. Close the
-    // client_tool_start lifecycle explicitly or observer UIs shimmer forever.
-    // Abort retains precedence: its cached interrupted results own terminal
-    // delivery when cancellation raced the exception.
+    // Close tool-start events after execution throws. Cancellation retains
+    // precedence because its cached interrupted results own terminal delivery.
     emitToolExecutionOutput.flush();
     if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
       await waitForTransportOpen(isDeliveryReady, shouldInterrupt);
@@ -874,7 +870,10 @@ export async function handleApprovalStop(params: {
   let continuationBatchId = dequeuedBatchId;
   const sendOptions = buildSendOptions() ?? {};
   if (shouldInterrupt()) return interruptTermination();
-  const consumedQueuedTurn = consumeQueuedTurn(runtime);
+  const consumedQueuedTurn =
+    params.allowQueuedContinuation === false
+      ? null
+      : consumeQueuedTurn(runtime, params.activeOriginatorScope ?? null);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     await params.onConsumeQueuedTurn?.(queuedTurn);

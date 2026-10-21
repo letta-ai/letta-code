@@ -33,7 +33,6 @@ import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
-import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
@@ -42,18 +41,14 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { emitDequeuedUserMessage, emitRetryDelta } from "./protocol-outbound";
-import { consumeQueuedTurn } from "./queue";
+import { emitRetryDelta } from "./protocol-outbound";
 import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
-import {
-  createTurnCorrelation,
-  type TurnCorrelation,
-} from "./turn-correlation";
+import type { TurnCorrelation } from "./turn-correlation";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
@@ -398,7 +393,7 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
-  let recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
+  const recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
@@ -419,7 +414,7 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      let continuationInput = createTurnInputState([
+      const continuationInput = createTurnInputState([
         {
           type: "approval",
           approvals: approvalResults,
@@ -427,21 +422,6 @@ export async function resolveStaleApprovals(
         },
       ]);
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-      const consumedQueuedTurn = consumeQueuedTurn(runtime);
-      if (consumedQueuedTurn) {
-        const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        recoveryActingUserId = queuedTurn.actingUserId;
-        recoveryTurnCorrelation = createTurnCorrelation(
-          runtime,
-          queuedTurn,
-          dequeuedBatch.batchId,
-        );
-        continuationInput = appendQueuedTurnToInput(
-          continuationInput,
-          queuedTurn,
-        );
-        emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
-      }
 
       const continuationMessagesWithSkillContent = injectQueuedSkillContent(
         continuationInput.messages,

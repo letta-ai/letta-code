@@ -20,6 +20,7 @@ import { enqueueInboundUserMessage } from "./inbound-queue";
 import { ordinaryInputIdentity } from "./input-disposition";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
+import { getMcpOriginatorScope } from "./mcp-originator-scope";
 import { createListenerMessageHandler } from "./message-router";
 import { consumeQueuedTurn } from "./queue";
 import { setActiveRuntime } from "./runtime";
@@ -416,17 +417,24 @@ describe("MCP originator batch resolution", () => {
     content: string,
     mcpOriginatorSuperRunId?: string,
     mcpOriginatorTokenPresent?: boolean,
+    preserveExisting = false,
   ): void {
-    enqueueInboundUserMessage(runtime, {
-      type: "message",
-      agentId: "agent-1",
-      conversationId: "conv-1",
-      ...(mcpOriginatorSuperRunId ? { mcpOriginatorSuperRunId } : {}),
-      ...(mcpOriginatorSuperRunId
-        ? { mcpOriginatorTokenPresent: Boolean(mcpOriginatorTokenPresent) }
-        : {}),
-      messages: [{ role: "user", content }],
-    });
+    enqueueInboundUserMessage(
+      runtime,
+      {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        actingUserId: "same-actor",
+        ...(mcpOriginatorSuperRunId ? { mcpOriginatorSuperRunId } : {}),
+        ...(mcpOriginatorSuperRunId
+          ? { mcpOriginatorTokenPresent: Boolean(mcpOriginatorTokenPresent) }
+          : {}),
+        messages: [{ role: "user", content }],
+      },
+      "same-actor",
+      { preserveExisting },
+    );
   }
 
   test("an originator-unanimous batch keeps its super run id", () => {
@@ -442,99 +450,140 @@ describe("MCP originator batch resolution", () => {
     expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
   });
 
-  test("a mixed-originator batch runs unattributed", () => {
+  for (const [firstId, firstPresent, secondId, secondPresent] of [
+    ["sr-1", true, "sr-2", true],
+    ["sr-1", true, undefined, false],
+    [undefined, false, "sr-1", true],
+    ["sr-1", false, "sr-1", true],
+    ["sr-1", true, "sr-1", false],
+  ] as const) {
+    test(`partitions FIFO ${firstId}/${firstPresent} then ${secondId}/${secondPresent}`, () => {
+      const runtime = getOrCreateScopedRuntime(
+        createRuntime(),
+        "agent-1",
+        "conv-1",
+      );
+      setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+      setMcpOriginatorToken("sr-2", "mst_two.secret-b");
+      enqueueMessage(runtime, "first", firstId, firstPresent);
+      enqueueMessage(runtime, "second", secondId, secondPresent);
+      const consumed = consumeQueuedTurn(runtime);
+      expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe(firstId);
+      expect(consumed?.queuedTurn.messages).toHaveLength(1);
+      expect(runtime.queueRuntime.readyLength).toBe(1);
+      expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
+      expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+      expect(
+        consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId,
+      ).toBe(secondId);
+    });
+  }
+
+  for (const kind of [
+    "cron_prompt",
+    "task_notification",
+    "mod_continue",
+  ] as const) {
+    for (const processFirst of [true, false]) {
+      test(`${kind} partitions from attributed work, processFirst=${processFirst}`, () => {
+        const runtime = getOrCreateScopedRuntime(
+          createRuntime(),
+          "agent-1",
+          "conv-1",
+        );
+        function enqueueProcess() {
+          runtime.queueRuntime.enqueue({
+            kind,
+            source: kind,
+            text: "process work",
+            content: [{ type: "text", text: "process work" }],
+            agentId: "agent-1",
+            conversationId: "conv-1",
+          } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
+        }
+        if (processFirst) enqueueProcess();
+        enqueueMessage(runtime, "A", "sr-1", true);
+        if (!processFirst) enqueueProcess();
+        const first = consumeQueuedTurn(runtime);
+        expect(first?.queuedTurn.messages).toHaveLength(1);
+        expect(first?.queuedTurn.mcpOriginatorSuperRunId).toBe(
+          processFirst ? undefined : "sr-1",
+        );
+        expect(first?.queuedTurn.processOwnedTurn === true).toBe(processFirst);
+        const second = consumeQueuedTurn(runtime);
+        expect(second?.queuedTurn.messages).toHaveLength(1);
+        expect(second?.queuedTurn.processOwnedTurn === true).toBe(
+          !processFirst,
+        );
+        expect(runtime.queueRuntime.length).toBe(0);
+      });
+    }
+  }
+
+  test("missing stored payload is unattributed, even with the same actor", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
       "conv-1",
     );
-    enqueueMessage(runtime, "first", "sr-1");
-    enqueueMessage(runtime, "second", "sr-2");
-
-    const consumed = consumeQueuedTurn(runtime);
-    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    enqueueMessage(runtime, "missing", "sr-1", true);
+    const missing = runtime.queueRuntime.peekReady()[0];
+    if (!missing) throw new Error("Missing queue item");
+    runtime.queuedMessagesByItemId.delete(missing.id);
+    enqueueMessage(runtime, "A", "sr-1", true);
+    expect(
+      consumeQueuedTurn(runtime, null)?.queuedTurn.mcpOriginatorSuperRunId,
+    ).toBeUndefined();
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(consumeQueuedTurn(runtime, null)).toBeNull();
+    expect(runtime.queueRuntime.length).toBe(1);
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId).toBe(
+      "sr-1",
+    );
   });
 
-  test("an unattributed member never borrows the batch's originator", () => {
+  test("prefix counts READY items while preserving a paused incompatible item", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
       "conv-1",
     );
-    // The attributed message arrives first and becomes the template; its id
-    // must not leak into the merged turn through the template spread.
-    enqueueMessage(runtime, "first", "sr-1");
-    enqueueMessage(runtime, "second");
-
-    const consumed = consumeQueuedTurn(runtime);
-    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    enqueueMessage(runtime, "paused B", "sr-2", true);
+    runtime.queueRuntime.pause();
+    enqueueMessage(runtime, "A first", "sr-1", true, true);
+    enqueueMessage(runtime, "A second", "sr-1", true, true);
+    enqueueMessage(runtime, "ready B", "sr-2", true, true);
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(2);
+    expect(runtime.queueRuntime.length).toBe(2);
+    expect(runtime.queueRuntime.pausedCount).toBe(1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(2);
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(1);
+    runtime.queueRuntime.resume();
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(1);
   });
 
-  test("a non-message batch member votes unattributed", () => {
-    // Cron prompts, task notifications, and mod continuations carry no
-    // originator delivery; merging one with an attributed message must not
-    // let process-owned work ride the user's token (evil-shub r4300499679).
+  test("active constraint cannot skip B to reach A or mutate ownership maps", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
       "conv-1",
     );
-    enqueueMessage(runtime, "user follow-up", "sr-1");
-    runtime.queueRuntime.enqueue({
-      kind: "task_notification",
-      source: "task_notification",
-      text: "subagent finished",
-      content: [{ type: "text", text: "subagent finished" }],
-      agentId: "agent-1",
-      conversationId: "conv-1",
-    } as Parameters<typeof runtime.queueRuntime.enqueue>[0]);
-
-    const consumed = consumeQueuedTurn(runtime);
-    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
-    expect(consumed?.queuedTurn.messages.length).toBe(2);
-  });
-
-  test("a mixed batch retires its constituents' held tokens", () => {
-    // The merged turn is unattributed and consumes every constituent input,
-    // so no later turn can legitimately use their tokens; they are dropped
-    // at merge time instead of leaking until session teardown (evil-shub
-    // r4300499690).
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
-    setMcpOriginatorToken("sr-2", "mst_two.secret-b");
-    setMcpOriginatorToken("sr-unrelated", "mst_three.secret-c");
-    enqueueMessage(runtime, "first", "sr-1");
-    enqueueMessage(runtime, "second", "sr-2");
-
-    const consumed = consumeQueuedTurn(runtime);
-    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
-    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
-    expect(getMcpOriginatorToken("sr-2")).toBeUndefined();
-    expect(getMcpOriginatorToken("sr-unrelated")).toBe("mst_three.secret-c");
-  });
-
-  test("token-bearing and tokenless deliveries for the SAME run vote distinct", () => {
-    // The merge vote is on (super run id, token presence), not the id alone:
-    // the tokenless delivery is a stale pre-mint frame whose accept cleared
-    // the run's authority, so merging it with the fresh token-bearing one
-    // would let stale work borrow the fresh token (evil-shub r4300657667).
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
-    enqueueMessage(runtime, "stale pre-mint frame", "sr-1", false);
-    enqueueMessage(runtime, "fresh token-bearing frame", "sr-1", true);
-
-    const consumed = consumeQueuedTurn(runtime);
-    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
-    // The mixed batch also retires the constituent run's held token.
-    expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+    enqueueMessage(runtime, "B", "sr-2", true);
+    enqueueMessage(runtime, "A", "sr-1", true);
+    const before = runtime.queueRuntime.peekReady();
+    expect(
+      consumeQueuedTurn(
+        runtime,
+        getMcpOriginatorScope({
+          mcpOriginatorSuperRunId: "sr-1",
+          mcpOriginatorTokenPresent: true,
+        }),
+      ),
+    ).toBeNull();
+    expect(runtime.queueRuntime.peekReady()).toEqual(before);
+    expect(runtime.queuedMessagesByItemId.size).toBe(2);
+    expect(runtime.dequeuedInputIdentitiesByBatchId.size).toBe(0);
+    expect(runtime.dequeuedClientMessageIdsByBatchId.size).toBe(0);
   });
 
   test("an id-unanimous batch with uniform token presence stays attributed", () => {
@@ -548,6 +597,7 @@ describe("MCP originator batch resolution", () => {
 
     const consumed = consumeQueuedTurn(runtime);
     expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
+    expect(consumed?.queuedTurn.messages).toHaveLength(2);
   });
 
   test("an originator-unanimous batch keeps its run's held token", () => {

@@ -436,7 +436,8 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(suppressActingUserFallback
         ? { suppressActingUserFallback: true }
         : {}),
-      ...(mcpOriginatorSuperRunId ? { mcpOriginatorSuperRunId } : {}),
+      // A newly scoped execution context must never inherit ambient authority.
+      mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
