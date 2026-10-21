@@ -2579,7 +2579,7 @@ Each output shown is the value you read from [`UserMessage.tool_use_result`](#us
     "subagent_type": str | None,  # The type of specialized agent to use
     "model": "sonnet" | "opus" | "haiku" | "fable" | None,  # Model override for this agent
     "effort": "low" | "medium" | "high" | "xhigh" | "max" | None,  # Reasoning effort for this agent
-    "run_in_background": bool | None,  # Agents run in the background by default; set to False to run synchronously
+    "run_in_background": bool | None,  # Default when omitted: your main agent's call runs the new agent in the background, and a subagent's call waits for it
     "name": str | None,  # Name for the spawned agent
     "team_name": str | None,  # Deprecated; ignored
     "mode": "acceptEdits" | "auto" | "bypassPermissions" | "default" | "dontAsk" | "plan" | None,  # Deprecated; ignored. The subagent inheritance rules decide a subagent's permission mode
@@ -2588,6 +2588,13 @@ Each output shown is the value you read from [`UserMessage.tool_use_result`](#us
 ```
 
 Launches a new agent to handle complex, multi-step tasks autonomously.
+
+When Claude leaves `run_in_background` out of an `Agent` call, by default your main agent doesn't wait for the new agent and a subagent waits:
+
+* **From your main agent**: the new agent runs in the background, and the result has `status: "async_launched"`. To make your main agent wait for the new agent instead, see [Choose whether Claude waits for subagents](/docs/en/agent-sdk/subagents#choose-whether-claude-waits-for-subagents).
+* **From one of your subagents**: the calling subagent [waits for the new agent](/docs/en/sub-agents#let-subagents-spawn-their-own-subagents). The new agent runs in the background instead when its definition sets [`background`](#agentdefinition) to `True`, or when you [turn fork mode off](/docs/en/sub-agents#turn-fork-mode-on-or-off) by setting `CLAUDE_CODE_FORK_SUBAGENT` to `0`.
+
+Before Python SDK v0.2.169, agents that your subagents started also ran in the background by default. That release is the first to bundle Claude Code v2.1.302 or later.
 
 **Output (status: `"completed"`):**
 
