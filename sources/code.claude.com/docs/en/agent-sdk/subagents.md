@@ -147,7 +147,7 @@ Focus on:
 | `tools` | `string[]` | No | Array of allowed tool names. If omitted, inherits every [tool available to subagents](/docs/en/sub-agents#available-tools) |
 | `disallowedTools` | `string[]` | No | Array of tool names to remove from the agent's tool set. MCP server-level patterns are also accepted: `mcp__server` or `mcp__server__*` removes every tool from that server, and `mcp__*` removes every MCP tool from any server |
 | `model` | `string` | No | Model override for this agent. Accepts an alias such as `'fable'`, `'opus'`, `'sonnet'`, `'haiku'`, `'inherit'`, or a full model ID. `'inherit'` uses the main model. When you omit it, Claude Code picks the model in the [subagent model order](/docs/en/sub-agents#choose-a-model) |
-| `skills` | `string[]` | No | List of skill names to preload into the agent's context at startup. Unlisted skills remain invocable through the Skill tool |
+| `skills` | `string[]` | No | List of skill names to preload into the agent's context at startup. At most the [first 32 distinct names](/docs/en/sub-agents#preload-skills-into-subagents) in the list are preloaded. Unlisted skills remain invocable through the Skill tool |
 | `memory` | `'user' \| 'project' \| 'local'` | No | Memory source for this agent |
 | `mcpServers` | `(string \| object)[]` | No | MCP servers available to this agent, by name or inline config |
 | `initialPrompt` | `string` | No | Auto-submitted as the first user turn when this agent runs as the main thread agent. Ignored when the agent is invoked as a subagent |
@@ -323,7 +323,7 @@ for await (const message of query({
 
 Claude invokes subagents through the Agent tool. To detect when a subagent is invoked, check for `tool_use` blocks where `name` is `"Agent"`.
 
-Messages from within a subagent's context include a `parent_tool_use_id` field. In TypeScript, each assistant and user message a subagent produces also carries [`agent_id`](/docs/en/agent-sdk/typescript#sdkassistantmessage): the `task_id` of that subagent's [task events](/docs/en/agent-sdk/typescript#sdktaskstartedmessage). `agent_id` requires TypeScript Agent SDK v0.3.292 or later.
+Messages from within a subagent's context include a `parent_tool_use_id` field. In TypeScript, each assistant and user message a subagent produces also carries [`agent_id`](/docs/en/agent-sdk/typescript#sdkassistantmessage): the `task_id` of that subagent's [task events](/docs/en/agent-sdk/typescript#sdktaskstartedmessage). `agent_id` stays the same when you [resume the subagent](#resume-subagents). `agent_id` requires TypeScript Agent SDK v0.3.292 or later.
 
 > [!NOTE]
 >

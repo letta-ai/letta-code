@@ -1120,7 +1120,7 @@ Some main-conversation state never reaches a non-fork subagent:
 
 Each subagent invocation creates a new instance rather than continuing an earlier one. To continue an existing subagent's work instead of starting over, ask Claude to resume it.
 
-Resumed subagents retain their full conversation history, including all previous tool calls, results, and reasoning. If the subagent spawned [background subagents of its own](#let-subagents-spawn-their-own-subagents), that history includes the results they delivered while it ran. The subagent picks up exactly where it stopped rather than starting fresh.
+Resumed subagents retain their full conversation history, including all previous tool calls, results, and reasoning. If the subagent spawned [background subagents of its own](#let-subagents-spawn-their-own-subagents), that history includes the results they delivered while it ran. Before v2.1.304, a subagent that Claude messaged or resumed right after it finished could forget its most recent work.
 
 * When a subagent completes, Claude receives its agent ID.
 * The built-in Explore and Plan agents are one-shot and return no agent ID, so Claude can't resume them. Use `general-purpose` or a custom subagent when you need to continue the work.
@@ -1159,6 +1159,16 @@ Subagent transcripts persist independently of the main conversation:
 * **Main conversation compaction**: when the main conversation compacts, subagent transcripts are unaffected. They're stored in separate files.
 * **Session persistence**: subagent transcripts persist within their session. You can [resume a subagent](#resume-subagents) after restarting Claude Code by resuming the same session.
 * **Automatic cleanup**: Claude Code deletes subagent transcripts after the `cleanupPeriodDays` retention period, 30 days by default, following the [retention sweep rules](/docs/en/claude-directory#cleaned-up-automatically).
+
+##### Message a subagent by name after a restart
+
+> [!NOTE]
+>
+> For a subagent that launched as a teammate, see the [agent team limitations](/docs/en/agent-teams#limitations) instead.
+
+If Claude can't message a subagent by name after you restart Claude Code and resume the session, give Claude the subagent's agent ID instead. Names Claude gave from the main conversation since its last [compaction](/docs/en/context-window#what-survives-compaction) survive the restart. A name from before that compaction doesn't. To find the ID for a name, look for that name in the `agent-{agentId}.meta.json` files in `~/.claude/projects/{project}/{sessionId}/subagents/`.
+
+After one message by ID, the subagent's name works again, unless a newer agent has taken that name. Before v2.1.299, no name survived a restart, and a send by name was refused even when the agent ID still worked.
 
 #### Auto-compaction
 
