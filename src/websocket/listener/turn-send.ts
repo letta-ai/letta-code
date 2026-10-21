@@ -20,7 +20,6 @@ import {
 import {
   type ApprovalContinuationSendResult,
   isApprovalOnlyInput,
-  resolveStaleApprovals,
   sendApprovalContinuationWithRetry,
   sendMessageStreamWithRetry,
 } from "./send";
@@ -89,21 +88,6 @@ export async function startTurnInput(
   };
   const sender = createTurnInputSender(sendParams);
   const input = params.getInput();
-  if (
-    params.runtime.queuePumpActive &&
-    !isApprovalOnlyInput(input.messages) &&
-    params.getInterruptedToolCallIds().length === 0 &&
-    params.runtime.pendingApprovalResolvers.size === 0
-  ) {
-    await resolveStaleApprovals(
-      params.runtime,
-      params.socket,
-      params.turnLease,
-      {
-        authorityGuard: params.authorityGuard,
-      },
-    );
-  }
   const withSkills = injectQueuedSkillContent(input.messages, params);
   const result = await sender.send(withSkills);
   return {
