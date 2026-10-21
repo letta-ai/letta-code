@@ -530,7 +530,7 @@ describe("external coding agent vault secrets", () => {
 });
 
 describe("external coding agent reminder composition", () => {
-  for (const type of ["claude-code", "codex"] as const) {
+  for (const type of ["claude-code", "codex", "opencode"] as const) {
     test.each([
       ["skills", "MCP", "skills\n\nMCP"],
       ["skills", undefined, "skills"],
@@ -568,6 +568,10 @@ describe("external coding agent reminder composition", () => {
                 stdout: '{"result":"done","session_id":"c1"}',
                 stderr: "",
               };
+            },
+            runOpenCodeTurn: async (options) => {
+              received = options.mcpReminder;
+              return { agentId: "parent", report: "done", success: true };
             },
             runCodexTurn: async (options) => {
               received = options.mcpReminder;

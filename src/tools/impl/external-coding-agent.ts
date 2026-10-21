@@ -99,6 +99,7 @@ export interface ExternalCodingAgentProcessResult {
 export interface ExternalCodingAgentDependencies {
   resolveSkillsReminder?: typeof resolveExternalCodingAgentSkillsReminder;
   runCodexTurn?: typeof runCodexTurn;
+  runOpenCodeTurn?: typeof runOpenCodeTurn;
   runProcess?: (
     command: ExternalCodingAgentCommand,
     options: {
@@ -477,17 +478,15 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
-  if (options.type === "claude-code" || options.type === "codex") {
-    const skillsReminder = await (
-      deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
-    )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
-    options = {
-      ...options,
-      mcpReminder:
-        [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
-        undefined,
-    };
-  }
+  const skillsReminder = await (
+    deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
+  )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
+  options = {
+    ...options,
+    mcpReminder:
+      [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
+      undefined,
+  };
   const startedAt = Date.now();
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
@@ -579,7 +578,7 @@ export async function runExternalCodingAgent(
   if (options.type === "opencode") {
     // OpenCode persists native sessions itself; transcript capture currently
     // supports only Claude/Codex formats, not OpenCode's database.
-    return runOpenCodeTurn(
+    return (deps.runOpenCodeTurn ?? runOpenCodeTurn)(
       {
         ...options,
         cwd,

@@ -80,6 +80,20 @@ The following skills are available. Read the relevant SKILL.md before using a sk
     expect(discovered).toBe(false);
   });
 
+  test("failed skill discovery skips skills without failing the launch", async () => {
+    const reminder = await resolveExternalCodingAgentSkillsReminder(
+      "parent",
+      "/project",
+      {
+        getScopeAgentId: async () => "parent",
+        discoverSkills: async () => {
+          throw new Error("discovery unavailable");
+        },
+      },
+    );
+    expect(reminder).toBeUndefined();
+  });
+
   test("caps large inventories without cutting paths", () => {
     const reminder = buildExternalCodingAgentSkillsReminder(
       Array.from({ length: 200 }, (_, i) => skill(`skill-${i}`)),
