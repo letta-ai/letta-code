@@ -880,8 +880,10 @@ async function connectWithRetry(
 
     fileCommandSession.dispose();
     const reasonText = reason.toString();
+    // Fencing 1008s can supersede us without a prior replacement close.
     const terminalClose =
       runtime.intentionallyClosed ||
+      (code === 1008 && reasonText !== "Environment not found") ||
       (code === 1000 && reasonText === "Replaced by new connection");
 
     if (!terminalClose && runtime.hasSuccessfulConnection) {
@@ -946,7 +948,8 @@ async function connectWithRetry(
     if (terminalClose || code === 1008) {
       if (getActiveRuntime() === runtime) setActiveRuntime(null);
       stopRuntime(runtime, true);
-      opts.onDisconnected();
+      if (code === 1008 && opts.onNeedsReregister) opts.onNeedsReregister();
+      else opts.onDisconnected();
       return;
     }
 
@@ -978,17 +981,13 @@ async function connectWithRetry(
   });
 }
 
-/**
- * Check if listener is currently active.
- */
+/** Check if listener is currently active. */
 export function isListenerActive(): boolean {
   const runtime = getActiveRuntime();
   return runtime !== null && runtime.transport !== null;
 }
 
-/**
- * Stop the active listener connection.
- */
+/** Stop the active listener connection. */
 export function stopListenerClient(): void {
   const runtime = getActiveRuntime();
   if (!runtime) {

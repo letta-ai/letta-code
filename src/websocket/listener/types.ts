@@ -58,7 +58,7 @@ export interface StartListenerOptions {
     connection: ListenerConnectionState,
   ) => void | Promise<void>;
   onDisconnected: () => void;
-  onNeedsReregister?: (replacement: ListenerClientReplacement) => void;
+  onNeedsReregister?: (replacement?: ListenerClientReplacement) => void;
   /** Explicit state lineage supplied only by onNeedsReregister. */
   replacement?: ListenerClientReplacement;
   onError: (error: Error) => void;

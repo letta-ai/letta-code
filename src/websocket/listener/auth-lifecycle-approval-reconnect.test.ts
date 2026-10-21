@@ -385,7 +385,11 @@ describe("listener approval reconnect timing", () => {
     }
   });
 
-  test("relay re-registration keeps local tool ownership and a live local gateway call", async () => {
+  const reregistrationTest = test.each([
+    "Environment not found",
+    "Listener pair is not current",
+  ]);
+  reregistrationTest("relay ownership: %s", async (reason) => {
     let connectedCount = 0;
     let reportReplacementStartup!: () => void;
     const replacementStartup = new Promise<void>((resolve) => {
@@ -482,6 +486,7 @@ describe("listener approval reconnect timing", () => {
         conversationRuntime.loopStatus === "EXECUTING_CLIENT_SIDE_TOOL",
       "client tool did not start",
     );
+
     const initialControlIndex = lastConnectionIndexForChannel("control");
     addSecondInitializedSubscriber(listener);
     const gatewayConnection = listener.connections.get("unrelated-connection");
@@ -503,7 +508,7 @@ describe("listener approval reconnect timing", () => {
         },
       );
     }
-    connections[initialControlIndex]?.close(1008, "Environment not found");
+    connections[initialControlIndex]?.close(1008, reason);
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 2 &&
@@ -511,6 +516,25 @@ describe("listener approval reconnect timing", () => {
       "listener did not reconnect after service restart",
     );
     await replacementStartup;
+    if (reason !== "Environment not found") {
+      const replacement = getActiveRuntime();
+      expect(replacement).not.toBe(listener);
+      expect(listener.intentionallyClosed).toBe(true);
+      expect(listener.conversationRuntimes.size).toBe(0);
+      expect(listener.connections.size).toBe(0);
+      expect(turnLease.signal.aborted).toBe(true);
+      expect(localRejected).toHaveBeenCalledTimes(1);
+      finishExecution(executionResults);
+      expect((await approvalStop).kind).toBe("interrupted");
+      expect(deps.sendApprovalContinuation).not.toHaveBeenCalled();
+      releaseReplacementStartup();
+      await waitFor(
+        () =>
+          replacement?.connections.get("connection-new")?.ingressReady === true,
+        "fresh runtime did not finish re-registration",
+      );
+      return;
+    }
     expect(listener.connections.get("connection-new")?.initialized).toBe(false);
     expect(getActiveRuntime()).toBe(listener);
     expect(conversationRuntime.turnLifecycle.isCurrent(turnLease)).toBe(true);
@@ -588,7 +612,6 @@ describe("listener approval reconnect timing", () => {
     expect(listener.connections.has("connection-id")).toBe(false);
     expect(conversationRuntime.lastStopReason).toBe("end_turn");
   });
-
   test("service restart buffers failed client-tool terminal frames until replacement startup", async () => {
     let connectedCount = 0;
     let reportReplacementStartup!: () => void;

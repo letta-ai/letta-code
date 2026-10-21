@@ -759,7 +759,7 @@ describe("listener auth lifecycle", () => {
       "approval resolver was not registered",
     );
 
-    connections[0]?.close(1008, "environment not found");
+    connections[0]?.close(1008, "Environment not found");
     await waitFor(
       () => onNeedsReregister.mock.calls.length === 1,
       "1008 close did not request re-registration",
