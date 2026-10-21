@@ -10,6 +10,7 @@
  * listener identities and owns their lifecycle.
  */
 
+import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { homedir, uptime } from "node:os";
@@ -39,8 +40,10 @@ interface ManualListenerLockDeps {
   processId: number;
   ownerToken: string;
   isProcessAlive: (pid: number) => boolean;
-  /** Epoch ms of the current OS boot; records acquired earlier are stale. */
+  /** Epoch ms of the current OS boot, used to spot pids reused after reboot. */
   bootTimeMs: number;
+  /** Returns the pid's command line, or null when it cannot be determined. */
+  getProcessCommand: (pid: number) => string | null;
 }
 
 const RECOVERY_MAX_DEPTH = 64;
@@ -93,22 +96,39 @@ function getDefaultBootTimeMs(): number {
   return Date.now() - uptime() * 1000;
 }
 
+function defaultGetProcessCommand(pid: number): string | null {
+  if (process.platform === "win32") return null;
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+      timeout: 1000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
- * An owner recorded before the current boot cannot still be running, even if
- * its pid has since been reused by an unrelated process.
+ * A live pid recorded before the current boot may have been reused by an
+ * unrelated process after a reboot. The boot estimate moves with the wall
+ * clock, so it only prompts a closer look: the owner is treated as stale only
+ * when its pid is positively identified as something other than letta.
  */
 function isOwnerAlive(
   record: ManualListenerLockRecord,
   deps: ManualListenerLockDeps,
 ): boolean {
+  if (!deps.isProcessAlive(record.pid)) return false;
   const acquiredAtMs = Date.parse(record.acquiredAt);
   if (
-    Number.isFinite(acquiredAtMs) &&
-    acquiredAtMs < deps.bootTimeMs - BOOT_TIME_SLACK_MS
+    !Number.isFinite(acquiredAtMs) ||
+    acquiredAtMs >= deps.bootTimeMs - BOOT_TIME_SLACK_MS
   ) {
-    return false;
+    return true;
   }
-  return deps.isProcessAlive(record.pid);
+  const command = deps.getProcessCommand(record.pid);
+  return !command || /letta/i.test(command);
 }
 
 function getDefaultLockRoot(): string {
@@ -314,6 +334,7 @@ export async function acquireManualListenerLock(
     ownerToken: randomUUID(),
     isProcessAlive: defaultIsProcessAlive,
     bootTimeMs: getDefaultBootTimeMs(),
+    getProcessCommand: defaultGetProcessCommand,
     ...overrides,
   };
   const listenerLockDir = path.join(deps.lockRoot, "listeners");

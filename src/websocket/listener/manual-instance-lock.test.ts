@@ -133,31 +133,42 @@ describe("manual listener instance lock", () => {
     await replacement.release();
   });
 
-  test("treats a live pid recorded before the current boot as stale", async () => {
+  test("reclaims a pre-boot lock only when its live pid is not letta", async () => {
     await acquire(SCOPE, 101, "owner-pre-reboot");
-    const acquireWithBootTime = (
+    const acquireWith = (
       processId: number,
-      ownerToken: string,
       bootTimeMs: number,
+      command: string | null,
     ) =>
       acquireManualListenerLock(SCOPE, {
         lockRoot,
         processId,
-        ownerToken,
+        ownerToken: `owner-${processId}`,
         isProcessAlive: () => true,
         bootTimeMs,
+        getProcessCommand: () => command,
       });
+    const beforeLock = Date.now() - 3_600_000;
+    const afterLock = Date.now() + 3_600_000;
 
     // Same boot: the live incumbent still blocks.
     await expect(
-      acquireWithBootTime(202, "owner-same-boot", Date.now() - 3_600_000),
+      acquireWith(202, beforeLock, "/usr/libexec/unrelated"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+    // Looks pre-boot (e.g. clock jump) but the pid is still a letta server.
+    await expect(
+      acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+    // Command lookup failed: fail closed.
+    await expect(acquireWith(202, afterLock, null)).rejects.toBeInstanceOf(
+      ManualListenerAlreadyRunningError,
+    );
 
-    // After a reboot, pid 101 may belong to an unrelated process.
-    const replacement = await acquireWithBootTime(
+    // After a reboot, pid 101 belongs to an unrelated process.
+    const replacement = await acquireWith(
       303,
-      "owner-post-reboot",
-      Date.now() + 3_600_000,
+      afterLock,
+      "/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird",
     );
     const record = JSON.parse(await readFile(replacement.lockPath, "utf-8"));
     expect(record.pid).toBe(303);
