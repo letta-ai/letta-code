@@ -639,6 +639,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             connectedId,
             readiness,
             startChannelGateway,
+            (error) =>
+              logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
           );
           if (!ready) return;
           sessionLog.log("Local channel listener ready.");
@@ -798,6 +800,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               connectedId,
               readiness,
               startChannelGateway,
+              (error) =>
+                logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
@@ -918,6 +922,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               connectedId,
               readiness,
               startChannelGateway,
+              (error) =>
+                logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
