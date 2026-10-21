@@ -15,7 +15,7 @@
     "maxConcurrent": {
       "type": "integer",
       "minimum": 1,
-      "description": "Maximum subagents running at once (default 16). Further agent() calls queue."
+      "description": "Maximum tool, subagent, or decision calls running at once (default 16). Further calls queue."
     },
     "model": {
       "type": "string",
