@@ -1003,6 +1003,26 @@ Read token attribution from the collection fields:
 
 Claude Code leaves the optional `deferredBuiltinTools`, `systemTools`, and `systemPromptSections` diagnostics unset, so expect them to be absent even though the type declares them.
 
+#### Find a row by ID, a server's instruction tokens, or an entry's plugin and file
+
+MCP server instructions are the usage notes that connected servers supply and Claude Code adds to context, and the `mcp_instructions` row of `categories` counts their tokens. Use these [`getContextUsage()`](#query-object) fields to pick out one `categories` row by `id`, split the `mcp_instructions` tokens by server, or find the plugin and file behind an agent or skill entry:
+
+| Field | Found on | What it holds |
+| :- | :- | :- |
+| `id` | Each `categories` row | The row's identifier, one of the values the [response type](#sdkcontrolgetcontextusageresponse) lists, such as `mcp_instructions`. Match on `id` to pick out one row, or on `kind` to group rows. A later Claude Code version can send a value your installed types don't list, so treat an `id` you don't recognize as absent |
+| `mcpInstructions` | The response | One `{ serverName, tokens }` entry per connected MCP server that supplies instructions, or an empty array when none does. The `tokens` values are estimates that add up to the `mcp_instructions` row's `tokens`. `serverName` is the `name` that [`mcpServerStatus()`](#query-object) reports for that server |
+| `pluginId` | `agents` and `skills.skillFrontmatter` entries | Names the plugin the entry comes from, as an ID in the form `name@marketplace`, and is absent for an entry that doesn't come from a plugin. When the plugin didn't come from a marketplace, the part after `@` names [its origin](/docs/en/plugins/loading#find-where-a-plugin-came-from) instead, such as `inline` for one you loaded through the [`plugins`](#options) option |
+| `path` | `agents` and `skills.skillFrontmatter` entries | Absolute path of the file that defines the agent or skill, on the machine where Claude Code runs. The field is absent when no file defines the entry, for example an agent from the [`agents`](#options) option or a skill built into Claude Code |
+
+As an example of matching on `id`, this sample finds the `mcp_instructions` row:
+
+```typescript theme={null}
+// q is the Query object that query() returned
+const usage = await q.getContextUsage();
+// undefined if no connected server supplies instructions
+const row = usage.categories.find((c) => c.id === "mcp_instructions");
+```
+
 ### `SDKControlReadFileResponse`
 
 Return type of [`readFile()`](#query-object).
@@ -5233,6 +5253,7 @@ When you call `setMcpServers()`, Claude Code applies these rules:
 * **Servers the call doesn't name**: outside a [cloud session](/docs/en/claude-code-on-the-web), Claude Code disconnects the servers an earlier `setMcpServers()` call added and the in-process SDK servers, and lists them in `removed`. Other servers keep running and aren't listed in `removed`, among them the stdio, HTTP, and SSE servers from the [`mcpServers`](#options) option, servers from settings files, and plugin-provided servers.
 * **Servers the call names**: Claude Code replaces a stdio, HTTP, or SSE server that an earlier `setMcpServers()` call added only when its config differs from the one you passed. An in-process SDK server already registered under that name stays as it is, so to swap one, leave it out of one call and add it in the next.
 * **Built-in servers the CLI started at startup**: if the call names one, Claude Code drops that entry and reports it in `errors`.
+* **Stdio, HTTP, or SSE servers that share a name with one from an MCP installation scope such as `.mcp.json`**: under that name the session uses your server's tools rather than the [installation-scope server's](/docs/en/mcp#mcp-installation-scopes). Before Claude Code v2.1.305, Claude Code could disconnect your server and connect the installation-scope server when your app [reloaded plugins](#query-object).
 
 The promise resolves after newly added stdio, HTTP, and SSE servers connect or fail, so tools from servers that connected are available on the next turn.
 
