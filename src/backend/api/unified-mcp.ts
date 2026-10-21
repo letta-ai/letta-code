@@ -17,6 +17,9 @@ export interface UnifiedMcpClient {
  * (USER_SCOPED_MCP_CONNECTIONS). Sent only when a token is held for the run.
  */
 const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
+// Compatibility negotiation, not principal authority. Emitted by the same
+// process that holds the bearer and isolates listener queues by originator.
+const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 
 export interface UnifiedMcpServer {
   id: string;
@@ -315,6 +318,7 @@ export async function runUnifiedMcpTool(params: {
           ? {
               headers: {
                 [MCP_ORIGINATOR_TOKEN_HEADER]: params.originatorToken,
+                [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
               },
             }
           : {}),
