@@ -162,7 +162,7 @@ export function validateTargetDevice(
   if (environment?.organizationId === "local") {
     return {
       ok: false,
-      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine (or enable remote access in the desktop app) to connect it.`,
+      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine to connect it.`,
     };
   }
 
