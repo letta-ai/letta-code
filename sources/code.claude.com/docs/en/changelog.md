@@ -10,6 +10,11 @@ This page is generated from the [CHANGELOG.md on GitHub](https://github.com/anth
 
 Run `claude --version` to check your installed version.
 
+**2.1.306**
+
+* Fixed `claude -p` inside cloud sessions reporting "Not logged in" when started without the session's environment variables
+* Fixed an API error being replaced by "prompt is too long", and an unneeded compaction, in sessions with many MCP tools
+
 **2.1.305**
 
 **Added**
