@@ -484,6 +484,8 @@ describe("listener approval reconnect timing", () => {
     );
     const initialControlIndex = lastConnectionIndexForChannel("control");
     addSecondInitializedSubscriber(listener);
+    const gatewayConnection = listener.connections.get("unrelated-connection");
+    if (!gatewayConnection) throw new Error("local gateway connection missing");
     const localResult = mock(() => {});
     const localRejected = mock(() => {});
     const cloudRejected = mock(() => {});
@@ -543,6 +545,12 @@ describe("listener approval reconnect timing", () => {
       () => listener.connections.get("connection-new")?.ingressReady === true,
       "replacement listener connection did not finish startup",
     );
+    expect(listener.connections.get(gatewayConnection.id)).toBe(
+      gatewayConnection,
+    );
+    expect(gatewayConnection.initialized).toBe(true);
+    expect(gatewayConnection.cancellation.signal.aborted).toBe(false);
+    expect(isListenerTransportOpen(gatewayConnection.writer)).toBe(true);
     const result = await approvalStop;
     expect(result.kind).toBe("terminal");
     if (result.kind !== "terminal") throw new Error("tool did not finish");
