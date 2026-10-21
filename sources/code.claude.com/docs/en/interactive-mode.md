@@ -262,6 +262,12 @@ Press `v` for character-wise selection or `V` for line-wise selection. Motions e
 
 Block-wise visual mode with `Ctrl+V` is not supported.
 
+### Cancel a question in vim mode
+
+When you're typing your own answer in the `Other` row of a [question Claude asks](/docs/en/tools-reference#askuserquestion-tool-behavior), press `Esc` twice to cancel the question.
+
+To cancel with a single key press instead, [bind another key to cancel the question](/docs/en/keybindings#cancel-a-question-with-one-key-press).
+
 ## Command history
 
 Claude Code keeps a history of the prompts you type, and Up-arrow recall reaches prompts from past sessions of the same project:
@@ -392,6 +398,15 @@ Claude Code runs some commands as soon as you send them instead of queueing them
 * [`/model`](/docs/en/model-config#setting-your-model): once you confirm the [cache warning](/docs/en/prompt-caching#switching-models), if Claude Code shows one, Claude Code applies your change to the next request it makes in that turn
 * [`/effort`](/docs/en/model-config#adjust-effort-level): once you confirm the [cache warning](/docs/en/prompt-caching#changing-effort-level), if Claude Code shows one, Claude Code applies your change to the next request it makes in that turn
 * [`/fast`](/docs/en/fast-mode#toggle-fast-mode): Claude Code keeps the fast mode setting that was active when the turn started, so your speed change applies from your next turn. If your current model doesn't support fast mode, turning it on also [switches your model](/docs/en/prompt-caching#turning-on-fast-mode), and Claude Code uses the new model from its next request in that turn
+
+### Background a session with messages queued
+
+When the session moves to the background after you [press `←`](/docs/en/agent-view#switch-sessions-without-leaving-the-terminal), the messages you had queued move with it. Claude reads them there in the order you sent them.
+
+Commands and `!` shell commands can't move, and neither can some messages, such as one with an [IDE selection](/docs/en/vs-code#the-built-in-ide-mcp-server) attached. If you press `←` while one of them is queued, the session stays in the foreground and a notice that begins `Cannot open agents` appears. To background the session, get the entry out of the queue and then press `←` again:
+
+* **Commands and `!` shell commands**: wait for them to run at the end of the turn, or [take them back](#take-back-what-you-queued) and clear the input box. While anything else is queued, you can't take `!` shell commands back, so wait for them to run.
+* **Messages that can't move**: wait until Claude has read them
 
 ### Take back what you queued
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.306:docs:518355818b74777fced2a3fa7e1ae56695cf5e409b13ac167a70baf7440afe11:runtime:26c6b7669fa33cf3a5ef02689d163502ea774725297711a43096db08953536b9",
+  "candidate_id": "claude@2.1.306:docs:cf20e1e2112ec9c19d5f75dc1b33183304d104afc57de01b2d75f3d4c1fd6df8:runtime:26c6b7669fa33cf3a5ef02689d163502ea774725297711a43096db08953536b9",
   "package_version": "2.1.306",
   "npm_integrity": "sha512-7biQtEqwnigGbezCgmpkGfcleiRddNy7Z9FXLCxmaizBnC11Qk9dxnr6mPBMX5eTRbnoMGHHIsL5M5el1vWhlw==",
   "npm_published_at": "2026-10-21T02:28:47.495Z",
@@ -674,7 +674,7 @@
       },
       "https://code.claude.com/docs/en/interactive-mode.md": {
         "url": "https://code.claude.com/docs/en/interactive-mode.md",
-        "hash": "460314f54f20914cad863b71f78bd6d475bab89360fccea64e2e97fbae3c96aa",
+        "hash": "a6781e829fe4d53e7529946719103a366ee75c8678e4f6d7a19dd162412f22b4",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/interactive-mode.md"
       },
@@ -1160,7 +1160,7 @@
       },
       "https://code.claude.com/docs/en/sub-agents.md": {
         "url": "https://code.claude.com/docs/en/sub-agents.md",
-        "hash": "ef0b7f52c196c22e986e546107112d74ff036a6110a9910a7ae2e4a5c4ecf356",
+        "hash": "fe1e138fd6bff2ebaf63366a943637f25fcddac490de879e2f973f00680281e5",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/sub-agents.md"
       },
@@ -1178,7 +1178,7 @@
       },
       "https://code.claude.com/docs/en/tools-reference.md": {
         "url": "https://code.claude.com/docs/en/tools-reference.md",
-        "hash": "7ed98b5309e16ef87ea86c46409f432c520f3fbbdf70d08a30312eddc049eb63",
+        "hash": "f7b4ca6a8b5f97804f2ec7ba8872a73f3aa3299faeeca3a282961624ec86ed6b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/tools-reference.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "518355818b74777fced2a3fa7e1ae56695cf5e409b13ac167a70baf7440afe11"
+    "digest": "cf20e1e2112ec9c19d5f75dc1b33183304d104afc57de01b2d75f3d4c1fd6df8"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1683,8 +1683,8 @@
     ],
     "digest": "26c6b7669fa33cf3a5ef02689d163502ea774725297711a43096db08953536b9"
   },
-  "fetched_at": "2026-10-21T18:31:44.436Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/39653325750",
-  "state_commit_parent": "d198dbd4a65c5e0ad7d3ed7a7212ff8ebd3fe3a5",
-  "analysis_parent_sha": "d198dbd4a65c5e0ad7d3ed7a7212ff8ebd3fe3a5"
+  "fetched_at": "2026-10-21T20:27:44.289Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/39670263493",
+  "state_commit_parent": "d91d2cb7e90939bd999f5790b0f7faa0f44ccecb",
+  "analysis_parent_sha": "d91d2cb7e90939bd999f5790b0f7faa0f44ccecb"
 }

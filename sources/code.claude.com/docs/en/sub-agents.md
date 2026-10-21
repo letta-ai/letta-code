@@ -955,7 +955,7 @@ A background subagent that completes stays listed in [`/tasks`](/docs/en/command
 
 ### Subagent names
 
-Claude can give a subagent a name by passing a `name` parameter on the Agent tool call, and may do so on its own, without asking you first. The name makes the subagent addressable: Claude can [message or resume it by name](#resume-subagents) after it finishes.
+If you start a session with [agent teams](/docs/en/agent-teams#enable-agent-teams) enabled, Claude can give a subagent a name by passing a `name` parameter on the Agent tool call. It may do so on its own, without asking you first. The name makes the subagent addressable: Claude can [message or resume it by name](#resume-subagents) after it finishes.
 
 In an interactive session with [agent teams](/docs/en/agent-teams) enabled, a subagent that Claude spawns from the main conversation with a `name` launches as a teammate instead, unless the call is a [fork](#fork-the-current-conversation) or passes `isolation` on the call itself. An `isolation` value in the subagent's frontmatter doesn't prevent it, and the teammate then runs in the main session's working directory. See [How Claude starts agent teams](/docs/en/agent-teams#how-claude-starts-agent-teams).
 

@@ -476,7 +476,11 @@ PowerShell commands follow the [same main-session working-directory reset behavi
 
 PowerShell commands also receive the variables hooks persist through `CLAUDE_ENV_FILE`, under the conditions in [Persisted variables in PowerShell commands](/docs/en/hooks#persisted-variables-in-powershell-commands). Requires Claude Code v2.1.296 or later.
 
-Exit code 1 from `grep`, `rg`, `egrep`, `fgrep`, `findstr`, and `git grep` means no matches. Exit code 1 from `git diff` means differences exist. Neither result is reported to Claude as a command failure. For `robocopy`, exit codes 0 through 7 are informational results, such as files copied or extra files detected. Exit codes of 8 or higher count as failures.
+### Exit code 1 from searches and `git diff` in PowerShell
+
+If a `grep` or `rg` search that matches nothing shows `Error: Exit code 1` when Claude runs it in the PowerShell tool, the search didn't fail. You don't need to do anything. The error can appear when the search is part of a longer command. For example, when `rg` exits with code 1, `rg foo | Out-Null` shows the error and `rg foo` doesn't.
+
+The PowerShell tool can count exit code 1 as a normal result from `grep`, `rg`, `egrep`, `fgrep`, `findstr`, `git grep`, and `git diff`. The searches use exit code 1 to report no matches. From `git diff`, exit code 1 means the files differ. A command that shows the error when Claude runs it [counts as failed](/docs/en/skills#when-an-injected-command-fails) in a skill with `shell: powershell`.
 
 ### Windows encoding and exit codes
 
@@ -484,7 +488,8 @@ Exit code 1 from `grep`, `rg`, `egrep`, `fgrep`, `findstr`, and `git grep` means
 * Claude Code encodes text piped to a native command's standard input as UTF-8
 * Claude Code captures error output without ANSI escape sequences
 * A command whose child process waits on standard input receives end-of-file instead of hanging
-* Exit code 1 from `where.exe` means no match, and from `fc.exe` and `diff.exe` it means the files differ, so when the command produces output, Claude Code treats that exit code as a valid negative answer rather than a command error. Claude Code still reports a silenced form, such as `where.exe /Q` or a redirect to `$null`, as a failure on exit code 1
+* If `where.exe` finds no match, or `fc.exe` or `diff.exe` finds that the files differ, the result can show `Error: Exit code 1` though the command didn't fail. You don't need to do anything.
+* If a `robocopy` exit code from 1 through 7 shows as an error, the copy didn't fail and you don't need to do anything. `robocopy` exits with code 0 through 7 to report a result, such as files copied, and with 8 or higher when it fails.
 
 ### Preview limitations
 
