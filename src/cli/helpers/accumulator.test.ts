@@ -176,3 +176,42 @@ describe("cloud tool return clipping", () => {
     expect(line.kind === "tool_call" && line.resultText).toBe(alreadyClamped);
   });
 });
+
+describe("assistant text after interleaved reasoning", () => {
+  test("streams the rest of the reply into a continuation line instead of a finished row", () => {
+    const b = createBuffers();
+    b.tokenStreamingEnabled = true;
+    const assistant = (text: string) =>
+      onChunk(b, {
+        message_type: "assistant_message",
+        otid: "assistant-otid",
+        id: "msg-1",
+        content: [{ type: "text", text }],
+      } as unknown as Parameters<typeof onChunk>[1]);
+
+    assistant("Короткий ответ: нет. Я све");
+    onChunk(b, {
+      message_type: "reasoning_message",
+      otid: "reasoning-otid",
+      id: "msg-1:reasoning:0",
+      reasoning: " ",
+    } as unknown as Parameters<typeof onChunk>[1]);
+    assistant("рил исходники.");
+
+    const head = b.byId.get("msg-1");
+    expect(head?.kind === "assistant" && head.phase).toBe("finished");
+    expect(head?.kind === "assistant" && head.text).toBe(
+      "Короткий ответ: нет. Я све",
+    );
+
+    const continuation = b.byId.get("msg-1-cont-0");
+    expect(continuation?.kind).toBe("assistant");
+    expect(continuation?.kind === "assistant" && continuation.text).toBe(
+      "рил исходники.",
+    );
+    expect(continuation?.kind === "assistant" && continuation.phase).toBe(
+      "streaming",
+    );
+    expect(b.order.at(-1)).toBe("msg-1-cont-0");
+  });
+});
