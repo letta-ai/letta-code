@@ -780,12 +780,26 @@ describe("scheduler lease", () => {
     expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
     probe(null);
     expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+    // A dev/bun-run listener: same runtime as this process, no "letta" in argv.
+    probe(`${process.execPath} run src/index.ts`);
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
 
     probe("/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird");
     const token = claimSchedulerLease();
     expect(readCronFile().scheduler_owner).toEqual(
       expect.objectContaining({ pid: process.pid, token }),
     );
+  });
+
+  test("never treats our own pid as reused, even for a pre-boot lease", () => {
+    __testOverrideReadProcessIdentity(() => null);
+    __testOverridePidReuseProbe({
+      platform: "darwin",
+      bootTimeMs: () => Date.now() - 3_600_000,
+      getProcessCommand: () => "/usr/sbin/unrelated",
+    });
+    const started_at = new Date(Date.now() - 86_400_000).toISOString();
+    expect(isProcessAlive(process.pid, { started_at })).toBe(true);
   });
 });
 

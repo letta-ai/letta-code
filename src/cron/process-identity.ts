@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { uptime } from "node:os";
+import { basename } from "node:path";
 
 interface ProcessIdentity {
   startTicks: string | null;
@@ -130,6 +131,9 @@ export function isProcessAlive(
     }
   }
 
+  // Our own pid is alive by definition; never run reuse heuristics on it.
+  if (pid === process.pid) return true;
+
   if (owner && pidReuseProbe.platform !== "linux") {
     return !isPidReusedSinceBoot(pid, owner.started_at);
   }
@@ -152,7 +156,21 @@ function isPidReusedSinceBoot(pid: number, startedAt?: string): boolean {
     return false;
   }
   const command = pidReuseProbe.getProcessCommand(pid);
-  return Boolean(command) && !/letta/i.test(command ?? "");
+  return Boolean(command) && !isLettaCommand(command ?? "");
+}
+
+/**
+ * Matches letta like manual-instance-lock.ts (/letta/i), plus this process's
+ * own runtime or entry script, so dev/bun-run listeners are not reclaimed.
+ */
+function isLettaCommand(command: string): boolean {
+  if (/letta/i.test(command)) return true;
+  const script = process.argv[1];
+  if (script && command.includes(script)) return true;
+  const argv0 = command.split(/\s+/)[0] ?? "";
+  return (
+    argv0 === process.execPath || basename(argv0) === basename(process.execPath)
+  );
 }
 
 export function __testOverridePidReuseProbe(
