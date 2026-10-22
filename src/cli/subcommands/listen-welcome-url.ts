@@ -85,8 +85,9 @@ export async function openWelcomeUrl(
     return `failed:${reasonFrom(error)}`;
   }
   return new Promise<WelcomeUrlResult>((resolve) => {
+    // Not unref'd: nothing else may be keeping the event loop alive, and an
+    // unref'd timer is then never guaranteed to fire (Bun on Windows does not).
     const timer = setTimeout(() => resolve("opened"), settleMs);
-    timer.unref?.();
     subprocess.once("error", (error) => {
       clearTimeout(timer);
       resolve(`failed:${reasonFrom(error)}`);
