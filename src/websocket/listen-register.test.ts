@@ -120,6 +120,32 @@ describe("registerWithCloud", () => {
     expect(result.supportsPairedListenerGenerations).toBe(true);
   });
 
+  it.each([
+    ["https://example.com/welcome", "https://example.com/welcome"],
+    ["file:///etc/passwd", undefined],
+    ["not a url", undefined],
+    [42, undefined],
+  ])("passes through only an http(s) welcomeUrl: %p", async (sent, kept) => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          connectionId: "conn-3",
+          wsUrl: "wss://example.com",
+          welcomeUrl: sent,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      ),
+    );
+
+    const result = await registerWithCloud(
+      defaultOpts,
+      mockFetch as unknown as typeof fetch,
+    );
+
+    expect(result.welcomeUrl).toBe(kept);
+    expect("welcomeUrl" in result).toBe(kept !== undefined);
+  });
+
   it("throws with body message on non-OK response with JSON error", async () => {
     mockFetch.mockResolvedValueOnce(
       new Response(JSON.stringify({ message: "Unauthorized" }), {
