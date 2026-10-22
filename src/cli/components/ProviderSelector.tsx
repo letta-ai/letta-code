@@ -12,6 +12,10 @@ import {
   getPiProviderRegistryRevision,
   subscribePiProviderRegistry,
 } from "@/backend/dev/pi-provider-mod-registry";
+import {
+  useChatGPTRateLimitState,
+  usePostResetCursor,
+} from "@/cli/hooks/use-chatgpt-rate-limit-state";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -27,16 +31,19 @@ import {
   type ProviderStorageTarget,
   removeProviderByName,
 } from "@/providers/byok-providers";
-import {
-  formatChatGPTUsageQuotaRows,
-  readChatGPTUsage,
-} from "@/providers/chatgpt-usage-service";
+import type { ChatGPTRateLimitResetCredit } from "@/providers/chatgpt-reset-credit-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
 import { settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
+import {
+  ChatGPTResetCreditPicker,
+  type ResetPickerPhase,
+} from "./ChatGPTResetCreditPicker";
+import type { ResetNotice } from "./chatgpt-reset-credit-helpers";
 import { colors } from "./colors";
+import { ProviderManageView } from "./ProviderManageView";
 import {
   type ConnectedProvidersByTarget,
   connectedProviderSummary,
@@ -67,14 +74,16 @@ type ViewState =
   | { type: "methodSelect"; provider: ByokProvider }
   | { type: "profileSelect"; provider: ByokProvider }
   | { type: "options"; provider: ByokProvider }
-  | { type: "oauthNameInput"; provider: ByokProvider };
+  | { type: "oauthNameInput"; provider: ByokProvider }
+  | {
+      type: "resetCredits";
+      provider: ByokProvider;
+      providerName: string;
+      phase: ResetPickerPhase;
+      chosen?: ChatGPTRateLimitResetCredit;
+    };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
-
-type ChatGPTUsageStatus =
-  | { status: "loading" }
-  | { status: "ready"; rows: string[] }
-  | { status: "error"; message: string };
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -84,12 +93,6 @@ interface ProviderSelectorProps {
     target: ProviderStorageTarget,
     providerName?: string,
   ) => void;
-}
-
-function usageStatusRows(status: ChatGPTUsageStatus | undefined): string[] {
-  if (!status || status.status === "loading") return ["Loading..."];
-  if (status.status === "error") return [`Unavailable: ${status.message}`];
-  return status.rows;
 }
 
 export {
@@ -138,9 +141,9 @@ export function ProviderSelector({
     useState<ValidationState>("idle");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [optionIndex, setOptionIndex] = useState(0);
-  const [chatGPTUsageByProvider, setChatGPTUsageByProvider] = useState<
-    Record<string, ChatGPTUsageStatus>
-  >({});
+  const chatGPTRateLimits = useChatGPTRateLimitState(selectedTarget);
+  const [resetCreditIndex, setResetCreditIndex] = useState(0);
+  const [resetNotice, setResetNotice] = useState<ResetNotice | null>(null);
   // Multi-field input state (for providers like Bedrock)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
@@ -331,51 +334,57 @@ export function ProviderSelector({
     [getConnectedProviderRecords],
   );
 
+  const { load: loadChatGPTRateLimits } = chatGPTRateLimits;
   const loadChatGPTUsageForProvider = useCallback(
     (provider: ByokProvider, forceRefresh = false) => {
       if (!isChatGPTUsageProvider(provider)) return;
-
-      const records = getConnectedProviderRecords(provider);
-      for (const record of records) {
-        const providerName = record.name;
-        setChatGPTUsageByProvider((previous) => ({
-          ...previous,
-          [providerName]: { status: "loading" },
-        }));
-
-        void readChatGPTUsage({
-          target: selectedTarget,
-          providerName,
-          forceRefresh,
-        })
-          .then((result) => {
-            if (!mountedRef.current) return;
-            setChatGPTUsageByProvider((previous) => ({
-              ...previous,
-              [providerName]: result.success
-                ? {
-                    status: "ready",
-                    rows: formatChatGPTUsageQuotaRows(result.usage),
-                  }
-                : { status: "error", message: result.error.message },
-            }));
-          })
-          .catch((error) => {
-            if (!mountedRef.current) return;
-            setChatGPTUsageByProvider((previous) => ({
-              ...previous,
-              [providerName]: {
-                status: "error",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to read ChatGPT usage.",
-              },
-            }));
-          });
-      }
+      loadChatGPTRateLimits(
+        getConnectedProviderRecords(provider).map((record) => record.name),
+        forceRefresh,
+      );
     },
-    [getConnectedProviderRecords, selectedTarget],
+    [getConnectedProviderRecords, loadChatGPTRateLimits],
+  );
+
+  const { spendableCreditsFor } = chatGPTRateLimits;
+
+  const resettableProviderNames = (provider: ByokProvider): string[] =>
+    chatGPTRateLimits.resettable(getConnectedProviderRecords(provider));
+
+  // Keeps a repeated confirm Enter off Disconnect (see usePostResetCursor).
+  const markResetApplied = usePostResetCursor(
+    viewState.type === "options"
+      ? providerManageActions(
+          viewState.provider,
+          selectedTarget,
+          getConnectedProviderRecords(viewState.provider),
+          resettableProviderNames(viewState.provider),
+        )
+      : null,
+    setOptionIndex,
+  );
+  const { consume: consumeChatGPTReset } = chatGPTRateLimits;
+  const consumeResetCredit = useCallback(
+    async (
+      provider: ByokProvider,
+      providerName: string,
+      credit: ChatGPTRateLimitResetCredit,
+    ) => {
+      setViewState({
+        type: "resetCredits",
+        provider,
+        providerName,
+        phase: "consuming",
+        chosen: credit,
+      });
+      const result = await consumeChatGPTReset(providerName, credit.id);
+      // null: a duplicate confirmation while the first spend is in flight.
+      if (!result || !mountedRef.current) return;
+      setResetNotice(result.notice);
+      markResetApplied();
+      setViewState({ type: "options", provider });
+    },
+    [consumeChatGPTReset, markResetApplied],
   );
 
   useEffect(() => {
@@ -920,8 +929,10 @@ export function ProviderSelector({
         viewState.provider,
         selectedTarget,
         connectedRecords,
+        resettableProviderNames(viewState.provider),
       );
       if (key.escape) {
+        setResetNotice(null);
         setViewState({ type: "list" });
       } else if (key.upArrow) {
         setOptionIndex((prev) => Math.max(0, prev - 1));
@@ -943,10 +954,45 @@ export function ProviderSelector({
         } else if (action?.type === "reconnect") {
           onStartOAuth?.(viewState.provider, selectedTarget);
         } else if (action?.type === "refresh-usage") {
+          setResetNotice(null);
           loadChatGPTUsageForProvider(viewState.provider, true);
+        } else if (action?.type === "use-reset") {
+          setResetNotice(null);
+          setResetCreditIndex(0);
+          setViewState({
+            type: "resetCredits",
+            provider: viewState.provider,
+            providerName: action.name,
+            phase: "select",
+          });
         } else {
           setViewState({ type: "list" });
         }
+      }
+    } else if (viewState.type === "resetCredits") {
+      const credits = spendableCreditsFor(viewState.providerName);
+      if (viewState.phase === "consuming") return;
+      if (viewState.phase === "confirm") {
+        if (key.escape) {
+          setViewState({ ...viewState, phase: "select", chosen: undefined });
+        } else if (key.return && viewState.chosen) {
+          void consumeResetCredit(
+            viewState.provider,
+            viewState.providerName,
+            viewState.chosen,
+          );
+        }
+      } else if (key.escape) {
+        setViewState({ type: "options", provider: viewState.provider });
+      } else if (key.upArrow) {
+        setResetCreditIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setResetCreditIndex((prev) =>
+          Math.min(Math.max(0, credits.length - 1), prev + 1),
+        );
+      } else if (key.return) {
+        const chosen = credits[resetCreditIndex];
+        if (chosen) setViewState({ ...viewState, phase: "confirm", chosen });
       }
     } else if (viewState.type === "oauthNameInput") {
       if (key.escape) {
@@ -1426,89 +1472,22 @@ export function ProviderSelector({
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
     const connectedRecords = getConnectedProviderRecords(provider);
-    const showUsage = isChatGPTUsageProvider(provider);
-    const options = providerManageActions(
-      provider,
-      selectedTarget,
-      connectedRecords,
-    ).map((action) => providerManageActionLabel(action, provider));
-
     return (
-      <>
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color={colors.selector.title}>
-            Manage {provider.displayName}
-          </Text>
-          <Box height={1} />
-          {connectedRecords.length > 0 ? (
-            connectedRecords.map((record) => {
-              const usageStatus = chatGPTUsageByProvider[record.name];
-              return (
-                <Box key={record.id} flexDirection="column">
-                  <Box flexDirection="row">
-                    <Text>{"  "}</Text>
-                    <Text color="green">[✓]</Text>
-                    <Text> </Text>
-                    <Text bold>{record.name}</Text>
-                    <Text dimColor> · </Text>
-                    <Text color="green">Connected</Text>
-                  </Box>
-                  {showUsage && (
-                    <Box flexDirection="column">
-                      {usageStatusRows(usageStatus).map((row) => (
-                        <Box key={row} flexDirection="row">
-                          <Text>{"      "}</Text>
-                          <Text
-                            color={
-                              usageStatus?.status === "error"
-                                ? "yellow"
-                                : undefined
-                            }
-                            dimColor={usageStatus?.status !== "error"}
-                          >
-                            {row}
-                          </Text>
-                        </Box>
-                      ))}
-                    </Box>
-                  )}
-                </Box>
-              );
-            })
-          ) : (
-            <Text dimColor>{"  "}No connected providers.</Text>
-          )}
-        </Box>
-
-        <Box flexDirection="column">
-          {options.map((option, index) => {
-            const isSelected = index === optionIndex;
-            return (
-              <Box key={option} flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? "> " : "  "}
-                </Text>
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {option}
-                </Text>
-              </Box>
-            );
-          })}
-        </Box>
-
-        <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter confirm · ↑↓ navigate · Esc back</Text>
-        </Box>
-      </>
+      <ProviderManageView
+        displayName={provider.displayName}
+        connectedRecords={connectedRecords}
+        showChatGPTUsage={isChatGPTUsageProvider(provider)}
+        usageByProvider={chatGPTRateLimits.usageByProvider}
+        creditsByProvider={chatGPTRateLimits.creditsByProvider}
+        resetNotice={resetNotice}
+        optionLabels={providerManageActions(
+          provider,
+          selectedTarget,
+          connectedRecords,
+          resettableProviderNames(provider),
+        ).map((action) => providerManageActionLabel(action, provider))}
+        optionIndex={optionIndex}
+      />
     );
   };
 
@@ -1559,6 +1538,15 @@ export function ProviderSelector({
       {viewState.type === "multiInput" && renderMultiInputView()}
       {viewState.type === "options" && renderOptionsView()}
       {viewState.type === "oauthNameInput" && renderOAuthNameInputView()}
+      {viewState.type === "resetCredits" && (
+        <ChatGPTResetCreditPicker
+          providerName={viewState.providerName}
+          credits={spendableCreditsFor(viewState.providerName)}
+          selectedIndex={resetCreditIndex}
+          phase={viewState.phase}
+          chosen={viewState.chosen}
+        />
+      )}
     </Box>
   );
 }
