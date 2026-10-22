@@ -38,6 +38,8 @@ import {
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
+import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
+import { waitForBusyRunRetry } from "@/agent/busy-run-wait";
 import {
   CHATGPT_PLAN_ROTATION_MAX_SWAPS_PER_TURN,
   formatPlanRotationNotice,
@@ -52,7 +54,7 @@ import {
   clearCompletedSubagents,
   hasActiveSubagents,
 } from "@/agent/subagent-state";
-import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getBackend } from "@/backend";
 import {
   type Buffers,
   type Line,
@@ -742,9 +744,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         }
 
         let streamSequenceCursor: StreamSequenceCursor | null = null;
+        let retryingBusyInput = false;
 
         while (true) {
-          const signal = abortControllerRef.current?.signal;
+          const signal = turnAbortController.signal;
+          if (myGeneration !== conversationGenerationRef.current) return;
 
           // Check if cancelled before starting new stream
           if (signal?.aborted) {
@@ -763,7 +767,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           const { consumeQueuedSkillContent } = await import(
             "@/tools/impl/skill-content-registry"
           );
-          const skillContents = consumeQueuedSkillContent();
+          const skillContents = retryingBusyInput
+            ? []
+            : consumeQueuedSkillContent();
           if (skillContents.length > 0) {
             currentInput = [
               ...currentInput,
@@ -803,6 +809,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               { maxRetries: 0, signal },
             );
             stream = nextStream;
+            retryingBusyInput = false;
             turnToolContextId = getStreamToolContextId(nextStream);
           } catch (preStreamError) {
             debugLog(
@@ -895,41 +902,27 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
-              // Resume the in-flight run via the conversation stream endpoint (otid lookup, active-run fallback)
               try {
-                const backend = getBackend();
-                const messageOtid = currentInput
-                  .map((item) => (item as Record<string, unknown>).otid)
-                  .find((v): v is string => typeof v === "string");
-                debugLog(
-                  "stream",
-                  "Conversation busy: resuming via stream endpoint (otid=%s)",
-                  messageOtid ?? "none",
-                );
-
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
+                if (myGeneration !== conversationGenerationRef.current) return;
+                if (signal.aborted || userCancelledRef.current) {
+                  setStreaming(false);
                   return;
                 }
 
                 const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await backend.streamConversationMessages(
+                const resumeStream = await resumeBusyRequestStream(
                   conversationId,
-                  // Cast needed until SDK MessageStreamParams includes otid field
-                  {
-                    agent_id:
-                      conversationId === "default"
-                        ? (agentIdRef.current ?? undefined)
-                        : undefined,
-                    otid: messageOtid ?? undefined,
-                    starting_after: 0,
-                    batch_size: 1000,
-                  } as unknown as ConversationMessageStreamBody,
+                  agentIdRef.current,
+                  currentInput,
+                  signal,
                 );
+                if (
+                  myGeneration !== conversationGenerationRef.current ||
+                  signal.aborted
+                ) {
+                  resumeStream.controller.abort();
+                  return;
+                }
 
                 // Only reset buffer state after confirming stream is available
                 buffersRef.current.interrupted = false;
@@ -946,19 +939,22 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   contextTrackerRef.current,
                   streamSequenceCursor,
                 );
+                if (
+                  myGeneration !== conversationGenerationRef.current ||
+                  signal.aborted
+                )
+                  return;
                 debugLog(
                   "stream",
                   "Pre-stream resume succeeded (stopReason=%s)",
                   preStreamResumeResult.stopReason,
                 );
+                retryingBusyInput = false;
                 // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
               } catch (resumeError) {
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
+                if (myGeneration !== conversationGenerationRef.current) return;
+                if (signal.aborted || userCancelledRef.current) {
+                  setStreaming(false);
                   return;
                 }
 
@@ -984,19 +980,21 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
 
-                // Wait with abort checking (same pattern as LLM API error retry)
-                let cancelled = false;
-                const startTime = Date.now();
-                while (Date.now() - startTime < retryDelayMs) {
+                try {
+                  await waitForBusyRunRetry(errorDetail, retryDelayMs, signal);
+                } catch (waitError) {
                   if (
-                    abortControllerRef.current?.signal.aborted ||
-                    userCancelledRef.current
-                  ) {
-                    cancelled = true;
-                    break;
-                  }
-                  await new Promise((resolve) => setTimeout(resolve, 100));
+                    myGeneration !== conversationGenerationRef.current ||
+                    signal.aborted
+                  )
+                    return;
+                  throw waitError;
                 }
+                if (
+                  myGeneration !== conversationGenerationRef.current ||
+                  signal.aborted
+                )
+                  return;
 
                 // Remove status message
                 buffersRef.current.byId.delete(statusId);
@@ -1005,10 +1003,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
                 refreshDerived();
 
-                if (!cancelled) {
+                if (!userCancelledRef.current) {
                   // Reset interrupted flag so retry stream chunks are processed
                   buffersRef.current.interrupted = false;
                   restorePinnedPermissionMode();
+                  retryingBusyInput = true;
                   continue;
                 }
               }
@@ -1186,8 +1185,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
             }
 
-            // Not a recoverable desync - re-throw to outer catch
-            throw preStreamError;
+            if (!preStreamResumeResult) throw preStreamError;
           }
 
           // Check again after network call - user may have pressed Escape during sendMessageStream
@@ -1301,7 +1299,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           }
 
           const drainResult: Promise<DrainResult> = preStreamResumeResult
-            ? preStreamResumeResult
+            ? Promise.resolve(preStreamResumeResult)
             : (() => {
                 if (!stream) {
                   throw new Error(
