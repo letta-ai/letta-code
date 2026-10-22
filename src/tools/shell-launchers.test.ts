@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -355,6 +361,40 @@ describe("Shell Launchers", () => {
             (l[0]?.includes("bash") || l[0]?.includes("zsh")) && l[1] === "-lc",
         );
         expect(loginLauncher).toBeDefined();
+      });
+
+      test("restores bundled tool paths after login startup", () => {
+        const tempDir = mkdtempSync(join(tmpdir(), "letta-login-path-"));
+        const toolDir = join(tempDir, "bundled tools");
+        mkdirSync(toolDir);
+        const toolPath = join(toolDir, "letta-test-tool");
+        writeFileSync(toolPath, "#!/bin/sh\nprintf bundled-tool");
+        chmodSync(toolPath, 0o755);
+        const startup = join(tempDir, "startup");
+        writeFileSync(startup, 'export PATH="$LETTA_TEST_LOGIN_PATH"\n');
+
+        try {
+          const launcher = buildShellLaunchers("command -v letta-test-tool", {
+            login: true,
+            pathPrefixes: [toolDir],
+          })[0];
+          expect(launcher).toBeDefined();
+          if (!launcher) throw new Error("missing login shell launcher");
+          const result = spawnSync(launcher[0] ?? "", launcher.slice(1), {
+            encoding: "utf8",
+            env: {
+              ...process.env,
+              BASH_ENV: startup,
+              LETTA_TEST_LOGIN_PATH: "/usr/bin:/bin",
+              PATH: toolDir,
+            },
+          });
+
+          expect(result.status, String(result.stderr)).toBe(0);
+          expect(String(result.stdout).trim()).toBe(toolPath);
+        } finally {
+          rmSync(tempDir, { force: true, recursive: true });
+        }
       });
 
       test("prefers user SHELL environment", () => {
