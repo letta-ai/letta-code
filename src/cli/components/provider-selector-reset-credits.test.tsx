@@ -162,9 +162,11 @@ async function openResetConfirmation(
   stdin: NodeJS.ReadStream,
   stdout: CaptureStream,
 ): Promise<string> {
+  // Storage tabs are hidden without Cloud credentials. Wait for the loaded
+  // provider list instead, regardless of credentials left by another suite.
   await waitForScreen(
     stdout,
-    (screen) => screen.includes("Filter:") && screen.includes("[ Local ]"),
+    (screen) => screen.includes("Filter:") && /> \[[ ✓]\]/.test(screen),
     "provider list",
   );
   // Search narrows the list so selection does not depend on catalog order.
