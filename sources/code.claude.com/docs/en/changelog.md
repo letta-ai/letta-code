@@ -12,9 +12,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.308**
 
+October 22, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.307**
+
+October 21, 2026
 
 **Added**
 
@@ -73,10 +77,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.306**
 
+October 21, 2026
+
 * Fixed `claude -p` inside cloud sessions reporting "Not logged in" when started without the session's environment variables
 * Fixed an API error being replaced by "prompt is too long", and an unneeded compaction, in sessions with many MCP tools
 
 **2.1.305**
+
+October 20, 2026
 
 **Added**
 
@@ -129,6 +137,8 @@ Run `claude --version` to check your installed version.
 * \[Code Review] Fixed Code Review sometimes not reviewing the newest commit when several pushes landed on a pull request during a review
 
 **2.1.304**
+
+October 19, 2026
 
 **Added**
 
@@ -220,9 +230,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.303**
 
+October 18, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.302**
+
+October 16, 2026
 
 **Added**
 
@@ -301,6 +315,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.301**
 
+October 15, 2026
+
 **Added**
 
 * Added `CLAUDE_CODE_RETRY_WATCHDOG_MAX_USAGE_LIMIT_WAIT_MS` so unattended retry mode (`CLAUDE_CODE_RETRY_WATCHDOG`) ends a request at a usage limit that resets too far away instead of waiting
@@ -365,6 +381,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed the native dictation audio module being loaded, to check microphone permission, where dictation is not offered (non-claude.ai sign-ins, remote windows)
 
 **2.1.300**
+
+October 14, 2026
 
 **Added**
 
@@ -467,6 +485,8 @@ Run `claude --version` to check your installed version.
 * \[Code Review] Fixed Code Review's "paused for this repository" comment sending admins to Code Review settings; it now says who can fix it and links the Git providers page
 
 **2.1.299**
+
+October 14, 2026
 
 **Added**
 
@@ -672,6 +692,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.296**
 
+October 9, 2026
+
 **Added**
 
 * Added a `code` key to the Claude apps gateway's `managed.policies[]`: the same settings as `cli`, also applied in Claude Desktop's Code tab; beside `desktop`, it turns on Claude Desktop's gateway mode
@@ -764,6 +786,8 @@ Run `claude --version` to check your installed version.
 * \[Code Review] Fixed the Code Review check sometimes staying "in progress" on a pull request after the review finished; it now shows the review's result
 
 **2.1.295**
+
+October 8, 2026
 
 **Added**
 
@@ -922,10 +946,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.294**
 
+October 8, 2026
+
 * Fixed `prompt` and `agent` hooks written as instructions (such as "Block commands that...") allowing what they should block
 * Improved how `prompt` hooks on Stop and SubagentStop written as instructions (such as "Carry on if the build is broken") are judged, so Claude is less likely to stop early
 
 **2.1.293**
+
+October 7, 2026
 
 **Added**
 
@@ -996,6 +1024,8 @@ Run `claude --version` to check your installed version.
 * \[Claude Tag] Fixed an access bundle's Add a connector dialog in Claude Tag admin settings showing every Google connector as connected after one Google sign-in
 
 **2.1.292**
+
+October 6, 2026
 
 **Added**
 
@@ -1103,10 +1133,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.291**
 
+October 6, 2026
+
 * Fixed a regression in 2.1.290 where cloud sessions could drop answers to permission prompts
 * Fixed a regression in 2.1.288 where the last messages of a session could be lost when quitting
 
 **2.1.290**
+
+October 5, 2026
 
 **Added**
 
@@ -1312,6 +1346,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.289**
 
+October 3, 2026
+
 **Added**
 
 * Added `agent.spawn` for teammates, one agent id across plugin hook events, and idle and waiting states in `$.agent.list()`
@@ -1352,6 +1388,8 @@ Run `claude --version` to check your installed version.
 * Fixed a mod's Client region staying failed for the whole session after the terminal threw while drawing it
 
 **2.1.288**
+
+October 2, 2026
 
 **Added**
 
@@ -1455,6 +1493,8 @@ Run `claude --version` to check your installed version.
 * Fixed `claude plugin test` reporting mods as turned off remotely when it had only read an out-of-date saved setting
 
 **2.1.287**
+
+October 1, 2026
 
 **Added**
 
@@ -1576,6 +1616,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.286**
 
+September 30, 2026
+
 **Added**
 
 * Added a count such as "2 of 5" to the permission prompt when several permission requests stack up
@@ -1677,6 +1719,8 @@ Run `claude --version` to check your installed version.
 * \[Claude Tag] Fixed public channel names on Claude Tag's spend limits page in admin settings showing as raw Slack IDs in larger organizations
 
 **2.1.285**
+
+September 29, 2026
 
 **Added**
 
@@ -1828,6 +1872,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.284**
 
+September 28, 2026
+
 **Added**
 
 * Added Claude Sonnet 5.5 (`claude-sonnet-5-5`), now the default Sonnet model on the Anthropic API — 1M context, $2/$10 per Mtok with \$0.20/Mtok cache reads
@@ -1942,6 +1988,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.283**
 
+September 25, 2026
+
 **Added**
 
 * Added `x-claude-code-prompt-id` to the gateway hint headers so LLM gateways can group the requests that serve one user prompt; opt in with `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`
@@ -2050,6 +2098,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.282**
 
+September 24, 2026
+
 **Added**
 
 * Added a `maxProseWidth` setting that caps the width of Claude's prose in wide terminals while tables and code blocks keep the full width
@@ -2149,6 +2199,8 @@ Run `claude --version` to check your installed version.
 * \[Claude Tag] Fixed the cost and token totals in Claude's reply footer reading many times too high after the session's cloud worker restarted
 
 **2.1.281**
+
+September 23, 2026
 
 **Added**
 
@@ -2341,6 +2393,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.280**
 
+September 22, 2026
+
 **Added**
 
 * Added Claude Opus 5.5 (`claude-opus-5-5`), now the default Opus model — 1M context, $4/$20 per Mtok with \$0.20/Mtok cache reads
@@ -2469,10 +2523,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.278**
 
-* Changed auto mode for Claude API and Enterprise users, and on Bedrock, Vertex, Foundry and gateways, to default to the server-side classifier, which does not charge for classifier overhead (`CLAUDE_CODE_AUTO_MODE_SERVER=0` opts out on Bedrock, Vertex, Foundry and gateways); warns on billed fallback. See [https://code.claude.com/docs/en/auto-mode-classifier-billing](https://code.claude.com/docs/en/auto-mode-classifier-billing)
+September 19, 2026
+
+* Changed auto mode for Claude API and Enterprise users, and on Bedrock, Vertex, Foundry and gateways, to default to the server-side classifier, which does not charge for classifier overhead (`CLAUDE_CODE_AUTO_MODE_SERVER=0` opts out on Bedrock, Vertex, Foundry and gateways); warns on billed fallback. See [https://code.claude.com/docs/en/auto-mode-classifier-billing](https://code.claude.com/docs/en/auto-mode-classifier-billing.md)
 * Added an `Auto mode server` row to `/status` showing whether this session's auto mode classifier runs on the server
 
 **2.1.277**
+
+September 18, 2026
 
 **Added**
 
@@ -2575,9 +2633,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.276**
 
+September 18, 2026
+
 * Fixed every request failing with `400 … Input tag 'advisor_20260301'` when `ANTHROPIC_BASE_URL` points at a proxy or gateway (2.1.275 regression)
 
 **2.1.275**
+
+September 17, 2026
 
 **Added**
 
@@ -2687,6 +2749,8 @@ Run `claude --version` to check your installed version.
 * \[Code Review] Fixed pull requests with more than 100 Claude reviews getting a full re-review on every clean merge from the base branch instead of the lighter merge-focused review
 
 **2.1.274**
+
+September 17, 2026
 
 **Added**
 
@@ -2810,6 +2874,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.273**
 
+September 15, 2026
+
 **Added**
 
 * Added `x-claude-code-request-class`, `x-claude-code-agent-type`, `x-claude-code-prev-tool-durations`, `x-claude-code-compaction` and `x-claude-code-context-compacted` request headers for LLM gateways; opt in with `CLAUDE_CODE_GATEWAY_HINT_HEADERS=1`
@@ -2888,9 +2954,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.272**
 
+September 15, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.271**
+
+September 14, 2026
 
 **Added**
 
@@ -3002,9 +3072,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.270**
 
+September 12, 2026
+
 * Fixed read-only git commands in Bash unexpectedly asking for permission after a session had been running for a while (regression in 2.1.269)
 
 **2.1.269**
+
+September 11, 2026
 
 **Added**
 
@@ -3118,6 +3192,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.268**
 
+September 10, 2026
+
 **Added**
 
 * Added to the Claude apps gateway: with `pricing:` set in `gateway.yaml`, signed-in Claude Code clients receive the same rates through managed settings, so `/cost` and telemetry match the spend meter
@@ -3228,6 +3304,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.267**
 
+September 9, 2026
+
 **Added**
 
 * Added `maxEffortLevel` setting (top-level or per model under `modelSettings`): caps the effort level on every provider, including Bedrock, Vertex and Foundry; users can still pick a lower level
@@ -3295,9 +3373,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.266**
 
+September 8, 2026
+
 * Fixed a 2.1.265 regression affecting LLM-gateway and proxy setups: the undocumented `CLAUDE_CODE_USE_GATEWAY` environment variable, previously ignored unless `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN` were both set, began forcing Cloud-gateway sign-in on its own in 2.1.265, so configurations that set it alongside an API key, `apiKeyHelper`, or custom auth headers failed every request with "Not signed in to the Cloud gateway". The variable on its own is ignored again; no configuration change is needed
 
 **2.1.265**
+
+September 8, 2026
 
 **Added**
 
@@ -3363,9 +3445,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.263**
 
+September 6, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.261**
+
+September 4, 2026
 
 **Added**
 
@@ -3448,6 +3534,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.260**
 
+September 3, 2026
+
 **Added**
 
 * Added a diff panel that opens beside the conversation in fullscreen mode and shows your uncommitted changes as Claude edits; toggle it with `/diff`
@@ -3528,6 +3616,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.259**
 
+September 2, 2026
+
 **Added**
 
 * Added `managedMcpServers` managed setting: organizations can provide HTTP/SSE MCP servers to every user (same entry shape as `.mcp.json`); entries that name a command to run are skipped
@@ -3579,10 +3669,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.258**
 
+September 1, 2026
+
 * Fixed Claude Code failing to launch on macOS 12 (Monterey), a regression introduced in 2.1.255
 * Fixed remote and scheduled sessions failing with "user messages must have non-empty content" after a re-sent permission approval could not be applied
 
 **2.1.257**
+
+September 1, 2026
 
 **Added**
 
@@ -3702,12 +3796,16 @@ Run `claude --version` to check your installed version.
 
 **2.1.252**
 
+August 31, 2026
+
 * Fixed Bash commands failing with "task output swap refused (tasks dir moved or linked)" on some Macs
 * Fixed "always allow" not saving in a project that has no .claude/settings.local.json yet
 * Fixed Remote Control sessions hosted by Claude Desktop or VS Code stalling for minutes after a tool finished when the connection to claude.ai was degraded
 * Fixed background task notifications with very large failure output (for example git errors on a full disk) making the conversation exceed the API request size limit
 
 **2.1.251**
+
+August 28, 2026
 
 **Added**
 
@@ -3794,9 +3892,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.250**
 
+August 28, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.248**
+
+August 27, 2026
 
 **Added**
 
@@ -3861,6 +3963,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.247**
 
+August 26, 2026
+
 **Added**
 
 * Added the `SendFeedback` tool: when something goes wrong in a session, Claude can draft a feedback report for you to review and send from `/feedback` (turn off with the `feedbackDrafts` setting)
@@ -3907,6 +4011,8 @@ Run `claude --version` to check your installed version.
 * Fixed cloud sessions going silent when the session's container restarts between turns while a background agent, shell, or monitor is still running — the resumed session now reports the lost work
 
 **2.1.246**
+
+August 25, 2026
 
 **Added**
 
@@ -3983,9 +4089,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.245**
 
+August 25, 2026
+
 * Fixed a crash on startup on Linux distributions that ship glibc 2.44 (for example Arch Linux, CachyOS and Fedora Rawhide)
 
 **2.1.243**
+
+August 25, 2026
 
 **Added**
 
@@ -4061,13 +4171,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.241**
 
+August 23, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.240**
 
+August 22, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.239**
+
+August 21, 2026
 
 **Added**
 
@@ -4142,6 +4258,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.238**
 
+August 20, 2026
+
 **Added**
 
 * Added a `keybindingFlavor` setting: set it to `"readline"` to make Ctrl+W in the prompt delete back to the previous whitespace, as in Bash; the default (`"classic"`) is unchanged
@@ -4195,10 +4313,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.237**
 
+August 20, 2026
+
 * Fixed prompt caching for sessions using an LLM gateway or custom base URL
 * Added a built-in "Concise" output style: Claude leads with results and skips preamble and narration, while doing the work just as thoroughly. Select it under Output style in /config.
 
 **2.1.236**
+
+August 19, 2026
 
 **Added**
 
@@ -4247,6 +4369,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.235**
 
+August 18, 2026
+
 **Added**
 
 * Added an optional `spellcheck` setting that underlines misspelled words in the prompt input as you type, using your installed `aspell`, `hunspell`, or `ispell`
@@ -4279,6 +4403,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed focus jumping between open Claude tabs on its own when a window with several Claude panels is restored or reloaded
 
 **2.1.234**
+
+August 17, 2026
 
 **Added**
 
@@ -4345,6 +4471,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.233**
 
+August 14, 2026
+
 **Added**
 
 * Added GitLab merge request URL support to the `--worktree` flag and the `claude agents` view (where MRs display as `!N`)
@@ -4378,6 +4506,8 @@ Run `claude --version` to check your installed version.
 * Windows: fixed auto mode repeatedly stopping for manual approval on ordinary `cd <dir> && <command> > file` Bash commands (a 2.1.232 regression)
 
 **2.1.232**
+
+August 13, 2026
 
 **Added**
 
@@ -4442,9 +4572,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.231**
 
+August 13, 2026
+
 * Fixed MCP OAuth sign-in failing with a redirect URI mismatch for servers that use a pre-registered OAuth client, such as Slack
 
 **2.1.229**
+
+August 12, 2026
 
 **Added**
 
@@ -4492,6 +4626,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.228**
 
+August 11, 2026
+
 **Changed**
 
 * Hardened skills synced from claude.ai: they no longer shadow local commands or MCP prompts, their descriptions are sanitized and labeled, and on your machine their bodies don't run `!` commands or expand `@` files
@@ -4521,6 +4657,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.227**
 
+August 10, 2026
+
 * Fixed feature flags being evaluated without the user's subscription tier when a session started with an expired login token, which could wrongly prompt Max plan users to enable usage credits for Fable
 * Fixed every Bash command failing under `claude-code-action` with `allowed_non_write_users` on GitHub-hosted runners
 * Fixed `/tui` bringing back a conversation that had been rewound to before its first message
@@ -4529,9 +4667,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.226**
 
+August 8, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.225**
+
+August 8, 2026
 
 **Added**
 
@@ -4560,6 +4702,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed Focus view folding away the latest to-do list, a pending question's context, and settled answers; thinking-only folds show "Thought for Ns" and re-collapse when their turn completes
 
 **2.1.224**
+
+August 7, 2026
 
 **Added**
 
@@ -4606,6 +4750,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.223**
 
+August 6, 2026
+
 **Added**
 
 * Added owner wildcard entries (`"owner/*"`) to the `strictKnownMarketplaces` and `blockedMarketplaces` managed settings for allowing or blocking all marketplace repos under a GitHub org
@@ -4635,6 +4781,8 @@ Run `claude --version` to check your installed version.
 * Fixed a rare hang when parsing unusual `git push` output
 
 **2.1.222**
+
+August 4, 2026
 
 **Changed**
 
@@ -4667,6 +4815,8 @@ Run `claude --version` to check your installed version.
 * Fixed host model-selection keys not taking precedence over a stale on-disk `managed-settings.json` when `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST` is set
 
 **2.1.221**
+
+August 4, 2026
 
 **Added**
 
@@ -4721,9 +4871,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.220**
 
+July 25, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.219**
+
+July 24, 2026
 
 **Added**
 
@@ -4762,6 +4916,8 @@ Run `claude --version` to check your installed version.
 * Fixed screen-reader mode rewriting the entire input line on every keystroke instead of echoing only the typed character
 
 **2.1.218**
+
+July 22, 2026
 
 **Added**
 
@@ -4813,6 +4969,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.217**
 
+July 21, 2026
+
 **Added**
 
 * Added emoji shortcode autocomplete in the prompt input: type `:heart:` to insert ❤️, or `:hea` for suggestions — disable with the `emojiCompletionEnabled` setting
@@ -4846,6 +5004,8 @@ Run `claude --version` to check your installed version.
 * Fixed `--max-budget-usd` not stopping background subagents: once the cap is reached, new spawns are denied and running background agents are halted
 
 **2.1.216**
+
+July 20, 2026
 
 **Added**
 
@@ -4901,9 +5061,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.215**
 
+July 19, 2026
+
 * Claude no longer runs the `/verify` and `/code-review` skills on its own; invoke them with `/verify` or `/code-review` when you want them
 
 **2.1.214**
+
+July 18, 2026
 
 **Added**
 
@@ -4965,6 +5129,8 @@ Run `claude --version` to check your installed version.
 * Fixed MCP transient errors during prompts/resources refresh clearing the server's slash commands and resources
 
 **2.1.212**
+
+July 17, 2026
 
 **Added**
 
@@ -5028,6 +5194,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.211**
 
+July 15, 2026
+
 **Added**
 
 * Added `--forward-subagent-text` flag and `CLAUDE_CODE_FORWARD_SUBAGENT_TEXT` environment variable to include subagent text and thinking in stream-json output
@@ -5079,6 +5247,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.210**
 
+July 14, 2026
+
 **Added**
 
 * Added a live elapsed-time counter to the collapsed tool summary line so long-running tool calls visibly tick instead of looking stuck
@@ -5126,9 +5296,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.209**
 
+July 14, 2026
+
 * Fixed /model and other dialogs being blocked in `claude agents` background sessions (reverts an overly broad guard)
 
 **2.1.208**
+
+July 14, 2026
 
 **Added**
 
@@ -5190,6 +5364,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.207**
 
+July 11, 2026
+
 **Changed**
 
 * Auto mode is now available without `CLAUDE_CODE_ENABLE_AUTO_MODE` opt-in on Bedrock, Vertex AI, and Foundry; disable via `disableAutoMode` in settings
@@ -5224,6 +5400,8 @@ Run `claude --version` to check your installed version.
 * Fixed `/usage-credits` amount inputs silently stripping malformed values (e.g. a pasted timestamp) to digits; malformed amounts are now rejected with an error, and amounts over \$1,000 require a typed confirmation
 
 **2.1.206**
+
+July 9, 2026
 
 **Added**
 
@@ -5266,6 +5444,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.205**
 
+July 8, 2026
+
 **Added**
 
 * Added an auto mode rule that blocks tampering with session transcript files
@@ -5303,9 +5483,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.204**
 
+July 8, 2026
+
 * Fixed hook events not streaming during SessionStart hooks in headless sessions, which could cause remote workers to be idle-reaped mid-hook
 
 **2.1.203**
+
+July 7, 2026
 
 **Added**
 
@@ -5358,6 +5542,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.202**
 
+July 6, 2026
+
 **Added**
 
 * Added a "Dynamic workflow size" setting in `/config` for controlling how large Claude generally makes dynamic workflows (small/medium/large agent counts) — an advisory guideline, not an enforced cap
@@ -5390,9 +5576,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.201**
 
+July 3, 2026
+
 * Claude Sonnet 5 sessions no longer use the mid-conversation system role for harness reminders
 
 **2.1.200**
+
+July 3, 2026
 
 **Changed**
 
@@ -5421,6 +5611,8 @@ Run `claude --version` to check your installed version.
 * Fixed rendering flicker under tmux 3.4+ by enabling synchronized terminal output
 
 **2.1.199**
+
+July 2, 2026
 
 **Changed**
 
@@ -5453,6 +5645,8 @@ Run `claude --version` to check your installed version.
 * Fixed plan mode not prompting for state-changing browser tool calls; read-only `browser_batch` calls are now correctly auto-allowed
 
 **2.1.198**
+
+July 1, 2026
 
 **Added**
 
@@ -5501,9 +5695,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.197**
 
+June 30, 2026
+
 * Introducing Claude Sonnet 5: now the default model in Claude Code, with a native 1M-token context window and promotional pricing of $2/$10 per Mtok through August 31. Update to version 2.1.197 for access. [https://www.anthropic.com/news/claude-sonnet-5](https://www.anthropic.com/news/claude-sonnet-5)
 
 **2.1.196**
+
+June 29, 2026
 
 **Added**
 
@@ -5546,6 +5744,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.195**
 
+June 26, 2026
+
 **Added**
 
 * Added `CLAUDE_CODE_DISABLE_MOUSE_CLICKS` to disable mouse click/drag/hover in fullscreen mode while keeping wheel scroll
@@ -5568,6 +5768,8 @@ Run `claude --version` to check your installed version.
 * Fixed background agent daemons running unreachable when the control socket fails to start, blocking restarts
 
 **2.1.193**
+
+June 25, 2026
 
 **Added**
 
@@ -5594,6 +5796,8 @@ Run `claude --version` to check your installed version.
 * Fixed agent panel hiding sibling agents when viewing a subagent
 
 **2.1.191**
+
+June 24, 2026
 
 **Added**
 
@@ -5629,9 +5833,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.190**
 
+June 24, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.187**
+
+June 23, 2026
 
 **Added**
 
@@ -5664,6 +5872,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed extension becoming unresponsive when resuming a large session
 
 **2.1.186**
+
+June 22, 2026
 
 **Added**
 
@@ -5712,9 +5922,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.185**
 
+June 20, 2026
+
 * The stream-stall hint now reads "Waiting for API response · will retry in …" instead of "No response from API · Retrying in …", and triggers after 20s of silence instead of 10s
 
 **2.1.183**
+
+June 19, 2026
 
 **Added**
 
@@ -5746,6 +5960,8 @@ Run `claude --version` to check your installed version.
 * Fixed focus mode showing "Ran N PostToolUse hooks" timing lines under each response
 
 **2.1.181**
+
+June 17, 2026
 
 **Added**
 
@@ -5800,6 +6016,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.179**
 
+June 16, 2026
+
 * Fixed mid-stream connection drops: partial responses are now preserved instead of showing a raw error, and the spinner no longer gets stuck at "running tool"
 * Fixed mouse-wheel scrolling in WSL2 under Windows Terminal and VS Code (regression in 2.1.172)
 * Fixed a sandbox `denyRead`/`allowRead` glob over a large directory tree making the Bash tool description enormous and the session unusable on Linux
@@ -5811,6 +6029,8 @@ Run `claude --version` to check your installed version.
 * Improved plugin loading performance in remote sessions
 
 **2.1.178**
+
+June 15, 2026
 
 **Added**
 
@@ -5850,6 +6070,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.176**
 
+June 12, 2026
+
 **Added**
 
 * Added `footerLinksRegexes` setting for regex-matched link badges in the footer row, configurable via user or managed settings
@@ -5886,9 +6108,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.175**
 
+June 12, 2026
+
 * Added `enforceAvailableModels` managed setting — when enabled, the `availableModels` allowlist also constrains the Default model (a Default that would resolve to a disallowed model now falls back to the first allowed model), and user or project settings can no longer widen a managed `availableModels` list
 
 **2.1.174**
+
+June 12, 2026
 
 **Added**
 
@@ -5911,10 +6137,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.173**
 
+June 11, 2026
+
 * Fixed Fable 5 model names with a `[1m]` suffix not being normalized — Fable 5 includes 1M context by default, so the suffix is now stripped automatically
 * Fixed a spurious "sandbox dependencies missing" startup warning on Windows when sandbox was enabled in settings
 
 **2.1.172**
+
+June 10, 2026
 
 **Added**
 
@@ -5960,10 +6190,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.170**
 
+June 9, 2026
+
 * Introducing Claude Fable 5: a Mythos-class model that we’ve made safe for general use. Fable’s capabilities exceed those of any model we’ve ever made generally available. Update to version 2.1.170 for access. [https://www.anthropic.com/news/claude-fable-5-mythos-5](https://www.anthropic.com/news/claude-fable-5-mythos-5)
 * Fixed sessions not saving transcripts (and not appearing in --resume) when launched from the VS Code integrated terminal or any shell that inherited Claude Code environment variables.
 
 **2.1.169**
+
+June 8, 2026
 
 **Added**
 
@@ -6009,13 +6243,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.168**
 
+June 6, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.167**
 
+June 6, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.166**
+
+June 6, 2026
 
 **Added**
 
@@ -6049,9 +6289,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.165**
 
+June 5, 2026
+
 * Bug fixes and reliability improvements
 
 **2.1.163**
+
+June 4, 2026
 
 **Added**
 
@@ -6085,6 +6329,8 @@ Run `claude --version` to check your installed version.
 * Fixed a stray "(no content)" line left in the transcript after closing panel dialogs like /mcp and /plugins
 
 **2.1.162**
+
+June 3, 2026
 
 **Changed**
 
@@ -6125,6 +6371,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.161**
 
+June 2, 2026
+
 **Added**
 
 * \[VSCode] Added a tip suggesting disabling terminal GPU acceleration (or running `/terminal-setup`) to fix garbled glyphs
@@ -6160,6 +6408,8 @@ Run `claude --version` to check your installed version.
 * Fixed `EADDRINUSE` errors from tools that bind Unix sockets under `$TMPDIR` when `CLAUDE_CODE_TMPDIR` is set to a deep path
 
 **2.1.160**
+
+June 2, 2026
 
 **Added**
 
@@ -6202,13 +6452,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.159**
 
+May 31, 2026
+
 * Internal infrastructure improvements (no user-facing changes)
 
 **2.1.158**
 
+May 30, 2026
+
 * Auto mode is now available on Bedrock, Vertex, and Foundry for Opus 4.7 and Opus 4.8. Opt in by setting `CLAUDE_CODE_ENABLE_AUTO_MODE=1`
 
 **2.1.157**
+
+May 29, 2026
 
 **Added**
 
@@ -6257,9 +6513,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.156**
 
+May 29, 2026
+
 * Fixed an issue when using Opus 4.8 where thinking blocks were modified, leading to API errors.
 
 **2.1.154**
+
+May 28, 2026
 
 **Added**
 
@@ -6319,6 +6579,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.153**
 
+May 28, 2026
+
 **Added**
 
 * Added `skipLfs` option to `github`/`git` plugin marketplace sources to skip Git LFS downloads during clone and update
@@ -6366,6 +6628,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.152**
 
+May 27, 2026
+
 **Added**
 
 * Added `/reload-skills` command to re-scan skill directories without restarting the session
@@ -6410,9 +6674,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.150**
 
+May 23, 2026
+
 * Internal infrastructure improvements (no user-facing changes)
 
 **2.1.149**
+
+May 22, 2026
 
 **Added**
 
@@ -6454,9 +6722,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.148**
 
+May 22, 2026
+
 * Fixed the Bash tool returning exit code 127 on every command for some users (a regression introduced in 2.1.147)
 
 **2.1.147**
+
+May 21, 2026
 
 **Changed**
 
@@ -6502,6 +6774,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.145**
 
+May 19, 2026
+
 **Added**
 
 * Added `claude agents --json` to list live Claude sessions as JSON for scripting (tmux-resurrect, status bars, session pickers)
@@ -6535,6 +6809,8 @@ Run `claude --version` to check your installed version.
 * Fixed an infinite loop where a skill using `context: fork` could repeatedly re-invoke itself instead of running
 
 **2.1.144**
+
+May 19, 2026
 
 **Added**
 
@@ -6600,6 +6876,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.143**
 
+May 15, 2026
+
 **Added**
 
 * Added plugin dependency enforcement: `claude plugin disable` now refuses when another enabled plugin depends on the target (with a copy-pasteable disable-chain hint), and `claude plugin enable` force-enables transitive dependencies
@@ -6644,6 +6922,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.142**
 
+May 14, 2026
+
 **Added**
 
 * Added new `claude agents` flags: `--add-dir`, `--settings`, `--mcp-config`, `--plugin-dir`, `--permission-mode`, `--model`, `--effort`, and `--dangerously-skip-permissions` to configure dispatched background sessions
@@ -6681,6 +6961,8 @@ Run `claude --version` to check your installed version.
 * Fixed plugin advisories not naming every `plugin.json` key that shadows a default folder
 
 **2.1.141**
+
+May 13, 2026
 
 **Added**
 
@@ -6757,6 +7039,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.140**
 
+May 12, 2026
+
 **Changed**
 
 * Updated agent color palette
@@ -6781,9 +7065,11 @@ Run `claude --version` to check your installed version.
 
 **2.1.139**
 
+May 11, 2026
+
 **Added**
 
-* Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run `claude agents` to get started. See [https://code.claude.com/docs/en/agent-view](https://code.claude.com/docs/en/agent-view)
+* Added agent view (Research Preview): a single list of every Claude Code session — running, blocked on you, or done. Run `claude agents` to get started. See [https://code.claude.com/docs/en/agent-view](https://code.claude.com/docs/en/agent-view.md)
 * Added `/goal` command: set a completion condition and Claude keeps working across turns until it's met. Works in interactive, `-p`, and Remote Control. Shows live elapsed/turns/tokens as an overlay panel
 * Added `/scroll-speed` command to tune mouse wheel scroll speed with a live preview
 * Added `claude plugin details <name>` to show a plugin's component inventory and projected per-session token cost
@@ -6842,13 +7128,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.138**
 
+May 9, 2026
+
 * Internal fixes
 
 **2.1.137**
 
+May 9, 2026
+
 * \[VSCode] Fixed extension failing to activate on Windows
 
 **2.1.136**
+
+May 8, 2026
 
 **Added**
 
@@ -6916,6 +7208,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.133**
 
+May 7, 2026
+
 **Added**
 
 * Added `worktree.baseRef` setting (`fresh` | `head`) to choose whether `--worktree`, `EnterWorktree`, and agent-isolation worktrees branch from `origin/<default>` or local `HEAD`. **Note:** the default `fresh` changes `EnterWorktree`'s base back to `origin/<default>` (it has been local `HEAD` since 2.1.128) — set `worktree.baseRef: "head"` to keep unpushed commits in new worktrees
@@ -6946,6 +7240,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed `claudeCode.claudeProcessWrapper` failing with "Unsupported platform" when the extension build doesn't bundle a Claude binary
 
 **2.1.132**
+
+May 6, 2026
 
 **Added**
 
@@ -6989,10 +7285,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.131**
 
+May 6, 2026
+
 * Fixed VS Code extension failing to activate on Windows due to a hardcoded build path in the bundled SDK (`createRequire` polyfill bug)
 * Fixed Mantle endpoint authentication failing with missing `x-api-key` header
 
 **2.1.129**
+
+May 6, 2026
 
 **Added**
 
@@ -7031,6 +7331,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed `/clear` not clearing the conversation context and displayed transcript
 
 **2.1.128**
+
+May 4, 2026
 
 **Changed**
 
@@ -7077,6 +7379,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.126**
 
+May 1, 2026
+
 **Changed**
 
 * The `/model` picker now lists models from your gateway's `/v1/models` endpoint when `ANTHROPIC_BASE_URL` points at an Anthropic-compatible gateway
@@ -7117,9 +7421,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.123**
 
+April 29, 2026
+
 * Fixed OAuth authentication failing with a 401 retry loop when `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` is set
 
 **2.1.122**
+
+April 28, 2026
 
 **Added**
 
@@ -7149,6 +7457,8 @@ Run `claude --version` to check your installed version.
 * Fixed a malformed hooks entry in `settings.json` no longer invalidating the entire file
 
 **2.1.121**
+
+April 28, 2026
 
 **Added**
 
@@ -7200,6 +7510,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.120**
 
+April 28, 2026
+
 **Added**
 
 * Added `claude ultrareview [target]` subcommand to run `/ultrareview` non-interactively from CI or scripts — prints findings to stdout (`--json` for raw output) and exits 0 on completion or 1 on failure
@@ -7232,6 +7544,8 @@ Run `claude --version` to check your installed version.
 * Fixed `find` in the Bash tool exhausting open file descriptors on large directory trees, causing host-wide crashes (macOS/Linux native builds)
 
 **2.1.119**
+
+April 23, 2026
 
 **Added**
 
@@ -7295,6 +7609,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.118**
 
+April 23, 2026
+
 **Added**
 
 * Added vim visual mode (`v`) and visual-line mode (`V`) with selection, operators, and visual feedback
@@ -7340,6 +7656,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.117**
 
+April 22, 2026
+
 **Changed**
 
 * Forked subagents can now be enabled on external builds by setting `CLAUDE_CODE_FORK_SUBAGENT=1`
@@ -7379,6 +7697,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.116**
 
+April 20, 2026
+
 **Changed**
 
 * `/resume` on large sessions is significantly faster (up to 67% on 40MB+ sessions) and handles sessions with many dead-fork entries more efficiently
@@ -7412,9 +7732,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.114**
 
+April 18, 2026
+
 * Fixed a crash in the permission dialog when an agent teams teammate requested tool permission
 
 **2.1.113**
+
+April 17, 2026
 
 **Added**
 
@@ -7468,9 +7792,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.112**
 
+April 16, 2026
+
 * Fixed "claude-opus-4-7 is temporarily unavailable" for auto mode
 
 **2.1.111**
+
+April 16, 2026
 
 **Added**
 
@@ -7521,6 +7849,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.110**
 
+April 15, 2026
+
 **Added**
 
 * Added `/tui` command and `tui` setting — run `/tui fullscreen` to switch to flicker-free rendering in the same conversation
@@ -7568,9 +7898,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.109**
 
+April 15, 2026
+
 * Improved the extended-thinking indicator with a rotating progress hint
 
 **2.1.108**
+
+April 14, 2026
 
 **Added**
 
@@ -7610,9 +7944,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.107**
 
+April 14, 2026
+
 * Show thinking hints sooner during long operations
 
 **2.1.105**
+
+April 13, 2026
 
 **Added**
 
@@ -7664,6 +8002,8 @@ Run `claude --version` to check your installed version.
 * Fixed Bash tool suggesting `acceptEdits` permission mode when exiting plan mode would downgrade from a higher permission level
 
 **2.1.101**
+
+April 10, 2026
 
 **Added**
 
@@ -7724,6 +8064,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed the file attachment below the chat input not clearing when the last editor tab is closed
 
 **2.1.98**
+
+April 9, 2026
 
 **Added**
 
@@ -7796,6 +8138,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.97**
 
+April 8, 2026
+
 **Added**
 
 * Added focus view toggle (`Ctrl+O`) in `NO_FLICKER` mode showing prompt, one-line tool summary with edit diffstats, and final response
@@ -7856,9 +8200,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.96**
 
+April 8, 2026
+
 * Fixed Bedrock requests failing with `403 "Authorization header is missing"` when using `AWS_BEARER_TOKEN_BEDROCK` or `CLAUDE_CODE_SKIP_BEDROCK_AUTH` (regression in 2.1.94)
 
 **2.1.94**
+
+April 7, 2026
 
 **Added**
 
@@ -7899,6 +8247,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.92**
 
+April 4, 2026
+
 **Added**
 
 * Added `forceRemoteSettingsRefresh` policy setting: when set, the CLI blocks startup until remote managed settings are freshly fetched, and exits if the fetch fails (fail-closed)
@@ -7934,6 +8284,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.91**
 
+April 2, 2026
+
 **Added**
 
 * Added MCP tool result persistence override via `_meta["anthropic/maxResultSizeChars"]` annotation (up to 500K), allowing larger results like DB schemas to pass through without truncation
@@ -7960,6 +8312,8 @@ Run `claude --version` to check your installed version.
 * Fixed Windows version cleanup not protecting the active version's rollback copy
 
 **2.1.90**
+
+April 1, 2026
 
 **Added**
 
@@ -7993,6 +8347,8 @@ Run `claude --version` to check your installed version.
 * Fixed headers disappearing when scrolling `/model`, `/config`, and other selection screens
 
 **2.1.89**
+
+April 1, 2026
 
 **Added**
 
@@ -8060,9 +8416,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.87**
 
+March 29, 2026
+
 * Fixed messages in Cowork Dispatch not getting delivered
 
 **2.1.86**
+
+March 27, 2026
 
 **Added**
 
@@ -8103,6 +8463,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed extension defaulting Max plan users to Sonnet after the OAuth token refreshes (8 hours after login)
 
 **2.1.85**
+
+March 26, 2026
 
 **Added**
 
@@ -8148,9 +8510,11 @@ Run `claude --version` to check your installed version.
 
 **2.1.84**
 
+March 26, 2026
+
 **Added**
 
-* Added PowerShell tool for Windows as an opt-in preview. Learn more at [https://code.claude.com/docs/en/tools-reference#powershell-tool](https://code.claude.com/docs/en/tools-reference#powershell-tool)
+* Added PowerShell tool for Windows as an opt-in preview. Learn more at [https://code.claude.com/docs/en/tools-reference#powershell-tool](https://code.claude.com/docs/en/tools-reference.md#powershell-tool)
 * Added `ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL_SUPPORTS` env vars to override effort/thinking capability detection for pinned default models for 3p (Bedrock, Vertex, Foundry), and `_MODEL_NAME`/`_DESCRIPTION` to customize the `/model` picker label
 * Added `CLAUDE_STREAM_IDLE_TIMEOUT_MS` env var to configure the streaming idle watchdog threshold (default 90s)
 * Added `TaskCreated` hook that fires when a task is created via `TaskCreate`
@@ -8201,6 +8565,8 @@ Run `claude --version` to check your installed version.
 * Fixed cold-start race where core tools could be deferred without their bypass active, causing Edit/Write to fail with InputValidationError on typed parameters
 
 **2.1.83**
+
+March 25, 2026
 
 **Added**
 
@@ -8292,6 +8658,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.81**
 
+March 20, 2026
+
 **Added**
 
 * Added `--bare` flag for scripted `-p` calls — skips hooks, LSP, plugin sync, and skill directory walks; requires `ANTHROPIC_API_KEY` or an `apiKeyHelper` via `--settings` (OAuth and keychain auth disabled); auto-memory fully disabled
@@ -8333,6 +8701,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.80**
 
+March 19, 2026
+
 **Added**
 
 * Added `rate_limits` field to statusline scripts for displaying Claude.ai rate limit usage (5-hour and 7-day windows with `used_percentage` and `resets_at`)
@@ -8363,6 +8733,8 @@ Run `claude --version` to check your installed version.
 * Fixed managed settings (`enabledPlugins`, `permissions.defaultMode`, policy-set env vars) not being applied at startup when `remote-settings.json` was cached from a prior session
 
 **2.1.79**
+
+March 18, 2026
 
 **Added**
 
@@ -8395,6 +8767,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed missing session diff button when opening sessions from the left sidebar
 
 **2.1.78**
+
+March 17, 2026
 
 **Added**
 
@@ -8435,6 +8809,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed "API Error: Rate limit reached" when selecting Opus — model dropdown no longer offers 1M context variant to subscribers whose plan tier is unknown
 
 **2.1.77**
+
+March 17, 2026
 
 **Added**
 
@@ -8494,6 +8870,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.76**
 
+March 14, 2026
+
 **Added**
 
 * Added MCP elicitation support — MCP servers can now request structured input mid-task via an interactive dialog (form fields or browser URL)
@@ -8543,6 +8921,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.75**
 
+March 13, 2026
+
 **Added**
 
 * Added 1M context window for Opus 4.6 by default for Max, Team, and Enterprise plans (previously required extra usage)
@@ -8576,6 +8956,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.74**
 
+March 12, 2026
+
 **Added**
 
 * Added actionable suggestions to `/context` command — identifies context-heavy tools, memory bloat, and capacity warnings with specific optimization tips
@@ -8606,6 +8988,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed delete button not working for Untitled sessions
 
 **2.1.73**
+
+March 11, 2026
 
 **Added**
 
@@ -8646,6 +9030,8 @@ Run `claude --version` to check your installed version.
 * VSCode: Fixed HTTP 400 errors for users behind proxies or on Bedrock/Vertex with Claude 4.5 models
 
 **2.1.72**
+
+March 10, 2026
 
 **Added**
 
@@ -8712,6 +9098,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.71**
 
+March 7, 2026
+
 **Added**
 
 * Added `/loop` command to run a prompt or slash command on a recurring interval (e.g. `/loop 5m check the deploy`)
@@ -8753,6 +9141,8 @@ Run `claude --version` to check your installed version.
 * Fixed prompting for `cd <cwd> && git ...` on Windows when the model uses a mingw-style path
 
 **2.1.70**
+
+March 6, 2026
 
 **Added**
 
@@ -8796,6 +9186,8 @@ Run `claude --version` to check your installed version.
 * Fixed teleport marker not rendering in VS Code teleported sessions
 
 **2.1.69**
+
+March 5, 2026
 
 **Added**
 
@@ -8914,15 +9306,21 @@ Run `claude --version` to check your installed version.
 
 **2.1.68**
 
+March 4, 2026
+
 * Opus 4.6 now defaults to medium effort for Max and Team subscribers. Medium effort works well for most tasks — it's the sweet spot between speed and thoroughness. You can change this anytime with `/model`
 * Re-introduced the "ultrathink" keyword to enable high effort for the next turn
 * Removed Opus 4 and 4.1 from Claude Code on the first-party API — users with these models pinned are automatically moved to Opus 4.6
 
 **2.1.66**
 
+March 4, 2026
+
 * Reduced spurious error logging
 
 **2.1.63**
+
+February 28, 2026
 
 **Added**
 
@@ -8964,13 +9362,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.62**
 
+February 27, 2026
+
 * Fixed prompt suggestion cache regression that reduced cache hit rates
 
 **2.1.61**
 
+February 26, 2026
+
 * Fixed concurrent writes corrupting config file on Windows
 
 **2.1.59**
+
+February 26, 2026
 
 * Claude automatically saves useful context to auto-memory. Manage with /memory
 * Added `/copy` command to show an interactive picker when code blocks are present, allowing selection of individual code blocks or the full response.
@@ -8983,17 +9387,25 @@ Run `claude --version` to check your installed version.
 
 **2.1.58**
 
+February 25, 2026
+
 * Expand Remote Control to more users
 
 **2.1.56**
+
+February 25, 2026
 
 * VS Code: Fixed another cause of "command 'claude-vscode.editor.openLast' not found" crashes
 
 **2.1.55**
 
+February 25, 2026
+
 * Fixed BashTool failing on Windows with EINVAL error
 
 **2.1.53**
+
+February 25, 2026
 
 * Fixed a UI flicker where user input would briefly disappear after submission before the message rendered
 * Fixed bulk agent kill (ctrl+f) to send a single aggregate notification instead of one per agent, and to properly clear the command queue
@@ -9006,9 +9418,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.52**
 
+February 24, 2026
+
 * VS Code: Fixed extension crash on Windows ("command 'claude-vscode.editor.openLast' not found")
 
 **2.1.51**
+
+February 24, 2026
 
 **Added**
 
@@ -9022,7 +9438,7 @@ Run `claude --version` to check your installed version.
 * BashTool now skips login shell (`-l` flag) by default when a shell snapshot is available, improving command execution performance. Previously this required setting `CLAUDE_BASH_NO_LOGIN=true`.
 * Tool results larger than 50K characters are now persisted to disk (previously 100K). This reduces context window usage and improves conversation longevity.
 * The `/model` picker now shows human-readable labels (e.g., "Sonnet 4.5") instead of raw model IDs for pinned model versions, with an upgrade hint when a newer version is available.
-* Managed settings can now be set via macOS plist or Windows Registry. Learn more at [https://code.claude.com/docs/en/settings#settings-files](https://code.claude.com/docs/en/settings#settings-files)
+* Managed settings can now be set via macOS plist or Windows Registry. Learn more at [https://code.claude.com/docs/en/settings#settings-files](https://code.claude.com/docs/en/settings.md#settings-files)
 
 **Fixed**
 
@@ -9031,6 +9447,8 @@ Run `claude --version` to check your installed version.
 * Fixed slash command autocomplete crashing when a plugin's SKILL.md description is a YAML array or other non-string type
 
 **2.1.50**
+
+February 20, 2026
 
 **Added**
 
@@ -9070,6 +9488,8 @@ Run `claude --version` to check your installed version.
 * Fixed memory leak in shell command execution where ChildProcess and AbortController references were retained after cleanup
 
 **2.1.49**
+
+February 19, 2026
 
 **Added**
 
@@ -9111,6 +9531,8 @@ Run `claude --version` to check your installed version.
 * Fixed `--resume` session picker showing raw XML tags for sessions that start with commands like `/clear`. Now correctly falls through to the session ID fallback.
 
 **2.1.47**
+
+February 18, 2026
 
 **Added**
 
@@ -9194,10 +9616,14 @@ Run `claude --version` to check your installed version.
 
 **2.1.46**
 
+February 18, 2026
+
 * Fixed orphaned CC processes after terminal disconnect on macOS
 * Added support for using claude.ai MCP connectors in Claude Code
 
 **2.1.45**
+
+February 17, 2026
 
 **Added**
 
@@ -9225,16 +9651,22 @@ Run `claude --version` to check your installed version.
 
 **2.1.44**
 
+February 16, 2026
+
 * Fixed ENAMETOOLONG errors for deeply-nested directory paths
 * Fixed auth refresh errors
 
 **2.1.43**
+
+February 16, 2026
 
 * Fixed AWS auth refresh hanging indefinitely by adding a 3-minute timeout
 * Fixed spurious warnings for non-agent markdown files in `.claude/agents/` directory
 * Fixed structured-outputs beta header being sent unconditionally on Vertex/Bedrock
 
 **2.1.42**
+
+February 13, 2026
 
 * Improved startup performance by deferring Zod schema construction
 * Improved prompt cache hit rates by moving date out of system prompt
@@ -9243,6 +9675,8 @@ Run `claude --version` to check your installed version.
 * Fixed image dimension limit errors to suggest /compact
 
 **2.1.41**
+
+February 13, 2026
 
 **Added**
 
@@ -9277,6 +9711,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.39**
 
+February 10, 2026
+
 * Improved terminal rendering performance
 * Fixed fatal errors being swallowed instead of displayed
 * Fixed process hanging after session close
@@ -9284,6 +9720,8 @@ Run `claude --version` to check your installed version.
 * Fixed blank lines in verbose transcript view
 
 **2.1.38**
+
+February 10, 2026
 
 * Fixed VS Code terminal scroll-to-top regression introduced in 2.1.37
 * Fixed Tab key queueing slash commands instead of autocompleting
@@ -9295,18 +9733,26 @@ Run `claude --version` to check your installed version.
 
 **2.1.37**
 
+February 7, 2026
+
 * Fixed an issue where /fast was not immediately available after enabling /extra-usage
 
 **2.1.36**
 
-* Fast mode is now available for Opus 4.6. Learn more at [https://code.claude.com/docs/en/fast-mode](https://code.claude.com/docs/en/fast-mode)
+February 7, 2026
+
+* Fast mode is now available for Opus 4.6. Learn more at [https://code.claude.com/docs/en/fast-mode](https://code.claude.com/docs/en/fast-mode.md)
 
 **2.1.34**
+
+February 6, 2026
 
 * Fixed a crash when agent teams setting changed between renders
 * Fixed a bug where commands excluded from sandboxing (via `sandbox.excludedCommands` or `dangerouslyDisableSandbox`) could bypass the Bash ask permission rule when `autoAllowBashIfSandboxed` was enabled
 
 **2.1.33**
+
+February 6, 2026
 
 **Added**
 
@@ -9338,6 +9784,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.32**
 
+February 5, 2026
+
 **Added**
 
 * Added research preview agent teams feature for multi-agent collaboration (token-intensive feature, requires setting CLAUDE\_CODE\_EXPERIMENTAL\_AGENT\_TEAMS=1)
@@ -9360,6 +9808,8 @@ Run `claude --version` to check your installed version.
 * VSCode: Fixed slash commands incorrectly being executed when pressing Enter with preceding text in the input field
 
 **2.1.31**
+
+February 4, 2026
 
 **Added**
 
@@ -9385,6 +9835,8 @@ Run `claude --version` to check your installed version.
 * Fixed LSP shutdown/exit compatibility with strict language servers that reject null params
 
 **2.1.30**
+
+February 3, 2026
 
 **Added**
 
@@ -9419,9 +9871,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.29**
 
+January 31, 2026
+
 * Fixed startup performance issues when resuming sessions that have `saved_hook_context`
 
 **2.1.27**
+
+January 30, 2026
 
 * Added tool call failures and denials to debug logs
 * Fixed context management validation error for gateway users, ensuring `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` avoids the error
@@ -9435,9 +9891,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.25**
 
+January 29, 2026
+
 * Fixed beta header validation error for gateway users on Bedrock and Vertex, ensuring `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` avoids the error
 
 **2.1.23**
+
+January 29, 2026
 
 **Added**
 
@@ -9464,9 +9924,13 @@ Run `claude --version` to check your installed version.
 
 **2.1.22**
 
+January 28, 2026
+
 * Fixed structured outputs for non-interactive (-p) mode
 
 **2.1.21**
+
+January 28, 2026
 
 **Added**
 
@@ -9488,6 +9952,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed message action buttons having incorrect background colors
 
 **2.1.20**
+
+January 27, 2026
 
 **Added**
 
@@ -9531,6 +9997,8 @@ Run `claude --version` to check your installed version.
 
 **2.1.19**
 
+January 23, 2026
+
 **Added**
 
 * Added env var `CLAUDE_CODE_ENABLE_TASKS`, set to `false` to keep the old system temporarily
@@ -9556,13 +10024,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.18**
 
-* Added customizable keyboard shortcuts. Configure keybindings per context, create chord sequences, and personalize your workflow. Run `/keybindings` to get started. Learn more at [https://code.claude.com/docs/en/keybindings](https://code.claude.com/docs/en/keybindings)
+January 23, 2026
+
+* Added customizable keyboard shortcuts. Configure keybindings per context, create chord sequences, and personalize your workflow. Run `/keybindings` to get started. Learn more at [https://code.claude.com/docs/en/keybindings](https://code.claude.com/docs/en/keybindings.md)
 
 **2.1.17**
+
+January 22, 2026
 
 * Fixed crashes on processors without AVX instruction support
 
 **2.1.16**
+
+January 22, 2026
 
 * Added new task management system, including new capabilities like dependency tracking
 * \[VSCode] Added native plugin management support
@@ -9574,12 +10048,16 @@ Run `claude --version` to check your installed version.
 
 **2.1.15**
 
-* Added deprecation notification for npm installations - run `claude install` or see [https://code.claude.com/docs/en/setup](https://code.claude.com/docs/en/setup) for more options
+January 21, 2026
+
+* Added deprecation notification for npm installations - run `claude install` or see [https://code.claude.com/docs/en/setup](https://code.claude.com/docs/en/setup.md) for more options
 * Improved UI rendering performance with React Compiler
 * Fixed the "Context left until auto-compact" warning not disappearing after running `/compact`
 * Fixed MCP stdio server timeout not killing child process, which could cause UI freezes
 
 **2.1.14**
+
+January 20, 2026
 
 **Added**
 
@@ -9608,13 +10086,19 @@ Run `claude --version` to check your installed version.
 
 **2.1.12**
 
+January 17, 2026
+
 * Fixed message rendering bug
 
 **2.1.11**
 
+January 17, 2026
+
 * Fixed excessive MCP connection requests for HTTP/SSE transports
 
 **2.1.10**
+
+January 17, 2026
 
 * Added new `Setup` hook event that can be triggered via `--init`, `--init-only`, or `--maintenance` CLI flags for repository setup and maintenance operations
 * Added keyboard shortcut 'c' to copy OAuth URL when browser doesn't open automatically during login
@@ -9625,6 +10109,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Added trust warning when installing plugins
 
 **2.1.9**
+
+January 16, 2026
 
 * Added `auto:N` syntax for configuring the MCP tool search auto-enable threshold, where N is the context window percentage (0-100)
 * Added `plansDirectory` setting to customize where plan files are stored
@@ -9637,6 +10123,8 @@ Run `claude --version` to check your installed version.
 * Fixed Ctrl+Z suspend not working in terminals using Kitty keyboard protocol (Ghostty, iTerm2, kitty, WezTerm)
 
 **2.1.7**
+
+January 14, 2026
 
 **Added**
 
@@ -9666,6 +10154,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed `claudeProcessWrapper` setting passing the wrapper path instead of the Claude binary path
 
 **2.1.6**
+
+January 13, 2026
 
 **Added**
 
@@ -9706,14 +10196,20 @@ Run `claude --version` to check your installed version.
 
 **2.1.5**
 
+January 12, 2026
+
 * Added `CLAUDE_CODE_TMPDIR` environment variable to override the temp directory used for internal temp files, useful for environments with custom temp directory requirements
 
 **2.1.4**
+
+January 11, 2026
 
 * Added `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` environment variable to disable all background task functionality including auto-backgrounding and the Ctrl+B shortcut
 * Fixed "Help improve Claude" setting fetch to refresh OAuth and retry when it fails due to a stale OAuth token
 
 **2.1.3**
+
+January 9, 2026
 
 **Added**
 
@@ -9741,6 +10237,8 @@ Run `claude --version` to check your installed version.
 * Fixed trust dialog acceptance when running from the home directory not enabling trust-requiring features like hooks during the session
 
 **2.1.2**
+
+January 9, 2026
 
 **Added**
 
@@ -9777,6 +10275,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Fixed usage display not updating after manual compact
 
 **2.1.0**
+
+January 7, 2026
 
 **Added**
 
@@ -9901,13 +10401,19 @@ Run `claude --version` to check your installed version.
 
 **2.0.76**
 
+January 7, 2026
+
 * Fixed issue with macOS code-sign warning when using Claude in Chrome integration
 
 **2.0.75**
 
+January 7, 2026
+
 * Minor bugfixes
 
 **2.0.74**
+
+December 19, 2025
 
 **Added**
 
@@ -9933,6 +10439,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.73**
 
+December 19, 2025
+
 * Added clickable `[Image #N]` links that open attached images in the default viewer
 * Added alt-y yank-pop to cycle through kill ring history after ctrl-y yank
 * Added search filtering to the plugin discover screen (type to filter by name, description, or marketplace)
@@ -9944,6 +10452,8 @@ Run `claude --version` to check your installed version.
 * \[VSCode] Added tab icon badges showing pending permissions (blue) and unread completions (orange)
 
 **2.0.72**
+
+December 17, 2025
 
 **Added**
 
@@ -9969,6 +10479,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.71**
 
+December 16, 2025
+
 * Added /config toggle to enable/disable prompt suggestions
 * Added `/settings` as an alias for the `/config` command
 * Fixed @ file reference suggestions incorrectly triggering when cursor is in the middle of a path
@@ -9978,6 +10490,8 @@ Run `claude --version` to check your installed version.
 * New syntax highlighting engine for native build
 
 **2.0.70**
+
+December 15, 2025
 
 **Added**
 
@@ -10005,9 +10519,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.69**
 
+December 13, 2025
+
 * Minor bugfixes
 
 **2.0.68**
+
+December 12, 2025
 
 * Fixed IME (Input Method Editor) support for languages like Chinese, Japanese, and Korean by correctly positioning the composition window at the cursor
 * Fixed a bug where disallowed MCP tools were visible to the model
@@ -10017,6 +10535,8 @@ Run `claude --version` to check your installed version.
 * Add support for enterprise managed settings. Contact your Anthropic account team to enable this feature.
 
 **2.0.67**
+
+December 12, 2025
 
 **Added**
 
@@ -10040,6 +10560,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.65**
 
+December 11, 2025
+
 * Added ability to switch models while writing a prompt using alt+p (linux, windows), option+p (macos).
 * Added context window information to status line input
 * Added `fileSuggestion` setting for custom `@` file search commands
@@ -10049,10 +10571,12 @@ Run `claude --version` to check your installed version.
 
 **2.0.64**
 
+December 10, 2025
+
 **Added**
 
 * Added named session support: use `/rename` to name sessions, `/resume <name>` in REPL or `claude --resume <name>` from the terminal to resume them
-* Added support for .claude/rules/\`.  See [https://code.claude.com/docs/en/memory](https://code.claude.com/docs/en/memory) for details.
+* Added support for .claude/rules/\`.  See [https://code.claude.com/docs/en/memory](https://code.claude.com/docs/en/memory.md) for details.
 * Added image dimension metadata when images are resized, enabling accurate coordinate mappings for large images
 * VSCode: Added copy-to-clipboard button on code blocks and bash tool inputs
 * Bedrock: Add support for `aws login` AWS Management Console credentials
@@ -10077,6 +10601,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.62**
 
+December 9, 2025
+
 * Added "(Recommended)" indicator for multiple-choice questions, with the recommended option moved to the top of the list
 * Added `attribution` setting to customize commit and PR bylines (deprecates `includeCoAuthoredBy`)
 * Fixed duplicate slash commands appearing when \~/.claude is symlinked to a project directory
@@ -10087,9 +10613,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.61**
 
+December 7, 2025
+
 * Reverted VSCode support for multiple terminal clients due to responsiveness issues.
 
 **2.0.60**
+
+December 6, 2025
 
 * Added background agent support. Agents run in the background while you work
 * Added --disable-slash-commands CLI flag to disable all slash commands
@@ -10100,11 +10630,15 @@ Run `claude --version` to check your installed version.
 
 **2.0.59**
 
+December 4, 2025
+
 * Added --agent CLI flag to override the agent setting for the current session
 * Added `agent` setting to configure main thread with a specific agent's system prompt, tool restrictions, and model
 * VS Code: Fixed .claude.json config file being read from incorrect location
 
 **2.0.58**
+
+December 3, 2025
 
 * Pro users now have access to Opus 4.5 as part of their subscription!
 * Fixed timer duration showing "11m 60s" instead of "12m 0s"
@@ -10112,15 +10646,21 @@ Run `claude --version` to check your installed version.
 
 **2.0.57**
 
+December 3, 2025
+
 * Added feedback input when rejecting plans, allowing users to tell Claude what to change
 * VSCode: Added streaming message support for real-time response display
 
 **2.0.56**
 
+December 2, 2025
+
 * Added setting to enable/disable terminal progress bar (OSC 9;4)
 * VSCode Extension: Added support for VS Code's secondary sidebar (VS Code 1.97+), allowing Claude Code to be displayed in the right sidebar while keeping the file explorer on the left. Requires setting sidebar as Preferred Location in the config.
 
 **2.0.55**
+
+November 26, 2025
 
 * Fixed proxy DNS resolution being forced on by default. Now opt-in via `CLAUDE_CODE_PROXY_RESOLVES_HOSTS=true` environment variable
 * Fixed keyboard navigation becoming unresponsive when holding down arrow keys in memory location selector
@@ -10129,10 +10669,14 @@ Run `claude --version` to check your installed version.
 
 **2.0.54**
 
+November 26, 2025
+
 * Hooks: Enable PermissionRequest hooks to process 'always allow' suggestions and apply permission updates
 * Fix issue with excessive iTerm notifications
 
 **2.0.52**
+
+November 24, 2025
 
 * Fixed duplicate message display when starting Claude with a command line argument
 * Fixed `/usage` command progress bars to fill up as usage increases (instead of showing remaining percentage)
@@ -10140,6 +10684,8 @@ Run `claude --version` to check your installed version.
 * Permit some uses of `$!` in bash commands
 
 **2.0.51**
+
+November 24, 2025
 
 * Added Opus 4.5! [https://www.anthropic.com/news/claude-opus-4-5](https://www.anthropic.com/news/claude-opus-4-5)
 * Introducing Claude Code for Desktop: [https://claude.com/download](https://claude.com/download)
@@ -10153,6 +10699,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.50**
 
+November 21, 2025
+
 * Fixed bug preventing calling MCP tools that have nested references in their input schemas
 * Silenced a noisy but harmless error during upgrades
 * Improved ultrathink text display
@@ -10160,11 +10708,15 @@ Run `claude --version` to check your installed version.
 
 **2.0.49**
 
+November 21, 2025
+
 * Added readline-style ctrl-y for pasting deleted text
 * Improved clarity of usage limit warning message
 * Fixed handling of subagent permissions
 
 **2.0.47**
+
+November 19, 2025
 
 * Improved error messages and validation for `claude --teleport`
 * Improved error handling in `/usage`
@@ -10173,15 +10725,21 @@ Run `claude --version` to check your installed version.
 
 **2.0.46**
 
+November 19, 2025
+
 * Fixed image files being reported with incorrect media type when format cannot be detected from metadata
 
 **2.0.45**
 
-* Added support for Microsoft Foundry! See [https://code.claude.com/docs/en/azure-ai-foundry](https://code.claude.com/docs/en/azure-ai-foundry)
+November 18, 2025
+
+* Added support for Microsoft Foundry! See [https://code.claude.com/docs/en/azure-ai-foundry](https://code.claude.com/docs/en/azure-ai-foundry.md)
 * Added `PermissionRequest` hook to automatically approve or deny tool permission requests with custom logic
 * Send background tasks to Claude Code on the web by starting a message with `&`
 
 **2.0.43**
+
+November 18, 2025
 
 * Added `permissionMode` field for custom agents
 * Added `tool_use_id` field to `PreToolUseHookInput` and `PostToolUseHookInput` types
@@ -10194,9 +10752,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.42**
 
+November 15, 2025
+
 * Added `agent_id` and `agent_transcript_path` fields to `SubagentStop` hooks.
 
 **2.0.41**
+
+November 14, 2025
 
 **Added**
 
@@ -10221,17 +10783,23 @@ Run `claude --version` to check your installed version.
 
 **2.0.37**
 
+November 11, 2025
+
 * Fixed how idleness is computed for notifications
 * Hooks: Added matcher values for Notification hook events
 * Output Styles: Added `keep-coding-instructions` option to frontmatter
 
 **2.0.36**
 
+November 7, 2025
+
 * Fixed: DISABLE\_AUTOUPDATER environment variable now properly disables package manager update notifications
 * Fixed queued messages being incorrectly executed as bash commands
 * Fixed input being lost when typing while a queued message is processed
 
 **2.0.35**
+
+November 6, 2025
 
 * Improve fuzzy search results when searching commands
 * Improved VS Code extension to respect `chat.fontSize` and `chat.fontFamily` settings throughout the entire UI, and apply font changes immediately without requiring reload
@@ -10241,6 +10809,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.34**
 
+November 5, 2025
+
 * VSCode Extension: Added setting to configure the initial permission mode for new conversations
 * Improved file path suggestion performance with native Rust-based fuzzy finder
 * Fixed infinite token refresh loop that caused MCP servers with OAuth (e.g., Slack) to hang during connection
@@ -10248,17 +10818,23 @@ Run `claude --version` to check your installed version.
 
 **2.0.33**
 
+November 4, 2025
+
 * Native binary installs now launch quicker.
 * Fixed `claude doctor` incorrectly detecting Homebrew vs npm-global installations by properly resolving symlinks
 * Fixed `claude mcp serve` exposing tools with incompatible outputSchemas
 
 **2.0.32**
 
+November 4, 2025
+
 * Un-deprecate output styles based on community feedback
 * Added `companyAnnouncements` setting for displaying announcements on startup
 * Fixed hook progress messages not updating correctly during PostToolUse hook execution
 
 **2.0.31**
+
+October 31, 2025
 
 * Windows: native installation uses shift+tab as shortcut for mode switching, instead of alt+m
 * Vertex: add support for Web Search on supported models
@@ -10268,6 +10844,8 @@ Run `claude --version` to check your installed version.
 * Fixed plugin uninstall not removing plugins
 
 **2.0.30**
+
+October 30, 2025
 
 **Added**
 
@@ -10296,6 +10874,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.28**
 
+October 27, 2025
+
 * Plan mode: introduced new Plan subagent
 * Subagents: claude can now choose to resume subagents
 * Subagents: claude can dynamically choose the model used by its subagents
@@ -10308,6 +10888,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.27**
 
+October 24, 2025
+
 * New UI for permission prompts
 * Added current branch filtering and search to session resume screen for easier navigation
 * Fixed directory @-mention causing "No assistant message found" error
@@ -10316,9 +10898,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.25**
 
+October 21, 2025
+
 * Removed legacy SDK entrypoint. Please migrate to @anthropic-ai/claude-agent-sdk for future SDK updates: [https://platform.claude.com/docs/en/agent-sdk/migration-guide](https://platform.claude.com/docs/en/agent-sdk/migration-guide)
 
 **2.0.24**
+
+October 20, 2025
 
 * Fixed a bug where project-level skills were not loading when --setting-sources 'project' was specified
 * Claude Code Web: Support for Web -> CLI teleport
@@ -10327,12 +10913,16 @@ Run `claude --version` to check your installed version.
 
 **2.0.22**
 
+October 17, 2025
+
 * Fixed content layout shift when scrolling through slash commands
 * IDE: Add toggle to enable/disable thinking.
 * Fix bug causing duplicate permission prompts with parallel tool calls
 * Add support for enterprise managed MCP allowlist and denylist
 
 **2.0.21**
+
+October 18, 2025
 
 * Support MCP `structuredContent` field in tool responses
 * Added an interactive question tool
@@ -10342,14 +10932,20 @@ Run `claude --version` to check your installed version.
 
 **2.0.20**
 
+October 16, 2025
+
 * Added support for Claude Skills
 
 **2.0.19**
+
+October 15, 2025
 
 * Auto-background long-running bash commands instead of killing them. Customize with BASH\_DEFAULT\_TIMEOUT\_MS
 * Fixed a bug where Haiku was unnecessarily called in print mode
 
 **2.0.17**
+
+October 15, 2025
 
 * Added Haiku 4.5 to model selector!
 * Haiku 4.5 automatically uses Sonnet in plan mode, and Haiku for execution (i.e. SonnetPlan by default)
@@ -10360,10 +10956,14 @@ Run `claude --version` to check your installed version.
 
 **2.0.15**
 
+October 14, 2025
+
 * Fixed bug with resuming where previously created files needed to be read again before writing
 * Fixed bug with `-p` mode where @-mentioned files needed to be read again before writing
 
 **2.0.14**
+
+October 10, 2025
 
 * Fix @-mentioning MCP servers to toggle them on/off
 * Improve permission checks for bash with inline env vars
@@ -10375,9 +10975,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.13**
 
+October 9, 2025
+
 * Fixed `/plugin` not working on native build
 
 **2.0.12**
+
+October 9, 2025
 
 **Changed**
 
@@ -10386,7 +10990,7 @@ Run `claude --version` to check your installed version.
 * Repository-level plugin configuration via `extraKnownMarketplaces` for team collaboration
 * `/plugin validate` command for validating plugin structure and configuration
 * Plugin announcement blog post at [https://www.anthropic.com/news/claude-code-plugins](https://www.anthropic.com/news/claude-code-plugins)
-* Plugin documentation available at [https://code.claude.com/docs/en/plugins](https://code.claude.com/docs/en/plugins)
+* Plugin documentation available at [https://code.claude.com/docs/en/plugins](https://code.claude.com/docs/en/plugins.md)
 * Comprehensive error messages and diagnostics via `/doctor` command
 * Avoid flickering in `/model` selector
 * Improvements to `/help`
@@ -10395,12 +10999,16 @@ Run `claude --version` to check your installed version.
 
 **2.0.11**
 
+October 8, 2025
+
 * Reduced system prompt size by 1.4k tokens
 * IDE: Fixed keyboard shortcuts and focus issues for smoother interaction
 * Fixed Opus fallback rate limit errors appearing incorrectly
 * Fixed /add-dir command selecting wrong default tab
 
 **2.0.10**
+
+October 8, 2025
 
 * Rewrote terminal renderer for buttery smooth UI
 * Enable/disable MCP servers by @mentioning, or in /mcp
@@ -10411,9 +11019,13 @@ Run `claude --version` to check your installed version.
 
 **2.0.9**
 
+October 6, 2025
+
 * Fix regression where bash backgrounding stopped working
 
 **2.0.8**
+
+October 4, 2025
 
 * Update Bedrock default Sonnet model to `global.anthropic.claude-sonnet-4-5-20250929-v1:0`
 * IDE: Add drag-and-drop support for files and folders in chat
@@ -10423,6 +11035,8 @@ Run `claude --version` to check your installed version.
 
 **2.0.5**
 
+October 4, 2025
+
 * IDE: Fix IME unintended message submission with Enter and Tab
 * IDE: Add "Open in Terminal" link in login screen
 * Fix unhandled OAuth expiration 401 API errors
@@ -10430,10 +11044,14 @@ Run `claude --version` to check your installed version.
 
 **2.0.1**
 
+September 30, 2025
+
 * Skip Sonnet 4.5 default model setting change for Bedrock and Vertex
 * Various bug fixes and presentation improvements
 
 **2.0.0**
+
+September 29, 2025
 
 **Added**
 
@@ -10453,10 +11071,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.126**
 
+September 26, 2025
+
 * Enable /context command for Bedrock and Vertex
 * Add mTLS support for HTTP-based OpenTelemetry exporters
 
 **1.0.124**
+
+September 25, 2025
 
 * Set `CLAUDE_BASH_NO_LOGIN` environment variable to 1 or true to to skip login shell for BashTool
 * Fix Bedrock and Vertex environment variables evaluating all strings as truthy
@@ -10466,15 +11088,19 @@ Run `claude --version` to check your installed version.
 
 **1.0.123**
 
+September 23, 2025
+
 * Bash permission rules now support output redirections when matching (e.g., `Bash(python:*)` matches `python script.py > output.txt`)
 * Fixed thinking mode triggering on negation phrases like "don't think"
 * Fixed rendering performance degradation during token streaming
-* Added SlashCommand tool, which enables Claude to invoke your slash commands. [https://code.claude.com/docs/en/slash-commands#SlashCommand-tool](https://code.claude.com/docs/en/slash-commands#SlashCommand-tool)
+* Added SlashCommand tool, which enables Claude to invoke your slash commands. [https://code.claude.com/docs/en/slash-commands#SlashCommand-tool](https://code.claude.com/docs/en/slash-commands.md#SlashCommand-tool)
 * Enhanced BashTool environment snapshot logging
 * Fixed a bug where resuming a conversation in headless mode would sometimes enable thinking unnecessarily
 * Migrated --debug logging to a file, to enable easy tailing & filtering
 
 **1.0.120**
+
+September 19, 2025
 
 * Fix input lag during typing, especially noticeable with large prompts
 * Improved VSCode extension command registry and sessions dialog user experience
@@ -10484,12 +11110,16 @@ Run `claude --version` to check your installed version.
 
 **1.0.119**
 
+September 19, 2025
+
 * Fix Windows issue where process visually freezes on entering interactive mode
 * Support dynamic headers for MCP servers via headersHelper configuration
 * Fix thinking mode not working in headless sessions
 * Fix slash commands now properly update allowed tools instead of replacing them
 
 **1.0.117**
+
+September 19, 2025
 
 * Add Ctrl-R history search to recall previous commands like bash/zsh
 * Fix input lag while typing, especially on Windows
@@ -10498,6 +11128,8 @@ Run `claude --version` to check your installed version.
 * Add permissions management hint to /add-dir output
 
 **1.0.115**
+
+September 16, 2025
 
 * Improve thinking mode display with enhanced visual effects
 * Type /t to temporarily disable thinking mode in your prompt
@@ -10508,10 +11140,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.113**
 
+September 13, 2025
+
 * Deprecated piped input in interactive mode
 * Move Ctrl+R keybinding for toggling transcript to Ctrl+O
 
 **1.0.112**
+
+September 12, 2025
 
 * Transcript mode (Ctrl+R): Added the model used to generate each assistant message
 * Addressed issue where some Claude Max users were incorrectly recognized as Claude Pro users
@@ -10521,10 +11157,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.111**
 
+September 10, 2025
+
 * /model now validates provided model names
 * Fixed Bash tool crashes caused by malformed shell syntax parsing
 
 **1.0.110**
+
+September 10, 2025
 
 * /terminal-setup command now supports WezTerm
 * MCP: OAuth tokens now proactively refresh before expiration
@@ -10532,17 +11172,25 @@ Run `claude --version` to check your installed version.
 
 **1.0.109**
 
+September 9, 2025
+
 * SDK: Added partial message streaming support via `--include-partial-messages` CLI flag
 
 **1.0.106**
+
+September 5, 2025
 
 * Windows: Fixed path permission matching to consistently use POSIX format (e.g., `Read(//c/Users/...)`)
 
 **1.0.97**
 
+August 29, 2025
+
 * Settings: /doctor now validates permission rule syntax and suggests corrections
 
 **1.0.94**
+
+August 27, 2025
 
 * Vertex: add support for global endpoints for supported models
 * /memory command now allows direct editing of all imported memory files
@@ -10551,14 +11199,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.93**
 
+August 26, 2025
+
 * Windows: Add alt + v shortcut for pasting images from clipboard
 * Support NO\_PROXY environment variable to bypass proxy for specified hostnames and IPs
 
 **1.0.90**
 
+August 25, 2025
+
 * Settings file changes take effect immediately - no restart required
 
 **1.0.88**
+
+August 22, 2025
 
 * Fixed issue causing "OAuth authentication is currently not supported"
 * Status line input now includes `exceeds_200k_tokens`
@@ -10568,16 +11222,22 @@ Run `claude --version` to check your installed version.
 
 **1.0.86**
 
+August 22, 2025
+
 * Added /context to help users self-serve debug context issues
 * SDK: Added UUID support for all SDK messages
 * SDK: Added `--replay-user-messages` to replay user messages back to stdout
 
 **1.0.85**
 
+August 19, 2025
+
 * Status line input now includes session cost info
 * Hooks: Introduced SessionEnd hook
 
 **1.0.84**
+
+August 18, 2025
 
 * Fix tool\_use/tool\_result id mismatch error when network is unstable
 * Fix Claude sometimes ignoring real-time steering when wrapping up a task
@@ -10586,10 +11246,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.83**
 
+August 18, 2025
+
 * @-mention: Support files with spaces in path
 * New shimmering spinner
 
 **1.0.82**
+
+August 16, 2025
 
 * SDK: Add request cancellation support
 * SDK: New additionalDirectories option to search custom paths, improved slash command processing
@@ -10599,14 +11263,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.81**
 
-* Released output styles, including new built-in educational output styles "Explanatory" and "Learning". Docs: [https://code.claude.com/docs/en/output-styles](https://code.claude.com/docs/en/output-styles)
+August 14, 2025
+
+* Released output styles, including new built-in educational output styles "Explanatory" and "Learning". Docs: [https://code.claude.com/docs/en/output-styles](https://code.claude.com/docs/en/output-styles.md)
 * Agents: Fix custom agent loading when agent files are unparsable
 
 **1.0.80**
 
+August 14, 2025
+
 * UI improvements: Fix text contrast for custom subagent colors and spinner rendering issues
 
 **1.0.77**
+
+August 14, 2025
 
 * Bash tool: Fix heredoc and multiline string escaping, improve stderr redirection handling
 * SDK: Add session support and permission denial tracking
@@ -10614,6 +11284,8 @@ Run `claude --version` to check your installed version.
 * Opus Plan Mode: New setting in `/model` to run Opus only in plan mode, Sonnet otherwise
 
 **1.0.73**
+
+August 11, 2025
 
 * MCP: Support multiple config files with `--mcp-config file1.json file2.json`
 * MCP: Press Esc to cancel OAuth authentication flows
@@ -10623,14 +11295,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.72**
 
+August 11, 2025
+
 * Ask permissions: have Claude Code always ask for confirmation to use specific tools with /permissions
 
 **1.0.71**
+
+August 7, 2025
 
 * Background commands: (Ctrl-b) to run any Bash command in the background so Claude can keep working (great for dev servers, tailing logs, etc.)
 * Customizable status line: add your terminal prompt to Claude Code with /statusline
 
 **1.0.70**
+
+August 7, 2025
 
 * Performance: Optimized message rendering for better performance with large contexts
 * Windows: Fixed native file search, ripgrep, and subagent functionality
@@ -10638,9 +11316,13 @@ Run `claude --version` to check your installed version.
 
 **1.0.69**
 
+August 5, 2025
+
 * Upgraded Opus to version 4.1
 
 **1.0.68**
+
+August 4, 2025
 
 * Fix incorrect model names being used for certain commands like `/pr-comments`
 * Windows: improve permissions checks for allow / deny tools and project trust. This may create a new project entry in `.claude.json` - manually merge the history field if desired.
@@ -10652,10 +11334,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.65**
 
+July 31, 2025
+
 * IDE: Fixed connection stability issues and error handling for diagnostics
 * Windows: Fixed shell environment setup for users without .bashrc files
 
 **1.0.64**
+
+July 30, 2025
 
 * Agents: Added model customization support - you can now specify which model an agent should use
 * Agents: Fixed unintended access to the recursive agent tool
@@ -10665,9 +11351,13 @@ Run `claude --version` to check your installed version.
 
 **1.0.63**
 
+July 29, 2025
+
 * Windows: Fixed file search, @agent mentions, and custom slash commands functionality
 
 **1.0.62**
+
+July 28, 2025
 
 * Added @-mention support with typeahead for custom agents. @`<your-custom-agent>` to invoke it
 * Hooks: Added SessionStart hook for new session initialization
@@ -10675,6 +11365,8 @@ Run `claude --version` to check your installed version.
 * Improved network connectivity check reliability
 
 **1.0.61**
+
+July 25, 2025
 
 * Transcript mode (Ctrl+R): Changed Esc to exit transcript mode rather than interrupt
 * Settings: Added `--settings` flag to load settings from a JSON file
@@ -10687,9 +11379,13 @@ Run `claude --version` to check your installed version.
 
 **1.0.60**
 
+July 24, 2025
+
 * You can now create custom subagents for specialized tasks! Run /agents to get started
 
 **1.0.59**
+
+July 23, 2025
 
 * SDK: Added tool confirmation support with canUseTool callback
 * SDK: Allow specifying env for spawned process
@@ -10699,11 +11395,15 @@ Run `claude --version` to check your installed version.
 
 **1.0.58**
 
+July 23, 2025
+
 * Added support for reading PDFs
 * MCP: Improved server health status display in 'claude mcp list'
 * Hooks: Added CLAUDE\_PROJECT\_DIR env var for hook commands
 
 **1.0.57**
+
+July 23, 2025
 
 * Added support for specifying a model in slash commands
 * Improved permission messages to help Claude understand allowed tools
@@ -10711,11 +11411,15 @@ Run `claude --version` to check your installed version.
 
 **1.0.56**
 
+July 23, 2025
+
 * Windows: Enabled shift+tab for mode switching on versions of Node.js that support terminal VT mode
 * Fixes for WSL IDE detection
 * Fix an issue causing awsRefreshHelper changes to .aws directory not to be picked up
 
 **1.0.55**
+
+July 23, 2025
 
 * Clarified knowledge cutoff for Opus 4 and Sonnet 4 models
 * Windows: fixed Ctrl+Z crash
@@ -10723,6 +11427,8 @@ Run `claude --version` to check your installed version.
 * Add --system-prompt-file option to override system prompt in print mode
 
 **1.0.54**
+
+July 19, 2025
 
 * Hooks: Added UserPromptSubmit hook and the current working directory to hook inputs
 * Custom slash commands: Added argument-hint to frontmatter
@@ -10732,14 +11438,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.53**
 
+July 18, 2025
+
 * Updated @-mention file truncation from 100 lines to 2000 lines
 * Add helper script settings for AWS token refresh: awsAuthRefresh (for foreground operations like aws sso login) and awsCredentialExport (for background operation with STS-like response).
 
 **1.0.52**
 
+July 18, 2025
+
 * Added support for MCP server instructions
 
 **1.0.51**
+
+July 11, 2025
 
 * Added support for native Windows (requires Git for Windows)
 * Added support for Bedrock API keys through environment variable AWS\_BEARER\_TOKEN\_BEDROCK
@@ -10753,6 +11465,8 @@ Run `claude --version` to check your installed version.
 
 **1.0.48**
 
+July 10, 2025
+
 * Fixed a bug in v1.0.45 where the app would sometimes freeze on launch
 * Added progress messages to Bash tool based on the last 5 lines of command output
 * Added expanding variables support for MCP server configuration
@@ -10763,6 +11477,8 @@ Run `claude --version` to check your installed version.
 
 **1.0.45**
 
+July 10, 2025
+
 * Redesigned Search (Grep) tool with new tool input parameters and features
 * Disabled IDE diffs for notebook files, fixing "Timeout waiting after 1000ms" error
 * Fixed config file corruption issue by enforcing atomic writes
@@ -10772,6 +11488,8 @@ Run `claude --version` to check your installed version.
 
 **1.0.44**
 
+July 7, 2025
+
 * New /export command lets you quickly export a conversation for sharing
 * MCP: resource\_link tool results are now supported
 * MCP: tool annotations and tool titles now display in /mcp view
@@ -10779,14 +11497,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.43**
 
+July 3, 2025
+
 * Fixed a bug where the theme selector was saving excessively
 * Hooks: Added EPIPE system error handling
 
 **1.0.42**
 
+July 3, 2025
+
 * Added tilde (`~`) expansion support to `/add-dir` command
 
 **1.0.41**
+
+July 3, 2025
 
 * Hooks: Split Stop hook triggering into Stop and SubagentStop
 * Hooks: Enabled optional timeout configuration for each command
@@ -10796,34 +11520,50 @@ Run `claude --version` to check your installed version.
 
 **1.0.40**
 
+July 3, 2025
+
 * Fixed a bug causing API connection errors with UNABLE\_TO\_GET\_ISSUER\_CERT\_LOCALLY if `NODE_EXTRA_CA_CERTS` was set
 
 **1.0.39**
+
+July 3, 2025
 
 * New Active Time metric in OpenTelemetry logging
 
 **1.0.38**
 
-* Released hooks. Special thanks to community input in [https://github.com/anthropics/claude-code/issues/712](https://github.com/anthropics/claude-code/issues/712). Docs: [https://code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks)
+June 30, 2025
+
+* Released hooks. Special thanks to community input in [https://github.com/anthropics/claude-code/issues/712](https://github.com/anthropics/claude-code/issues/712). Docs: [https://code.claude.com/docs/en/hooks](https://code.claude.com/docs/en/hooks.md)
 
 **1.0.37**
+
+June 30, 2025
 
 * Remove ability to set `Proxy-Authorization` header via ANTHROPIC\_AUTH\_TOKEN or apiKeyHelper
 
 **1.0.36**
+
+June 30, 2025
 
 * Web search now takes today's date into context
 * Fixed a bug where stdio MCP servers were not terminating properly on exit
 
 **1.0.35**
 
+June 25, 2025
+
 * Added support for MCP OAuth Authorization Server discovery
 
 **1.0.34**
 
+June 24, 2025
+
 * Fixed a memory leak causing a MaxListenersExceededWarning message to appear
 
 **1.0.33**
+
+June 24, 2025
 
 * Improved logging functionality with session ID support
 * Added prompt input undo functionality (Ctrl+Z and vim 'u' command)
@@ -10831,14 +11571,20 @@ Run `claude --version` to check your installed version.
 
 **1.0.32**
 
+June 24, 2025
+
 * Updated loopback config for litellm
 * Added forceLoginMethod setting to bypass login selection screen
 
 **1.0.31**
 
+June 24, 2025
+
 * Fixed a bug where \~/.claude.json would get reset when file contained invalid JSON
 
 **1.0.30**
+
+June 24, 2025
 
 * Custom slash commands: Run bash output, @-mention files, enable thinking with thinking keywords
 * Improved file path autocomplete with filename matching
@@ -10847,9 +11593,13 @@ Run `claude --version` to check your installed version.
 
 **1.0.29**
 
+June 24, 2025
+
 * Improved CJK character support in cursor navigation and rendering
 
 **1.0.28**
+
+June 24, 2025
 
 * Slash commands: Fix selector display during history navigation
 * Resizes images before upload to prevent API size limit errors
@@ -10859,12 +11609,16 @@ Run `claude --version` to check your installed version.
 
 **1.0.27**
 
+June 18, 2025
+
 * Streamable HTTP MCP servers are now supported
 * Remote MCP servers (SSE and HTTP) now support OAuth
 * MCP resources can now be @-mentioned
 * /resume slash command to switch conversations within Claude Code
 
 **1.0.25**
+
+June 16, 2025
 
 * Slash commands: moved "project" and "user" prefixes to descriptions
 * Slash commands: improved reliability for command discovery
@@ -10873,25 +11627,35 @@ Run `claude --version` to check your installed version.
 
 **1.0.24**
 
+June 16, 2025
+
 * Improved /mcp output
 * Fixed a bug where settings arrays got overwritten instead of merged
 
 **1.0.23**
+
+June 16, 2025
 
 * Released TypeScript SDK: import @anthropic-ai/claude-code to get started
 * Released Python SDK: pip install claude-code-sdk to get started
 
 **1.0.22**
 
+June 12, 2025
+
 * SDK: Renamed `total_cost` to `total_cost_usd`
 
 **1.0.21**
+
+June 12, 2025
 
 * Improved editing of files with tab-based indentation
 * Fix for tool\_use without matching tool\_result errors
 * Fixed a bug where stdio MCP server processes would linger after quitting Claude Code
 
 **1.0.18**
+
+June 9, 2025
 
 * Added --add-dir CLI argument for specifying additional working directories
 * Added streaming input support without require -p flag
@@ -10904,12 +11668,16 @@ Run `claude --version` to check your installed version.
 
 **1.0.17**
 
+June 9, 2025
+
 * We now emit messages from sub-tasks in -p mode (look for the parent\_tool\_use\_id property)
 * Fixed crashes when the VS Code diff tool is invoked multiple times quickly
 * MCP server list UI improvements
 * Update Claude Code process title to display "claude" instead of "node"
 
 **1.0.11**
+
+June 4, 2025
 
 * Claude Code can now also be used with a Claude Pro subscription
 * Added /upgrade for smoother switching to Claude Max plans
@@ -10919,10 +11687,14 @@ Run `claude --version` to check your installed version.
 
 **1.0.10**
 
+June 4, 2025
+
 * Added markdown table support
 * Improved streaming performance
 
 **1.0.8**
+
+June 2, 2025
 
 * Fixed Vertex AI region fallback when using CLOUD\_ML\_REGION
 * Increased default otel interval from 1s -> 5s
@@ -10933,6 +11705,8 @@ Run `claude --version` to check your installed version.
 
 **1.0.7**
 
+June 2, 2025
+
 * Renamed /allowed-tools -> /permissions
 * Migrated allowedTools and ignorePatterns from .claude.json -> settings.json
 * Deprecated claude config commands in favor of editing settings.json
@@ -10942,6 +11716,8 @@ Run `claude --version` to check your installed version.
 
 **1.0.6**
 
+June 2, 2025
+
 * Improved edit reliability for tab-indented files
 * Respect CLAUDE\_CONFIG\_DIR everywhere
 * Reduced unnecessary tool permission prompts
@@ -10950,9 +11726,13 @@ Run `claude --version` to check your installed version.
 
 **1.0.4**
 
+May 28, 2025
+
 * Fixed a bug where MCP tool errors weren't being parsed correctly
 
 **1.0.1**
+
+May 22, 2025
 
 * Added `DISABLE_INTERLEAVED_THINKING` to give users the option to opt out of interleaved thinking.
 * Improved model references to show provider-specific names (Sonnet 3.7 for Bedrock, Sonnet 4 for Console)
@@ -10960,15 +11740,21 @@ Run `claude --version` to check your installed version.
 
 **1.0.0**
 
+May 22, 2025
+
 * Claude Code is now generally available
 * Introducing Sonnet 4 and Opus 4 models
 
 **0.2.125**
 
+May 21, 2025
+
 * Breaking change: Bedrock ARN passed to `ANTHROPIC_MODEL` or `ANTHROPIC_SMALL_FAST_MODEL` should no longer contain an escaped slash (specify `/` instead of `%2F`)
 * Removed `DEBUG=true` in favor of `ANTHROPIC_LOG=debug`, to log all requests
 
 **0.2.117**
+
+May 17, 2025
 
 * Breaking change: --print JSON output now returns nested message objects, for forwards-compatibility as we introduce new metadata fields
 * Introduced settings.cleanupPeriodDays
@@ -10976,6 +11762,8 @@ Run `claude --version` to check your installed version.
 * Introduced --debug mode
 
 **0.2.108**
+
+May 13, 2025
 
 * You can now send messages to Claude while it works to steer Claude in real-time
 * Introduced BASH\_DEFAULT\_TIMEOUT\_MS and BASH\_MAX\_TIMEOUT\_MS env vars
@@ -10986,14 +11774,20 @@ Run `claude --version` to check your installed version.
 
 **0.2.107**
 
+May 9, 2025
+
 * CLAUDE.md files can now import other files. Add @path/to/file.md to ./CLAUDE.md to load additional files on launch
 
 **0.2.106**
+
+May 9, 2025
 
 * MCP SSE server configs can now specify custom headers
 * Fixed a bug where MCP permission prompt didn't always show correctly
 
 **0.2.105**
+
+May 8, 2025
 
 * Claude can now search the web
 * Moved system & account status to /status
@@ -11002,34 +11796,48 @@ Run `claude --version` to check your installed version.
 
 **0.2.102**
 
+May 5, 2025
+
 * Improved thinking triggering reliability
 * Improved @mention reliability for images and folders
 * You can now paste multiple large chunks into one prompt
 
 **0.2.100**
 
+May 2, 2025
+
 * Fixed a crash caused by a stack overflow error
 * Made db storage optional; missing db support disables --continue and --resume
 
 **0.2.98**
 
+May 1, 2025
+
 * Fixed an issue where auto-compact was running twice
 
 **0.2.96**
 
+May 1, 2025
+
 * Claude Code can now also be used with a Claude Max subscription ([https://claude.ai/upgrade](https://claude.ai/upgrade))
 
 **0.2.93**
+
+April 30, 2025
 
 * Resume conversations from where you left off from with "claude --continue" and "claude --resume"
 * Claude now has access to a Todo list that helps it stay on track and be more organized
 
 **0.2.82**
 
+April 25, 2025
+
 * Added support for --disallowedTools
 * Renamed tools for consistency: LSTool -> LS, View -> Read, etc.
 
 **0.2.75**
+
+April 21, 2025
 
 * Hit Enter to queue up additional messages while Claude is working
 * Drag in or copy/paste image files directly into the prompt
@@ -11039,14 +11847,20 @@ Run `claude --version` to check your installed version.
 
 **0.2.74**
 
+April 18, 2025
+
 * Added support for refreshing dynamically generated API keys (via apiKeyHelper), with a 5 minute TTL
 * Task tool can now perform writes and run bash commands
 
 **0.2.72**
 
+April 18, 2025
+
 * Updated spinner to indicate tokens loaded and tool usage
 
 **0.2.70**
+
+April 17, 2025
 
 * Network commands like curl are now available for Claude to use
 * Claude can now run multiple web queries in parallel
@@ -11054,23 +11868,33 @@ Run `claude --version` to check your installed version.
 
 **0.2.69**
 
+April 17, 2025
+
 * Fixed UI glitches with improved Select component behavior
 * Enhanced terminal output display with better text truncation logic
 
 **0.2.67**
 
+April 17, 2025
+
 * Shared project permission rules can be saved in .claude/settings.json
 
 **0.2.66**
+
+April 17, 2025
 
 * Print mode (-p) now supports streaming output via --output-format=stream-json
 * Fixed issue where pasting could trigger memory or bash mode unexpectedly
 
 **0.2.63**
 
+April 17, 2025
+
 * Fixed an issue where MCP tools were loaded twice, which caused tool call errors
 
 **0.2.61**
+
+April 2, 2025
 
 * Navigate menus with vim-style keys (j/k) or bash/emacs shortcuts (Ctrl+n/p) for faster interaction
 * Enhanced image detection for more reliable clipboard paste functionality
@@ -11078,11 +11902,15 @@ Run `claude --version` to check your installed version.
 
 **0.2.59**
 
+April 2, 2025
+
 * Copy+paste images directly into your prompt
 * Improved progress indicators for bash and fetch tools
 * Bugfixes for non-interactive mode (-p)
 
 **0.2.54**
+
+April 2, 2025
 
 * Quickly add to Memory by starting your message with '#'
 * Press ctrl+r to see full output for long tool results
@@ -11090,18 +11918,26 @@ Run `claude --version` to check your installed version.
 
 **0.2.53**
 
+April 2, 2025
+
 * New web fetch tool lets Claude view URLs that you paste in
 * Fixed a bug with JPEG detection
 
 **0.2.50**
 
+April 2, 2025
+
 * New MCP "project" scope now allows you to add MCP servers to .mcp.json files and commit them to your repository
 
 **0.2.49**
 
+April 2, 2025
+
 * Previous MCP server scopes have been renamed: previous "project" scope is now "local" and "global" scope is now "user"
 
 **0.2.47**
+
+April 2, 2025
 
 * Press Tab to auto-complete file and folder names
 * Press Shift + Tab to toggle auto-accept for file edits
@@ -11109,38 +11945,54 @@ Run `claude --version` to check your installed version.
 
 **0.2.44**
 
+April 2, 2025
+
 * Ask Claude to make a plan with thinking mode: just say 'think' or 'think harder' or even 'ultrathink'
 
 **0.2.41**
+
+April 2, 2025
 
 * MCP server startup timeout can now be configured via MCP\_TIMEOUT environment variable
 * MCP server startup no longer blocks the app from starting up
 
 **0.2.37**
 
+April 2, 2025
+
 * New /release-notes command lets you view release notes at any time
 * `claude config add/remove` commands now accept multiple values separated by commas or spaces
 
 **0.2.36**
+
+April 2, 2025
 
 * Import MCP servers from Claude Desktop with `claude mcp add-from-claude-desktop`
 * Add MCP servers as JSON strings with `claude mcp add-json <n> <json>`
 
 **0.2.34**
 
+April 2, 2025
+
 * Vim bindings for text input - enable with /vim or /config
 
 **0.2.32**
+
+April 2, 2025
 
 * Interactive MCP setup wizard: Run "claude mcp add" to add MCP servers with a step-by-step interface
 * Fix for some PersistentShell issues
 
 **0.2.31**
 
+April 2, 2025
+
 * Custom slash commands: Markdown files in .claude/commands/ directories now appear as custom slash commands to insert prompts into your conversation
 * MCP debug mode: Run with --mcp-debug flag to get more information about MCP server errors
 
 **0.2.30**
+
+April 2, 2025
 
 * Added ANSI color theme for better terminal compatibility
 * Fixed issue where slash command arguments weren't being sent properly
@@ -11148,10 +12000,14 @@ Run `claude --version` to check your installed version.
 
 **0.2.26**
 
+April 2, 2025
+
 * New /approved-tools command for managing tool permissions
 * Word-level diff display for improved code readability
 * Fuzzy matching for slash commands
 
 **0.2.21**
+
+April 2, 2025
 
 * Fuzzy matching for /commands

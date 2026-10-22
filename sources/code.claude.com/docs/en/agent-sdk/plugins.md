@@ -13,13 +13,13 @@ Plugins let you extend Claude Code with custom functionality that can be shared 
 * **Hooks**: event handlers that respond to tool use and other events
 * **MCP servers**: external tool integrations via Model Context Protocol
 
-For complete information on plugin structure and how to create plugins, see [Plugins](/docs/en/plugins/overview).
+For complete information on plugin structure and how to create plugins, see [Plugins](/docs/en/plugins/overview.md).
 
 ## Loading plugins
 
 Load plugins by providing their local file system paths in your options configuration. The `type` field must be `"local"`, the only value the SDK accepts. The SDK supports loading multiple plugins from different locations.
 
-To use a plugin distributed through a [marketplace](/docs/en/plugins/overview) or remote repository, download it first and provide the local directory path. For the directory layout a plugin needs, see the [Plugin structure reference](#plugin-structure-reference) below.
+To use a plugin distributed through a [marketplace](/docs/en/plugins/overview.md) or remote repository, download it first and provide the local directory path. For the directory layout a plugin needs, see the [Plugin structure reference](#plugin-structure-reference) below.
 
 ```typescript TypeScript theme={null}
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -322,8 +322,8 @@ If plugin skills don't work:
 
 ## See also
 
-* [Plugins](/docs/en/plugins/overview) - Complete plugin development guide
-* [Plugins reference](/docs/en/plugins/manifest-reference) - Technical specifications
-* [Commands](/docs/en/agent-sdk/skills#dispatch-commands-by-name) - Dispatching commands in the SDK
-* [Subagents](/docs/en/agent-sdk/subagents) - Working with specialized agents
-* [Skills](/docs/en/agent-sdk/skills) - Using Agent Skills
+* [Plugins](/docs/en/plugins/overview.md) - Complete plugin development guide
+* [Plugins reference](/docs/en/plugins/manifest-reference.md) - Technical specifications
+* [Commands](/docs/en/agent-sdk/skills.md#dispatch-commands-by-name) - Dispatching commands in the SDK
+* [Subagents](/docs/en/agent-sdk/subagents.md) - Working with specialized agents
+* [Skills](/docs/en/agent-sdk/skills.md) - Using Agent Skills

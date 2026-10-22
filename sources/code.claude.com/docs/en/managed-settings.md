@@ -6,9 +6,9 @@
 
 > Deploy managed settings to every developer's machine: delivery mechanisms per OS, how Claude Code combines managed sources, and how to verify enforcement.
 
-Managed settings are the settings your organization deploys to every developer's machine. Claude Code applies them above every other level, so no user, project, local, or `--settings` value overrides them, apart from a few [security-sensitive exceptions](/docs/en/settings#exceptions-to-managed-settings-precedence) where a stricter value from a lower level still counts.
+Managed settings are the settings your organization deploys to every developer's machine. Claude Code applies them above every other level, so no user, project, local, or `--settings` value overrides them, apart from a few [security-sensitive exceptions](/docs/en/settings.md#exceptions-to-managed-settings-precedence) where a stricter value from a lower level still counts.
 
-This page is for the administrator who deploys managed settings or debugs why one isn't applying. To decide what to enforce, start with the [Decide what to enforce](/docs/en/admin-setup#decide-what-to-enforce) table. For the claude.ai console path, see [Server-managed settings](/docs/en/server-managed-settings). For which file a developer's own values go in, see [Settings](/docs/en/settings).
+This page is for the administrator who deploys managed settings or debugs why one isn't applying. To decide what to enforce, start with the [Decide what to enforce](/docs/en/admin-setup.md#decide-what-to-enforce) table. For the claude.ai console path, see [Server-managed settings](/docs/en/server-managed-settings.md). For which file a developer's own values go in, see [Settings](/docs/en/settings.md).
 
 ## Deploy a managed settings file
 
@@ -16,7 +16,7 @@ This is the quickest way to put a policy on each machine: a `managed-settings.js
 
 **1. Write managed-settings.json**
 
-Write a `managed-settings.json` that holds the keys you've decided to enforce, in the same JSON shape as `settings.json`. The [Decide what to enforce](/docs/en/admin-setup#decide-what-to-enforce) table lists the keys behind each control, and each entry in the [settings reference](/docs/en/settings-reference) says whether a managed source can set it. This file blocks two file reads, turns off bypass mode, and makes Claude Code ignore permission rules from user, project, and local files and from `--allowedTools`:
+Write a `managed-settings.json` that holds the keys you've decided to enforce, in the same JSON shape as `settings.json`. The [Decide what to enforce](/docs/en/admin-setup.md#decide-what-to-enforce) table lists the keys behind each control, and each entry in the [settings reference](/docs/en/settings-reference.md) says whether a managed source can set it. This file blocks two file reads, turns off bypass mode, and makes Claude Code ignore permission rules from user, project, and local files and from `--allowedTools`:
 
 ```json managed-settings.json theme={null}
 {
@@ -31,7 +31,7 @@ Write a `managed-settings.json` that holds the keys you've decided to enforce, i
 }
 ```
 
-For a fuller example that shows the shape of more managed keys, including the login method, models, MCP servers, and marketplaces, see [An organization's managed settings](/docs/en/settings-example#an-organizations-managed-settings).
+For a fuller example that shows the shape of more managed keys, including the login method, models, MCP servers, and marketplaces, see [An organization's managed settings](/docs/en/settings-example.md#an-organizations-managed-settings).
 
 **2. Place the file on each machine**
 
@@ -47,12 +47,12 @@ On one machine, run `/status` inside Claude Code. The `Setting sources` line sho
 
 ## Choose a delivery mechanism
 
-The file in the steps above is one of four ways to get managed settings onto a machine. Every mechanism carries the same policy keys as a `settings.json` file, so the [settings reference](/docs/en/settings-reference) applies to all of them. A few keys are tied to particular sources, and each entry's Scope line says which:
+The file in the steps above is one of four ways to get managed settings onto a machine. Every mechanism carries the same policy keys as a `settings.json` file, so the [settings reference](/docs/en/settings-reference.md) applies to all of them. A few keys are tied to particular sources, and each entry's Scope line says which:
 
 * **Delivery controls**: [`policyHelper`](/docs/en/settings-reference#policyhelper), [`wslInheritsWindowsSettings`](/docs/en/settings-reference#wslinheritswindowssettings), and [`managedSourcesBehavior`](/docs/en/settings-reference#managedsourcesbehavior)
 * **Gateway login keys**: [`forceLoginGatewayUrl`](/docs/en/settings-reference#forcelogingatewayurl), [`gatewayInternalNetworks`](/docs/en/settings-reference#gatewayinternalnetworks), and the `"gateway"` value of [`forceLoginMethod`](/docs/en/settings-reference#forceloginmethod)
 
-A managed settings file, an MDM profile, or the claude.ai console applies one policy to everyone it reaches. To give one group of developers a different policy, deploy a different file or profile to that group; the claude.ai console [can't target a group yet](/docs/en/server-managed-settings#current-limitations), while a self-hosted [Claude apps gateway](/docs/en/claude-apps-gateway) delivers managed settings per IdP group.
+A managed settings file, an MDM profile, or the claude.ai console applies one policy to everyone it reaches. To give one group of developers a different policy, deploy a different file or profile to that group; the claude.ai console [can't target a group yet](/docs/en/server-managed-settings.md#current-limitations), while a self-hosted [Claude apps gateway](/docs/en/claude-apps-gateway) delivers managed settings per IdP group.
 
 When more than one mechanism delivers a policy to the same machine, Claude Code by default uses one and ignores the others. [How Claude Code combines managed sources](#how-claude-code-combines-managed-sources) gives the order and the opt-in that applies every source.
 
@@ -62,22 +62,22 @@ Pick a mechanism by how you already manage devices, using the table below.
 
 | Mechanism | How you deliver it | When Claude Code reads it | Use it when |
 | :- | :- | :- | :- |
-| [Server-managed settings](/docs/en/server-managed-settings) | In the claude.ai admin console, or on a self-hosted [Claude apps gateway](/docs/en/claude-apps-gateway) | Fetched at startup and polled hourly; see [changes that need approval](#where-and-when-a-policy-applies) | You want one place to change policy for a claude.ai organization without touching each machine |
+| [Server-managed settings](/docs/en/server-managed-settings.md) | In the claude.ai admin console, or on a self-hosted [Claude apps gateway](/docs/en/claude-apps-gateway) | Fetched at startup and polled hourly; see [changes that need approval](#where-and-when-a-policy-applies) | You want one place to change policy for a claude.ai organization without touching each machine |
 | MDM or OS-level policy | As a macOS configuration profile or a Windows `HKLM` registry value, through Jamf, Intune, Group Policy, or a similar tool; see [where each mechanism stores the policy](#where-each-mechanism-stores-the-policy) | Read at startup and checked for changes every 30 minutes | You already manage devices with MDM or Group Policy |
 | File-based | As `managed-settings.json` in a system directory on each machine; see [where each mechanism stores the policy](#where-each-mechanism-stores-the-policy) | Read at startup and reloaded when a file changes | Machines without MDM, Linux hosts, or images you build yourself |
 | HKCU registry, Windows and WSL | As a Windows `HKCU` registry value; see [where each mechanism stores the policy](#where-each-mechanism-stores-the-policy) | Read at startup and checked for changes every 30 minutes; Claude Code uses it only when [no admin document is present above it](#present-admin-documents) and no [host-supplied parent settings](#let-an-embedding-host-add-policy) supply a restrictive key | You can't write the machine-level `HKLM` key |
 
 Starter templates for Jamf, Iru, Intune, and Group Policy are in the [MDM examples repository](https://github.com/anthropics/claude-code/tree/main/examples/mdm).
 
-If your organization has the [HIPAA configuration](/docs/en/hipaa-setup#deploy-managed-settings) applied, see `settings-hipaa.json` and `README-hipaa.md` in the [settings examples repository](https://github.com/anthropics/claude-code/tree/main/examples/settings) for a fuller `managed-settings.json` with sandboxing, a network allowlist, credential protections, and local data retention.
+If your organization has the [HIPAA configuration](/docs/en/hipaa-setup.md#deploy-managed-settings) applied, see `settings-hipaa.json` and `README-hipaa.md` in the [settings examples repository](https://github.com/anthropics/claude-code/tree/main/examples/settings) for a fuller `managed-settings.json` with sandboxing, a network allowlist, credential protections, and local data retention.
 
-For managed MCP servers, which you deploy alongside any of these through `managed-mcp.json` or provide through the [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) key, see [Managed MCP configuration](/docs/en/managed-mcp).
+For managed MCP servers, which you deploy alongside any of these through `managed-mcp.json` or provide through the [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) key, see [Managed MCP configuration](/docs/en/managed-mcp.md).
 
 ### Where and when a policy applies
 
 A deployed policy reaches the developer's sessions as follows:
 
-* **Surfaces**: on the developer's machine, the terminal, the VS Code and JetBrains extensions, the desktop app's Code tab, and [Agent SDK](/docs/en/agent-sdk/typescript) sessions read all of these sources. Agent SDK sessions load managed settings even when `settingSources` excludes the user, project, and local files.
+* **Surfaces**: on the developer's machine, the terminal, the VS Code and JetBrains extensions, the desktop app's Code tab, and [Agent SDK](/docs/en/agent-sdk/typescript.md) sessions read all of these sources. Agent SDK sessions load managed settings even when `settingSources` excludes the user, project, and local files.
 * **Cloud sessions**: a session in an Anthropic-hosted environment doesn't read a device's MDM profile or file, so policy for it has to come from server-managed settings. A session in a [self-hosted environment](/docs/en/self-hosted-environments) also reads the managed settings file in its runner image, by default only when server-managed settings deliver no policy key, apart from the [keys Claude Code reads from every admin source](#keys-read-from-every-admin-source). [How Claude Code combines managed sources](#how-claude-code-combines-managed-sources) covers the opt-in that applies both.
 * **Claude Tag sessions**: [Claude Tag](https://claude.com/docs/claude-tag/overview) sessions run in cloud environments but don't receive server-managed settings. In a [self-hosted environment](/docs/en/self-hosted-environments), they still read the managed settings file in the runner image. Configure Claude Tag itself in the [Claude Tag admin settings](https://claude.com/docs/claude-tag/admins/customize).
 * **Cowork sessions**: [Cowork](https://claude.com/docs/cowork/overview) in the Claude Desktop app runs its sessions on Claude Code. In a Cowork session, Claude Code never fetches server-managed settings from the claude.ai admin console, even when the user signs in with a Team or Enterprise account, so which policy applies depends on where the session runs:
@@ -86,21 +86,23 @@ A deployed policy reaches the developer's sessions as follows:
   * **In a full VM sandbox**: when your Claude Desktop managed configuration sets [`requireCoworkFullVmSandbox`](https://claude.com/docs/third-party/claude-desktop/configuration#requirecoworkfullvmsandbox), Claude Code runs inside a virtual machine where the device's MDM policy and managed settings file aren't present.
   * **Remote Cowork sessions**: these run on Anthropic-managed VMs, where Claude Code has no device policy to read.
 
-  Wherever the session runs, claude.ai applies the admin console's [`strictKnownMarketplaces`](/docs/en/settings-reference#strictknownmarketplaces) and [`blockedMarketplaces`](/docs/en/settings-reference#blockedmarketplaces) lists itself when anyone adds a marketplace from a git repository on claude.ai or from **Customize** in Cowork. [How restrictions work](/docs/en/plugins/org#restrict-what-users-can-install) describes that check. The [surface coverage](/docs/en/model-config#surface-coverage) table compares Cowork with the other surfaces.
+  Wherever the session runs, claude.ai applies the admin console's [`strictKnownMarketplaces`](/docs/en/settings-reference#strictknownmarketplaces) and [`blockedMarketplaces`](/docs/en/settings-reference#blockedmarketplaces) lists itself when anyone adds a marketplace from a git repository on claude.ai or from **Customize** in Cowork. [How restrictions work](/docs/en/plugins/org.md#restrict-what-users-can-install) describes that check. The [surface coverage](/docs/en/model-config.md#surface-coverage) table compares Cowork with the other surfaces.
 * **Running sessions**: most changes reach a running session on the schedule in the [delivery mechanism table](#choose-a-delivery-mechanism), without a restart.
-  * Changes to [`forceRemoteSettingsRefresh`](/docs/en/settings-reference#forceremotesettingsrefresh), [`requiredMinimumVersion`](/docs/en/settings-reference#requiredminimumversion), and [some user-editable keys](/docs/en/settings#when-edits-take-effect) take effect at the next session start.
+  * Changes to [`forceRemoteSettingsRefresh`](/docs/en/settings-reference#forceremotesettingsrefresh), [`requiredMinimumVersion`](/docs/en/settings-reference#requiredminimumversion), and [some user-editable keys](/docs/en/settings.md#when-edits-take-effect) take effect at the next session start.
   * A new or changed [`policyHelper`](/docs/en/settings-reference#policyhelper) entry takes effect at the next launch. If server-managed settings shadow the helper at that launch, the helper runs as soon as a fetch reports those settings removed.
-* **Changes that need approval**: apart from the [updates that wait for the next launch](/docs/en/server-managed-settings#fetch-and-caching-behavior), a server-managed change to a setting that [needs approval](/docs/en/server-managed-settings#security-approval-dialogs), such as a hook or an `env` variable, waits for the developer to accept the dialog in an interactive session, and applies for the current run in a session an IDE extension or the Agent SDK hosts. Other server-managed changes apply on the next poll.
+* **Changes that need approval**: apart from the [updates that wait for the next launch](/docs/en/server-managed-settings.md#fetch-and-caching-behavior), a server-managed change to a setting that [needs approval](/docs/en/server-managed-settings.md#security-approval-dialogs), such as a hook or an `env` variable, waits for the developer to accept the dialog in an interactive session, and applies for the current run in a session an IDE extension or the Agent SDK hosts. Other server-managed changes apply on the next poll.
 * **Long-lived sessions**: a session left open for weeks can still lag a rollout. [`requiredMinimumVersion`](/docs/en/settings-reference#requiredminimumversion) blocks an outdated binary from starting and doesn't end a session that's already running.
 
 ### Where each mechanism stores the policy
 
 The keys are the same everywhere, but each mechanism stores them in a different place and shape:
 
-* **Server-managed**: Anthropic's servers, or your gateway, hold the policy. Claude Code keeps a local cache that it applies at startup and [replaces on each successful fetch](/docs/en/server-managed-settings#security-considerations).
+* **Server-managed**: Anthropic's servers, or your gateway, hold the policy. Claude Code keeps a local cache that it applies at startup and [replaces on each successful fetch](/docs/en/server-managed-settings.md#security-considerations).
 * **macOS configuration profile**: the `com.anthropic.claudecode` managed preferences domain. Use the same top-level keys as `managed-settings.json`, with nested settings as dictionaries and lists as plist arrays.
 * **Windows HKLM registry**: the JSON as a `REG_SZ` or `REG_EXPAND_SZ` value named `Settings` under `HKLM\SOFTWARE\Policies\ClaudeCode`.
 * **File-based**: `managed-settings.json`, an optional `managed-settings.d/` directory, and `managed-mcp.json` in the system directory: `/Library/Application Support/ClaudeCode/` on macOS, `/etc/claude-code/` on Linux and WSL, and `C:\Program Files\ClaudeCode\` on Windows. Claude Code doesn't read the legacy Windows path `C:\ProgramData\ClaudeCode\managed-settings.json`.
+
+  You can deploy any of these files as a symbolic link, and Claude Code reads the file the link leads to. The policy still applies when the link leads outside the system directory or Claude Code can't confirm that it stays inside. A warning naming the file then appears in `/status` and `claude doctor`. To clear the warning, point the link at a target inside the system directory.
 * **Windows HKCU registry**: the same `Settings` value under `HKCU\SOFTWARE\Policies\ClaudeCode`.
 
 ### Split a file-based policy across teams
@@ -132,7 +134,7 @@ Both settings rank the sources the same way. These terms recur in this section:
 
 Claude Code checks the sources in this order, highest priority first:
 
-1. Remote settings, delivered from claude.ai as [server-managed settings](/docs/en/server-managed-settings) or by a [Claude apps gateway](/docs/en/claude-apps-gateway). Claude Code fetches this source only when the session authenticates to Anthropic's API directly with an [eligible credential](/docs/en/server-managed-settings#platform-availability), signs in to a gateway with `/login`, or runs in Claude Desktop's Code tab behind a gateway that [serves that session settings](/docs/en/claude-apps-gateway-config#apply-code-settings-in-the-code-tab). On other providers, or when `ANTHROPIC_BASE_URL` points somewhere other than Anthropic's API, it starts at the next source
+1. Remote settings, delivered from claude.ai as [server-managed settings](/docs/en/server-managed-settings.md) or by a [Claude apps gateway](/docs/en/claude-apps-gateway). Claude Code fetches this source only when the session authenticates to Anthropic's API directly with an [eligible credential](/docs/en/server-managed-settings.md#platform-availability), signs in to a gateway with `/login`, or runs in Claude Desktop's Code tab behind a gateway that [serves that session settings](/docs/en/claude-apps-gateway-config.md#apply-code-settings-in-the-code-tab). On other providers, or when `ANTHROPIC_BASE_URL` points somewhere other than Anthropic's API, it starts at the next source
 2. MDM or OS-level policies: the macOS plist or the HKLM registry key
 3. Managed settings files, `managed-settings.d/*.json` and `managed-settings.json` merged together
 4. The HKCU registry, on Windows, and on WSL once the HKLM registry or the Windows managed settings file turns [`wslInheritsWindowsSettings`](/docs/en/settings-reference#wslinheritswindowssettings) on and the HKCU value also sets it. Claude Code reads it only when [no admin document is present above it](#present-admin-documents) and no [host-supplied parent settings](#let-an-embedding-host-add-policy) supply a restrictive key
@@ -170,11 +172,11 @@ The cross-source keys include:
 * The sandbox `ripgrep` binary, [`sandbox.ripgrep`](/docs/en/settings-reference#sandbox-ripgrep)
 * `sandbox.filesystem.disabled` and `sandbox.network.strictAllowlist`
 * [`useAutoModeDuringPlan`](/docs/en/settings-reference#useautomodeduringplan), [`syncClaudeAiSkills`](/docs/en/settings-reference#syncclaudeaiskills), and [`syncClaudeAiPlugins`](/docs/en/settings-reference#syncclaudeaiplugins), where a `false` from any admin source turns the behavior off. A `false` in the developer's user or local settings turns it off too; each key can only deny
-* [`enableArtifact`](/docs/en/settings-reference#enableartifact), where a `false` from any admin source turns the [Artifact tool](/docs/en/artifacts) off. A `false` in the developer's user, project, or local settings turns it off too, and no source turns it back on; see [which lower-level values still count](/docs/en/settings#exceptions-to-managed-settings-precedence). Requires Claude Code v2.1.242 or later
+* [`enableArtifact`](/docs/en/settings-reference#enableartifact), where a `false` from any admin source turns the [Artifact tool](/docs/en/artifacts.md) off. A `false` in the developer's user, project, or local settings turns it off too, and no source turns it back on; see [which lower-level values still count](/docs/en/settings.md#exceptions-to-managed-settings-precedence). Requires Claude Code v2.1.242 or later
 * [`maxEffortLevel`](/docs/en/settings-reference#maxeffortlevel), where the lowest cap in any admin source applies. If a developer sets a lower cap in their own settings or with `--settings`, Claude Code applies that one; no source can raise the cap. Requires Claude Code v2.1.267 or later
 * A commit-trailer opt-out in `attribution`, or in the deprecated `includeCoAuthoredBy`, from any tier
 * [`forceRemoteSettingsRefresh`](/docs/en/server-managed-settings)
-* `env`, merged per variable across the admin sources: each variable comes from the highest-priority source that defines it, so lower sources fill in variables the higher ones leave unset. A few variables follow their own rules; [Per-key exceptions across managed sources](/docs/en/server-managed-settings#per-key-exceptions-across-managed-sources) names each one. Requires Claude Code v2.1.223 or later. Before v2.1.223, Claude Code applied the selected source's whole `env` block only
+* `env`, merged per variable across the admin sources: each variable comes from the highest-priority source that defines it, so lower sources fill in variables the higher ones leave unset. A few variables follow their own rules; [Per-key exceptions across managed sources](/docs/en/server-managed-settings.md#per-key-exceptions-across-managed-sources) names each one. Requires Claude Code v2.1.223 or later. Before v2.1.223, Claude Code applied the selected source's whole `env` block only
 
 The [gateway login keys](#choose-a-delivery-mechanism) follow a separate rule. Claude Code never reads them from server-managed settings, so while server-managed settings are the selected source, the highest-ranked admin source on the machine that carries a policy key still supplies them. A value in an admin source ranked below that one, or in the HKCU registry, is ignored.
 
@@ -209,7 +211,7 @@ A [`policyHelper`](/docs/en/settings-reference#policyhelper) is an executable yo
 
 * **The emitted `managedSettings` object is the only managed settings for the session**, including for the [keys it otherwise reads from every admin source](#keys-read-from-every-admin-source), apart from [`forceRemoteSettingsRefresh`, which has its own startup rule](/docs/en/settings-reference#forceremotesettingsrefresh)
 
-For which helper runs fail, and what Claude Code does when one does, see [Helper failures](/docs/en/settings-reference#helper-failures).
+For which helper runs fail, and what Claude Code does when one does, see [Helper failures](/docs/en/settings-reference.md#helper-failures).
 
 ### Let an embedding host add policy
 
@@ -251,16 +253,16 @@ To restore the writes, add allow rules for those folders to the managed source C
 }
 ```
 
-After you deploy the policy, Claude can save files under that folder in a new Cowork session. [Read and Edit rules](/docs/en/permissions#read-and-edit) cover the path syntax, including the `//` form for absolute paths.
+After you deploy the policy, Claude can save files under that folder in a new Cowork session. [Read and Edit rules](/docs/en/permissions.md#read-and-edit) cover the path syntax, including the `//` form for absolute paths.
 
 ### What a developer can change
 
-A developer's own settings files, `--settings` values, and project files never override a managed value; the [exceptions](/docs/en/settings#exceptions-to-managed-settings-precedence) only let a stricter lower-level value count. These cases sit outside that rule:
+A developer's own settings files, `--settings` values, and project files never override a managed value; the [exceptions](/docs/en/settings.md#exceptions-to-managed-settings-precedence) only let a stricter lower-level value count. These cases sit outside that rule:
 
 * **The model for a session**: a managed `model` is a default, not a lock. `--model` and `ANTHROPIC_MODEL` still pick the model for that session, so deploy [`availableModels`](/docs/en/settings-reference#availablemodels) to restrict the choice.
-* **The auto-compact window for a session**: a managed [`autoCompactWindow`](/docs/en/settings-reference#autocompactwindow) is a default too. The `--autocompact` flag and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable still set the [auto-compact window](/docs/en/model-config#set-the-auto-compact-window) for that session.
+* **The auto-compact window for a session**: a managed [`autoCompactWindow`](/docs/en/settings-reference#autocompactwindow) is a default too. The `--autocompact` flag and the `CLAUDE_CODE_AUTO_COMPACT_WINDOW` variable still set the [auto-compact window](/docs/en/model-config.md#set-the-auto-compact-window) for that session.
 * **Local admin rights**: a developer who is an administrator on the machine can edit the managed source itself, which is why MDM tooling can redeploy the profile or file on a schedule and why the HKLM registry and the macOS managed preferences domain exist.
-* **The server-managed cache**: server-managed settings come from Anthropic's servers, and an edit to the local cache [lasts only until the next successful fetch](/docs/en/server-managed-settings#security-considerations).
+* **The server-managed cache**: server-managed settings come from Anthropic's servers, and an edit to the local cache [lasts only until the next successful fetch](/docs/en/server-managed-settings.md#security-considerations).
 * **Other tools**: managed settings bind Claude Code only. A developer who calls the API from another tool isn't under them.
 
 ## Check that a policy is in force
@@ -287,7 +289,7 @@ When the policy isn't applying, the `Setting sources` line tells you which of tw
 
   If you deployed a managed settings file, check that it sits at the path for the OS and that it contains a [policy key](#how-claude-code-combines-managed-sources) rather than only the control keys. A file that isn't valid JSON doesn't produce this state; Claude Code [refuses to start](#find-entries-claude-code-dropped) instead.
 
-  When you deployed through server-managed settings instead, run `claude doctor`, which reports the [fetch outcome](/docs/en/server-managed-settings#verify-settings-delivery).
+  When you deployed through server-managed settings instead, run `claude doctor`, which reports the [fetch outcome](/docs/en/server-managed-settings.md#verify-settings-delivery).
 * **The line names a source other than the one you deployed**: a higher-priority source is present and Claude Code ignored yours, and `Skipped sources` lists it. [How Claude Code combines managed sources](#how-claude-code-combines-managed-sources) gives the order.
 
 ### Find entries Claude Code dropped
@@ -296,7 +298,7 @@ If your managed settings file, MDM profile, registry value, or server-managed pa
 
 Claude Code is stricter with the `managedSettings` a [`policyHelper`](/docs/en/settings-reference#policyhelper) emits: it makes the same entry repairs, but any schema violation that survives fails the whole helper run, and at startup Claude Code refuses to start, the same as for a helper that exits non-zero.
 
-When a managed settings file, drop-in file, MDM plist, or HKLM registry value is present but can't be parsed as a JSON object, Claude Code refuses to start and prints [an error naming the source](/docs/en/errors#managed-settings-document-could-not-be-parsed), even when another admin source delivers a valid policy. Each source fails this way when:
+When a managed settings file, drop-in file, MDM plist, or HKLM registry value is present but can't be parsed as a JSON object, Claude Code refuses to start and prints [an error naming the source](/docs/en/errors.md#managed-settings-document-could-not-be-parsed), even when another admin source delivers a valid policy. Each source fails this way when:
 
 * **Managed settings file or drop-in file**: the file isn't valid JSON, or its top level isn't an object
 * **MDM plist**: macOS's `plutil` reports the plist malformed, or its converted content isn't a JSON object
@@ -311,7 +313,7 @@ Three source states don't cause this refusal:
 When a managed settings file, drop-in file, `managed-settings.d/` directory, MDM profile, or HKLM registry value exists but can't be read, and no admin source supplies a policy, what happens depends on why the read failed:
 
 * If the operating system denied the read, for example on a root-only file, every session starts without that source's policies. `/status` and `claude doctor` record the failure, and a run with `-p` also prints it to stderr.
-* For any other read failure, such as an I/O error, every session exits at startup with [a message to contact an administrator](/docs/en/errors#unable-to-read-managed-policy-settings).
+* For any other read failure, such as an I/O error, every session exits at startup with [a message to contact an administrator](/docs/en/errors.md#unable-to-read-managed-policy-settings).
 
 To find a dropped entry, look in one of three places:
 
@@ -342,22 +344,22 @@ These keys have their own fallback:
 
 | Field | Behavior when present but invalid |
 | :- | :- |
-| `allowedMcpServers` | Enforced as an empty allowlist until the value is fixed, so no MCP servers that users add are admitted. Servers your organization delivers through [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) still load, and `managed-mcp.json` servers load per [Servers that skip the allowlist check](/docs/en/managed-mcp#servers-that-skip-the-allowlist-check). An individual invalid entry is stripped and the valid subset is enforced. |
+| `allowedMcpServers` | Enforced as an empty allowlist until the value is fixed, so no MCP servers that users add are admitted. Servers your organization delivers through [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) still load, and `managed-mcp.json` servers load per [Servers that skip the allowlist check](/docs/en/managed-mcp.md#servers-that-skip-the-allowlist-check). An individual invalid entry is stripped and the valid subset is enforced. |
 | [`allowedProviders`](/docs/en/settings-reference#allowedproviders) | Enforced as an empty allowlist until the value is fixed, so every API provider is refused and Claude Code doesn't start on the machine. If only an individual entry isn't a known provider name, Claude Code drops and reports that entry and enforces the rest. |
-| `allowedHttpHookUrls` | Claude Code enforces an empty managed [allowlist](/docs/en/settings-reference#allowedhttphookurls) until you fix the value, so an HTTP hook runs only if another settings file lists its URL. If only an individual entry is invalid, Claude Code strips that entry and enforces the rest. |
-| `httpHookAllowedEnvVars` | Claude Code enforces an empty managed [allowlist](/docs/en/settings-reference#httphookallowedenvvars) until you fix the value, so a header variable is interpolated only if another settings file names it. If only an individual entry is invalid, Claude Code strips that entry and enforces the rest. |
+| `allowedHttpHookUrls` | Claude Code enforces an empty managed [allowlist](/docs/en/settings-reference.md#allowedhttphookurls) until you fix the value, so an HTTP hook runs only if another settings file lists its URL. If only an individual entry is invalid, Claude Code strips that entry and enforces the rest. |
+| `httpHookAllowedEnvVars` | Claude Code enforces an empty managed [allowlist](/docs/en/settings-reference.md#httphookallowedenvvars) until you fix the value, so a header variable is interpolated only if another settings file names it. If only an individual entry is invalid, Claude Code strips that entry and enforces the rest. |
 | `allowedChannelPlugins` | Claude Code enforces an empty allowlist until you fix the value, so no channel plugin passed to `--channels` is admitted. If only an individual entry is invalid, it strips that entry and enforces the rest. |
-| `strictKnownMarketplaces` | Enforced as an empty allowlist until the value is fixed, so no [marketplace source](/docs/en/plugins/org#restrict-what-users-can-install) is admitted. An individual entry that is invalid or can't be enforced, such as a `hostPattern` regex that doesn't compile, is stripped and the valid subset is enforced. |
+| `strictKnownMarketplaces` | Enforced as an empty allowlist until the value is fixed, so no [marketplace source](/docs/en/plugins/org.md#restrict-what-users-can-install) is admitted. An individual entry that is invalid or can't be enforced, such as a `hostPattern` regex that doesn't compile, is stripped and the valid subset is enforced. |
 | `availableModels` | Enforced as an empty allowlist until fixed, so only the Default model is available; a non-string entry is stripped and the valid subset enforced. |
 | [`availableModelsMatch`](/docs/en/settings-reference#availablemodelsmatch) | Treated as `exact` until the value is fixed. |
 | `forceLoginOrgUUID` | No organization is permitted to log in until the value is fixed. |
 | `gatewayInternalNetworks` | When the invalid value comes from the highest managed source on the machine, `/login` refuses every new [cloud gateway](/docs/en/claude-apps-gateway#allow-a-gateway-on-public-address-space-you-own) sign-in on that machine until the value is fixed. |
-| `crossSessionInbound` | Treated as `refuse`, the most restrictive value, so inbound [cross-session messages](/docs/en/cross-session-messaging#control-inbound-messages) are refused until the value is fixed. The developer sees [a warning](/docs/en/errors#crosssessioninbound-must-be-one-of-accept-hold-refuse). |
+| `crossSessionInbound` | Treated as `refuse`, the most restrictive value, so inbound [cross-session messages](/docs/en/cross-session-messaging.md#control-inbound-messages) are refused until the value is fixed. The developer sees [a warning](/docs/en/errors.md#crosssessioninbound-must-be-one-of-accept-hold-refuse). |
 | `deniedMcpServers` | An individual invalid entry is stripped and the valid subset is enforced. A wholly invalid value is dropped with a warning, since denying every server would block servers the policy never named. |
 | [`deniedModels`](/docs/en/settings-reference#deniedmodels) | A non-string entry is stripped and the rest of the list is enforced. A wholly invalid value is dropped with a warning and blocks no models until it is fixed. |
-| `blockedMarketplaces` | An individual invalid entry is stripped and the valid subset is enforced. An entry that parses but can never match, such as a `hostPattern` regex that doesn't compile, is kept with a warning. It blocks nothing until fixed, but [marketplace restrictions](/docs/en/plugins/org#restrict-what-users-can-install) stay active. A wholly invalid value is dropped with a warning, since blocking every marketplace would block sources the policy never named. |
+| `blockedMarketplaces` | An individual invalid entry is stripped and the valid subset is enforced. An entry that parses but can never match, such as a `hostPattern` regex that doesn't compile, is kept with a warning. It blocks nothing until fixed, but [marketplace restrictions](/docs/en/plugins/org.md#restrict-what-users-can-install) stay active. A wholly invalid value is dropped with a warning, since blocking every marketplace would block sources the policy never named. |
 | `sandbox` | When one value inside the block is invalid, Claude Code doesn't drop the whole block. For what happens to each kind of invalid field, see [Invalid values inside `sandbox`](#invalid-values-inside-sandbox). |
-| `sandbox.credentials` | A recoverable invalid entry is degraded to `mode: "deny"` with a warning; an unrecoverable one is stripped; valid entries stay enforced. See [invalid credential entries](/docs/en/settings-reference#invalid-credential-entries-in-managed-settings). |
+| `sandbox.credentials` | A recoverable invalid entry is degraded to `mode: "deny"` with a warning; an unrecoverable one is stripped; valid entries stay enforced. See [invalid credential entries](/docs/en/settings-reference.md#invalid-credential-entries-in-managed-settings). |
 | `strictPluginOnlyCustomization` | Treated as `true`, locking all four surfaces, when the value is neither a boolean nor an array. An array entry that this version doesn't recognize as a surface locks nothing; a status note counts such entries so you can check them for typos. |
 | `enabledPlugins` | An invalid entry is dropped with a warning and the other entries stay enforced. A value that isn't a map of plugin IDs, or whose every entry is invalid, is dropped whole with a warning. |
 
@@ -388,35 +390,35 @@ Claude Code reads the following keys only from a managed source; placing them in
 
 Most of them are locks: the value a lock governs, such as permission rules or `sandbox.network.allowedDomains`, is an ordinary key that any level can set, and the lock tells Claude Code to honor only the managed value.
 
-The table covers the permission, plugin, and delivery controls. For any key not listed here, the Scope column of the [settings reference](/docs/en/settings-reference#all-settings) index says whether it's managed-only.
+The table covers the permission, plugin, and delivery controls. For any key not listed here, the Scope column of the [settings reference](/docs/en/settings-reference.md#all-settings) index says whether it's managed-only.
 
 | Setting | Description |
 | :- | :- |
 | [`allowAllClaudeAiMcps`](/docs/en/settings-reference#allowallclaudeaimcps) | Load the claude.ai connectors Claude Code fetches itself alongside a deployed `managed-mcp.json` instead of suppressing them |
-| [`allowedChannelPlugins`](/docs/en/settings-reference#allowedchannelplugins) | Allowlist of channel plugins that may push messages. Replaces the default Anthropic allowlist when set. Requires `channelsEnabled: true`. See [Restrict which channel plugins can run](/docs/en/channels#restrict-which-channel-plugins-can-run) |
+| [`allowedChannelPlugins`](/docs/en/settings-reference#allowedchannelplugins) | Allowlist of channel plugins that may push messages. Replaces the default Anthropic allowlist when set. Requires `channelsEnabled: true`. See [Restrict which channel plugins can run](/docs/en/channels.md#restrict-which-channel-plugins-can-run) |
 | [`allowManagedHooksOnly`](/docs/en/settings-reference#allowmanagedhooksonly) | When `true`, restricts which hooks run; see [what runs under `allowManagedHooksOnly`](/docs/en/settings-reference#what-runs-under-allowmanagedhooksonly) for the full effect list |
-| [`allowManagedMcpServersOnly`](/docs/en/settings-reference#allowmanagedmcpserversonly) | When `true`, only `allowedMcpServers` from managed settings are respected. `deniedMcpServers` still merges from all sources. See [Keys read from every admin source](#keys-read-from-every-admin-source) for which managed sources can set it, and [Managed MCP configuration](/docs/en/managed-mcp) |
+| [`allowManagedMcpServersOnly`](/docs/en/settings-reference#allowmanagedmcpserversonly) | When `true`, only `allowedMcpServers` from managed settings are respected. `deniedMcpServers` still merges from all sources. See [Keys read from every admin source](#keys-read-from-every-admin-source) for which managed sources can set it, and [Managed MCP configuration](/docs/en/managed-mcp.md) |
 | [`allowManagedPermissionRulesOnly`](/docs/en/settings-reference#allowmanagedpermissionrulesonly) | Makes managed settings the only settings source of permission rules. The entry lists every source it ignores |
-| [`blockedMarketplaces`](/docs/en/settings-reference#blockedmarketplaces) | Blocklist of marketplace sources. Blocked sources are checked before downloading, so they never touch the filesystem. See [managed marketplace restrictions](/docs/en/plugins/org#restrict-what-users-can-install) |
-| [`channelsEnabled`](/docs/en/settings-reference#channelsenabled) | Allow [channels](/docs/en/channels) for the organization. See [enterprise controls](/docs/en/channels#enterprise-controls) for the default on each plan |
+| [`blockedMarketplaces`](/docs/en/settings-reference#blockedmarketplaces) | Blocklist of marketplace sources. Blocked sources are checked before downloading, so they never touch the filesystem. See [managed marketplace restrictions](/docs/en/plugins/org.md#restrict-what-users-can-install) |
+| [`channelsEnabled`](/docs/en/settings-reference#channelsenabled) | Allow [channels](/docs/en/channels.md) for the organization. See [enterprise controls](/docs/en/channels.md#enterprise-controls) for the default on each plan |
 | [`disableCommandPluginSources`](/docs/en/settings-reference#disablecommandpluginsources) | When `true`, blocks [`command` plugin sources](/docs/en/plugins/marketplace-reference#command-plugin-source) entirely, so the marketplace-declared command never runs. Also blocks marketplace [`headersHelper` commands](/docs/en/plugins/host-marketplace#authenticate-archive-downloads), except for a marketplace that managed settings themselves declare. When unset, follows `allowManagedHooksOnly`. Requires Claude Code v2.1.229 or later, and the `headersHelper` block requires v2.1.238 or later |
-| [`disableSideloadFlags`](/docs/en/settings-reference#disablesideloadflags) | Reject the `--plugin-dir`, `--plugin-url`, `--agents`, and `--mcp-config` flags at startup. In cloud sessions, Claude Code instead starts the session and drops the server-delivered `--mcp-config` servers, apart from the exceptions its [reference entry](/docs/en/settings-reference#disablesideloadflags) lists. Requires Claude Code v2.1.193 or later |
-| [`forceRemoteSettingsRefresh`](/docs/en/settings-reference#forceremotesettingsrefresh) | When `true`, blocks CLI startup until remote managed settings are freshly fetched and exits if the fetch fails. See [fail-closed enforcement](/docs/en/server-managed-settings#enforce-fail-closed-startup) |
-| [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) | Remote MCP servers provided to every user alongside their own. It provides servers rather than locking anything down. See [Provide servers through managed settings](/docs/en/managed-mcp#provide-servers-through-managed-settings). Requires Claude Code v2.1.259 or later |
+| [`disableSideloadFlags`](/docs/en/settings-reference#disablesideloadflags) | Reject the `--plugin-dir`, `--plugin-url`, `--agents`, and `--mcp-config` flags at startup. In cloud sessions, Claude Code instead starts the session and drops the server-delivered `--mcp-config` servers, apart from the exceptions its [reference entry](/docs/en/settings-reference.md#disablesideloadflags) lists. Requires Claude Code v2.1.193 or later |
+| [`forceRemoteSettingsRefresh`](/docs/en/settings-reference#forceremotesettingsrefresh) | When `true`, blocks CLI startup until remote managed settings are freshly fetched and exits if the fetch fails. See [fail-closed enforcement](/docs/en/server-managed-settings.md#enforce-fail-closed-startup) |
+| [`managedMcpServers`](/docs/en/settings-reference#managedmcpservers) | Remote MCP servers provided to every user alongside their own. It provides servers rather than locking anything down. See [Provide servers through managed settings](/docs/en/managed-mcp.md#provide-servers-through-managed-settings). Requires Claude Code v2.1.259 or later |
 | [`managedSourcesBehavior`](/docs/en/settings-reference#managedsourcesbehavior) | Whether Claude Code applies only the highest-priority managed source or [composes every one of them](#compose-every-managed-source) |
 | [`parentSettingsBehavior`](/docs/en/settings-reference#parentsettingsbehavior) | Whether host-supplied parent settings merge under the managed policy |
 | [`pluginSuggestionMarketplaces`](/docs/en/settings-reference#pluginsuggestionmarketplaces) | Marketplaces whose plugins Claude Code may suggest to users |
 | [`pluginTrustMessage`](/docs/en/settings-reference#plugintrustmessage) | Custom message appended to the plugin trust warning shown before installation |
-| [`policyHelper`](/docs/en/settings-reference#policyhelper) | Executable that computes managed settings at startup; see [Compute managed settings with a policy helper](/docs/en/settings-reference#policyhelper) |
+| [`policyHelper`](/docs/en/settings-reference#policyhelper) | Executable that computes managed settings at startup; see [Compute managed settings with a policy helper](/docs/en/settings-reference.md#policyhelper) |
 | [`sandbox.filesystem.allowManagedReadPathsOnly`](/docs/en/settings-reference#sandbox-filesystem-allowmanagedreadpathsonly) | When `true`, only `filesystem.allowRead` paths from managed settings are respected. `denyRead` still merges from all sources |
 | [`sandbox.network.allowManagedDomainsOnly`](/docs/en/settings-reference#sandbox-network-allowmanageddomainsonly) | Honor only managed `allowedDomains` and `WebFetch(domain:...)` allow rules; block other domains without prompting |
-| [`strictKnownMarketplaces`](/docs/en/settings-reference#strictknownmarketplaces) | Controls which plugin marketplace sources users can add and install plugins from. See [managed marketplace restrictions](/docs/en/plugins/org#restrict-what-users-can-install) |
+| [`strictKnownMarketplaces`](/docs/en/settings-reference#strictknownmarketplaces) | Controls which plugin marketplace sources users can add and install plugins from. See [managed marketplace restrictions](/docs/en/plugins/org.md#restrict-what-users-can-install) |
 | [`strictPluginOnlyCustomization`](/docs/en/settings-reference#strictpluginonlycustomization) | Block skills, agents, hooks, and MCP servers from user and project sources; `true` locks all four, an array names which |
 | [`wslInheritsWindowsSettings`](/docs/en/settings-reference#wslinheritswindowssettings) | When set in the HKLM registry or a file under `C:\Program Files\ClaudeCode`, have WSL read the Windows policy chain, and read `/etc/claude-code` only when [no Windows admin document is present](#present-admin-documents); the entry gives the order |
 
 > [!NOTE]
 >
-> On Team and Enterprise plans, an Owner enables or disables [Remote Control](/docs/en/remote-control) and [cloud sessions](/docs/en/claude-code-on-the-web) organization-wide in [Claude Code admin settings](https://claude.ai/admin-settings/claude-code). When an Owner turns Remote Control off, already-connected sessions that run Claude Code v2.1.286 or later disconnect too. Each one disconnects the next time it refreshes your organization's policy, about once an hour. For what happens in those sessions, see [`Remote Control was turned off by your organization's policy`](/docs/en/remote-control#remote-control-was-turned-off-by-your-organizations-policy).
+> On Team and Enterprise plans, an Owner enables or disables [Remote Control](/docs/en/remote-control.md) and [cloud sessions](/docs/en/claude-code-on-the-web.md) organization-wide in [Claude Code admin settings](https://claude.ai/admin-settings/claude-code). When an Owner turns Remote Control off, already-connected sessions that run Claude Code v2.1.286 or later disconnect too. Each one disconnects the next time it refreshes your organization's policy, about once an hour. For what happens in those sessions, see [`Remote Control was turned off by your organization's policy`](/docs/en/remote-control#remote-control-was-turned-off-by-your-organizations-policy).
 >
 > Remote Control can additionally be disabled per device with the [`disableRemoteControl`](/docs/en/settings-reference#disableremotecontrol) setting. Cloud sessions have no per-device managed settings key.
 >
@@ -424,7 +426,7 @@ The table covers the permission, plugin, and delivery controls. For any key not 
 
 ## Turn telemetry off for your organization
 
-Claude Code sends Anthropic operational [telemetry](/docs/en/data-usage#telemetry-services) by default on sessions that use the Anthropic API, whether directly, through an LLM gateway, or through a custom `ANTHROPIC_BASE_URL`; [Default behaviors by API provider](/docs/en/data-usage#default-behaviors-by-api-provider) says which providers send it. To turn it off for every developer without relying on each person's shell, deliver `DISABLE_TELEMETRY` through the `env` block of your managed settings. This example sets `DISABLE_TELEMETRY` for everyone the policy reaches:
+Claude Code sends Anthropic operational [telemetry](/docs/en/data-usage.md#telemetry-services) by default on sessions that use the Anthropic API, whether directly, through an LLM gateway, or through a custom `ANTHROPIC_BASE_URL`; [Default behaviors by API provider](/docs/en/data-usage.md#default-behaviors-by-api-provider) says which providers send it. To turn it off for every developer without relying on each person's shell, deliver `DISABLE_TELEMETRY` through the `env` block of your managed settings. This example sets `DISABLE_TELEMETRY` for everyone the policy reaches:
 
 ```json theme={null}
 {
@@ -434,18 +436,18 @@ Claude Code sends Anthropic operational [telemetry](/docs/en/data-usage#telemetr
 }
 ```
 
-Claude Code applies a value of `1` without showing the user the [approval dialog](/docs/en/server-managed-settings#environment-variables-and-the-approval-dialog).
+Claude Code applies a value of `1` without showing the user the [approval dialog](/docs/en/server-managed-settings.md#environment-variables-and-the-approval-dialog).
 
-If you turn telemetry off, Claude Code stops sending the usage data that feeds your organization's [analytics dashboard](/docs/en/analytics) for the developers the policy reaches. The variable also turns off [feature-flag fetching](/docs/en/env-vars#features-that-need-feature-flag-fetching) for those developers. For Remote Control, see the [Remote Control requirements](/docs/en/remote-control#requirements).
+If you turn telemetry off, Claude Code stops sending the usage data that feeds your organization's [analytics dashboard](/docs/en/analytics.md) for the developers the policy reaches. The variable also turns off [feature-flag fetching](/docs/en/env-vars.md#features-that-need-feature-flag-fetching) for those developers. For Remote Control, see the [Remote Control requirements](/docs/en/remote-control.md#requirements).
 
-[Where and when a policy applies](#where-and-when-a-policy-applies) says which delivery mechanism reaches each surface, and [Platform availability](/docs/en/server-managed-settings#platform-availability) says which sessions skip the server-managed settings fetch.
+[Where and when a policy applies](#where-and-when-a-policy-applies) says which delivery mechanism reaches each surface, and [Platform availability](/docs/en/server-managed-settings.md#platform-availability) says which sessions skip the server-managed settings fetch.
 
-If your organization uses customer-managed encryption keys and routes Claude Code through a gateway, [Configure proxies and gateways](/docs/en/third-party-integrations#configure-proxies-and-gateways) says why those sessions need this variable.
+If your organization uses customer-managed encryption keys and routes Claude Code through a gateway, [Configure proxies and gateways](/docs/en/third-party-integrations.md#configure-proxies-and-gateways) says why those sessions need this variable.
 
 ## See also
 
-* [Set up Claude Code for your organization](/docs/en/admin-setup): decide what to enforce and how
-* [Server-managed settings](/docs/en/server-managed-settings): deliver policy from the claude.ai console or a gateway
-* [Managed MCP configuration](/docs/en/managed-mcp): control which MCP servers developers can use
-* [All settings](/docs/en/settings-reference): every key, with whether a managed source can set it
-* [Example settings files](/docs/en/settings-example#an-organizations-managed-settings): a complete `managed-settings.json` showing the shape of the managed keys
+* [Set up Claude Code for your organization](/docs/en/admin-setup.md): decide what to enforce and how
+* [Server-managed settings](/docs/en/server-managed-settings.md): deliver policy from the claude.ai console or a gateway
+* [Managed MCP configuration](/docs/en/managed-mcp.md): control which MCP servers developers can use
+* [All settings](/docs/en/settings-reference.md): every key, with whether a managed source can set it
+* [Example settings files](/docs/en/settings-example.md#an-organizations-managed-settings): a complete `managed-settings.json` showing the shape of the managed keys

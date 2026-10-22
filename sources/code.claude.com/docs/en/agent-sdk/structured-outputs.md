@@ -54,7 +54,7 @@ Consider a recipe app where an agent searches the web and brings back recipes. W
 
 To use structured outputs, define a [JSON Schema](https://json-schema.org/understanding-json-schema/about) describing the shape of data you want, then pass it to `query()` via the `outputFormat` option (TypeScript) or `output_format` option (Python). When the agent finishes, the result message includes a `structured_output` field with validated data matching your schema.
 
-Before running the examples on this page, install the Claude Agent SDK by following the [quickstart](/docs/en/agent-sdk/quickstart#setup). The example below asks the agent to research Anthropic and return the company name, year founded, and headquarters as structured output.
+Before running the examples on this page, install the Claude Agent SDK by following the [quickstart](/docs/en/agent-sdk/quickstart.md#setup). The example below asks the agent to research Anthropic and return the company name, year founded, and headquarters as structured output.
 
 ```typescript TypeScript theme={null}
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -370,7 +370,7 @@ asyncio.run(main())
 
 ## Recognize the StructuredOutput tool call
 
-When you set `outputFormat` in TypeScript or `output_format` in Python, your message stream carries a tool call named `StructuredOutput` that you never defined. Claude Code adds this tool to the session, and the agent calls it to return its answer. The [system init message](/docs/en/agent-sdk/typescript#sdksystemmessage) lists it in the `tools` array, and each call arrives as two blocks:
+When you set `outputFormat` in TypeScript or `output_format` in Python, your message stream carries a tool call named `StructuredOutput` that you never defined. Claude Code adds this tool to the session, and the agent calls it to return its answer. The [system init message](/docs/en/agent-sdk/typescript.md#sdksystemmessage) lists it in the `tools` array, and each call arrives as two blocks:
 
 * A `tool_use` block named `StructuredOutput`, whose input is the object the agent produced for your schema
 * A `tool_result` block reading `Structured output provided successfully`
@@ -381,7 +381,7 @@ If your application shows or logs tool calls, skip the ones named `StructuredOut
 
 ## Error handling
 
-Structured output generation can fail when the agent cannot produce valid JSON matching your schema. This typically happens when the schema is too complex for the task, the task itself is ambiguous, or the agent hits its retry limit trying to fix validation errors. It can also happen without any validation failure: a [model fallback](/docs/en/model-config#automatic-model-fallback) can retract an already-completed output mid-stream, and if no retry replaces it the run ends with the same error. Check the `errors` list on the error result message to tell the two causes apart before debugging your schema.
+Structured output generation can fail when the agent cannot produce valid JSON matching your schema. This typically happens when the schema is too complex for the task, the task itself is ambiguous, or the agent hits its retry limit trying to fix validation errors. It can also happen without any validation failure: a [model fallback](/docs/en/model-config.md#automatic-model-fallback) can retract an already-completed output mid-stream, and if no retry replaces it the run ends with the same error. Check the `errors` list on the error result message to tell the two causes apart before debugging your schema.
 
 When an error occurs, the result message has a `subtype` indicating what went wrong:
 
@@ -390,7 +390,7 @@ When an error occurs, the result message has a `subtype` indicating what went wr
 | `success` | Output was generated and validated successfully |
 | `error_max_structured_output_retries` | No valid output remained after multiple attempts (validation failures, or a model-fallback retraction with no successful retry) |
 
-A result can also end with subtype `success` but no `structured_output` value, for example when the run completes without the agent producing a structured output. Treat that case as a failure as well. The troubleshooting entry [structured\_output is None but the result says success](/docs/en/agent-sdk/troubleshooting#structured_output-is-none-but-the-result-says-success) covers this case. The example below treats a result as successful only when the `subtype` is `success` and `structured_output` is present, and handles every other result as a failure:
+A result can also end with subtype `success` but no `structured_output` value, for example when the run completes without the agent producing a structured output. Treat that case as a failure as well. The troubleshooting entry [structured\_output is None but the result says success](/docs/en/agent-sdk/troubleshooting.md#structured_output-is-none-but-the-result-says-success) covers this case. The example below treats a result as successful only when the `subtype` is `success` and `structured_output` is present, and handles every other result as a failure:
 
 ```typescript TypeScript theme={null}
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -483,4 +483,4 @@ asyncio.run(main())
 
 * [JSON Schema documentation](https://json-schema.org/): learn JSON Schema syntax for defining complex schemas with nested objects, arrays, enums, and validation constraints
 * [API Structured Outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs): use structured outputs with the Claude API directly for single-turn requests without tool use
-* [Custom tools](/docs/en/agent-sdk/custom-tools): give your agent custom tools to call during execution before returning structured output
+* [Custom tools](/docs/en/agent-sdk/custom-tools.md): give your agent custom tools to call during execution before returning structured output

@@ -62,24 +62,24 @@ asyncio.run(main())
 
 Point `cwd` at one of your own projects and run the example. The summary of that project's open TODOs prints when the result message arrives.
 
-`allowedTools` (TypeScript) or `allowed_tools` (Python) pre-approves the listed tools, so calls to them run without stopping for approval. Tools outside the list stay available. When Claude calls an unlisted tool, the permission mode decides whether the call runs. For more information, see [Allow and deny rules](/docs/en/agent-sdk/permissions#allow-and-deny-rules).
+`allowedTools` (TypeScript) or `allowed_tools` (Python) pre-approves the listed tools, so calls to them run without stopping for approval. Tools outside the list stay available. When Claude calls an unlisted tool, the permission mode decides whether the call runs. For more information, see [Allow and deny rules](/docs/en/agent-sdk/permissions.md#allow-and-deny-rules).
 
 ## Load settings files
 
 Settings files supply configuration beyond the options object. Two options control how they load:
 
 * **`settingSources` / `setting_sources`**: controls which filesystem sources load: user, project, and local. Settings files and CLAUDE.md files arrive through these sources.
-* **`settings`**: loads a settings file path or an inline JSON string in either language, and TypeScript also accepts a settings object. Whichever form you pass overrides user, project, and local filesystem settings; only managed policy settings rank higher. The references document the full precedence order under [Settings precedence](/docs/en/agent-sdk/typescript#settings-precedence) for TypeScript and [Settings precedence](/docs/en/agent-sdk/python#settings-precedence) for Python.
+* **`settings`**: loads a settings file path or an inline JSON string in either language, and TypeScript also accepts a settings object. Whichever form you pass overrides user, project, and local filesystem settings; only managed policy settings rank higher. The references document the full precedence order under [Settings precedence](/docs/en/agent-sdk/typescript.md#settings-precedence) for TypeScript and [Settings precedence](/docs/en/agent-sdk/python.md#settings-precedence) for Python.
 
-Pass `[]` to disable user, project, and local settings. For more information, see [Use Claude Code features in the SDK](/docs/en/agent-sdk/claude-code-features).
+Pass `[]` to disable user, project, and local settings. For more information, see [Use Claude Code features in the SDK](/docs/en/agent-sdk/claude-code-features.md).
 
 ## Choose a model
 
-Unless the `model` option, your settings, or your environment selects a model, a new session starts on [Claude Code's default model](/docs/en/model-config#default-model-setting). For the order of those sources, see [Setting your model](/docs/en/model-config#setting-your-model). Set `model` to pin a specific model, or to pick a smaller one for faster, cheaper agents. The value takes a model alias or a full model name; aliases and the versions they resolve to are listed under [Model aliases](/docs/en/model-config#model-aliases).
+Unless the `model` option, your settings, or your environment selects a model, a new session starts on [Claude Code's default model](/docs/en/model-config.md#default-model-setting). For the order of those sources, see [Setting your model](/docs/en/model-config.md#setting-your-model). Set `model` to pin a specific model, or to pick a smaller one for faster, cheaper agents. The value takes a model alias or a full model name; aliases and the versions they resolve to are listed under [Model aliases](/docs/en/model-config.md#model-aliases).
 
 Set `fallbackModel` (TypeScript) or `fallback_model` (Python) to name a backup model. When the primary is overloaded or unavailable, the session switches to the backup. The primary is retried at the start of each user turn, so the session returns to it once the outage passes.
 
-In either language, the option accepts a single model or a comma-separated list of backups. For the order and the chain cap, see [Fallback model chains](/docs/en/model-config#fallback-model-chains). In TypeScript, a fallback equal to `model` throws an error at startup.
+In either language, the option accepts a single model or a comma-separated list of backups. For the order and the chain cap, see [Fallback model chains](/docs/en/model-config.md#fallback-model-chains). In TypeScript, a fallback equal to `model` throws an error at startup.
 
 The examples below show a fallback list in TypeScript and a single fallback in Python:
 
@@ -99,7 +99,7 @@ options = ClaudeAgentOptions(
 
 > [!NOTE]
 >
-> The [Messages API](https://platform.claude.com/docs/en/api/messages) request parameters `temperature`, `top_p`, and `max_tokens` have no fields on the options object in either language. Set the [effort level](/docs/en/agent-sdk/agent-loop#effort-level) or a [spend cap](#limit-turns-and-spend) instead, or call the Messages API when you need those parameters directly.
+> The [Messages API](https://platform.claude.com/docs/en/api/messages) request parameters `temperature`, `top_p`, and `max_tokens` have no fields on the options object in either language. Set the [effort level](/docs/en/agent-sdk/agent-loop.md#effort-level) or a [spend cap](#limit-turns-and-spend) instead, or call the Messages API when you need those parameters directly.
 
 ## Set environment variables
 
@@ -124,7 +124,7 @@ options = ClaudeAgentOptions(
 )
 ```
 
-The variables you pass can also configure Claude Code itself. For the variables the Claude Code process reads, see [Environment variables](/docs/en/env-vars). To tune API timeouts and stall detection this way, follow the Handle slow or stalled API responses section in the [TypeScript reference](/docs/en/agent-sdk/typescript#handle-slow-or-stalled-api-responses) or the [Python reference](/docs/en/agent-sdk/python#handle-slow-or-stalled-api-responses).
+The variables you pass can also configure Claude Code itself. For the variables the Claude Code process reads, see [Environment variables](/docs/en/env-vars.md). To tune API timeouts and stall detection this way, follow the Handle slow or stalled API responses section in the [TypeScript reference](/docs/en/agent-sdk/typescript.md#handle-slow-or-stalled-api-responses) or the [Python reference](/docs/en/agent-sdk/python.md#handle-slow-or-stalled-api-responses).
 
 ## Set the working directory
 
@@ -132,11 +132,11 @@ Set `cwd` to run the session in a specific directory. When you leave `cwd` unset
 
 Claude Code reads the working directory to determine:
 
-* **Project settings and hooks**: which project's [settings and hooks load](/docs/en/agent-sdk/claude-code-features)
-* **Skills**: where [session skills are discovered](/docs/en/agent-sdk/skills)
-* **Session storage**: which project a [stored session belongs to](/docs/en/agent-sdk/session-storage)
+* **Project settings and hooks**: which project's [settings and hooks load](/docs/en/agent-sdk/claude-code-features.md)
+* **Skills**: where [session skills are discovered](/docs/en/agent-sdk/skills.md)
+* **Session storage**: which project a [stored session belongs to](/docs/en/agent-sdk/session-storage.md)
 
-To let tools reach files outside the working directory, add paths with `additionalDirectories` (TypeScript) or `add_dirs` (Python). For the scope of that grant, see [Additional directories grant file access, not configuration](/docs/en/permissions#additional-directories-grant-file-access-not-configuration).
+To let tools reach files outside the working directory, add paths with `additionalDirectories` (TypeScript) or `add_dirs` (Python). For the scope of that grant, see [Additional directories grant file access, not configuration](/docs/en/permissions.md#additional-directories-grant-file-access-not-configuration).
 
 ## Limit turns and spend
 
@@ -150,18 +150,18 @@ The two caps treat `0` differently:
 * **`maxTurns` / `max_turns`**: `0` runs the session without a turn limit, the same as leaving the option unset
 * **`maxBudgetUsd` / `max_budget_usd`**: the CLI rejects `0` as an invalid amount at startup, and the session never runs
 
-For more information about both caps, including subagent spend, see [Turns and budget](/docs/en/agent-sdk/agent-loop#turns-and-budget).
+For more information about both caps, including subagent spend, see [Turns and budget](/docs/en/agent-sdk/agent-loop.md#turns-and-budget).
 
 ## Change configuration mid-session
 
-When you start a session with [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode), you can switch its model and permission mode while it runs. Where you call the setters differs by language:
+When you start a session with [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode.md), you can switch its model and permission mode while it runs. Where you call the setters differs by language:
 
 * **TypeScript**: methods on the object `query()` returns
 * **Python**: methods on [`ClaudeSDKClient`](/docs/en/agent-sdk/python#claudesdkclient), since `query()` returns a plain iterator without control methods
 
 Both languages have the same setters:
 
-* **`setModel()` / `set_model()`**: switches the model. Call it with no model to switch to [Claude Code's default model](/docs/en/model-config#default-model-setting) rather than the `model` you passed in options.
+* **`setModel()` / `set_model()`**: switches the model. Call it with no model to switch to [Claude Code's default model](/docs/en/model-config.md#default-model-setting) rather than the `model` you passed in options.
 * **`setPermissionMode()` / `set_permission_mode()`**: switches the permission mode
 
 TypeScript also has `applyFlagSettings()` and `updateSettings()`:
@@ -254,36 +254,36 @@ On the Claude API, the program prints `First turn model: claude-sonnet-5`, then 
 
 > [!NOTE]
 >
-> Each model has its own prompt cache, so after a mid-session switch the next request recomputes the full conversation uncached at the new model's rates. For more information, see [Switching models](/docs/en/prompt-caching#switching-models).
+> Each model has its own prompt cache, so after a mid-session switch the next request recomputes the full conversation uncached at the new model's rates. For more information, see [Switching models](/docs/en/prompt-caching.md#switching-models).
 
 ## Configure specific features
 
-The table below maps each option to the feature it configures. For options this page doesn't cover, see the [TypeScript](/docs/en/agent-sdk/typescript#options) and [Python](/docs/en/agent-sdk/python#claudeagentoptions) references. If you know your goal but not which option serves it, start from [Choose the right feature](/docs/en/agent-sdk/claude-code-features#choose-the-right-feature).
+The table below maps each option to the feature it configures. For options this page doesn't cover, see the [TypeScript](/docs/en/agent-sdk/typescript.md#options) and [Python](/docs/en/agent-sdk/python.md#claudeagentoptions) references. If you know your goal but not which option serves it, start from [Choose the right feature](/docs/en/agent-sdk/claude-code-features.md#choose-the-right-feature).
 
 | TypeScript | Python | Controls | Covered in |
 | - | - | - | - |
-| `permissionMode` | `permission_mode` | What the agent can do without approval | [Configure permissions](/docs/en/agent-sdk/permissions) |
-| `allowedTools` | `allowed_tools` | Which tool calls are pre-approved | [Configure permissions](/docs/en/agent-sdk/permissions) |
-| `canUseTool` | `can_use_tool` | Your approval callback for tool calls | [Handle tool approval requests](/docs/en/agent-sdk/user-input#handle-tool-approval-requests) |
-| `systemPrompt` | `system_prompt` | The agent's instructions | [Modifying system prompts](/docs/en/agent-sdk/modifying-system-prompts) |
-| `settingSources` | `setting_sources` | Which filesystem settings load | [Use Claude Code features in the SDK](/docs/en/agent-sdk/claude-code-features) |
-| `mcpServers` | `mcp_servers` | External tool servers | [Connect to external tools with MCP](/docs/en/agent-sdk/mcp) |
-| `agents` | `agents` | Subagent definitions | [Subagents](/docs/en/agent-sdk/subagents) |
-| `hooks` | `hooks` | Callbacks at lifecycle points | [Hooks](/docs/en/agent-sdk/hooks) |
-| `skills` | `skills` | Which skills load | [Extend agents with skills](/docs/en/agent-sdk/skills) |
-| `plugins` | `plugins` | Which plugins load | [Plugins](/docs/en/agent-sdk/plugins) |
-| `outputFormat` | `output_format` | Structured output schemas | [Structured outputs](/docs/en/agent-sdk/structured-outputs) |
-| `resume` | `resume` | Continuing a stored session | [Sessions](/docs/en/agent-sdk/sessions) |
-| `forkSession` | `fork_session` | Branching a session | [Sessions](/docs/en/agent-sdk/sessions) |
-| `sessionStore` | `session_store` | External session persistence | [Session storage](/docs/en/agent-sdk/session-storage) |
-| `enableFileCheckpointing` | `enable_file_checkpointing` | Rewindable file edits | [File checkpointing](/docs/en/agent-sdk/file-checkpointing) |
-| `effort` | `effort` | How much work Claude puts into responses | [Effort level](/docs/en/agent-sdk/agent-loop#effort-level) |
-| `sandbox` | `sandbox` | Sandbox behavior for tool execution | [TypeScript](/docs/en/agent-sdk/typescript#sandbox-configuration) and [Python](/docs/en/agent-sdk/python#sandbox-configuration) references, with deployment context in [Secure deployment](/docs/en/agent-sdk/secure-deployment) |
+| `permissionMode` | `permission_mode` | What the agent can do without approval | [Configure permissions](/docs/en/agent-sdk/permissions.md) |
+| `allowedTools` | `allowed_tools` | Which tool calls are pre-approved | [Configure permissions](/docs/en/agent-sdk/permissions.md) |
+| `canUseTool` | `can_use_tool` | Your approval callback for tool calls | [Handle tool approval requests](/docs/en/agent-sdk/user-input.md#handle-tool-approval-requests) |
+| `systemPrompt` | `system_prompt` | The agent's instructions | [Modifying system prompts](/docs/en/agent-sdk/modifying-system-prompts.md) |
+| `settingSources` | `setting_sources` | Which filesystem settings load | [Use Claude Code features in the SDK](/docs/en/agent-sdk/claude-code-features.md) |
+| `mcpServers` | `mcp_servers` | External tool servers | [Connect to external tools with MCP](/docs/en/agent-sdk/mcp.md) |
+| `agents` | `agents` | Subagent definitions | [Subagents](/docs/en/agent-sdk/subagents.md) |
+| `hooks` | `hooks` | Callbacks at lifecycle points | [Hooks](/docs/en/agent-sdk/hooks.md) |
+| `skills` | `skills` | Which skills load | [Extend agents with skills](/docs/en/agent-sdk/skills.md) |
+| `plugins` | `plugins` | Which plugins load | [Plugins](/docs/en/agent-sdk/plugins.md) |
+| `outputFormat` | `output_format` | Structured output schemas | [Structured outputs](/docs/en/agent-sdk/structured-outputs.md) |
+| `resume` | `resume` | Continuing a stored session | [Sessions](/docs/en/agent-sdk/sessions.md) |
+| `forkSession` | `fork_session` | Branching a session | [Sessions](/docs/en/agent-sdk/sessions.md) |
+| `sessionStore` | `session_store` | External session persistence | [Session storage](/docs/en/agent-sdk/session-storage.md) |
+| `enableFileCheckpointing` | `enable_file_checkpointing` | Rewindable file edits | [File checkpointing](/docs/en/agent-sdk/file-checkpointing.md) |
+| `effort` | `effort` | How much work Claude puts into responses | [Effort level](/docs/en/agent-sdk/agent-loop.md#effort-level) |
+| `sandbox` | `sandbox` | Sandbox behavior for tool execution | [TypeScript](/docs/en/agent-sdk/typescript.md#sandbox-configuration) and [Python](/docs/en/agent-sdk/python.md#sandbox-configuration) references, with deployment context in [Secure deployment](/docs/en/agent-sdk/secure-deployment.md) |
 
 ## Next steps
 
 To see configuration composed into working agents:
 
-* **[Quickstart](/docs/en/agent-sdk/quickstart)**: build and run a first agent end to end
-* **[Examples](/docs/en/agent-sdk/examples)**: find a complete, runnable project or a guided Claude Cookbook recipe that matches what you want to build
-* **[Multi-tenant isolation](/docs/en/agent-sdk/hosting#multi-tenant-isolation)**: isolate each tenant's settings and memory with `settingSources` / `setting_sources`, `env`, and `cwd`
+* **[Quickstart](/docs/en/agent-sdk/quickstart.md)**: build and run a first agent end to end
+* **[Examples](/docs/en/agent-sdk/examples.md)**: find a complete, runnable project or a guided Claude Cookbook recipe that matches what you want to build
+* **[Multi-tenant isolation](/docs/en/agent-sdk/hosting.md#multi-tenant-isolation)**: isolate each tenant's settings and memory with `settingSources` / `setting_sources`, `env`, and `cwd`

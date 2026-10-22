@@ -38,7 +38,7 @@ Before Claude Code v2.1.221, the SDK disabled tool search for all models on Goog
 
 > [!NOTE]
 >
-> Tool search is on by default behind an `ANTHROPIC_BASE_URL` gateway, with nothing to set. If the gateway rejects it, see [Tool search through an LLM gateway](/docs/en/mcp#tool-search-through-a-gateway). Before Claude Code v2.1.304, the SDK disabled tool search behind such a gateway unless `ENABLE_TOOL_SEARCH` was `true`, `auto`, or `auto:N`.
+> Tool search is on by default behind an `ANTHROPIC_BASE_URL` gateway, with nothing to set. If the gateway rejects it, see [Tool search through an LLM gateway](/docs/en/mcp.md#tool-search-through-a-gateway). Before Claude Code v2.1.304, the SDK disabled tool search behind such a gateway unless `ENABLE_TOOL_SEARCH` was `true`, `auto`, or `auto:N`.
 
 You control whether and when tool definitions are deferred with the `ENABLE_TOOL_SEARCH` environment variable, which takes these values:
 
@@ -46,13 +46,13 @@ You control whether and when tool definitions are deferred with the `ENABLE_TOOL
 | :- | :- |
 | (unset) | Tool search is on, with tool definitions deferred and discovered on demand. Falls back to loading upfront on models earlier than Opus 4 and Sonnet 4, on the [earlier Agent Platform models](#configure-tool-search), and on Microsoft Foundry deployments hosted on Azure. |
 | `true` | Tool search is on, with the same fallbacks as (unset). |
-| `auto` | Tool search is off, and tool definitions load upfront, until the definitions it can defer reach 10% of the model's context window. Tool search then activates, and can [stay on in the same conversation](/docs/en/mcp#tools-that-stay-deferred-below-the-threshold) even if those definitions later drop below 10%. |
+| `auto` | Tool search is off, and tool definitions load upfront, until the definitions it can defer reach 10% of the model's context window. Tool search then activates, and can [stay on in the same conversation](/docs/en/mcp.md#tools-that-stay-deferred-below-the-threshold) even if those definitions later drop below 10%. |
 | `auto:N` | Same as `auto` with a custom percentage. `auto:5` activates when those definitions reach 5% of the context window. Lower values activate sooner. |
 | `false` | Tool search is off. All tool definitions are loaded into context on every turn. |
 
-Setting [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`](/docs/en/env-vars) keeps tool search off. You can't override it by setting `ENABLE_TOOL_SEARCH` yourself. On Claude Code v2.1.227 or later, your organization can keep tool search on under this variable through [managed settings](/docs/en/managed-settings). In a session that [gets the HIPAA configuration](/docs/en/hipaa-setup#check-how-developers-sign-in-and-connect), tool search is off, and neither `ENABLE_TOOL_SEARCH` nor managed settings turns it back on. [Disable pre-release capabilities](/docs/en/llm-gateway-protocol#disable-pre-release-capabilities) covers where the override applies and what the variable strips.
+Setting [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`](/docs/en/env-vars) keeps tool search off. You can't override it by setting `ENABLE_TOOL_SEARCH` yourself. On Claude Code v2.1.227 or later, your organization can keep tool search on under this variable through [managed settings](/docs/en/managed-settings.md). In a session that [gets the HIPAA configuration](/docs/en/hipaa-setup.md#check-how-developers-sign-in-and-connect), tool search is off, and neither `ENABLE_TOOL_SEARCH` nor managed settings turns it back on. [Disable pre-release capabilities](/docs/en/llm-gateway-protocol.md#disable-pre-release-capabilities) covers where the override applies and what the variable strips.
 
-Tool search applies to all registered tools, whether they come from remote MCP servers or [custom SDK MCP servers](/docs/en/agent-sdk/custom-tools). When you use `auto`, the SDK counts every definition that tool search can defer toward one combined threshold: each MCP tool that isn't marked [`alwaysLoad`](/docs/en/mcp#exempt-a-server-from-deferral), from any server, plus the built-in tools that load on demand. The SDK loads core built-in tools such as Bash, Read, and Edit upfront and doesn't count them toward the threshold. A [mod](/docs/en/plugins/mods/reference#tools) in one of your plugins can also defer a tool or load it upfront, which changes that count.
+Tool search applies to all registered tools, whether they come from remote MCP servers or [custom SDK MCP servers](/docs/en/agent-sdk/custom-tools.md). When you use `auto`, the SDK counts every definition that tool search can defer toward one combined threshold: each MCP tool that isn't marked [`alwaysLoad`](/docs/en/mcp#exempt-a-server-from-deferral), from any server, plus the built-in tools that load on demand. The SDK loads core built-in tools such as Bash, Read, and Edit upfront and doesn't count them toward the threshold. A [mod](/docs/en/plugins/mods/reference.md#tools) in one of your plugins can also defer a tool or load it upfront, which changes that count.
 
 Set the value in the `env` option on `query()`. In TypeScript, `env` replaces the subprocess environment, so spread `...process.env` to keep inherited variables. In Python, `env` is merged on top of the inherited environment. This example connects to a remote MCP server that exposes many tools, pre-approves all of them with a wildcard, and uses `auto:5` so tool search activates when the definitions it can defer reach 5% of the context window:
 
@@ -125,7 +125,7 @@ asyncio.run(main())
 
 To run this example, replace `https://tools.example.com/mcp` with the URL of your own MCP server. On success the result text prints to the console.
 
-Because this is a single-shot `query()` call, the SDK raises after yielding an error result, so the example wraps the loop in a try block. To see why a run failed, check the result message's `subtype`, such as `error_during_execution`, inside the loop. For more on result messages, see [Handle the result](/docs/en/agent-sdk/agent-loop#handle-the-result).
+Because this is a single-shot `query()` call, the SDK raises after yielding an error result, so the example wraps the loop in a try block. To see why a run failed, check the result message's `subtype`, such as `error_during_execution`, inside the loop. For more on result messages, see [Handle the result](/docs/en/agent-sdk/agent-loop.md#handle-the-result).
 
 ## Optimize tool discovery
 
@@ -153,7 +153,7 @@ options = ClaudeAgentOptions(
 )
 ```
 
-For the full set of system prompt options, see [Modifying system prompts](/docs/en/agent-sdk/modifying-system-prompts).
+For the full set of system prompt options, see [Modifying system prompts](/docs/en/agent-sdk/modifying-system-prompts.md).
 
 ## Limits
 
@@ -164,7 +164,7 @@ For the full set of system prompt options, see [Modifying system prompts](/docs/
 ## Related documentation
 
 * [Tool search in the API](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool): Full API documentation for tool search, including custom implementations
-* [Connect MCP servers](/docs/en/agent-sdk/mcp): Connect to external tools via MCP servers
-* [Custom tools](/docs/en/agent-sdk/custom-tools): Build your own tools with SDK MCP servers
-* [TypeScript SDK reference](/docs/en/agent-sdk/typescript): Full API reference
-* [Python SDK reference](/docs/en/agent-sdk/python): Full API reference
+* [Connect MCP servers](/docs/en/agent-sdk/mcp.md): Connect to external tools via MCP servers
+* [Custom tools](/docs/en/agent-sdk/custom-tools.md): Build your own tools with SDK MCP servers
+* [TypeScript SDK reference](/docs/en/agent-sdk/typescript.md): Full API reference
+* [Python SDK reference](/docs/en/agent-sdk/python.md): Full API reference

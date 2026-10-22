@@ -314,7 +314,7 @@ Subagent transcripts are mirrored under `subpath: "subagents/agent-<id>"`. `list
 
 The SDK never deletes from your store on its own. Retention is the adapter's responsibility: use your backend's expiry or lifecycle mechanism, or run scheduled cleanup, according to your compliance requirements.
 
-Local transcripts under `CLAUDE_CONFIG_DIR` are swept independently by the `cleanupPeriodDays` setting, following the [retention sweep rules](/docs/en/claude-directory#cleaned-up-automatically). A run [resumed from the store](#resume-from-the-store) leaves no local transcript, so for those runs your store's retention is the only retention there is.
+Local transcripts under `CLAUDE_CONFIG_DIR` are swept independently by the `cleanupPeriodDays` setting, following the [retention sweep rules](/docs/en/claude-directory.md#cleaned-up-automatically). A run [resumed from the store](#resume-from-the-store) leaves no local transcript, so for those runs your store's retention is the only retention there is.
 
 ## Supported on
 
@@ -332,11 +332,11 @@ The following TypeScript SDK functions accept a `sessionStore` option and operat
 * [`listSubagents()`](/docs/en/agent-sdk/typescript)
 * [`getSubagentMessages()`](/docs/en/agent-sdk/typescript)
 
-In the Python SDK, set `session_store` in [`ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions) to run `query()` against a store. The remaining operations each have a store-backed Python function that takes the store as an argument: `list_sessions_from_store()`, `get_session_info_from_store()`, `get_session_messages_from_store()`, `list_subagents_from_store()`, `get_subagent_messages_from_store()`, `rename_session_via_store()`, `tag_session_via_store()`, `delete_session_via_store()`, and `fork_session_via_store()`. `startup()` has no Python equivalent. The standalone functions documented in the [Python SDK reference](/docs/en/agent-sdk/python#functions), such as `list_sessions()`, read local session files.
+In the Python SDK, set `session_store` in [`ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions) to run `query()` against a store. The remaining operations each have a store-backed Python function that takes the store as an argument: `list_sessions_from_store()`, `get_session_info_from_store()`, `get_session_messages_from_store()`, `list_subagents_from_store()`, `get_subagent_messages_from_store()`, `rename_session_via_store()`, `tag_session_via_store()`, `delete_session_via_store()`, and `fork_session_via_store()`. `startup()` has no Python equivalent. The standalone functions documented in the [Python SDK reference](/docs/en/agent-sdk/python.md#functions), such as `list_sessions()`, read local session files.
 
 ## Related resources
 
-* [Work with sessions](/docs/en/agent-sdk/sessions): Continue, resume, and fork without a custom store
-* [Host the SDK](/docs/en/agent-sdk/hosting): Deployment patterns for multi-host environments
+* [Work with sessions](/docs/en/agent-sdk/sessions.md): Continue, resume, and fork without a custom store
+* [Host the SDK](/docs/en/agent-sdk/hosting.md): Deployment patterns for multi-host environments
 * [TypeScript `Options`](/docs/en/agent-sdk/typescript#options): Full option reference
 * [Reference implementations](#reference-implementations): Runnable example adapters for an object store, a key-value store, and a database, in both SDK repositories

@@ -38,11 +38,11 @@ The [comparison table](#compare-the-four-approaches) shows what each customizati
 
 ## Customize agent behavior
 
-`append` and a custom prompt string each change the system prompt directly, and an output style changes the instructions Claude Code gives Claude for every response. CLAUDE.md takes a different path: the SDK reads it and injects its content into the conversation as project context, so it shapes behavior alongside whichever system prompt you choose. [Skills](/docs/en/agent-sdk/skills), [hooks](/docs/en/agent-sdk/hooks), and [permissions](/docs/en/agent-sdk/permissions) also shape behavior outside the system prompt and are covered on their own pages.
+`append` and a custom prompt string each change the system prompt directly, and an output style changes the instructions Claude Code gives Claude for every response. CLAUDE.md takes a different path: the SDK reads it and injects its content into the conversation as project context, so it shapes behavior alongside whichever system prompt you choose. [Skills](/docs/en/agent-sdk/skills.md), [hooks](/docs/en/agent-sdk/hooks.md), and [permissions](/docs/en/agent-sdk/permissions.md) also shape behavior outside the system prompt and are covered on their own pages.
 
 ### CLAUDE.md files for project-level instructions
 
-CLAUDE.md files give Claude persistent project context and instructions. The SDK injects their content into the conversation and leaves the system prompt untouched, so they work with any system prompt configuration. For what to put in CLAUDE.md, where to place it, and how to write effective instructions, see [When to add to CLAUDE.md](/docs/en/memory#when-to-add-to-claude-md) and the rest of [How Claude remembers your project](/docs/en/memory). This section covers what's specific to the SDK: how CLAUDE.md loads.
+CLAUDE.md files give Claude persistent project context and instructions. The SDK injects their content into the conversation and leaves the system prompt untouched, so they work with any system prompt configuration. For what to put in CLAUDE.md, where to place it, and how to write effective instructions, see [When to add to CLAUDE.md](/docs/en/memory.md#when-to-add-to-claude-md) and the rest of [How Claude remembers your project](/docs/en/memory.md). This section covers what's specific to the SDK: how CLAUDE.md loads.
 
 The SDK reads CLAUDE.md when the matching setting source is enabled: `'project'` loads `CLAUDE.md` or `.claude/CLAUDE.md` from the working directory, and `'user'` loads `~/.claude/CLAUDE.md`. Default `query()` options enable both sources, so CLAUDE.md loads automatically. If you set `settingSources` in TypeScript or `setting_sources` in Python explicitly, include the sources you need. CLAUDE.md loading is controlled by setting sources, not by the `claude_code` preset.
 
@@ -108,7 +108,7 @@ Output styles are saved sets of instructions that change Claude's role, tone, an
 
 #### Create an output style
 
-An output style is a markdown file with [frontmatter](/docs/en/output-styles#frontmatter) for metadata, followed by the prompt content. Save it to `~/.claude/output-styles/` for a user-level style available in every project, or `.claude/output-styles/` in your repository for a project-level style you can commit and share with your team.
+An output style is a markdown file with [frontmatter](/docs/en/output-styles.md#frontmatter) for metadata, followed by the prompt content. Save it to `~/.claude/output-styles/` for a user-level style available in every project, or `.claude/output-styles/` in your repository for a project-level style you can commit and share with your team.
 
 A custom output style leaves the `claude_code` preset's software engineering instructions out and uses your own. To keep them and layer your instructions on top, set `keep-coding-instructions: true` in the frontmatter. Those instructions are only in Claude Code's full system prompt, so the setting has no effect in a session on the shorter system prompt; set [`CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT`](/docs/en/env-vars#variables) to `0` to select the full prompt on any model. Keep them when your agent is still doing software engineering work. Leave them out when you're replacing the role entirely.
 
@@ -326,7 +326,7 @@ In the TypeScript SDK, you can pass a custom prompt as an array of strings inste
 
 > [!NOTE]
 >
-> Claude Code splits the prompt only when it calls the Claude API directly or runs on [Claude Platform on AWS](/docs/en/claude-platform-on-aws). In every other configuration, such as Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or an [LLM gateway](/docs/en/llm-gateway-connect), it sends the whole prompt as one block, the same as passing one string. The same happens whenever you set [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`](/docs/en/llm-gateway-protocol#disable-pre-release-capabilities).
+> Claude Code splits the prompt only when it calls the Claude API directly or runs on [Claude Platform on AWS](/docs/en/claude-platform-on-aws.md). In every other configuration, such as Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or an [LLM gateway](/docs/en/llm-gateway-connect.md), it sends the whole prompt as one block, the same as passing one string. The same happens whenever you set [`CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1`](/docs/en/llm-gateway-protocol#disable-pre-release-capabilities).
 
 To split the prompt, import `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` from `@anthropic-ai/claude-agent-sdk` and pass it as its own array element between the two parts. The SDK sends the strings before the marker as one text block and the strings after it as a second block, each with its own cache breakpoint. In the example below, a support agent loads its triage instructions from a file and receives details about one ticket on each request, so the instructions stay cached while the ticket details change:
 
@@ -349,7 +349,7 @@ for await (const message of query({
 }
 ```
 
-[Track cache tokens](/docs/en/agent-sdk/cost-tracking#track-cache-tokens) describes the `cache_creation_input_tokens` and `cache_read_input_tokens` fields on each result message.
+[Track cache tokens](/docs/en/agent-sdk/cost-tracking.md#track-cache-tokens) describes the `cache_creation_input_tokens` and `cache_read_input_tokens` fields on each result message.
 
 The SDK assembles the blocks from the array as follows:
 
@@ -370,17 +370,17 @@ By default, if you pass a different `append` or custom prompt when you return to
 If the instructions you put in the system prompt need to change while a session is running, for example because your user switched the agent to a read-only mode or edited its configuration in your app, send the new instructions in the conversation instead of changing `systemPrompt`:
 
 * **In your next message**: include the new instructions in the next user message you send.
-* **From a hook**: return [`additionalContext`](/docs/en/hooks#add-context-for-claude) from a `UserPromptSubmit` or `PostToolUse` [hook callback](/docs/en/agent-sdk/hooks#outputs), written as a factual statement such as "The workspace is now read-only". The SDK inserts the text into the conversation at the point where the hook fired, so the recorded prompt stays unchanged.
+* **From a hook**: return [`additionalContext`](/docs/en/hooks#add-context-for-claude) from a `UserPromptSubmit` or `PostToolUse` [hook callback](/docs/en/agent-sdk/hooks.md#outputs), written as a factual statement such as "The workspace is now read-only". The SDK inserts the text into the conversation at the point where the hook fired, so the recorded prompt stays unchanged.
 
 #### Turn recording off while you iterate on wording
 
 While you iterate on prompt wording and want each edit to reach a session you resume, set `snapshot` to false on the object form of the system prompt. Claude Code then rebuilds the prompt on every request. The field is available on the preset and custom forms of [`systemPrompt`](/docs/en/agent-sdk/typescript#options) in TypeScript and of [`system_prompt`](/docs/en/agent-sdk/python#systempromptpreset) in Python, and requires `@anthropic-ai/claude-agent-sdk` v0.3.257 or later, or `claude-agent-sdk` v0.2.153 or later.
 
-Keep recording on in production. With recording off, a different `append` or custom prompt on a resumed session reaches Claude on the next turn, and that request can't reuse the session's [prompt cache](/docs/en/prompt-caching#how-the-cache-is-organized). Where the API enforces [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), Claude also loses its thinking from earlier turns.
+Keep recording on in production. With recording off, a different `append` or custom prompt on a resumed session reaches Claude on the next turn, and that request can't reuse the session's [prompt cache](/docs/en/prompt-caching.md#how-the-cache-is-organized). Where the API enforces [preserved thinking](https://platform.claude.com/docs/en/build-with-claude/preserved-thinking), Claude also loses its thinking from earlier turns.
 
-Outside of [cloud sessions](/docs/en/cloud-environments), if you start Claude Code in [bare mode](/docs/en/headless#start-faster-with-bare-mode) by passing `--bare` through `extraArgs` or setting `CLAUDE_CODE_SIMPLE=1`, recording stays off unless you set `snapshot: true`.
+Outside of [cloud sessions](/docs/en/cloud-environments.md), if you start Claude Code in [bare mode](/docs/en/headless.md#start-faster-with-bare-mode) by passing `--bare` through `extraArgs` or setting `CLAUDE_CODE_SIMPLE=1`, recording stays off unless you set `snapshot: true`.
 
-Recording an `append` or custom prompt by default requires Claude Code v2.1.265 or later, which the TypeScript Agent SDK bundles from v0.3.265 and the Python Agent SDK from v0.2.153. Before Claude Code v2.1.268, sessions that don't [fetch feature flags](/docs/en/env-vars#features-that-need-feature-flag-fetching), including sessions on Amazon Bedrock, Google Cloud's Agent Platform, and Microsoft Foundry, rebuilt the prompt on every request and `snapshot` had no effect.
+Recording an `append` or custom prompt by default requires Claude Code v2.1.265 or later, which the TypeScript Agent SDK bundles from v0.3.265 and the Python Agent SDK from v0.2.153. Before Claude Code v2.1.268, sessions that don't [fetch feature flags](/docs/en/env-vars.md#features-that-need-feature-flag-fetching), including sessions on Amazon Bedrock, Google Cloud's Agent Platform, and Microsoft Foundry, rebuilt the prompt on every request and `snapshot` had no effect.
 
 ## Context Claude Code adds outside the system prompt
 
@@ -395,10 +395,10 @@ System reminders are text Claude Code adds to the conversation alongside the pro
 * **Project instructions**: the CLAUDE.md files that your [`settingSources`](#claude-md-files-for-project-level-instructions) option loads
 * **Output style instructions**: the instructions of the active [output style](#output-styles-for-persistent-configurations), in the main conversation
 * **Commit and pull request attribution**: the `Co-Authored-By` trailer and pull request footer from the [`attribution`](/docs/en/settings-reference#attribution) setting
-* **Hook output**: text your [hooks](/docs/en/agent-sdk/hooks#outputs) return as `additionalContext`
-* **Available skills**: the names and descriptions of the [skills](/docs/en/agent-sdk/skills) Claude can call
-* **Available subagents**: the names and descriptions of the [subagents](/docs/en/agent-sdk/subagents) Claude can start
-* **Task list nudges**: in a [session that has the task-tracking tools](/docs/en/agent-sdk/todo-tracking#model-availability), a prompt to update the task list when Claude hasn't touched it for several turns
+* **Hook output**: text your [hooks](/docs/en/agent-sdk/hooks.md#outputs) return as `additionalContext`
+* **Available skills**: the names and descriptions of the [skills](/docs/en/agent-sdk/skills.md) Claude can call
+* **Available subagents**: the names and descriptions of the [subagents](/docs/en/agent-sdk/subagents.md) Claude can start
+* **Task list nudges**: in a [session that has the task-tracking tools](/docs/en/agent-sdk/todo-tracking.md#model-availability), a prompt to update the task list when Claude hasn't touched it for several turns
 * **File-changed notes**: a note that a file Claude read earlier has changed on disk
 
 Claude Code introduces your CLAUDE.md files with a line telling Claude that the instructions override default behavior.
@@ -571,8 +571,8 @@ asyncio.run(main())
 
 ## See also
 
-* [Output styles](/docs/en/output-styles): create, manage, and share output styles for the CLI, including the file format and storage locations
-* [How Claude remembers your project](/docs/en/memory): what to put in CLAUDE.md, where to place it, and how to write effective project instructions
-* [TypeScript SDK reference](/docs/en/agent-sdk/typescript): the full `Options` type, including `systemPrompt`, `settingSources`, and `settings`
-* [Python SDK reference](/docs/en/agent-sdk/python): the full `ClaudeAgentOptions` type, including `system_prompt` and `setting_sources`
-* [Settings](/docs/en/settings): the `settings.json` reference, including where output styles and other configuration are stored
+* [Output styles](/docs/en/output-styles.md): create, manage, and share output styles for the CLI, including the file format and storage locations
+* [How Claude remembers your project](/docs/en/memory.md): what to put in CLAUDE.md, where to place it, and how to write effective project instructions
+* [TypeScript SDK reference](/docs/en/agent-sdk/typescript.md): the full `Options` type, including `systemPrompt`, `settingSources`, and `settings`
+* [Python SDK reference](/docs/en/agent-sdk/python.md): the full `ClaudeAgentOptions` type, including `system_prompt` and `setting_sources`
+* [Settings](/docs/en/settings.md): the `settings.json` reference, including where output styles and other configuration are stored

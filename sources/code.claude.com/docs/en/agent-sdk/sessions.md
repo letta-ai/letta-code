@@ -12,13 +12,13 @@ Returning to a session means the agent has full context from before: files it al
 
 > [!NOTE]
 >
-> Sessions persist the **conversation**, not the filesystem. To snapshot and revert file changes the agent made, use [file checkpointing](/docs/en/agent-sdk/file-checkpointing).
+> Sessions persist the **conversation**, not the filesystem. To snapshot and revert file changes the agent made, use [file checkpointing](/docs/en/agent-sdk/file-checkpointing.md).
 
 This guide covers how to pick the right approach for your app, the SDK interfaces that track sessions automatically, how to capture session IDs and use `resume` and `fork` manually, and what to know about resuming sessions across hosts.
 
 ## Choose an approach
 
-How much session handling you need depends on your application's shape. Session management comes into play when you send multiple prompts that should share context. Within a single `query()` call, the agent already takes as many turns as it needs, and permission prompts and `AskUserQuestion` are [handled in-loop](/docs/en/agent-sdk/user-input) (they don't end the call).
+How much session handling you need depends on your application's shape. Session management comes into play when you send multiple prompts that should share context. Within a single `query()` call, the agent already takes as many turns as it needs, and permission prompts and `AskUserQuestion` are [handled in-loop](/docs/en/agent-sdk/user-input.md) (they don't end the call).
 
 | What you're building | What to use |
 | :- | :- |
@@ -98,7 +98,7 @@ asyncio.run(main())
 
 Each query prints the agent's text response followed by a status line from the result message, such as `[done: success, cost: $0.0042]`.
 
-See the [Python SDK reference](/docs/en/agent-sdk/python#choosing-between-query-and-claudesdkclient) for details on when to use `ClaudeSDKClient` vs the standalone `query()` function.
+See the [Python SDK reference](/docs/en/agent-sdk/python.md#choosing-between-query-and-claudesdkclient) for details on when to use `ClaudeSDKClient` vs the standalone `query()` function.
 
 ### TypeScript: `continue: true`
 
@@ -141,7 +141,7 @@ for await (const message of query({
 
 > [!NOTE]
 >
-> The experimental [V2 session API](/docs/en/agent-sdk/typescript-v2-preview), which provided `createSession()` with a `send` / `stream` pattern, was removed in TypeScript Agent SDK 0.3.142. Use the `query()` function and the session options described on this page instead.
+> The experimental [V2 session API](/docs/en/agent-sdk/typescript-v2-preview.md), which provided `createSession()` with a `send` / `stream` pattern, was removed in TypeScript Agent SDK 0.3.142. Use the `query()` function and the session options described on this page instead.
 
 ## Use session options with `query()`
 
@@ -215,7 +215,7 @@ When the query completes, the script prints the agent's response followed by a l
 Pass a session ID to `resume` to return to that specific session. The agent picks up with full context from wherever the session left off. Common reasons to resume:
 
 * **Follow up on a completed task.** The agent already analyzed something; now you want it to act on that analysis without re-reading files.
-* **Recover from a limit.** The first run ended with `error_max_turns` or `error_max_budget_usd` (see [Handle the result](/docs/en/agent-sdk/agent-loop#handle-the-result)); resume with a higher limit. In a single-shot `query()` call the SDK raises after yielding that error result, so catch the error before resuming.
+* **Recover from a limit.** The first run ended with `error_max_turns` or `error_max_budget_usd` (see [Handle the result](/docs/en/agent-sdk/agent-loop.md#handle-the-result)); resume with a higher limit. In a single-shot `query()` call the SDK raises after yielding that error result, so catch the error before resuming.
 * **Restart your process.** You captured the ID before shutdown and want to restore the conversation.
 
 This example resumes the session from [Capture the session ID](#capture-the-session-id) with a follow-up prompt. Because you're resuming, the agent already has the prior analysis in context:
@@ -268,13 +268,13 @@ You should see a response that builds on the earlier analysis instead of startin
 >
 > Claude Code stores sessions under `~/.claude/projects/<encoded-cwd>/*.jsonl`. If you set the `CLAUDE_CONFIG_DIR` environment variable, look under `$CLAUDE_CONFIG_DIR/projects/` instead.
 >
-> To find your session's directory, replace every non-alphanumeric character in the absolute working directory with `-`: `/Users/me/proj` becomes `-Users-me-proj`. For a working directory whose converted name exceeds 200 characters, Claude Code [truncates the name and appends a hash](/docs/en/sessions#where-transcripts-are-stored), so match the first 200 characters of the converted name when you list `projects/`.
+> To find your session's directory, replace every non-alphanumeric character in the absolute working directory with `-`: `/Users/me/proj` becomes `-Users-me-proj`. For a working directory whose converted name exceeds 200 characters, Claude Code [truncates the name and appends a hash](/docs/en/sessions.md#where-transcripts-are-stored), so match the first 200 characters of the converted name when you list `projects/`.
 >
 > If you set [`CLAUDE_CODE_PROJECT_DIR_NAME`](/docs/en/sessions#name-the-project-directory-yourself) beside `CLAUDE_CONFIG_DIR`, look under that name in `projects/` instead. Requires TypeScript Agent SDK v0.3.234 or later, or Python Agent SDK v0.2.140 or later.
 >
 > You can resume from any working directory:
 >
-> * **Cross-directory lookup**: Claude Code searches beyond the current project directory to find the ID; see [Resume a session](/docs/en/sessions#where-the-session-picker-looks) for the exact lookup order and how duplicate copies are handled.
+> * **Cross-directory lookup**: Claude Code searches beyond the current project directory to find the ID; see [Resume a session](/docs/en/sessions.md#where-the-session-picker-looks) for the exact lookup order and how duplicate copies are handled.
 > * **Same machine only**: the session file still needs to exist on the current machine.
 >
 > Before v2.1.223, the lookup was scoped to the current project directory and its git worktrees; SDK versions that bundle an older CLI still behave this way.
@@ -287,7 +287,7 @@ Forking creates a new session that starts with a copy of the original's history 
 
 > [!NOTE]
 >
-> Forking branches the conversation history, not the filesystem. If a forked agent edits files, those changes are real and visible to any session working in the same directory. To branch and revert file changes, use [file checkpointing](/docs/en/agent-sdk/file-checkpointing).
+> Forking branches the conversation history, not the filesystem. If a forked agent edits files, those changes are real and visible to any session working in the same directory. To branch and revert file changes, use [file checkpointing](/docs/en/agent-sdk/file-checkpointing.md).
 
 This example builds on [Capture the session ID](#capture-the-session-id): you've already analyzed an auth module in `session_id` and want to explore OAuth2 without losing the JWT-focused thread. The first block forks the session and captures the fork's ID (`forked_id`); the second block resumes the original `session_id` to continue down the JWT path. You now have two session IDs pointing at two separate histories:
 
@@ -397,7 +397,7 @@ Session files are local to the machine that created them. To resume a session on
 
 * **Move the session file.** Persist `~/.claude/projects/<encoded-cwd>/<session-id>.jsonl` from the first run and restore it inside any directory under `~/.claude/projects/` on the new host before calling `resume`.
 
-  Claude Code searches beyond the current project directory to find the ID; see [Resume a session](/docs/en/sessions#where-the-session-picker-looks) for the exact lookup order and how duplicate copies are handled. Before v2.1.223, the lookup was scoped to the current project directory and its git worktrees; SDK versions that bundle an older CLI still behave this way.
+  Claude Code searches beyond the current project directory to find the ID; see [Resume a session](/docs/en/sessions.md#where-the-session-picker-looks) for the exact lookup order and how duplicate copies are handled. Before v2.1.223, the lookup was scoped to the current project directory and its git worktrees; SDK versions that bundle an older CLI still behave this way.
 
 * **Don't rely on session resume.** Capture the results you need (analysis output, decisions, file diffs) as application state and pass them into a fresh session's prompt. This is often more robust than shipping transcript files around.
 
@@ -407,7 +407,7 @@ Both SDKs also expose functions for looking up and mutating individual sessions:
 
 ## Related resources
 
-* [How the agent loop works](/docs/en/agent-sdk/agent-loop): Understand turns, messages, and context accumulation within a session
-* [File checkpointing](/docs/en/agent-sdk/file-checkpointing): Snapshot and revert file changes the agent made within a session
+* [How the agent loop works](/docs/en/agent-sdk/agent-loop.md): Understand turns, messages, and context accumulation within a session
+* [File checkpointing](/docs/en/agent-sdk/file-checkpointing.md): Snapshot and revert file changes the agent made within a session
 * [Python `ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions): Full session option reference for Python
 * [TypeScript `Options`](/docs/en/agent-sdk/typescript#options): Full session option reference for TypeScript

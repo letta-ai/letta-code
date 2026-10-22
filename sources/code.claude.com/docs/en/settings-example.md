@@ -12,7 +12,7 @@ This page holds three example `settings.json` files, one for each place you save
 * A team's `.claude/settings.json`, committed to the repository
 * An organization's `managed-settings.json`
 
-Each one is a plausible file for that reader, so you can see the shape and copy the parts you want. None of them is a recommended baseline. Every value comes from the key's entry on the [settings reference](/docs/en/settings-reference), which has its type, default, and where it can be set.
+Each one is a plausible file for that reader, so you can see the shape and copy the parts you want. None of them is a recommended baseline. Every value comes from the key's entry on the [settings reference](/docs/en/settings-reference.md), which has its type, default, and where it can be set.
 
 Each example has two tabs. **Copyable settings file** is the file as you'd save it. **What each key does** is the same file with a comment above each key; Claude Code doesn't accept comments in a settings file, so copy from the first tab.
 
@@ -94,10 +94,10 @@ The same file with a comment above each key. Read it here; copy from the other t
 
 One team's shared settings, committed to the repository so everyone who clones it gets the same permissions, hooks, and plugin marketplace. Save a file like this at `.claude/settings.json` at the top of the repository. What to know before you commit one:
 
-* **Cloud sessions outside a [project](/docs/en/claude-projects#what-threads-pick-up-from-your-repositories)'s threads read it too.** A [cloud session](/docs/en/settings#settings-in-cloud-sessions) with one repository starts inside the clone, so the committed file applies there as well.
-* **Telemetry goes in managed or personal settings.** Claude Code ignores the [OpenTelemetry exporter variables](/docs/en/settings-reference#variables-claude-code-ignores-in-env) in a repository's settings files, apart from some values that turn telemetry off. Set them in [managed settings](/docs/en/monitoring-usage#administrator-configuration) for your organization, or in each person's `~/.claude/settings.json`.
-* **Allow rules wait for trust.** Allow rules and `extraKnownMarketplaces` entries take effect after each person [trusts this folder itself](/docs/en/permissions#project-allow-rules-and-workspace-trust), not only a parent folder; deny and ask rules apply in every session, trusted or not.
-* **The hook is a script in the repo.** This file's hook runs `.claude/hooks/block-rm.sh`; [How a hook resolves](/docs/en/hooks#how-a-hook-resolves) walks through writing it.
+* **Cloud sessions outside a [project](/docs/en/claude-projects.md#what-threads-pick-up-from-your-repositories)'s threads read it too.** A [cloud session](/docs/en/settings.md#settings-in-cloud-sessions) with one repository starts inside the clone, so the committed file applies there as well.
+* **Telemetry goes in managed or personal settings.** Claude Code ignores the [OpenTelemetry exporter variables](/docs/en/settings-reference.md#variables-claude-code-ignores-in-env) in a repository's settings files, apart from some values that turn telemetry off. Set them in [managed settings](/docs/en/monitoring-usage.md#administrator-configuration) for your organization, or in each person's `~/.claude/settings.json`.
+* **Allow rules wait for trust.** Allow rules and `extraKnownMarketplaces` entries take effect after each person [trusts this folder itself](/docs/en/permissions.md#project-allow-rules-and-workspace-trust), not only a parent folder; deny and ask rules apply in every session, trusted or not.
+* **The hook is a script in the repo.** This file's hook runs `.claude/hooks/block-rm.sh`; [How a hook resolves](/docs/en/hooks.md#how-a-hook-resolves) walks through writing it.
 * **Rules match the command and path as written.** `Bash(git push *)` doesn't match [`git -C . push`](/docs/en/permissions#bash-rule-limits). `Read(./.env)` on its own stops the file tools and commands that name the file, such as `cat .env`, but not [`grep -r` run over the directory](/docs/en/permissions#read-and-edit); the `sandbox` block in this file closes that gap, because the sandbox [adds your `Read` deny paths](/docs/en/settings-reference#sandbox-filesystem-denyread) to what every sandboxed command can't read.
 
 **Copyable settings file**
@@ -236,16 +236,16 @@ A `managed-settings.json` file that shows the shape of the managed keys, with on
 
 * `forceLoginMethod` and `forceLoginOrgUUID` pin the login method and organization
 * `availableModels` and `enforceAvailableModels` restrict which models sessions can use
-* `permissions.deny` denies two file reads and `curl` commands [as Claude writes them](/docs/en/permissions#bash-rule-limits), and `disableBypassPermissionsMode` removes the bypass permission mode
+* `permissions.deny` denies two file reads and `curl` commands [as Claude writes them](/docs/en/permissions.md#bash-rule-limits), and `disableBypassPermissionsMode` removes the bypass permission mode
 * [`allowManagedPermissionRulesOnly`](/docs/en/settings-reference#allowmanagedpermissionrulesonly) and [`allowManagedMcpServersOnly`](/docs/en/settings-reference#allowmanagedmcpserversonly) make the managed permission and MCP allowlists the only ones that apply
 * `allowedMcpServers` pins the MCP server by URL
 * `strictKnownMarketplaces` allows one plugin marketplace
-* `sandbox` sandboxes commands with a fixed network allowlist and no unsandboxed retry. Its `failIfUnavailable` key [stops Claude Code from starting where the sandbox can't run](/docs/en/sandboxing#enforce-sandboxing-with-managed-settings)
+* `sandbox` sandboxes commands with a fixed network allowlist and no unsandboxed retry. Its `failIfUnavailable` key [stops Claude Code from starting where the sandbox can't run](/docs/en/sandboxing.md#enforce-sandboxing-with-managed-settings)
 * `requiredMinimumVersion` sets a minimum Claude Code version
 * `cleanupPeriodDays` shortens retention of session transcripts and other local data to seven days
 * `companyAnnouncements` shows a message at startup
 
-Administrators deploy a file like this as `managed-settings.json`, or the same JSON through MDM or [server-managed settings](/docs/en/server-managed-settings). One deployed file applies to every machine or account it reaches. To give a group different values, deploy a different file or profile to that group, since [server-managed settings don't support per-group policy yet](/docs/en/server-managed-settings#current-limitations).
+Administrators deploy a file like this as `managed-settings.json`, or the same JSON through MDM or [server-managed settings](/docs/en/server-managed-settings.md). One deployed file applies to every machine or account it reaches. To give a group different values, deploy a different file or profile to that group, since [server-managed settings don't support per-group policy yet](/docs/en/server-managed-settings.md#current-limitations).
 
 **Copyable settings file**
 

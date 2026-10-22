@@ -46,20 +46,20 @@ const options = { canUseTool: handleToolRequest };
 
 The callback fires in two cases:
 
-1. **Tool needs approval**: Claude wants to use a tool that isn't auto-approved by a [permission rule](/docs/en/agent-sdk/permissions) or permission mode. Check `tool_name` for the tool (e.g., `"Bash"`, `"Write"`).
+1. **Tool needs approval**: Claude wants to use a tool that isn't auto-approved by a [permission rule](/docs/en/agent-sdk/permissions.md) or permission mode. Check `tool_name` for the tool (e.g., `"Bash"`, `"Write"`).
 2. **Claude asks a question**: Claude calls the `AskUserQuestion` tool. Check if `tool_name == "AskUserQuestion"` to handle it differently. If you specify a `tools` array, include `AskUserQuestion` for this to work. See [Handle clarifying questions](#handle-clarifying-questions) for details.
 
 > [!WARNING]
 >
-> **The callback never fires for auto-approved tools.** Any approval earlier in the [permission evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated), an allow rule or a mode like `acceptEdits` or `bypassPermissions`, resolves the call before `canUseTool` is consulted. If you list a tool bare in `allowed_tools`, a `canUseTool` check for that tool runs only when the [evaluation flow](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) routes the call back to a prompt, such as an ask rule or `plan` mode. For logic that must apply to every tool call, use a [`PreToolUse` hook](/docs/en/agent-sdk/hooks), which executes before the rest of the flow and can allow, deny, or modify requests.
+> **The callback never fires for auto-approved tools.** Any approval earlier in the [permission evaluation flow](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated), an allow rule or a mode like `acceptEdits` or `bypassPermissions`, resolves the call before `canUseTool` is consulted. If you list a tool bare in `allowed_tools`, a `canUseTool` check for that tool runs only when the [evaluation flow](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) routes the call back to a prompt, such as an ask rule or `plan` mode. For logic that must apply to every tool call, use a [`PreToolUse` hook](/docs/en/agent-sdk/hooks), which executes before the rest of the flow and can allow, deny, or modify requests.
 >
-> An allow rule doesn't pre-approve the [actions no mode auto-approves](/docs/en/permission-modes#actions-no-mode-auto-approves); see [How permissions are evaluated](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) for which of them reach the callback and what happens in `dontAsk` and `auto` mode.
+> An allow rule doesn't pre-approve the [actions no mode auto-approves](/docs/en/permission-modes.md#actions-no-mode-auto-approves); see [How permissions are evaluated](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) for which of them reach the callback and what happens in `dontAsk` and `auto` mode.
 
 You can also use the [`PermissionRequest` hook](/docs/en/agent-sdk/hooks#available-hooks) to send external notifications (Slack, email, push) when Claude is waiting for approval.
 
 ## Handle tool approval requests
 
-Once you've passed a `canUseTool` callback in your query options, it fires when Claude wants to use a tool that nothing earlier in the permission flow has approved. In some configurations, such as `dontAsk` mode, Claude Code doesn't call it; the last step of [How permissions are evaluated](/docs/en/agent-sdk/permissions#how-permissions-are-evaluated) lists them and says what happens to the call instead.
+Once you've passed a `canUseTool` callback in your query options, it fires when Claude wants to use a tool that nothing earlier in the permission flow has approved. In some configurations, such as `dontAsk` mode, Claude Code doesn't call it; the last step of [How permissions are evaluated](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) lists them and says what happens to the call instead.
 
 Your callback receives three arguments:
 
@@ -78,7 +78,7 @@ The `input` object contains tool-specific parameters. Common examples:
 | `Edit` | `file_path`, `old_string`, `new_string` |
 | `Read` | `file_path`, `offset`, `limit` |
 
-See the SDK reference for complete input schemas: [Python](/docs/en/agent-sdk/python#tool-input%2Foutput-types) | [TypeScript](/docs/en/agent-sdk/typescript#tool-input-types).
+See the SDK reference for complete input schemas: [Python](/docs/en/agent-sdk/python.md#tool-input%2Foutput-types) | [TypeScript](/docs/en/agent-sdk/typescript.md#tool-input-types).
 
 You can display this information to the user so they can decide whether to allow or reject the action, then return the appropriate response.
 
@@ -221,7 +221,7 @@ Beyond allowing or denying, you can modify the tool's input or provide context t
 * **Approve and remember**: echo a suggested permission rule back so matching calls skip the prompt next time
 * **Reject**: block the tool and tell Claude why
 * **Suggest alternative**: block but guide Claude toward what the user wants instead
-* **Redirect entirely**: use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode) to send Claude a completely new instruction
+* **Redirect entirely**: use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode.md) to send Claude a completely new instruction
 
 The `ask_user` and `askUser` helpers in the following snippets stand in for your application's own prompt UI.
 
@@ -383,7 +383,7 @@ canUseTool: async (toolName, input) => {
 
 **Redirect entirely**
 
-For a complete change of direction (not just a nudge), use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
+For a complete change of direction (not just a nudge), use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode.md) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
 
 ## Handle clarifying questions
 
@@ -804,7 +804,7 @@ The `canUseTool` callback and `AskUserQuestion` tool cover most approval and cla
 
 ### Streaming input
 
-Use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode) when you need to:
+Use [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode.md) when you need to:
 
 * **Interrupt the agent mid-task**: send a cancel signal or change direction while Claude is working
 * **Provide additional context**: add information Claude needs without waiting for it to ask
@@ -814,7 +814,7 @@ Streaming input is ideal for conversational UIs where users interact with the ag
 
 ### Custom tools
 
-Use [custom tools](/docs/en/agent-sdk/custom-tools) when you need to:
+Use [custom tools](/docs/en/agent-sdk/custom-tools.md) when you need to:
 
 * **Collect structured input**: build forms, wizards, or multi-step workflows that go beyond `AskUserQuestion`'s multiple-choice format
 * **Integrate external approval systems**: connect to existing ticketing, workflow, or approval platforms
@@ -824,6 +824,6 @@ Custom tools give you full control over the interaction, but require more implem
 
 ## Related resources
 
-* [Configure permissions](/docs/en/agent-sdk/permissions): set up permission modes and rules
-* [Control execution with hooks](/docs/en/agent-sdk/hooks): run custom code at key points in the agent lifecycle
-* [TypeScript SDK reference](/docs/en/agent-sdk/typescript#canusetool): full canUseTool API documentation
+* [Configure permissions](/docs/en/agent-sdk/permissions.md): set up permission modes and rules
+* [Control execution with hooks](/docs/en/agent-sdk/hooks.md): run custom code at key points in the agent lifecycle
+* [TypeScript SDK reference](/docs/en/agent-sdk/typescript.md#canusetool): full canUseTool API documentation
