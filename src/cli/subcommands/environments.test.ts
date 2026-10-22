@@ -3,6 +3,7 @@ import type {
   EnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
+import { settingsManager } from "@/settings-manager";
 import { runEnvironmentsSubcommand } from "./environments";
 
 function environment(id: string, online = true): EnvironmentConnection {
@@ -22,6 +23,10 @@ function environment(id: string, online = true): EnvironmentConnection {
 
 async function runList(args: string[], list: typeof listEnvironments) {
   const log = spyOn(console, "log").mockImplementation(() => {});
+  const deviceId = spyOn(
+    settingsManager,
+    "getOrCreateDeviceId",
+  ).mockReturnValue("test-current-device");
   try {
     expect(
       await runEnvironmentsSubcommand(["list", ...args], {
@@ -31,6 +36,7 @@ async function runList(args: string[], list: typeof listEnvironments) {
     ).toBe(0);
     return JSON.parse(String(log.mock.calls[0]?.[0]));
   } finally {
+    deviceId.mockRestore();
     log.mockRestore();
   }
 }
