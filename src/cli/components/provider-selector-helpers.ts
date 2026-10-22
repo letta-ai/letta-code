@@ -188,6 +188,20 @@ export function providerManageActions(
   return actions;
 }
 
+/**
+ * Cursor position after a reset returns to the manage menu. Row 0 is
+ * Disconnect, which runs immediately; a repeated Enter from the confirm
+ * screen must land on a harmless row ("Refresh usage") instead.
+ */
+export function postResetOptionIndex(
+  actions: readonly ProviderManageAction[],
+): number {
+  const refresh = actions.findIndex(
+    (action) => action.type === "refresh-usage",
+  );
+  return refresh >= 0 ? refresh : Math.max(0, actions.length - 1);
+}
+
 export function providerManageActionLabel(
   action: ProviderManageAction,
   provider: ByokProvider,

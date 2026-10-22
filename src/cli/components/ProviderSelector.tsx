@@ -12,7 +12,10 @@ import {
   getPiProviderRegistryRevision,
   subscribePiProviderRegistry,
 } from "@/backend/dev/pi-provider-mod-registry";
-import { useChatGPTRateLimitState } from "@/cli/hooks/use-chatgpt-rate-limit-state";
+import {
+  useChatGPTRateLimitState,
+  usePostResetCursor,
+} from "@/cli/hooks/use-chatgpt-rate-limit-state";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -38,10 +41,7 @@ import {
   ChatGPTResetCreditPicker,
   type ResetPickerPhase,
 } from "./ChatGPTResetCreditPicker";
-import {
-  type ResetNotice,
-  spendableResetCredits,
-} from "./chatgpt-reset-credit-helpers";
+import type { ResetNotice } from "./chatgpt-reset-credit-helpers";
 import { colors } from "./colors";
 import { ProviderManageView } from "./ProviderManageView";
 import {
@@ -346,24 +346,23 @@ export function ProviderSelector({
     [getConnectedProviderRecords, loadChatGPTRateLimits],
   );
 
-  const spendableCreditsFor = useCallback(
-    (providerName: string): ChatGPTRateLimitResetCredit[] => {
-      const status = chatGPTRateLimits.creditsByProvider[providerName];
-      return status?.status === "ready"
-        ? spendableResetCredits(status.credits)
-        : [];
-    },
-    [chatGPTRateLimits.creditsByProvider],
-  );
+  const { spendableCreditsFor } = chatGPTRateLimits;
 
-  const resettableProviderNames = useCallback(
-    (provider: ByokProvider): string[] =>
-      getConnectedProviderRecords(provider)
-        .map((record) => record.name)
-        .filter((name) => spendableCreditsFor(name).length > 0),
-    [getConnectedProviderRecords, spendableCreditsFor],
-  );
+  const resettableProviderNames = (provider: ByokProvider): string[] =>
+    chatGPTRateLimits.resettable(getConnectedProviderRecords(provider));
 
+  // Keeps a repeated confirm Enter off Disconnect (see usePostResetCursor).
+  const markResetApplied = usePostResetCursor(
+    viewState.type === "options"
+      ? providerManageActions(
+          viewState.provider,
+          selectedTarget,
+          getConnectedProviderRecords(viewState.provider),
+          resettableProviderNames(viewState.provider),
+        )
+      : null,
+    setOptionIndex,
+  );
   const { consume: consumeChatGPTReset } = chatGPTRateLimits;
   const consumeResetCredit = useCallback(
     async (
@@ -378,13 +377,14 @@ export function ProviderSelector({
         phase: "consuming",
         chosen: credit,
       });
-      const notice = await consumeChatGPTReset(providerName, credit.id);
-      if (!mountedRef.current) return;
-      setResetNotice(notice);
-      setOptionIndex(0);
+      const result = await consumeChatGPTReset(providerName, credit.id);
+      // null: a duplicate confirmation while the first spend is in flight.
+      if (!result || !mountedRef.current) return;
+      setResetNotice(result.notice);
+      markResetApplied();
       setViewState({ type: "options", provider });
     },
-    [consumeChatGPTReset],
+    [consumeChatGPTReset, markResetApplied],
   );
 
   useEffect(() => {

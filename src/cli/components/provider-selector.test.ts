@@ -12,6 +12,7 @@ import {
   isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
+  postResetOptionIndex,
   providerApiKeyFromInput,
   providerManageActionLabel,
   providerManageActions,
@@ -352,6 +353,22 @@ describe("ProviderSelector connected provider actions", () => {
       "Refresh usage",
       "Back",
     ]);
+  });
+
+  test("returns to Refresh usage after a reset, never Disconnect", () => {
+    const actions = providerManageActions(
+      codexProvider,
+      "local",
+      [chatgptDefaultProvider],
+      ["chatgpt-plus-pro"],
+    );
+    expect(actions[0]).toEqual({
+      type: "disconnect",
+      name: "chatgpt-plus-pro",
+    });
+    expect(actions[postResetOptionIndex(actions)]).toEqual({
+      type: "refresh-usage",
+    });
   });
 
   test("surfaces connect-another only for API ChatGPT OAuth providers", () => {
