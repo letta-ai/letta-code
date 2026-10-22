@@ -81,8 +81,9 @@ test("same-agent sends ask for a reply only when one is needed", () => {
   const sender = { agentId: "agent-a", conversationId: "conv-1" };
   const sameAgent = buildAgentSendReminder(sender, true, "agent-a");
   expect(sameAgent).toContain("another of your own conversations");
-  expect(sameAgent).toContain("Reply only if it asks you for something");
-  expect(sameAgent).toContain("To reply, call SendAgentMessage");
+  expect(sameAgent).toContain("Do not send acknowledgments");
+  expect(sameAgent).toContain("you can reply with SendAgentMessage");
+  expect(sameAgent).not.toContain("To reply, call SendAgentMessage");
   const otherAgent = buildAgentSendReminder(sender, true, "agent-b");
   expect(otherAgent).not.toContain("another of your own conversations");
   expect(buildAgentSendReminder(sender, true)).toBe(otherAgent);

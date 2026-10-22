@@ -59,7 +59,12 @@ export function buildAgentSendReminder(
       ? `To reply, call SendAgentMessage with ${toolTarget}. Only if that tool is unavailable, run letta -p ${cliTarget} --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.`
       : "Ordinary assistant output is not forwarded to the sender. No return conversation was supplied.";
   if (sameAgent) {
-    return `<system-reminder>\nThis message is from another of your own conversations (agent ${sender.agentId}${address}).\nReply only if it asks you for something. Do not send acknowledgments or status updates back. ${instruction}\n</system-reminder>\n\n`;
+    // State the return address as a fact, not an imperative: the unconditional
+    // "To reply, call SendAgentMessage" is what produced the ping-pong.
+    const replyHint = sender.conversationId
+      ? ` If it asks you something only this conversation can answer, you can reply with SendAgentMessage to ${toolTarget}.`
+      : "";
+    return `<system-reminder>\nThis message is from another of your own conversations (agent ${sender.agentId}${address}).\nTreat it as context. Do not send acknowledgments or status updates back.${replyHint}\n</system-reminder>\n\n`;
   }
   return `<system-reminder>\nThis message is from agent ${sender.agentId}${address}.\n${instruction}\n</system-reminder>\n\n`;
 }

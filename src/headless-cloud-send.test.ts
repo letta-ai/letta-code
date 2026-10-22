@@ -361,7 +361,8 @@ test("a no-wait send to another of the sender's own conversations asks for repli
   );
   const content = JSON.stringify(f.submissions[0]?.content);
   expect(content).toContain("another of your own conversations");
-  expect(content).toContain("Reply only if it asks you for something");
+  expect(content).toContain("Do not send acknowledgments");
+  expect(content).not.toContain("To reply, call SendAgentMessage");
 });
 
 test("missing sender context adds no fabricated return address", () => {
