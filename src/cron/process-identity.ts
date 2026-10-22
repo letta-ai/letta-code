@@ -22,7 +22,7 @@ const BOOT_TIME_SLACK_MS = 60_000;
 const defaultPidReuseProbe: PidReuseProbe = {
   platform: process.platform,
   bootTimeMs: () => Date.now() - uptime() * 1000,
-  // Mirrors defaultGetProcessCommand in websocket/listener/manual-instance-lock.ts.
+  // Reads the command line via `ps`; same approach as letta-code#5205 (unmerged).
   getProcessCommand: (pid) => {
     if (process.platform === "win32") return null;
     try {
@@ -160,8 +160,9 @@ function isPidReusedSinceBoot(pid: number, startedAt?: string): boolean {
 }
 
 /**
- * Matches letta like manual-instance-lock.ts (/letta/i), plus this process's
- * own runtime or entry script, so dev/bun-run listeners are not reclaimed.
+ * Treats a command as letta if it mentions "letta" (case-insensitive), runs
+ * this process's entry script, or uses this process's runtime, so dev/bun-run
+ * listeners are not reclaimed.
  */
 function isLettaCommand(command: string): boolean {
   if (/letta/i.test(command)) return true;
