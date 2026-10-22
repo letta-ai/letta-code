@@ -335,6 +335,25 @@ describe("ProviderSelector connected provider actions", () => {
     ).toBe("2 connected");
   });
 
+  test("offers a reset only for ChatGPT accounts with a spendable credit", () => {
+    const labels = (resettable: string[]) =>
+      providerManageActions(
+        codexProvider,
+        "local",
+        [chatgptDefaultProvider, chatgptWorkProvider],
+        resettable,
+      ).map((action) => providerManageActionLabel(action, codexProvider));
+
+    expect(labels([])).not.toContain("Use a reset on chatgpt-work");
+    expect(labels(["chatgpt-work"])).toEqual([
+      "Disconnect chatgpt-plus-pro",
+      "Disconnect chatgpt-work",
+      "Use a reset on chatgpt-work",
+      "Refresh usage",
+      "Back",
+    ]);
+  });
+
   test("surfaces connect-another only for API ChatGPT OAuth providers", () => {
     const openai = getProviderConfigs("api").find(
       (provider) => provider.id === "openai",
