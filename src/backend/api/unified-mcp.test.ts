@@ -237,7 +237,7 @@ describe("unified MCP API adapter", () => {
     ]);
   });
 
-  test("sends the originator token header only when a token is provided", async () => {
+  test("sends isolation compatibility only alongside the current originator token", async () => {
     const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
     const requests: Array<{
       path: string;
@@ -276,7 +276,31 @@ describe("unified MCP API adapter", () => {
     expect(requests[1]).toEqual({
       path: runPath,
       body: { args: { title: "Bug" } },
-      headers: { "x-letta-mcp-originator-token": "mst_one.secret-a" },
+      headers: {
+        "x-letta-mcp-originator-token": "mst_one.secret-a",
+        "x-letta-mcp-originator-isolation": "1",
+      },
     });
+
+    // Tool arguments cannot advertise compatibility, borrow the preceding
+    // call's bearer, or turn an empty token into an attributed request.
+    const args = {
+      "x-letta-mcp-originator-token": "untrusted-argument",
+      "x-letta-mcp-originator-isolation": "1",
+    };
+    for (const originatorToken of [undefined, ""]) {
+      await runUnifiedMcpTool({
+        client,
+        agentId: "agent-1",
+        mcpServerId: "mcp-1",
+        toolId: "tool-1",
+        args,
+        originatorToken,
+      });
+    }
+    expect(requests.slice(2)).toEqual([
+      { path: runPath, body: { args }, headers: undefined },
+      { path: runPath, body: { args }, headers: undefined },
+    ]);
   });
 });

@@ -11,7 +11,8 @@ import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
 /**
  * USER_SCOPED_MCP_CONNECTIONS: an MCP tool-run made inside a listener turn
  * attributed to a cloud super run forwards that run's originator token as the
- * `x-letta-mcp-originator-token` header. Unattributed calls omit the header.
+ * `x-letta-mcp-originator-token` header with the isolation compatibility marker.
+ * Unattributed calls omit both headers.
  */
 describe("MCP originator token forwarding", () => {
   afterEach(() => {
@@ -87,7 +88,10 @@ describe("MCP originator token forwarding", () => {
       {
         path: runPath,
         body: { args: { title: "Bug" } },
-        headers: { "x-letta-mcp-originator-token": "mst_one.secret-a" },
+        headers: {
+          "x-letta-mcp-originator-token": "mst_one.secret-a",
+          "x-letta-mcp-originator-isolation": "1",
+        },
       },
     ]);
   });
