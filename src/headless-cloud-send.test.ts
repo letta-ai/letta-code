@@ -349,6 +349,21 @@ test("explicit sender keeps its identity but cannot borrow another sender's retu
   );
 });
 
+test("a no-wait send to another of the sender's own conversations asks for replies only when needed", async () => {
+  const f = fixture();
+  f.deps.env = { AGENT_ID: "agent-target", CONVERSATION_ID: "conv-parent" };
+  await tryCloudHeadlessSend(
+    flags("--conversation", "conv-target", "--no-wait"),
+    "hello",
+    f.backend,
+    false,
+    f.deps,
+  );
+  const content = JSON.stringify(f.submissions[0]?.content);
+  expect(content).toContain("another of your own conversations");
+  expect(content).toContain("Reply only if it asks you for something");
+});
+
 test("missing sender context adds no fabricated return address", () => {
   expect(buildAgentSendReminder({}, true)).toBe("");
   expect(buildAgentSendReminder({ agentId: "agent-a" }, true)).toContain(

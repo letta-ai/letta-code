@@ -250,7 +250,7 @@ export async function tryCloudHeadlessSend(
         agentId,
         conversationId,
         clientMessageId,
-        content: buildAgentSendContent(sender, noWait, prompt),
+        content: buildAgentSendContent(sender, noWait, prompt, agentId),
         computer,
       },
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
