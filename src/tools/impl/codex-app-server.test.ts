@@ -585,3 +585,81 @@ describe("Codex app-server lifecycle", () => {
     );
   });
 });
+
+test.each([undefined, "high"])(
+  "turn effort %s is only sent on turn/start",
+  async (reasoning_effort) => {
+    const fake = new FakeCodexTransport();
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        reasoning_effort,
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const turn = fake.requests.find(
+      (request) => request.method === "turn/start",
+    )?.params as Record<string, unknown>;
+    if (reasoning_effort === undefined)
+      expect(turn).not.toHaveProperty("effort");
+    else expect(turn.effort).toBe("high");
+    const thread = fake.requests.find(
+      (request) => request.method === "thread/start",
+    )?.params;
+    expect(thread).not.toHaveProperty("effort");
+    fake.complete();
+    expect((await handle.completion).success).toBe(true);
+  },
+);
+
+test("invalid Codex effort fails before launching", async () => {
+  let launched = false;
+  await expect(
+    startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        reasoning_effort: "ultracode",
+      },
+      {
+        createTransport: () => {
+          launched = true;
+          return new FakeCodexTransport().transport();
+        },
+      },
+    ),
+  ).rejects.toThrow("Invalid reasoning_effort for codex");
+  expect(launched).toBe(false);
+});
+
+test("retains launch effort for subsequent Codex turns", async () => {
+  const fake = new FakeCodexTransport();
+  const handle = await startCodexTurn(
+    {
+      prompt: "Work",
+      parentAgentId: "parent",
+      cwd: "/repo",
+      reasoning_effort: "high",
+    },
+    { createTransport: () => fake.transport() },
+  );
+  fake.complete();
+  await handle.completion;
+  const next = await sendCodexMessage({
+    threadId: handle.threadId,
+    prompt: "Continue",
+    parentAgentId: "parent",
+    cwd: "/repo",
+  });
+  const turns = fake.requests.filter(
+    (request) => request.method === "turn/start",
+  );
+  expect(turns).toHaveLength(2);
+  for (const turn of turns)
+    expect(turn.params).toMatchObject({ effort: "high" });
+  fake.complete();
+  await next.completion;
+});

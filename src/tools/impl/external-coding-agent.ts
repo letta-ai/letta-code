@@ -26,6 +26,7 @@ import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import { assertExternalReasoningEffort } from "./external-reasoning-effort";
 import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
@@ -58,6 +59,7 @@ export interface ExternalCodingAgentRunOptions {
   type: ExternalCodingAgentType;
   prompt: string;
   model?: string;
+  reasoning_effort?: string;
   parentAgentId: string;
   parentConversationId?: string;
   actingUserId?: string | null;
@@ -236,9 +238,16 @@ export async function resolveExternalCodingAgentMcpReminder(
 export function buildExternalCodingAgentCommand(
   options: Pick<
     ExternalCodingAgentRunOptions,
-    "type" | "prompt" | "model" | "resumeSessionId" | "cwd" | "mcpReminder"
+    | "type"
+    | "prompt"
+    | "model"
+    | "reasoning_effort"
+    | "resumeSessionId"
+    | "cwd"
+    | "mcpReminder"
   >,
 ): ExternalCodingAgentCommand {
+  assertExternalReasoningEffort(options.type, options.reasoning_effort);
   if (options.type === "opencode") {
     return {
       executable: "opencode",
@@ -259,6 +268,8 @@ export function buildExternalCodingAgentCommand(
       "Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch",
     ];
     if (options.model) args.push("--model", options.model);
+    if (options.reasoning_effort)
+      args.push("--effort", options.reasoning_effort);
     if (options.resumeSessionId) {
       args.push("--resume", options.resumeSessionId);
     }
@@ -477,6 +488,7 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
+  assertExternalReasoningEffort(options.type, options.reasoning_effort);
   const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
   // Compose once for both providers, independently of MCP inheritance.
   options = {
@@ -616,6 +628,7 @@ export async function runExternalCodingAgent(
             parentAgentId: options.parentAgentId,
             cwd,
             model: options.model,
+            reasoning_effort: options.reasoning_effort,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
@@ -671,6 +684,7 @@ export async function runExternalCodingAgent(
             parentAgentId: options.parentAgentId,
             cwd,
             model: options.model,
+            reasoning_effort: options.reasoning_effort,
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,

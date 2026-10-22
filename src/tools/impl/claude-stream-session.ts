@@ -7,6 +7,7 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { assertExternalReasoningEffort } from "./external-reasoning-effort";
 import {
   type ExternalToolCallListener,
   formatExternalToolCallArgs,
@@ -61,6 +62,7 @@ export interface ClaudeTurnOptions {
   parentAgentId: string;
   cwd: string;
   model?: string;
+  reasoning_effort?: string;
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeSessionId?: string;
@@ -117,6 +119,7 @@ function interruptInput(requestId: string): string {
 
 export function buildClaudeStreamArgs(options: {
   model?: string;
+  reasoning_effort?: string;
   mcpReminder?: string;
   resumeSessionId?: string;
   sessionId?: string;
@@ -134,7 +137,9 @@ export function buildClaudeStreamArgs(options: {
     "--permission-mode",
     "bypassPermissions",
   ];
+  assertExternalReasoningEffort("claude-code", options.reasoning_effort);
   if (options.model) args.push("--model", options.model);
+  if (options.reasoning_effort) args.push("--effort", options.reasoning_effort);
   if (options.resumeSessionId) args.push("--resume", options.resumeSessionId);
   else if (options.sessionId) args.push("--session-id", options.sessionId);
   if (options.mcpReminder)
@@ -402,6 +407,7 @@ async function launchSession(
     transport = (deps.createTransport ?? createTransport)({
       args: buildClaudeStreamArgs({
         model: options.model,
+        reasoning_effort: options.reasoning_effort,
         mcpReminder: options.mcpReminder,
         resumeSessionId: options.resumeSessionId,
         sessionId,
