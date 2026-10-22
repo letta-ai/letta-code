@@ -573,6 +573,9 @@ export async function startListenerClient(
   setExplicitOrganizationId(opts.organizationId);
 
   await reloadListenerModAdapter(runtime);
+  // Tool discovery belongs to client startup, not a transport retry. Repeating
+  // it after a drop can block reconnect before a new socket is even created.
+  await loadTools();
   await connectWithRetry(runtime, opts);
 }
 
@@ -682,10 +685,6 @@ async function connectWithRetry(
   }
 
   clearRuntimeTimers(runtime);
-
-  if (attempt === 0) {
-    await loadTools();
-  }
 
   const auth = await resolveListenerReconnectAuth(opts);
   if (auth.kind === "retry")
