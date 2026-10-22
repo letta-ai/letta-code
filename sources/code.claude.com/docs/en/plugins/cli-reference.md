@@ -32,7 +32,7 @@ Every subcommand shares these exit codes, plugin arguments, and scope values:
 
 ### plugin init
 
-Scaffold a new plugin at `~/.claude/skills/<name>/`. It loads in your next session as `<name>@skills-dir` with no install step.
+Scaffold a new plugin at `~/.claude/skills/<name>/`. Unless your administrator has [blocked skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings), it loads in your next session as `<name>@skills-dir` with no install step.
 
 `new` is an alias for `init`.
 
@@ -66,7 +66,7 @@ Claude Code exits `1` without writing when it can't scaffold safely, and the mes
 
 * An unknown `--with` value
 * An existing scaffold at the target without `--force`
-* A managed setting that blocks skills-directory plugins
+* A managed marketplace allowlist without the `skills-dir` source, or a blocklist that names it. The message is [`Plugins from ~/.claude/skills/ are blocked by your organization's managed settings`](/docs/en/plugins/troubleshooting#plugins-from-claude-skills-are-blocked-by-your-organizations-managed-s).
 
 ### plugin install
 

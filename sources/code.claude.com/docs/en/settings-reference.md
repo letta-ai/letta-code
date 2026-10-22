@@ -171,6 +171,7 @@ Every key below links to its entry. Scope lists the [files](/docs/en/settings#se
 | [`respondToBashCommands`](#respondtobashcommands) | Stop Claude from responding after a [`!` shell command](/docs/en/interactive-mode#shell-mode-with-prefix) runs | Interface and terminal | Any file |
 | [`sandbox`](#sandbox) | [Isolate Bash commands](/docs/en/sandboxing) from your filesystem and network on macOS, Linux, and WSL2 | Sandbox settings | Any file |
 | [`sandbox.allowAppleEvents`](#sandbox-allowappleevents) | Let [sandboxed](/docs/en/sandboxing) commands send Apple Events on macOS | Sandbox settings | User or managed |
+| [`sandbox.allowNestedUserNamespaces`](#sandbox-allownestedusernamespaces) | Let [sandboxed](/docs/en/sandboxing#chromium-or-rootless-podman-fails-inside-the-sandbox-on-linux) commands create user namespaces on Linux and WSL2 | Sandbox settings | User or managed |
 | [`sandbox.allowUnsandboxedCommands`](#sandbox-allowunsandboxedcommands) | Let Claude retry a blocked command outside the [sandbox](/docs/en/sandboxing#the-unsandboxed-retry-escape-hatch), or forbid it | Sandbox settings | Any file |
 | [`sandbox.autoAllowBashIfSandboxed`](#sandbox-autoallowbashifsandboxed) | Run [sandboxed](/docs/en/sandboxing#auto-allow-mode) commands without a permission prompt | Sandbox settings | Any file |
 | [`sandbox.bwrapPath`](#sandbox-bwrappath) | Point the [sandbox](/docs/en/sandboxing) at a bubblewrap binary outside `PATH` | Sandbox settings | Managed |
@@ -1172,7 +1173,7 @@ Isolate the commands Claude runs from your filesystem, your network, and your cr
 Isolate the Bash commands Claude runs from your filesystem and network with [sandboxing](/docs/en/sandboxing). Turn the sandbox on with `enabled`, then narrow or widen what sandboxed commands can touch with the `filesystem`, `network`, and `credentials` sub-objects. The sandbox runs on macOS, Linux, and WSL2.
 
 * **Scope**: [`Any file`](#scopes)
-* **Type**: object with `enabled`, `failIfUnavailable`, `autoAllowBashIfSandboxed`, `excludedCommands`, `allowUnsandboxedCommands`, `enableWeakerNestedSandbox`, `enableWeakerNetworkIsolation`, `allowAppleEvents`, `bwrapPath`, `socatPath`, `ignoreViolations`, and `ripgrep`, plus the `filesystem`, `network`, and `credentials` objects
+* **Type**: object with `enabled`, `failIfUnavailable`, `autoAllowBashIfSandboxed`, `excludedCommands`, `allowUnsandboxedCommands`, `enableWeakerNestedSandbox`, `enableWeakerNetworkIsolation`, `allowAppleEvents`, `allowNestedUserNamespaces`, `bwrapPath`, `socatPath`, `ignoreViolations`, and `ripgrep`, plus the `filesystem`, `network`, and `credentials` objects
 * **Default**: unset, so Claude Code runs commands without a sandbox
 
 This turns the sandbox on, skips permission prompts for sandboxed commands, runs `docker` outside the sandbox, opens two extra write paths, hides your AWS credentials file, and pre-allows GitHub and npm:
@@ -1593,6 +1594,29 @@ Let sandboxed commands on macOS send Apple Events, which `open`, `osascript`, an
 ```
 
 To keep isolation and still run one such tool, add it to [`excludedCommands`](#sandbox-excludedcommands) instead. See [Apple Events on macOS](/docs/en/sandboxing#security-limitations).
+
+### `sandbox.allowNestedUserNamespaces`
+
+Let sandboxed commands on Linux and WSL2 create user namespaces, which Chromium's and Electron's own sandbox, a nested bubblewrap, and `unshare` need. If you set this key to `true`, you turn off a security boundary: code from a sandboxed command can end up running outside the sandbox. For rootless Podman or Buildah, use [`excludedCommands`](#sandbox-excludedcommands) instead, because the sandbox stops them in other ways too. Requires Claude Code v2.1.305 or later.
+
+* **Scope**: [`User or managed`](#scopes). A `true` counts from `~/.claude/settings.json`, JSON passed with `--settings`, or [managed settings](/docs/en/managed-settings). Claude Code ignores a `true` in a project's `.claude/settings.json` or `.claude/settings.local.json`. In a session with [`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`](/docs/en/env-vars#variables) set to `1`, Claude Code ignores a `true` from every source. A `false` counts from any file, by [settings precedence](/docs/en/settings#settings-precedence).
+* **Type**: Boolean
+  * `true`: sandboxed commands can create user namespaces
+  * `false`: this key allows nothing extra, and the sandbox's default applies
+* **Default**: `false`
+
+```json settings.json theme={null}
+{
+  "sandbox": {
+    "enabled": true,
+    "allowNestedUserNamespaces": true
+  }
+}
+```
+
+With this key on, don't rely on any of the sandbox's restrictions, including [protected paths](/docs/en/sandboxing#protected-paths) and [`credentials.files`](#sandbox-credentials-files) entries, to stop a malicious command. In [auto-allow mode](/docs/en/sandboxing#auto-allow-mode), that command can run without a permission prompt. If your organization has a security team, check with them before you turn the key on.
+
+To find the fix for your tool, see [Chromium or rootless Podman fails inside the sandbox on Linux](/docs/en/sandboxing#chromium-or-rootless-podman-fails-inside-the-sandbox-on-linux).
 
 ### `sandbox.ripgrep`
 
@@ -3881,7 +3905,7 @@ Each entry below shows one allowlist entry per source type and the fields it acc
 | `directory` | `{ "source": "directory", "path": "/opt/acme-corp/approved-marketplaces" }` | `path` required, the absolute path to a directory containing `.claude-plugin/marketplace.json` |
 | `hostPattern` | `{ "source": "hostPattern", "hostPattern": "^github\\.example\\.com$" }` | `hostPattern` required, a regex matched anywhere in the marketplace host; anchor it with `^` and `$` to match the whole host |
 | `pathPattern` | `{ "source": "pathPattern", "pathPattern": "^/opt/approved/" }` | `pathPattern` required, a regex matched anywhere in the `path` of `file` and `directory` sources; start it with `^` to pin a prefix |
-| `skills-dir` | `{ "source": "skills-dir" }` | No fields. Opts the `~/.claude/skills/` plugin scan back in |
+| `skills-dir` | `{ "source": "skills-dir" }` | No fields |
 
 Three source types carry rules beyond the table:
 
@@ -3895,7 +3919,7 @@ Three source types carry rules beyond the table:
   `file` and `directory` sources have no host and never match a `hostPattern` entry.
 * **`pathPattern`**: use it to allow filesystem marketplaces alongside `hostPattern` entries for network sources. `".*"` allows every local path; a narrower pattern such as `"^/opt/approved/"` restricts to a directory.
 
-Any allowlist, even an empty one, also stops Claude Code loading [`@skills-dir` plugins](/docs/en/plugins/loading#plugins-shared-through-a-repository) from `~/.claude/skills/`. Add the `{ "source": "skills-dir" }` entry to keep loading them; the entry has no meaning outside this key and `blockedMarketplaces`.
+Any allowlist, even an empty one, also stops Claude Code loading [`@skills-dir` plugins](/docs/en/plugins/loading#plugins-shared-through-a-repository) from `~/.claude/skills/`. To keep loading them, add the `{ "source": "skills-dir" }` entry and leave [`strictPluginOnlyCustomization`](#strictpluginonlycustomization) unset. The entry has no meaning outside this key and `blockedMarketplaces`.
 
 #### Owner wildcards
 
@@ -4001,11 +4025,13 @@ This example locks skills and hooks and leaves agents and MCP servers unlocked:
 }
 ```
 
-The four sub-key entries below list what each surface blocks and what still loads. Claude Code ignores surface names it doesn't recognize rather than failing the settings file, so you can add new surface names before every client has updated.
+If you lock any surface, Claude Code also stops loading [skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings), the plugin folders that users keep under `~/.claude/skills/` or `.claude/skills/`. Users place those folders themselves rather than installing them from a marketplace, so Claude Code treats them as user customization under this setting.
+
+The four sub-key entries below list what else each surface blocks and what still loads. Claude Code ignores surface names it doesn't recognize rather than failing the settings file, so you can add new surface names before every client has updated.
 
 ### `strictPluginOnlyCustomization.skills`
 
-Lock the `skills` surface. Claude Code stops loading skills from `~/.claude/skills/` and `.claude/skills/`, custom commands from `~/.claude/commands/` and `.claude/commands/`, skills and commands under `--add-dir` directories, and skills synced from your claude.ai account. It keeps loading plugin skills, bundled skills, and skills in the managed policy directory.
+Lock the `skills` surface. Claude Code stops loading skills from `~/.claude/skills/` and `.claude/skills/`, custom commands from `~/.claude/commands/` and `.claude/commands/`, skills and commands under `--add-dir` directories, and skills synced from your claude.ai account. It keeps loading bundled skills, skills in the managed policy directory, and skills from plugins other than [skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings).
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: the string `"skills"` in the [`strictPluginOnlyCustomization`](#strictpluginonlycustomization) array
@@ -4019,7 +4045,7 @@ Lock the `skills` surface. Claude Code stops loading skills from `~/.claude/skil
 
 ### `strictPluginOnlyCustomization.agents`
 
-Lock the `agents` surface. Claude Code stops loading agents from `~/.claude/agents/`, `.claude/agents/`, and `--add-dir` directories. It keeps loading plugin agents, built-in agents, and agents in the managed policy directory.
+Lock the `agents` surface. Claude Code stops loading agents from `~/.claude/agents/`, `.claude/agents/`, and `--add-dir` directories. It keeps loading built-in agents, agents in the managed policy directory, and agents from plugins other than [skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings).
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: the string `"agents"` in the [`strictPluginOnlyCustomization`](#strictpluginonlycustomization) array
@@ -4038,7 +4064,7 @@ Lock the `hooks` surface:
 * **Stops running**:
   * Hooks from user, project, and local `settings.json`
   * Frontmatter hooks in skills, custom commands, and agents, from the sources that a [`skills`](#strictpluginonlycustomization-skills) or [`agents`](#strictpluginonlycustomization-agents) lock would block
-* **Keeps running**: plugin hooks and hooks in managed settings
+* **Keeps running**: hooks in managed settings, and hooks from plugins other than [skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings)
 
 Skills, custom commands, and agents whose frontmatter hooks stop running still load while their own surface isn't locked.
 
@@ -4054,7 +4080,7 @@ Skills, custom commands, and agents whose frontmatter hooks stop running still l
 
 ### `strictPluginOnlyCustomization.mcp`
 
-Lock the `mcp` surface. Claude Code stops loading MCP servers from `~/.claude.json` and `.mcp.json`, and keeps loading plugin MCP servers, [`managed-mcp.json`](/docs/en/managed-mcp) servers, and servers from [`managedMcpServers`](#managedmcpservers).
+Lock the `mcp` surface. Claude Code stops loading MCP servers from `~/.claude.json` and `.mcp.json`. It keeps loading [`managed-mcp.json`](/docs/en/managed-mcp) servers, servers from [`managedMcpServers`](#managedmcpservers), and MCP servers from plugins other than [skills-directory plugins](/docs/en/plugins/loading#skills-directory-plugins-blocked-by-managed-settings).
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: the string `"mcp"` in the [`strictPluginOnlyCustomization`](#strictpluginonlycustomization) array
@@ -4312,7 +4338,7 @@ Built-in servers such as Claude in Chrome, the `ide` server Claude Code connects
 Servers your organization delivers are also exempt from the allowlist, and the denylist still applies to them. The exemption covers every [`managedMcpServers`](#managedmcpservers) entry, and any [`managed-mcp.json`](/docs/en/managed-mcp#exclusive-control-with-managed-mcp-json) entry whose values use no `${VAR}` expansion. See [How a server is evaluated](/docs/en/managed-mcp#how-a-server-is-evaluated) for the full check order. Before v2.1.259, servers from `managed-mcp.json` had to match too.
 
 * **Scope**: [`Any file`](#scopes). Entries from every file merge into one allowlist unless [`allowManagedMcpServersOnly`](#allowmanagedmcpserversonly) is set. Deploy it in managed settings to enforce it.
-* **Type**: array of objects, each with exactly one key: `serverName`, a string limited to letters, numbers, hyphens, and underscores; `serverCommand`, an array of the command and its arguments matched exactly; or `serverUrl`, a URL pattern with `*` wildcards
+* **Type**: array of objects, each with exactly one key. Use `serverName`, a string limited to letters, numbers, hyphens, and underscores; `serverCommand`, an array of the command and its arguments matched exactly; or `serverUrl`, a URL pattern with `*` wildcards
 * **Default**: unset, so every server is allowed; an empty array blocks every server users add
 
 This example allows only the stdio server that the listed `npx` command starts:
@@ -4702,7 +4728,7 @@ Configure Remote Control, cloud environments, the desktop app, and the notificat
 
 ### `agentPushNotifEnabled`
 
-Allow Claude to send a push notification to your phone when it decides one is worth sending, for example when a long task finishes. Claude Code syncs this choice to your account, and pushes arrive while [Remote Control](/docs/en/remote-control) is connected. Appears in `/config` as **Push when Claude decides**.
+Allow Claude to send a push notification to your phone when it decides one is worth sending, for example when a long task finishes. Claude can send one while [Remote Control](/docs/en/remote-control) is connected. Appears in `/config` as **Push when Claude decides**. When you change it there, Claude Code also saves the value to your account.
 
 * **Scope**: [`Any file`](#scopes). Claude Code also reads a value left in `~/.claude.json` by older versions.
 * **Type**: Boolean
@@ -4715,6 +4741,8 @@ Allow Claude to send a push notification to your phone when it decides one is wo
   "agentPushNotifEnabled": true
 }
 ```
+
+If you run sessions under a [`claude remote-control`](/docs/en/remote-control#start-a-remote-control-session) server, they follow the value saved to your account rather than this key. To change that value, run `/config` in a Claude Code session in your terminal and turn **Push when Claude decides** on or off. If the toggle already shows the value you want, change it and change it back so that Claude Code saves that value to your account.
 
 See [Mobile push notifications](/docs/en/remote-control#mobile-push-notifications).
 

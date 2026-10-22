@@ -251,7 +251,7 @@ Certain settings that could pose security risks require explicit user approval b
 
 * **Shell command settings**: settings that execute shell commands, such as `apiKeyHelper`, `statusLine`, and `otelHeadersHelper`
 * **Sandbox binary settings**: `sandbox.bwrapPath`, `sandbox.socatPath`, and `sandbox.ripgrep`. Each of these settings points at an executable, and Claude Code runs that executable
-* **Sandbox network and isolation settings**: [sandbox](/docs/en/sandboxing) settings that let the sandbox proxy read, reroute, or authenticate traffic, or that weaken the sandbox's isolation: `sandbox.network.tlsTerminate`, `sandbox.network.httpProxyPort`, `sandbox.network.socksProxyPort`, `sandbox.credentials`, `sandbox.allowAppleEvents`, `sandbox.enableWeakerNestedSandbox`, `sandbox.enableWeakerNetworkIsolation`, `sandbox.filesystem.disabled`, `sandbox.network.allowAllUnixSockets`, `sandbox.network.allowUnixSockets`, and `sandbox.network.allowMachLookup`. A `sandbox.credentials` block that contains only `deny` rules doesn't need approval, since it restricts the sandbox without giving the proxy a credential. Before v2.1.251, Claude Code applied these settings without approval
+* **Sandbox network and isolation settings**: [sandbox](/docs/en/sandboxing) settings that let the sandbox proxy read, reroute, or authenticate traffic, or that weaken the sandbox's isolation: `sandbox.network.tlsTerminate`, `sandbox.network.httpProxyPort`, `sandbox.network.socksProxyPort`, `sandbox.credentials`, `sandbox.allowAppleEvents`, `sandbox.allowNestedUserNamespaces`, `sandbox.enableWeakerNestedSandbox`, `sandbox.enableWeakerNetworkIsolation`, `sandbox.filesystem.disabled`, `sandbox.network.allowAllUnixSockets`, `sandbox.network.allowUnixSockets`, and `sandbox.network.allowMachLookup`. A `sandbox.credentials` block that contains only `deny` rules doesn't need approval, since it restricts the sandbox without giving the proxy a credential. Before v2.1.251, Claude Code applied these settings without approval
 * **Custom environment variables**: delivered `env` variables that require the user's approval, such as proxy and base-URL variables; see [Environment variables and the approval dialog](#environment-variables-and-the-approval-dialog)
 * **Hook configurations**: any hook definition
 
@@ -282,6 +282,9 @@ Claude Code can't always show the dialog. Each case below says which settings ap
 
 * **An interactive session that can't show the dialog**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. The dialog appears in the next session that can show it.
 * **`claude install` or `claude update`**: Claude Code doesn't show the dialog during either command. The command runs with the last-approved settings, and the dialog appears in your next interactive session. If Claude Code waits for the settings fetch at startup, such as with [`forceRemoteSettingsRefresh`](#enforce-fail-closed-startup) set or on a [Claude apps gateway](/docs/en/claude-apps-gateway) deployment, it shows the dialog during the command instead, and an install run from a pipe fails; see [`Raw mode is not supported` during install](/docs/en/troubleshoot-install#raw-mode-is-not-supported-during-install). Before v2.1.246, Claude Code tried to show the dialog during these commands too.
+* **A `claude plugin` command that prints to a terminal but can't read from the keyboard**: when Claude Code doesn't wait for the settings fetch at startup, the command doesn't apply the delivered settings. Without [cached settings](#fetch-and-caching-behavior), a command that changes your plugins or marketplaces [stops with an error](/docs/en/errors#managed-settings-need-your-approval). With cached settings, it runs with the last-approved settings. The dialog appears when you next run `claude` in a terminal.
+
+  The command can't read from the keyboard when you pipe or redirect its input and, on macOS and Linux, it also can't open `/dev/tty`. If you pipe or redirect its output too, the run is non-interactive instead, and the delivered settings apply for that run only.
 * **An error closes the dialog before you answer**: Claude Code doesn't apply the delivered settings and keeps the last-approved settings. It shows the dialog again in the next session that can show it.
 * **A non-interactive run**, such as `claude -p`, an Agent SDK session, or a session in the VS Code extension's chat panel or the desktop app's Code tab: Claude Code can't show the dialog, so when the delivered settings would require approval, it applies them for that run only. It doesn't record them as approved or write them to the [local cache](#fetch-and-caching-behavior), and the next interactive session shows the dialog. Until a user approves in an interactive session, each non-interactive run fetches the settings again at startup. Before v2.1.207, a non-interactive run saved the settings as approved, so later interactive sessions never showed the dialog for them.
 
@@ -291,11 +294,17 @@ Claude Code applies some delivered `env` variables without showing the user the 
 
 * Feature and command toggles
 * Model selection and behavior settings, such as `ANTHROPIC_MODEL`, `DISABLE_PROMPT_CACHING`, and `CLAUDE_CODE_EFFORT_LEVEL`
-* Context window and compaction settings, such as `DISABLE_AUTO_COMPACT`
+* Context window and compaction settings, such as `DISABLE_AUTO_COMPACT`, but not `CLAUDE_CODE_DISABLE_1M_CONTEXT`
 * Terminal UI and accessibility options
 * Numeric limits, budgets, and timeouts
 
-Other delivered variables can require the user's approval before they take effect; a non-empty proxy, base-URL, or `OTEL_EXPORTER_OTLP_ENDPOINT` value always does. When a delivered variable needs approval, the dialog names it, so the user sees exactly what the policy is asking to set. Before v2.1.218, Claude Code applied fewer variables without asking the user, so settings such as `DISABLE_AUTO_COMPACT` triggered the dialog at any non-empty value.
+Other delivered variables can require the user's approval before they take effect. For example, in interactive sessions these always do, at any non-empty value:
+
+* A proxy or base-URL variable
+* `OTEL_EXPORTER_OTLP_ENDPOINT`
+* `CLAUDE_CODE_DISABLE_1M_CONTEXT`
+
+When a delivered variable needs approval, the dialog names it, so the user sees exactly what the policy is asking to set. Before v2.1.218, Claude Code applied fewer variables without asking the user, so settings such as `DISABLE_AUTO_COMPACT` triggered the dialog at any non-empty value.
 
 Claude Code decides whether four privacy toggles need approval by the delivered value rather than by the variable name: `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`, `DISABLE_ERROR_REPORTING`, `DISABLE_TELEMETRY`, and `DO_NOT_TRACK`. A truthy value such as `1` or `true` only turns tracking, reporting, or other nonessential traffic off, so Claude Code applies it without asking the user. For any other non-empty value, Claude Code shows the dialog. Before v2.1.218, all of them except `DO_NOT_TRACK` applied without approval at any value, and `DO_NOT_TRACK` triggered the dialog at any non-empty value.
 
