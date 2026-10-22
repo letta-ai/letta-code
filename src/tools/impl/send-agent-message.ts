@@ -122,6 +122,33 @@ function resolveParentAddress(
   return { agentId, conversationId };
 }
 
+/**
+ * A child launched through this listener has no saved target in Cloud, so an
+ * omitted computer would start the child's own sandbox without the parent's
+ * workspace. Pin it to the listener it was launched from.
+ */
+function parentListenerComputer(
+  context: ReturnType<typeof getRuntimeContext>,
+): string | undefined {
+  const connectionId = context?.connectionId;
+  return connectionId?.startsWith("conn-") ? connectionId : undefined;
+}
+
+/** Cloud rejects an offline computer before it creates a Super Run. */
+function isComputerOfflineRejection(error: unknown): boolean {
+  if (!(error instanceof ApiRequestError) || error.status !== 503) return false;
+  try {
+    const body: unknown = JSON.parse(error.responseText);
+    return (
+      typeof body === "object" &&
+      body !== null &&
+      (body as Record<string, unknown>).error === "Computer is offline."
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function send_agent_message(
   args: SendAgentMessageArgs,
   deps: SendAgentMessageDeps = {},
@@ -456,7 +483,8 @@ export async function send_agent_message(
         ...destination,
         clientMessageId,
         content: buildAgentSendContent(sender, true, args.message),
-        computer,
+        computer:
+          computer ?? (child ? parentListenerComputer(context) : undefined),
         actingUserId,
       },
       signal,
@@ -488,7 +516,8 @@ export async function send_agent_message(
         error.status >= 400 &&
         error.status < 500
       ) &&
-      !isProvenCloudApiShutdownRejection(error);
+      !isProvenCloudApiShutdownRejection(error) &&
+      !isComputerOfflineRejection(error);
     return {
       content: JSON.stringify({
         status: unknown ? "acceptance_unknown" : "submission_failed",
