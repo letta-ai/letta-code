@@ -302,6 +302,33 @@ function reasoningEffortForThinkingLevel(level: string): string {
   return level === "off" ? "none" : level;
 }
 
+const EFFORT_DESCRIPTIONS: Record<string, string> = {
+  none: "no reasoning",
+  minimal: "minimal reasoning",
+  low: "low reasoning",
+  medium: "med reasoning",
+  high: "high reasoning",
+  xhigh: "extra-high reasoning",
+  max: "max reasoning",
+};
+
+/**
+ * Describe a local catalog variant the way Cloud presets do, so pickers that
+ * render only label + description (ACP clients) can tell variants apart.
+ */
+function localVariantDescription(
+  entry: AvailableModel,
+  effort: string | undefined,
+): string {
+  const slashIndex = entry.handle.indexOf("/");
+  const provider =
+    slashIndex === -1 ? undefined : entry.handle.slice(0, slashIndex);
+  const effortText = effort
+    ? ` (${EFFORT_DESCRIPTIONS[effort] ?? `${effort} reasoning`})`
+    : "";
+  return `${entry.label}${effortText}${provider ? ` via ${provider}` : ""}`;
+}
+
 /** Project backend model inventory into the shared runtime catalog shape. */
 export function toRuntimeCatalogModels(
   entries: readonly AvailableModel[],
@@ -334,7 +361,7 @@ export function toRuntimeCatalogModels(
         id: effort ? `${baseId}-${effort}` : baseId,
         handle: entry.handle,
         label: entry.label,
-        description: "",
+        description: localVariantDescription(entry, effort),
         ...(typeof entry.supportsStructuredOutputs === "boolean"
           ? { supportsStructuredOutputs: entry.supportsStructuredOutputs }
           : {}),
