@@ -28,7 +28,9 @@ export interface MemoryFile {
   path: string; // e.g. "system/persona/soul.md"
   isSystem: boolean; // under system/ directory
   frontmatter: Record<string, string>;
-  content: string; // raw markdown body (after frontmatter)
+  content: string; // Markdown 正文或完整 UTF-8 文本；不可预览的文件为空。
+  contentType: "markdown" | "text" | "binary" | "unreadable";
+  sizeBytes?: number;
 }
 
 export interface MemoryCommit {
