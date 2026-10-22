@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -121,6 +121,11 @@ let previousLocalDir: string | undefined;
 let previousFetch: typeof fetch;
 let storageDir = "";
 let instance: Instance | undefined;
+let settingsSpy:
+  | ReturnType<
+      typeof spyOn<typeof settingsManager, "getSettingsWithSecureTokens">
+    >
+  | undefined;
 
 beforeEach(async () => {
   testIndex += 1;
@@ -132,6 +137,15 @@ beforeEach(async () => {
   process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
   configureBackendMode("local");
   await settingsManager.initialize();
+  // The Local tab label is only shown when Cloud credentials are present.
+  // Keep that UI state independent of the host and other tests' credentials.
+  settingsSpy = spyOn(
+    settingsManager,
+    "getSettingsWithSecureTokens",
+  ).mockResolvedValue({
+    ...settingsManager.getSettings(),
+    env: { LETTA_API_KEY: "letta-test-key" },
+  });
   setLocalOAuthProvider({
     storageDir,
     providerName: PROVIDER_NAME,
@@ -150,6 +164,8 @@ afterEach(async () => {
   instance?.unmount();
   instance?.cleanup();
   instance = undefined;
+  settingsSpy?.mockRestore();
+  settingsSpy = undefined;
   globalThis.fetch = previousFetch;
   configureBackendMode(previousBackendMode);
   if (previousLocalDir === undefined)

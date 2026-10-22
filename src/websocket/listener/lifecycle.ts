@@ -58,7 +58,7 @@ import {
   rejectPendingExternalToolCalls,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
-import { startListenerPongHeartbeat } from "./heartbeat";
+import { recordListenerPong, startListenerPongHeartbeat } from "./heartbeat";
 import {
   getParsedRuntimeScope,
   stampInboundUserMessageOtids,
@@ -852,7 +852,7 @@ async function connectWithRetry(
 
   socket.on("message", (data: WebSocket.RawData) => {
     if (parseServerLifecycleMessage(data)?.type === "pong") {
-      if (runtime.socket === socket) runtime.lastPongAt = Date.now();
+      recordListenerPong(runtime, socket);
       return;
     }
     pendingStartupFrames.accept(data, handleMessage);
