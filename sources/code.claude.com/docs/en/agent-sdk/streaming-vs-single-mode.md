@@ -154,7 +154,7 @@ async def streaming_analysis():
 asyncio.run(streaming_analysis())
 ```
 
-When you run the example, the TypeScript version prints each response as it completes. The Python version's `receive_response()` loop ends at the first result message, so it prints the security analysis; to read both responses, use one `query()` and `receive_response()` pair per message as shown in the [Python reference's example of continuing a conversation](/docs/en/agent-sdk/python.md#example-continuing-a-conversation).
+When you run the example, the TypeScript version prints each response as it completes. The Python version's `receive_response()` loop ends at the first result message, so it prints the security analysis; to read both responses, use one `query()` and `receive_response()` pair per message as shown in the [Python reference's example of continuing a conversation](https://code.claude.com/docs/en/agent-sdk/python.md#example-continuing-a-conversation).
 
 If an image block's `source` is missing or isn't an object, the SDK doesn't report an error. Claude Code sends Claude a text note in place of the image, such as `[Image could not be processed: image block has no source object]`, and the session continues.
 
@@ -187,7 +187,7 @@ Use single message input when:
 > * Real-time interruption
 > * Natural multi-turn conversations
 
-If a query ends with an error result, such as `error_max_turns`, a single message `query()` call raises an error that includes the failure text after yielding the final result message, so wrap the loop in a try block if your code needs to continue. See [Handle the result](/docs/en/agent-sdk/agent-loop.md#handle-the-result) for the result subtypes.
+If a query ends with an error result, such as `error_max_turns`, a single message `query()` call raises an error that includes the failure text after yielding the final result message, so wrap the loop in a try block if your code needs to continue. See [Handle the result](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#handle-the-result) for the result subtypes.
 
 ### Implementation Example
 

@@ -8,9 +8,9 @@
 
 The Agent SDK lets you embed Claude Code's autonomous agent loop in your own applications. The SDK is a standalone package that gives you programmatic control over tools, permissions, cost limits, and output.
 
-Both the TypeScript and Python SDKs bundle a native Claude Code binary, so most installs need no separate Claude Code install. See the [quickstart's install note](/docs/en/agent-sdk/quickstart.md) for the installs that do.
+Both the TypeScript and Python SDKs bundle a native Claude Code binary, so most installs need no separate Claude Code install. See the [quickstart's install note](https://code.claude.com/docs/en/agent-sdk/quickstart.md) for the installs that do.
 
-When you start an agent, the SDK runs the same [execution loop that powers Claude Code](/docs/en/how-claude-code-works.md#the-agentic-loop): Claude evaluates your prompt, calls tools to take action, receives the results, and repeats until the task is complete. This page explains what happens inside that loop so you can build, debug, and optimize your agents effectively.
+When you start an agent, the SDK runs the same [execution loop that powers Claude Code](https://code.claude.com/docs/en/how-claude-code-works.md#the-agentic-loop): Claude evaluates your prompt, calls tools to take action, receives the results, and repeats until the task is complete. This page explains what happens inside that loop so you can build, debug, and optimize your agents effectively.
 
 ## The loop at a glance
 
@@ -20,7 +20,7 @@ Every agent session follows the same cycle:
 
 1. **Receive prompt.** Claude receives your prompt, along with the system prompt, tool definitions, and conversation history. The SDK yields a [`SystemMessage`](#message-types) with subtype `"init"` containing session metadata.
 2. **Evaluate and respond.** Claude evaluates the current state and determines how to proceed. It may respond with text, request one or more tool calls, or both. The SDK yields one or more [`AssistantMessage`](#message-types) objects, one for each content block, such as a text block or a tool call request.
-3. **Execute tools.** The SDK runs each requested tool and collects the results. Each set of tool results feeds back to Claude for the next decision. You can use [hooks](/docs/en/agent-sdk/hooks.md) to intercept, modify, or block tool calls before they run.
+3. **Execute tools.** The SDK runs each requested tool and collects the results. Each set of tool results feeds back to Claude for the next decision. You can use [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md) to intercept, modify, or block tool calls before they run.
 4. **Repeat.** Steps 2 and 3 repeat as a cycle. Each full cycle is one turn. Claude continues calling tools and processing results until it produces a response with no tool calls.
 5. **Return result.** The SDK yields a final [`AssistantMessage`](#message-types) with the text response (no tool calls), followed by a [`ResultMessage`](#message-types) with the final text, token usage, cost, and session ID.
 
@@ -51,18 +51,18 @@ As the loop runs, the SDK yields a stream of messages. Each message carries a ty
 
 * **`SystemMessage`:** session lifecycle events. The `subtype` field distinguishes them:
 
-  * `"init"`: session metadata for the run. When a `SessionStart` or `Setup` hook runs during session startup, its [hook lifecycle messages](/docs/en/agent-sdk/typescript.md#sdkhookstartedmessage) arrive before the `init` message
+  * `"init"`: session metadata for the run. When a `SessionStart` or `Setup` hook runs during session startup, its [hook lifecycle messages](https://code.claude.com/docs/en/agent-sdk/typescript.md#sdkhookstartedmessage) arrive before the `init` message
   * `"compact_boundary"`: fires after [compaction](#automatic-compaction)
   * `"informational"`: plain-text status banners from the loop
   * `"worker_shutting_down"`: the host is exiting or Remote Control disconnected
 
-  In TypeScript, each subtype other than `"init"` is its own type in the [`SDKMessage` union](/docs/en/agent-sdk/typescript#sdkmessage) rather than a subtype of `SDKSystemMessage`.
+  In TypeScript, each subtype other than `"init"` is its own type in the [`SDKMessage` union](https://code.claude.com/docs/en/agent-sdk/typescript#sdkmessage) rather than a subtype of `SDKSystemMessage`.
 * **`AssistantMessage`:** emitted for each content block in Claude's responses, including the final text-only one. Each carries a single content block, such as text or a tool call, and the messages from one response share a message ID.
 * **`UserMessage`:** emitted after each tool execution with the tool result content sent back to Claude. Also emitted for any user inputs you stream mid-loop.
-* **`StreamEvent`:** only emitted when partial messages are enabled. Contains raw API streaming events (text deltas, tool input chunks). See [Stream responses](/docs/en/agent-sdk/streaming-output.md).
+* **`StreamEvent`:** only emitted when partial messages are enabled. Contains raw API streaming events (text deltas, tool input chunks). See [Stream responses](https://code.claude.com/docs/en/agent-sdk/streaming-output.md).
 * **`ResultMessage`:** marks the end of the agent loop. Contains the final text result, token usage, cost, and session ID. Check the `subtype` field to determine whether the task succeeded or hit a limit. A small number of trailing system events, such as `prompt_suggestion`, can arrive after it, so iterate the stream to completion rather than breaking on the result. See [Handle the result](#handle-the-result).
 
-These five types cover the full agent loop lifecycle. Both SDKs also yield observability events such as rate-limit status and task notifications that are not required to drive the loop. See the [Python message types reference](/docs/en/agent-sdk/python.md#message-types) and [TypeScript message types reference](/docs/en/agent-sdk/typescript.md#message-types) for the complete lists.
+These five types cover the full agent loop lifecycle. Both SDKs also yield observability events such as rate-limit status and task notifications that are not required to drive the loop. See the [Python message types reference](https://code.claude.com/docs/en/agent-sdk/python.md#message-types) and [TypeScript message types reference](https://code.claude.com/docs/en/agent-sdk/typescript.md#message-types) for the complete lists.
 
 ### Handle messages
 
@@ -70,7 +70,7 @@ Which messages you handle depends on what you're building:
 
 * **Final results only:** handle `ResultMessage` to get the output, cost, and whether the task succeeded or hit a limit.
 * **Progress updates:** handle `AssistantMessage` to see what Claude is doing each turn, including which tools it called.
-* **Live streaming:** enable partial messages (`include_partial_messages` in Python, `includePartialMessages` in TypeScript) to get `StreamEvent` messages in real time. See [Stream responses in real-time](/docs/en/agent-sdk/streaming-output.md).
+* **Live streaming:** enable partial messages (`include_partial_messages` in Python, `includePartialMessages` in TypeScript) to get `StreamEvent` messages in real time. See [Stream responses in real-time](https://code.claude.com/docs/en/agent-sdk/streaming-output.md).
 
 How you check message types depends on the SDK:
 
@@ -157,23 +157,23 @@ The SDK includes the same tools that power Claude Code:
 | **Discovery** | `ToolSearch` | Dynamically find and load tools on-demand instead of preloading all of them |
 | **Orchestration** | `Agent`, `Skill`, `AskUserQuestion`, `TaskCreate`, `TaskUpdate` | Spawn subagents, invoke skills, ask the user, track tasks |
 
-On the [models that don't get the task-tracking tools](/docs/en/agent-sdk/todo-tracking.md#model-availability), Claude Code provides `TaskCreate` and `TaskUpdate` only when you opt in.
+On the [models that don't get the task-tracking tools](https://code.claude.com/docs/en/agent-sdk/todo-tracking.md#model-availability), Claude Code provides `TaskCreate` and `TaskUpdate` only when you opt in.
 
 Beyond built-in tools, you can:
 
-* **Connect external services** with [MCP servers](/docs/en/agent-sdk/mcp.md) (databases, browsers, APIs)
-* **Define custom tools** with [custom tool handlers](/docs/en/agent-sdk/custom-tools.md)
-* **Load project skills** via [setting sources](/docs/en/agent-sdk/claude-code-features.md) for reusable workflows
+* **Connect external services** with [MCP servers](https://code.claude.com/docs/en/agent-sdk/mcp.md) (databases, browsers, APIs)
+* **Define custom tools** with [custom tool handlers](https://code.claude.com/docs/en/agent-sdk/custom-tools.md)
+* **Load project skills** via [setting sources](https://code.claude.com/docs/en/agent-sdk/claude-code-features.md) for reusable workflows
 
 ### Tool permissions
 
 Claude determines which tools to call based on the task, but you control whether those calls are allowed to execute. You can auto-approve specific tools, block others entirely, or require approval for everything. Three options work together to determine what runs:
 
-* **`allowed_tools` / `allowedTools`** auto-approves listed tools. A read-only agent with `["Read", "Glob", "Grep"]` in its allowed tools list runs those tools without prompting, apart from reads from [network paths](/docs/en/permissions.md#network-paths). Tools not listed are still available, and calls to them that need approval fall through to the permission mode and `canUseTool`.
-* **`disallowed_tools` / `disallowedTools`** blocks listed tools, regardless of other settings. See [Permissions](/docs/en/agent-sdk/permissions.md) for the order that rules are checked before a tool runs.
-* **`permission_mode` / `permissionMode`** controls how much human oversight you want. The SDK evaluates the active mode together with your allow and deny rules in a fixed order, described in [How permissions are evaluated](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated). See [Permission mode](#permission-mode) for available modes.
+* **`allowed_tools` / `allowedTools`** auto-approves listed tools. A read-only agent with `["Read", "Glob", "Grep"]` in its allowed tools list runs those tools without prompting, apart from reads from [network paths](https://code.claude.com/docs/en/permissions.md#network-paths). Tools not listed are still available, and calls to them that need approval fall through to the permission mode and `canUseTool`.
+* **`disallowed_tools` / `disallowedTools`** blocks listed tools, regardless of other settings. See [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) for the order that rules are checked before a tool runs.
+* **`permission_mode` / `permissionMode`** controls how much human oversight you want. The SDK evaluates the active mode together with your allow and deny rules in a fixed order, described in [How permissions are evaluated](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated). See [Permission mode](#permission-mode) for available modes.
 
-You can also scope individual tools with rules like `"Bash(npm *)"` to allow only specific commands. See [Permissions](/docs/en/agent-sdk/permissions.md) for the full rule syntax.
+You can also scope individual tools with rules like `"Bash(npm *)"` to allow only specific commands. See [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) for the full rule syntax.
 
 When a tool is denied, Claude receives a rejection message as the tool result and typically attempts a different approach or reports that it couldn't proceed.
 
@@ -181,11 +181,11 @@ When a tool is denied, Claude receives a rejection message as the tool result an
 
 When Claude requests multiple tool calls in a single turn, both SDKs can run them concurrently or sequentially depending on the tool. Read-only tools (like `Read`, `Glob`, `Grep`, and MCP tools marked as read-only) can run concurrently. Tools that modify state (like `Edit`, `Write`, and `Bash`) run sequentially to avoid conflicts.
 
-Custom tools default to sequential execution. To enable parallel execution for a custom tool, set `readOnlyHint` in its annotations. Both the [TypeScript](/docs/en/agent-sdk/typescript.md#tool) and [Python](/docs/en/agent-sdk/python.md#tool) SDKs use this field name from the MCP SDK.
+Custom tools default to sequential execution. To enable parallel execution for a custom tool, set `readOnlyHint` in its annotations. Both the [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#tool) and [Python](https://code.claude.com/docs/en/agent-sdk/python.md#tool) SDKs use this field name from the MCP SDK.
 
 ## Control how the loop runs
 
-You can limit how many turns the loop takes, how much it costs, how deeply Claude reasons, and whether tools require approval before running. All of these are fields on [`ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions) (Python) / [`Options`](/docs/en/agent-sdk/typescript#options) (TypeScript).
+You can limit how many turns the loop takes, how much it costs, how deeply Claude reasons, and whether tools require approval before running. All of these are fields on [`ClaudeAgentOptions`](https://code.claude.com/docs/en/agent-sdk/python#claudeagentoptions) (Python) / [`Options`](https://code.claude.com/docs/en/agent-sdk/typescript#options) (TypeScript).
 
 ### Turns and budget
 
@@ -194,15 +194,15 @@ You can limit how many turns the loop takes, how much it costs, how deeply Claud
 | Max turns (`max_turns` / `maxTurns`) | Maximum tool-use round trips | No limit |
 | Max budget (`max_budget_usd` / `maxBudgetUsd`) | Estimated spend at which the loop stops | No limit |
 
-When either limit is hit, the SDK returns a `ResultMessage` with a corresponding error subtype (`error_max_turns` or `error_max_budget_usd`). See [Handle the result](#handle-the-result) for how to check these subtypes and [`ClaudeAgentOptions`](/docs/en/agent-sdk/python#claudeagentoptions) / [`Options`](/docs/en/agent-sdk/typescript#options) for syntax.
+When either limit is hit, the SDK returns a `ResultMessage` with a corresponding error subtype (`error_max_turns` or `error_max_budget_usd`). See [Handle the result](#handle-the-result) for how to check these subtypes and [`ClaudeAgentOptions`](https://code.claude.com/docs/en/agent-sdk/python#claudeagentoptions) / [`Options`](https://code.claude.com/docs/en/agent-sdk/typescript#options) for syntax.
 
-The budget cap covers [subagents](/docs/en/agent-sdk/subagents.md): their spend counts toward the total. Once spend reaches the cap, spawning another subagent fails with `Budget limit reached`, and Claude Code stops any background subagents still running. The cap-enforcement behaviors require Claude Code v2.1.217 or later.
+The budget cap covers [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md): their spend counts toward the total. Once spend reaches the cap, spawning another subagent fails with `Budget limit reached`, and Claude Code stops any background subagents still running. The cap-enforcement behaviors require Claude Code v2.1.217 or later.
 
-With [streaming input](/docs/en/agent-sdk/streaming-vs-single-mode.md), a message that is still queued when a turn ends at the max-turns limit stays queued. Claude Code doesn't add it to that turn's last model call. It starts a new turn for the message, and the max-turns count starts over for that turn. The budget total keeps accumulating across messages, and once spend reaches `maxBudgetUsd`, later messages in the same conversation end with the `error_max_budget_usd` result. A [`/clear`](/docs/en/agent-sdk/cost-tracking) starts the budget over.
+With [streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md), a message that is still queued when a turn ends at the max-turns limit stays queued. Claude Code doesn't add it to that turn's last model call. It starts a new turn for the message, and the max-turns count starts over for that turn. The budget total keeps accumulating across messages, and once spend reaches `maxBudgetUsd`, later messages in the same conversation end with the `error_max_budget_usd` result. A [`/clear`](https://code.claude.com/docs/en/agent-sdk/cost-tracking) starts the budget over.
 
 #### Budget headroom
 
-Claude Code compares spend with the `max_budget_usd` / `maxBudgetUsd` cap after model responses arrive, because each response's cost comes from the token usage the API returns with it. The response that reaches the cap still completes and counts toward [`total_cost_usd`](/docs/en/agent-sdk/cost-tracking#get-the-total-cost-of-a-query). Spend can therefore pass the cap by up to the cost of that one response, plus anything that subagents still running at that moment spend before they stop. Leave headroom for this when you set the cap.
+Claude Code compares spend with the `max_budget_usd` / `maxBudgetUsd` cap after model responses arrive, because each response's cost comes from the token usage the API returns with it. The response that reaches the cap still completes and counts toward [`total_cost_usd`](https://code.claude.com/docs/en/agent-sdk/cost-tracking#get-the-total-cost-of-a-query). Spend can therefore pass the cap by up to the cost of that one response, plus anything that subagents still running at that moment spend before they stop. Leave headroom for this when you set the cap.
 
 ### Effort level
 
@@ -213,16 +213,16 @@ The `effort` option controls how much reasoning Claude applies. Lower effort lev
 | `"low"` | Minimal reasoning, fast responses | File lookups, listing directories |
 | `"medium"` | Balanced reasoning | Routine edits, standard tasks |
 | `"high"` | Thorough analysis | Refactors, debugging |
-| `"xhigh"` | Extended reasoning depth | Coding and agentic tasks on the [models that support it](/docs/en/model-config.md#adjust-effort-level) |
+| `"xhigh"` | Extended reasoning depth | Coding and agentic tasks on the [models that support it](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) |
 | `"max"` | Maximum reasoning depth | Multi-step problems requiring deep analysis |
 
-If you don't set `effort`, Claude Code resolves the effort level itself, in the order [Adjust effort level](/docs/en/model-config.md#adjust-effort-level) describes.
+If you don't set `effort`, Claude Code resolves the effort level itself, in the order [Adjust effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) describes.
 
 > [!NOTE]
 >
-> `effort` trades latency and token cost for reasoning depth within each response. [Extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) is a separate feature that produces `thinking` blocks in the output, and the `display` field on `ThinkingConfig` for [Python](/docs/en/agent-sdk/python.md#thinkingconfig) or [TypeScript](/docs/en/agent-sdk/typescript.md#thinkingconfig) controls whether you receive their text. They are independent: you can set `effort: "low"` with extended thinking enabled, or `effort: "max"` without it.
+> `effort` trades latency and token cost for reasoning depth within each response. [Extended thinking](https://platform.claude.com/docs/en/build-with-claude/extended-thinking) is a separate feature that produces `thinking` blocks in the output, and the `display` field on `ThinkingConfig` for [Python](https://code.claude.com/docs/en/agent-sdk/python.md#thinkingconfig) or [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#thinkingconfig) controls whether you receive their text. They are independent: you can set `effort: "low"` with extended thinking enabled, or `effort: "max"` without it.
 
-Use lower effort for agents doing simple, well-scoped tasks (like listing files or running a single grep) to reduce cost and latency. Set `effort` in the top-level `query()` options for the whole session, or per subagent with the `effort` field on [`AgentDefinition`](/docs/en/agent-sdk/subagents#agentdefinition-configuration) to override the session level.
+Use lower effort for agents doing simple, well-scoped tasks (like listing files or running a single grep) to reduce cost and latency. Set `effort` in the top-level `query()` options for the whole session, or per subagent with the `effort` field on [`AgentDefinition`](https://code.claude.com/docs/en/agent-sdk/subagents#agentdefinition-configuration) to override the session level.
 
 ### Permission mode
 
@@ -233,19 +233,19 @@ The permission mode option (`permission_mode` in Python, `permissionMode` in Typ
 | `"default"` | Tool calls that need approval and aren't covered by allow rules trigger your `canUseTool` callback; no callback means deny | Interactive applications with a custom approval callback |
 | `"acceptEdits"` | Auto-approves file edits and common filesystem commands (`mkdir`, `touch`, `mv`, `cp`, etc.); other Bash commands follow default rules | You trust Claude's edits and want faster iteration, such as during prototyping or when working in an isolated directory |
 | `"plan"` | Claude explores and plans without editing your source files; file edits are never auto-approved and prompt through your `canUseTool` callback | You want Claude to propose changes without executing them, such as during code review or when you need to approve changes before they're made |
-| `"dontAsk"` | Never prompts. Tools pre-approved by [permission rules](/docs/en/settings-reference.md#permission-settings) run, and so do calls that need no approval in `default` mode, such as file reads inside your working directories. Every call that would otherwise prompt is denied, though a [mod](/docs/en/plugins/mods/overview.md) you installed can still approve [some of those calls](/docs/en/permissions.md#precedence-among-rules-hooks-and-mods). `AskUserQuestion`, connector tools [your organization set to `ask`](/docs/en/mcp#organization-controls-on-connector-tools), MCP tools marked [`requiresUserInteraction`](/docs/en/mcp#require-approval-for-a-specific-tool), and [reads from network paths](/docs/en/permissions.md#network-paths) are denied even if you've allowed them | You want a fixed, explicit tool surface for a headless agent and prefer a hard deny over silent reliance on `canUseTool` being absent |
-| `"auto"` | Uses a model classifier to review actions such as shell commands and network requests, allowing or blocking each one it reviews. See [Auto mode](/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) for availability and the decision order | Autonomous agents that still want safety guardrails on tool use |
-| `"bypassPermissions"` | Runs all allowed tools without asking, except tools matched by an explicit [`ask` rule](/docs/en/settings-reference#permission-settings), connector tools [your organization set to `ask`](/docs/en/mcp#organization-controls-on-connector-tools), and tools that require user interaction. The [cross-session messaging safeguards](/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) still apply. See [How permissions are evaluated](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) for the precedence order. In the TypeScript SDK, also requires `allowDangerouslySkipPermissions: true` in `options`. Can't be used when running as root on Unix. Use only in isolated environments where the agent's actions can't affect systems you care about | CI, containers, or other isolated environments |
+| `"dontAsk"` | Never prompts. Tools pre-approved by [permission rules](https://code.claude.com/docs/en/settings-reference.md#permission-settings) run, and so do calls that need no approval in `default` mode, such as file reads inside your working directories. Every call that would otherwise prompt is denied, though a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you installed can still approve [some of those calls](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods). `AskUserQuestion`, connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools), MCP tools marked [`requiresUserInteraction`](https://code.claude.com/docs/en/mcp#require-approval-for-a-specific-tool), and [reads from network paths](https://code.claude.com/docs/en/permissions.md#network-paths) are denied even if you've allowed them | You want a fixed, explicit tool surface for a headless agent and prefer a hard deny over silent reliance on `canUseTool` being absent |
+| `"auto"` | Uses a model classifier to review actions such as shell commands and network requests, allowing or blocking each one it reviews. See [Auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) for availability and the decision order | Autonomous agents that still want safety guardrails on tool use |
+| `"bypassPermissions"` | Runs all allowed tools without asking, except tools matched by an explicit [`ask` rule](https://code.claude.com/docs/en/settings-reference#permission-settings), connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools), and tools that require user interaction. The [cross-session messaging safeguards](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) still apply. See [How permissions are evaluated](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) for the precedence order. In the TypeScript SDK, also requires `allowDangerouslySkipPermissions: true` in `options`. Can't be used when running as root on Unix. Use only in isolated environments where the agent's actions can't affect systems you care about | CI, containers, or other isolated environments |
 
-For interactive applications, use `"default"` with a tool approval callback to surface approval prompts. For autonomous agents on a dev machine, `"acceptEdits"` auto-approves file edits and common filesystem commands (`mkdir`, `touch`, `mv`, `cp`, etc.) while still gating other `Bash` commands behind allow rules. Reserve `"bypassPermissions"` for CI, containers, or other isolated environments. See [Permissions](/docs/en/agent-sdk/permissions.md) for full details.
+For interactive applications, use `"default"` with a tool approval callback to surface approval prompts. For autonomous agents on a dev machine, `"acceptEdits"` auto-approves file edits and common filesystem commands (`mkdir`, `touch`, `mv`, `cp`, etc.) while still gating other `Bash` commands behind allow rules. Reserve `"bypassPermissions"` for CI, containers, or other isolated environments. See [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) for full details.
 
 ### Model
 
-Set the `model` option to choose which model runs the session. For more information, see [Choose a model](/docs/en/agent-sdk/configuration.md#choose-a-model).
+Set the `model` option to choose which model runs the session. For more information, see [Choose a model](https://code.claude.com/docs/en/agent-sdk/configuration.md#choose-a-model).
 
 ## The context window
 
-The context window is the total amount of information available to Claude during a session. It does not reset between turns within a session. Everything accumulates: the system prompt, tool definitions, conversation history, tool inputs, and tool outputs. Content that stays the same across turns (system prompt, tool definitions, CLAUDE.md) is automatically [prompt cached](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), which reduces cost and latency for repeated prefixes. For how a custom system prompt or `append` text affects cache reuse across sessions, see [Modifying system prompts](/docs/en/agent-sdk/modifying-system-prompts.md#improve-prompt-caching-across-users-and-machines).
+The context window is the total amount of information available to Claude during a session. It does not reset between turns within a session. Everything accumulates: the system prompt, tool definitions, conversation history, tool inputs, and tool outputs. Content that stays the same across turns (system prompt, tool definitions, CLAUDE.md) is automatically [prompt cached](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), which reduces cost and latency for repeated prefixes. For how a custom system prompt or `append` text affects cache reuse across sessions, see [Modifying system prompts](https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts.md#improve-prompt-caching-across-users-and-machines).
 
 ### What consumes context
 
@@ -254,8 +254,8 @@ Here's how each component affects context in the SDK:
 | Source | When it loads | Impact |
 | :- | :- | :- |
 | **System prompt** | Every request | Small fixed cost, always present |
-| **CLAUDE.md files** | Session start, via [`settingSources`](/docs/en/agent-sdk/claude-code-features) | Full content in every request (but prompt-cached, so only the first request pays full cost) |
-| **Tool definitions** | Every request for core built-in tools such as Bash, Read, and Edit; on demand for MCP tools and other built-in tools, which [tool search](/docs/en/agent-sdk/mcp.md#mcp-tool-search) defers by default | Every schema loads upfront in the cases under [Configure tool search](/docs/en/agent-sdk/tool-search.md#configure-tool-search) |
+| **CLAUDE.md files** | Session start, via [`settingSources`](https://code.claude.com/docs/en/agent-sdk/claude-code-features) | Full content in every request (but prompt-cached, so only the first request pays full cost) |
+| **Tool definitions** | Every request for core built-in tools such as Bash, Read, and Edit; on demand for MCP tools and other built-in tools, which [tool search](https://code.claude.com/docs/en/agent-sdk/mcp.md#mcp-tool-search) defers by default | Every schema loads upfront in the cases under [Configure tool search](https://code.claude.com/docs/en/agent-sdk/tool-search.md#configure-tool-search) |
 | **Conversation history** | Accumulates over turns | Grows with each turn: prompts, responses, tool inputs, tool outputs |
 | **Skill descriptions** | Session start, via setting sources | Short summaries; full content loads only when invoked |
 
@@ -265,13 +265,13 @@ Large tool outputs consume significant context. Reading a big file or running a 
 
 When the context window approaches its limit, the SDK automatically compacts the conversation: it summarizes older history to free space, keeping your most recent exchanges and key decisions intact. The SDK emits a message with `type: "system"` and `subtype: "compact_boundary"` in the stream when this happens (in Python this is a `SystemMessage`; in TypeScript it is a separate `SDKCompactBoundaryMessage` type).
 
-Compaction replaces older messages with a summary, so specific instructions from early in the conversation may not be preserved. Persistent rules belong in CLAUDE.md (loaded via [`settingSources`](/docs/en/agent-sdk/claude-code-features)) rather than in the initial prompt, because CLAUDE.md content is re-injected on every request.
+Compaction replaces older messages with a summary, so specific instructions from early in the conversation may not be preserved. Persistent rules belong in CLAUDE.md (loaded via [`settingSources`](https://code.claude.com/docs/en/agent-sdk/claude-code-features)) rather than in the initial prompt, because CLAUDE.md content is re-injected on every request.
 
 You can customize compaction behavior in several ways:
 
 * **Summarization instructions in CLAUDE.md:** The compactor reads your CLAUDE.md like any other context, so you can include a section telling it what to preserve when summarizing. The compactor matches on intent, so the section header is free-form.
-* **`PreCompact` hook:** Run custom logic before compaction occurs, for example to archive the full transcript. The hook receives a `trigger` field (`manual` or `auto`). See [hooks](/docs/en/agent-sdk/hooks.md).
-* **Manual compaction:** Send `/compact` as a prompt string to trigger compaction on demand. Commands sent this way are ordinary SDK inputs. See [dispatch commands by name](/docs/en/agent-sdk/skills.md#dispatch-commands-by-name).
+* **`PreCompact` hook:** Run custom logic before compaction occurs, for example to archive the full transcript. The hook receives a `trigger` field (`manual` or `auto`). See [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md).
+* **Manual compaction:** Send `/compact` as a prompt string to trigger compaction on demand. Commands sent this way are ordinary SDK inputs. See [dispatch commands by name](https://code.claude.com/docs/en/agent-sdk/skills.md#dispatch-commands-by-name).
 
 > **Example: Summarization instructions in CLAUDE.md**
 >
@@ -292,11 +292,11 @@ You can customize compaction behavior in several ways:
 A few strategies for long-running agents:
 
 * **Use subagents for subtasks.** A subagent returns only its final response, so your main agent's context grows by a summary, not by the subtask's transcript.
-* **Be selective with tools.** Every tool definition takes context space. Use the `tools` field on [`AgentDefinition`](/docs/en/agent-sdk/subagents#agentdefinition-configuration) to scope subagents to the minimum set they need.
-* **Watch MCP server costs.** [MCP tool search](/docs/en/agent-sdk/mcp.md#mcp-tool-search) defers MCP tool schemas by default and loads them on demand. When tool search is off or has fallen back to upfront loading, each MCP server adds all its tool schemas to every request, so a few servers with many tools can consume significant context before the agent does any work. See [Configure tool search](/docs/en/agent-sdk/tool-search.md#configure-tool-search) for the configurations where the fallback applies.
+* **Be selective with tools.** Every tool definition takes context space. Use the `tools` field on [`AgentDefinition`](https://code.claude.com/docs/en/agent-sdk/subagents#agentdefinition-configuration) to scope subagents to the minimum set they need.
+* **Watch MCP server costs.** [MCP tool search](https://code.claude.com/docs/en/agent-sdk/mcp.md#mcp-tool-search) defers MCP tool schemas by default and loads them on demand. When tool search is off or has fallen back to upfront loading, each MCP server adds all its tool schemas to every request, so a few servers with many tools can consume significant context before the agent does any work. See [Configure tool search](https://code.claude.com/docs/en/agent-sdk/tool-search.md#configure-tool-search) for the configurations where the fallback applies.
 * **Use lower effort for routine tasks.** Set [effort](#effort-level) to `"low"` for agents that only need to read files or list directories. This reduces token usage and cost.
 
-For a detailed breakdown of per-feature context costs, see [Understand context costs](/docs/en/features-overview.md#understand-context-costs).
+For a detailed breakdown of per-feature context costs, see [Understand context costs](https://code.claude.com/docs/en/features-overview.md#understand-context-costs).
 
 ## Sessions and continuity
 
@@ -304,11 +304,11 @@ Each interaction with the SDK creates or continues a session. Capture the sessio
 
 When you resume, the full context from previous turns is restored: files that were read, analysis that was performed, and actions that were taken. You can also fork a session to branch into a different approach without modifying the original.
 
-See [Session management](/docs/en/agent-sdk/sessions.md) for the full guide on resume, continue, and fork patterns. To resume sessions across stateless containers or serverless hosts, pass a [`session_store` / `sessionStore` adapter](/docs/en/agent-sdk/session-storage) so the SDK mirrors transcripts to your own backend and another host can resume them. The Claude Code subprocess still writes to local disk first. See [Dual-write architecture](/docs/en/agent-sdk/session-storage.md#dual-write-architecture) for which copy outlives a fresh session versus a run resumed from the store, and how to keep the local copy ephemeral.
+See [Session management](https://code.claude.com/docs/en/agent-sdk/sessions.md) for the full guide on resume, continue, and fork patterns. To resume sessions across stateless containers or serverless hosts, pass a [`session_store` / `sessionStore` adapter](https://code.claude.com/docs/en/agent-sdk/session-storage) so the SDK mirrors transcripts to your own backend and another host can resume them. The Claude Code subprocess still writes to local disk first. See [Dual-write architecture](https://code.claude.com/docs/en/agent-sdk/session-storage.md#dual-write-architecture) for which copy outlives a fresh session versus a run resumed from the store, and how to keep the local copy ephemeral.
 
 > [!NOTE]
 >
-> In Python, `ClaudeSDKClient` handles session IDs automatically across multiple calls. See the [Python SDK reference](/docs/en/agent-sdk/python.md#choosing-between-query-and-claudesdkclient) for details.
+> In Python, `ClaudeSDKClient` handles session IDs automatically across multiple calls. See the [Python SDK reference](https://code.claude.com/docs/en/agent-sdk/python.md#choosing-between-query-and-claudesdkclient) for details.
 
 ## Handle the result
 
@@ -326,10 +326,10 @@ The `result` field holds the final text output and is only present on the `succe
 
 All result subtypes carry `total_cost_usd`, `usage`, `num_turns`, and `session_id` so you can track cost and resume even after errors. Guard for these cases:
 
-* After a session crash, the final result is an `error_during_execution` whose cost fields may be zeroed and whose `stop_reason` is `null`, and the process exits after emitting it. See [Recover totals after a session crash](/docs/en/agent-sdk/cost-tracking.md#recover-totals-after-a-session-crash).
+* After a session crash, the final result is an `error_during_execution` whose cost fields may be zeroed and whose `stop_reason` is `null`, and the process exits after emitting it. See [Recover totals after a session crash](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md#recover-totals-after-a-session-crash).
 * In Python, `total_cost_usd`, `usage`, and `model_usage` are typed as optional, so check that they aren't `None` before you read them.
 
-The `usage` field covers only the main agent loop. Use `modelUsage`, or `model_usage` in Python, for whole-tree token and cost accounting. See [Tracking costs and usage](/docs/en/agent-sdk/cost-tracking.md) for details on interpreting the `usage` fields.
+The `usage` field covers only the main agent loop. Use `modelUsage`, or `model_usage` in Python, for whole-tree token and cost accounting. See [Tracking costs and usage](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md) for details on interpreting the `usage` fields.
 
 > [!NOTE]
 >
@@ -340,11 +340,11 @@ The `usage` field covers only the main agent loop. Use `modelUsage`, or `model_u
 
 The result also includes a `stop_reason` field (`string | null` in TypeScript, `str | None` in Python) indicating why the model stopped generating on its final turn. Common values are `end_turn` (model finished normally), `max_tokens` (hit the output token limit), and `refusal` (the model declined the request). On error results that the loop produced, `stop_reason` carries the value from the last assistant response before the loop ended; the result Claude Code synthesizes after a session crash carries `null`.
 
-To detect refusals, check `stop_reason === "refusal"` (TypeScript) or `stop_reason == "refusal"` (Python). See [`SDKResultMessage`](/docs/en/agent-sdk/typescript#sdkresultmessage) (TypeScript) or [`ResultMessage`](/docs/en/agent-sdk/python#resultmessage) (Python) for the full type.
+To detect refusals, check `stop_reason === "refusal"` (TypeScript) or `stop_reason == "refusal"` (Python). See [`SDKResultMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkresultmessage) (TypeScript) or [`ResultMessage`](https://code.claude.com/docs/en/agent-sdk/python#resultmessage) (Python) for the full type.
 
 ## Hooks
 
-[Hooks](/docs/en/agent-sdk/hooks.md) are callbacks that fire at specific points in the loop: before a tool runs, after it returns, when the agent finishes, and so on. Some commonly used hooks are:
+[Hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md) are callbacks that fire at specific points in the loop: before a tool runs, after it returns, when the agent finishes, and so on. Some commonly used hooks are:
 
 | Hook | When it fires | Common uses |
 | :- | :- | :- |
@@ -357,7 +357,7 @@ To detect refusals, check `stop_reason === "refusal"` (TypeScript) or `stop_reas
 
 Hooks run in your application process, not inside the agent's context window, so they don't consume context. Hooks can also short-circuit the loop: a `PreToolUse` hook that rejects a tool call prevents it from executing, and Claude receives the rejection message instead.
 
-Both SDKs support all the events above. The TypeScript SDK includes additional events that Python does not yet support. See [Control execution with hooks](/docs/en/agent-sdk/hooks.md) for the complete event list, per-SDK availability, and the full callback API.
+Both SDKs support all the events above. The TypeScript SDK includes additional events that Python does not yet support. See [Control execution with hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md) for the complete event list, per-SDK availability, and the full callback API.
 
 ## Put it all together
 
@@ -465,11 +465,11 @@ When the agent finishes successfully, the example prints a `Done:` line with the
 
 Now that you understand the loop, here's where to go depending on what you're building:
 
-* **Haven't run an agent yet?** Start with the [quickstart](/docs/en/agent-sdk/quickstart.md) to get the SDK installed and see a full example running end to end.
-* **Ready to hook into your project?** [Load CLAUDE.md, skills, and filesystem hooks](/docs/en/agent-sdk/claude-code-features.md) so the agent follows your project conventions automatically.
-* **Building an interactive UI?** Enable [streaming](/docs/en/agent-sdk/streaming-output.md) to show live text and tool calls as the loop runs.
-* **Need tighter control over what the agent can do?** Lock down tool access with [permissions](/docs/en/agent-sdk/permissions.md), and use [hooks](/docs/en/agent-sdk/hooks.md) to audit, block, or transform tool calls before they execute.
-* **Running long or expensive tasks?** Offload isolated work to [subagents](/docs/en/agent-sdk/subagents.md) to keep your main context lean.
-* **Deploying as a service?** See [Hosting the Agent SDK](/docs/en/agent-sdk/hosting.md) for container and serverless guidance, and [Session storage](/docs/en/agent-sdk/session-storage.md) to persist sessions to your own backend.
+* **Haven't run an agent yet?** Start with the [quickstart](https://code.claude.com/docs/en/agent-sdk/quickstart.md) to get the SDK installed and see a full example running end to end.
+* **Ready to hook into your project?** [Load CLAUDE.md, skills, and filesystem hooks](https://code.claude.com/docs/en/agent-sdk/claude-code-features.md) so the agent follows your project conventions automatically.
+* **Building an interactive UI?** Enable [streaming](https://code.claude.com/docs/en/agent-sdk/streaming-output.md) to show live text and tool calls as the loop runs.
+* **Need tighter control over what the agent can do?** Lock down tool access with [permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md), and use [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md) to audit, block, or transform tool calls before they execute.
+* **Running long or expensive tasks?** Offload isolated work to [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md) to keep your main context lean.
+* **Deploying as a service?** See [Hosting the Agent SDK](https://code.claude.com/docs/en/agent-sdk/hosting.md) for container and serverless guidance, and [Session storage](https://code.claude.com/docs/en/agent-sdk/session-storage.md) to persist sessions to your own backend.
 
-For the broader conceptual picture of the agentic loop (not SDK-specific), see [How Claude Code works](/docs/en/how-claude-code-works.md). For a practical guide to designing loops in Claude Code, from turn-based to goal-based and proactive loops, see [Loop engineering: getting started with loops](https://claude.com/blog/getting-started-with-loops) on the blog.
+For the broader conceptual picture of the agentic loop (not SDK-specific), see [How Claude Code works](https://code.claude.com/docs/en/how-claude-code-works.md). For a practical guide to designing loops in Claude Code, from turn-based to goal-based and proactive loops, see [Loop engineering: getting started with loops](https://claude.com/blog/getting-started-with-loops) on the blog.

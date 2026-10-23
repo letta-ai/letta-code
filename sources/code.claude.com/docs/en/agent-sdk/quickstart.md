@@ -91,8 +91,8 @@ If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-Exe
 >
 > Both the TypeScript and Python SDKs bundle a native Claude Code binary, so most installs need no separate Claude Code install. Some installs have no bundled binary:
 >
-> * If pip installs the Python SDK's source distribution instead of a platform wheel, for example on ARM64 Windows, no binary is bundled. [Install Claude Code natively](/docs/en/setup.md#install-claude-code). The Python SDK finds it on your `PATH`.
-> * The TypeScript SDK installs its binary through npm optional dependencies, so an install that skips them, for example `npm ci --omit=optional`, gets no binary even on a supported platform. Reinstall without skipping optional dependencies, or [install Claude Code natively](/docs/en/setup.md#install-claude-code) and set `pathToClaudeCodeExecutable` to its path.
+> * If pip installs the Python SDK's source distribution instead of a platform wheel, for example on ARM64 Windows, no binary is bundled. [Install Claude Code natively](https://code.claude.com/docs/en/setup.md#install-claude-code). The Python SDK finds it on your `PATH`.
+> * The TypeScript SDK installs its binary through npm optional dependencies, so an install that skips them, for example `npm ci --omit=optional`, gets no binary even on a supported platform. Reinstall without skipping optional dependencies, or [install Claude Code natively](https://code.claude.com/docs/en/setup.md#install-claude-code) and set `pathToClaudeCodeExecutable` to its path.
 
 **3. Set your API key**
 
@@ -119,7 +119,7 @@ The SDK also supports authentication via third-party API providers:
 * **Google Cloud's Agent Platform**: set `CLAUDE_CODE_USE_VERTEX=1` environment variable and configure Google Cloud credentials
 * **Microsoft Foundry**: set `CLAUDE_CODE_USE_FOUNDRY=1` environment variable and configure Azure credentials
 
-See the setup guides for [Amazon Bedrock](/docs/en/amazon-bedrock.md), [Claude Platform on AWS](/docs/en/claude-platform-on-aws.md), [Google Cloud's Agent Platform](/docs/en/google-vertex-ai.md), or [Microsoft Foundry](/docs/en/microsoft-foundry.md) for details.
+See the setup guides for [Amazon Bedrock](https://code.claude.com/docs/en/amazon-bedrock.md), [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md), [Google Cloud's Agent Platform](https://code.claude.com/docs/en/google-vertex-ai.md), or [Microsoft Foundry](https://code.claude.com/docs/en/microsoft-foundry.md) for details.
 
 > [!NOTE]
 >
@@ -206,11 +206,11 @@ for await (const message of query({
 
 This code has three main parts:
 
-1. **`query`**: the main entry point that creates the agentic loop. It returns an async iterator, so you use `async for` to stream messages as Claude works. See the full API in the [Python](/docs/en/agent-sdk/python.md#query) or [TypeScript](/docs/en/agent-sdk/typescript.md#query) SDK reference.
+1. **`query`**: the main entry point that creates the agentic loop. It returns an async iterator, so you use `async for` to stream messages as Claude works. See the full API in the [Python](https://code.claude.com/docs/en/agent-sdk/python.md#query) or [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#query) SDK reference.
 
 2. **`prompt`**: what you want Claude to do. Claude figures out which tools to use based on the task.
 
-3. **`options`**: configuration for the agent. This example uses `allowedTools` to pre-approve `Read`, `Edit`, and `Glob`, and `permissionMode: "acceptEdits"` to auto-approve file changes. Other options include `systemPrompt`, `mcpServers`, and more. See all options for [Python](/docs/en/agent-sdk/python.md#claudeagentoptions) or [TypeScript](/docs/en/agent-sdk/typescript.md#options).
+3. **`options`**: configuration for the agent. This example uses `allowedTools` to pre-approve `Read`, `Edit`, and `Glob`, and `permissionMode: "acceptEdits"` to auto-approve file changes. Other options include `systemPrompt`, `mcpServers`, and more. See all options for [Python](https://code.claude.com/docs/en/agent-sdk/python.md#claudeagentoptions) or [TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md#options).
 
 The `async for` loop keeps running as Claude thinks, calls tools, observes results, and decides what to do next. Each iteration yields a message: Claude's reasoning, a tool call, a tool result, or the final outcome. The SDK handles the orchestration, tool execution, context management, and retries, so you consume the stream. The loop ends when Claude finishes the task or hits an error.
 
@@ -218,7 +218,7 @@ The message handling inside the loop filters for human-readable output. Without 
 
 > [!NOTE]
 >
-> This example uses streaming to show progress in real-time. If you don't need live output (for example, for background jobs or CI pipelines), you can collect all messages at once. See [Streaming vs. single-turn mode](/docs/en/agent-sdk/streaming-vs-single-mode.md) for details.
+> This example uses streaming to show progress in real-time. If you don't need live output (for example, for background jobs or CI pipelines), you can collect all messages at once. See [Streaming vs. single-turn mode](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md) for details.
 
 ### Run your agent
 
@@ -258,7 +258,7 @@ This is what makes the Agent SDK different: Claude executes tools directly inste
 >
 > If you see an authentication error such as `Not logged in` or `Invalid API key`, make sure you've set the `ANTHROPIC_API_KEY` environment variable in the shell where you run your agent. The SDK doesn't load `.env` files automatically.
 >
-> For the causes and fixes behind these and other authentication errors, see [Authentication errors](/docs/en/errors.md#authentication-errors) in the Error reference.
+> For the causes and fixes behind these and other authentication errors, see [Authentication errors](https://code.claude.com/docs/en/errors.md#authentication-errors) in the Error reference.
 
 ### Try other prompts
 
@@ -328,7 +328,7 @@ const _ = {
 
 With `Bash` enabled, try: `"Write unit tests for utils.py, run them, and fix any failures"`
 
-Each of these snippets sets fields on the same options object. For more information, see [Configure your agent](/docs/en/agent-sdk/configuration.md).
+Each of these snippets sets fields on the same options object. For more information, see [Configure your agent](https://code.claude.com/docs/en/agent-sdk/configuration.md).
 
 ## Key concepts
 
@@ -340,17 +340,17 @@ Each of these snippets sets fields on the same options object. For more informat
 | `Read`, `Edit`, `Glob` | Analyze and modify code |
 | `Read`, `Edit`, `Bash`, `Glob`, `Grep` | Full automation |
 
-**Permission modes** control how much human oversight you want. The SDK evaluates the active mode together with your allow and deny rules in a fixed order, described in [How permissions are evaluated](/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated). For the full list of modes, their behavior, and when to use each, see [Permission mode in How the agent loop works](/docs/en/agent-sdk/agent-loop.md#permission-mode).
+**Permission modes** control how much human oversight you want. The SDK evaluates the active mode together with your allow and deny rules in a fixed order, described in [How permissions are evaluated](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated). For the full list of modes, their behavior, and when to use each, see [Permission mode in How the agent loop works](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#permission-mode).
 
 ## Next steps
 
 Now that you've created your first agent, learn how to extend its capabilities and tailor it to your use case:
 
-* **[Configure your agent](/docs/en/agent-sdk/configuration.md)**: compose the options object and find the page that covers each setting
-* **[Permissions](/docs/en/agent-sdk/permissions.md)**: control what your agent can do and when it needs approval
-* **[Hooks](/docs/en/agent-sdk/hooks.md)**: run custom code before or after tool calls
-* **[Sessions](/docs/en/agent-sdk/sessions.md)**: build multi-turn agents that maintain context
-* **[MCP servers](/docs/en/agent-sdk/mcp.md)**: connect to databases, browsers, APIs, and other external systems
-* **[Hosting](/docs/en/agent-sdk/hosting.md)**: deploy agents to Docker, cloud, and CI/CD
+* **[Configure your agent](https://code.claude.com/docs/en/agent-sdk/configuration.md)**: compose the options object and find the page that covers each setting
+* **[Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md)**: control what your agent can do and when it needs approval
+* **[Hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md)**: run custom code before or after tool calls
+* **[Sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md)**: build multi-turn agents that maintain context
+* **[MCP servers](https://code.claude.com/docs/en/agent-sdk/mcp.md)**: connect to databases, browsers, APIs, and other external systems
+* **[Hosting](https://code.claude.com/docs/en/agent-sdk/hosting.md)**: deploy agents to Docker, cloud, and CI/CD
 * **[Example agents](https://github.com/anthropics/claude-agent-sdk-demos)**: see complete examples: email assistant, research agent, and more
-* **[Troubleshooting](/docs/en/agent-sdk/troubleshooting.md)**: fix errors when the CLI fails to start or exits, or a result arrives without structured output
+* **[Troubleshooting](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md)**: fix errors when the CLI fails to start or exits, or a result arrives without structured output

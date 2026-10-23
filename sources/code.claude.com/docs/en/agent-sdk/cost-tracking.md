@@ -8,11 +8,11 @@
 
 The Claude Agent SDK provides detailed token usage information for each interaction with Claude. This guide explains how to properly track usage and understand cost reporting, especially when dealing with parallel tool uses and multi-step conversations.
 
-For complete API documentation, see the [TypeScript SDK reference](/docs/en/agent-sdk/typescript.md) and [Python SDK reference](/docs/en/agent-sdk/python.md).
+For complete API documentation, see the [TypeScript SDK reference](https://code.claude.com/docs/en/agent-sdk/typescript.md) and [Python SDK reference](https://code.claude.com/docs/en/agent-sdk/python.md).
 
 > [!WARNING]
 >
-> The `total_cost_usd` and `costUSD` fields are client-side estimates, not authoritative billing data. The SDK computes them locally from a price table bundled at build time, unless a [`modelPricing`](/docs/en/settings-reference#modelpricing) table is in effect. They can drift from what you are actually billed when:
+> The `total_cost_usd` and `costUSD` fields are client-side estimates, not authoritative billing data. The SDK computes them locally from a price table bundled at build time, unless a [`modelPricing`](https://code.claude.com/docs/en/settings-reference#modelpricing) table is in effect. They can drift from what you are actually billed when:
 >
 > * pricing changes
 > * the installed SDK version does not recognize a model
@@ -33,7 +33,7 @@ Both SDKs use the same underlying cost model and expose the same granularity. Th
 
 Cost tracking depends on understanding how the SDK scopes usage data:
 
-* **`query()` call:** one invocation of the SDK's `query()` function. A single call can involve multiple steps: Claude responds, uses tools, gets results, and responds again. Each call produces one [`result`](/docs/en/agent-sdk/typescript#sdkresultmessage) message at the end, except in [streaming input mode](/docs/en/agent-sdk/streaming-vs-single-mode.md), where one `query()` call carries multiple user turns and each turn emits its own `result` message.
+* **`query()` call:** one invocation of the SDK's `query()` function. A single call can involve multiple steps: Claude responds, uses tools, gets results, and responds again. Each call produces one [`result`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkresultmessage) message at the end, except in [streaming input mode](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md), where one `query()` call carries multiple user turns and each turn emits its own `result` message.
 * **Step:** a single request/response cycle within a `query()` call. Each step produces assistant messages with token usage.
 * **Session:** a series of `query()` calls linked by a session ID through the `resume` option. A resumed call's results report the session's whole spend, not just that call's own. See [Accumulate costs across multiple calls](#accumulate-costs-across-multiple-calls) for how the totals carry over.
 
@@ -47,7 +47,7 @@ When Claude responds, it sends one or more assistant messages. In TypeScript, ea
 
 **2. The result message provides the cumulative estimate**
 
-When the `query()` call completes, the SDK emits a result message with `total_cost_usd` and cumulative `usage`, typed as [`SDKResultMessage`](/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](/docs/en/agent-sdk/python#resultmessage) in Python. If you only need the estimated total, you can ignore the per-step usage and read this single value.
+When the `query()` call completes, the SDK emits a result message with `total_cost_usd` and cumulative `usage`, typed as [`SDKResultMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](https://code.claude.com/docs/en/agent-sdk/python#resultmessage) in Python. If you only need the estimated total, you can ignore the per-step usage and read this single value.
 
 If you make multiple independent `query()` calls, each result reflects only the cost of that individual call. A call that resumes a session also counts the session's earlier spend.
 
@@ -55,7 +55,7 @@ In streaming input mode, each turn emits its own result message. See [Track cost
 
 ## Track costs in streaming input mode
 
-In [streaming input mode](/docs/en/agent-sdk/streaming-vs-single-mode.md), one `query()` call carries multiple user turns and each turn emits its own result message. The result fields differ in scope:
+In [streaming input mode](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md), one `query()` call carries multiple user turns and each turn emits its own result message. The result fields differ in scope:
 
 * **`usage`**: covers only that turn, and within it only the main agent loop, not any subagents it ran.
 * **`total_cost_usd` and `modelUsage`, or `model_usage` in Python**: carry the running total for the whole call so far, plus any spend restored when the call resumed a session.
@@ -70,20 +70,20 @@ The running totals start over each time your app sends one of those three comman
 
 To total the whole call, add the last result from before each `/clear` to the call's final result. Every other result, including the `/clear` turn's own, is superseded by a later one.
 
-In TypeScript, the SDK also emits an [`SDKConversationResetMessage`](/docs/en/agent-sdk/typescript#sdkconversationresetmessage) at each reset, so you can detect resets from the stream. In Python, the SDK likewise emits a `ConversationResetMessage`. Before Python SDK v0.2.137, the Python iterator dropped that message, so on those versions count the resets yourself from the `/clear` turns your app sends.
+In TypeScript, the SDK also emits an [`SDKConversationResetMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkconversationresetmessage) at each reset, so you can detect resets from the stream. In Python, the SDK likewise emits a `ConversationResetMessage`. Before Python SDK v0.2.137, the Python iterator dropped that message, so on those versions count the resets yourself from the `/clear` turns your app sends.
 
 `maxBudgetUsd` (TypeScript) or `max_budget_usd` (Python) counts only the call's own spend: totals restored from a resumed session don't count against it, and a `/clear` starts the budget over.
 
 ## Get the total cost of a query
 
-The result message, typed as [`SDKResultMessage`](/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](/docs/en/agent-sdk/python#resultmessage) in Python, marks the end of the agent loop for a `query()` call. It includes `total_cost_usd`, the cumulative estimated cost across all steps in that call. A call that resumes a session also counts the session's earlier spend. Two caveats apply when you read the value:
+The result message, typed as [`SDKResultMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkresultmessage) in TypeScript and [`ResultMessage`](https://code.claude.com/docs/en/agent-sdk/python#resultmessage) in Python, marks the end of the agent loop for a `query()` call. It includes `total_cost_usd`, the cumulative estimated cost across all steps in that call. A call that resumes a session also counts the session's earlier spend. Two caveats apply when you read the value:
 
 * In Python the field is typed as optional, so check that it isn't `None` before you read it.
 * Success and error results both carry it, though the final result of a [session crash](#recover-totals-after-a-session-crash) may carry it zeroed.
 
 In streaming input mode, read call totals as described in [Track costs in streaming input mode](#track-costs-in-streaming-input-mode).
 
-The three result-level fields differ in what they count when the agent spawns [subagents](/docs/en/agent-sdk/subagents.md). Use `modelUsage`, or `model_usage` in Python, for whole-tree token accounting; the `usage` field undercounts as soon as nesting occurs.
+The three result-level fields differ in what they count when the agent spawns [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md). Use `modelUsage`, or `model_usage` in Python, for whole-tree token accounting; the `usage` field undercounts as soon as nesting occurs.
 
 | Field | Subagent activity |
 | - | - |
@@ -91,7 +91,7 @@ The three result-level fields differ in what they count when the agent spawns [s
 | `total_cost_usd` | Included. Counts subagent requests alongside the top-level loop |
 | `modelUsage` / `model_usage` | Included. Counts subagent requests alongside the top-level loop, broken down by model |
 
-In [single message input mode](/docs/en/agent-sdk/streaming-vs-single-mode.md#single-message-input), when background subagents are still running at the end of the final turn, Claude Code waits for them, up to the cap described in [background tasks at exit](/docs/en/headless.md#background-tasks-at-exit), before emitting the result. The result's `total_cost_usd`, `duration_api_ms`, and `modelUsage`, or `model_usage` in Python, include the work done during that wait.
+In [single message input mode](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md#single-message-input), when background subagents are still running at the end of the final turn, Claude Code waits for them, up to the cap described in [background tasks at exit](https://code.claude.com/docs/en/headless.md#background-tasks-at-exit), before emitting the result. The result's `total_cost_usd`, `duration_api_ms`, and `modelUsage`, or `model_usage` in Python, include the work done during that wait.
 
 The following examples iterate over the message stream from a `query()` call and print the total cost when the `result` message arrives:
 
@@ -133,11 +133,11 @@ async def main():
 asyncio.run(main())
 ```
 
-To bound how much subagents can add to `total_cost_usd`, set the [depth, concurrency, and spend limits](/docs/en/agent-sdk/subagents.md#cap-subagent-depth-concurrency-and-spend) on the query.
+To bound how much subagents can add to `total_cost_usd`, set the [depth, concurrency, and spend limits](https://code.claude.com/docs/en/agent-sdk/subagents.md#cap-subagent-depth-concurrency-and-spend) on the query.
 
 ## Track per-step and per-model usage
 
-The examples in this section use TypeScript field names. In Python, the equivalent fields are [`AssistantMessage.usage`](/docs/en/agent-sdk/python#assistantmessage) and `AssistantMessage.message_id` for per-step usage, and [`ResultMessage.model_usage`](/docs/en/agent-sdk/python#resultmessage) for per-model breakdowns.
+The examples in this section use TypeScript field names. In Python, the equivalent fields are [`AssistantMessage.usage`](https://code.claude.com/docs/en/agent-sdk/python#assistantmessage) and `AssistantMessage.message_id` for per-step usage, and [`ResultMessage.model_usage`](https://code.claude.com/docs/en/agent-sdk/python#resultmessage) for per-model breakdowns.
 
 ### Track per-step usage
 
@@ -186,9 +186,9 @@ console.log(`Output tokens: ${resultOutputTokens}`);
 
 ### Break down usage per model
 
-The result message includes [`modelUsage`](/docs/en/agent-sdk/typescript#modelusage), a map of model name to per-model token counts and cost. This is useful when you run multiple models (for example, Haiku for subagents and Opus for the main agent) and want to see where tokens are going.
+The result message includes [`modelUsage`](https://code.claude.com/docs/en/agent-sdk/typescript#modelusage), a map of model name to per-model token counts and cost. This is useful when you run multiple models (for example, Haiku for subagents and Opus for the main agent) and want to see where tokens are going.
 
-Each entry's `costBasis` says which price table priced that model's latest request: `list` for list price, `managed` for a [`modelPricing`](/docs/en/settings-reference#modelpricing) table, or `unknown` when neither matched the model ID. The field requires Claude Code v2.1.246 or later.
+Each entry's `costBasis` says which price table priced that model's latest request: `list` for list price, `managed` for a [`modelPricing`](https://code.claude.com/docs/en/settings-reference#modelpricing) table, or `unknown` when neither matched the model ID. The field requires Claude Code v2.1.246 or later.
 
 The following example runs a query and prints the cost and token breakdown for each model used:
 
@@ -220,7 +220,7 @@ try {
 Each `query()` call returns `total_cost_usd` on its results. How you combine the values depends on whether the calls share a session:
 
 * **Independent calls, with no `resume` or `continue` option**: each result covers only its own call, so add the totals yourself, as the examples below do.
-* **Calls that resume the same session**: Claude Code saves the session's totals to its [transcript](/docs/en/sessions.md#where-transcripts-are-stored) when the process exits normally and restores them when a later call resumes or forks the session. Each result already includes the session's earlier spend. Read the latest result for the session total; summing results double-counts the restored spend. Before v2.1.277, a session that you resumed through the SDK or `claude -p` started its totals at zero, so each call's results covered only that call.
+* **Calls that resume the same session**: Claude Code saves the session's totals to its [transcript](https://code.claude.com/docs/en/sessions.md#where-transcripts-are-stored) when the process exits normally and restores them when a later call resumes or forks the session. Each result already includes the session's earlier spend. Read the latest result for the session total; summing results double-counts the restored spend. Before v2.1.277, a session that you resumed through the SDK or `claude -p` started its totals at zero, so each call's results covered only that call.
 
 Either way, the combined figure is still a [client-side estimate](#estimates-not-billing).
 
@@ -303,7 +303,7 @@ Claude Code builds each assistant message from the usage the API reported when t
 
 The API reports the real output count at the end of the response, and Claude Code adds it to the result message. Read output tokens from the result's `usage`, or from `modelUsage` for a per-model breakdown.
 
-To watch a response's output count grow while it streams, set `includePartialMessages`, or `include_partial_messages` in Python, and read `usage` from each `message_delta` stream event, typed as [`SDKPartialAssistantMessage`](/docs/en/agent-sdk/typescript#sdkpartialassistantmessage) in TypeScript and [`StreamEvent`](/docs/en/agent-sdk/python#streamevent) in Python.
+To watch a response's output count grow while it streams, set `includePartialMessages`, or `include_partial_messages` in Python, and read `usage` from each `message_delta` stream event, typed as [`SDKPartialAssistantMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkpartialassistantmessage) in TypeScript and [`StreamEvent`](https://code.claude.com/docs/en/agent-sdk/python#streamevent) in Python.
 
 ### Track costs on failed conversations
 
@@ -333,17 +333,17 @@ The Agent SDK automatically uses [prompt caching](https://platform.claude.com/do
 * `cache_creation_input_tokens`: tokens used to create new cache entries (charged at a higher rate than standard input tokens).
 * `cache_read_input_tokens`: tokens read from existing cache entries (charged at a reduced rate).
 
-Track these separately from `input_tokens` to understand caching savings. In TypeScript, these fields are typed on the [`Usage`](/docs/en/agent-sdk/typescript#usage) object. In Python, they appear as keys in the [`ResultMessage.usage`](/docs/en/agent-sdk/python#resultmessage) dict (for example, `message.usage.get("cache_read_input_tokens", 0)`).
+Track these separately from `input_tokens` to understand caching savings. In TypeScript, these fields are typed on the [`Usage`](https://code.claude.com/docs/en/agent-sdk/typescript#usage) object. In Python, they appear as keys in the [`ResultMessage.usage`](https://code.claude.com/docs/en/agent-sdk/python#resultmessage) dict (for example, `message.usage.get("cache_read_input_tokens", 0)`).
 
 ### Extend the prompt cache TTL to one hour
 
-Your own turns fall in the [main conversation TTL bucket](/docs/en/prompt-caching.md#which-ttl-each-request-gets), together with the helpers Claude Code runs inline with them. The requests Claude Code makes outside that conversation, such as [subagents](/docs/en/agent-sdk/subagents.md), have a [separate TTL control](/docs/en/prompt-caching.md#choose-the-ttl-yourself).
+Your own turns fall in the [main conversation TTL bucket](https://code.claude.com/docs/en/prompt-caching.md#which-ttl-each-request-gets), together with the helpers Claude Code runs inline with them. The requests Claude Code makes outside that conversation, such as [subagents](https://code.claude.com/docs/en/agent-sdk/subagents.md), have a [separate TTL control](https://code.claude.com/docs/en/prompt-caching.md#choose-the-ttl-yourself).
 
-Cache entries for your own turns use a 5-minute TTL by default when you authenticate with an API key or run on Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or [Claude Platform on AWS](/docs/en/claude-platform-on-aws.md). If your workload runs many short sessions against the same system prompt and context with gaps longer than 5 minutes between them, the cache expires between sessions and each new session pays full input price.
+Cache entries for your own turns use a 5-minute TTL by default when you authenticate with an API key or run on Amazon Bedrock, Google Cloud's Agent Platform, Microsoft Foundry, or [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md). If your workload runs many short sessions against the same system prompt and context with gaps longer than 5 minutes between them, the cache expires between sessions and each new session pays full input price.
 
-To request a 1-hour TTL on cache writes, set the [`ENABLE_PROMPT_CACHING_1H`](/docs/en/env-vars) environment variable. You can export it in your shell or container environment, or pass it through `options.env`.
+To request a 1-hour TTL on cache writes, set the [`ENABLE_PROMPT_CACHING_1H`](https://code.claude.com/docs/en/env-vars) environment variable. You can export it in your shell or container environment, or pass it through `options.env`.
 
-The following example enables 1-hour TTL for an agent running on Amazon Bedrock. Because it sets `CLAUDE_CODE_USE_BEDROCK`, it requires working AWS credentials for [Amazon Bedrock](/docs/en/amazon-bedrock.md); without them the query fails.
+The following example enables 1-hour TTL for an agent running on Amazon Bedrock. Because it sets `CLAUDE_CODE_USE_BEDROCK`, it requires working AWS credentials for [Amazon Bedrock](https://code.claude.com/docs/en/amazon-bedrock.md); without them the query fails.
 
 ```python Python theme={null}
 from claude_agent_sdk import ClaudeAgentOptions, query
@@ -385,13 +385,13 @@ Cache writes with a 1-hour TTL are billed at a higher rate than 5-minute writes,
 
 `ENABLE_PROMPT_CACHING_1H` asks for the 1-hour TTL on every request in both buckets. To choose a TTL for each bucket separately, use these controls instead. Each takes `5m` or `1h` and takes precedence over `ENABLE_PROMPT_CACHING_1H`:
 
-* Main conversation: the `CLAUDE_CODE_PROMPT_CACHE_TTL` [environment variable](/docs/en/env-vars.md), or the [`promptCacheTtl`](/docs/en/settings-reference#promptcachettl) setting
-* Everything else: the `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` environment variable, or the [`subagentPromptCacheTtl`](/docs/en/settings-reference#subagentpromptcachettl) setting
+* Main conversation: the `CLAUDE_CODE_PROMPT_CACHE_TTL` [environment variable](https://code.claude.com/docs/en/env-vars.md), or the [`promptCacheTtl`](https://code.claude.com/docs/en/settings-reference#promptcachettl) setting
+* Everything else: the `CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL` environment variable, or the [`subagentPromptCacheTtl`](https://code.claude.com/docs/en/settings-reference#subagentpromptcachettl) setting
 
-Setting `promptCacheTtl` to `1h` keeps the 1-hour cache on the main conversation while you're drawing on usage credits. For the full precedence order, see [choose the TTL yourself](/docs/en/prompt-caching.md#choose-the-ttl-yourself).
+Setting `promptCacheTtl` to `1h` keeps the 1-hour cache on the main conversation while you're drawing on usage credits. For the full precedence order, see [choose the TTL yourself](https://code.claude.com/docs/en/prompt-caching.md#choose-the-ttl-yourself).
 
 ## Related documentation
 
-* [TypeScript SDK Reference](/docs/en/agent-sdk/typescript.md) - Complete API documentation
-* [SDK Overview](/docs/en/agent-sdk/overview.md) - Getting started with the SDK
-* [SDK Permissions](/docs/en/agent-sdk/permissions.md) - Managing tool permissions
+* [TypeScript SDK Reference](https://code.claude.com/docs/en/agent-sdk/typescript.md) - Complete API documentation
+* [SDK Overview](https://code.claude.com/docs/en/agent-sdk/overview.md) - Getting started with the SDK
+* [SDK Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) - Managing tool permissions

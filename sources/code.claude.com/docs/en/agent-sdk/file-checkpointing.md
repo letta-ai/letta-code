@@ -6,11 +6,11 @@
 
 > Track file changes during agent sessions and restore files to any previous state
 
-File checkpointing tracks file modifications made through the [Write](/docs/en/tools-reference.md#write-tool-behavior), [Edit](/docs/en/tools-reference.md#edit-tool-behavior), and [NotebookEdit](/docs/en/tools-reference.md#notebookedit-tool-behavior) tools during an agent session, allowing you to rewind files to any previous state. To watch a rewind restore a file, jump to the [interactive example](#try-it-out).
+File checkpointing tracks file modifications made through the [Write](https://code.claude.com/docs/en/tools-reference.md#write-tool-behavior), [Edit](https://code.claude.com/docs/en/tools-reference.md#edit-tool-behavior), and [NotebookEdit](https://code.claude.com/docs/en/tools-reference.md#notebookedit-tool-behavior) tools during an agent session, allowing you to rewind files to any previous state. To watch a rewind restore a file, jump to the [interactive example](#try-it-out).
 
 > [!WARNING]
 >
-> `rewindFiles()` doesn't undo what `sed -i` or another Bash command did to a file, unless a tool such as Write or Edit had modified that file in the main conversation. [Subagent](/docs/en/agent-sdk/subagents.md) edits aren't tracked, while edits from a [skill with `context: fork`](/docs/en/skills#run-skills-in-a-subagent) running in the foreground are.
+> `rewindFiles()` doesn't undo what `sed -i` or another Bash command did to a file, unless a tool such as Write or Edit had modified that file in the main conversation. [Subagent](https://code.claude.com/docs/en/agent-sdk/subagents.md) edits aren't tracked, while edits from a [skill with `context: fork`](https://code.claude.com/docs/en/skills#run-skills-in-a-subagent) running in the foreground are.
 
 ## How checkpointing works
 
@@ -20,7 +20,7 @@ When you enable file checkpointing, the SDK creates backups of files before modi
 >
 > File rewinding restores files on disk to a previous state. It does not rewind the conversation itself. The conversation history and context remain intact after calling `rewindFiles()` (TypeScript) or `rewind_files()` (Python).
 
-When you rewind to a checkpoint, Claude Code deletes the files it created and restores the files it modified to their content at that point. Claude Code skips a tracked path that is a symlink, hard link, or other non-regular file. It also skips a tracked file whose parent directory no longer resolves to its checkpoint-time location, or whose backup it can't read safely. [`RewindFilesResult`](/docs/en/agent-sdk/typescript#rewindfilesresult) counts every skipped path in its `skippedLinks` field. Skipping requires Claude Code v2.1.216 or later; before v2.1.216, a rewind wrote and deleted through links at tracked paths.
+When you rewind to a checkpoint, Claude Code deletes the files it created and restores the files it modified to their content at that point. Claude Code skips a tracked path that is a symlink, hard link, or other non-regular file. It also skips a tracked file whose parent directory no longer resolves to its checkpoint-time location, or whose backup it can't read safely. [`RewindFilesResult`](https://code.claude.com/docs/en/agent-sdk/typescript#rewindfilesresult) counts every skipped path in its `skippedLinks` field. Skipping requires Claude Code v2.1.216 or later; before v2.1.216, a rewind wrote and deleted through links at tracked paths.
 
 ## Implement checkpointing
 
@@ -143,7 +143,7 @@ Configure your SDK options to enable checkpointing and receive checkpoint UUIDs:
 | Enable checkpointing | `enable_file_checkpointing=True` | `enableFileCheckpointing: true` | Tracks file changes for rewinding |
 | Receive checkpoint UUIDs | `extra_args={"replay-user-messages": None}` | `extraArgs: { 'replay-user-messages': null }` | Required to get user message UUIDs in the stream |
 
-The lead example under [Implement checkpointing](#implement-checkpointing) also sets the permission mode to `acceptEdits`, which approves the agent's file edits without a prompt. For more information, see [Permission modes](/docs/en/agent-sdk/permissions.md#permission-modes).
+The lead example under [Implement checkpointing](#implement-checkpointing) also sets the permission mode to `acceptEdits`, which approves the agent's file edits without a prompt. For more information, see [Permission modes](https://code.claude.com/docs/en/agent-sdk/permissions.md#permission-modes).
 
 **2. Capture checkpoint UUID and session ID**
 
@@ -157,7 +157,7 @@ Capturing the session ID (`message.session_id`) is optional; you only need it if
 
 To rewind after the stream completes, resume the session with an empty prompt and call `rewind_files()` (Python) or `rewindFiles()` (TypeScript) with your checkpoint UUID. Enable checkpointing on the resumed session's options too, and call rewind from inside the response loop. You can also rewind during the stream. See [Checkpoint before risky operations](#checkpoint-before-risky-operations) for that pattern.
 
-If you capture the session ID and checkpoint ID, you can also rewind from the CLI. This command requires the `claude` executable, which comes from [installing Claude Code](/docs/en/setup.md). The SDK enables checkpointing for you, but when you run `claude -p` directly you must set the `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` environment variable:
+If you capture the session ID and checkpoint ID, you can also rewind from the CLI. This command requires the `claude` executable, which comes from [installing Claude Code](https://code.claude.com/docs/en/setup.md). The SDK enables checkpointing for you, but when you run `claude -p` directly you must set the `CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING` environment variable:
 
 ```bash theme={null}
 CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true claude -p --resume <session-id> --rewind-files <checkpoint-uuid>
@@ -380,7 +380,7 @@ main();
 
 This complete example creates a small utility file, has the agent add documentation comments, shows you the changes, then asks if you want to rewind.
 
-Before you begin, make sure you have the [Claude Agent SDK installed](/docs/en/agent-sdk/quickstart.md).
+Before you begin, make sure you have the [Claude Agent SDK installed](https://code.claude.com/docs/en/agent-sdk/quickstart.md).
 
 **1. Create a test file**
 
@@ -606,7 +606,7 @@ File checkpointing has the following limitations:
 | Limitation | Description |
 | - | - |
 | Bash command changes | Rewinding doesn't undo changes a Bash command made, except in files the main conversation had already edited with a tool such as Write or Edit |
-| Subagent edits | Edits a [subagent](/docs/en/agent-sdk/subagents.md) applies aren't tracked, except a skill with `context: fork` running in the foreground. A rewind reverts them only in files the main conversation had already edited; use git to revert the rest |
+| Subagent edits | Edits a [subagent](https://code.claude.com/docs/en/agent-sdk/subagents.md) applies aren't tracked, except a skill with `context: fork` running in the foreground. A rewind reverts them only in files the main conversation had already edited; use git to revert the rest |
 | Same session | Checkpoints are tied to the session that created them |
 | File content only | Creating, moving, or deleting directories is not undone by rewinding |
 | Local files | Remote or network files are not tracked |
@@ -661,7 +661,7 @@ This error occurs when you call `rewindFiles()` or `rewind_files()` after you've
 
 ## Next steps
 
-* **[Sessions](/docs/en/agent-sdk/sessions.md)**: learn how to resume sessions, which is required for rewinding after the stream completes. Covers session IDs, resuming conversations, and session forking.
-* **[Permissions](/docs/en/agent-sdk/permissions.md)**: configure which tools Claude can use and how file modifications are approved. Useful if you want more control over when edits happen.
-* **[TypeScript SDK reference](/docs/en/agent-sdk/typescript.md)**: complete API reference including all options for `query()` and the `rewindFiles()` method.
-* **[Python SDK reference](/docs/en/agent-sdk/python.md)**: complete API reference including all options for `ClaudeAgentOptions` and the `rewind_files()` method.
+* **[Sessions](https://code.claude.com/docs/en/agent-sdk/sessions.md)**: learn how to resume sessions, which is required for rewinding after the stream completes. Covers session IDs, resuming conversations, and session forking.
+* **[Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md)**: configure which tools Claude can use and how file modifications are approved. Useful if you want more control over when edits happen.
+* **[TypeScript SDK reference](https://code.claude.com/docs/en/agent-sdk/typescript.md)**: complete API reference including all options for `query()` and the `rewindFiles()` method.
+* **[Python SDK reference](https://code.claude.com/docs/en/agent-sdk/python.md)**: complete API reference including all options for `ClaudeAgentOptions` and the `rewind_files()` method.
