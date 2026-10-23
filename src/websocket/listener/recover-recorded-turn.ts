@@ -33,6 +33,7 @@ import {
   acquireRecoveryClaim,
   canRecoverConversation,
   type RecoveryClaim,
+  recoveryRetryDelay,
   resolveRecoveryEligibility,
 } from "./recovery-ownership";
 import { getActiveRuntime, getConversationRuntimeKey } from "./runtime";
@@ -968,14 +969,21 @@ export async function recoverRecordedTurns(
     }
   } finally {
     recovering.delete(listener);
+    const retryDelayMs = recoveryRetryDelay(
+      listener,
+      deps.retryDelayMs ?? 5000,
+    );
     if (pendingRecoveries.delete(listener)) {
       scheduleRecordedTurnRecovery(
         listener,
         () => recoverRecordedTurns(listener, deps),
         deps.retryDelayMs,
       );
-    } else if (deferred && !listener.intentionallyClosed) {
-      const retryDelayMs = deps.retryDelayMs ?? 5000;
+    } else if (
+      deferred &&
+      Number.isFinite(retryDelayMs) &&
+      !listener.intentionallyClosed
+    ) {
       const timer = setTimeout(() => {
         retryTimers.delete(listener);
         scheduleRecordedTurnRecovery(
