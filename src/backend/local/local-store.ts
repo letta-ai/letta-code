@@ -39,6 +39,7 @@ import {
 } from "./local-agent-record";
 import { readAgentRecordFiles } from "./local-agent-record-file";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
+import { localConversationKey } from "./local-conversation-key";
 import { listLocalConversations } from "./local-conversation-list";
 import {
   agentFreeExecutionRecord,
@@ -3254,8 +3255,6 @@ export class LocalStore {
   }
 
   private conversationKey(conversationId: string, agentId: string): string {
-    return conversationId === "default"
-      ? `default:${agentId}`
-      : `conversation:${conversationId}`;
+    return localConversationKey(conversationId, agentId);
   }
 }
