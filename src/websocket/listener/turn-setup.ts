@@ -344,6 +344,7 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
+    bundledSkills: runtime.bundledSkills,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
     cachedAgent,
@@ -361,6 +362,7 @@ export async function prepareListenerTurn(params: {
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
+      bundledSkills: runtime.bundledSkills,
     })
   ).availableSkills;
   if (isInterrupted()) {
@@ -379,6 +381,7 @@ export async function prepareListenerTurn(params: {
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
+      bundledSkills: runtime.bundledSkills,
     },
   );
   if (isInterrupted()) return { kind: "interrupted" };

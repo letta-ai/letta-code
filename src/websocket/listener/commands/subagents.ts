@@ -68,6 +68,7 @@ export async function handleLaunchSubagentCommand(
               parent.conversationId,
             ),
             skillSources: parent.skillSources,
+            bundledSkills: parent.bundledSkills,
             workspaceSandbox: parent.workspaceSandbox,
             executionSettings: parent.executionSettings,
           },

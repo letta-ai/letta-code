@@ -445,6 +445,8 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
   executionSettings?: RuntimeExecutionSettings;
@@ -645,7 +647,10 @@ export type ListenerRuntime = {
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
   /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
-  skillSourcesByConversation: Map<string, SkillSource[]>;
+  skillSourcesByConversation: Map<
+    string,
+    { sources: SkillSource[]; bundledSkills?: string[] }
+  >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */

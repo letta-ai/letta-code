@@ -38,6 +38,8 @@ export interface RuntimeContextSnapshot {
   suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   workingDirectory?: string | null;
   /**
    * Set when the runtime-scoped working directory was found deleted and
