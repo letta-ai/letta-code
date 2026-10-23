@@ -295,11 +295,18 @@ function isNotFoundError(error: unknown): boolean {
 
 async function retrieveMessageVariantsForPendingApproval(
   messageId: string,
+  throwOnReadError = false,
 ): Promise<Message[]> {
   try {
-    return await getBackend().retrieveMessage(messageId);
+    const messages = await getBackend().retrieveMessage(messageId);
+    if (throwOnReadError && messages.length === 0) {
+      throw new Error(
+        "The in-context message could not be read for approval recovery",
+      );
+    }
+    return messages;
   } catch (error) {
-    if (isNotFoundError(error)) {
+    if (isNotFoundError(error) && !throwOnReadError) {
       debugWarn(
         "check-approval",
         `Unable to retrieve in-context message ${messageId} while checking pending approvals: ${error instanceof Error ? error.message : String(error)}`,
@@ -486,6 +493,7 @@ async function fetchResumeTail(
 async function pendingApprovalsFromTailOrRetrieve(
   messages: Message[],
   lastInContextId?: string | null,
+  throwOnReadError = false,
 ): Promise<ReturnType<typeof pendingApprovalsFromMessageVariants>> {
   const tailCheck = pendingApprovalsFromTail(messages, lastInContextId);
   if (
@@ -493,14 +501,18 @@ async function pendingApprovalsFromTailOrRetrieve(
     tailCheck.pendingApprovals.length > 0 &&
     tailStartsInsideSourceMessage(messages, lastInContextId)
   ) {
-    const retrievedMessages =
-      await retrieveMessageVariantsForPendingApproval(lastInContextId);
+    const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+      lastInContextId,
+      throwOnReadError,
+    );
     return pendingApprovalsFromMessageVariants(retrievedMessages);
   }
   if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
 
-  const retrievedMessages =
-    await retrieveMessageVariantsForPendingApproval(lastInContextId);
+  const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+    lastInContextId,
+    throwOnReadError,
+  );
   return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
@@ -570,7 +582,11 @@ export async function getResumeDataFromBackend(
       }
 
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          options.throwOnReadError,
+        );
       return {
         pendingApproval,
         pendingApprovals,
@@ -606,7 +622,11 @@ export async function getResumeDataFromBackend(
 
     if (lastInContextId) {
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          options.throwOnReadError,
+        );
       return {
         pendingApproval,
         pendingApprovals,

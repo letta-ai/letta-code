@@ -36,6 +36,10 @@ import {
   refreshInputOtidsForNewRequest,
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
+import {
+  AutomaticApprovalRetryChangedError,
+  reconcileAutomaticApprovalRetry,
+} from "@/agent/automatic-approval-retry";
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
 import { waitForBusyRunRetry } from "@/agent/busy-run-wait";
@@ -818,6 +822,30 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           let preStreamResumeResult: DrainResult | null = null;
           let prefetchedAgent: AgentState | null = null;
           try {
+            if (retryingBusyInput) {
+              try {
+                currentInput = await reconcileAutomaticApprovalRetry(
+                  agentIdRef.current,
+                  conversationIdRef.current ?? "default",
+                  currentInput,
+                  signal,
+                );
+              } catch (error) {
+                if (
+                  myGeneration === conversationGenerationRef.current &&
+                  !signal.aborted
+                ) {
+                  const restored = getApprovalRecoveryInputText(currentInput);
+                  if (restored) setRestoredInput(restored);
+                }
+                throw error;
+              }
+            }
+            if (
+              myGeneration !== conversationGenerationRef.current ||
+              signal.aborted
+            )
+              return;
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
@@ -1136,16 +1164,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             if (hasApprovalInPayload) {
               // "Invalid tool call IDs": server HAS differently-IDed pending approvals
               // — fetch the real pending approvals and show them.
-              if (isInvalidToolCallIdsError(errorDetail)) {
+              if (
+                isInvalidToolCallIdsError(errorDetail) ||
+                (preStreamError instanceof AutomaticApprovalRetryChangedError &&
+                  preStreamError.action === "show_pending")
+              ) {
                 try {
-                  const agent = await getBackend().retrieveAgent(
-                    agentIdRef.current,
-                  );
                   const { pendingApprovals: serverApprovals } =
-                    await getResumeDataFromBackend(
-                      agent,
-                      conversationIdRef.current,
-                    );
+                    preStreamError instanceof AutomaticApprovalRetryChangedError
+                      ? preStreamError
+                      : await getResumeDataFromBackend(
+                          await getBackend().retrieveAgent(agentIdRef.current),
+                          conversationIdRef.current,
+                        );
+                  if (
+                    myGeneration !== conversationGenerationRef.current ||
+                    signal.aborted
+                  )
+                    return;
 
                   if (serverApprovals && serverApprovals.length > 0) {
                     // Preserve user message (filter system reminders to avoid re-inject)
@@ -1175,6 +1211,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                           );
                         }),
                       );
+                      if (
+                        myGeneration !== conversationGenerationRef.current ||
+                        signal.aborted
+                      )
+                        return;
                       setApprovalContexts(contexts);
                     } catch {
                       // If analysis fails, contexts remain empty (will show basic options)
@@ -2246,7 +2287,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             detailFromRun = runErrorInfo?.detail ?? runErrorInfo?.message;
           const invalidIdsDetected =
             isInvalidToolCallIdsError(detailFromRun) ||
-            isInvalidToolCallIdsError(latestErrorText);
+            isInvalidToolCallIdsError(latestErrorText) ||
+            isInvalidToolCallIdsError(fallbackError);
 
           if (hasApprovalInPayload && invalidIdsDetected) {
             try {
@@ -2326,7 +2368,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           // interrupt may have been rejected by the backend.
           const approvalPendingDetected =
             isApprovalPendingError(detailFromRun) ||
-            isApprovalPendingError(latestErrorText);
+            isApprovalPendingError(latestErrorText) ||
+            isApprovalPendingError(fallbackError);
 
           if (
             shouldAttemptApprovalRecovery({

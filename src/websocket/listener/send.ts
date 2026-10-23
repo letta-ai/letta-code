@@ -6,6 +6,7 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { reconcileAutomaticApprovalRetry } from "@/agent/automatic-approval-retry";
 import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
 import {
   BUSY_RUN_POLL_INTERVAL_MS,
@@ -399,6 +400,18 @@ export async function sendMessageStreamWithRetry(
     });
 
     try {
+      if (conversationBusyRetries > 0)
+        messages = await reconcileAutomaticApprovalRetry(
+          opts?.agentId ?? runtime.agentId ?? "",
+          conversationId,
+          messages,
+          abortSignal,
+        );
+      if (
+        !runtime.turnLifecycle.isCurrent(turnLease) ||
+        retryOptions.authorityGuard?.() === false
+      )
+        throw new Error("Recovery ownership lost");
       const stream = await sendMessageStream(
         conversationId,
         messages,
@@ -615,6 +628,18 @@ export async function sendApprovalContinuationWithRetry(
     });
 
     try {
+      if (conversationBusyRetries > 0)
+        messages = await reconcileAutomaticApprovalRetry(
+          opts?.agentId ?? runtime.agentId ?? "",
+          conversationId,
+          messages,
+          abortSignal,
+        );
+      if (
+        !runtime.turnLifecycle.isCurrent(turnLease) ||
+        retryOptions.authorityGuard?.() === false
+      )
+        throw new Error("Recovery ownership lost");
       const stream = await sendMessageStream(
         conversationId,
         messages,

@@ -10,6 +10,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
+import { reconcileAutomaticApprovalRetry } from "@/agent/automatic-approval-retry";
 import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
 import { waitForBusyRunRetry } from "@/agent/busy-run-wait";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
@@ -2205,10 +2206,16 @@ export async function handleHeadlessCommand(
         }
       }
 
-      // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>> | undefined;
       let turnToolContextId: string | null = null;
       try {
+        if (retryingBusyInput)
+          currentInput = await reconcileAutomaticApprovalRetry(
+            agent.id,
+            conversationId,
+            currentInput,
+            sigintSignal,
+          );
         const turnToolContext = await prepareHeadlessToolExecutionContext({
           agentId: agent.id,
           conversationId,
@@ -2242,7 +2249,6 @@ export async function handleHeadlessCommand(
           await exitInterrupted();
         }
 
-        // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
 
         const preStreamAction = getPreStreamErrorAction(
@@ -2260,7 +2266,6 @@ export async function handleHeadlessCommand(
         );
 
         // Check for pending approval blocking new messages - resolve and retry.
-        // Distinct from "conversation busy": needs approval resolution, not delay.
         if (preStreamAction === "resolve_approval_pending") {
           if (outputFormat === "stream-json") {
             const recoveryMsg: RecoveryMessage = {
@@ -2474,7 +2479,6 @@ export async function handleHeadlessCommand(
       const fallbackError = result.fallbackError ?? null;
       if (lastRunId) lastKnownRunId = lastRunId;
 
-      // Track API duration for this stream
       sessionStats.endTurn(apiDurationMs);
 
       // Exit before dispatching tool calls produced after an interrupt.
@@ -2495,7 +2499,6 @@ export async function handleHeadlessCommand(
         continue;
       }
 
-      // Case 1: Turn ended normally
       if (stopReason === "end_turn") {
         // Reset retry counters on success
         llmApiErrorRetries = 0;
@@ -2549,14 +2552,12 @@ export async function handleHeadlessCommand(
         break;
       }
 
-      // Case 2: Requires approval - batch process all approvals
       if (stopReason === "requires_approval") {
         if (approvals.length === 0) {
           console.error("Unexpected empty approvals array");
           await exitHeadless(1, "headless_requires_approval_empty");
         }
 
-        // Phase 1: Collect decisions for all approvals
         type Decision =
           | {
               type: "approve";
@@ -2604,7 +2605,6 @@ export async function handleHeadlessCommand(
           })),
         ];
 
-        // Phase 2: Execute all approved tools and format results using shared function
         const { executeApprovalBatch } = await import(
           "@/agent/approval-execution"
         );
@@ -2724,7 +2724,6 @@ export async function handleHeadlessCommand(
             );
           }
 
-          // Exponential backoff before retrying the same input
           await new Promise((resolve) => setTimeout(resolve, delayMs));
 
           // Post-stream retry creates a new run/request.
@@ -2735,7 +2734,8 @@ export async function handleHeadlessCommand(
 
       const invalidIdsDetected =
         isInvalidToolCallIdsError(detailFromRun) ||
-        isInvalidToolCallIdsError(latestErrorText);
+        isInvalidToolCallIdsError(latestErrorText) ||
+        isInvalidToolCallIdsError(fallbackError);
       if (invalidIdsDetected) {
         if (outputFormat === "stream-json") {
           const recoveryMsg: RecoveryMessage = {
@@ -2783,8 +2783,6 @@ export async function handleHeadlessCommand(
       // Unexpected stop reason: before failing, check run metadata for a
       // retriable cause — the backend may send a generic error stop_reason
       // for a transient LLM/network issue.
-
-      // Early exit for stop reasons that should never be retried
       const nonRetriableReasons: StopReasonType[] = [
         "cancelled",
         "requires_approval",
