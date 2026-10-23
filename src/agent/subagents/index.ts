@@ -440,7 +440,15 @@ export function resolveSubagentConfigForMemoryFormat(
   ) {
     return config;
   }
-  return { ...config, systemPrompt: v2Builtin.systemPrompt };
+  return {
+    ...config,
+    systemPrompt: v2Builtin.systemPrompt,
+    // Keep an override's explicit skill list; upgrade only the built-in default.
+    skills:
+      config.skills.join(",") === v1Builtin.skills.join(",")
+        ? [...v2Builtin.skills]
+        : config.skills,
+  };
 }
 
 /**

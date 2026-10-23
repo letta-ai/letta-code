@@ -35,7 +35,7 @@ For poll loops checking job state, emit on every terminal status (`succeeded|fai
 
 Stdout lines within 200ms are batched into a single notification, so multiline output from a single event groups naturally.
 
-The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams) — the monitor runs until you call TaskStop or the session ends. Use TaskStop to cancel early.
+The script runs in the same shell environment as Bash. Exit ends the watch (exit code is reported). Timeout → killed. Set `persistent: true` for session-length watches (log tails, long-lived event streams). In managed Cloud sandboxes, every monitor stops after at most 1 hour, including persistent monitors; elsewhere persistent monitors run until TaskStop or session end. For longer Cloud waits, schedule a Wake or cron (which does not keep the sandbox running between turns) and combine it with shorter monitors. Use TaskStop to cancel early.
 
 When someone is waiting on the result, set `backup_after_seconds` (e.g. 900). If the monitor goes that long without an event, a durable Wake brings you back to check the real state, so a queued, hung, or dead watch can't leave them waiting in silence.
 

@@ -303,7 +303,7 @@ export function estimateProviderRequestBytes(
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
   contextTokensEstimate?: number,
-): LettaStreamingResponse | undefined {
+): LettaStreamingResponse {
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -312,19 +312,11 @@ function createUsageStatisticsChunk(
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
   const reasoningTokens = usage?.reasoning;
-  if (
-    promptTokens === undefined &&
-    completionTokens === undefined &&
-    totalTokens === undefined &&
-    cachedInputTokens === undefined &&
-    cacheWriteTokens === undefined &&
-    reasoningTokens === undefined &&
-    contextTokens === undefined
-  ) {
-    return undefined;
-  }
   return {
     message_type: "usage_statistics",
+    // One chunk per completed provider step (see the `done` handler), so each
+    // reports exactly one step, matching Cloud's per-step usage_statistics.
+    step_count: 1,
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
@@ -508,14 +500,11 @@ function createProviderLettaStream(
 
           if (part.type === "done") {
             if (!sawUsageStatistics) {
-              const usageChunk = createUsageStatisticsChunk(
+              sawUsageStatistics = true;
+              yield createUsageStatisticsChunk(
                 part.message.usage,
                 contextTokensEstimate,
               );
-              if (usageChunk) {
-                sawUsageStatistics = true;
-                yield usageChunk;
-              }
             }
             pendingStopReason = {
               message_type: "stop_reason",

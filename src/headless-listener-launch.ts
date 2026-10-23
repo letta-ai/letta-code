@@ -11,13 +11,13 @@ import {
   dequeueConversationMessage,
   type EnqueueReceipt,
   enqueueConversationMessage,
+  getEnqueueAgentId,
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
 import { getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type {
-  AgentRuntimeScope,
   ConversationRuntimeScope,
   LoopState,
   MessageDelta,
@@ -46,7 +46,7 @@ export function listenerControlUrl(
 
 async function createListenerClient(
   connectionId: string,
-  scope: AgentRuntimeScope,
+  scope: ConversationRuntimeScope,
 ): Promise<AppServerClient> {
   const auth = await getApiRequestConfig();
   return createAppServerClient({
@@ -60,7 +60,8 @@ async function createListenerClient(
 /** Cancel only this input: a queued child must not interrupt the turn ahead of it. */
 export async function cancelListenerInput(params: {
   client: AppServerClient;
-  scope: AgentRuntimeScope;
+  scope: ConversationRuntimeScope;
+  parentAgentId?: string;
   clientMessageId: string;
   dequeue?: typeof dequeueConversationMessage;
   readState: () => {
@@ -68,9 +69,12 @@ export async function cancelListenerInput(params: {
     cancelled: boolean;
   };
 }): Promise<boolean> {
+  const agentId = params.scope.agent_id ?? params.parentAgentId;
+  if (!agentId)
+    throw new Error("Listener cancellation requires an agent or parent agent.");
   const removed = await (params.dequeue ?? dequeueConversationMessage)(
     {
-      agentId: params.scope.agent_id,
+      agentId,
       conversationId: params.scope.conversation_id,
       clientMessageId: params.clientMessageId,
       actingUserId: params.scope.acting_user_id,
@@ -101,7 +105,7 @@ export async function cancelAcceptedListenerInput(
 ): Promise<boolean> {
   const removed = await dequeueConversationMessage(
     {
-      agentId: receipt.agent_id,
+      agentId: getEnqueueAgentId(receipt),
       conversationId: receipt.conversation_id,
       clientMessageId: receipt.client_message_id,
       actingUserId: receipt.acting_user_id,
@@ -130,6 +134,7 @@ export async function cancelAcceptedListenerInput(
     return await cancelListenerInput({
       client,
       scope,
+      parentAgentId: receipt.parent_agent_id,
       clientMessageId: receipt.client_message_id,
       dequeue: async () => removed,
       readState: () => ({ loop, cancelled: false }),
@@ -144,7 +149,8 @@ export async function cancelAcceptedListenerInput(
 export async function launchListenerConversation(
   params: {
     connectionId: string;
-    scope: AgentRuntimeScope;
+    scope: ConversationRuntimeScope;
+    parentAgentId?: string;
     content: MessageCreate["content"];
     /** Initial assignment identity, not a control-command request_id. */
     clientMessageId?: string;
@@ -172,6 +178,9 @@ export async function launchListenerConversation(
     waitDeadline?: AbortSignal;
   } = {},
 ): Promise<ListenerLaunchResult> {
+  const agentId = params.scope.agent_id ?? params.parentAgentId;
+  if (!agentId)
+    throw new Error("Listener delivery requires an agent or parent agent.");
   const client =
     deps.client ??
     (await createListenerClient(params.connectionId, params.scope));
@@ -284,7 +293,7 @@ export async function launchListenerConversation(
     if (interrupted) throw new Error("Launch cancelled before input was sent");
     const accepted = await (deps.enqueue ?? enqueueConversationMessage)(
       {
-        agentId: params.scope.agent_id,
+        agentId,
         conversationId: params.scope.conversation_id,
         clientMessageId,
         content: params.content,
@@ -298,7 +307,14 @@ export async function launchListenerConversation(
     if (params.noWait)
       return {
         status: "queued",
-        receipt: { ...accepted, connection_id: params.connectionId },
+        receipt: {
+          ...accepted,
+          connection_id: params.connectionId,
+          agent_id: params.scope.agent_id,
+          ...(params.scope.agent_id === null
+            ? { parent_agent_id: agentId }
+            : {}),
+        },
       };
     while (true) {
       if (disconnected)
@@ -313,6 +329,7 @@ export async function launchListenerConversation(
           await cancelListenerInput({
             client,
             scope: params.scope,
+            parentAgentId: params.parentAgentId,
             clientMessageId,
             dequeue: deps.dequeue,
             readState: () => ({ loop, cancelled }),

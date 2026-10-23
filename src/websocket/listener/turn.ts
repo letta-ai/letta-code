@@ -8,13 +8,14 @@ import {
   rotateChatGPTPlanOnQuotaLimit,
 } from "@/agent/chatgpt-plan-rotation";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { getStreamToolContextId } from "@/agent/message";
 import {
   getRetryDelayMs,
+  isApprovalPendingError,
   isEmptyResponseRetryable,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
-import { getBackend } from "@/backend";
 import {
   createBuffers,
   findLastAssistantText,
@@ -68,11 +69,11 @@ import {
   createTurnCorrelation,
   type TurnCorrelation,
 } from "./turn-correlation";
+import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import {
-  checkpointTurnInputOwnership,
-  createTurnDurabilityOwnership,
-} from "./turn-durability-ownership";
-import { createTurnFinalizer } from "./turn-finalizer";
+  createQueuedTurnConsumer,
+  createTurnFinalizer,
+} from "./turn-finalizer";
 import {
   createDeploymentRecoveryTurnInput,
   rebuildTurnInputWithFreshDenials,
@@ -80,6 +81,7 @@ import {
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishTurnIfMaxTurnsReached } from "./turn-max-turns";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
   prepareProviderRetryInput,
@@ -183,6 +185,7 @@ async function handleIncomingMessageInner(
     recoveryLineageId,
     recoveryTerminalRevision,
     recoveryAuthorityStore,
+    mcpOriginatorSuperRunId: msg.mcpOriginatorSuperRunId,
   });
   const {
     finishClaimedTurn,
@@ -331,23 +334,20 @@ async function handleIncomingMessageInner(
         break;
       }
       lastApprovalContinuationAccepted = false;
-      const maxTurns = runtime.executionSettings?.max_turns;
       if (
-        maxTurns !== undefined &&
-        buffers.usage.stepCount >= maxTurns &&
-        stopReason !== "requires_approval" &&
-        !(stopReason === "error" && fallbackError)
-      ) {
-        finishTurn({
-          stopReason: "max_steps",
+        finishTurnIfMaxTurnsReached({
+          runtime,
           socket,
+          buffers,
+          stopReason,
+          approvals,
+          fallbackError,
+          runId: runId || runtime.activeRunId,
           agentId,
           conversationId,
-          errorNotice: {
-            message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-            runId: runId || runtime.activeRunId,
-          },
-        });
+          finishTurn,
+        })
+      ) {
         break;
       }
       if (stopReason === "end_turn") {
@@ -460,16 +460,22 @@ async function handleIncomingMessageInner(
           });
 
           try {
-            const agent = await getBackend().retrieveAgent(agentId || "");
+            const agent = await retrieveResumeState(agentId, conversationId);
             const { pendingApprovals: existingApprovals } =
               await getResumeDataFromBackend(agent, requestedConversationId);
             turnInput = rebuildTurnInputWithFreshDenials(
               turnInput,
               existingApprovals ?? [],
               STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+              isApprovalPendingError(errorDetail),
             );
           } catch {
-            turnInput = rebuildTurnInputWithFreshDenials(turnInput, [], "");
+            turnInput = rebuildTurnInputWithFreshDenials(
+              turnInput,
+              [],
+              "",
+              isApprovalPendingError(errorDetail),
+            );
           }
           if (finishIfInterrupted(lastRunId || runtime.activeRunId)) {
             break;
@@ -779,17 +785,15 @@ async function handleIncomingMessageInner(
         turnToolContextId,
         turnLease,
         turnCorrelation,
-        onConsumeQueuedTurn: async (queuedTurn) => {
-          durabilityOwnership.recordInput(queuedTurn);
-          interruptedRevisionRef.current = await checkpointTurnInputOwnership(
-            runtime,
-            durabilityOwnership,
-            interruptedRevisionRef.current,
-            queuedTurn.actingUserId,
-            recoveryLineageId,
-            recoveryEvidenceWriter,
-          );
-        },
+        ...createQueuedTurnConsumer({
+          parkedInput: msg,
+          turnToolContextId,
+          runtime,
+          ownership: durabilityOwnership,
+          interruptedRevisionRef,
+          recoveryLineageId,
+          recoveryEvidenceWriter,
+        }),
         processOwnedTurn: msg.processOwnedTurn === true,
         originConnectionId: msg.connectionId,
         originConnectionCanResume,

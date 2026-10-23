@@ -12,6 +12,9 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
+import { createRuntime } from "@/websocket/listener/lifecycle";
+import { buildSubagentSnapshot } from "@/websocket/listener/protocol-outbound";
 import { backgroundTasks } from "./process_manager";
 import { launchSubagent, spawnBackgroundSubagentTask } from "./task";
 
@@ -59,7 +62,7 @@ function launch(type: "claude-code" | "codex") {
 }
 
 describe("notify caller on the launching computer", () => {
-  test("publishes the final report on the snapshot instead of notifying itself", async () => {
+  test("publishes the final report without changing the default parent runtime claim", async () => {
     const { taskId, subagentId } = spawnBackgroundSubagentTask({
       subagentType: "claude-code",
       prompt: "Fix the bug",
@@ -91,7 +94,16 @@ describe("notify caller on the launching computer", () => {
       status: "completed",
       result: "Fixed it",
       toolCallId: "call-1",
+      claimsParentRuntime: undefined,
     });
+    const runtime = getOrCreateScopedRuntime(
+      createRuntime(),
+      parentScope.agentId,
+      parentScope.conversationId,
+    );
+    expect(
+      JSON.parse(JSON.stringify(buildSubagentSnapshot(runtime)))[0],
+    ).not.toHaveProperty("claims_parent_runtime");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(queued).toHaveLength(0);
   });
@@ -148,7 +160,7 @@ rl.on("line", (line) => {
   );
 
   test.skipIf(isWindows)(
-    "records Codex tool calls on the subagent snapshot while it runs",
+    "records caller-notified Codex tool calls without claiming the parent runtime",
     async () => {
       fakeExecutable(
         "codex",
@@ -180,6 +192,15 @@ rl.on("line", (line) => {
         const entry = getSubagentSnapshot().agents.find(
           (agent) => agent.toolCallId === "call-1",
         );
+        expect(entry?.claimsParentRuntime).toBe(false);
+        const runtime = getOrCreateScopedRuntime(
+          createRuntime(),
+          parentScope.agentId,
+          parentScope.conversationId,
+        );
+        expect(
+          JSON.parse(JSON.stringify(buildSubagentSnapshot(runtime))),
+        ).toEqual([expect.objectContaining({ claims_parent_runtime: false })]);
         expect(entry?.toolCalls).toEqual([
           { id: "cmd-1", name: "Bash", args: '{"command":"bun test"}' },
         ]);

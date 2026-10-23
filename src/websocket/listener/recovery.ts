@@ -17,7 +17,6 @@ import {
   resolveTurnExecutionConnectionId,
 } from "./connection";
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
-import { appendQueuedTurnToInput } from "./continuation-input";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -40,11 +39,9 @@ import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
-  emitDequeuedUserMessage,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
-import { consumeQueuedTurn } from "./queue";
 import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
@@ -61,11 +58,11 @@ export {
   shouldAttemptPostStopApprovalRecovery,
 } from "./recovery-error-policy";
 
+import { scheduleQueuePump } from "./queue";
 import {
   fenceLostRecoveryClaim,
   scheduleRecoveredApprovalRetry,
 } from "./recovered-approval-retry";
-import { rehydrateClaimLostQueuedTurn } from "./recovered-queue-rehydration";
 import {
   createRecoveredTurnFinalizer,
   finalizeHandledRecoveryTurn,
@@ -97,10 +94,7 @@ import {
   isListenerTransportOpen,
   type ListenerTransport,
 } from "./transport";
-import {
-  createTurnCorrelation,
-  type TurnCorrelation,
-} from "./turn-correlation";
+import type { TurnCorrelation } from "./turn-correlation";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { replayPendingTurnFinishedToConnection } from "./turn-finished-replay";
 import { createTurnInputState } from "./turn-input-state";
@@ -110,7 +104,7 @@ import { setTurnLoopStatus } from "./turn-status";
 export { debugLogApprovalResumeState } from "./recovery-debug";
 export { finalizeHandledRecoveryTurn };
 
-import type { ConversationRuntime } from "./types";
+import type { ConversationRuntime, StartListenerOptions } from "./types";
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
   socket: ListenerTransport,
@@ -776,79 +770,27 @@ async function executeRecoveredApprovalContinuation(params: {
     }
     emitRuntimeStateUpdates(runtime, scope);
 
-    let continuationInput = createTurnInputState([
+    const continuationInput = createTurnInputState([
       {
         type: "approval",
         approvals: approvalResults,
         otid: continuationOtid,
       },
     ]);
-    let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    let continuationCorrelation: TurnCorrelation | undefined;
+    const continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    const continuationCorrelation: TurnCorrelation | undefined = undefined;
     const continuationOwnership = createTurnDurabilityOwnership();
     continuationOwnership.recordInput(recovered);
-    const consumedQueuedTurn = consumeQueuedTurn(runtime);
-    if (consumedQueuedTurn) {
-      const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      continuationOwnership.recordInput(queuedTurn);
-      try {
-        await evidence.checkpointOwnership(
-          continuationOwnership,
-          queuedTurn.actingUserId,
-        );
-      } catch (error) {
-        runtime.dequeuedClientMessageIdsByBatchId.delete(dequeuedBatch.batchId);
-        runtime.dequeuedInputIdentitiesByBatchId.delete(dequeuedBatch.batchId);
-        rehydrateClaimLostQueuedTurn(
-          runtime,
-          socket,
-          queuedTurn,
-          opts,
-          processTurn,
-        );
-        throw error;
-      }
-      continuationBatchId = dequeuedBatch.batchId;
-      continuationInput = appendQueuedTurnToInput(
-        continuationInput,
-        queuedTurn,
-      );
-      continuationCorrelation = createTurnCorrelation(
-        runtime,
-        {
-          type: "message",
-          agentId: recovered.agentId,
-          conversationId: recovered.conversationId,
-          durableInputIdentities: continuationOwnership.durableInputIdentities,
-          terminalConsumerIds: continuationOwnership.terminalConsumerIds,
-          messages: continuationInput.messages,
-        },
-        continuationBatchId,
-      );
-      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
-    }
 
     if (!hasRecoveryOwnership()) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
       runtime.dequeuedInputIdentitiesByBatchId.delete(continuationBatchId);
-      if (consumedQueuedTurn) {
-        const { queuedTurn } = consumedQueuedTurn;
-        rehydrateClaimLostQueuedTurn(
-          runtime,
-          socket,
-          queuedTurn,
-          opts,
-          processTurn,
-        );
-      }
       return;
     }
 
     const continuationConnectionId =
       selectedDeliveryOwnerId ?? opts?.connectionId;
-    const continuationActingUserId = consumedQueuedTurn
-      ? consumedQueuedTurn.queuedTurn.actingUserId
-      : recovered.actingUserId;
+    const continuationActingUserId = recovered.actingUserId;
     await processTurn(
       {
         type: "message",
@@ -940,6 +882,22 @@ async function executeRecoveredApprovalContinuation(params: {
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
+    // Recovery cannot prove the original MCP scope. Queued work starts fresh
+    // only after the recovery lease and its approval gate have been released.
+    scheduleQueuePump(
+      runtime,
+      socket,
+      (opts ?? {}) as StartListenerOptions,
+      (queued, batch) =>
+        processTurn(
+          queued,
+          socket,
+          runtime,
+          opts?.onStatusChange,
+          queued.connectionId ?? opts?.connectionId,
+          batch.batchId,
+        ),
+    );
     return;
   } catch (error) {
     if (continuationFinalized) {

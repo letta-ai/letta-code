@@ -1140,7 +1140,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.length).toBe(0);
   });
 
-  test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
+  test("resolveStaleApprovals keeps queued turns separate without replaying tools", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
@@ -1211,7 +1211,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(4);
+    expect(continuationMessages).toHaveLength(2);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -1228,17 +1228,6 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
-      content: "queued user",
-      otid: expect.any(String),
-    });
-    expect(continuationMessages?.[2]).toEqual({
-      role: "user",
-      content: "<task-notification>done</task-notification>",
-      attribution: {},
-      otid: expect.any(String),
-    });
-    expect(continuationMessages?.[3]).toEqual({
-      role: "user",
       content: [
         {
           type: "text",
@@ -1248,16 +1237,13 @@ describe("listen-client multi-worker concurrency", () => {
       otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
-    expect(runtime.queueRuntime.length).toBe(0);
-    expect(runtime.queuedMessagesByItemId.size).toBe(0);
-    expect(
-      socket.sentPayloads.some((payload) => payload.includes("queued user")),
-    ).toBe(true);
-    expect(
-      socket.sentPayloads.some((payload) =>
-        payload.includes("<task-notification>done</task-notification>"),
-      ),
-    ).toBe(true);
+    expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
+      queuedMessageItem.id,
+      queuedTaskItem.id,
+    ]);
+    expect(runtime.queuedMessagesByItemId.has(queuedMessageItem.id)).toBe(true);
+    expect(socket.sentPayloads.join("")).not.toContain("queued user");
+    expect(socket.sentPayloads.join("")).not.toContain("<task-notification>");
     expect(classifyApprovalsMock).not.toHaveBeenCalled();
     expect(executeApprovalBatchMock).not.toHaveBeenCalled();
 
@@ -1272,6 +1258,17 @@ describe("listen-client multi-worker concurrency", () => {
       approvals: [],
       apiDurationMs: 0,
     });
+    const next = __listenClientTestUtils.consumeQueuedTurn(runtime);
+    expect(
+      next?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([queuedMessageItem.id, queuedTaskItem.id]);
+    expect(next?.queuedTurn.messages).toEqual([
+      expect.objectContaining({ content: "queued user" }),
+      expect.objectContaining({
+        content: "<task-notification>done</task-notification>",
+      }),
+    ]);
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
   test("interrupt-queue approval continuation appends skill content as trailing user message", async () => {

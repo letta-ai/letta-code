@@ -95,11 +95,13 @@ export function rebuildTurnInputWithFreshDenials(
   state: TurnInputState,
   serverApprovals: PendingApprovalInfo[],
   denialReason: string,
+  preserveMessageOtids = false,
 ): TurnInputState {
   const rebuiltMessages = rebuildInputWithFreshDenials(
     state.messages,
     serverApprovals,
     denialReason,
+    preserveMessageOtids,
   );
   return createTurnInputState(
     rebuiltMessages,

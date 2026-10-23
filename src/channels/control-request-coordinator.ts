@@ -183,13 +183,20 @@ export class ChannelControlRequestCoordinator {
       return true;
     }
     await this.clear(requestId);
-    if (result === "expired") {
-      await this.options.deliverReprompt(
-        cloneEvent(pending.event),
-        input,
-        "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
-      );
-    }
+    if (result !== "expired") return true;
+    // The listener has no pending approval for this request, so it was
+    // resolved elsewhere or abandoned. An explicit approval still gets told it
+    // didn't land; any other text was never meant as a reply, so it goes to
+    // the agent as a normal message instead of being dropped.
+    const wasApproval =
+      "decision" in parsed.response &&
+      parsed.response.decision?.behavior === "allow";
+    if (!wasApproval) return false;
+    await this.options.deliverReprompt(
+      cloneEvent(pending.event),
+      input,
+      "That approval prompt expired before I could use your reply. Please ask the agent to try again.",
+    );
     return true;
   }
 

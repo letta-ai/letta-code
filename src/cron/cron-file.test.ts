@@ -29,6 +29,7 @@ import {
   verifySchedulerLease,
   withLock,
 } from "@/cron/cron-file";
+import { __testOverridePidReuseProbe } from "@/cron/process-identity";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ afterEach(() => {
   __testFailNextRefreshSchedulerLease(false);
   __testThrowNextRefreshSchedulerLease(false);
   __testOverrideReadProcessIdentity(null);
+  __testOverridePidReuseProbe(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
@@ -749,6 +751,55 @@ describe("scheduler lease", () => {
         boot_id: "boot-a",
       }),
     );
+  });
+
+  test("without /proc identity, reclaims a pre-boot lease only when its live pid is not letta", () => {
+    __testOverrideReadProcessIdentity(() => null);
+    const writePreBootOwner = () =>
+      writeFileSync(
+        _CRON_PATH,
+        JSON.stringify({
+          version: 1,
+          scheduler_owner: {
+            pid: process.ppid,
+            token: "pre-boot-token",
+            started_at: new Date(Date.now() - 86_400_000).toISOString(),
+          },
+          tasks: [],
+        }),
+      );
+    const probe = (command: string | null) =>
+      __testOverridePidReuseProbe({
+        platform: "darwin",
+        bootTimeMs: () => Date.now() - 3_600_000,
+        getProcessCommand: () => command,
+      });
+
+    writePreBootOwner();
+    probe("node /usr/local/bin/letta server");
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+    probe(null);
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+    // A dev/bun-run listener: same runtime as this process, no "letta" in argv.
+    probe(`${process.execPath} run src/index.ts`);
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+
+    probe("/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird");
+    const token = claimSchedulerLease();
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
+    );
+  });
+
+  test("never treats our own pid as reused, even for a pre-boot lease", () => {
+    __testOverrideReadProcessIdentity(() => null);
+    __testOverridePidReuseProbe({
+      platform: "darwin",
+      bootTimeMs: () => Date.now() - 3_600_000,
+      getProcessCommand: () => "/usr/sbin/unrelated",
+    });
+    const started_at = new Date(Date.now() - 86_400_000).toISOString();
+    expect(isProcessAlive(process.pid, { started_at })).toBe(true);
   });
 });
 

@@ -6,7 +6,6 @@ Letta Code is a stateful agent harness for creating agents that are more like pe
 
 Letta Code can be used interactively, or to power always-on agents that work proactively. Interact with agents through:
 * A local [**CLI**](https://docs.letta.com/letta-code/cli)
-* The [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux
 * Your browser, including [mobile](https://docs.letta.com/letta-code/remote-mobile), at [chat.letta.com](https://chat.letta.com)
 * Messaging integrations, including [Telegram](https://docs.letta.com/letta-code/channels#telegram-cli), [Slack](https://docs.letta.com/letta-code/channels#slack-cli), [Discord](https://docs.letta.com/letta-code/channels#discord-cli), and [custom channels](https://github.com/letta-ai/letta-code/blob/main/src/channels/README.md)
 
@@ -43,6 +42,18 @@ Install the package via [npm](https://docs.npmjs.com/downloading-and-installing-
 npm install -g @letta-ai/letta-code
 ```
 
+Alternatively, install with [uv](https://docs.astral.sh/uv/) or [pipx](https://pipx.pypa.io/) (Node.js is bundled):
+
+```bash
+uv tool install letta
+# or
+pipx install letta
+```
+
+Requires Python 3.9+. Wheels support glibc Linux 2.28+ (x86-64/ARM64), macOS 14+ (Intel/Apple Silicon), and Windows x64; Alpine/musl, 32-bit systems, and Windows ARM64 are unsupported.
+
+If `npm install -g` fails with `EACCES`, don't use `sudo`: root ownership prevents the CLI's `npm install -g` self-updates. Use uv/pipx, a user-owned npm prefix, or nvm. See the [CLI installation docs](https://docs.letta.com/platform/cli).
+
 Navigate to your project directory and run `letta` (see command-line options [in the docs](https://docs.letta.com/letta-code/commands)). You can also run the tutorial agent with: 
 ```
 letta --new-agent --personality tutorial
@@ -52,11 +63,9 @@ Letta Cloud is the default. On first launch, choose to sign in with Letta or pro
 
 Run `/connect` to configure your own LLM API keys (OpenAI / ChatGPT, Anthropic, Z.ai coding plan, etc.), and use `/model` to swap models.
 
-You can also download the [**desktop app**](https://docs.letta.com/letta-code/desktop-app) for macOS, Windows, and Linux. Agents created in the CLI are available via the desktop app, and vice versa.
-
 ## Letta Cloud
 
-Letta Cloud stores agents' memory, identity, and conversations while Letta Code runs on a laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a Cloud sandbox, or a remote computer. Chat with them through [chat.letta.com](https://chat.letta.com/) or Desktop. On resume, bundled default system prompts (including older versions) become Cloud-managed. Custom prompts stay explicit. Set `LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT=1` to disable automatic prompt updates on Cloud.
+Letta Cloud stores agents' memory, identity, and conversations while Letta Code runs on a laptop, [GitHub Actions](https://github.com/letta-ai/letta-code-action), a Cloud sandbox, or a remote computer. Chat with them through [chat.letta.com](https://chat.letta.com/). On resume, bundled default system prompts (including older versions) become Cloud-managed. Custom prompts stay explicit. Set `LETTA_CODE_PRESERVE_CLOUD_SYSTEM_PROMPT=1` to disable automatic prompt updates on Cloud.
 
 ```mermaid
 graph TD
@@ -67,7 +76,7 @@ graph TD
     LettaCloud --> D["📦 Managed Sandbox"]
 ```
 
-Run `/login` from the CLI or sign in through the desktop app to access agents in your Letta account.
+Run `/login` from the CLI to access agents in your Letta account.
 
 ### Remote computers
 Agents stored in Letta Cloud can run across multiple machines. Connect any machine by running:

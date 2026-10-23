@@ -124,7 +124,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Workflow",
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
-const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow"]);
+const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
 
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
@@ -670,6 +670,7 @@ export async function executeExternalTool(
   input: Record<string, unknown>,
   executorOverride?: ExternalToolExecutor,
   toolDefinition?: ExternalToolDefinition,
+  signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
   const executor = executorOverride ?? getExternalToolExecutor();
   if (!executor) {
@@ -687,7 +688,7 @@ export async function executeExternalTool(
       toolCallId,
       toolName,
       input,
-      tool ? { tool } : undefined,
+      tool ? { tool, signal } : undefined,
     );
     success = !result.isError;
     return {
@@ -2134,11 +2135,13 @@ async function executeToolInner(
           eventArgs as Record<string, unknown>,
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
+          options?.signal,
         ),
         listenerExternalToolBackgroundOptions(
           externalTool,
           modEvents,
           executionScope,
+          options?.signal,
         ),
       ),
     );
@@ -2253,17 +2256,21 @@ async function executeToolInner(
         if (Object.keys(invocationSecrets).length > 0) {
           enhancedArgs = { ...enhancedArgs, secretEnv: invocationSecrets };
         }
-        const parentScope =
-          options?.parentScope ??
-          (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
-            ? {
-                agentId: scopedAgentId,
-                conversationId: executionScope.conversationId ?? "default",
-              }
-            : undefined);
-        if (parentScope) {
-          enhancedArgs = { ...enhancedArgs, parentScope };
-        }
+      }
+      const parentScope =
+        options?.parentScope ??
+        (SCOPED_BACKGROUND_TOOLS.has(internalName) && scopedAgentId
+          ? {
+              agentId: scopedAgentId,
+              conversationId: executionScope.conversationId ?? "default",
+            }
+          : undefined);
+      if (
+        parentScope &&
+        (STREAMING_SHELL_TOOLS.has(internalName) ||
+          ["Task", "Skill", "CodeMode"].includes(internalName))
+      ) {
+        enhancedArgs = { ...enhancedArgs, parentScope };
       }
 
       // Correlate receipts with executor identity, never model-supplied fields.
@@ -2273,13 +2280,6 @@ async function executeToolInner(
       ) {
         enhancedArgs = { ...enhancedArgs, toolCallId: options?.toolCallId };
       }
-      if (
-        (internalName === "Task" || internalName === "Skill") &&
-        options?.parentScope
-      ) {
-        enhancedArgs = { ...enhancedArgs, parentScope: options.parentScope };
-      }
-
       if (WORKTREE_TOOL_NAMES.has(internalName as ToolName)) {
         enhancedArgs = {
           ...enhancedArgs,

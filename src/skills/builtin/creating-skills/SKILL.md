@@ -1,6 +1,6 @@
 ---
 name: creating-skills
-description: Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an existing skill) that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations.
+description: Guide for creating effective skills. Use when creating a new skill or updating an existing one that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations, whether a user asks for it or a reusable workflow is worth capturing.
 ---
 
 # Creating Skills
@@ -206,7 +206,7 @@ Skill creation involves these steps:
 2. Plan reusable skill contents (scripts, references, assets)
 3. Initialize the skill (run init-skill.ts)
 4. Edit the skill (implement resources and write SKILL.md)
-5. Package the skill (run package-skill.ts)
+5. Package the skill if it will be distributed (run package-skill.ts)
 6. Iterate based on real usage
 
 Follow these steps in order, skipping only if there is a clear reason why they are not applicable.
@@ -215,16 +215,15 @@ Follow these steps in order, skipping only if there is a clear reason why they a
 
 Skip this step only when the skill's usage patterns are already clearly understood. It remains valuable even when working with an existing skill.
 
-To create an effective skill, clearly understand concrete examples of how the skill will be used. This understanding can come from either direct user examples or generated examples that are validated with user feedback.
+To create an effective skill, clearly understand concrete examples of how the skill will be used. Draw them from the material at hand first: the conversation or transcripts that motivated the skill, the commands and tool calls that worked, and the requests that would trigger it.
 
-For example, when building an `editing-images` skill, relevant questions include:
+For example, when building an `editing-images` skill, establish:
 
-- "What functionality should the editing-images skill support? Editing, rotating, anything else?"
-- "Can you give some examples of how this skill would be used?"
-- "I can imagine users asking for things like 'Remove the red-eye from this image' or 'Rotate this image'. Are there other ways you imagine this skill being used?"
-- "What would a user say that should trigger this skill?"
+- What functionality the skill should support: editing, rotating, anything else?
+- What concrete requests it should handle, such as "Remove the red-eye from this image" or "Rotate this image"
+- What a user would say that should trigger the skill
 
-To avoid overwhelming users, avoid asking too many questions in a single message. Start with the most important questions and follow up as needed for better effectiveness.
+If you are working with a user and these remain unclear, ask the most important questions first rather than many at once. If no one is available to ask, such as in a background or automated run, do not wait for answers: scope the skill to what the source material demonstrates and leave out functionality it does not support.
 
 Conclude this step when there is a clear sense of the functionality the skill should support.
 
@@ -265,7 +264,7 @@ Usage:
 ```bash
 npx tsx <SKILL_DIR>/scripts/init-skill.ts <skill-name> --path <output-directory>
 ```
-Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header).
+Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header). If no Skill Directory is shown, create the skill directory and `SKILL.md` directly instead.
 
 The script:
 
@@ -291,7 +290,7 @@ These files contain established best practices for effective skill design.
 
 #### Start with Reusable Skill Contents
 
-To begin implementation, start with the reusable resources identified above: `scripts/`, `references/`, and `assets/` files. Note that this step may require user input. For example, when implementing a `brand-guidelines` skill, the user may need to provide brand assets or templates to store in `assets/`, or documentation to store in `references/`.
+To begin implementation, start with the reusable resources identified above: `scripts/`, `references/`, and `assets/` files. Some resources come from outside the source material. For example, a `brand-guidelines` skill may need brand assets or templates in `assets/`, or documentation in `references/`. Ask the user for them if you are working with one; otherwise include only what is available and leave out resources you cannot supply.
 
 Added scripts must be tested by actually running them to ensure there are no bugs and that the output matches what is expected. If there are many similar scripts, only a representative sample needs to be tested to ensure confidence that they all work while balancing time to completion.
 
@@ -333,7 +332,9 @@ Write instructions for using the skill and its bundled resources.
 
 ### Step 5: Packaging a Skill
 
-Once development of the skill is complete, it must be packaged into a distributable .skill file that gets shared with the user. The packaging process automatically validates the skill first to ensure it meets all requirements:
+Package the skill only when it needs to be distributed as a file, for example when sharing it with a user. Skills maintained in place, such as those under an agent's memory `skills/` directory, are used directly and need no packaging.
+
+To package a skill into a distributable .skill file, run the packaging script. The packaging process automatically validates the skill first to ensure it meets all requirements:
 
 ```bash
 npx tsx <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder>
@@ -360,7 +361,7 @@ If validation fails, the script will report the errors and exit without creating
 
 ### Step 6: Iterate
 
-After testing the skill, users may request improvements. Often this happens right after using the skill, with fresh context of how the skill performed.
+Improve a skill when real usage shows it falling short, whether through user feedback or sessions where the skill was used. Usage with fresh context of how the skill performed is the best evidence.
 
 **Iteration workflow:**
 

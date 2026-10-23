@@ -57,4 +57,31 @@ describe("MCP OAuth callback server", () => {
     }
     await expect(waiting).rejects.toThrow("MCP OAuth flow was cancelled");
   });
+
+  test("success page names the client app", async () => {
+    const page = async (appName?: string) => {
+      const server = await startOAuthCallbackServer(undefined, appName);
+      server.expectedState.value = "state-1";
+      try {
+        const url = new URL(server.redirectUrl);
+        url.searchParams.set("code", "code-1");
+        url.searchParams.set("state", "state-1");
+        const response = await fetch(url);
+        await server.waitForCallback();
+        return response.text();
+      } finally {
+        server.close();
+      }
+    };
+
+    const named = await page("Acme Agent");
+    expect(named).toContain("return to Acme Agent.");
+    expect(named).toContain(
+      "<title>Authorization complete - Acme Agent</title>",
+    );
+    expect(named).not.toContain("Letta Code");
+
+    expect(await page()).toContain("return to Letta Code.");
+    expect(await page("<b>x</b>")).toContain("return to &lt;b&gt;x&lt;/b&gt;.");
+  });
 });

@@ -46,6 +46,8 @@ export interface AgentCallOptions {
   allowedTools?: string[];
   /** Extra system prompt appended for this subagent. */
   systemPrompt?: string;
+  /** Skill names whose full content is loaded into this subagent's prompt. */
+  skills?: string[];
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
   /** Maximum unique tool calls for this subagent. Default 1000. */

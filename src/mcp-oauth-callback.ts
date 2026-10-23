@@ -1,4 +1,5 @@
 import { createServer, type Server } from "node:http";
+import { DEFAULT_MCP_OAUTH_CLIENT_NAME } from "@/mcp-oauth-client-name";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -19,14 +20,19 @@ export interface OAuthCallbackServer {
   close(): void;
 }
 
+/**
+ * @param appName Name shown on the success page ("return to <appName>"),
+ *   normally the consent-screen client name. Defaults to "Letta Code".
+ */
 export async function startOAuthCallbackServer(
   preferredPort?: number,
+  appName: string = DEFAULT_MCP_OAUTH_CLIENT_NAME,
 ): Promise<OAuthCallbackServer> {
   try {
-    return await startOAuthCallbackServerOnPort(preferredPort ?? 0);
+    return await startOAuthCallbackServerOnPort(preferredPort ?? 0, appName);
   } catch (error) {
     if (!preferredPort) throw error;
-    return startOAuthCallbackServerOnPort(0);
+    return startOAuthCallbackServerOnPort(0, appName);
   }
 }
 
@@ -44,6 +50,7 @@ export function callbackPort(redirectUrl?: string): number | undefined {
 
 async function startOAuthCallbackServerOnPort(
   port: number,
+  appName: string,
 ): Promise<OAuthCallbackServer> {
   const expectedState: { value?: string } = {};
   let server: Server;
@@ -107,14 +114,14 @@ async function startOAuthCallbackServerOnPort(
     if (!state || state !== expectedState.value) {
       response.writeHead(400, { "Content-Type": "text/html" });
       response.end(
-        callbackPage("Authorization failed", "Invalid OAuth callback"),
+        callbackPage(appName, "Authorization failed", "Invalid OAuth callback"),
       );
       return;
     }
     if (error) {
       response.writeHead(400, { "Content-Type": "text/html" });
       reject?.(new Error(`MCP OAuth authorization failed: ${error}`));
-      response.end(callbackPage("Authorization failed", error), () => {
+      response.end(callbackPage(appName, "Authorization failed", error), () => {
         void closeServer(true);
       });
       return;
@@ -122,7 +129,11 @@ async function startOAuthCallbackServerOnPort(
     if (!code) {
       response.writeHead(400, { "Content-Type": "text/html" });
       response.end(
-        callbackPage("Authorization failed", "Missing authorization code"),
+        callbackPage(
+          appName,
+          "Authorization failed",
+          "Missing authorization code",
+        ),
       );
       return;
     }
@@ -130,8 +141,9 @@ async function startOAuthCallbackServerOnPort(
     settle?.(domain ? { code, domain } : { code });
     response.end(
       callbackPage(
+        appName,
         "Authorization complete",
-        "You can close this tab and return to Letta Code.",
+        `You can close this tab and return to ${appName}.`,
       ),
       () => {
         void closeServer(true);
@@ -181,8 +193,8 @@ async function startOAuthCallbackServerOnPort(
   };
 }
 
-function callbackPage(title: string, message: string): string {
-  return `<!doctype html><html><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
+function callbackPage(appName: string, title: string, message: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(`${title} - ${appName}`)}</title></head><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
 }
 
 function escapeHtml(value: string): string {

@@ -183,7 +183,7 @@ describe("buildClientSkillsPayload", () => {
     ]);
   });
 
-  test("excludes skills marked disable-model-invocation from client_skills", async () => {
+  test("hides disable-model-invocation skills but keeps them preloadable", async () => {
     const { buildClientSkillsPayload } = await import("@/agent/client-skills");
 
     const discoverSkillsFn = async (): Promise<SkillDiscoveryResult> => ({
@@ -220,9 +220,7 @@ describe("buildClientSkillsPayload", () => {
         location: "/tmp/auto/SKILL.md",
       },
     ]);
-    expect(result.skillPathById).toEqual({
-      "auto-ok": "/tmp/auto/SKILL.md",
-    });
+    expect(result.skillPathById["manual-only"]).toBe("/tmp/manual/SKILL.md");
   });
 
   test("treats .agents/skills as primary and .skills as legacy fallback", async () => {

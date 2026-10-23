@@ -4,7 +4,6 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -12,6 +11,7 @@ import {
 import { join } from "node:path";
 import type { ApprovalResult } from "@/agent/approval-execution";
 import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
+import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { isInputIdentity, isTeleportIntent } from "./interrupted-turn-schema";
 import type { InterruptedTurnRecord } from "./interrupted-turn-types";
@@ -166,7 +166,7 @@ export function createRecoveryLineageSidecarAccess(params: {
         mode: 0o600,
         flush: true,
       });
-      renameSync(temporary, destination);
+      renameSyncWithRetry(temporary, destination);
       params.syncDirectory(params.directory);
     } finally {
       rmSync(temporary, { force: true });

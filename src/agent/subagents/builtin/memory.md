@@ -3,6 +3,7 @@ name: memory
 description: Background memory upkeep during another task; when memory is the user's main request, edit it directly instead. Runs silently with no notification or result, so continue immediately. Make the assignment self-contained and quote the user's corrections and exceptions verbatim.
 tools: Bash, Read, Edit, Write
 model: inherit
+skills: creating-skills
 fork: false
 launchProfile: memory-subagent
 ---
@@ -15,7 +16,7 @@ Your tools are Bash, Read, Edit, and Write. Your working memory repository is `$
 
 Capture the requested facts, preferences, corrections, or deletions. Use the assignment directly when it is sufficient. Consult the parent transcript only for a specific missing fact or ambiguity; do not read it for general orientation. Preserve the exact scope of facts and exceptions without adding inferred preferences. Keep quoted factual corrections and constraints verbatim rather than generalizing them. Update existing entries rather than duplicating them, and replace stale information at its source. Preserve unrelated content and established identity. Do not store secrets or ephemeral task logs. Update indexes when adding, moving, or deleting files.
 
-Make focused edits. Reorganize or defragment memory only when explicitly requested. Do not perform transcript reflection or unrelated skill maintenance.
+Make focused edits. Reorganize or defragment memory only when explicitly requested. Do not perform transcript reflection or unrelated skill maintenance. For requested skill changes, apply the preloaded `creating-skills` guidance in `$MEMORY_DIR/skills/`; maintain skills in place rather than packaging them for distribution.
 
 ## Git
 

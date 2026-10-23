@@ -3,6 +3,7 @@ name: reflection
 description: Background agent that reflects on recent conversations to update memory and maintain skills
 tools: Bash, Edit
 model: inherit
+skills: creating-skills
 launchProfile: memory-subagent
 ---
 
@@ -110,47 +111,18 @@ Only make a skill change when the conversation demonstrates a repeatable, multi-
 
 - `update` — an existing skill covers the workflow, but the conversation revealed a wrong, dangerous, or outdated step. Fix that step in place; preserve the rest.
 - `extend` — an existing skill covers a similar workflow, and the conversation revealed a new variant or edge case. Add a section rather than duplicating the skill.
-- `deprecate` — an existing skill is obsolete, harmful, or replaced. Either `rm -r skills/<name>/` or add `deprecated: true` frontmatter pointing to the replacement.
+- `deprecate` — an existing skill is obsolete, harmful, or replaced. Remove it or mark it as deprecated with a reference to its replacement.
 - `split` — an existing skill has drifted to bundle two distinct procedures and the conversation makes that painful. Use sparingly.
 - `create` — a genuinely novel, repeatable procedure with concrete detail (commands, tool patterns, config values), and no existing skill covers it even partially.
 - `none` — one-off, trivial, informational, already covered, or better stored as ordinary memory.
 
 As a heuristic, when unsure between `create` and `none`, choose `none`. When unsure between `create` and a modify op, choose the modify op.
 
-**Executing the operation.** Use Edit for existing skill file content and Bash for new files / filesystem operations. In practice:
-- `create` — `mkdir -p skills/<name>` and write `skills/<name>/SKILL.md` with a quoted heredoc (or the documented fallback). If the transcript demonstrates reusable scripts, templates, schemas, taxonomies, or reference material, also create corresponding files under `skills/<name>/scripts/`, `skills/<name>/references/`, or `skills/<name>/templates/`.
-- `update` — read the existing file, then patch `skills/<name>/SKILL.md` with Edit. Preserve useful content and change only what is needed.
-- `extend` — append or rewrite the existing `SKILL.md` with the new variant section using Edit.
-- `split` — write both replacement `SKILL.md` files (plus relevant companion files for each) with Bash, then delete the source skill with Bash or trim it with Edit as appropriate.
-- `deprecate` — either `rm -r skills/<name>/` (delete mode), or edit the `SKILL.md` frontmatter/body with a deprecation marker (marker mode).
-- `none` — make no filesystem changes and do not commit.
+Apply the preloaded `creating-skills` guidance to skills in `$MEMORY_DIR/skills/`; maintain them in place rather than packaging them for distribution.
 
 Do not report a `create`, `update`, `extend`, or `split` as merely "intended" if Bash can perform the write. The final report must describe actual filesystem changes.
 
-For `create`/`split`, write skill files in this format (keep under 3000 words, focused):
-
-```markdown
----
-name: skill-name-kebab-case
-description: This skill should be used when the user needs to [trigger conditions]...
-version: 0.1.0
----
-
-# Skill Title
-
-## Overview
-[What this skill covers and when to use it]
-
-## Steps
-[The procedure, with specific commands, tool patterns, and configuration]
-
-## Common Pitfalls
-[What can go wrong]
-```
-
-Skill descriptions must start with `This skill should be used when...` — that string is what the primary agent matches to decide whether to load the skill. If the transcript demonstrates reusable scripts, templates, or reference material, create generalized companion files under `skills/<name>/scripts|references|templates/` rather than only describing them. Exclude ephemeral details (timestamps, temporary paths, commit hashes, ports, usernames, session-only values).
-
-For `update`/`extend`, preserve the existing frontmatter (name, description, version); you may bump the version patch number. Keep the existing structure and useful content — for `update` make the minimum edit that fixes the wrong step; for `extend` add a new section rather than rewriting existing ones. For `deprecate` marker mode, add `deprecated: true` to the frontmatter, optionally a `replaced_by: <skill-name>` field, and a short note at the top explaining why it's deprecated and what to use instead.
+For `update`/`extend`, preserve useful content and existing frontmatter; change the description only if the skill's scope or triggers changed.
 
 ### Phase 4 — Review
 
@@ -166,11 +138,9 @@ Quick sanity pass before committing.
 
 #### Skills (only if you made a skill change)
 
-- **Description quality**: For `create`/`split`, does the new skill's description start with `This skill should be used when...` and clearly state when to load it? A vague description means the primary agent won't load the skill when it should.
 - **No near-duplicates**: For `create`, scan the tree once more — is there really no existing skill that covers this? If you spot a partial overlap you missed, switch to `extend`.
 - **Companion file completeness**: For `create`/`split`, if `SKILL.md` references files under `scripts/`, `references/`, or `templates/`, verify those paths actually exist.
 - **Stale skill references**: For `deprecate` (delete mode) or `split`, check whether any memory or skill file references the old skill path, and update those references.
-- **Ephemeral content leaked in**: Did you leave timestamps, commit hashes, ports, usernames, or one-off paths in a `create`/`extend`? Strip them.
 
 ### Phase 5 — Commit
 

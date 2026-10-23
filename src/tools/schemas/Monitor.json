@@ -14,7 +14,7 @@
     "persistent": {
       "type": "boolean",
       "default": false,
-      "description": "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop."
+      "description": "Run until TaskStop or session end. In managed Cloud sandboxes, a hard 1-hour limit still applies; elsewhere there is no timeout. For longer waits in Cloud, use Wake/cron rather than keeping a monitor running."
     },
     "backup_after_seconds": {
       "type": "integer",

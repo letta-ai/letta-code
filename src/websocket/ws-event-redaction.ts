@@ -8,6 +8,7 @@ const ALWAYS_SENSITIVE_KEYS = new Set([
   "credentials",
   "handoff_key",
   "id_token",
+  "mcp_originator_token",
   "raw",
   "refresh_token",
   "token",

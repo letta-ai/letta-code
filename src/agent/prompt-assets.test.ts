@@ -150,6 +150,15 @@ describe("buildSystemPrompt", () => {
 
     expect(result).toContain("#### Shared memory");
     expect(result).toContain("shared memory repository");
+    for (const mode of ["memfs", "root-memfs"] as const) {
+      const prompt = buildSystemPrompt("letta", mode);
+      expect(prompt).toContain(
+        "shallow checkouts containing only the latest commit",
+      );
+      expect(prompt).toContain("git fetch --deepen=<n>");
+      expect(prompt).toContain("git fetch --unshallow");
+      expect(prompt).toContain("some repositories have very long histories");
+    }
     expect(buildSystemPrompt("letta", "local-memfs")).not.toContain(
       "#### Shared memory",
     );

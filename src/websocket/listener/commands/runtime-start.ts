@@ -408,14 +408,19 @@ async function applyRuntimeStartState(
     parsed.preserve_skill_sources !== true
   ) {
     scopedRuntime.skillSources = undefined;
+    scopedRuntime.bundledSkills = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
   } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
+    const bundledSkills = parsed.bundled_skills
+      ? [...new Set(parsed.bundled_skills)]
+      : undefined;
     scopedRuntime.skillSources = skillSources;
-    context.runtime.skillSourcesByConversation.set(
-      scopedRuntime.key,
-      skillSources,
-    );
+    scopedRuntime.bundledSkills = bundledSkills;
+    context.runtime.skillSourcesByConversation.set(scopedRuntime.key, {
+      sources: skillSources,
+      ...(bundledSkills ? { bundledSkills } : {}),
+    });
   }
 
   if (parsed.mode) {

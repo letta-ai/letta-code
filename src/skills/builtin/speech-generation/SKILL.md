@@ -14,7 +14,8 @@ Instead of calling ElevenLabs with your own key, you call Letta's hosted endpoin
 `POST /v1/audio/speech`. It forwards the request to ElevenLabs with Letta's key
 and charges the organization's Letta credits, so you do not need an ElevenLabs
 API key. The request body uses the same field names as ElevenLabs "Create
-speech"; the voice ID goes in the body.
+speech" (the voice ID and `output_format` go in the body), and the response is
+the audio file itself, as with ElevenLabs.
 
 ## Quick Start
 
@@ -25,20 +26,9 @@ curl -sS -X POST "$base_url/v1/audio/speech" \
   -H "Authorization: Bearer $LETTA_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"text":"Hello, welcome to ElevenLabs!","voice_id":"JBFqnCBsd6RMkjVDRZzb","model_id":"eleven_v4"}' \
-  > speech-response.json
-
-python3 - <<'PY'
-import base64, json
-
-with open("speech-response.json") as f:
-    response = json.load(f)
-if "audio_b64" not in response:
-    raise SystemExit(response.get("message", response))
-
-with open("output.mp3", "wb") as f:
-    f.write(base64.b64decode(response["audio_b64"]))
-print("saved output.mp3")
-PY
+  --output output.mp3 \
+  --dump-header speech-headers.txt \
+  --write-out '%{http_code} %{content_type}\n'
 ```
 
 Use the runtime-provided `LETTA_BASE_URL` and `LETTA_API_KEY` together. Build
@@ -46,9 +36,13 @@ URLs relative to `${LETTA_BASE_URL%/}` and do not hardcode
 `https://api.letta.com`. If either variable is missing, the user needs to
 authenticate with Letta Cloud; do not ask for an ElevenLabs key.
 
+A `200` with an `audio/...` content type means `output.mp3` is the speech. Any
+other status means `output.mp3` holds a JSON error with a `message` instead;
+read it (see "Error Handling") and do not share the file.
+
 Share the saved file the way your current surface supports: attach or upload it
-to the conversation or channel you are replying in. Never paste the base64 into
-a reply. Keep credit amounts out of replies unless the user asks about cost.
+to the conversation or channel you are replying in. Keep credit amounts out of
+replies unless the user asks about cost.
 
 ## Models
 
@@ -160,8 +154,9 @@ When generating long audio in multiple requests, the audio can have pops, unnatu
 {"text": "And this continues the story.", "voice_id": "JBFqnCBsd6RMkjVDRZzb", "model_id": "eleven_v4", "previous_text": "This is the first part."}
 ```
 
-Each response includes `request_id`. Instead of `previous_text`, you can pass up
-to three earlier `request_id` values in `previous_request_ids` (and later ones in
+Each response has a `request-id` header (saved by `--dump-header` above, e.g.
+`grep -i '^request-id:' speech-headers.txt`). Instead of `previous_text`, you can
+pass up to three earlier request IDs in `previous_request_ids` (and later ones in
 `next_request_ids` when regenerating a middle part). Keep the same voice, model,
 and voice settings for every part, split long text at sentence or paragraph
 boundaries (each request takes up to 10,000 characters), and concatenate the
@@ -169,7 +164,7 @@ files in order, for example with `ffmpeg -f concat`.
 
 ## Output Formats
 
-Pass `output_format` in the body.
+Pass `output_format` in the body, and name the file to match the format.
 
 | Format | Description |
 |--------|-------------|
@@ -186,22 +181,6 @@ Pass `output_format` in the body.
 | `alaw_8000` | A-law 8kHz - telephony (alternative to μ-law) |
 | `opus_48000_64` | Opus 48kHz 64kbps - efficient codec, small files |
 | `wav_44100` | WAV 44.1kHz - uncompressed with headers |
-
-The Letta endpoint returns the whole file at once (as `audio_b64`); it does not stream.
-
-## Response
-
-```json
-{
-  "model_id": "eleven_v4",
-  "voice_id": "JBFqnCBsd6RMkjVDRZzb",
-  "output_format": "mp3_44100_128",
-  "audio_b64": "<base64>",
-  "request_id": "Frhov0LQNC3M9HcHKY3t",
-  "characters": 46,
-  "billing": { "credits_charged": 4, "transaction_id": "...", "new_credit_balance": "..." }
-}
-```
 
 ## Error Handling
 

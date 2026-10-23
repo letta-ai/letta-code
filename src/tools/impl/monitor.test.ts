@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
@@ -55,6 +55,7 @@ function outputFileOf(result: Awaited<ReturnType<typeof monitor>>): string {
 describe("Monitor", () => {
   let scratchpad: string;
   let previousScratchpad: string | undefined;
+  let previousManagedCloud: string | undefined;
   let queuedMessages: QueuedMessage[];
   let childScriptIndex: number;
 
@@ -72,6 +73,8 @@ describe("Monitor", () => {
   }
 
   beforeEach(() => {
+    previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
     scratchpad = mkdtempSync(join(tmpdir(), "monitor-test-"));
     process.env.LETTA_SCRATCHPAD = scratchpad;
@@ -82,6 +85,11 @@ describe("Monitor", () => {
   });
 
   afterEach(() => {
+    if (previousManagedCloud === undefined) {
+      delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
+    } else {
+      process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
+    }
     for (const processState of backgroundProcesses.values()) {
       processState.completionNotificationSuppressed = true;
       try {
@@ -121,11 +129,81 @@ describe("Monitor", () => {
     expect(MonitorSchema.properties.persistent).toMatchObject({
       default: false,
       description:
-        "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop.",
+        "Run until TaskStop or session end. In managed Cloud sandboxes, a hard 1-hour limit still applies; elsewhere there is no timeout. For longer waits in Cloud, use Wake/cron rather than keeping a monitor running.",
     });
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",
     );
+  });
+
+  test.each(["command", "websocket"] as const)(
+    "caps persistent %s monitors in Cloud and notifies once",
+    async (source) => {
+      process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+      const realSetTimeout = globalThis.setTimeout;
+      const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+        Object.assign(
+          (...[callback, ms, ...args]: Parameters<typeof setTimeout>) =>
+            realSetTimeout(callback, ms === 3_600_000 ? 50 : ms, ...args),
+          { __promisify__: realSetTimeout.__promisify__ },
+        ),
+      );
+      const server =
+        source === "websocket" ? new WebSocketServer({ port: 0 }) : undefined;
+      try {
+        const address = server?.address();
+        const result = await monitor({
+          description: "Cloud lifetime test",
+          persistent: true,
+          timeout_ms: 1000, // Persistent still ignores this, but not the Cloud cap.
+          parentScope: { agentId: "agent-cloud", conversationId: "conv-cloud" },
+          ...(source === "command"
+            ? { command: nodeCommand("setInterval(() => {}, 1000)") }
+            : {
+                ws: {
+                  url: `ws://127.0.0.1:${typeof address === "object" ? address?.port : 0}`,
+                },
+              }),
+        });
+        expect(result).toMatchObject({
+          timeoutMs: 3_600_000,
+          persistent: false,
+        });
+        expect(timers.mock.calls.some(([, ms]) => ms === 3_600_000)).toBe(true);
+        await waitFor(
+          () => backgroundProcesses.get(result.taskId)?.status === "failed",
+        );
+        const notifications = queuedMessages.filter((message) =>
+          message.text.includes("1-hour"),
+        );
+        expect(notifications).toHaveLength(1);
+        expect(notifications[0]).toMatchObject({
+          agentId: "agent-cloud",
+          conversationId: "conv-cloud",
+        });
+        expect(notifications[0]?.text).toContain("Wake or cron");
+        if (server) await waitFor(() => server.clients.size === 0);
+      } finally {
+        timers.mockRestore();
+        server?.close();
+      }
+    },
+  );
+
+  test("preserves shorter Cloud monitor deadlines", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const result = await monitor({
+      description: "short Cloud watch",
+      command: nodeCommand("setInterval(() => {}, 1000)"),
+      timeout_ms: 1000,
+    });
+    expect(result).toMatchObject({ timeoutMs: 1000, persistent: false });
+    await waitFor(
+      () => backgroundProcesses.get(result.taskId)?.status === "failed",
+    );
+    expect(
+      queuedMessages.some((message) => message.text.includes("1-hour")),
+    ).toBe(false);
   });
 
   test("validates source, timeout, and WebSocket inputs", async () => {

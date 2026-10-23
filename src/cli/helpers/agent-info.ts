@@ -2,6 +2,7 @@
 // Generates agent info system reminder (agent identity, memory dir)
 
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { settingsManager } from "@/settings-manager";
@@ -16,6 +17,7 @@ export interface AgentInfo {
 export interface AgentInfoOptions {
   agentInfo: AgentInfo;
   conversationId?: string;
+  parentAgentId?: string;
 }
 
 /**
@@ -78,12 +80,18 @@ export function buildAgentInfo(options: AgentInfoOptions): string {
       ? `\n- **Memory directory (also stored in \`MEMORY_DIR\` env var)**: \`${getScopedMemoryFilesystemRoot(agentInfo.id)}\``
       : "";
 
+    const parentMemoryNote =
+      options.parentAgentId && options.parentAgentId !== agentInfo.id
+        ? buildParentMemoryNote(options.parentAgentId)
+        : undefined;
+    const parentMemoryLine = parentMemoryNote ? `\n- ${parentMemoryNote}` : "";
+
     const convLine = conversationId
       ? `\n- **Conversation ID (also stored in \`CONVERSATION_ID\` env var)**: ${conversationId}`
       : "";
 
     return `${SYSTEM_REMINDER_OPEN} This is an automated message providing information about you.
-- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${convLine}${memoryDirLine}
+- **Agent ID (also stored in \`AGENT_ID\` env var)**: ${agentInfo.id}${convLine}${memoryDirLine}${parentMemoryLine}
 - **Agent name**: ${agentInfo.name || "(unnamed)"} (the user can change this with /rename)
 - **Agent description**: ${agentInfo.description || "(no description)"} (the user can change this with /description)
 - **Last message**: ${lastRunInfo}
