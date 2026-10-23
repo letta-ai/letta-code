@@ -78,7 +78,7 @@ test("publishes readiness only for the exact open ingress-live connection", asyn
   setActiveRuntime(null);
 });
 
-test("starts the channel gateway only after startup ingress is live and before publishing readiness", async () => {
+test("slow or failed gateway startup does not block Cloud readiness", async () => {
   const runtime = createRuntime();
   setActiveRuntime(runtime);
   const transitions: boolean[] = [];
@@ -126,12 +126,33 @@ test("starts the channel gateway only after startup ingress is live and before p
       readiness.setGatewayReady(true);
     },
   );
-  await Promise.resolve();
-  expect(transitions).toEqual([]);
-
-  releaseGateway();
   expect(await startup).toBe(true);
+  expect(readiness.getState()).toEqual({
+    cloudReady: true,
+    gatewayReady: false,
+    ready: false,
+  });
+  expect(transitions).toEqual([]);
+  releaseGateway();
+  await Promise.resolve();
   expect(transitions).toEqual([true]);
+
+  const failure = new Error("gateway failed");
+  let reportFailure!: (error: unknown) => void;
+  const reported = new Promise<unknown>((resolve) => {
+    reportFailure = resolve;
+  });
+  expect(
+    await completeListenerConnectionStartup(
+      connection,
+      readiness,
+      () => {
+        throw failure;
+      },
+      reportFailure,
+    ),
+  ).toBe(true);
+  expect(await reported).toBe(failure);
 
   stopRuntime(runtime, true);
   setActiveRuntime(null);
