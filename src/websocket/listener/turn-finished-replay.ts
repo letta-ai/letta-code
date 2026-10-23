@@ -7,7 +7,6 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -16,6 +15,7 @@ import { join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
 import type { TurnFinishedMessage } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
+import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import { toListenerConnection } from "./connection";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -290,7 +290,7 @@ export function createTurnFinishedStore(
         mode: 0o600,
         flush: true,
       });
-      renameSync(temporary, destination);
+      renameSyncWithRetry(temporary, destination);
       fsyncDirectory(directory);
     } finally {
       rmSync(temporary, { force: true });
