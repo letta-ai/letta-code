@@ -5765,6 +5765,7 @@ type SandboxSettings = {
   filesystem?: SandboxFilesystemConfig;
   ignoreViolations?: Record<string, string[]>;
   enableWeakerNestedSandbox?: boolean;
+  allowNestedUserNamespaces?: boolean;
   ripgrep?: { command: string; args?: string[] };
 };
 ```
@@ -5780,6 +5781,7 @@ type SandboxSettings = {
 | `filesystem` | [`SandboxFilesystemConfig`](#sandboxfilesystemconfig) | `undefined` | Filesystem-specific sandbox configuration for read/write restrictions |
 | `ignoreViolations` | `Record<string, string[]>` | `undefined` | Map of command substrings, or `*` for every command, to substrings of the violation text to ignore, such as `{ "*": ['/etc/hosts'] }`; see [`sandbox.ignoreViolations`](/docs/en/settings-reference#sandbox-ignoreviolations) |
 | `enableWeakerNestedSandbox` | `boolean` | `false` | Enable a weaker nested sandbox for compatibility |
+| `allowNestedUserNamespaces` | `boolean` | `false` | Let sandboxed commands on Linux and WSL2 create user namespaces. Before you set it to `true`, read [`sandbox.allowNestedUserNamespaces`](/docs/en/settings-reference#sandbox-allownestedusernamespaces), which covers the tools that need it and the security boundary you turn off. Requires Claude Code v2.1.305 or later |
 | `ripgrep` | `{ command: string; args?: string[] }` | `undefined` | Custom ripgrep binary configuration for sandbox environments |
 
 > [!NOTE]
