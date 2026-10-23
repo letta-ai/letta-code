@@ -188,7 +188,16 @@ export async function handleSubagentMessageCommand(
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
+          // This handler always runs on the worker, for a parent runtime that
+          // only exists here as a sideband control scope. Mirror the
+          // `notify: "caller"` launch contract: publish the result back to the
+          // caller and let its own listener raise the notice. Emitting it here
+          // would start a turn on the caller's conversation from the worker's
+          // machine, and claiming the runtime would make Cloud route the
+          // caller's deliveries to this sandbox.
           publishResult: true,
+          emitCompletionNotification: false,
+          claimsParentRuntime: false,
         });
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);

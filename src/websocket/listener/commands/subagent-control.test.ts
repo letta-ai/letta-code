@@ -210,6 +210,51 @@ describe("remote external subagent control", () => {
     });
   });
 
+  test("routes the resumed completion to the caller instead of running it here", async () => {
+    const { parent } = fixture();
+    let tracked: Record<string, unknown> | undefined;
+    const completion = Promise.resolve({
+      agentId: nativeId,
+      success: true,
+      report: "Done",
+    } satisfies SubagentResult);
+    await handleSubagentMessageCommand(
+      {
+        type: "subagent_message",
+        request_id: "resume-scope",
+        runtime,
+        agent_id: nativeId,
+        message: "Continue",
+      },
+      parent,
+      {
+        sendClaude: async () => ({
+          mode: "resumed",
+          sessionId: nativeId,
+          completion,
+          interrupt: async () => {},
+        }),
+        track: ((args: Record<string, unknown>) => {
+          tracked = args;
+          return {
+            taskId: "task-follow",
+            outputFile: "/tmp/follow",
+            subagentId: "subagent-follow",
+          };
+        }) as never,
+      },
+    );
+    // The worker holds the caller's runtime only as a sideband control scope.
+    // Emitting the notice here starts a turn on the caller's conversation from
+    // the worker's sandbox; claiming the runtime makes Cloud route the
+    // caller's deliveries here. Both must stay off on this path.
+    expect(tracked).toMatchObject({
+      publishResult: true,
+      emitCompletionNotification: false,
+      claimsParentRuntime: false,
+    });
+  });
+
   test("interrupts untracked resumed work and allows the request to retry", async () => {
     const { parent } = fixture();
     let interrupts = 0;
