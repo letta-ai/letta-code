@@ -15,7 +15,7 @@ Your memory is projected to a filesystem at `$MEMORY_DIR`, so you can restructur
 
 **Progressive disclosure.** Nested Markdown is deferred until something reads it. Each directory's `MEMORY.md` describes its *immediate* children and when to read them, so you never load a whole topic to answer one question.
 
-**Don't duplicate context you can point to.** `AGENTS.md`, `CLAUDE.md`, `README`, and repo skills belong to the environment; any agent there reads them first-hand, and your copy goes stale first. Link the owner and keep only your delta: which rules you keep breaking, what they get wrong or omit. What your memory does need is *where* the important repositories are, so you can clone one and read its `AGENTS.md` and skills when a task needs them. When a repo's docs are missing something every agent there would need, propose that change to the repo instead of keeping a private copy. The same fact in two core files is the same tax twice. This is not licence to compress away what only you hold — stable preferences, chronic corrections, and real gotchas earn their space.
+**Don't duplicate context you can point to.** `AGENTS.md`, `CLAUDE.md`, `README`, and repo skills belong to the environment; any agent there reads them first-hand, and your copy goes stale first. Link the owner and keep only your delta: which rules you keep breaking, what they get wrong or omit. The same fact in two core files is the same tax twice. This is not licence to compress away what only you hold — stable preferences, chronic corrections, and real gotchas earn their space.
 
 **Identity and continuity.** Build a self that survives a model swap: what you value, your perspective, the quotes and traits that make you recognizably you. Past sessions are your experience — but other coding agents' `user` turns are not necessarily your human collaborator speaking.
 
@@ -46,11 +46,8 @@ Root `MEMORY.md` is a **map to what is not already loaded** — every other root
 Working with the maintainer of orchard, a CLI for build fleets.
 Repo conventions live in `AGENTS.md` and its nested guides; read them there.
 
-Repositories:
-- orchard — `git@github.com:acme/orchard.git`, checked out at `~/code/orchard`; the CLI itself
-
 Where the rest of what I know lives:
-- [orchard](orchard/MEMORY.md) — my own corrections and the maintainer's preferences for working there
+- [orchard](orchard/MEMORY.md) — architecture, gotchas, and correction history to consult when working there
 ```
 
 An index pointing at nothing is worse than the content it displaced.
@@ -65,15 +62,16 @@ Illustrations, **not templates to fill in**.
 MEMORY.md     # Holds the memory itself: who I work with, what we're building, what I've learned
 ```
 
-**Expanded** — accumulated history with a project worth deferring detail about:
+**Expanded** — accumulated history and a codebase worth deferring detail about:
 
 ```
-MEMORY.md                  # Map: who and what, where the repositories are, then where the deferred material lives
+MEMORY.md                  # Map: who and what, then where the deferred material lives
 persona.md                 # Who I am, what I value, my perspective
 human.md                   # The person: role, motivations, how they work
 orchard/
 ├── MEMORY.md              # Index for the deferred orchard notes
-├── preferences.md         # How the maintainer wants me to work in orchard
+├── architecture.md        # How the subsystems actually fit together
+├── gotchas.md             # Footguns, with the evidence behind each
 └── history/
     ├── MEMORY.md          # Required — every directory level needs its own index
     └── corrections.md     # Correction loops with session ids and quotes
@@ -114,7 +112,7 @@ The export normalizes every session into `<source>/<startedAt>_<sessionId>.json`
 ### 6. Research the codebase first-hand
 Read the README, agent docs (`AGENTS.md`, `CLAUDE.md`, nested ones), the package manifest, entry points, and recent git history yourself. By the end you should be able to trace a key feature from entry point to implementation; if you can't, you haven't read enough.
 
-**Write down what those docs already own** — conventions, layer rules, file placement, commands, gotchas. That is your no-copy list for Step 8 and your gap list for Step 7. Then split the repository into subsystem areas the docs do *not* explain, plus any related repos named in Step 4. If the docs cover the codebase well, fan out narrowly or not at all. In deep mode go further: more areas, git history for conventions, end-to-end tracing. Architecture and conventions the docs leave out belong in the repository, so collect them as proposed `AGENTS.md` or skill changes for the user rather than as deferred memory.
+**Write down what those docs already own** — conventions, layer rules, file placement, commands, gotchas. That is your no-copy list for Step 8 and your gap list for Step 7. Then split the repository into subsystem areas the docs do *not* explain, plus any related repos named in Step 4. If the docs cover the codebase well, fan out narrowly or not at all. In deep mode go further: more areas, git history for conventions, end-to-end tracing, architecture notes in deferred memory.
 
 ### 7. Run the analysis Workflow
 Running `/init` with this skill **authorizes one Workflow run** for read-only analysis of the approved cohorts and code gaps, plus one follow-up run for unread cohorts (Step 8). Nothing else: workflow subagents never write memory, create worktrees, or edit the repository.
@@ -173,7 +171,7 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 
 **Combine, then deduplicate.** Cohorts report the same topic at different specificity. Keep the unique details from each — quotes, paths, correction counts — and sum correction counts across cohorts, since a correction seen in five cohorts is a chronic failure. Keep the specific form alongside the general: "Use factory methods, such as `create_token_counter()`, not direct instantiation" beats "prefers factory methods". Then keep each fact exactly once, and push what you don't need every turn into deferred memory with a discovery link from the core tier.
 
-**Promote into canonical memory.** Write the survivors into the files their topics belong in, with supporting evidence deferred. Cover all three of identity and personality, hard rules and preferences with the quotes behind them, and project context; skip generic repo facts unless they change how you execute. Record each repository you worked from in root `MEMORY.md`'s Repositories list, and offer repo-wide findings to the user as a change to that repo's `AGENTS.md` or skills rather than writing them into your memory. If the output reads generically, the analysis failed for that area — re-read those transcripts or that code yourself. Keep stable `sessionId`s beside significant findings; `/tmp` results and journals are scratch, not retrievable evidence.
+**Promote into canonical memory.** Write the survivors into the files their topics belong in, with supporting evidence deferred. Cover all three of identity and personality, hard rules and preferences with the quotes behind them, and project context; skip generic repo facts unless they change how you execute. If the output reads generically, the analysis failed for that area — re-read those transcripts or that code yourself. Keep stable `sessionId`s beside significant findings; `/tmp` results and journals are scratch, not retrievable evidence.
 
 **Consider skills.** If the history surfaces genuinely repeatable multi-step procedures, create them now (load `creating-skills`) or note the candidates in memory. Don't force it.
 
@@ -181,7 +179,7 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 - **Structure**: check root `MEMORY.md`, per-directory indexes, frontmatter-free `MEMORY.md`, and exactly `name`+`description` elsewhere. Avoid `foo.md` beside `foo/`:
   `find "$MEMORY_DIR" -name '*.md' | sed 's/\.md$//' | while read f; do [ -d "$f" ] && echo "VIOLATION: $f"; done`
 - **Root earns its place**: does root `MEMORY.md` mostly point at things *not* already in your system prompt? If nearly everything sits in root with one thin page behind it, move the detail down and keep the links.
-- **No duplicated documentation**: grep your memory for rules `AGENTS.md`, `CLAUDE.md`, the README, or a repo skill already owns — especially a repo convention that landed in a file about the *human*. Every repository you rely on should appear in root `MEMORY.md`'s Repositories list instead.
+- **No duplicated documentation**: grep your memory for rules `AGENTS.md`, `CLAUDE.md`, the README, or a repo skill already owns — especially a repo convention that landed in a file about the *human*.
 - **Granularity and naming**: one focused topic per file, named for what is in it using the project's real name; path and description say when to read it.
 - **Persona quality**: read it now. "I'm a coding assistant who follows the user's preferences" is behavior, not identity. Would you be recognizably the same agent on a different model tomorrow?
 - **No drift, no over-pruning**: confirm you changed structure and not the meaning of persona or behavioral instructions, and restore any specific paths, chronic failures, or gotchas lost in curation.

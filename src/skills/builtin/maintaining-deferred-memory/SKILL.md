@@ -9,17 +9,6 @@ Deferred memory should NOT be used to store:
 - Information that can be accessed by querying the message history (recall memory). For example, logs of specific interactions can simply be looked up in past messages. Reserve deferred memory to store knowledge that is actually *derived* from experience, or to organize knowledge in a way that optimizes recalling the right information at the right time through progressive disclosure.
 - Justifications or reasons for updating memory. These belong in the git commit history of MemFS.
 
-## Project-level vs agent-level memory
-
-Knowledge about a code repository has two possible homes, and they serve different readers.
-
-- **Project-level memory** lives in the repository: `AGENTS.md` (root and nested), repo skills (`.agents/skills/`, or legacy `.skills/`), and docs. How to build, test, and deploy, the conventions, and the architecture belong there, because every agent and person working in that repository reads them first-hand and keeps them current with the code.
-- **Agent-level memory** is this memory directory. It holds what is not tied to one repository: people, your own preferences and history, projects that span repositories, and where the important repositories are.
-
-A private copy of a repository's knowledge goes stale as the code changes and helps no one else, so do not rebuild it here. Record where each important repository lives instead: its name, clone URL or local path, and one line on what it is for. Keep that as a short "Repositories" list in root `MEMORY.md`; when it outgrows a few lines, move it to `repositories/MEMORY.md` and leave a one-line pointer in root. When a task needs repository knowledge, clone or open the repository and read its `AGENTS.md` and skills.
-
-When you learn something every agent in a repository would need, such as a missing build step or an undocumented gotcha, propose it to the repository as an `AGENTS.md` or skill change rather than saving it privately. Keep in agent-level memory only your own delta about a repository: your history there, recurring mistakes of your own, and the user's preferences about how you work in it.
-
 ## Check the limits first
 
 Read `$MEMORY_DIR/.memfs.config.json` if it exists. The memory repository's pre-commit hook enforces it:
@@ -91,5 +80,6 @@ Recall already returns what happened. A deferred memory file is worth keeping on
 - When a raw event matters, point to it with terms that will find it in recall rather than copying it.
 - Keep one home per subject. Update the existing file instead of adding a near-duplicate, and replace stale conclusions where they live.
 - Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, and current status. Link to the owning source instead.
+- Keep a short "Repositories" list in root `MEMORY.md` saying where the important repos are (`repositories/MEMORY.md` if it grows), so the agent can clone one and read its `AGENTS.md` and skills. Knowledge every agent in a repo needs goes to that repo, not to private memory.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 

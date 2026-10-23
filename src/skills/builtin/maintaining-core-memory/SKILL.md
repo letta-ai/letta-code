@@ -65,7 +65,7 @@ Core memory is the agent's working model: who it is, how the user thinks and wha
 - Update only from a pattern or an explicit instruction, not a single ambiguous event.
 - Check that a change does not contradict an existing line; resolve the conflict instead of adding both.
 - Write in plain language without all-caps or absolute emphasis. Overstated instructions get overapplied.
-- Leave out content the agent can cheaply rederive: file contents, command lists, current status, and recent activity. A repository's build, test, and convention rules belong in its `AGENTS.md`, not here.
+- Leave out content the agent can cheaply rederive: file contents, command lists, current status, and recent activity.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
 ## Teach with examples, not more rules
@@ -89,7 +89,6 @@ The agent consults deferred memory only when something in its prompt tells it to
 - Give each directory a one-line entry saying when to open it, in the words a future request would use: "deployments, rollbacks, on-call runbooks", not "ops notes".
 - Name a specific deeper file when its topic would not be guessable from the directory entry.
 - Say what kinds of questions should send the agent to memory before it answers from assumption, such as an unfamiliar person, project, or system named in the conversation.
-- Keep a short "Repositories" list of the important code repositories: where each lives and what it is for. A repository's own `AGENTS.md` and skills hold how to work in it, so the list only needs to get the agent there. See "Project-level vs agent-level memory" in the `maintaining-deferred-memory` skill.
 - Do not re-index root files or skills; both are already in the prompt.
 - After adding a directory or file, check that a natural future request would reach it by reading only root `MEMORY.md` and the indexes beneath it.
 
