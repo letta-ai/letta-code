@@ -1,14 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
-import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import {
   spawnManagedWorkloadProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
@@ -26,6 +24,7 @@ import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import { resolveExternalCodingAgentSkillsReminder } from "./external-coding-agent-skills";
 import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
@@ -98,7 +97,9 @@ export interface ExternalCodingAgentProcessResult {
 }
 
 export interface ExternalCodingAgentDependencies {
+  resolveSkillsReminder?: typeof resolveExternalCodingAgentSkillsReminder;
   runCodexTurn?: typeof runCodexTurn;
+  runOpenCodeTurn?: typeof runOpenCodeTurn;
   runProcess?: (
     command: ExternalCodingAgentCommand,
     options: {
@@ -477,20 +478,17 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
-  const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
-  // Compose once for both providers, independently of MCP inheritance.
-  options = {
-    ...options,
-    mcpReminder:
-      [
-        parentMemoryNote
-          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
-          : undefined,
-        options.mcpReminder,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined,
-  };
+  if (options.type === "claude-code" || options.type === "codex") {
+    const skillsReminder = await (
+      deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
+    )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
+    options = {
+      ...options,
+      mcpReminder:
+        [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
+        undefined,
+    };
+  }
   const startedAt = Date.now();
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
@@ -582,7 +580,7 @@ export async function runExternalCodingAgent(
   if (options.type === "opencode") {
     // OpenCode persists native sessions itself; transcript capture currently
     // supports only Claude/Codex formats, not OpenCode's database.
-    return runOpenCodeTurn(
+    return (deps.runOpenCodeTurn ?? runOpenCodeTurn)(
       {
         ...options,
         cwd,
