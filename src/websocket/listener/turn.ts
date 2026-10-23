@@ -81,6 +81,7 @@ import {
   updateTurnInputMessagesPreservingOtids,
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
+import { finishTurnIfMaxTurnsReached } from "./turn-max-turns";
 import { notifyTurnFinished, notifyTurnStarted } from "./turn-observers";
 import {
   prepareProviderRetryInput,
@@ -333,23 +334,20 @@ async function handleIncomingMessageInner(
         break;
       }
       lastApprovalContinuationAccepted = false;
-      const maxTurns = runtime.executionSettings?.max_turns;
       if (
-        maxTurns !== undefined &&
-        buffers.usage.stepCount >= maxTurns &&
-        stopReason !== "requires_approval" &&
-        !(stopReason === "error" && fallbackError)
-      ) {
-        finishTurn({
-          stopReason: "max_steps",
+        finishTurnIfMaxTurnsReached({
+          runtime,
           socket,
+          buffers,
+          stopReason,
+          approvals,
+          fallbackError,
+          runId: runId || runtime.activeRunId,
           agentId,
           conversationId,
-          errorNotice: {
-            message: `Maximum turns limit reached (${buffers.usage.stepCount}/${maxTurns} steps)`,
-            runId: runId || runtime.activeRunId,
-          },
-        });
+          finishTurn,
+        })
+      ) {
         break;
       }
       if (stopReason === "end_turn") {
