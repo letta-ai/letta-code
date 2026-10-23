@@ -673,6 +673,41 @@ describe("ProviderTurnExecutor", () => {
     expect(usage?.context_tokens).toBe(1025);
   });
 
+  test("reports step_count 1 per completed step, even without token usage", async () => {
+    const steps = [
+      assistantMessage({ ...emptyLocalUsage(), input: 10, totalTokens: 10 }),
+      {
+        ...assistantMessage(),
+        usage: undefined as unknown as LocalAssistantMessage["usage"],
+      },
+    ];
+    const adapter: ProviderStreamAdapter = {
+      async *stream() {
+        const message = steps.shift();
+        yield providerStreamPart(
+          part({ type: "done", reason: "stop", message }),
+        );
+      },
+    };
+    const executor = new ProviderTurnExecutor(adapter);
+
+    const usageChunks: LettaStreamingResponse[] = [];
+    for (let step = 0; step < 2; step++) {
+      const chunks = await collect(await executor.execute(input()));
+      usageChunks.push(
+        ...chunks.filter((chunk) => chunk.message_type === "usage_statistics"),
+      );
+    }
+
+    expect(usageChunks).toHaveLength(2);
+    expect(
+      usageChunks.map((chunk) => (chunk as { step_count?: number }).step_count),
+    ).toEqual([1, 1]);
+    expect(
+      (usageChunks[1] as { prompt_tokens?: number }).prompt_tokens,
+    ).toBeUndefined();
+  });
+
   test("normalizes provider errors into local error chunks", async () => {
     const adapter: ProviderStreamAdapter = {
       async *stream() {
