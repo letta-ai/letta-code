@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.309:docs:b9315c4701de5bf8a01a0d27ae066f6e2d0ddb581f4c7ea93922f4a43d7e285e:runtime:901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad",
+  "candidate_id": "claude@2.1.309:docs:55c7ab8923b484e0ed95d63818951205dce630f2a2a5023e1f92cf7bba3f0465:runtime:901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad",
   "package_version": "2.1.309",
   "npm_integrity": "sha512-+lBYZRuXOJpiKJcRv/CK7gF+5UFNWyJE7hSxkgGUKDZOWgANl9MAabfTkrJk183Tp3B0Nv4xF/DU1t0BaKXOPw==",
   "npm_published_at": "2026-10-22T20:34:13.713Z",
@@ -1124,7 +1124,7 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "03e6622e86014b69959e7a3c0825cd7a41662cd8e246d3d5da3622ffd34d523d",
+        "hash": "d359aa89b2adba5cdf14d3e2f57f51d57629cfec56732bffcb4e1b586589fc2c",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "b9315c4701de5bf8a01a0d27ae066f6e2d0ddb581f4c7ea93922f4a43d7e285e"
+    "digest": "55c7ab8923b484e0ed95d63818951205dce630f2a2a5023e1f92cf7bba3f0465"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad"
   },
-  "fetched_at": "2026-10-23T18:32:42.639Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40003972635",
-  "state_commit_parent": "f4bf2745db36c0d94ae61c41117b72c7a2bc892e",
-  "analysis_parent_sha": "f4bf2745db36c0d94ae61c41117b72c7a2bc892e"
+  "fetched_at": "2026-10-23T20:27:47.152Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40019224468",
+  "state_commit_parent": "93cd2837eebf4129626faf8ab000ffc1a5cffb4d",
+  "analysis_parent_sha": "93cd2837eebf4129626faf8ab000ffc1a5cffb4d"
 }
