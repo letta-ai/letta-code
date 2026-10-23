@@ -39,6 +39,7 @@ export function isRuntimeStartCommand(
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.preserve_skill_sources === undefined ||
       typeof c.preserve_skill_sources === "boolean") &&
+    (c.bundled_skills === undefined || isStringArray(c.bundled_skills)) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&

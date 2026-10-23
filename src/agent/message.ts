@@ -440,6 +440,7 @@ export async function sendMessageStreamWithBackend(
         undefined,
       skillsDirectory: executionRuntimeContext?.skillsDirectory,
       skillSources: opts.skillSources ?? getSkillSources(),
+      bundledSkills: executionRuntimeContext?.bundledSkills,
     });
 
   const resolvedConversationId = conversationId;

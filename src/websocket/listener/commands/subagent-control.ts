@@ -85,6 +85,7 @@ function runtimeContext(
       parent.conversationId,
     ),
     skillSources: parent.skillSources,
+    bundledSkills: parent.bundledSkills,
     workspaceSandbox: parent.workspaceSandbox,
     executionSettings: parent.executionSettings,
   };
