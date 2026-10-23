@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
@@ -115,6 +117,7 @@ export interface ExternalCodingAgentDependencies {
   ) => Promise<ExternalCodingAgentProcessResult>;
   env?: NodeJS.ProcessEnv;
   resolveSecretEnv?: (parentAgentId: string) => Promise<Record<string, string>>;
+  fetch?: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>;
 }
 
 export function isExternalCodingAgentType(
@@ -473,24 +476,54 @@ export async function resolveExternalCodingAgentSecretEnv(
   return { ...inherited, ...loadSecrets(parentAgentId) };
 }
 
+async function resolveIntegrationsNote(
+  env: NodeJS.ProcessEnv,
+  fetchConnections: NonNullable<ExternalCodingAgentDependencies["fetch"]>,
+): Promise<string | undefined> {
+  // Local logins can live in the keychain rather than the worker environment.
+  if (!env.LETTA_API_KEY || !env.LETTA_BASE_URL || !env.AGENT_ID) return;
+  try {
+    // Existing Cloud connections endpoint, also used by the connection UI.
+    const response = await fetchConnections(
+      `${env.LETTA_BASE_URL.replace(/\/$/, "")}/v1/agents/${encodeURIComponent(env.AGENT_ID)}/connections`,
+      {
+        headers: { Authorization: `Bearer ${env.LETTA_API_KEY}` },
+        signal: AbortSignal.timeout(5000),
+      },
+    );
+    if (!response.ok) return;
+    const body = (await response.json()) as {
+      connections: { kind: string; service: string }[];
+    };
+    const services = [
+      ...new Set(
+        body.connections
+          .filter(
+            ({ kind }) =>
+              kind === "integration" || kind === "google_workspace_account",
+          )
+          .map(({ service }) => service),
+      ),
+    ].sort();
+    if (!services.length) return;
+    return [
+      SYSTEM_REMINDER_OPEN,
+      `Connected integrations: ${services.join(", ")}.`,
+      `Read the existing cloud skills at ${join(homedir(), ".letta", "cloud-skills")}/*/SKILL.md for integration broker/CLI instructions.`,
+      "$LETTA_API_KEY, $LETTA_BASE_URL and $AGENT_ID are already in your environment; use Letta's OAuth broker rather than looking for provider API keys.",
+      'If cloud skills are unavailable, the Linear broker can be called with: curl -sS "$LETTA_BASE_URL/v1/integrations/linear/graphql" -H "Authorization: Bearer $LETTA_API_KEY" -H "Content-Type: application/json" -d "{\\"agent_id\\":\\"$AGENT_ID\\",\\"query\\":\\"query { viewer { id name } }\\"}"',
+      SYSTEM_REMINDER_CLOSE,
+    ].join("\n");
+  } catch {
+    // Discovery is advisory; unavailable Cloud APIs must not block the worker.
+    return;
+  }
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
-  const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
-  // Compose once for both providers, independently of MCP inheritance.
-  options = {
-    ...options,
-    mcpReminder:
-      [
-        parentMemoryNote
-          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
-          : undefined,
-        options.mcpReminder,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined,
-  };
   const startedAt = Date.now();
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
@@ -504,6 +537,21 @@ export async function runExternalCodingAgent(
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
+  };
+  const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
+  // Compose once for both providers, independently of MCP inheritance.
+  options = {
+    ...options,
+    mcpReminder:
+      [
+        parentMemoryNote
+          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+          : undefined,
+        options.mcpReminder,
+        await resolveIntegrationsNote(env, deps.fetch ?? fetch),
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined,
   };
   if (typeof options.actingUserId === "string") {
     env[ACTING_USER_ID_ENV] = options.actingUserId;
