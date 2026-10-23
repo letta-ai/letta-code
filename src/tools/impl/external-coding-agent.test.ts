@@ -122,6 +122,7 @@ describe("external coding agent MCP metadata", () => {
 
   test("inherits local and cloud MCP discovery by default, with explicit opt-out", async () => {
     const deps = {
+      lookupParentAgent: async () => undefined,
       getLocalServerNames: (id: string) => {
         expect(id).toBe("parent");
         return ["filesystem"];
@@ -251,17 +252,25 @@ describe("external coding agent output and preflight", () => {
   test("uses the Codex app-server turn even when native login status would fail", async () => {
     const preflightArgs: string[][] = [];
     const result = await runExternalCodingAgent(
-      { type: "codex", prompt: "test", parentAgentId: "parent" },
+      {
+        type: "codex",
+        prompt: "test",
+        parentAgentId: "parent",
+        reasoning_effort: "high",
+      },
       {
         runPreflight: async (_executable, args) => {
           preflightArgs.push(args);
           return { exitCode: 0, stdout: "codex-cli 0.151.0", stderr: "" };
         },
-        runCodexTurn: async () => ({
-          agentId: "codex_thread-1",
-          report: "completed through configured provider",
-          success: true,
-        }),
+        runCodexTurn: async (options) => {
+          expect(options.reasoning_effort).toBe("high");
+          return {
+            agentId: "codex_thread-1",
+            report: "completed through configured provider",
+            success: true,
+          };
+        },
       },
     );
     expect(preflightArgs).toEqual([["--version"]]);
@@ -589,3 +598,57 @@ describe("parent memory launch instructions", () => {
     },
   );
 });
+
+test("Claude command includes effort only when provided", () => {
+  const options = { type: "claude-code" as const, prompt: "Work" };
+  const baseline = buildExternalCodingAgentCommand(options);
+  expect(baseline.args).not.toContain("--effort");
+  expect(
+    buildExternalCodingAgentCommand({ ...options, reasoning_effort: "high" }),
+  ).toEqual({
+    ...baseline,
+    args: [...baseline.args, "--effort", "high"],
+  });
+});
+
+test.each(["claude-code", "codex"] as const)(
+  "invalid %s effort is rejected before launching",
+  async (type) => {
+    let launched = false;
+    await expect(
+      runExternalCodingAgent(
+        {
+          type,
+          prompt: "Work",
+          parentAgentId: "parent",
+          reasoning_effort: "junk",
+        },
+        {
+          runPreflight: async () => {
+            launched = true;
+            return { exitCode: 0, stdout: "", stderr: "" };
+          },
+        },
+      ),
+    ).rejects.toThrow(`Invalid reasoning_effort for ${type}`);
+    expect(launched).toBe(false);
+  },
+);
+
+test.each(["general-purpose", "opencode"])(
+  "Task rejects reasoning effort for %s",
+  async (subagent_type) => {
+    const { launchSubagent } = await import("./task");
+    expect(
+      await launchSubagent({
+        subagent_type,
+        prompt: "Work",
+        description: "Work",
+        reasoning_effort: "high",
+      }),
+    ).toMatchObject({
+      success: false,
+      error: "reasoning_effort only applies to claude-code and codex workers",
+    });
+  },
+);

@@ -17,6 +17,10 @@
       "type": "string",
       "description": "Optional; leave unset by default. When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."
     },
+    "reasoning_effort": {
+      "type": "string",
+      "description": "Optional per-launch reasoning effort for claude-code or codex workers (e.g. low, medium, high, xhigh, max); leave unset to use the CLI default."
+    },
     "agent_id": {
       "type": "string",
       "description": "Deploy an existing agent instead of creating a new one. Starts a new conversation with that agent."

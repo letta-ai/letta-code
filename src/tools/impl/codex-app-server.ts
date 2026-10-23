@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
+import { assertExternalReasoningEffort } from "./external-reasoning-effort";
 import {
   type ExternalToolCall,
   type ExternalToolCallListener,
@@ -48,6 +49,7 @@ interface CodexSession {
   cwd: string;
   parentAgentId: string;
   model?: string;
+  reasoning_effort?: string;
   activeTurnId?: string;
   activeWaiter?: TurnWaiter;
   startLock: Promise<void>;
@@ -61,6 +63,7 @@ export interface CodexTurnOptions {
   parentAgentId: string;
   cwd: string;
   model?: string;
+  reasoning_effort?: string;
   mcpReminder?: string;
   signal?: AbortSignal;
   resumeThreadId?: string;
@@ -471,6 +474,7 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
+  assertExternalReasoningEffort("codex", options.reasoning_effort);
   const env = {
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
@@ -529,6 +533,7 @@ async function createSession(
     cwd: readString(thread, "cwd") ?? options.cwd,
     parentAgentId: options.parentAgentId,
     model: options.model,
+    reasoning_effort: options.reasoning_effort,
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
@@ -570,6 +575,9 @@ async function startTurnUnlocked(
     input: textInput(prompt),
     cwd: session.cwd,
     model: session.model,
+    ...(session.reasoning_effort !== undefined
+      ? { effort: session.reasoning_effort }
+      : {}),
     approvalPolicy: "never",
     // Unattended subagent: no approval relay exists, so run without the
     // workspace sandbox rather than failing writes outside cwd.
@@ -640,6 +648,7 @@ async function resumeSession(
   options: Omit<CodexTurnOptions, "prompt" | "resumeThreadId">,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
+  assertExternalReasoningEffort("codex", options.reasoning_effort);
   const loaded = sessions.get(threadId);
   if (loaded) {
     clearIdleSessionCleanup(loaded);

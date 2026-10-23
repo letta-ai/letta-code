@@ -746,3 +746,14 @@ describe("remote external coding agent control", () => {
     expect(computer.closed).toBe(true);
   });
 });
+
+test("forwards per-launch effort to the remote worker", async () => {
+  const computer = new FakeComputer(() => accepted);
+  const result = await launch([computer], { reasoning_effort: "high" });
+  if (!result.success) throw new Error(result.error);
+  expect(computer.launches[0]).toMatchObject({
+    args: { reasoning_effort: "high" },
+  });
+  computer.snapshot({ status: "completed", result: "Done" });
+  await notified();
+});
