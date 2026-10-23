@@ -716,7 +716,7 @@ describe("listener auth lifecycle", () => {
     expect(connections).toHaveLength(1);
   });
 
-  test("1008 re-registration closes tear down same-process runtime state", async () => {
+  test("1008 re-registration preserves pending approvals and queued work", async () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onNeedsReregister });
     await waitFor(
@@ -759,18 +759,19 @@ describe("listener auth lifecycle", () => {
       "approval resolver was not registered",
     );
 
-    connections[0]?.close(1008, "environment not found");
+    connections[0]?.close(1008, "Environment not found");
     await waitFor(
       () => onNeedsReregister.mock.calls.length === 1,
       "1008 close did not request re-registration",
     );
 
-    const rejection = await approvalRejection;
-    expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toBe("Listener runtime stopped");
-    expect(getActiveRuntime()).toBeNull();
-    expect(listener.conversationRuntimes.size).toBe(0);
-    expect(connections).toHaveLength(1);
+    expect(getActiveRuntime()).toBe(listener);
+    expect(listener.conversationRuntimes.size).toBe(1);
+    expect(conversationRuntime.turnLifecycle.isCurrent(turnLease)).toBe(true);
+    expect(conversationRuntime.pendingApprovalResolvers.size).toBe(1);
+    expect(conversationRuntime.queueRuntime.length).toBe(1);
+    stopListenerClient();
+    expect((await approvalRejection).message).toBe("Listener runtime stopped");
   });
 
   test("intentional stop closes tear down same-process runtime state", async () => {

@@ -172,23 +172,24 @@ test("accepted tombstone transfers only through explicit listener replacement", 
     getInputDisposition(unrelatedRuntime, ordinaryInputIdentity("ack-lost")),
   ).toBeUndefined();
   expect(() =>
-    adoptListenerClientReplacement(unrelated, {
+    adoptListenerClientReplacement({
       ...options,
       connectionName: "other-account-lineage",
       replacement,
     }),
   ).toThrow("Invalid listener replacement lineage");
   expect(() =>
-    adoptListenerClientReplacement(unrelated, {
+    adoptListenerClientReplacement({
       ...options,
       replacement: { ...replacement },
     }),
   ).toThrow("Invalid listener replacement lineage");
 
-  const next = createRuntime();
-  adoptListenerClientReplacement(next, { ...options, replacement });
+  const next = adoptListenerClientReplacement({ ...options, replacement });
+  expect(next).toBe(original);
+  if (!next) throw new Error("runtime missing");
   expect(() =>
-    adoptListenerClientReplacement(createRuntime(), {
+    adoptListenerClientReplacement({
       ...options,
       replacement,
     }),

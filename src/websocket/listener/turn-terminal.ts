@@ -384,5 +384,6 @@ export function finishListenerTurn(
       debugWarn("recovery", "Failed to retire completed listener work", error);
     }
   }
+  runtime.activeConnectionId = null;
   return transition;
 }

@@ -116,9 +116,9 @@ export function createListenerReadinessController(
 }
 
 /**
- * Memoize a gateway start per listener runtime. Re-registration replaces the
- * active runtime and stops the old one, so a gateway bound to the old runtime
- * can never become ready again; close it and start fresh on the new runtime.
+ * Memoize a gateway start per listener runtime. Re-registration resumes the
+ * same runtime and keeps its gateway; replacing the runtime closes the old
+ * gateway and starts a new one.
  */
 export function createRuntimeBoundGatewayStarter<R extends object>(options: {
   getRuntime: () => R | null;

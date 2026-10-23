@@ -251,7 +251,7 @@ test("initial gateway readiness composes with Cloud readiness", () => {
   expect(transitions).toEqual([true]);
 });
 
-test("rebuilds the channel gateway when re-registration replaces the runtime", async () => {
+test("keeps the gateway for a resumed runtime and rebuilds for a new runtime", async () => {
   const events: string[] = [];
   const runtimes = new Map<object, string>();
   const startGateway = createRuntimeBoundGatewayStarter({
@@ -271,7 +271,13 @@ test("rebuilds the channel gateway when re-registration replaces the runtime", a
   await startGateway();
   expect(events).toEqual(["start:A"]);
 
-  // Re-registration: the old runtime is stopped and a new one becomes active.
+  // Re-registration rotates the relay identity while keeping its runtime.
+  runtimeA.connectionId = "conn-reregistered";
+  setActiveRuntime(runtimeA);
+  await Promise.all([startGateway(), startGateway()]);
+  expect(events).toEqual(["start:A"]);
+
+  // An unrelated runtime replacement still closes and rebuilds the gateway.
   stopRuntime(runtimeA, true);
   const runtimeB = createRuntime();
   runtimes.set(runtimeB, "B");
