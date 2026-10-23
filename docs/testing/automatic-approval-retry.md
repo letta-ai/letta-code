@@ -34,22 +34,8 @@ or submit production approvals.
 - Restored user text excludes injected reminder parts. Malformed runtime parts
   are ignored without losing valid text.
 
-## Recorded validation before upstream integration
-
-On Windows with Bun 1.3.11 and Node 22.19.0, before integrating newer upstream commits:
-
-- Final focused run: 274 tests passed across 16 files; no failures.
-- `bun run check`: all 13 stages passed, including TypeScript and Biome.
-- `bun run build` and `node letta.js --version`: passed; the bundle reported
-  `0.34.21 (Letta Code)`.
-- Six Node-target TUI scenarios passed: normal, changed pending calls, unchanged
-  pending calls, consumed denials, failed pending-state read, and SSE-only errors.
-- Focused instrumentation reported full line/function coverage for the two new
-  policy and text-restoration modules. This is not a global coverage claim.
-
-The original TUI RED run had one passing control and three failing recovery
-cases. The SSE-only case failed separately before its classifier fix. Review
-also caught and corrected a malformed-content regression in text restoration.
+Validation snapshots belong in [PR #5240](https://github.com/letta-ai/letta-code/pull/5240).
+The contracts above remain the acceptance criteria when rerunning the tests.
 
 ## Limits
 

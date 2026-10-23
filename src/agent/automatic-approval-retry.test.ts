@@ -5,6 +5,7 @@ import {
   AutomaticApprovalRetryChangedError,
   reconcileAutomaticApprovalRetry,
 } from "./automatic-approval-retry";
+import type { ResumeData } from "./check-approval";
 import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "./turn-recovery-policy";
 
 type Input = Parameters<typeof reconcileAutomaticApprovalRetry>[2];
@@ -34,6 +35,15 @@ const pending = (id: string) => ({
   toolName: "UpdatePlan",
   toolArgs: "{}",
 });
+function reconcileWithPending(
+  input: Input,
+  readPending: () => Promise<ResumeData["pendingApprovals"]>,
+  signal?: AbortSignal,
+) {
+  return reconcileAutomaticApprovalRetry("agent", "default", input, signal, {
+    readPending,
+  });
+}
 afterEach(() => __testSetBackend(originalBackend));
 
 describe("automatic approval retry reconciliation", () => {
@@ -69,17 +79,9 @@ describe("automatic approval retry reconciliation", () => {
     ];
     for (const input of inputs) {
       expect(
-        await reconcileAutomaticApprovalRetry(
-          "agent",
-          "default",
-          input,
-          undefined,
-          {
-            readPending: async () => {
-              throw new Error("must not read");
-            },
-          },
-        ),
+        await reconcileWithPending(input, async () => {
+          throw new Error("must not read");
+        }),
       ).toBe(input);
     }
   });
@@ -99,15 +101,10 @@ describe("automatic approval retry reconciliation", () => {
     };
     const input = [automatic(), result, message];
     expect(
-      await reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
-        input,
-        undefined,
-        {
-          readPending: async () => [pending("A3"), pending("A1")],
-        },
-      ),
+      await reconcileWithPending(input, async () => [
+        pending("A3"),
+        pending("A1"),
+      ]),
     ).toBe(input);
   });
 
@@ -115,13 +112,7 @@ describe("automatic approval retry reconciliation", () => {
     const snapshot = [pending("A1"), pending("A2")];
     const input = [automatic(), message];
     try {
-      await reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
-        input,
-        undefined,
-        { readPending: async () => snapshot },
-      );
+      await reconcileWithPending(input, async () => snapshot);
       throw new Error("Expected a changed-approval error");
     } catch (error) {
       expect(error).toBeInstanceOf(AutomaticApprovalRetryChangedError);
@@ -136,12 +127,9 @@ describe("automatic approval retry reconciliation", () => {
   });
 
   test("keeps unsent message objects and OTIDs when all automatic denials were consumed", async () => {
-    const result = await reconcileAutomaticApprovalRetry(
-      "agent",
-      "default",
+    const result = await reconcileWithPending(
       [automatic(), message],
-      undefined,
-      { readPending: async () => [] },
+      async () => [],
     );
     expect(result).toEqual([message]);
     expect(result[0]).toBe(message);
@@ -149,15 +137,7 @@ describe("automatic approval retry reconciliation", () => {
 
   test("never submits an empty approval-only request", async () => {
     await expect(
-      reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
-        [automatic()],
-        undefined,
-        {
-          readPending: async () => [],
-        },
-      ),
+      reconcileWithPending([automatic()], async () => []),
     ).rejects.toMatchObject({ action: "stop", pendingApprovals: [] });
   });
 
@@ -179,9 +159,7 @@ describe("automatic approval retry reconciliation", () => {
     ];
     const before = structuredClone(input);
     await expect(
-      reconcileAutomaticApprovalRetry("agent", "default", input, undefined, {
-        readPending: async () => [pending("A1"), pending("A2")],
-      }),
+      reconcileWithPending(input, async () => [pending("A1"), pending("A2")]),
     ).rejects.toMatchObject({ action: "stop" });
     expect(input).toEqual(before);
   });
@@ -189,42 +167,28 @@ describe("automatic approval retry reconciliation", () => {
   test("detects an incomplete or duplicated approval set", async () => {
     for (const input of [[automatic()], [automatic(), automatic()]]) {
       await expect(
-        reconcileAutomaticApprovalRetry("agent", "default", input, undefined, {
-          readPending: async () => [pending("A3"), pending("A1")],
-        }),
+        reconcileWithPending(input, async () => [pending("A3"), pending("A1")]),
       ).rejects.toBeInstanceOf(AutomaticApprovalRetryChangedError);
     }
   });
 
   test("propagates failed reads instead of treating them as no pending approvals", async () => {
     await expect(
-      reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
-        [automatic(), message],
-        undefined,
-        {
-          readPending: async () => {
-            throw new Error("unavailable");
-          },
-        },
-      ),
+      reconcileWithPending([automatic(), message], async () => {
+        throw new Error("unavailable");
+      }),
     ).rejects.toThrow("unavailable");
   });
 
   test("does not read after cancellation", async () => {
     const signal = AbortSignal.abort(new Error("cancelled"));
     await expect(
-      reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
+      reconcileWithPending(
         [automatic()],
-        signal,
-        {
-          readPending: async () => {
-            throw new Error("must not read");
-          },
+        async () => {
+          throw new Error("must not read");
         },
+        signal,
       ),
     ).rejects.toThrow("cancelled");
   });
@@ -232,17 +196,13 @@ describe("automatic approval retry reconciliation", () => {
   test("does not authorize a retry when cancelled during the read", async () => {
     const controller = new AbortController();
     await expect(
-      reconcileAutomaticApprovalRetry(
-        "agent",
-        "default",
+      reconcileWithPending(
         [automatic()],
-        controller.signal,
-        {
-          readPending: async () => {
-            controller.abort(new Error("cancelled"));
-            return [pending("A3")];
-          },
+        async () => {
+          controller.abort(new Error("cancelled"));
+          return [pending("A3")];
         },
+        controller.signal,
       ),
     ).rejects.toThrow("cancelled");
   });
