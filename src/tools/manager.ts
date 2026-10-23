@@ -8,6 +8,7 @@ import {
   getSkillSources,
   getSkillsDirectory,
 } from "@/agent/context";
+import { resolveScopedMemoryDir } from "@/agent/memory-filesystem";
 import { getModelInfo } from "@/agent/model";
 import { getModelFacingSubagentDescriptors } from "@/agent/subagents";
 import { getBackend } from "@/backend";
@@ -2041,6 +2042,7 @@ async function executeToolInner(
         args,
         workingDirectory,
         activeModTools.has(name),
+        resolveScopedMemoryDir({ agentId: scopedAgentId }),
       );
   } catch (error) {
     return {
@@ -2048,7 +2050,6 @@ async function executeToolInner(
       toolReturn: `Memory checkout is unavailable: ${String(error)}`,
     };
   }
-
   if (activeModTools.has(name)) {
     const modTool = activeModTools.get(name);
     if (!modTool) {
@@ -2159,7 +2160,6 @@ async function executeToolInner(
       status: "error",
     };
   }
-
   const { args: eventArgs, result } = await emitToolStartEvent({
     args,
     events: modEvents,
