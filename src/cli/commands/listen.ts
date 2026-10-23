@@ -6,6 +6,7 @@
 import { hostname } from "node:os";
 import type { Buffers, Line } from "@/cli/helpers/accumulator";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
+import { handleWelcomeUrl } from "@/cli/subcommands/listen-welcome-url";
 import { settingsManager } from "@/settings-manager";
 import { getErrorMessage } from "@/utils/error";
 import { registerWithCloudRetry } from "@/websocket/listen-register";
@@ -227,6 +228,7 @@ export async function handleListen(
       wsUrl,
       supportsSplitStatusChannels,
       supportsPairedListenerGenerations,
+      welcomeUrl,
     } = await registerWithCloudRetry(registerOptions, {
       onRetry: (attempt, delayMs, error) => {
         updateCommandResult(
@@ -241,6 +243,16 @@ export async function handleListen(
         );
       },
     });
+
+    // Same first-run welcome as `letta server`: only the initial registration
+    // can carry it, and re-registrations never open anything.
+    if (welcomeUrl) {
+      void handleWelcomeUrl(welcomeUrl, {
+        serverUrl: registerOptions.serverUrl,
+        apiKey: registerOptions.apiKey,
+        connectionId,
+      });
+    }
 
     updateCommandResult(
       ctx.buffersRef,

@@ -20,6 +20,7 @@ import {
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { createListenerProcessAnchorPromise } from "@/cli/subcommands/listen-process-anchor";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
+import { handleWelcomeUrl } from "@/cli/subcommands/listen-welcome-url";
 import {
   applyGatewayLifecycleReadiness,
   completeListenerConnectionStartup,
@@ -680,6 +681,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       wsUrl,
       supportsSplitStatusChannels,
       supportsPairedListenerGenerations,
+      welcomeUrl,
     } = await registerWithCloudRetry(registerOptions, {
       onRetry: (attempt, delayMs, error) => {
         sessionLog.log(
@@ -696,6 +698,16 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
     sessionLog.log(`Registered: connectionId=${connectionId}`);
     sessionLog.log(`wsUrl: ${wsUrl}`);
+
+    // Only the initial registration can carry a first-run welcome URL;
+    // re-registrations after a reconnect never open anything.
+    if (welcomeUrl) {
+      void handleWelcomeUrl(welcomeUrl, {
+        serverUrl: registerOptions.serverUrl,
+        apiKey: registerOptions.apiKey,
+        connectionId,
+      }).then((result) => sessionLog.log(`Welcome URL: ${result}`));
+    }
 
     if (debugMode) {
       console.log(`[${formatTimestamp()}] Registered successfully`);
