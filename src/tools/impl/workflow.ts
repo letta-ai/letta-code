@@ -48,7 +48,10 @@ import {
 } from "@/tools/workflow/journal";
 import { parseWorkflowMeta } from "@/tools/workflow/meta";
 import { loadAgentSdk } from "@/tools/workflow/sdk-loader";
-import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
+import {
+  createSdkSpawner,
+  type SdkSpawnerConfig,
+} from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
@@ -103,6 +106,11 @@ export interface WorkflowSpawnerHandle {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  /**
+   * Re-capture the invoking turn's model, permission mode, tools, and working
+   * directory for later spawns, keeping the spawner's continuation state.
+   */
+  refresh?: () => Promise<void>;
   /** TaskStop controller for background runs; absent for foreground runs. */
   backgroundStopController?: AbortController;
   cleanup(): Promise<void>;
@@ -117,15 +125,12 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
-export async function createSdkSpawnerHandle(
+/** The invoking turn's settings that new worker spawns inherit. */
+async function captureInvokingContext(
   args: WorkflowArgs,
-  setStage: (stage: string) => void = () => {},
-): Promise<WorkflowSpawnerHandle> {
-  setStage("resolving parent agent");
-  const parentAgentId = await resolveScriptParentAgentId(args);
-  if (!parentAgentId) {
-    throw new Error("Workflow requires an invoking parent agent.");
-  }
+  parentAgentId: string,
+  setStage: (stage: string) => void,
+): Promise<Partial<SdkSpawnerConfig> & { model: string }> {
   setStage("resolving model");
   let model: string | null;
   if (args.model) {
@@ -148,10 +153,9 @@ export async function createSdkSpawnerHandle(
       );
     }
   }
-  const backendMode = resolveBackendMode();
   let parentModelSettings: Record<string, unknown> | undefined;
   let parentContextWindowLimit: number | null | undefined;
-  if (backendMode === "local") {
+  if (resolveBackendMode() === "local") {
     setStage("snapshotting local parent settings");
     const conversationId =
       args.parentScope?.conversationId ?? getConversationId();
@@ -177,9 +181,6 @@ export async function createSdkSpawnerHandle(
       parentContextWindowLimit = record.context_window_limit;
     }
   }
-  setStage("loading Agent SDK");
-  const sdk = await loadAgentSdk();
-  setStage("creating SDK client and spawner");
   const runtime = getRuntimeContext();
   const toolContextId = runtime?.toolContextId ?? null;
   // Lazy: tool impls are loaded by the manager, so a static import cycles.
@@ -187,29 +188,45 @@ export async function createSdkSpawnerHandle(
   const executionContext = toolContextId
     ? manager.getExecutionContextById(toolContextId)
     : undefined;
-  const client = sdk.createLocalClient(backendMode);
+  return {
+    model,
+    parentToolNames: runtime?.clientToolNames,
+    agentScopedToolNames: Array.from(executionContext?.modTools.values() ?? [])
+      .filter((tool) => tool.owner?.scope === "agent")
+      .map((tool) => tool.name),
+    permissionMode: runtime?.permissionMode ?? permissionMode.getMode(),
+    cwd: getCurrentWorkingDirectory(),
+    parentModelSettings,
+    parentContextWindowLimit,
+  };
+}
+
+export async function createSdkSpawnerHandle(
+  args: WorkflowArgs,
+  setStage: (stage: string) => void = () => {},
+): Promise<WorkflowSpawnerHandle> {
+  setStage("resolving parent agent");
+  const parentAgentId = await resolveScriptParentAgentId(args);
+  if (!parentAgentId) {
+    throw new Error("Workflow requires an invoking parent agent.");
+  }
+  const config: SdkSpawnerConfig = {
+    parentAgentId,
+    resolveModel,
+    allowedTools: args.allowedTools,
+    verifyPersistedRuns: resolveBackendMode() === "api",
+    ...(await captureInvokingContext(args, parentAgentId, setStage)),
+  };
+  setStage("loading Agent SDK");
+  const sdk = await loadAgentSdk();
+  setStage("creating SDK client and spawner");
+  config.supportsAgentFreeResume = sdk.supportsAgentFreeResume;
+  const client = sdk.createLocalClient(resolveBackendMode());
   let spawner: SubagentSpawner;
   try {
-    spawner = createSdkSpawner(client, {
-      parentAgentId,
-      model,
-      resolveModel,
-      allowedTools: args.allowedTools,
-      parentToolNames: runtime?.clientToolNames,
-      agentScopedToolNames: Array.from(
-        executionContext?.modTools.values() ?? [],
-      )
-        .filter((tool) => tool.owner?.scope === "agent")
-        .map((tool) => tool.name),
-      permissionMode: runtime?.permissionMode ?? permissionMode.getMode(),
-      cwd: getCurrentWorkingDirectory(),
-      supportsAgentFreeResume: sdk.supportsAgentFreeResume,
-      verifyPersistedRuns: backendMode === "api",
-      ...(parentModelSettings ? { parentModelSettings } : {}),
-      ...(parentContextWindowLimit !== undefined
-        ? { parentContextWindowLimit }
-        : {}),
-    });
+    // The spawner reads `config` at each spawn, so refresh() applies to
+    // later spawns without discarding its continuation state.
+    spawner = createSdkSpawner(client, config);
   } catch (error) {
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
@@ -229,6 +246,12 @@ export async function createSdkSpawnerHandle(
   return {
     spawner,
     ...toolScope,
+    refresh: async () => {
+      Object.assign(
+        config,
+        await captureInvokingContext(args, parentAgentId, () => {}),
+      );
+    },
     backgroundStopController,
     cleanup: async () => {
       await toolScope.cleanup();

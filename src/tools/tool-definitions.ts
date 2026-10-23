@@ -15,6 +15,7 @@ import MonitorDescription from "./descriptions/Monitor.md";
 import ReadDescription from "./descriptions/Read.md";
 import ReadArtifactFileDescription from "./descriptions/ReadArtifactFile.md";
 import ReadLSPDescription from "./descriptions/ReadLSP.md";
+import ReplDescription from "./descriptions/Repl.md";
 import SendAgentMessageDescription from "./descriptions/SendAgentMessage.md";
 import SetWorkingDirectoryDescription from "./descriptions/SetWorkingDirectory.md";
 import SkillDescription from "./descriptions/Skill.md";
@@ -48,6 +49,7 @@ import { memory } from "./impl/memory";
 import { monitor } from "./impl/monitor";
 import { read } from "./impl/read";
 import { read_lsp } from "./impl/read-lsp";
+import { repl } from "./impl/repl";
 import { send_agent_message } from "./impl/send-agent-message";
 import { set_working_directory } from "./impl/set-working-directory";
 import { skill } from "./impl/skill";
@@ -80,6 +82,7 @@ import MonitorSchema from "./schemas/Monitor.json";
 import ReadSchema from "./schemas/Read.json";
 import ReadArtifactFileSchema from "./schemas/ReadArtifactFile.json";
 import ReadLSPSchema from "./schemas/ReadLSP.json";
+import ReplSchema from "./schemas/Repl.json";
 import SendAgentMessageSchema from "./schemas/SendAgentMessage.json";
 import SetWorkingDirectorySchema from "./schemas/SetWorkingDirectory.json";
 import SkillSchema from "./schemas/Skill.json";
@@ -262,6 +265,11 @@ const toolDefinitions = {
     schema: WorkflowSchema,
     description: WorkflowDescription.trim(),
     impl: workflow,
+  }),
+  Repl: defineTool({
+    schema: ReplSchema,
+    description: ReplDescription.trim(),
+    impl: repl,
   }),
   Write: defineTool({
     schema: WriteSchema,

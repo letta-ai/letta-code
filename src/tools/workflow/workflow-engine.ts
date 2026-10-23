@@ -20,6 +20,12 @@ import vm from "node:vm";
 import { submitWorkflowDecision } from "./decide.ts";
 import { appendJournalEntry } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
+import {
+  createToolHooks,
+  parallel,
+  pipeline,
+  Semaphore,
+} from "./script-hooks.ts";
 import type {
   AgentCallOptions,
   RunWorkflowOptions,
@@ -27,66 +33,12 @@ import type {
   WorkflowExecutionResult,
   WorkflowMeta,
   WorkflowProgressEvent,
-  WorkflowToolInfo,
-  WorkflowToolResult,
 } from "./types.ts";
 
 export const DEFAULT_MAX_CONCURRENT = 16;
 const DEFAULT_MAX_TOTAL_AGENTS = 1000;
 const DEFAULT_MAX_TOTAL_DECISIONS = 1000;
 const DEFAULT_MAX_TOTAL_TOOL_CALLS = 1000;
-const MAX_ITEMS_PER_HELPER = 4096;
-
-class Semaphore {
-  private available: number;
-  private waiters: Array<() => void> = [];
-
-  constructor(slots: number) {
-    this.available = Math.max(1, slots);
-  }
-
-  async acquire(): Promise<void> {
-    if (this.available > 0) {
-      this.available--;
-      return;
-    }
-    await new Promise<void>((resolve) => this.waiters.push(resolve));
-  }
-
-  release(): void {
-    const next = this.waiters.shift();
-    if (next) next();
-    else this.available++;
-  }
-}
-
-function mcpText(content: unknown[]): string[] {
-  return content.flatMap((part) =>
-    part &&
-    typeof part === "object" &&
-    (part as { type?: unknown }).type === "text" &&
-    typeof (part as { text?: unknown }).text === "string"
-      ? [(part as { text: string }).text]
-      : [],
-  );
-}
-
-/** Text results resolve to a string (parsed when JSON); others stay raw. */
-function mcpContentValue(content: unknown[]): unknown {
-  const text = mcpText(content);
-  if (text.length !== content.length || text.length === 0) return content;
-  const joined = text.join("\n");
-  try {
-    return JSON.parse(joined);
-  } catch {
-    return joined;
-  }
-}
-
-function mcpErrorText(result: { content: unknown[] }): string {
-  return mcpText(result.content).join("\n").slice(0, 2000) || "MCP tool error";
-}
-
 function defaultLabel(prompt: string): string {
   const oneLine = prompt.replace(/\s+/g, " ").trim();
   return oneLine.length <= 48 ? oneLine : `${oneLine.slice(0, 45)}...`;
@@ -147,7 +99,6 @@ async function executeScript(
   let currentPhase: string | null = null;
   let callCounter = 0;
   let decisionCounter = 0;
-  let toolCallCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
 
@@ -172,100 +123,15 @@ async function executeScript(
     return trackCall(callDecision(state, questions, callOptions));
   }
 
-  // Codex-style `tools` global: `await tools.Read(args)` or
-  // `await tools.mcp__server__tool(args)`. Only the invoking turn's built-ins
-  // and agent MCP tools are exposed; any other name is undefined.
-  const builtinToolNames = new Set(options.builtinToolNames ?? []);
-  const isCallable = (name: string) =>
-    builtinToolNames.has(name) || name.startsWith("mcp__");
-  const tools = new Proxy(Object.freeze({}), {
-    get: (_target, name) =>
-      typeof name === "string" && isCallable(name)
-        ? (args?: unknown) => trackCall(callTool(name, args))
-        : undefined,
+  const toolHooks = createToolHooks({
+    bindings: () => options,
+    signal: () => signal,
+    semaphore,
+    maxTotalToolCalls,
+    track: trackCall,
+    journalPath: options.journalPath,
+    abortedMessage: "Workflow aborted.",
   });
-
-  let toolInfo: Promise<WorkflowToolInfo[]> | undefined;
-  function loadToolInfo(): Promise<WorkflowToolInfo[]> {
-    if (!options.listTools) return Promise.resolve([]);
-    toolInfo ??= options.listTools().catch((error: unknown) => {
-      toolInfo = undefined;
-      throw error;
-    });
-    return toolInfo;
-  }
-
-  /** `[{ name, description }]` for every tool callable through `tools`. */
-  async function listTools(): Promise<
-    Array<{ name: string; description: string }>
-  > {
-    return (await loadToolInfo()).map(({ name, description }) => ({
-      name,
-      description,
-    }));
-  }
-
-  /** `{ name, description, inputSchema }`, or undefined for an unknown tool. */
-  async function describeTool(
-    name: unknown,
-  ): Promise<WorkflowToolInfo | undefined> {
-    if (typeof name !== "string" || !name) {
-      throw new Error("describeTool() requires a tool name string.");
-    }
-    return (await loadToolInfo()).find((tool) => tool.name === name);
-  }
-
-  async function callTool(toolName: string, args?: unknown): Promise<unknown> {
-    const call = options.callTool;
-    if (!call) {
-      throw new Error("tools are unavailable: no invoking tool scope.");
-    }
-    if (
-      args !== undefined &&
-      (!args || typeof args !== "object" || Array.isArray(args))
-    ) {
-      throw new Error(`tools.${toolName}() arguments must be an object.`);
-    }
-    if (signal.aborted) throw new Error("Workflow aborted.");
-    if (toolCallCounter >= maxTotalToolCalls) {
-      throw new Error(
-        `Lifetime tool call cap of ${maxTotalToolCalls} reached.`,
-      );
-    }
-    toolCallCounter++;
-    await semaphore.acquire();
-    const startedAt = Date.now();
-    const journal = (isError: boolean, error?: string) => {
-      if (!options.journalPath) return;
-      appendJournalEntry(options.journalPath, {
-        kind: "tool_call",
-        toolName,
-        isError,
-        durationMs: Date.now() - startedAt,
-        ...(error ? { error } : {}),
-      });
-    };
-    let result: WorkflowToolResult;
-    try {
-      if (signal.aborted) throw new Error("Workflow aborted.");
-      result = await call(toolName, (args ?? {}) as Record<string, unknown>);
-    } catch (error) {
-      journal(true, error instanceof Error ? error.message : String(error));
-      throw error;
-    } finally {
-      semaphore.release();
-    }
-    if (result.isError) {
-      const message = mcpErrorText(result);
-      journal(true, message);
-      throw new Error(`${toolName} failed: ${message}`);
-    }
-    journal(false);
-    // Built-ins resolve to their text output verbatim; MCP results normalize.
-    if (builtinToolNames.has(toolName))
-      return mcpText(result.content).join("\n");
-    return result.structuredContent ?? mcpContentValue(result.content);
-  }
 
   async function callDecision(
     state: unknown,
@@ -432,67 +298,6 @@ async function executeScript(
     }
   }
 
-  async function collectResults(tasks: Promise<unknown>[]): Promise<unknown[]> {
-    // Preserve sibling completion, but never turn an unhandled failure into
-    // a successful null result. Scripts can catch inside each callback for
-    // best-effort processing.
-    const outcomes = await Promise.allSettled(tasks);
-    return outcomes.map((outcome) => {
-      if (outcome.status === "rejected") throw outcome.reason;
-      return outcome.value;
-    });
-  }
-
-  async function parallel(thunks: unknown): Promise<unknown[]> {
-    if (!Array.isArray(thunks)) {
-      throw new Error("parallel() takes an array of zero-arg functions.");
-    }
-    if (thunks.length > MAX_ITEMS_PER_HELPER) {
-      throw new Error(
-        `parallel() accepts at most ${MAX_ITEMS_PER_HELPER} items, got ${thunks.length}.`,
-      );
-    }
-    return collectResults(
-      thunks.map(async (thunk) => {
-        if (typeof thunk !== "function") {
-          throw new Error("parallel() takes an array of zero-arg functions.");
-        }
-        return await thunk();
-      }),
-    );
-  }
-
-  async function pipeline(
-    items: unknown,
-    ...stages: unknown[]
-  ): Promise<unknown[]> {
-    if (!Array.isArray(items)) {
-      throw new Error(
-        "pipeline() takes an array of items followed by stage functions.",
-      );
-    }
-    if (items.length > MAX_ITEMS_PER_HELPER) {
-      throw new Error(
-        `pipeline() accepts at most ${MAX_ITEMS_PER_HELPER} items, got ${items.length}.`,
-      );
-    }
-    type StageFn = (prev: unknown, item: unknown, index: number) => unknown;
-    const stageFns = stages.filter(
-      (s): s is StageFn => typeof s === "function",
-    );
-    // No barrier between stages: each item flows through its whole chain
-    // independently, so item A can be in stage 3 while item B is in stage 1.
-    return collectResults(
-      items.map(async (item, index) => {
-        let value: unknown = item;
-        for (const stage of stageFns) {
-          value = await stage(value, item, index);
-        }
-        return value;
-      }),
-    );
-  }
-
   function phase(title: unknown): void {
     if (typeof title !== "string" || !title) {
       throw new Error("phase() requires a title string.");
@@ -506,9 +311,9 @@ async function executeScript(
   }
 
   const context = vm.createContext({
-    tools,
-    listTools,
-    describeTool,
+    tools: toolHooks.tools,
+    listTools: toolHooks.listTools,
+    describeTool: toolHooks.describeTool,
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
