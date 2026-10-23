@@ -414,22 +414,27 @@ export function getPreviousCronOccurrence(
   now: Date,
   timezone?: string | null,
 ): Date {
+  const fallback = new Date(
+    Math.floor(now.getTime() / MS_PER_MINUTE) * MS_PER_MINUTE,
+  );
+  const parserExpression = normalizeCronExpressionForParser(expr);
+  if (parserExpression === null) return fallback;
   let tz = timezone || undefined;
   try {
     if (tz) new Intl.DateTimeFormat("en-US", { timeZone: tz });
   } catch {
     tz = undefined;
   }
-  const iterator = CronExpressionParser.parse(
-    normalizeCronExpressionForParser(expr) ?? expr,
-    { currentDate: new Date(now.getTime() + 1), tz },
-  );
-  let occurrence = iterator.prev().toDate();
+  const iterator = CronExpressionParser.parse(parserExpression, {
+    currentDate: new Date(now.getTime() + 1),
+    tz,
+  });
   // cron-parser shifts nonexistent spring-forward times; classic cron skips them.
-  while (!cronMatchesTime(expr, occurrence, timezone)) {
-    occurrence = iterator.prev().toDate();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const occurrence = iterator.prev().toDate();
+    if (cronMatchesTime(expr, occurrence, timezone)) return occurrence;
   }
-  return occurrence;
+  return fallback;
 }
 
 function toWallClockMinute(date: Date, timezone?: string | null): Date {

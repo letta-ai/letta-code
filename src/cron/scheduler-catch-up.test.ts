@@ -1,13 +1,21 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ListenerTransport } from "@/websocket/listener/transport";
-import { addTask, getTask, recordTaskQueued, updateTask } from "./cron-file";
+import {
+  addTask,
+  getTask,
+  readCronFile,
+  recordTaskQueued,
+  updateTask,
+} from "./cron-file";
+import { getPreviousCronOccurrence } from "./parse-interval";
 import { getCronRunLogPath, readCronRunLogEntries } from "./run-log";
 import {
   getIntendedCronOccurrence,
   handleTaskPreflight,
+  runCronTaskNow,
   shouldFireTask,
   startScheduler,
   stopScheduler,
@@ -123,5 +131,52 @@ test("initial tick catches a two-minute gap and deduplicates pending jitter acro
     stopScheduler();
     globalThis.setInterval = realInterval;
     globalThis.setTimeout = realTimeout;
+  }
+});
+
+test("invalid legacy cron falls back to the current minute and Send now does not throw", async () => {
+  const now = new Date("2026-06-03T13:02:37.123Z");
+  const cron = "0 0 9 * * *";
+  expect(getPreviousCronOccurrence(cron, now, "America/New_York")).toEqual(
+    new Date("2026-06-03T13:02:00.000Z"),
+  );
+  const { task } = addTask({
+    agent_id: "agent-test",
+    conversation_id: "default",
+    name: "legacy",
+    description: "legacy",
+    prompt: "hello",
+    cron: "0 9 * * *",
+    recurring: true,
+  });
+  const persisted = readCronFile();
+  persisted.tasks = persisted.tasks.map((t) => ({ ...t, cron }));
+  writeFileSync(path.join(dir, "crons.json"), JSON.stringify(persisted));
+  task.cron = cron;
+  try {
+    startScheduler(
+      {} as ListenerTransport,
+      {
+        connectionId: "test",
+        wsUrl: "wss://example.test",
+        deviceId: "test",
+        connectionName: "test",
+        onConnected() {},
+        onDisconnected() {},
+        onError() {},
+      },
+      async () => {},
+    );
+    expect(getTask(task.id)?.last_run_reason).toBe("invalid_cron");
+    expect(getIntendedCronOccurrence(task, now)).toEqual(
+      new Date("2026-06-03T13:02:00.000Z"),
+    );
+    // No active conversation runtime: the manual path should return its normal failure.
+    expect(await runCronTaskNow(task.id)).toMatchObject({
+      found: true,
+      success: false,
+    });
+  } finally {
+    stopScheduler();
   }
 });
