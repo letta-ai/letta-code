@@ -1,7 +1,7 @@
 // src/permissions/checker.ts
 // Main permission checking logic
 
-import { resolve } from "node:path";
+import { posix, resolve, win32 } from "node:path";
 import { getCurrentAgentId } from "@/agent/context";
 import { runPermissionRequestHooks } from "@/hooks";
 import {
@@ -611,6 +611,31 @@ function checkPermissionForEngine(
 }
 
 /**
+ * Check whether `child` is `root` or a path nested under it, comparing whole
+ * path segments rather than string prefixes (so `/x/project2` is NOT within
+ * `/x/project`). Handles trailing separators, drive letters and UNC paths via
+ * the platform path implementation; Windows comparisons are case-insensitive.
+ */
+export function isPathWithin(
+  child: string,
+  root: string,
+  pathImpl: typeof posix = process.platform === "win32" ? win32 : posix,
+): boolean {
+  const caseInsensitive = pathImpl === win32;
+  const normalizedChild = caseInsensitive ? child.toLowerCase() : child;
+  const normalizedRoot = caseInsensitive ? root.toLowerCase() : root;
+  const rel = pathImpl.relative(normalizedRoot, normalizedChild);
+  if (rel === "") {
+    return true;
+  }
+  return (
+    rel !== ".." &&
+    !rel.startsWith(`..${pathImpl.sep}`) &&
+    !pathImpl.isAbsolute(rel)
+  );
+}
+
+/**
  * Check if file path is within allowed directories
  * (working directory + additionalDirectories)
  */
@@ -622,7 +647,7 @@ function isWithinAllowedDirectories(
   const absolutePath = resolve(workingDirectory, filePath);
 
   // Check if within working directory
-  if (absolutePath.startsWith(workingDirectory)) {
+  if (isPathWithin(absolutePath, resolve(workingDirectory))) {
     return true;
   }
 
@@ -630,7 +655,7 @@ function isWithinAllowedDirectories(
   if (permissions.additionalDirectories) {
     for (const dir of permissions.additionalDirectories) {
       const resolvedDir = resolve(workingDirectory, dir);
-      if (absolutePath.startsWith(resolvedDir)) {
+      if (isPathWithin(absolutePath, resolvedDir)) {
         return true;
       }
     }
