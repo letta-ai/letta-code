@@ -223,5 +223,10 @@ export async function drainTurnStreamWithEmission(
     LISTENER_STREAM_RESUME_POLICY,
   );
 
+  // Returned calls own this boundary, even if the server reports a terminal
+  // stop reason. The turn must handle them before releasing the queue.
+  if (result.approvals?.length && result.stopReason !== "cancelled") {
+    result.stopReason = "requires_approval";
+  }
   return { result, runId };
 }
