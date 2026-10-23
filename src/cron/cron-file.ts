@@ -1,6 +1,5 @@
 /**
  * Persistent cron task storage backed by ~/.letta/crons.json.
- *
  * Provides CRUD operations with:
  * - Atomic writes (temp file + rename)
  * - mkdir-based advisory locking for read-modify-write cycles
@@ -28,8 +27,6 @@ export {
   isProcessAlive,
 } from "./process-identity";
 
-// ── Types ───────────────────────────────────────────────────────────
-
 export type CronTaskStatus =
   | "active"
   | "paused"
@@ -37,10 +34,16 @@ export type CronTaskStatus =
   | "missed"
   | "cancelled";
 export type CancelReason = "conversation_not_found" | "expired";
-export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
+export type CronRunOutcome =
+  | "queued"
+  | "delivered"
+  | "missed"
+  | "failed"
+  | "skipped";
 export type CronRunReason =
   | "scheduled_time_matched"
   | "one_off_due"
+  | "dequeued"
   | "scheduler_inactive"
   | "started_too_late"
   | "queue_full"
