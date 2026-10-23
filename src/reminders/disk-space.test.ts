@@ -8,6 +8,7 @@ import {
   refreshDiskSpaceSample,
   resetDiskSpaceAlertForTests,
   resetDiskSpaceCacheForTests,
+  setCriticalDiskSpaceReporter,
   takePendingDiskSpaceReminder,
   watchDiskSpaceDuring,
 } from "@/reminders/disk-space";
@@ -198,6 +199,7 @@ describe("evaluateDiskSpaceReminder", () => {
 describe("watchDiskSpaceDuring", () => {
   const managed = { LETTA_MANAGED_CLOUD_RUNTIME: "1" } as NodeJS.ProcessEnv;
   afterEach(() => {
+    setCriticalDiskSpaceReporter(null);
     resetDiskSpaceAlertForTests();
     setMessageQueueAdder(null);
     clearPendingMessages();
@@ -252,5 +254,64 @@ describe("watchDiskSpaceDuring", () => {
       "task_notification",
     ]);
     expect(queued[0]?.conversationId).toBe("conv-1");
+  });
+
+  test("reports the critical crossing once, for the scope whose tools filled it", async () => {
+    const reports: unknown[] = [];
+    setCriticalDiskSpaceReporter(async (scope) => {
+      reports.push(scope);
+    });
+    let free = 1.5 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    const delivered: string[] = [];
+    const watch = () =>
+      watchDiskSpaceDuring(
+        "/work",
+        (text) => delivered.push(text),
+        async () => {},
+        {
+          env: managed,
+          statfsFn,
+          scope: { agentId: "agent-1", conversationId: "conv-1" },
+        },
+      );
+
+    await watch(); // low: the agent is warned, Cloud is not told
+    await flush();
+    expect(reports).toEqual([]);
+    expect(delivered[0]).not.toContain("Letta Cloud");
+
+    free = 0.5 * GIB; // 97.5% used
+    await watch();
+    await flush();
+    await watch();
+    await flush();
+    expect(reports).toEqual([{ agentId: "agent-1", conversationId: "conv-1" }]);
+    expect(delivered).toHaveLength(2);
+    expect(delivered[1]).toContain("Letta Cloud");
+  });
+
+  test("a failing report never reaches the agent's tool batch", async () => {
+    setCriticalDiskSpaceReporter(async () => {
+      throw new Error("cloud down");
+    });
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, 0.5 * GIB).fn(path);
+    const delivered: string[] = [];
+
+    await expect(
+      watchDiskSpaceDuring(
+        "/work",
+        (text) => delivered.push(text),
+        async () => "done",
+        {
+          env: managed,
+          statfsFn,
+        },
+      ),
+    ).resolves.toBe("done");
+    await flush();
+    expect(delivered).toHaveLength(1);
   });
 });
