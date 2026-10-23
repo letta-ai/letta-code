@@ -13,11 +13,22 @@ import {
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
   resolveExternalCodingAgentMcpReminder,
-  runExternalCodingAgent,
+  runExternalCodingAgent as runExternalCodingAgentImpl,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 import { clearNativeSessionCaptureForTests } from "./native-session-capture";
+
+// Keep launch tests independent of the developer's connected Cloud account.
+function runExternalCodingAgent(
+  options: Parameters<typeof runExternalCodingAgentImpl>[0],
+  deps: Parameters<typeof runExternalCodingAgentImpl>[1] = {},
+) {
+  return runExternalCodingAgentImpl(options, {
+    fetch: async () => Response.json({ connections: [] }),
+    ...deps,
+  });
+}
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -584,6 +595,102 @@ describe("parent memory launch instructions", () => {
           );
         } finally {
           rmSync(directory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
+});
+
+describe("connected integration launch instructions", () => {
+  test.each(["claude-code", "codex"] as const)(
+    "only appends available integration instructions for %s",
+    async (type) => {
+      for (const connected of [true, false]) {
+        for (const authenticated of [true, false]) {
+          let received: string | undefined;
+          let lookedUp = false;
+          const env = {
+            LETTA_BASE_URL: "https://cloud.example",
+            ...(authenticated ? { LETTA_API_KEY: "test-key" } : {}),
+          };
+          await runExternalCodingAgent(
+            {
+              type,
+              parentAgentId: "agent-integrations",
+              prompt: "file a ticket",
+            },
+            {
+              env,
+              resolveSecretEnv: async () => ({}),
+              fetch: async (url, init) => {
+                lookedUp = true;
+                expect(String(url)).toBe(
+                  "https://cloud.example/v1/agents/agent-integrations/connections",
+                );
+                expect(init?.headers).toEqual({
+                  Authorization: "Bearer test-key",
+                });
+                return Response.json({
+                  connections: connected
+                    ? [
+                        {
+                          kind: "integration",
+                          service: "linear",
+                          display_name: "Linear",
+                        },
+                        {
+                          kind: "google_workspace_account",
+                          service: "google_workspace",
+                          display_name: "Google",
+                        },
+                        {
+                          kind: "mcp_server",
+                          service: "unrelated",
+                          display_name: "MCP",
+                        },
+                      ]
+                    : [],
+                });
+              },
+              runPreflight: async () => ({
+                exitCode: 0,
+                stdout: '{"loggedIn":true}',
+                stderr: "",
+              }),
+              runProcess: async (command, options) => {
+                const index = command.args.indexOf("--append-system-prompt");
+                received = index >= 0 ? command.args[index + 1] : undefined;
+                expect(options.env.AGENT_ID).toBe("agent-integrations");
+                expect(options.env.LETTA_API_KEY).toBe(env.LETTA_API_KEY);
+                return {
+                  exitCode: 0,
+                  stdout: '{"result":"done","session_id":"c1"}',
+                  stderr: "",
+                };
+              },
+              runCodexTurn: async (options, deps) => {
+                received = options.mcpReminder;
+                expect(deps?.env?.AGENT_ID).toBe("agent-integrations");
+                expect(deps?.env?.LETTA_API_KEY).toBe(env.LETTA_API_KEY);
+                throw new Error("captured launch instructions");
+              },
+            },
+          );
+          expect(lookedUp).toBe(authenticated);
+          if (connected && authenticated) {
+            expect(received).toContain(
+              "Connected integrations: google_workspace, linear.",
+            );
+            expect(received).toContain("cloud-skills");
+            expect(received).toContain(
+              "$LETTA_API_KEY, $LETTA_BASE_URL and $AGENT_ID are already",
+            );
+            expect(received).toContain("/v1/integrations/linear/graphql");
+            expect(received).not.toContain("unrelated");
+            expect(received).not.toContain("test-key");
+          } else {
+            expect(received ?? "").not.toContain("Connected integrations:");
+          }
         }
       }
     },
