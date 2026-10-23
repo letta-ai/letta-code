@@ -115,6 +115,76 @@ describe("Codex GitHub release fetch", () => {
     expect(sleeps).toEqual([1000, 2000]);
   });
 
+  test("retries a disconnected successful response body", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+    const releases = await listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        if (requests === 1) {
+          return new Response(
+            new ReadableStream({
+              pull(controller) {
+                controller.error(new TypeError("fetch failed: ECONNRESET"));
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        return Response.json(STABLES);
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    expect(requests).toBe(2);
+    expect(sleeps).toEqual([1000]);
+    expect(releases).toEqual(STABLES);
+  });
+
+  test("stops retrying disconnected bodies at the existing budget", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+    const result = listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.error(new TypeError("fetch failed: ECONNRESET"));
+            },
+          }),
+        );
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    await expect(result).rejects.toThrow("after 3 attempts");
+    expect(requests).toBe(3);
+    expect(sleeps).toEqual([1000, 2000]);
+  });
+
+  test("does not retry malformed JSON", async () => {
+    const sleeps: number[] = [];
+    let requests = 0;
+    const result = listStableReleases({
+      fetchImpl: (async () => {
+        requests++;
+        return new Response("not JSON");
+      }) as typeof fetch,
+      sleep: async (delayMs) => {
+        sleeps.push(delayMs);
+      },
+    });
+
+    await expect(result).rejects.toBeInstanceOf(SyntaxError);
+    expect(requests).toBe(1);
+    expect(sleeps).toEqual([]);
+  });
+
   test("fails immediately on a client error", async () => {
     const sleeps: number[] = [];
     let requests = 0;
