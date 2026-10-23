@@ -262,6 +262,68 @@ describe("local compaction fallback keeps custom prompt", () => {
     await rm(storageDir, { recursive: true, force: true });
   });
 
+  test("pressure compaction requires the full request to fit the threshold", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-pressure-budget-"));
+    let summaryCalls = 0;
+    const backend = new LocalBackend({
+      storageDir,
+      executor: turnExecutor(),
+      complete: async () => {
+        summaryCalls++;
+        return assistantMessage({
+          responseId: "pressure-summary",
+          stopReason: "stop",
+          content: [{ type: "text", text: "Compacted summary." }],
+        });
+      },
+      memfsEnabled: false,
+    });
+    try {
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+      for (let turn = 0; turn < 2; turn++) {
+        await drain(
+          await backend.createConversationMessageStream(conversation.id, {
+            agent_id: agent.id,
+            messages: [{ role: "user", content: "remember this ".repeat(100) }],
+          } as ConversationMessageCreateBody),
+        );
+      }
+      const compact = (contextTokens: number) =>
+        (
+          backend as unknown as {
+            compactForContextPressure: (
+              input: unknown,
+              pressure: unknown,
+            ) => Promise<unknown>;
+          }
+        ).compactForContextPressure(
+          { conversationId: conversation.id, agentId: agent.id },
+          {
+            contextTokens,
+            contextWindow: 1000,
+            phase: "post_turn",
+            source: "usage",
+          },
+        );
+      const before = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+      expect(await compact(2000)).toBeNull();
+      expect(summaryCalls).toBe(0);
+      const after = await backend.listConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+      expect(after.getPaginatedItems()).toEqual(before.getPaginatedItems());
+      expect(await compact(1300)).not.toBeNull();
+      expect(summaryCalls).toBe(1);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("commits a normal full compaction", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-compaction-progress-"),

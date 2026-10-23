@@ -27,20 +27,23 @@ import type {
   LocalContextPressure,
   PiStreamFunction,
 } from "@/backend/dev/pi-stream-adapter";
-import type {
-  LlmEndInfo,
-  LlmStartInfo,
-  ProviderTurnInput,
+import {
+  contextCompactionThreshold,
+  type LlmEndInfo,
+  type LlmStartInfo,
+  type ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
   assertLocalCompactionProgress,
+  assertLocalPressureBudget,
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
   type LocalCompactionMode,
+  type LocalCompactionResult,
   type LocalCompactionStats,
   type LocalCompleteFunction,
   packageLocalSummaryMessage,
@@ -122,6 +125,7 @@ interface ResolvedLocalCompactionSettings {
   prompt?: string | null;
   clipChars?: number | null;
   slidingWindowPercentage: number;
+  maxMessageTokens?: number;
 }
 
 function compactionSettingsRecord(
@@ -567,17 +571,23 @@ export class LocalBackend extends HeadlessBackend {
 
   private async compactForContextPressure(
     input: ProviderTurnInput,
-    _pressure: LocalContextPressure,
+    pressure: LocalContextPressure,
   ): Promise<{
     uiMessages: LocalMessage[];
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
+    const messageTokens = estimateLocalMessageTokens(
+      this.store.listLocalMessages(input.conversationId, input.agentId),
+    );
+    const fixedTokens = Math.max(0, pressure.contextTokens - messageTokens);
     const result = await runLocalPressureCompaction(() =>
       this.compactLocalConversation(
         input.conversationId,
         input.agentId,
         "context_window_limit",
+        undefined,
+        (contextCompactionThreshold(pressure.contextWindow) ?? 0) - fixedTokens,
       ),
     );
     if (!result) return null;
@@ -727,18 +737,15 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+    maxMessageTokens?: number,
+  ): Promise<LocalCompactionResult> {
     await this.emitCompactStart(conversationId, agentId, trigger);
     const result = await this.compactLocalConversationInner(
       conversationId,
       agentId,
       trigger,
       body,
+      maxMessageTokens,
     );
     await this.emitCompactEnd(conversationId, agentId, trigger, result.stats);
     return result;
@@ -749,23 +756,16 @@ export class LocalBackend extends HeadlessBackend {
     agentId: string,
     trigger: string,
     body?: ConversationMessageCompactBody,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+    maxMessageTokens?: number,
+  ): Promise<LocalCompactionResult> {
     const agent = this.effectiveAgentForConversation(conversationId, agentId);
-    const settings = this.resolveCompactionSettings(agent, body);
-    let result: {
-      numMessagesBefore: number;
-      numMessagesAfter: number;
-      summary: string;
-      stats: LocalCompactionStats;
+    const settings = {
+      ...this.resolveCompactionSettings(agent, body),
+      maxMessageTokens,
     };
     if (settings.mode === "sliding_window") {
       try {
-        result = await this.compactLocalConversationSlidingWindow(
+        const result = await this.compactLocalConversationSlidingWindow(
           conversationId,
           agentId,
           agent,
@@ -790,7 +790,7 @@ export class LocalBackend extends HeadlessBackend {
         if (!isLocalSlidingWindowCompactionPlanningError(error)) throw error;
       }
     }
-    result = await this.compactLocalConversationAll(
+    const result = await this.compactLocalConversationAll(
       conversationId,
       agentId,
       agent,
@@ -813,15 +813,12 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+  ): Promise<LocalCompactionResult> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextTokensBefore = estimateLocalMessageTokens(messages);
     const plan = planLocalAllCompaction(messages);
+    const keptTokens = estimateLocalMessageTokens(plan.messagesToKeep);
+    assertLocalPressureBudget(keptTokens, "all", settings.maxMessageTokens);
     const summary = await summarizeLocalMessagesAll({
       conversationId,
       agent,
@@ -835,14 +832,12 @@ export class LocalBackend extends HeadlessBackend {
     const stats: LocalCompactionStats = {
       trigger,
       context_tokens_before: contextTokensBefore,
-      context_tokens_after:
-        Math.ceil(summary.length / 4) +
-        estimateLocalMessageTokens(plan.messagesToKeep),
+      context_tokens_after: Math.ceil(summary.length / 4) + keptTokens,
       context_window: this.effectiveContextWindow(conversationId, agentId),
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
-    assertLocalCompactionProgress(stats, "all");
+    assertLocalCompactionProgress(stats, "all", settings.maxMessageTokens);
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -865,18 +860,18 @@ export class LocalBackend extends HeadlessBackend {
     agent: LocalAgentRecord,
     trigger: string,
     settings: ResolvedLocalCompactionSettings,
-  ): Promise<{
-    numMessagesBefore: number;
-    numMessagesAfter: number;
-    summary: string;
-    stats: LocalCompactionStats;
-  }> {
+  ): Promise<LocalCompactionResult> {
     const messages = this.store.listLocalMessages(conversationId, agentId);
     const contextWindow = this.effectiveContextWindow(conversationId, agentId);
     const plan = planLocalSlidingWindowCompaction(messages, {
       slidingWindowPercentage: settings.slidingWindowPercentage,
       contextWindow,
     });
+    assertLocalPressureBudget(
+      estimateLocalMessageTokens(plan.messagesToKeep),
+      "sliding_window",
+      settings.maxMessageTokens,
+    );
     const summary = await summarizeLocalMessagesSlidingWindow({
       conversationId,
       agent,
@@ -898,7 +893,11 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
-    assertLocalCompactionProgress(stats, "sliding_window");
+    assertLocalCompactionProgress(
+      stats,
+      "sliding_window",
+      settings.maxMessageTokens,
+    );
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
