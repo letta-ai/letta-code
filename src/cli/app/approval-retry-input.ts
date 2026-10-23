@@ -9,24 +9,22 @@ export function getApprovalRecoveryInputText(
   const message = input.find((item) => item.type === "message");
   if (!message || !("content" in message)) return null;
   const content = message.content;
-  const text =
-    typeof content === "string"
-      ? stripSystemReminders(content)
-      : Array.isArray(content)
-        ? content
-            .filter(
-              (part): part is { type: "text"; text: string } =>
-                typeof part === "object" &&
-                part !== null &&
-                "type" in part &&
-                part.type === "text" &&
-                "text" in part &&
-                typeof part.text === "string" &&
-                !part.text.includes(SYSTEM_REMINDER_OPEN) &&
-                !part.text.includes(SYSTEM_ALERT_OPEN),
-            )
-            .map((part) => part.text)
-            .join("\n")
-        : "";
+  if (typeof content === "string") return stripSystemReminders(content) || null;
+  if (!Array.isArray(content)) return null;
+
+  const text = content
+    .filter(
+      (part): part is { type: "text"; text: string } =>
+        typeof part === "object" &&
+        part !== null &&
+        "type" in part &&
+        part.type === "text" &&
+        "text" in part &&
+        typeof part.text === "string" &&
+        !part.text.includes(SYSTEM_REMINDER_OPEN) &&
+        !part.text.includes(SYSTEM_ALERT_OPEN),
+    )
+    .map((part) => part.text)
+    .join("\n");
   return text.trim() ? text : null;
 }
