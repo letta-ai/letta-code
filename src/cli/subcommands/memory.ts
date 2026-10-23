@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
+import { resetMemoryToRemote } from "@/agent/memory-reset";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
 import { runMemoryTokensAction } from "./memory-tokens";
@@ -23,6 +24,7 @@ Usage:
   letta memory backup [--agent <id>]
   letta memory backups [--agent <id>]
   letta memory restore --from <backup> --force [--agent <id>]
+  letta memory reset --force [--agent <id>]
   letta memory export --agent <id> --out <dir>
   letta memory pull [--agent <id>]
   letta memory tokens [--memory-dir <path>] [--agent <id>] [--top <N>]
@@ -34,6 +36,8 @@ Notes:
     estimated token size of core memory for the detected MemFS layout. Policy
     (whether a size is concerning) is up to the caller.
   - Memory is git-backed. Use git commands for commit/push.
+  - Reset backs up local memory, then discards local changes and unpushed commits
+    to restore hosted memory. It never changes hosted memory.
 
 Examples:
   LETTA_AGENT_ID=agent-123 letta memory status
@@ -172,6 +176,18 @@ export async function runMemorySubcommand(
   }
 
   try {
+    if (action === "reset") {
+      if (!parsed.values.force) {
+        console.error(
+          "Reset discards local changes and unpushed commits. Re-run with --force to restore hosted memory.",
+        );
+        return 1;
+      }
+      await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+      console.log(JSON.stringify(await resetMemoryToRemote(agentId), null, 2));
+      return 0;
+    }
+
     if (action === "status") {
       if (!isGitRepo(agentId)) {
         console.log(
