@@ -97,7 +97,11 @@ The array lists user-invocable skills only. A skill with [`user-invocable: false
 
 ### Allow only specific skills
 
-To let Claude invoke only specific skills, pass their names in the `skills` list. Names match the `name` field in `SKILL.md` or the skill's directory name. Use `plugin:skill` for plugin-provided skills.
+To let Claude invoke only specific skills, pass their names in the `skills` list:
+
+* **Your own skills**: the skill's directory name
+* **Plugin skills**: `plugin:skill`
+* **Name clashes in `additionalDirectories` or `add_dirs`**: a skill in one of those directories gets a [prefixed name](/docs/en/skills.md#how-a-skill-gets-its-command-name) when its name clashes with an enterprise, personal, or project skill, or one in a directory added earlier. List it by that name. With a `verify` skill in `../api` and `../web`, added in that order, and no other `verify` skill, list them as `verify` and `web:verify`. Requires Claude Code v2.1.309 or later
 
 The list takes exact skill names only. If an entry can't work as an exact name, `query()` rejects the list before the session starts. See [Invalid skill name error](#invalid-skill-name-error) for the name rules and the error each SDK raises.
 

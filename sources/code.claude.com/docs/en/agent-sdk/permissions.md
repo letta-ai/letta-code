@@ -134,7 +134,9 @@ The SDK supports these permission modes:
 
 > [!WARNING]
 >
-> **Subagent inheritance:** A subagent runs in the parent session's permission mode unless you set `permissionMode` on its [`AgentDefinition`](/docs/en/agent-sdk/typescript#agentdefinition) and the parent session is in `default`, `dontAsk`, or `plan` mode. Even then, Claude Code never applies a `"bypassPermissions"` value, and applies an `"auto"` value only when [auto mode is available](/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) to that subagent. A subagent runs in `bypassPermissions` mode only when the parent session itself does. The `bypassPermissions` exception requires Claude Code v2.1.267 or later.
+> **Subagent inheritance:** If your main session is in [plan mode](/docs/en/permission-modes.md#analyze-before-you-edit-with-plan-mode), a subagent whose [`AgentDefinition`](/docs/en/agent-sdk/typescript#agentdefinition) sets `permissionMode: "acceptEdits"` still runs in plan mode. That subagent's `Edit` and `Write` calls on your source files still go to your `canUseTool` callback. Plan mode holds for the subagents you define too, so that handing work to one doesn't get around reviewing the plan first.
+>
+> The subagent inherits `plan`, `acceptEdits`, `auto`, or `bypassPermissions` from the main session, and under a `default`- or `dontAsk`-mode main session it runs in the mode you set. Even then, Claude Code never applies a `"bypassPermissions"` value, and applies an `"auto"` value only when [auto mode is available](/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) to that subagent. The `bypassPermissions` exception requires Claude Code v2.1.267 or later.
 >
 > Subagents may have different system prompts and less constrained behavior than your main agent, so inheriting `bypassPermissions` grants them full, autonomous system access. The [actions no mode auto-approves](/docs/en/permission-modes.md#actions-no-mode-auto-approves) still apply.
 

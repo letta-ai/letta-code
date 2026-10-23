@@ -10,7 +10,7 @@ File checkpointing tracks file modifications made through the [Write](/docs/en/t
 
 > [!WARNING]
 >
-> Only changes made through the Write, Edit, and NotebookEdit tools are tracked. Changes made through Bash commands (like `echo > file.txt` or `sed -i`) are not captured by the checkpoint system, and neither are edits a [subagent](/docs/en/agent-sdk/subagents.md) applies, except a [skill with `context: fork`](/docs/en/skills#run-skills-in-a-subagent) that runs in the foreground.
+> `rewindFiles()` doesn't undo what `sed -i` or another Bash command did to a file, unless a tool such as Write or Edit had modified that file in the main conversation. [Subagent](/docs/en/agent-sdk/subagents.md) edits aren't tracked, while edits from a [skill with `context: fork`](/docs/en/skills#run-skills-in-a-subagent) running in the foreground are.
 
 ## How checkpointing works
 
@@ -605,7 +605,7 @@ File checkpointing has the following limitations:
 
 | Limitation | Description |
 | - | - |
-| Write/Edit/NotebookEdit tools only | Changes made through Bash commands are not tracked |
+| Bash command changes | Rewinding doesn't undo changes a Bash command made, except in files the main conversation had already edited with a tool such as Write or Edit |
 | Subagent edits | Edits a [subagent](/docs/en/agent-sdk/subagents.md) applies aren't tracked, except a skill with `context: fork` running in the foreground. A rewind reverts them only in files the main conversation had already edited; use git to revert the rest |
 | Same session | Checkpoints are tied to the session that created them |
 | File content only | Creating, moving, or deleting directories is not undone by rewinding |

@@ -337,6 +337,10 @@ In four rare cases, Claude Code creates no worktree at all: it can't tell which 
 * **`The repository git config has a conditional include (includeIf)`**: move the settings the `includeIf` in `.git/config` pulls in directly into that file, remove the `includeIf`, and retry. An `includeIf` in your global git config doesn't trigger this.
 * **`Git was not run: the repository's own git config sets <key>`**: the message names a key that points Git LFS at a program to run, such as `lfs.customtransfer.<name>.path` or `lfs.standalonetransferagent`. If that setting is yours, move it to your global git config. If you don't recognize it, remove it from the repository's git config, since a tool or checkout you don't trust may have written it. Retry once the key is gone from the repository's config.
 
+### Worktree creation fails in a partial clone
+
+An error containing `This repository is a partial clone` means Claude Code couldn't fetch every git object the worktree's starting commit needs. Take the step in the message's sentence ending in `try again`. Then retry from the shell where you took it: run `claude --worktree`, or start `claude` there and ask again.
+
 ### Claude Code refuses to use a worktree
 
 An error starting `Refusing to use <path> as an isolation worktree` means Claude Code checked the directory's git identity before adopting it as a session's or subagent's isolated checkout, and declined it. The check runs whether Claude Code is creating the worktree, entering an existing one, or reusing one from an earlier run.

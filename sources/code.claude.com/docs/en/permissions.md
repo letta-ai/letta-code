@@ -104,6 +104,8 @@ To match all uses of a tool, use only the tool name without parentheses:
 
 `Bash(*)` is equivalent to `Bash` and matches all Bash commands. As a deny rule, both forms remove the tool from Claude's context.
 
+The label shown for a tool in the transcript and permission dialog can differ from its canonical name. For example, the tool labeled `Stop Task` in the transcript has the canonical name `TaskStop`. Permission rules and [hook matchers](/docs/en/hooks.md) don't match the label, so a rule written as `Stop Task` doesn't match. For deny and ask rules, a [startup warning](/docs/en/errors.md#matches-no-tool) says so. Use the canonical names listed in the [tools reference](/docs/en/tools-reference.md).
+
 ### Use specifiers for fine-grained control
 
 Add a specifier in parentheses to match specific tool uses:
@@ -205,8 +207,6 @@ Deny and ask rules also accept glob patterns in the tool-name position. The patt
 Allow rules accept tool-name globs only after a literal `mcp__<server>__` prefix. The server segment must be glob-free so the rule names a specific server you configured. `mcp__puppeteer__*` matches every tool from the `puppeteer` server, and `mcp__github__get_*` matches its `get_` tools. An unanchored allow glob such as `"*"`, `"B*"`, or `"mcp__*"` is skipped and doesn't auto-approve anything.
 
 A deny or ask rule whose tool name matches no known tool produces a [startup warning](/docs/en/errors.md#matches-no-tool) to catch typos. Tool names containing `_` or `*` are exempt from the check, and so are the names of tools Claude Code has removed, such as `TaskOutput`.
-
-The label shown for a tool in the transcript and permission dialog can differ from its canonical name. For example, the tool labeled `Stop Task` in the transcript has the canonical name `TaskStop`. Permission rules and [hook matchers](/docs/en/hooks.md) don't match the label, so a rule written as `Stop Task` doesn't match. For deny and ask rules, the startup warning above catches the mismatch. Use the canonical names listed in the [tools reference](/docs/en/tools-reference.md).
 
 ## Tool-specific permission rules
 
