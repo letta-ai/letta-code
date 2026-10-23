@@ -10,7 +10,11 @@ relevant file contents and links to check:
 - **Structure:** required files, frontmatter, skill layout, and overlapping
   file/directory names against the active memory format below.
 - **Organization:** duplicate or contradictory facts/instructions, stale content,
-  and filenames or descriptions that misrepresent a file's purpose.
+  and filenames or descriptions that misrepresent a file's purpose. Repository
+  build, test, convention, or architecture knowledge copied from a repo's
+  `AGENTS.md`, skills, or docs is duplication: the repo owns it, so core memory
+  should say where the repo is rather than restate it. Knowledge the repo lacks
+  is a candidate change to that repo, not something to keep only in memory.
 - **Discoverability:** broken links, missing index entries, and external memory
   with no useful discovery path from core memory. Follow links to verify their
   targets and the context in which they would be retrieved. Skills are discovered
