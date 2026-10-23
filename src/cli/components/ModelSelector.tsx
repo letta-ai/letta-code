@@ -737,26 +737,27 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Recent models: models the user has recently selected (max 10)
-  // Only includes models that are currently available
   const recentModels = useMemo(() => {
     if (availableHandles === undefined) return [];
-    const recentHandles = settingsManager.getRecentModels();
-    if (recentHandles.length < 2) return []; // Don't show recents with < 2 items
+    const recentSelections = settingsManager.getRecentModels();
+    if (recentSelections.length < 2) return []; // Don't show recents with < 2 items
 
     const resolved: UiModel[] = [];
-    for (const handle of recentHandles) {
-      // When availableHandles is non-null, skip unavailable models
+    for (const { handle, modelId } of recentSelections) {
       if (availableHandles !== null && !availableHandles.has(handle)) continue;
 
       if (backendModelCatalog) {
-        const backendModel = modelsForBackendHandle(handle, true)[0];
+        const candidates = modelsForBackendHandle(handle, true);
+        const backendModel = modelId
+          ? candidates.find((model) => model.id === modelId)
+          : candidates[0];
         if (backendModel) resolved.push(backendModel);
         continue;
       }
 
-      // Try to resolve to a static model with label/description
-      const staticModel = pickPreferredStaticModel(toBaseHandle(handle));
+      const staticModel = modelId
+        ? models.find((model) => model.id === modelId)
+        : pickPreferredStaticModel(toBaseHandle(handle));
       if (staticModel) {
         resolved.push(
           toByokSelectorModel(
@@ -769,7 +770,7 @@ export function ModelSelector({
             ),
           ),
         );
-      } else {
+      } else if (modelId === null) {
         const fallbackModel = toSelectorModelForHandle(handle);
         resolved.push({
           ...fallbackModel,
@@ -791,7 +792,6 @@ export function ModelSelector({
     withProviderTypeMetadata,
   ]);
 
-  // Map category -> list for O(1) lookup
   const categoryListMap = useMemo(
     () => ({
       recents: recentModels,

@@ -618,14 +618,14 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
           setCurrentModelId(modelId);
           setTempModelOverride(null);
 
-          // Record the previous and new model in recents (by handle, since
-          // availableHandles in ModelSelector uses handles).
-          // The "from" model is added first so the "to" model ends up at the
-          // front of the list after both addRecentModel calls.
+          // Add the previous preset first so the new preset remains most recent.
           if (currentModelHandle) {
-            settingsManager.addRecentModel(currentModelHandle);
+            settingsManager.addRecentModel({
+              handle: currentModelHandle,
+              modelId: currentModelId ?? null,
+            });
           }
-          settingsManager.addRecentModel(modelHandle);
+          settingsManager.addRecentModel({ handle: modelHandle, modelId });
 
           // Reset context token tracking since different models have different tokenizers
           resetContextHistory(contextTrackerRef.current);

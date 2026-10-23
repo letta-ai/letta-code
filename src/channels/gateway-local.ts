@@ -498,7 +498,10 @@ export async function startLocalChannelGateway(
       if (!response.success) {
         return { success: false, error: response.error };
       }
-      settingsManager.addRecentModel(response.model_handle ?? modelIdentifier);
+      settingsManager.addRecentModel({
+        handle: response.model_handle ?? modelIdentifier,
+        modelId: response.model_id ?? modelIdentifier,
+      });
       gateway.updateModelStatus(
         runtime,
         response.model_handle ?? modelIdentifier,
@@ -565,7 +568,9 @@ export async function startLocalChannelGateway(
                 current: status,
                 entries: listResponse.entries,
                 availableHandles: listResponse.available_handles,
-                recentHandles: settingsManager.getRecentModels(),
+                recentHandles: settingsManager
+                  .getRecentModels()
+                  .map(({ handle }) => handle),
               }
             : undefined;
         return {
@@ -588,7 +593,9 @@ export async function startLocalChannelGateway(
       return runChannelModelListCommand({
         channelId,
         client: runtimeCommandClient,
-        recentHandles: settingsManager.getRecentModels(),
+        recentHandles: settingsManager
+          .getRecentModels()
+          .map(({ handle }) => handle),
         channelDisplayName,
       });
     }
