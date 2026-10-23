@@ -1,12 +1,11 @@
 #!/usr/bin/env -S npx tsx
 /**
- * Skill Validator - Validates skill structure and frontmatter
+ * Skill Validator - checks a skill against the Agent Skills specification
+ * (https://agentskills.io/specification), matching the skills-ref reference
+ * validator.
  *
  * Usage:
  *   npx tsx validate-skill.ts <skill-directory>
- *
- * Example:
- *   npx tsx validate-skill.ts .skills/my-skill
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -16,7 +15,7 @@ import { fileURLToPath } from "node:url";
 interface ValidationResult {
   valid: boolean;
   message: string;
-  warnings?: string[];
+  errors: string[];
 }
 
 const ALLOWED_PROPERTIES = new Set([
@@ -29,6 +28,8 @@ const ALLOWED_PROPERTIES = new Set([
 ]);
 
 export const MAX_SKILL_NAME_LENGTH = 64;
+const MAX_DESCRIPTION_LENGTH = 1024;
+const MAX_COMPATIBILITY_LENGTH = 500;
 
 type BunYamlRuntime = {
   Bun?: {
@@ -154,136 +155,136 @@ function parseFrontmatter(source: string): Record<string, unknown> {
 }
 
 export function validateSkill(skillPath: string): ValidationResult {
-  // Check SKILL.md exists
   const skillMdPath = join(skillPath, "SKILL.md");
   if (!existsSync(skillMdPath)) {
-    return { valid: false, message: "SKILL.md not found" };
+    return invalid(["Missing required file: SKILL.md"]);
   }
 
-  // Read content
   const content = readFileSync(skillMdPath, "utf-8");
-
-  // Check for frontmatter
   if (!content.startsWith("---")) {
-    return { valid: false, message: "No YAML frontmatter found" };
+    return invalid(["SKILL.md must start with YAML frontmatter (---)"]);
   }
 
-  // Extract frontmatter
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) {
-    return { valid: false, message: "Invalid frontmatter format" };
+    return invalid(["SKILL.md frontmatter not properly closed with ---"]);
   }
 
-  const frontmatterText = match[1] as string;
-
-  // Parse YAML frontmatter
   let frontmatter: Record<string, unknown>;
   try {
-    frontmatter = parseFrontmatter(frontmatterText);
-    if (typeof frontmatter !== "object" || frontmatter === null) {
-      return { valid: false, message: "Frontmatter must be a YAML dictionary" };
-    }
+    frontmatter = parseFrontmatter(match[1] as string);
   } catch (e) {
-    return {
-      valid: false,
-      message: `Invalid YAML in frontmatter: ${e instanceof Error ? e.message : String(e)}`,
-    };
+    return invalid([
+      `Invalid YAML in frontmatter: ${e instanceof Error ? e.message : String(e)}`,
+    ]);
   }
 
-  // Check for unexpected properties (warn but don't fail for forward-compatibility)
-  const warnings: string[] = [];
+  const errors: string[] = [];
+
   const unexpectedKeys = Object.keys(frontmatter).filter(
     (key) => !ALLOWED_PROPERTIES.has(key),
   );
   if (unexpectedKeys.length > 0) {
-    warnings.push(
-      `Unknown frontmatter key(s): ${unexpectedKeys.sort().join(", ")}. Known properties are: ${[...ALLOWED_PROPERTIES].sort().join(", ")}`,
+    errors.push(
+      `Unexpected fields in frontmatter: ${unexpectedKeys.sort().join(", ")}. Only ${[...ALLOWED_PROPERTIES].sort().join(", ")} are allowed.`,
     );
   }
 
-  // Check required fields
   if (!("name" in frontmatter)) {
-    return { valid: false, message: "Missing 'name' in frontmatter" };
+    errors.push("Missing required field in frontmatter: name");
+  } else {
+    errors.push(
+      ...validateName(frontmatter.name, basename(resolve(skillPath))),
+    );
   }
+
   if (!("description" in frontmatter)) {
-    return { valid: false, message: "Missing 'description' in frontmatter" };
+    errors.push("Missing required field in frontmatter: description");
+  } else {
+    errors.push(...validateDescription(frontmatter.description));
   }
 
-  // Validate name
-  const name = frontmatter.name;
-  if (typeof name !== "string") {
-    return {
-      valid: false,
-      message: `Name must be a string, got ${typeof name}`,
-    };
-  }
-  const trimmedName = name.trim();
-  if (trimmedName) {
-    // Check naming convention (hyphen-case: lowercase with hyphens)
-    if (!/^[a-z0-9-]+$/.test(trimmedName)) {
-      return {
-        valid: false,
-        message: `Name '${trimmedName}' should be hyphen-case (lowercase letters, digits, and hyphens only)`,
-      };
-    }
-    if (
-      trimmedName.startsWith("-") ||
-      trimmedName.endsWith("-") ||
-      trimmedName.includes("--")
-    ) {
-      return {
-        valid: false,
-        message: `Name '${trimmedName}' cannot start/end with hyphen or contain consecutive hyphens`,
-      };
-    }
-    // Check name length
-    if (trimmedName.length > MAX_SKILL_NAME_LENGTH) {
-      return {
-        valid: false,
-        message: `Name is too long (${trimmedName.length} characters). Maximum is ${MAX_SKILL_NAME_LENGTH} characters.`,
-      };
-    }
-
-    // Check name matches directory name (warn if not)
-    const dirName = basename(skillPath);
-    if (trimmedName !== dirName) {
-      warnings.push(
-        `Name '${trimmedName}' doesn't match directory name '${dirName}'. For portability, these should match.`,
+  if ("compatibility" in frontmatter) {
+    const compatibility = frontmatter.compatibility;
+    if (typeof compatibility !== "string" || !compatibility.trim()) {
+      errors.push("Field 'compatibility' must be a non-empty string");
+    } else if (compatibility.length > MAX_COMPATIBILITY_LENGTH) {
+      errors.push(
+        `Compatibility exceeds ${MAX_COMPATIBILITY_LENGTH} character limit (${compatibility.length} chars)`,
       );
     }
   }
 
-  // Validate description
-  const description = frontmatter.description;
-  if (typeof description !== "string") {
-    return {
-      valid: false,
-      message: `Description must be a string, got ${typeof description}`,
-    };
-  }
-  const trimmedDescription = description.trim();
-  if (trimmedDescription) {
-    // Check for angle brackets
-    if (trimmedDescription.includes("<") || trimmedDescription.includes(">")) {
-      return {
-        valid: false,
-        message: "Description cannot contain angle brackets (< or >)",
-      };
-    }
-    // Check description length (max 1024 characters)
-    if (trimmedDescription.length > 1024) {
-      return {
-        valid: false,
-        message: `Description is too long (${trimmedDescription.length} characters). Maximum is 1024 characters.`,
-      };
+  if ("metadata" in frontmatter) {
+    const metadata = frontmatter.metadata;
+    if (
+      typeof metadata !== "object" ||
+      metadata === null ||
+      Array.isArray(metadata) ||
+      Object.values(metadata).some((value) => typeof value !== "string")
+    ) {
+      errors.push(
+        "Field 'metadata' must map string keys to string values (quote values like \"1.0\")",
+      );
     }
   }
 
-  return {
-    valid: true,
-    message: "Skill is valid!",
-    warnings: warnings.length > 0 ? warnings : undefined,
-  };
+  for (const field of ["license", "allowed-tools"]) {
+    if (field in frontmatter && typeof frontmatter[field] !== "string") {
+      errors.push(`Field '${field}' must be a string`);
+    }
+  }
+
+  return errors.length > 0
+    ? invalid(errors)
+    : { valid: true, message: "Skill is valid!", errors: [] };
+}
+
+function invalid(errors: string[]): ValidationResult {
+  return { valid: false, message: errors.join("\n"), errors };
+}
+
+function validateName(name: unknown, directoryName: string): string[] {
+  if (typeof name !== "string" || !name.trim()) {
+    return ["Field 'name' must be a non-empty string"];
+  }
+
+  const errors: string[] = [];
+  const normalized = name.trim().normalize("NFKC");
+  if (normalized.length > MAX_SKILL_NAME_LENGTH) {
+    errors.push(
+      `Skill name '${normalized}' exceeds ${MAX_SKILL_NAME_LENGTH} character limit (${normalized.length} chars)`,
+    );
+  }
+  if (!/^[a-z0-9-]+$/.test(normalized)) {
+    errors.push(
+      `Skill name '${normalized}' may only contain lowercase letters, digits, and hyphens`,
+    );
+  }
+  if (normalized.startsWith("-") || normalized.endsWith("-")) {
+    errors.push("Skill name cannot start or end with a hyphen");
+  }
+  if (normalized.includes("--")) {
+    errors.push("Skill name cannot contain consecutive hyphens");
+  }
+  if (directoryName.normalize("NFKC") !== normalized) {
+    errors.push(
+      `Directory name '${directoryName}' must match skill name '${normalized}'`,
+    );
+  }
+  return errors;
+}
+
+function validateDescription(description: unknown): string[] {
+  if (typeof description !== "string" || !description.trim()) {
+    return ["Field 'description' must be a non-empty string"];
+  }
+  if (description.length > MAX_DESCRIPTION_LENGTH) {
+    return [
+      `Description exceeds ${MAX_DESCRIPTION_LENGTH} character limit (${description.length} chars)`,
+    ];
+  }
+  return [];
 }
 
 function isMainModule(): boolean {
@@ -301,11 +302,13 @@ if (isMainModule()) {
     process.exit(1);
   }
 
-  const { valid, message, warnings } = validateSkill(args[0] as string);
-  console.log(message);
-  if (warnings && warnings.length > 0) {
-    for (const warning of warnings) {
-      console.warn(`Warning: ${warning}`);
+  const { valid, message, errors } = validateSkill(args[0] as string);
+  if (valid) {
+    console.log(message);
+  } else {
+    console.error("Skill is invalid:");
+    for (const error of errors) {
+      console.error(`  - ${error}`);
     }
   }
   process.exit(valid ? 0 : 1);

@@ -1,5 +1,5 @@
 /**
- * Tests for the bundled skill-creator scripts
+ * Tests for the bundled creating-skills validator
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -8,20 +8,10 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
-  readdirSync,
-  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
-import {
-  initSkill,
-  titleCaseSkillName,
-} from "@/skills/builtin/creating-skills/scripts/init-skill";
-import {
-  normalizeZipEntryPath,
-  packageSkill,
-} from "@/skills/builtin/creating-skills/scripts/package-skill";
+import { join } from "node:path";
 import { validateSkill } from "@/skills/builtin/creating-skills/scripts/validate-skill";
 
 const TEST_DIR = join(import.meta.dir, ".test-skill-creator");
@@ -67,7 +57,7 @@ This is a valid skill.
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toBe("SKILL.md not found");
+    expect(result.message).toBe("Missing required file: SKILL.md");
   });
 
   test("fails when frontmatter is missing", () => {
@@ -83,7 +73,9 @@ This skill has no frontmatter.
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toBe("No YAML frontmatter found");
+    expect(result.message).toBe(
+      "SKILL.md must start with YAML frontmatter (---)",
+    );
   });
 
   test("fails when name is missing", () => {
@@ -101,7 +93,9 @@ description: A skill without a name
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toBe("Missing 'name' in frontmatter");
+    expect(result.errors).toContain(
+      "Missing required field in frontmatter: name",
+    );
   });
 
   test("fails when description is missing", () => {
@@ -119,7 +113,9 @@ name: no-description
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toBe("Missing 'description' in frontmatter");
+    expect(result.errors).toContain(
+      "Missing required field in frontmatter: description",
+    );
   });
 
   test("fails when name has invalid characters", () => {
@@ -138,7 +134,9 @@ description: A skill with invalid name
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toContain("should be hyphen-case");
+    expect(result.message).toContain(
+      "may only contain lowercase letters, digits, and hyphens",
+    );
   });
 
   test("fails when name starts with hyphen", () => {
@@ -157,29 +155,12 @@ description: A skill with invalid name
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(false);
-    expect(result.message).toContain("cannot start/end with hyphen");
-  });
-
-  test("fails when description contains angle brackets", () => {
-    const skillDir = join(TEST_DIR, "angle-brackets");
-    mkdirSync(skillDir);
-    writeFileSync(
-      join(skillDir, "SKILL.md"),
-      `---
-name: angle-brackets
-description: A skill with <invalid> description
----
-
-# Angle Brackets
-`,
+    expect(result.errors).toContain(
+      "Skill name cannot start or end with a hyphen",
     );
-
-    const result = validateSkill(skillDir);
-    expect(result.valid).toBe(false);
-    expect(result.message).toContain("cannot contain angle brackets");
   });
 
-  test("warns but passes when unknown frontmatter keys are present", () => {
+  test("fails when frontmatter has fields outside the specification", () => {
     const skillDir = join(TEST_DIR, "unknown-keys");
     mkdirSync(skillDir);
     writeFileSync(
@@ -196,13 +177,13 @@ version: 1.0.0
     );
 
     const result = validateSkill(skillDir);
-    expect(result.valid).toBe(true);
-    expect(result.warnings).toBeDefined();
-    expect(result.warnings?.length).toBeGreaterThan(0);
-    expect(result.warnings?.[0]).toContain("Unknown frontmatter key(s)");
+    expect(result.valid).toBe(false);
+    expect(result.message).toContain(
+      "Unexpected fields in frontmatter: author, version",
+    );
   });
 
-  test("accepts all official spec frontmatter fields without warnings", () => {
+  test("accepts all specification frontmatter fields", () => {
     const skillDir = join(TEST_DIR, "full-spec");
     mkdirSync(skillDir);
     writeFileSync(
@@ -224,7 +205,7 @@ allowed-tools: Bash Read Write
 
     const result = validateSkill(skillDir);
     expect(result.valid).toBe(true);
-    expect(result.warnings).toBeUndefined();
+    expect(result.errors).toEqual([]);
   });
 
   test("fails when unquoted frontmatter contains colon-space", () => {
@@ -268,17 +249,6 @@ description: This breaks: unless quoted
       ),
       join(fakePackageScriptsDir, "validate-skill.ts"),
     );
-    copyFileSync(
-      join(
-        import.meta.dir,
-        "builtin",
-        "creating-skills",
-        "scripts",
-        "package-skill.ts",
-      ),
-      join(fakePackageScriptsDir, "package-skill.ts"),
-    );
-
     const skillDir = join(TEST_DIR, "self-contained-skill");
     mkdirSync(skillDir);
     writeFileSync(
@@ -303,18 +273,9 @@ description: A valid test skill
     expect(validateResult.status).toBe(0);
     expect(validateResult.stderr).toBe("");
     expect(validateResult.stdout).toContain("Skill is valid!");
-
-    const packageResult = spawnSync(
-      process.execPath,
-      [join(fakePackageScriptsDir, "package-skill.ts"), skillDir, TEST_DIR],
-      { cwd: join(TEST_DIR, "app"), env, encoding: "utf8" },
-    );
-    expect(packageResult.status).toBe(0);
-    expect(packageResult.stderr).toBe("");
-    expect(existsSync(join(TEST_DIR, "self-contained-skill.skill"))).toBe(true);
   });
 
-  test("warns when name doesn't match directory name", () => {
+  test("fails when name doesn't match directory name", () => {
     const skillDir = join(TEST_DIR, "my-directory");
     mkdirSync(skillDir);
     writeFileSync(
@@ -329,237 +290,63 @@ description: Name doesn't match directory
     );
 
     const result = validateSkill(skillDir);
-    expect(result.valid).toBe(true);
-    expect(result.warnings).toBeDefined();
-    expect(result.warnings?.[0]).toContain("doesn't match directory name");
-  });
-});
-
-describe("init-skill", () => {
-  beforeEach(() => {
-    if (existsSync(TEST_DIR)) {
-      rmSync(TEST_DIR, { recursive: true });
-    }
-    mkdirSync(TEST_DIR, { recursive: true });
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual([
+      "Directory name 'my-directory' must match skill name 'different-name'",
+    ]);
   });
 
-  afterEach(() => {
-    if (existsSync(TEST_DIR)) {
-      rmSync(TEST_DIR, { recursive: true });
-    }
-  });
-
-  test("titleCaseSkillName converts hyphenated names", () => {
-    expect(titleCaseSkillName("my-skill")).toBe("My Skill");
-    expect(titleCaseSkillName("pdf-editor")).toBe("Pdf Editor");
-    expect(titleCaseSkillName("big-query-helper")).toBe("Big Query Helper");
-  });
-
-  test("creates a new skill directory with all files", () => {
-    const result = initSkill("test-skill", TEST_DIR);
-
-    expect(result).not.toBeNull();
-    expect(existsSync(join(TEST_DIR, "test-skill"))).toBe(true);
-    expect(existsSync(join(TEST_DIR, "test-skill", "SKILL.md"))).toBe(true);
-    expect(existsSync(join(TEST_DIR, "test-skill", "scripts"))).toBe(true);
-    expect(existsSync(join(TEST_DIR, "test-skill", "references"))).toBe(true);
-    expect(existsSync(join(TEST_DIR, "test-skill", "assets"))).toBe(true);
-  });
-
-  test("created skill passes validation", () => {
-    initSkill("valid-init", TEST_DIR);
-
-    // The initialized skill should pass validation (except for TODO in description)
-    const skillDir = join(TEST_DIR, "valid-init");
-    expect(existsSync(join(skillDir, "SKILL.md"))).toBe(true);
-  });
-
-  test("fails when directory already exists", () => {
-    const skillDir = join(TEST_DIR, "existing-skill");
-    mkdirSync(skillDir, { recursive: true });
-
-    const result = initSkill("existing-skill", TEST_DIR);
-    expect(result).toBeNull();
-  });
-});
-
-describe("package-skill", () => {
-  beforeEach(() => {
-    if (existsSync(TEST_DIR)) {
-      rmSync(TEST_DIR, { recursive: true });
-    }
-    mkdirSync(TEST_DIR, { recursive: true });
-  });
-
-  afterEach(() => {
-    if (existsSync(TEST_DIR)) {
-      rmSync(TEST_DIR, { recursive: true });
-    }
-  });
-
-  test("packages a valid skill into a .skill file", () => {
-    // Create a valid skill
-    const skillDir = join(TEST_DIR, "packagable-skill");
+  test("enforces specification length and value limits", () => {
+    const longName = "a".repeat(65);
+    const skillDir = join(TEST_DIR, longName);
     mkdirSync(skillDir);
     writeFileSync(
       join(skillDir, "SKILL.md"),
       `---
-name: packagable-skill
-description: A skill that can be packaged
+name: ${longName}
+description: "${"d".repeat(1025)}"
+compatibility: "${"c".repeat(501)}"
+metadata:
+  version: 1.0
 ---
-
-# Packagable Skill
-
-This skill can be packaged.
 `,
     );
-    const scriptsDir = join(skillDir, "scripts");
-    mkdirSync(scriptsDir);
-    const unicodeScriptPath = join(scriptsDir, "café.mjs");
-    writeFileSync(unicodeScriptPath, 'console.log("déjà vu");\n');
 
-    const result = packageSkill(skillDir, TEST_DIR);
-    expect(result).not.toBeNull();
-    const archivePath = join(TEST_DIR, "packagable-skill.skill");
-    expect(existsSync(archivePath)).toBe(true);
-
-    if (process.platform === "win32") {
-      // Python and Info-ZIP interoperability run on Unix CI below. On Windows,
-      // inspect the actual archive bytes so a host-native backslash cannot
-      // silently return to either local or central entry names.
-      const archive = readFileSync(archivePath);
-      expect(
-        archive.includes(
-          Buffer.from("packagable-skill/scripts/café.mjs", "utf8"),
-        ),
-      ).toBe(true);
-      expect(
-        archive.includes(
-          Buffer.from("packagable-skill\\scripts\\café.mjs", "utf8"),
-        ),
-      ).toBe(false);
-      return;
-    }
-
-    const extractedDir = join(TEST_DIR, "extracted");
-    mkdirSync(extractedDir);
-    const extraction = spawnSync(
-      "python3",
-      [
-        "-c",
-        [
-          "import json, sys",
-          "from zipfile import ZipFile",
-          "with ZipFile(sys.argv[1]) as archive:",
-          "    print(json.dumps([{'filename': entry.filename, 'create_system': entry.create_system, 'external_attr': entry.external_attr} for entry in archive.infolist()], ensure_ascii=True))",
-          "    archive.extractall(sys.argv[2])",
-        ].join("\n"),
-        archivePath,
-        extractedDir,
-      ],
-      { encoding: "utf8", timeout: 45_000 },
-    );
-    expect(extraction.status).toBe(0);
-    expect(extraction.stderr).toBe("");
-    const zipEntries = JSON.parse(extraction.stdout) as Array<{
-      create_system: number;
-      external_attr: number;
-      filename: string;
-    }>;
-    expect(zipEntries.map((entry) => entry.filename).sort()).toEqual(
-      [
-        "packagable-skill/",
-        "packagable-skill/SKILL.md",
-        "packagable-skill/scripts/",
-        "packagable-skill/scripts/café.mjs",
-      ].sort(),
-    );
-    for (const entry of zipEntries) {
-      expect(entry.create_system).toBe(3);
-      expect(entry.external_attr >>> 16).toBe(
-        entry.filename.endsWith("/") ? 0o40755 : 0o100644,
-      );
-      expect(entry.external_attr & 0x10).toBe(
-        entry.filename.endsWith("/") ? 0x10 : 0,
-      );
-    }
-    expect(readdirSync(extractedDir)).toEqual(["packagable-skill"]);
-    const extractedSkillDir = join(extractedDir, "packagable-skill");
-    expect(readdirSync(extractedSkillDir).sort()).toEqual([
-      "SKILL.md",
-      "scripts",
+    const result = validateSkill(skillDir);
+    expect(result.valid).toBe(false);
+    expect(result.errors).toEqual([
+      `Skill name '${longName}' exceeds 64 character limit (65 chars)`,
+      "Description exceeds 1024 character limit (1025 chars)",
+      "Compatibility exceeds 500 character limit (501 chars)",
+      "Field 'metadata' must map string keys to string values (quote values like \"1.0\")",
     ]);
-    expect(readFileSync(join(extractedSkillDir, "SKILL.md"))).toEqual(
-      readFileSync(join(skillDir, "SKILL.md")),
-    );
-    expect(readdirSync(join(extractedSkillDir, "scripts"))).toEqual([
-      "café.mjs",
-    ]);
-    expect(
-      readFileSync(join(extractedSkillDir, "scripts", "café.mjs")),
-    ).toEqual(readFileSync(unicodeScriptPath));
-
-    const infoZipDir = join(TEST_DIR, "infozip-extracted");
-    mkdirSync(infoZipDir);
-    const infoZipExtraction = spawnSync(
-      "unzip",
-      ["-qq", archivePath, "-d", infoZipDir],
-      { encoding: "utf8" },
-    );
-    expect(infoZipExtraction.status).toBe(0);
-    expect(infoZipExtraction.stderr).toBe("");
-    const infoZipUnicodePath = join(
-      infoZipDir,
-      "packagable-skill",
-      "scripts",
-      "café.mjs",
-    );
-    expect(
-      readdirSync(dirname(infoZipUnicodePath), { encoding: "buffer" }),
-    ).toEqual([Buffer.from("café.mjs", "utf8")]);
-    expect(existsSync(infoZipUnicodePath)).toBe(true);
-    expect(readFileSync(infoZipUnicodePath)).toEqual(
-      readFileSync(unicodeScriptPath),
-    );
-  }, 60_000);
-
-  test("normalizes only the current platform's path separators", () => {
-    expect(normalizeZipEntryPath("skill\\scripts\\helper.mjs", "\\")).toBe(
-      "skill/scripts/helper.mjs",
-    );
-    expect(normalizeZipEntryPath("skill/literal\\name.txt", "/")).toBe(
-      "skill/literal\\name.txt",
-    );
   });
 
-  test("fails when skill directory does not exist", () => {
-    const result = packageSkill(join(TEST_DIR, "nonexistent"), TEST_DIR);
-    expect(result).toBeNull();
-  });
-
-  test("fails when SKILL.md is missing", () => {
-    const skillDir = join(TEST_DIR, "no-skill-md");
-    mkdirSync(skillDir);
-
-    const result = packageSkill(skillDir, TEST_DIR);
-    expect(result).toBeNull();
-  });
-
-  test("fails when skill validation fails", () => {
-    const skillDir = join(TEST_DIR, "invalid-skill");
+  test("fails on consecutive hyphens and empty description", () => {
+    const skillDir = join(TEST_DIR, "pdf--processing");
     mkdirSync(skillDir);
     writeFileSync(
       join(skillDir, "SKILL.md"),
       `---
-name: Invalid_Name
-description: Invalid skill
+name: pdf--processing
+description: ""
 ---
-
-# Invalid
 `,
     );
 
-    const result = packageSkill(skillDir, TEST_DIR);
-    expect(result).toBeNull();
+    const result = validateSkill(skillDir);
+    expect(result.errors).toEqual([
+      "Skill name cannot contain consecutive hyphens",
+      "Field 'description' must be a non-empty string",
+    ]);
+  });
+
+  test("validates this skill itself", () => {
+    const skillDir = join(import.meta.dir, "builtin", "creating-skills");
+    expect(validateSkill(skillDir)).toEqual({
+      valid: true,
+      message: "Skill is valid!",
+      errors: [],
+    });
   });
 });
