@@ -18,6 +18,11 @@ if (
     "queue-metadata-failure",
     "queue-approval-timeout",
     "queue-own-drain-error",
+    "approval-changed",
+    "approval-stable",
+    "approval-cleared",
+    "approval-read-failed",
+    "approval-sse-only",
   ].includes(scenario)
 ) {
   throw new Error(`Unknown TUI busy-run scenario: ${scenario ?? "missing"}`);
@@ -99,6 +104,24 @@ const ref = <T,>(current: T) => ({ current });
 const errors: unknown[] = [];
 const sentPayloads: unknown[] = [];
 const acceptedPayloads: unknown[] = [];
+const approvalScenario = scenario.startsWith("approval-");
+let pendingIds = ["A3"];
+let shownApprovals: unknown = null;
+let restoredInput: string | null = null;
+let errorDetail = "";
+function errorStream(detail: string) {
+  errorDetail = detail;
+  return {
+    controller: new AbortController(),
+    async *[Symbol.asyncIterator]() {
+      yield* [];
+      throw new APIError(500, {
+        message_type: "error_message", error_type: "internal_error",
+        message: detail, detail, run_id: "run-error",
+      }, detail, new Headers());
+    },
+  };
+}
 function capturedMessages(body: SentPayload): unknown {
   return structuredClone(body.messages ?? body);
 }
@@ -230,10 +253,11 @@ const context: Context = {
   setNeedsEagerApprovalCheck: noop,
   setNetworkPhase: noop,
   setExecutionPhase: noop,
-  setPendingApprovals: noop,
+  setPendingApprovals: (approvals) => { shownApprovals = approvals; },
   setRestoreQueueOnCancel: noop,
   setRestoredInput: (value) => {
-    const text = typeof value === "function" ? value(null) : value;
+    const text = typeof value === "function" ? value(restoredInput) : value;
+    restoredInput = text;
     if (text !== null) restoredInputs.push(text);
   },
   setStreaming: noop,
@@ -282,6 +306,25 @@ const fakeBackend = Object.create(
     async createConversationMessageStream(_id: string, body: SentPayload) {
       sentPayloads.push(capturedMessages(body));
       sentBytes.push(JSON.stringify(body));
+      if (approvalScenario) {
+        if (sentPayloads.length > 4) throw new Error("Unexpected extra POST");
+        if (sentPayloads.length === 1)
+          return errorStream("Cannot send message: waiting for approval");
+        if (sentPayloads.length === 2) {
+          if (scenario === "approval-sse-only") {
+            pendingIds = ["A1", "A2"];
+            return errorStream("Invalid tool call IDs: expected [A1, A2], received [A3]");
+          }
+          pendingIds = scenario === "approval-stable" ? ["A3"] : scenario === "approval-cleared" ? [] : ["A1", "A2"];
+          throw new APIError(409, { detail: `Another request (run_id=${runId}) is currently being processed for this conversation.` }, undefined, new Headers());
+        }
+        const messages = body.messages as Array<{ approvals?: Array<{ tool_call_id: string }> }>;
+        const ids = messages.flatMap(message => message.approvals?.map(approval => approval.tool_call_id) ?? []);
+        if (JSON.stringify(ids) !== JSON.stringify(pendingIds))
+          return errorStream(`Invalid tool call IDs: expected [${pendingIds.join(", ")}], received [${ids.join(", ")}]`);
+        acceptedPayloads.push(capturedMessages(body));
+        return stopStream("run-original-input");
+      }
       if (queueFailure) {
         if (
           replaying &&
@@ -409,6 +452,8 @@ const fakeBackend = Object.create(
     },
     async retrieveRun(id: string) {
       polledRunIds.push(id);
+      if (approvalScenario)
+        return { id, agent_id: "agent-synthetic", status: "completed", metadata: id === "run-error" && scenario !== "approval-sse-only" ? { error: { detail: errorDetail } } : {} };
       if (queueFailure) {
         runPolls += 1;
         if (scenario === "queue-metadata-failure")
@@ -440,10 +485,15 @@ const fakeBackend = Object.create(
     async retrieveConversation() {
       return {
         id: "conv-synthetic",
-        in_context_message_ids: ["message-foreign-approval"],
+        in_context_message_ids: [approvalScenario ? "msg-pending" : "message-foreign-approval"],
       };
     },
+    async listConversationMessages() {
+      return { getPaginatedItems: () => [], async *[Symbol.asyncIterator]() {} };
+    },
     async retrieveMessage() {
+      if (approvalScenario)
+        return [{ id: "msg-pending", date: new Date().toISOString(), message_type: "approval_request_message", tool_calls: pendingIds.map(tool_call_id => ({ tool_call_id, name: "UpdatePlan", arguments: '{"plan":[]}' })) }];
       return [
         {
           id: "message-foreign-approval",
@@ -461,6 +511,11 @@ const fakeBackend = Object.create(
     },
     async retrieveAgent() {
       approvalReads += 1;
+      if (approvalScenario) {
+        if (scenario === "approval-read-failed" && sentPayloads.length >= 2)
+          throw new Error("Approval metadata unavailable");
+        return { id: "agent-synthetic", message_ids: ["msg-pending"], tools: [] };
+      }
       if (foreignApproval)
         return {
           id: "agent-synthetic",
@@ -582,6 +637,8 @@ try {
       postsAfterFailure,
       queueAfterReplay: queue.items,
       restoredInputs,
+      shownApprovals,
+      restoredInput,
     })}`,
   );
 } finally {
