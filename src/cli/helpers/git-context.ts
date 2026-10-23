@@ -35,18 +35,31 @@ function runGit(args: string[], cwd: string): string | null {
   }
 }
 
+// A git child that never exits (lock contention, a stalled network filesystem,
+// a credential prompt) would otherwise hang every caller sharing its promise,
+// including listener startup.
+const GIT_ASYNC_TIMEOUT_MS = 10_000;
+
 async function runGitAsync(
   args: string[],
   cwd: string,
+  timeoutMs: number,
 ): Promise<string | null> {
   try {
     const { stdout } = await execFileAsync("git", args, {
       cwd,
       encoding: "utf-8",
       windowsHide: true,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
     });
     return stdout.trim();
-  } catch {
+  } catch (error) {
+    // Node sets `killed` when it killed the child for exceeding the timeout.
+    // An ordinary non-zero git exit still means "no value".
+    if ((error as { killed?: boolean } | null)?.killed) {
+      throw new Error(`git ${args[0] ?? ""} timed out after ${timeoutMs}ms`);
+    }
     return null;
   }
 }
@@ -148,16 +161,23 @@ export interface LightGitContext {
 /**
  * Get a lightweight git context suitable for the DeviceStatus payload.
  * Fast: only runs `git branch --show-current` and `git branch --sort=-committerdate`.
- * Returns null if the cwd is not inside a git repo.
+ * Returns null if the cwd is not inside a git repo. Rejects (after killing the
+ * child) if any git command runs longer than `timeoutMs`.
  */
 export async function getGitContextAsync(
   cwd: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<LightGitContext | null> {
-  if (!(await runGitAsync(["rev-parse", "--git-dir"], cwd))) {
+  const timeoutMs = options.timeoutMs ?? GIT_ASYNC_TIMEOUT_MS;
+  if (!(await runGitAsync(["rev-parse", "--git-dir"], cwd, timeoutMs))) {
     return null;
   }
 
-  const branch = await runGitAsync(["branch", "--show-current"], cwd);
+  const branch = await runGitAsync(
+    ["branch", "--show-current"],
+    cwd,
+    timeoutMs,
+  );
 
   // Get up to 11 local branches sorted by most recent commit (10 + current)
   const branchList = await runGitAsync(
@@ -168,6 +188,7 @@ export async function getGitContextAsync(
       "--no-color",
     ],
     cwd,
+    timeoutMs,
   );
 
   const recentBranches = branchList
