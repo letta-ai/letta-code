@@ -190,8 +190,7 @@ export async function listStableReleases(
 
   for (let page = 1; page <= 10; page++) {
     const url = `https://api.github.com/repos/${CODEX_REPO}/releases?per_page=100&page=${page}`;
-    const res = await fetchGitHubReleasesPage(url, headers, fetchImpl, sleep);
-    const batch = (await res.json()) as Release[];
+    const batch = await fetchGitHubReleasesPage(url, headers, fetchImpl, sleep);
     releases.push(...batch);
     if (batch.length < 100) break;
   }
@@ -205,12 +204,15 @@ async function fetchGitHubReleasesPage(
   headers: Record<string, string>,
   fetchImpl: typeof fetch,
   sleep: (delayMs: number) => Promise<void>,
-): Promise<Response> {
+): Promise<Release[]> {
   for (let attempt = 1; ; attempt++) {
     let response: Response;
     try {
       response = await fetchImpl(url, { headers });
+      // A successful fetch can still lose its connection while reading the body.
+      if (response.ok) return (await response.json()) as Release[];
     } catch (error) {
+      if (error instanceof SyntaxError) throw error;
       if (attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
         throw new Error(
           `GitHub releases API request failed after ${attempt} attempts: ${String(error)}`,
@@ -220,8 +222,6 @@ async function fetchGitHubReleasesPage(
       await retryGitHubReleasesFetch(attempt, String(error), sleep);
       continue;
     }
-
-    if (response.ok) return response;
 
     const message = `GitHub releases API failed (${response.status}): ${await response.text()}`;
     if (response.status < 500 || attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
