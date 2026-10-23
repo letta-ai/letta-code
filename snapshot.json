@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.309:docs:65ed1219154d6dae16da14596de8aa815478d9c062a7f32eafc9280f5eae0c5c:runtime:901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad",
+  "candidate_id": "claude@2.1.309:docs:c68cb7dcf78f22d1221c7769d5cc0e04130b006ec895468dfbda5726bb6b266d:runtime:901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad",
   "package_version": "2.1.309",
   "npm_integrity": "sha512-+lBYZRuXOJpiKJcRv/CK7gF+5UFNWyJE7hSxkgGUKDZOWgANl9MAabfTkrJk183Tp3B0Nv4xF/DU1t0BaKXOPw==",
   "npm_published_at": "2026-10-22T20:34:13.713Z",
@@ -110,7 +110,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/observability.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/observability.md",
-        "hash": "ee3ab558d0f6ba308273bc47b20f43a539000df524868db29e17e39ae8abd593",
+        "hash": "145e45ad87e94734e2912aa5af2d07cdafd40adac4b9fcdce3d40d0be0726235",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/observability.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "65ed1219154d6dae16da14596de8aa815478d9c062a7f32eafc9280f5eae0c5c"
+    "digest": "c68cb7dcf78f22d1221c7769d5cc0e04130b006ec895468dfbda5726bb6b266d"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "901849f466633e27137554508af6efe2f07604b894fc6698ae1b9a900a0c2aad"
   },
-  "fetched_at": "2026-10-23T02:36:53.346Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/39890402621",
-  "state_commit_parent": "86f4d57c8c99375c1422b1bcc54fe45f26f72796",
-  "analysis_parent_sha": "86f4d57c8c99375c1422b1bcc54fe45f26f72796"
+  "fetched_at": "2026-10-23T04:31:00.547Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/39900592863",
+  "state_commit_parent": "bbaadcb5a9f899bed1abef41474f884bfd58ede6",
+  "analysis_parent_sha": "bbaadcb5a9f899bed1abef41474f884bfd58ede6"
 }
