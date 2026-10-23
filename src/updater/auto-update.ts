@@ -45,7 +45,6 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 const NPM_PREFIX_TIMEOUT_MS = 5000;
-const UPDATE_INSTALL_TIMEOUT_MS = 60_000;
 type FetchImpl = typeof fetch;
 
 export interface SelfUpdateStatus {
@@ -122,7 +121,7 @@ export function buildInstallCommand(
 }
 
 export function buildUpdateExecOptions(
-  timeout: number,
+  timeout = 0,
   platform: NodeJS.Platform = process.platform,
 ): ExecFileOptionsWithStringEncoding {
   return {
@@ -137,7 +136,7 @@ export function buildUpdateExecOptions(
 async function runUpdateCommand(
   command: string,
   args: string[],
-  timeout: number,
+  timeout = 0,
 ): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(command, args, buildUpdateExecOptions(timeout));
 }
@@ -415,7 +414,8 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   try {
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
-    await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
+    // Never time out an install: killing it can leave the global package incomplete.
+    await runUpdateCommand(pm, installArgs);
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
     return { success: true };
@@ -435,7 +435,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
+        await runUpdateCommand(pm, installArgs);
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -474,7 +474,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
         await cleanupOrphanedDirs(globalPath);
       }
       try {
-        await runUpdateCommand(pm, installArgs, UPDATE_INSTALL_TIMEOUT_MS);
+        await runUpdateCommand(pm, installArgs);
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
