@@ -276,6 +276,7 @@ test("a new connection's runtime_start resumes queued work after the startup pum
       processQueuedTurn,
       {
         startHeartbeat: false,
+        startStartupDeadline: false,
         startCronScheduler: false,
         emitInitialState: false,
       },

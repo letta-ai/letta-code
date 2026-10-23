@@ -107,6 +107,7 @@ import {
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
 } from "./split-stream-lifecycle";
+import { startListenerStartupDeadline } from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
 import {
   activateStartupIngress,
@@ -126,6 +127,8 @@ import {
   LocalListenerTransport,
 } from "./transport";
 import type {
+  ConnectedListenerOptions,
+  ConnectedListenerRuntimeOptions,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -229,25 +232,11 @@ export function stopRuntime(
 export async function startConnectedListenerRuntime(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
-  opts: Pick<
-    StartListenerOptions,
-    | "connectionId"
-    | "onConnected"
-    | "onConnectionReady"
-    | "onStatusChange"
-    | "onWsEvent"
-  >,
+  opts: ConnectedListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
-  options: {
-    startHeartbeat?: boolean;
-    startCronScheduler?: boolean;
-    startProcessServices?: boolean;
-    streamTransport?: ListenerTransport | null;
-    emitInitialState?: boolean;
-    updateReconnectState?: boolean;
+  options: ConnectedListenerRuntimeOptions & {
     recoverRecordedWork?: typeof recoverRecordedTurns;
     restoreDurableQueuedInputs?: typeof restoreDurableQueuedInputs;
-    activateIngress?: () => Promise<boolean>;
   } = {},
 ): Promise<void> {
   if (runtime !== getActiveRuntime() || runtime.intentionallyClosed) return;
@@ -284,6 +273,12 @@ export async function startConnectedListenerRuntime(
   }
   const heartbeat =
     options.startHeartbeat !== false && runtime.heartbeatInterval;
+  const clearStartupDeadline = startListenerStartupDeadline(
+    runtime,
+    transport,
+    opts,
+    options.startStartupDeadline,
+  );
   let startupComplete = false;
   try {
     if (
@@ -311,6 +306,7 @@ export async function startConnectedListenerRuntime(
     if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
     startupComplete = true;
   } finally {
+    clearStartupDeadline();
     if (!startupComplete && heartbeat) {
       clearInterval(heartbeat);
       if (runtime.heartbeatInterval === heartbeat)
