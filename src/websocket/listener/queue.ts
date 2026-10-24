@@ -3,6 +3,8 @@ import {
   type AttributedMessageCreate,
   withMessageAttribution,
 } from "@/agent/message-attribution";
+import { getTask } from "@/cron/cron-file";
+import { safeAppendCronRunLogForTask } from "@/cron/run-log";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -417,6 +419,25 @@ export function consumeQueuedTurn(
   const dequeuedBatch = runtime.queueRuntime.consumeItems(queueLen);
   if (!dequeuedBatch) {
     return null;
+  }
+
+  for (const item of dequeuedBatch.items) {
+    if (item.kind !== "cron_prompt") continue;
+    try {
+      const task = getTask(item.cronTaskId);
+      if (task && task.agent_id === item.agentId) {
+        safeAppendCronRunLogForTask(task, {
+          status: "ok",
+          outcome: "delivered",
+          reason: "dequeued",
+          queueItemId: item.id,
+          conversationId: item.conversationId,
+          runAtMs: Date.now(),
+        });
+      }
+    } catch (error) {
+      debugWarn("Cron", "Error reading task for dequeued cron prompt:", error);
+    }
   }
 
   const clientMessageIds = getDequeuedClientMessageIds(runtime, dequeuedBatch);

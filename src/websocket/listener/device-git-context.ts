@@ -46,14 +46,19 @@ export class DeviceGitContextCache {
     }
 
     const load = this.load(cwd)
-      .then((value) => {
-        this.entries.set(cwd, {
-          expiresAt: this.now() + GIT_CONTEXT_CACHE_TTL_MS,
-          value,
-        });
-        this.prune();
-        return value;
-      })
+      .then(
+        (value) => {
+          this.entries.set(cwd, {
+            expiresAt: this.now() + GIT_CONTEXT_CACHE_TTL_MS,
+            value,
+          });
+          this.prune();
+          return value;
+        },
+        // A failed or timed-out load caches nothing: serve the last known
+        // value and let the next refresh retry.
+        () => this.entries.get(cwd)?.value ?? null,
+      )
       .finally(() => {
         this.pending.delete(cwd);
       });

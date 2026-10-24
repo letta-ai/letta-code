@@ -492,8 +492,8 @@ export function refreshInputOtidsForNewRequest<
 }
 
 /**
- * Strip stale approval payloads from the message input array and optionally
- * prepend fresh denial results for the actual pending approvals from the server.
+ * Rebuild approvals in server order, preserving matching local results and
+ * denying pending calls without results. Drop stale local approvals.
  */
 export function rebuildInputWithFreshDenials(
   currentInput: Array<MessageCreate | ApprovalCreate>,
@@ -501,6 +501,19 @@ export function rebuildInputWithFreshDenials(
   denialReason: string,
   preserveMessageOtids = false,
 ): Array<MessageCreate | ApprovalCreate> {
+  const localResults = new Map<
+    string,
+    NonNullable<ApprovalCreate["approvals"]>[number]
+  >();
+  for (const item of currentInput) {
+    if (item?.type === "approval") {
+      for (const result of item.approvals ?? []) {
+        if (result.tool_call_id) {
+          localResults.set(result.tool_call_id, result);
+        }
+      }
+    }
+  }
   const content = currentInput.filter((item) => item?.type !== "approval");
   // Only pre-persistence pending-approval rejections can reuse message identity.
   const stripped = preserveMessageOtids
@@ -510,7 +523,9 @@ export function rebuildInputWithFreshDenials(
   if (serverApprovals.length > 0) {
     const denials: ApprovalCreate = {
       type: "approval",
-      approvals: buildFreshDenialApprovals(serverApprovals, denialReason),
+      approvals: buildFreshDenialApprovals(serverApprovals, denialReason).map(
+        (denial) => localResults.get(denial.tool_call_id) ?? denial,
+      ),
       otid: randomUUID(),
     };
     return [denials, ...stripped];

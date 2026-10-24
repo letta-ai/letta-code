@@ -84,8 +84,9 @@ Add options:
                          conversation; "default" for the agent default)
   --computer <id>        (managed Cloud sandbox only) Run on a connected
                          external computer (deviceId from \`letta computers
-                         list\`). Falls back to the Cloud sandbox if that
-                         computer is offline at fire time.
+                         list\`). If that computer is offline at fire
+                         time, that run fails (no Cloud sandbox fallback);
+                         omit --computer to run in the Cloud sandbox.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -390,7 +391,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     console.log(JSON.stringify(output, null, 2));
     console.error(
       targetDeviceId
-        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (sandbox fallback if offline).`
+        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (if it is offline at fire time, that run fails; no sandbox fallback).`
         : "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
     );
     return 0;
