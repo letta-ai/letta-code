@@ -1,13 +1,17 @@
+import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
   DequeuedBatch,
   MessageQueueItem,
+  QueueRuntime,
   TaskNotificationQueueItem,
 } from "@/queue/queue-runtime";
+import { debugLog } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import {
   buildContentFromQueueBatch,
   toQueuedMsg,
 } from "./queued-message-parts";
+import { takeTuiBusyInput } from "./tui-busy-input";
 
 /** Keep the scheduled origin when converting to the TUI's mid-turn queue shape. */
 export function toTuiQueuedMessage(
@@ -37,4 +41,29 @@ export function prepareTuiQueueSubmit(batch: DequeuedBatch) {
       ),
     },
   };
+}
+
+/** Recovered requests bypass submit hooks; ordinary batches retain their routing. */
+export async function submitTuiQueuedInput(
+  queue: QueueRuntime,
+  handlers: {
+    retry: (input: MessageCreate[]) => Promise<unknown>;
+    submit: (
+      input: ReturnType<typeof prepareTuiQueueSubmit>,
+    ) => Promise<unknown>;
+  },
+): Promise<void> {
+  const recovered = takeTuiBusyInput(queue);
+  if (recovered) {
+    await handlers.retry(recovered);
+    return;
+  }
+  const batch = queue.consumeItems(queue.readyLength);
+  if (!batch) return;
+  const submission = prepareTuiQueueSubmit(batch);
+  debugLog(
+    "queue",
+    `Dequeuing ${batch.mergedCount} message(s): "${submission.text.slice(0, 50)}"`,
+  );
+  await handlers.submit(submission);
 }

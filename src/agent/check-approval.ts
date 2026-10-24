@@ -63,6 +63,7 @@ export function isResumedConversation(
 }
 
 export interface GetResumeDataOptions {
+  signal?: AbortSignal;
   /**
    * Controls whether backfill message history should be fetched.
    * Defaults to true to preserve existing /resume behavior.
@@ -295,11 +296,22 @@ function isNotFoundError(error: unknown): boolean {
 
 async function retrieveMessageVariantsForPendingApproval(
   messageId: string,
+  throwOnReadError = false,
+  signal?: AbortSignal,
 ): Promise<Message[]> {
   try {
-    return await getBackend().retrieveMessage(messageId);
+    signal?.throwIfAborted();
+    const messages = signal
+      ? await getBackend().retrieveMessage(messageId, { signal, maxRetries: 0 })
+      : await getBackend().retrieveMessage(messageId);
+    if (throwOnReadError && messages.length === 0) {
+      throw new Error(
+        "The in-context message could not be read for approval recovery",
+      );
+    }
+    return messages;
   } catch (error) {
-    if (isNotFoundError(error)) {
+    if (isNotFoundError(error) && !throwOnReadError) {
       debugWarn(
         "check-approval",
         `Unable to retrieve in-context message ${messageId} while checking pending approvals: ${error instanceof Error ? error.message : String(error)}`,
@@ -460,6 +472,7 @@ async function fetchResumeTail(
   agentId: string,
   conversationId: string,
   limit = BACKFILL_PAGE_LIMIT,
+  signal?: AbortSignal,
 ): Promise<{
   conversation?: Conversation;
   messages: Message[];
@@ -470,6 +483,7 @@ async function fetchResumeTail(
     {
       limit,
       includeReturnMessageTypes: RESUME_BACKFILL_MESSAGE_TYPES,
+      ...(signal ? { signal } : {}),
     },
   );
   const warnIfMissingAssistant =
@@ -486,6 +500,8 @@ async function fetchResumeTail(
 async function pendingApprovalsFromTailOrRetrieve(
   messages: Message[],
   lastInContextId?: string | null,
+  throwOnReadError = false,
+  signal?: AbortSignal,
 ): Promise<ReturnType<typeof pendingApprovalsFromMessageVariants>> {
   const tailCheck = pendingApprovalsFromTail(messages, lastInContextId);
   if (
@@ -493,14 +509,20 @@ async function pendingApprovalsFromTailOrRetrieve(
     tailCheck.pendingApprovals.length > 0 &&
     tailStartsInsideSourceMessage(messages, lastInContextId)
   ) {
-    const retrievedMessages =
-      await retrieveMessageVariantsForPendingApproval(lastInContextId);
+    const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+      lastInContextId,
+      throwOnReadError,
+      signal,
+    );
     return pendingApprovalsFromMessageVariants(retrievedMessages);
   }
   if (tailCheck.messageToCheck || !lastInContextId) return tailCheck;
 
-  const retrievedMessages =
-    await retrieveMessageVariantsForPendingApproval(lastInContextId);
+  const retrievedMessages = await retrieveMessageVariantsForPendingApproval(
+    lastInContextId,
+    throwOnReadError,
+    signal,
+  );
   return pendingApprovalsFromMessageVariants(retrievedMessages);
 }
 
@@ -521,6 +543,7 @@ export async function getResumeDataFromBackend(
   options: GetResumeDataOptions = {},
 ): Promise<ResumeData> {
   try {
+    options.signal?.throwIfAborted();
     const includeMessageHistory = options.includeMessageHistory ?? true;
     const shouldFetchTail = includeMessageHistory && isBackfillEnabled();
     const agentWithInContext = agent as AgentState & {
@@ -537,11 +560,17 @@ export async function getResumeDataFromBackend(
       let conversation: Conversation | undefined;
       if (shouldFetchTail) {
         try {
-          const tail = await fetchResumeTail(agent.id, activeConversationId);
+          const tail = await fetchResumeTail(
+            agent.id,
+            activeConversationId,
+            BACKFILL_PAGE_LIMIT,
+            options.signal,
+          );
           messages = tail.messages;
           conversation = tail.conversation;
           inContextMessageIds = conversation?.in_context_message_ids;
         } catch (backfillError) {
+          options.signal?.throwIfAborted();
           debugWarn(
             "check-approval",
             `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
@@ -550,8 +579,12 @@ export async function getResumeDataFromBackend(
       }
 
       if (!conversation) {
-        conversation =
-          await getBackend().retrieveConversation(activeConversationId);
+        conversation = options.signal
+          ? await getBackend().retrieveConversation(activeConversationId, {
+              signal: options.signal,
+              maxRetries: 0,
+            })
+          : await getBackend().retrieveConversation(activeConversationId);
         inContextMessageIds = conversation.in_context_message_ids;
       }
 
@@ -570,7 +603,12 @@ export async function getResumeDataFromBackend(
       }
 
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          options.throwOnReadError,
+          options.signal,
+        );
       return {
         pendingApproval,
         pendingApprovals,
@@ -586,8 +624,9 @@ export async function getResumeDataFromBackend(
     if (shouldFetchTail || !lastInContextId) {
       try {
         const tailLimit = shouldFetchTail ? BACKFILL_PAGE_LIMIT : 1;
-        messages = (await fetchResumeTail(agent.id, "default", tailLimit))
-          .messages;
+        messages = (
+          await fetchResumeTail(agent.id, "default", tailLimit, options.signal)
+        ).messages;
         if (isDebugEnabled()) {
           debugLog(
             "check-approval",
@@ -597,6 +636,8 @@ export async function getResumeDataFromBackend(
           );
         }
       } catch (backfillError) {
+        options.signal?.throwIfAborted();
+        if (options.throwOnReadError && !lastInContextId) throw backfillError;
         debugWarn(
           "check-approval",
           `Failed to load message history: ${backfillError instanceof Error ? backfillError.message : String(backfillError)}`,
@@ -606,7 +647,12 @@ export async function getResumeDataFromBackend(
 
     if (lastInContextId) {
       const { pendingApproval, pendingApprovals } =
-        await pendingApprovalsFromTailOrRetrieve(messages, lastInContextId);
+        await pendingApprovalsFromTailOrRetrieve(
+          messages,
+          lastInContextId,
+          options.throwOnReadError,
+          options.signal,
+        );
       return {
         pendingApproval,
         pendingApprovals,
@@ -636,6 +682,7 @@ export async function getResumeDataFromBackend(
       messageHistory: prepareMessageHistory(messages),
     };
   } catch (error) {
+    options.signal?.throwIfAborted();
     // Let callers distinguish a failed read from genuinely empty approval state.
     if (error instanceof APIError && isNotFoundError(error)) {
       throw error;

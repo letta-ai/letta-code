@@ -199,6 +199,7 @@ export class QueueRuntime {
   private readonly hardMaxItems: number;
   private nextId = 0;
   private nextBatchId = 0;
+  private recoveryPaused = false;
 
   // Blocked-reason transition tracking
   private lastEmittedBlockedReason: QueueBlockedReason | null = null;
@@ -444,10 +445,14 @@ export class QueueRuntime {
    * starting the next turn on their own. System-originated items are not
    * affected. Returns the number of items newly paused.
    */
-  pause(): number {
+  pause(all = false): number {
+    if (all) this.recoveryPaused = true;
     let changed = 0;
     for (const item of this.store) {
-      if (item.kind === "message" && item.source === "user" && !item.paused) {
+      if (
+        (all || (item.kind === "message" && item.source === "user")) &&
+        !item.paused
+      ) {
         item.paused = true;
         changed += 1;
       }
@@ -461,6 +466,7 @@ export class QueueRuntime {
 
   /** Release every paused item. Returns the number of items resumed. */
   resume(): number {
+    this.recoveryPaused = false;
     let changed = 0;
     for (const item of this.store) {
       if (item.paused) {
@@ -476,6 +482,23 @@ export class QueueRuntime {
     return changed;
   }
 
+  /** TUI recovery only: return an unaccepted input to the head of the queue. */
+  prependMessage(
+    content: MessageCreate["content"],
+    clientMessageId?: string,
+  ): MessageQueueItem {
+    const input: Omit<MessageQueueItem, "id" | "enqueuedAt"> = {
+      kind: "message",
+      source: "user",
+      content,
+      clientMessageId,
+    };
+    const item = this.makeItem(input) as MessageQueueItem;
+    this.store.unshift(item);
+    this.safeCallback("onEnqueued", item, this.store.length);
+    return item;
+  }
+
   // ── Clear ──────────────────────────────────────────────────────
 
   /** Remove all items and fire onCleared. */
@@ -484,6 +507,7 @@ export class QueueRuntime {
     const clearedItems = this.store.slice();
     if (!this.mutationAllowed("beforeCleared", reason, clearedItems)) return;
     this.store.length = 0;
+    this.recoveryPaused = false;
     this.lastEmittedBlockedReason = null;
     this.blockedEmittedForNonEmpty = false;
     this.safeCallback("onCleared", reason, count, clearedItems);
@@ -536,6 +560,7 @@ export class QueueRuntime {
   private makeItem(input: Omit<QueueItem, "id" | "enqueuedAt">): QueueItem {
     return {
       ...input,
+      ...(this.recoveryPaused ? { paused: true } : {}),
       id: `q-${++this.nextId}`,
       enqueuedAt: Date.now(),
     } as QueueItem;
