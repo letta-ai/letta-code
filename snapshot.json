@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.310:docs:f3df4cf1bb2576b176d3e797a81cdd5ad6d083c41480265eca1f8b599122bc68:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
+  "candidate_id": "claude@2.1.310:docs:3c9c0342ffbeb80e420dabb9ebbc3d74d29a16052d37d19f1a28dd093b0560d5:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
   "package_version": "2.1.310",
   "npm_integrity": "sha512-EySpBwaocdU1nc9r7JH+GOlnMsbXc764d3HX7NL8fr7qqdxz2MiXI9hqf/rzeE/XgU23HHFltIqhb+Fq6G1CVw==",
   "npm_published_at": "2026-10-23T21:20:46.540Z",
@@ -560,7 +560,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "103e5e521a7f0893b65f93fd4184e1b06220a54b51bb3b6ad1070d24706a97d7",
+        "hash": "30e7f4222de5bbc8080db9634d9423a4a1e54100710ee6e9f94c2c6cbfbfdc7b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "f3df4cf1bb2576b176d3e797a81cdd5ad6d083c41480265eca1f8b599122bc68"
+    "digest": "3c9c0342ffbeb80e420dabb9ebbc3d74d29a16052d37d19f1a28dd093b0560d5"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1"
   },
-  "fetched_at": "2026-10-24T14:24:23.507Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40102243691",
-  "state_commit_parent": "a746ee872a06602b95028c636dca6f9ec56153cc",
-  "analysis_parent_sha": "a746ee872a06602b95028c636dca6f9ec56153cc"
+  "fetched_at": "2026-10-24T16:26:36.686Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40111451764",
+  "state_commit_parent": "b03ae0af05b821f45329786564ad165e502ece5f",
+  "analysis_parent_sha": "b03ae0af05b821f45329786564ad165e502ece5f"
 }
