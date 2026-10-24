@@ -88,7 +88,6 @@ import {
 import type { ExecutionPhase } from "@/cli/helpers/phase-visuals";
 import { getQueuedNotificationSummaries } from "@/cli/helpers/queued-message-parts";
 import { appendTranscriptDeltaJsonl } from "@/cli/helpers/reflection-transcript";
-import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
   advanceStreamSequenceCursor,
@@ -126,6 +125,7 @@ import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
 import {
+  analyzeRecoveredApprovalContexts,
   createBusyInputApprovalGuard,
   recoverTuiPendingApprovalInput,
 } from "./busy-input-approval-guard";
@@ -779,6 +779,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
         while (true) {
           const signal = turnAbortController.signal;
+          const canContinueTurn = () =>
+            myGeneration === conversationGenerationRef.current &&
+            !signal.aborted;
           if (myGeneration !== conversationGenerationRef.current) return;
 
           // Check if cancelled before starting new stream
@@ -822,30 +825,14 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           let preStreamResumeResult: DrainResult | null = null;
           let prefetchedAgent: AgentState | null = null;
           try {
-            if (retryingBusyInput) {
-              try {
-                currentInput = await reconcileAutomaticApprovalRetry(
-                  agentIdRef.current,
-                  conversationIdRef.current ?? "default",
-                  currentInput,
-                  signal,
-                );
-              } catch (error) {
-                if (
-                  myGeneration === conversationGenerationRef.current &&
-                  !signal.aborted
-                ) {
-                  const restored = getApprovalRecoveryInputText(currentInput);
-                  if (restored) setRestoredInput(restored);
-                }
-                throw error;
-              }
-            }
-            if (
-              myGeneration !== conversationGenerationRef.current ||
-              signal.aborted
-            )
-              return;
+            if (retryingBusyInput)
+              currentInput = await reconcileAutomaticApprovalRetry(
+                agentIdRef.current,
+                conversationIdRef.current ?? "default",
+                currentInput,
+                signal,
+              );
+            if (!canContinueTurn()) return;
             const preparedToolContext = await prepareScopedToolExecutionContext(
               tempModelOverrideRef.current ?? undefined,
             );
@@ -902,12 +889,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               preStreamAction === "resolve_approval_pending" &&
               (await busyApprovalGuard.wait(signal))
             ) {
-              if (
-                myGeneration !== conversationGenerationRef.current ||
-                signal.aborted ||
-                userCancelledRef.current
-              )
-                return;
+              if (!canContinueTurn() || userCancelledRef.current) return;
               retryingBusyInput = true;
               continue;
             }
@@ -973,10 +955,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   currentInput,
                   signal,
                 );
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                ) {
+                if (!canContinueTurn()) {
                   resumeStream.controller.abort();
                   return;
                 }
@@ -998,11 +977,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   contextTrackerRef.current,
                   streamSequenceCursor,
                 );
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                )
-                  return;
+                if (!canContinueTurn()) return;
                 debugLog(
                   "stream",
                   "Pre-stream resume succeeded (stopReason=%s)",
@@ -1045,18 +1020,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   busyApprovalGuard.noteConflict(errorDetail);
                   await waitForBusyRunRetry(errorDetail, retryDelayMs, signal);
                 } catch (waitError) {
-                  if (
-                    myGeneration !== conversationGenerationRef.current ||
-                    signal.aborted
-                  )
-                    return;
+                  if (!canContinueTurn()) return;
                   throw waitError;
                 }
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                )
-                  return;
+                if (!canContinueTurn()) return;
 
                 // Remove status message
                 buffersRef.current.byId.delete(statusId);
@@ -1177,11 +1144,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                           await getBackend().retrieveAgent(agentIdRef.current),
                           conversationIdRef.current,
                         );
-                  if (
-                    myGeneration !== conversationGenerationRef.current ||
-                    signal.aborted
-                  )
-                    return;
+                  if (!canContinueTurn()) return;
 
                   if (serverApprovals && serverApprovals.length > 0) {
                     // Preserve user message (filter system reminders to avoid re-inject)
@@ -1200,22 +1163,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
                     // Analyze approval contexts (same logic as /resume)
                     try {
-                      const contexts = await Promise.all(
-                        serverApprovals.map(async (approval) => {
-                          const parsedArgs = safeJsonParseOr<
-                            Record<string, unknown>
-                          >(approval.toolArgs, {});
-                          return await analyzeToolApproval(
-                            approval.toolName,
-                            parsedArgs,
-                          );
-                        }),
+                      const contexts = await analyzeRecoveredApprovalContexts(
+                        serverApprovals,
+                        analyzeToolApproval,
                       );
-                      if (
-                        myGeneration !== conversationGenerationRef.current ||
-                        signal.aborted
-                      )
-                        return;
+                      if (!canContinueTurn()) return;
                       setApprovalContexts(contexts);
                     } catch {
                       // If analysis fails, contexts remain empty (will show basic options)
@@ -2318,16 +2270,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
                 // Analyze approval contexts
                 try {
-                  const contexts = await Promise.all(
-                    serverApprovals.map(async (approval) => {
-                      const parsedArgs = safeJsonParseOr<
-                        Record<string, unknown>
-                      >(approval.toolArgs, {});
-                      return await analyzeToolApproval(
-                        approval.toolName,
-                        parsedArgs,
-                      );
-                    }),
+                  const contexts = await analyzeRecoveredApprovalContexts(
+                    serverApprovals,
+                    analyzeToolApproval,
                   );
                   setApprovalContexts(contexts);
                 } catch {

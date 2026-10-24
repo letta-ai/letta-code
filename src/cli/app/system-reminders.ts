@@ -33,7 +33,10 @@ export function getRestorableUserText(
   if (!Array.isArray(content)) return "";
   return content
     .flatMap((c) =>
+      c !== null &&
+      typeof c === "object" &&
       c.type === "text" &&
+      typeof c.text === "string" &&
       !c.text.includes(SYSTEM_REMINDER_OPEN) &&
       !c.text.includes(SYSTEM_ALERT_OPEN)
         ? [c.text]

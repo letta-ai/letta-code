@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { __testSetBackend, getBackend } from "@/backend";
 import {
+  analyzeRecoveredApprovalContexts,
   createBusyInputApprovalGuard,
   recoverTuiPendingApprovalInput,
 } from "./busy-input-approval-guard";
@@ -9,6 +10,29 @@ const busy = (id: string) =>
   `Another request (run_id=${id}) is currently being processed`;
 
 describe("foreign approval guard for rejected TUI input", () => {
+  test("shared recovery contexts preserve order and tolerate invalid JSON", async () => {
+    const contexts = await analyzeRecoveredApprovalContexts(
+      [
+        { toolName: "first", toolArgs: '{"command":"pwd"}' },
+        { toolName: "second", toolArgs: "malformed" },
+      ],
+      async (name, args) => ({ name, args }),
+    );
+    expect(contexts).toEqual([
+      { name: "first", args: { command: "pwd" } },
+      { name: "second", args: {} },
+    ]);
+  });
+  test("context analysis failures reach the existing caller fallback", async () => {
+    await expect(
+      analyzeRecoveredApprovalContexts(
+        [{ toolName: "first", toolArgs: "{}" }],
+        async () => {
+          throw new Error("analysis unavailable");
+        },
+      ),
+    ).rejects.toThrow("analysis unavailable");
+  });
   test("preserves the existing orphan approval recovery when no foreign run owns it", async () => {
     const original = getBackend();
     const backend = Object.create(

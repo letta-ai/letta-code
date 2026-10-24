@@ -11,6 +11,22 @@ import {
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { extractConversationBusyRunId } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
+import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
+
+/** Shared context parsing for pre-stream and post-stream approval recovery. */
+export function analyzeRecoveredApprovalContexts<T>(
+  approvals: ReadonlyArray<{ toolName: string; toolArgs: string }>,
+  analyze: (name: string, args: Record<string, unknown>) => Promise<T>,
+): Promise<T[]> {
+  return Promise.all(
+    approvals.map((approval) =>
+      analyze(
+        approval.toolName,
+        safeJsonParseOr<Record<string, unknown>>(approval.toolArgs, {}),
+      ),
+    ),
+  );
+}
 
 /** A rejected prompt is not authority to deny another client's approvals. */
 export function createBusyInputApprovalGuard(

@@ -23,6 +23,9 @@ if (
     "approval-cleared",
     "approval-read-failed",
     "approval-sse-only",
+    "approval-empty-prestream",
+    "approval-empty-sse",
+    "approval-cancel-read",
   ].includes(scenario)
 ) {
   throw new Error(`Unknown TUI busy-run scenario: ${scenario ?? "missing"}`);
@@ -92,6 +95,7 @@ let replayAttempts = 0;
 const sentBytes: string[] = [];
 const polledRunIds: string[] = [];
 let approvalReads = 0;
+let pendingReadSignal: AbortSignal | undefined;
 let cancellationTriggered = false;
 const continuationId = "run-22222222-2222-4222-8222-222222222222";
 type SentPayload = { otid?: string; content?: unknown; [key: string]: unknown };
@@ -115,10 +119,18 @@ function errorStream(detail: string) {
     controller: new AbortController(),
     async *[Symbol.asyncIterator]() {
       yield* [];
-      throw new APIError(500, {
-        message_type: "error_message", error_type: "internal_error",
-        message: detail, detail, run_id: "run-error",
-      }, detail, new Headers());
+      throw new APIError(
+        500,
+        {
+          message_type: "error_message",
+          error_type: "internal_error",
+          message: detail,
+          detail,
+          run_id: "run-error",
+        },
+        detail,
+        new Headers(),
+      );
     },
   };
 }
@@ -253,7 +265,9 @@ const context: Context = {
   setNeedsEagerApprovalCheck: noop,
   setNetworkPhase: noop,
   setExecutionPhase: noop,
-  setPendingApprovals: (approvals) => { shownApprovals = approvals; },
+  setPendingApprovals: (approvals) => {
+    shownApprovals = approvals;
+  },
   setRestoreQueueOnCancel: noop,
   setRestoredInput: (value) => {
     const text = typeof value === "function" ? value(restoredInput) : value;
@@ -311,17 +325,44 @@ const fakeBackend = Object.create(
         if (sentPayloads.length === 1)
           return errorStream("Cannot send message: waiting for approval");
         if (sentPayloads.length === 2) {
+          if (scenario.startsWith("approval-empty-")) {
+            pendingIds = [];
+            const detail = "Invalid tool call IDs: expected [], received [A3]";
+            if (scenario === "approval-empty-sse") return errorStream(detail);
+            throw new APIError(400, { detail }, undefined, new Headers());
+          }
           if (scenario === "approval-sse-only") {
             pendingIds = ["A1", "A2"];
-            return errorStream("Invalid tool call IDs: expected [A1, A2], received [A3]");
+            return errorStream(
+              "Invalid tool call IDs: expected [A1, A2], received [A3]",
+            );
           }
-          pendingIds = scenario === "approval-stable" ? ["A3"] : scenario === "approval-cleared" ? [] : ["A1", "A2"];
-          throw new APIError(409, { detail: `Another request (run_id=${runId}) is currently being processed for this conversation.` }, undefined, new Headers());
+          pendingIds =
+            scenario === "approval-stable"
+              ? ["A3"]
+              : scenario === "approval-cleared"
+                ? []
+                : ["A1", "A2"];
+          throw new APIError(
+            409,
+            {
+              detail: `Another request (run_id=${runId}) is currently being processed for this conversation.`,
+            },
+            undefined,
+            new Headers(),
+          );
         }
-        const messages = body.messages as Array<{ approvals?: Array<{ tool_call_id: string }> }>;
-        const ids = messages.flatMap(message => message.approvals?.map(approval => approval.tool_call_id) ?? []);
+        const messages = body.messages as Array<{
+          approvals?: Array<{ tool_call_id: string }>;
+        }>;
+        const ids = messages.flatMap(
+          (message) =>
+            message.approvals?.map((approval) => approval.tool_call_id) ?? [],
+        );
         if (JSON.stringify(ids) !== JSON.stringify(pendingIds))
-          return errorStream(`Invalid tool call IDs: expected [${pendingIds.join(", ")}], received [${ids.join(", ")}]`);
+          return errorStream(
+            `Invalid tool call IDs: expected [${pendingIds.join(", ")}], received [${ids.join(", ")}]`,
+          );
         acceptedPayloads.push(capturedMessages(body));
         return stopStream("run-original-input");
       }
@@ -453,7 +494,15 @@ const fakeBackend = Object.create(
     async retrieveRun(id: string) {
       polledRunIds.push(id);
       if (approvalScenario)
-        return { id, agent_id: "agent-synthetic", status: "completed", metadata: id === "run-error" && scenario !== "approval-sse-only" ? { error: { detail: errorDetail } } : {} };
+        return {
+          id,
+          agent_id: "agent-synthetic",
+          status: "completed",
+          metadata:
+            id === "run-error" && scenario !== "approval-sse-only"
+              ? { error: { detail: errorDetail } }
+              : {},
+        };
       if (queueFailure) {
         runPolls += 1;
         if (scenario === "queue-metadata-failure")
@@ -485,15 +534,31 @@ const fakeBackend = Object.create(
     async retrieveConversation() {
       return {
         id: "conv-synthetic",
-        in_context_message_ids: [approvalScenario ? "msg-pending" : "message-foreign-approval"],
+        in_context_message_ids: [
+          approvalScenario ? "msg-pending" : "message-foreign-approval",
+        ],
       };
     },
     async listConversationMessages() {
-      return { getPaginatedItems: () => [], async *[Symbol.asyncIterator]() {} };
+      return {
+        getPaginatedItems: () => [],
+        async *[Symbol.asyncIterator]() {},
+      };
     },
     async retrieveMessage() {
       if (approvalScenario)
-        return [{ id: "msg-pending", date: new Date().toISOString(), message_type: "approval_request_message", tool_calls: pendingIds.map(tool_call_id => ({ tool_call_id, name: "UpdatePlan", arguments: '{"plan":[]}' })) }];
+        return [
+          {
+            id: "msg-pending",
+            date: new Date().toISOString(),
+            message_type: "approval_request_message",
+            tool_calls: pendingIds.map((tool_call_id) => ({
+              tool_call_id,
+              name: "UpdatePlan",
+              arguments: '{"plan":[]}',
+            })),
+          },
+        ];
       return [
         {
           id: "message-foreign-approval",
@@ -509,12 +574,29 @@ const fakeBackend = Object.create(
         },
       ];
     },
-    async retrieveAgent() {
+    async retrieveAgent(
+      _id?: string,
+      _query?: unknown,
+      options?: { signal?: AbortSignal },
+    ) {
       approvalReads += 1;
       if (approvalScenario) {
+        if (scenario === "approval-cancel-read" && sentPayloads.length >= 2) {
+          pendingReadSignal = options?.signal;
+          setTimeout(() => {
+            cancellationTriggered = true;
+            context.userCancelledRef.current = true;
+            context.abortControllerRef.current?.abort();
+          }, 10);
+          return new Promise<never>(() => {});
+        }
         if (scenario === "approval-read-failed" && sentPayloads.length >= 2)
           throw new Error("Approval metadata unavailable");
-        return { id: "agent-synthetic", message_ids: ["msg-pending"], tools: [] };
+        return {
+          id: "agent-synthetic",
+          message_ids: ["msg-pending"],
+          tools: [],
+        };
       }
       if (foreignApproval)
         return {
@@ -639,6 +721,7 @@ try {
       restoredInputs,
       shownApprovals,
       restoredInput,
+      pendingReadAborted: pendingReadSignal?.aborted ?? false,
     })}`,
   );
 } finally {

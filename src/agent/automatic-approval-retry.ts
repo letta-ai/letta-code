@@ -9,6 +9,63 @@ import { getBackend } from "@/backend";
 
 type Input = Array<MessageCreate | ApprovalCreate>;
 type Pending = ResumeData["pendingApprovals"];
+type ReadDependencies = {
+  readPending?: (signal: AbortSignal) => Promise<Pending>;
+  timeoutMs?: number;
+};
+
+async function readPendingWithDeadline(
+  agentId: string,
+  conversationId: string,
+  signal: AbortSignal | undefined,
+  deps: ReadDependencies,
+): Promise<Pending> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(signal?.reason);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(
+    () =>
+      controller.abort(
+        new Error("Automatic approval pending-state read timed out"),
+      ),
+    deps.timeoutMs ?? 30_000,
+  );
+  let rejectInterrupted!: (reason: unknown) => void;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    rejectInterrupted = reject;
+  });
+  const onInterrupted = () => rejectInterrupted(controller.signal.reason);
+  controller.signal.addEventListener("abort", onInterrupted, { once: true });
+  const readPending =
+    deps.readPending ??
+    (async (readSignal: AbortSignal) => {
+      const agent = await getBackend().retrieveAgent(agentId, undefined, {
+        signal: readSignal,
+        maxRetries: 0,
+      });
+      readSignal.throwIfAborted();
+      return (
+        await getResumeDataFromBackend(agent, conversationId, {
+          includeMessageHistory: false,
+          throwOnReadError: true,
+          signal: readSignal,
+        })
+      ).pendingApprovals;
+    });
+  try {
+    signal?.throwIfAborted();
+    const pending = await Promise.race([
+      readPending(controller.signal),
+      interrupted,
+    ]);
+    controller.signal.throwIfAborted();
+    return pending;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", onAbort);
+    controller.signal.removeEventListener("abort", onInterrupted);
+  }
+}
 
 export class AutomaticApprovalRetryChangedError extends Error {
   constructor(
@@ -27,7 +84,7 @@ export async function reconcileAutomaticApprovalRetry(
   conversationId: string,
   input: Input,
   signal?: AbortSignal,
-  deps: { readPending?: () => Promise<Pending> } = {},
+  deps: ReadDependencies = {},
 ): Promise<Input> {
   signal?.throwIfAborted();
   const approvals = input.flatMap((item) =>
@@ -40,19 +97,12 @@ export async function reconcileAutomaticApprovalRetry(
       approval.reason === STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   );
   if (automatic.length === 0) return input;
-  const readPending =
-    deps.readPending ??
-    (async () => {
-      const agent = await getBackend().retrieveAgent(agentId);
-      signal?.throwIfAborted();
-      return (
-        await getResumeDataFromBackend(agent, conversationId, {
-          includeMessageHistory: false,
-          throwOnReadError: true,
-        })
-      ).pendingApprovals;
-    });
-  const pending = await readPending();
+  const pending = await readPendingWithDeadline(
+    agentId,
+    conversationId,
+    signal,
+    deps,
+  );
   signal?.throwIfAborted();
   const expected = new Set(pending.map((approval) => approval.toolCallId));
   const submitted = approvals.map((approval) => approval.tool_call_id);
