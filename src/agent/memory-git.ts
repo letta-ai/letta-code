@@ -31,6 +31,10 @@ import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
+import {
+  buildGitTransferStallArgs,
+  getGitCommandTimeoutMs,
+} from "./git-transfer-config";
 import { getAuthToken } from "./memory-auth";
 import { getScopedMemoryFilesystemRoot } from "./memory-filesystem";
 import { withSerializedGitConfigMutation } from "./memory-git-config-lock";
@@ -336,7 +340,6 @@ async function syncRepoMount(args: RepositoryMountGitArgs): Promise<void> {
         args.token,
         {
           operation: `clone repository ${args.repositoryName}`,
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
         },
       );
     } else if (!existsSync(join(directory, ".git"))) {
@@ -543,9 +546,6 @@ export function buildNonInteractiveGitEnv(
 }
 
 /** Run git in the given directory, passing a token as an auth header when provided. */
-const GIT_DEFAULT_TIMEOUT_MS = 60_000; // 60s
-const GIT_CLONE_TIMEOUT_MS = 180_000; // 3min — clone can be slow on cold CI runners
-
 export async function runGit(
   cwd: string,
   args: string[],
@@ -556,6 +556,7 @@ export async function runGit(
   const allArgs = [
     ...GIT_DISABLE_COMMIT_SIGNING_ARGS,
     ...buildMemfsGitProxyArgs(args),
+    ...buildGitTransferStallArgs(args),
     ...authArgs,
     ...args,
   ];
@@ -575,7 +576,7 @@ export async function runGit(
   const loggableCommand = redactGitAuthInText(loggableArgs.join(" "));
   debugLog("memfs-git", `git ${loggableCommand} (in ${cwd})`);
 
-  const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
+  const timeoutMs = getGitCommandTimeoutMs(args, options?.timeoutMs);
   let result: Awaited<ReturnType<typeof execFile>>;
   try {
     result = await execFile("git", allArgs, {
@@ -1511,7 +1512,6 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
       if (fresh) {
         await runGitWithRetry(dir, ["clone", url, "."], token, {
           operation: "clone memory repo",
-          timeoutMs: GIT_CLONE_TIMEOUT_MS,
         });
       } else if (!existsSync(join(dir, ".git"))) {
         // Directory exists but isn't a git repo (legacy local layout)
@@ -1524,7 +1524,6 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
           mkdirSync(tmpDir, { recursive: true });
           await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
             operation: "clone memory repo (tmp migration)",
-            timeoutMs: GIT_CLONE_TIMEOUT_MS,
           });
 
           // Move .git into the existing memory directory
