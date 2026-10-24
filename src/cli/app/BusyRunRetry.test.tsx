@@ -4,8 +4,21 @@ import { fileURLToPath } from "node:url";
 
 type BusyRunResult = {
   acceptedPayloads: unknown[];
+  sentBytes: string[];
+  polledRunIds: string[];
+  approvalReads: number;
+  cancellationTriggered: boolean;
   blockerCompletesAt: number;
   errors: unknown[];
+  queueAfterFailure: Array<{
+    content: unknown;
+    paused?: boolean;
+    clientMessageId?: string;
+  }>;
+  queueAfterReplay: Array<{ content: unknown }>;
+  readyAfterFailure: number;
+  postsAfterFailure: number;
+  restoredInputs: string[];
   lastStopReason: string | null;
   resumeBodies: Array<{ otid?: string }>;
   runPolls: number;
@@ -76,6 +89,96 @@ function expectOriginalInputAccepted(result: BusyRunResult): void {
 }
 
 describe("interactive busy-run recovery", () => {
+  test(
+    "never requeues accepted own input if its resumed stream fails",
+    () => {
+      const result = runScenario("queue-own-drain-error");
+      expect(result.postsAfterFailure).toBe(1);
+      expect(result.sentPayloads).toHaveLength(1);
+      expect(result.acceptedPayloads).toHaveLength(1);
+      expect(result.acceptedPayloads[0]).toEqual(result.sentPayloads[0]);
+      expect(result.queueAfterFailure.map((item) => item.content)).toEqual([
+        [{ type: "text", text: "queued first" }],
+        "queued second",
+      ]);
+      expect(result.readyAfterFailure).toBe(0);
+      expect(result.restoredInputs).toEqual([]);
+    },
+    { timeout: 120_000 },
+  );
+  for (const scenario of [
+    "queue-timeout",
+    "queue-exhausted",
+    "queue-metadata-failure",
+    "queue-approval-timeout",
+  ]) {
+    test(
+      `parks rejected input and pending queue in FIFO after ${scenario}`,
+      () => {
+        const result = runScenario(scenario);
+        expect(result.queueAfterFailure.map((item) => item.content)).toEqual([
+          userText,
+          [{ type: "text", text: "queued first" }],
+          "queued second",
+        ]);
+        expect(result.queueAfterFailure.every((item) => item.paused)).toBe(
+          true,
+        );
+        expect(result.readyAfterFailure).toBe(0);
+        expect(result.restoredInputs).toEqual([]);
+        expect(result.queueAfterFailure[0]?.clientMessageId).toBe(requestOtid);
+        expect(result.queueAfterReplay.map((item) => item.content)).toEqual([
+          [{ type: "text", text: "queued first" }],
+          "queued second",
+        ]);
+        expect(result.acceptedPayloads).toHaveLength(1);
+        expect(result.acceptedPayloads[0]).toEqual(result.sentPayloads[0]);
+        expect(result.approvalReads).toBe(0);
+        expect(result.lastStopReason).toBe("end_turn");
+        expect(result.postsAfterFailure).toBe(
+          scenario === "queue-timeout"
+            ? 1
+            : scenario === "queue-approval-timeout"
+              ? 62
+              : 4,
+        );
+      },
+      { timeout: 120_000 },
+    );
+  }
+  test(
+    "preserves foreign approval ownership across an advancing blocker",
+    () => {
+      const result = runScenario("foreign-approval");
+      expectOriginalInputAccepted(result);
+      expect(result.approvalReads).toBe(0);
+      expect(result.sentBytes).toHaveLength(4);
+      expect(new Set(result.sentBytes).size).toBe(1);
+      expect(result.polledRunIds).toContain(
+        "run-11111111-1111-4111-8111-111111111111",
+      );
+      expect(result.polledRunIds).toContain(
+        "run-22222222-2222-4222-8222-222222222222",
+      );
+      expect(
+        result.resumeBodies.every((body) => body.otid === requestOtid),
+      ).toBe(true);
+    },
+    { timeout: 120_000 },
+  );
+
+  test(
+    "cancels the pending original during another client's approval wait",
+    () => {
+      const result = runScenario("cancel-foreign-approval");
+      expect(result.cancellationTriggered).toBe(true);
+      expect(result.acceptedPayloads).toEqual([]);
+      expect(result.sentPayloads).toHaveLength(2);
+      expect(result.approvalReads).toBe(0);
+      expect(new Set(result.sentBytes).size).toBe(1);
+    },
+    { timeout: 120_000 },
+  );
   test(
     "retains and sends the original input once after the blocker settles",
     () => {

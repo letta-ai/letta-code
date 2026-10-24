@@ -34,7 +34,6 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
-  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
@@ -105,6 +104,7 @@ import {
   isFileWriteTool,
   isPatchTool,
 } from "@/cli/helpers/tool-name-mapping";
+import { parkTuiBusyInput } from "@/cli/helpers/tui-busy-input";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
 import { runStopHooks } from "@/hooks";
@@ -121,7 +121,10 @@ import { analyzeToolApproval, type ToolExecutionResult } from "@/tools/manager";
 import type { PreparedScopeToolContext } from "@/tools/toolset";
 import { debugLog, debugWarn, isDebugEnabled } from "@/utils/debug";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
-
+import {
+  createBusyInputApprovalGuard,
+  recoverTuiPendingApprovalInput,
+} from "./busy-input-approval-guard";
 import {
   CONVERSATION_BUSY_MAX_RETRIES,
   EAGER_CANCEL,
@@ -570,7 +573,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       processingConversationRef.current += 1;
       let turnStartCancelReason: string | null = null;
 
-      if (hasUserMessageInput(currentInput)) {
+      if (hasUserMessageInput(currentInput) && !options?.preserveBusyInput) {
         const originalInput = currentInput;
         try {
           const turnStartEvent = {
@@ -624,6 +627,27 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
       let turnAbortController: AbortController | null = null;
+      let busyRecoveryAttempted = options?.preserveBusyInput === true;
+      let rejectedBusyInput = busyRecoveryAttempted;
+      const restoreFailedInput = () => {
+        const queue = tuiQueueRef.current;
+        if (busyRecoveryAttempted && queue) {
+          parkTuiBusyInput(queue, rejectedBusyInput ? currentInput : []);
+          lastDequeuedMessageRef.current = null;
+          lastSentInputRef.current = null;
+          if (queue.length > 0)
+            appendError(
+              "Pending inputs preserved in order. Press Enter to retry.",
+              true,
+            );
+        } else {
+          if (lastDequeuedMessageRef.current) {
+            setRestoredInput(lastDequeuedMessageRef.current);
+            lastDequeuedMessageRef.current = null;
+          }
+          queue?.clear("error");
+        }
+      };
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -675,6 +699,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             m.type === "message" && m.role === "user",
         );
         const canInjectInterruptRecovery =
+          !options?.preserveBusyInput &&
           pendingInterruptRecoveryConversationIdRef.current !== null &&
           pendingInterruptRecoveryConversationIdRef.current ===
             conversationIdRef.current;
@@ -743,7 +768,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         }
 
         let streamSequenceCursor: StreamSequenceCursor | null = null;
-        let retryingBusyInput = false;
+        let retryingBusyInput = options?.preserveBusyInput === true;
+        const busyApprovalGuard = createBusyInputApprovalGuard({
+          protectedInput: retryingBusyInput,
+        });
 
         while (true) {
           const signal = turnAbortController.signal;
@@ -808,7 +836,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               { maxRetries: 0, signal },
             );
             stream = nextStream;
+            rejectedBusyInput = false;
             retryingBusyInput = false;
+            busyApprovalGuard.reset();
             turnToolContextId = getStreamToolContextId(nextStream);
           } catch (preStreamError) {
             debugLog(
@@ -840,6 +870,20 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               },
             );
 
+            if (
+              preStreamAction === "resolve_approval_pending" &&
+              (await busyApprovalGuard.wait(signal))
+            ) {
+              if (
+                myGeneration !== conversationGenerationRef.current ||
+                signal.aborted ||
+                userCancelledRef.current
+              )
+                return;
+              retryingBusyInput = true;
+              continue;
+            }
+
             // Stale approval conflict: fetch real pending approvals, auto-deny,
             // retry. Shares llmApiErrorRetriesRef budget (max 3 per turn).
             if (
@@ -851,34 +895,19 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               })
             ) {
               llmApiErrorRetriesRef.current += 1;
-              try {
-                const agent = await getBackend().retrieveAgent(
-                  agentIdRef.current,
-                );
-                const { pendingApprovals: existingApprovals } =
-                  await getResumeDataFromBackend(
-                    agent,
-                    conversationIdRef.current,
-                  );
-                currentInput = rebuildInputWithFreshDenials(
-                  currentInput,
-                  existingApprovals ?? [],
-                  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-                );
-              } catch {
-                // Fetch failed — strip stale payload and retry plain message
-                currentInput = rebuildInputWithFreshDenials(
-                  currentInput,
-                  [],
-                  "",
-                );
-              }
+              currentInput = await recoverTuiPendingApprovalInput(
+                currentInput,
+                agentIdRef.current,
+                conversationIdRef.current,
+              );
               buffersRef.current.interrupted = false;
               continue;
             }
 
             // Check for 409 "conversation busy" error - retry with exponential backoff
             if (preStreamAction === "retry_conversation_busy") {
+              busyRecoveryAttempted = true;
+              rejectedBusyInput = true;
               conversationBusyRetriesRef.current += 1;
               const retryDelayMs = getRetryDelayMs({
                 category: "conversation_busy",
@@ -901,6 +930,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
+              let resumedOwnRequest = false;
               try {
                 if (myGeneration !== conversationGenerationRef.current) return;
                 if (signal.aborted || userCancelledRef.current) {
@@ -922,6 +952,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   resumeStream.controller.abort();
                   return;
                 }
+                resumedOwnRequest = true;
+                rejectedBusyInput = false;
 
                 // Only reset buffer state after confirming stream is available
                 buffersRef.current.interrupted = false;
@@ -949,8 +981,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   preStreamResumeResult.stopReason,
                 );
                 retryingBusyInput = false;
+                busyApprovalGuard.reset();
                 // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
               } catch (resumeError) {
+                if (resumedOwnRequest) throw resumeError;
                 if (myGeneration !== conversationGenerationRef.current) return;
                 if (signal.aborted || userCancelledRef.current) {
                   setStreaming(false);
@@ -980,6 +1014,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 refreshDerived();
 
                 try {
+                  busyApprovalGuard.noteConflict(errorDetail);
                   await waitForBusyRunRetry(errorDetail, retryDelayMs, signal);
                 } catch (waitError) {
                   if (
@@ -2302,25 +2337,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           ) {
             llmApiErrorRetriesRef.current += 1;
 
-            try {
-              // Fetch pending approvals and auto-deny them
-              const agent = await getBackend().retrieveAgent(
-                agentIdRef.current,
-              );
-              const { pendingApprovals: existingApprovals } =
-                await getResumeDataFromBackend(
-                  agent,
-                  conversationIdRef.current,
-                );
-              currentInput = rebuildInputWithFreshDenials(
-                currentInput,
-                existingApprovals ?? [],
-                STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-              );
-            } catch {
-              // Fetch failed — strip stale payload and retry plain message
-              currentInput = rebuildInputWithFreshDenials(currentInput, [], "");
-            }
+            currentInput = await recoverTuiPendingApprovalInput(
+              currentInput,
+              agentIdRef.current,
+              conversationIdRef.current,
+            );
 
             // Reset interrupted flag so retry stream chunks are processed
             buffersRef.current.interrupted = false;
@@ -2596,13 +2617,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             });
             appendError(ERROR_FEEDBACK_HINT, true);
 
-            // Restore dequeued message to input on error
-            if (lastDequeuedMessageRef.current) {
-              setRestoredInput(lastDequeuedMessageRef.current);
-              lastDequeuedMessageRef.current = null;
-            }
-            // Clear any remaining queue on error
-            tuiQueueRef.current?.clear("error");
+            restoreFailedInput();
 
             setStreaming(false);
             sendDesktopNotification("Stream error", "error"); // Notify user of error
@@ -2715,13 +2730,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 true,
               );
 
-              // Restore dequeued message to input on error
-              if (lastDequeuedMessageRef.current) {
-                setRestoredInput(lastDequeuedMessageRef.current);
-                lastDequeuedMessageRef.current = null;
-              }
-              // Clear any remaining queue on error
-              tuiQueueRef.current?.clear("error");
+              restoreFailedInput();
 
               setStreaming(false);
               sendDesktopNotification();
@@ -2750,13 +2759,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             );
           }
 
-          // Restore dequeued message to input on error
-          if (lastDequeuedMessageRef.current) {
-            setRestoredInput(lastDequeuedMessageRef.current);
-            lastDequeuedMessageRef.current = null;
-          }
-          // Clear any remaining queue on error
-          tuiQueueRef.current?.clear("error");
+          restoreFailedInput();
 
           setStreaming(false);
           sendDesktopNotification("Execution error", "error"); // Notify user of error
@@ -2816,13 +2819,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         });
         appendError(ERROR_FEEDBACK_HINT, true);
 
-        // Restore dequeued message to input on error (Input component will only use if empty)
-        if (lastDequeuedMessageRef.current) {
-          setRestoredInput(lastDequeuedMessageRef.current);
-          lastDequeuedMessageRef.current = null;
-        }
-        // Clear any remaining queue on error
-        tuiQueueRef.current?.clear("error");
+        restoreFailedInput();
 
         setStreaming(false);
         sendDesktopNotification("Processing error", "error"); // Notify user of error

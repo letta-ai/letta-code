@@ -5,7 +5,21 @@ import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
 const scenario = process.argv[2];
-if (!scenario || !["busy", "normal", "accepted-own-otid"].includes(scenario)) {
+if (
+  !scenario ||
+  ![
+    "busy",
+    "normal",
+    "accepted-own-otid",
+    "foreign-approval",
+    "cancel-foreign-approval",
+    "queue-timeout",
+    "queue-exhausted",
+    "queue-metadata-failure",
+    "queue-approval-timeout",
+    "queue-own-drain-error",
+  ].includes(scenario)
+) {
   throw new Error(`Unknown TUI busy-run scenario: ${scenario ?? "missing"}`);
 }
 
@@ -46,12 +60,35 @@ const { createDisabledModAdapter } = await import(
 );
 const { prepareCurrentToolExecutionContext } = await import("@/tools/manager");
 const { settingsManager } = await import("@/settings-manager");
+const { QueueRuntime } = await import("@/queue/queue-runtime");
+const { takeTuiBusyInput } = await import("@/cli/helpers/tui-busy-input");
 
 type Context = Parameters<typeof useConversationLoop>[0];
 type ResumeBody = Parameters<
   ReturnType<typeof getBackend>["streamConversationMessages"]
 >[1];
-type Scenario = "busy" | "normal" | "accepted-own-otid";
+type Scenario =
+  | "busy"
+  | "normal"
+  | "accepted-own-otid"
+  | "foreign-approval"
+  | "cancel-foreign-approval"
+  | "queue-timeout"
+  | "queue-exhausted"
+  | "queue-metadata-failure"
+  | "queue-approval-timeout"
+  | "queue-own-drain-error";
+const foreignApproval = scenario.includes("foreign-approval");
+const queueFailure = scenario.startsWith("queue-");
+const queue = new QueueRuntime();
+const restoredInputs: string[] = [];
+let replaying = false;
+let replayAttempts = 0;
+const sentBytes: string[] = [];
+const polledRunIds: string[] = [];
+let approvalReads = 0;
+let cancellationTriggered = false;
+const continuationId = "run-22222222-2222-4222-8222-222222222222";
 type SentPayload = { otid?: string; content?: unknown; [key: string]: unknown };
 
 const runId = "run-11111111-1111-4111-8111-111111111111";
@@ -195,7 +232,10 @@ const context: Context = {
   setExecutionPhase: noop,
   setPendingApprovals: noop,
   setRestoreQueueOnCancel: noop,
-  setRestoredInput: noop,
+  setRestoredInput: (value) => {
+    const text = typeof value === "function" ? value(null) : value;
+    if (text !== null) restoredInputs.push(text);
+  },
   setStreaming: noop,
   setConversationSummary: noop,
   setTempModelOverride: noop,
@@ -212,7 +252,7 @@ const context: Context = {
   trajectoryRunTokenStartRef: ref(0),
   trajectorySegmentStartRef: ref(null),
   trajectoryTokenDisplayRef: ref(0),
-  tuiQueueRef: ref(null),
+  tuiQueueRef: ref(queue),
   uiPermissionModeRef: ref(
     "default" as Context["uiPermissionModeRef"]["current"],
   ),
@@ -241,6 +281,60 @@ const fakeBackend = Object.create(
     capabilities: { ...originalBackend.capabilities, localModelCatalog: false },
     async createConversationMessageStream(_id: string, body: SentPayload) {
       sentPayloads.push(capturedMessages(body));
+      sentBytes.push(JSON.stringify(body));
+      if (queueFailure) {
+        if (
+          replaying &&
+          !(scenario === "queue-approval-timeout" && replayAttempts++ === 0)
+        ) {
+          acceptedPayloads.push(capturedMessages(body));
+          return stopStream("run-original-input");
+        }
+        const approvalPending =
+          scenario === "queue-approval-timeout" && sentPayloads.length > 1;
+        throw new APIError(
+          409,
+          {
+            detail: approvalPending
+              ? "Conversation is waiting for approval"
+              : `Another request (run_id=${runId}) is currently being processed for this conversation.`,
+          },
+          undefined,
+          new Headers(),
+        );
+      }
+      if (foreignApproval) {
+        const attempt = sentPayloads.length;
+        if (attempt >= 4) {
+          acceptedPayloads.push(capturedMessages(body));
+          return stopStream("run-original-input");
+        }
+        if (attempt === 2) {
+          if (scenario === "cancel-foreign-approval") {
+            setTimeout(() => {
+              cancellationTriggered = true;
+              context.userCancelledRef.current = true;
+              context.abortControllerRef.current?.abort();
+            }, 1000);
+          }
+          throw new APIError(
+            409,
+            { detail: "Conversation is waiting for approval" },
+            undefined,
+            new Headers(),
+          );
+        }
+        const blocker = attempt === 1 ? runId : continuationId;
+        throw new APIError(
+          409,
+          {
+            detail: `Another request (run_id=${blocker}) is currently being processed for this conversation.`,
+            run_id: blocker,
+          },
+          undefined,
+          new Headers(),
+        );
+      }
       if (scenario === "normal") {
         acceptedPayloads.push(capturedMessages(body));
         return stopStream("run-normal");
@@ -274,6 +368,18 @@ const fakeBackend = Object.create(
     },
     async streamConversationMessages(_id: string, body: ResumeBody) {
       resumeBodies.push(body);
+      if (scenario === "queue-own-drain-error") {
+        acceptedPayloads.push(sentPayloads[0]);
+        return {
+          controller: new AbortController(),
+          async *[Symbol.asyncIterator]() {
+            yield { message_type: "ping" };
+            throw new Error(
+              "Own request stream transport failed after admission",
+            );
+          },
+        };
+      }
       if (scenario === "accepted-own-otid" && body?.otid === requestOtid) {
         return stopStream("run-own-request");
       }
@@ -302,6 +408,25 @@ const fakeBackend = Object.create(
       );
     },
     async retrieveRun(id: string) {
+      polledRunIds.push(id);
+      if (queueFailure) {
+        runPolls += 1;
+        if (scenario === "queue-metadata-failure")
+          throw new Error("metadata unavailable");
+        return {
+          id,
+          status: scenario === "queue-timeout" ? "running" : "completed",
+        };
+      }
+      if (foreignApproval && [runId, continuationId].includes(id)) {
+        runPolls += 1;
+        return {
+          id,
+          agent_id: "agent-synthetic",
+          status: "completed",
+          stop_reason: id === runId ? "requires_approval" : "end_turn",
+        };
+      }
       if (id !== runId)
         throw new Error("Fixture polled a run outside its synthetic blocker");
       runPolls += 1;
@@ -312,7 +437,36 @@ const fakeBackend = Object.create(
         status: blockingRunActive ? "running" : "completed",
       };
     },
+    async retrieveConversation() {
+      return {
+        id: "conv-synthetic",
+        in_context_message_ids: ["message-foreign-approval"],
+      };
+    },
+    async retrieveMessage() {
+      return [
+        {
+          id: "message-foreign-approval",
+          date: new Date().toISOString(),
+          message_type: "approval_request_message",
+          tool_calls: [
+            {
+              tool_call_id: "call-foreign-owner",
+              name: "Bash",
+              arguments: '{"command":"pwd"}',
+            },
+          ],
+        },
+      ];
+    },
     async retrieveAgent() {
+      approvalReads += 1;
+      if (foreignApproval)
+        return {
+          id: "agent-synthetic",
+          tools: [],
+          message_ids: ["message-foreign-approval"],
+        };
       throw new Error(
         "Agent metadata is unavailable in this transport fixture",
       );
@@ -320,7 +474,7 @@ const fakeBackend = Object.create(
   }),
 );
 __testSetBackend(fakeBackend);
-if (scenario === "busy") {
+if (scenario === "busy" || foreignApproval || queueFailure) {
   Date.now = () => clock;
   globalThis.setTimeout = ((
     callback: (...args: unknown[]) => void,
@@ -367,6 +521,27 @@ const instance = render(createElement(Probe), {
 try {
   if (!processConversation)
     throw new Error("The actual interactive hook did not mount");
+  if (queueFailure) {
+    const first: Omit<
+      import("@/queue/queue-runtime").MessageQueueItem,
+      "id" | "enqueuedAt"
+    > = {
+      kind: "message",
+      source: "user",
+      content: [{ type: "text", text: "queued first" }],
+    };
+    const second: Omit<
+      import("@/queue/queue-runtime").MessageQueueItem,
+      "id" | "enqueuedAt"
+    > = {
+      kind: "message",
+      source: "user",
+      content: "queued second",
+    };
+    queue.enqueue(first);
+    queue.enqueue(second);
+    context.lastDequeuedMessageRef.current = userText;
+  }
   await processConversation([
     {
       type: "message",
@@ -375,6 +550,15 @@ try {
       otid: requestOtid,
     },
   ]);
+  const queueAfterFailure = structuredClone(queue.items);
+  const readyAfterFailure = queue.readyLength;
+  const postsAfterFailure = sentPayloads.length;
+  if (queueFailure) {
+    replaying = true;
+    queue.resume();
+    const input = takeTuiBusyInput(queue);
+    if (input) await processConversation(input, { preserveBusyInput: true });
+  }
   console.log(
     `TUI_BUSY_RESULT=${JSON.stringify({
       runtime: process.version,
@@ -384,11 +568,20 @@ try {
       virtualElapsedMs: clock,
       blockerCompletesAt,
       sentPayloads,
+      sentBytes,
+      polledRunIds,
+      approvalReads,
+      cancellationTriggered,
       acceptedPayloads,
       runPolls,
       lastStopReason: context.lastStopReasonRef.current,
       resumeBodies,
       errors,
+      queueAfterFailure,
+      readyAfterFailure,
+      postsAfterFailure,
+      queueAfterReplay: queue.items,
+      restoredInputs,
     })}`,
   );
 } finally {
