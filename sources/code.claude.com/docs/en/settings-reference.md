@@ -324,7 +324,7 @@ This example lets people select only Sonnet and Haiku models:
 }
 ```
 
-A model ID entry such as `"claude-opus-5"` also permits later versions that extend it, such as Opus 5.5. To block one of those versions, use [`deniedModels`](#deniedmodels). To make each model ID entry permit only the version it names, use [`availableModelsMatch`](#availablemodelsmatch). See [Restrict model selection](https://code.claude.com/docs/en/model-config.md#restrict-model-selection).
+A model ID entry such as `"claude-opus-5"` also permits later versions that extend it, such as Opus 5.5. To block one of those versions, use [`deniedModels`](#deniedmodels). To make each model ID entry permit only the version it names, use [`availableModelsMatch`](#availablemodelsmatch). See [Restrict model selection](https://code.claude.com/docs/en/model-config.md#restrict-model-selection). For third-party provider IDs, see [Pin models for third-party deployments](https://code.claude.com/docs/en/model-config.md#pin-models-for-third-party-deployments).
 
 ### `availableModelsMatch`
 
@@ -333,7 +333,7 @@ Choose how [`availableModels`](#availablemodels) entries match model IDs. By def
 * **Scope**: [`Managed`](#scopes). Claude Code ignores the key in user, project, and local settings and in `--settings`, with a warning
 * **Type**: string, one of:
   * `"prefix"`: a model ID entry permits its version and any model ID that extends it with another segment
-  * `"exact"`: a model ID entry permits only the version it names, including that version's dated IDs, so `"claude-opus-5"` permits Opus 5 but not `claude-opus-5-5`. A family alias such as `"opus"` still permits the whole family, and `best`, `opusplan`, and `default` entries are ignored
+  * `"exact"`: a model ID entry permits only the version it names, so `"claude-opus-5"` permits Opus 5 but not `claude-opus-5-5`. An entry such as `"claude-opus-4-5"` also permits its dated Anthropic model ID `claude-opus-4-5-20251101`. A family alias such as `"opus"` still permits the whole family, and `best`, `opusplan`, and `default` entries are ignored
 * **Default**: `"prefix"`
 
 This example permits Opus 5 and Sonnet 5 and no later release of either:
@@ -1371,12 +1371,40 @@ The `//path` prefix for absolute paths also works. If you use single-slash `/pat
 
 Claude Code strips a trailing slash from a directory path, so `~/.aws` and `~/.aws/` match the same directory. Before v2.1.224, Claude Code passed the trailing slash through to the sandbox, and Claude could still read or write paths under a `denyRead` or `denyWrite` entry written with one.
 
-Claude Code also removes a trailing `/**`, so `~/build/**` and `~/build` cover the same directory. Whether a wildcard such as `*` works depends on which list the entry is in and on the platform:
+##### Where wildcards work in sandbox paths
 
-* **`allowWrite` and `denyWrite`**: on macOS, wildcards work. On Linux and WSL2, the sandbox mounts concrete paths, so Claude Code skips an entry that contains `*`, `?`, or `[` once the trailing `/**` is removed, and that entry has no effect. Claude Code adds the paths from your `Edit` permission rules to these lists, so the same limit applies to them, and the **Config** tab of `/sandbox` warns about `Edit` and `Read` permission rules that contain wildcards.
-* **`denyRead` and `allowRead`**: wildcards work on every platform. On Linux and WSL2, Claude Code expands a read entry to the concrete paths it matches, which it doesn't do for the write lists.
+The wildcards `*`, `?`, and `**` work in all four `sandbox.filesystem` path lists on macOS and in fewer places on Linux and WSL2:
 
-Braces match as ordinary characters in a name, so `~/data/{keys,tokens}` covers a directory literally named `{keys,tokens}`, not two alternatives. To cover `~/data/keys` and `~/data/tokens`, add each as its own entry.
+| `sandbox.filesystem` list | What works on Linux and WSL2 | Example that doesn't work on Linux and WSL2 | What to write instead |
+| :- | :- | :- | :- |
+| `denyRead`, `allowRead` | A trailing `/**` works, so `~/build/**` covers the same directory as `~/build`. Any other wildcard works only after the first directory name of the entry's [full path](#sandbox-path-prefixes). | `/**/*.pem` in `denyRead` covers nothing, so it blocks no reads | `/srv/**/*.pem`, with one entry for each top-level directory |
+| `allowWrite`, `denyWrite` | Only a trailing `/**` works, so `~/build/**` covers the same directory as `~/build` | `./src/*` covers only a file or directory in `src` that is itself named `*`, and nothing when there is none | `./src`, which covers everything under `src`, or one entry for each path |
+
+In `~/keys/*.pem`, the wildcard comes after the first directory name, which is `home` for a home directory of `/home/alice`:
+
+```text theme={null}
+~/keys/*.pem              the entry
+/home/alice/keys/*.pem    its full path
+ ^^^^                     the first directory name, home
+```
+
+On Linux and WSL2, the **Config** tab of `/sandbox` in a session warns about `Edit` permission rules that contain a wildcard other than a trailing `/**`. Those wildcards don't work for sandboxed commands. Add each path the rule should cover, or the directory that holds them, to `allowWrite` for an allow rule or `denyWrite` for a deny rule.
+
+##### Directory names with brackets, braces, or parentheses
+
+To allow or block a directory whose name contains brackets, write the name as it is, such as `./app/[slug]`. In that entry, `[slug]` is the directory's real name, brackets included:
+
+```text theme={null}
+app/
+└── [slug]/
+    └── page.tsx
+```
+
+That entry covers everything under the directory, so leave off a trailing `/**`. On macOS and on Linux and WSL2, the `app/[slug]` directory has to exist when the sandboxed command starts.
+
+* **Brackets such as `[slug]`**: in every list on macOS, and in `denyRead` and `allowRead` on Linux and WSL2, the brackets in `./app/[slug]` are also a pattern. The entry then also matches any path under `app` named with one character from `slug`, such as `app/s` or `app/g`. With that entry in `allowRead`, or in `allowWrite` on macOS, sandboxed commands can reach those paths as well. Rename any they shouldn't reach.
+* **Brackets such as `[user-id]` or `[post-id]`, where the hyphen's left character sorts after its right**: `./app/[user-id]` covers only the directory with exactly that name, in every list on every platform. Before v2.1.304, sandboxed commands on Linux and WSL2 failed to start while `denyRead` or `allowRead` held such an entry.
+* **Braces and parentheses**: these are ordinary characters, so `~/data/{keys,tokens}` covers one directory named `{keys,tokens}`, not two alternatives. To cover `~/data/keys` and `~/data/tokens`, add each as its own entry.
 
 ### `sandbox.filesystem.allowWrite`
 
@@ -3520,7 +3548,7 @@ Turn off [hooks](https://code.claude.com/docs/en/hooks.md#disable-or-remove-hook
 The reach depends on which file carries the key:
 
 * **In managed settings**: Claude Code disables every configured hook, including managed ones, and keeps running the hooks the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview.md) registers in process
-* **In the Agent SDK's `managedSettings` option**: Claude Code treats the key as `allowManagedHooksOnly: true`, so see [what runs under `allowManagedHooksOnly`](#what-runs-under-allowmanagedhooksonly) for which hooks stop. On a machine where an administrator deploys managed settings, Claude Code ignores this key unless the administrator [lets an embedding host add policy](https://code.claude.com/docs/en/managed-settings.md#let-an-embedding-host-add-policy). Requires Claude Code v2.1.309 or later.
+* **In the Agent SDK's `managedSettings` option**: on a machine where an administrator deploys managed settings, Claude Code ignores this key unless the administrator [lets an embedding host add policy](https://code.claude.com/docs/en/managed-settings.md#let-an-embedding-host-add-policy). Where the key takes effect, user, project, local, and plugin hooks stop, as do any in the SDK's `settings` option. An administrator's managed hooks, [force-enabled](#enabledplugins) plugins' hooks, and your [SDK hook callbacks](https://code.claude.com/docs/en/agent-sdk/hooks.md) keep running. Requires Claude Code v2.1.309 or later.
 * **In any other settings file**: Claude Code disables user, project, local, and plugin hooks; managed hooks, Agent SDK hooks, and hooks from plugins force-enabled in managed [`enabledPlugins`](#enabledplugins) keep running
 
 The key also stops [mods](https://code.claude.com/docs/en/plugins/mods/overview.md), which are plugins whose code registers hooks:
@@ -3841,7 +3869,7 @@ Block the [`command` plugin source](https://code.claude.com/docs/en/plugins/mark
 * **Type**: Boolean
   * `true`: Claude Code never runs the marketplace-declared command, doesn't install or update command-sourced plugins, and stops loading the ones already installed
   * `false`: Claude Code allows command-sourced plugins explicitly
-* **Default**: unset, so Claude Code follows [`allowManagedHooksOnly`](#allowmanagedhooksonly): an organization that restricts hook execution to managed settings gets command sources disabled too
+* **Default**: unset, so Claude Code follows [`allowManagedHooksOnly`](#allowmanagedhooksonly): an organization that restricts hook execution to managed settings gets command sources disabled too. An application that passes [`disableAllHooks: true`](#disableallhooks) in the Agent SDK's `managedSettings` option doesn't by itself disable command sources.
 
 ```json managed-settings.json theme={null}
 {

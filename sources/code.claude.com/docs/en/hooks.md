@@ -961,6 +961,8 @@ If the error for a blocked tool call includes this text, a `PreToolUse` or `Perm
 blocking because Git Bash wasn't found, so only exit code 0 or 2 counts as this hook's verdict.
 ```
 
+If the error also says `PowerShell started no program`, start with [the fixes for a `command` that is only quoted strings](#powershell-started-no-program), which PowerShell prints instead of running.
+
 Without Git Bash, any exit code other than 0 or 2 from that hook counts as a [failure](#block-the-action-when-a-hook-fails), even when it prints JSON that doesn't deny the call. To find out why the hook failed, check the [debug log](#debug-hooks). Then pick the fix that matches your hook:
 
 * **The call should go ahead when the hook fails**: add [`"onFailure": "continue"`](#block-the-action-when-a-hook-fails) to the hook
@@ -970,6 +972,15 @@ Without Git Bash, any exit code other than 0 or 2 from that hook counts as a [fa
 * **A PowerShell guard hook that must block on failure**: with `onFailure` unset, it stops doing so once Git for Windows is installed and Claude Code finds Git Bash. Add `"onFailure": "block"` so a failure or a timeout blocks the call with or without Git Bash. Also set `"shell": "powershell"` so the hook keeps running in PowerShell from then on instead of in Git Bash
 
 Before v2.1.309, the message read `blocking because Git Bash wasn't found and this hook doesn't set "shell" to "powershell", so only exit code 0 or 2 counts as its verdict.`
+
+#### PowerShell started no program
+
+A hook with this error ran in PowerShell, which prints a `command` that is only quoted strings, such as `"command": "\"C:\\Tools\\guard.exe\""`, instead of running it.
+
+* **To print text, such as JSON**: set `"shell": "powershell"`, and the hook exits 0
+* **To run a `.ps1`, `.cmd`, or `.bat` file, or a `.exe` whose path has a variable**: set `"shell": "powershell"` and put `&` before the quoted path. Leave `$HOME` as written, and spell environment variables as the [`check.ps1` example](#reference-scripts-by-path-in-powershell-hooks) spells `$env:CLAUDE_PROJECT_DIR`
+* **To run one `.exe` at a path without `$`**: remove the inner quotes from `command`, then apply the [fix for a hook that runs one `.exe`](#failed-hooks-on-windows-without-git-bash), writing `"args": []` if the program takes no arguments
+* **To run a script written for Bash**: apply the [fix for a hook written for Bash](#failed-hooks-on-windows-without-git-bash)
 
 #### Exit code 2 behavior per event
 
@@ -4184,6 +4195,8 @@ On Windows, you can run individual hooks in PowerShell by setting `"shell": "pow
   }
 }
 ```
+
+### Reference scripts by path in PowerShell hooks
 
 To reference the project root from a PowerShell shell-form command, write `${CLAUDE_PROJECT_DIR}` or `$env:CLAUDE_PROJECT_DIR`. Claude Code rewrites the `${CLAUDE_PROJECT_DIR}`, `${CLAUDE_PLUGIN_ROOT}`, and `${CLAUDE_PLUGIN_DATA}` placeholders in a PowerShell shell-form command to PowerShell's `${env:NAME}` form, whether the hook is defined in `settings.json`, a plugin, or a skill. PowerShell then resolves the value from the exported environment after parsing, so the placeholder works inside double-quoted strings but not inside single-quoted strings, where PowerShell never expands variables.
 
