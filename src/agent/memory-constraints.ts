@@ -1,7 +1,7 @@
 /**
  * Self-contained validator installed beside the MemFS pre-commit hook.
  *
- * It runs under Node because Letta Code requires Node 22.19 or newer. Keeping
+ * It runs under Node because Letta Code requires Node ^22.23.4, ^24.22.1, or ^26.12.1. Keeping
  * the validator dependency-free lets Git execute it from agent and shared
  * memory repositories without resolving the Letta Code package at commit time.
  *
