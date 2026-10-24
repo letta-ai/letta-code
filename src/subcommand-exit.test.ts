@@ -64,7 +64,7 @@ test.each([false, true])(
     try {
       const code = await exited;
       expect(code, stderr).toBe(0);
-      expect(JSON.parse(stdout)).toEqual(response);
+      expect(JSON.parse(stdout)).toEqual({ ...response, nextCursor: null });
       expect(stderr).toContain("async-work-drained");
     } finally {
       clearTimeout(timeout);
