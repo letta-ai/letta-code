@@ -961,15 +961,13 @@ If the error for a blocked tool call includes this text, a `PreToolUse` or `Perm
 blocking because Git Bash wasn't found, so only exit code 0 or 2 counts as this hook's verdict.
 ```
 
-To find out why the hook failed, check the [debug log](#debug-hooks). Pick the fix that matches your hook:
+Without Git Bash, any exit code other than 0 or 2 from that hook counts as a [failure](#block-the-action-when-a-hook-fails), even when it prints JSON that doesn't deny the call. To find out why the hook failed, check the [debug log](#debug-hooks). Then pick the fix that matches your hook:
 
-* **The action should go ahead when the hook fails**: add [`"onFailure": "continue"`](#block-the-action-when-a-hook-fails) to the hook
-* **The hook is written for Bash**: a [shell-form](#exec-form-and-shell-form) hook with no `shell` set runs in PowerShell when Git Bash isn't installed, where a script written for Bash may not run as written. Install [Git for Windows](https://git-scm.com/downloads/win), or set [`CLAUDE_CODE_GIT_BASH_PATH`](https://code.claude.com/docs/en/env-vars) if Git Bash is installed where Claude Code doesn't find it, then start a new session
+* **The call should go ahead when the hook fails**: add [`"onFailure": "continue"`](#block-the-action-when-a-hook-fails) to the hook
+* **The hook exits 1 to warn but must block when it crashes**: with `"onFailure": "continue"`, the call goes ahead on exit code 1, warning or crash alike. Add `"onFailure": "block"` instead, and have the script exit 0 where it warns, so those calls go ahead. To still show the warning on `PreToolUse`, print it to stdout as the [`systemMessage`](#json-output) field of one JSON object.
+* **The hook is written for Bash**: without Git Bash, a [shell-form](#exec-form-and-shell-form) hook with no `shell` set runs in PowerShell, where it can fail. Install [Git for Windows](https://git-scm.com/downloads/win), or set [`CLAUDE_CODE_GIT_BASH_PATH`](https://code.claude.com/docs/en/env-vars) if Git Bash is installed where Claude Code doesn't find it. Then start a new session.
 * **The hook runs one `.exe`, not a `.cmd` or `.bat` file**: put the program in `command` and its arguments in `args` to use exec form, and add `"onFailure": "block"`. Claude Code then starts the program with no shell. Without `"onFailure": "block"`, the call can go ahead when the program fails, is missing, or times out
-* **The hook exits 1 to warn but must block when it crashes**: with `"onFailure": "continue"`, the call goes ahead on exit code 1, warning or crash alike. Add `"onFailure": "block"` instead, and end the script with exit code 0 where it warns, so those calls go ahead. To show the warning on `PreToolUse` after exit code 0, print it to stdout in the [`systemMessage`](#json-output) field of one JSON object
 * **A PowerShell guard hook that must block on failure**: with `onFailure` unset, it stops doing so once Git for Windows is installed and Claude Code finds Git Bash. Add `"onFailure": "block"` so a failure or a timeout blocks the call with or without Git Bash. Also set `"shell": "powershell"` so the hook keeps running in PowerShell from then on instead of in Git Bash
-
-For a hook that shows this error, any exit code other than 0 or 2 counts as a [failure](#block-the-action-when-a-hook-fails), even when the hook prints JSON that doesn't deny the call.
 
 Before v2.1.309, the message read `blocking because Git Bash wasn't found and this hook doesn't set "shell" to "powershell", so only exit code 0 or 2 counts as its verdict.`
 

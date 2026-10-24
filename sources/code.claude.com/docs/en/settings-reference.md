@@ -3470,7 +3470,7 @@ This example allows any URL under `https://hooks.example.com/` and any `http://l
 
 Hostname matching is case-insensitive and treats `hooks.example.com.`, with the trailing dot that marks a fully qualified domain name, the same as `hooks.example.com`, which is how DNS treats them. The allowlist applies to hooks from every source, including managed settings.
 
-In the Agent SDK's `managedSettings` option, Claude Code ignores this key when its list has entries, so pass the list in the SDK's `settings` option instead. See [what each value does in parent settings](https://code.claude.com/docs/en/claude-apps-gateway#how-hook-and-skill-keys-in-parent-settings-take-effect).
+In the Agent SDK's `managedSettings` option, Claude Code ignores a list with entries, so pass it in the SDK's [`settings` option](https://code.claude.com/docs/en/agent-sdk/typescript#options) instead. See [what an empty list does in parent settings](https://code.claude.com/docs/en/claude-apps-gateway#how-hook-and-skill-keys-in-parent-settings-take-effect).
 
 ### `allowManagedHooksOnly`
 
@@ -3624,7 +3624,7 @@ This example limits header interpolation to `MY_TOKEN` and `HOOK_SECRET`:
 
 The allowlist applies to hooks from every source, including managed settings.
 
-In the Agent SDK's `managedSettings` option, Claude Code ignores this key when its list has entries, so pass the list in the SDK's `settings` option instead. See [what each value does in parent settings](https://code.claude.com/docs/en/claude-apps-gateway#how-hook-and-skill-keys-in-parent-settings-take-effect).
+In the Agent SDK's `managedSettings` option, Claude Code ignores a list with entries, so pass it in the SDK's [`settings` option](https://code.claude.com/docs/en/agent-sdk/typescript#options) instead. See [what an empty list does in parent settings](https://code.claude.com/docs/en/claude-apps-gateway#how-hook-and-skill-keys-in-parent-settings-take-effect).
 
 ### `workflowKeywordTriggerEnabled`
 

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.310:docs:2f17616dc5b66578536fed6b699924de679ec74b12d9e0a895eb20eeb23d01ce:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
+  "candidate_id": "claude@2.1.310:docs:f3df4cf1bb2576b176d3e797a81cdd5ad6d083c41480265eca1f8b599122bc68:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
   "package_version": "2.1.310",
   "npm_integrity": "sha512-EySpBwaocdU1nc9r7JH+GOlnMsbXc764d3HX7NL8fr7qqdxz2MiXI9hqf/rzeE/XgU23HHFltIqhb+Fq6G1CVw==",
   "npm_published_at": "2026-10-23T21:20:46.540Z",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "b7064ac53215f39ad3b8cb20f1a63dba5334f6fcb7efd8e789c55fa634e3d4c0",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-10-24T00:54:08.354Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
@@ -662,7 +662,7 @@
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "47ffc799070326108bbd3811db73d26f9a4cd68168078095d923a2ba710fdd8a",
+        "hash": "c56e08215ce4dc8ae123e8bde1fd93c6d31c9336e822c4acf61831c5c00f5696",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
@@ -1124,7 +1124,7 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "d359aa89b2adba5cdf14d3e2f57f51d57629cfec56732bffcb4e1b586589fc2c",
+        "hash": "d2e12c0b5d2d0f80f8b869c66d1e999219cf4ef69c26ee8ab06e6d759f172ebc",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "2f17616dc5b66578536fed6b699924de679ec74b12d9e0a895eb20eeb23d01ce"
+    "digest": "f3df4cf1bb2576b176d3e797a81cdd5ad6d083c41480265eca1f8b599122bc68"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1"
   },
-  "fetched_at": "2026-10-24T00:55:09.681Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40047204620",
-  "state_commit_parent": "4c47cc84d62ba0c4322a41771f6ddf5a18b280ef",
-  "analysis_parent_sha": "4c47cc84d62ba0c4322a41771f6ddf5a18b280ef"
+  "fetched_at": "2026-10-24T14:24:23.507Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40102243691",
+  "state_commit_parent": "a746ee872a06602b95028c636dca6f9ec56153cc",
+  "analysis_parent_sha": "a746ee872a06602b95028c636dca6f9ec56153cc"
 }
