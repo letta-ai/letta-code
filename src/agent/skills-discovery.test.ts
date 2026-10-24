@@ -10,6 +10,26 @@ import {
 import { join } from "node:path";
 import { discoverSkills, getBundledSkills } from "@/agent/skills";
 
+test("bundles the anysearch preset skill with tool and safety guidance", async () => {
+  const skills = await getBundledSkills();
+  const skill = skills.find((candidate) => candidate.id === "anysearch");
+  if (!skill) {
+    throw new Error("anysearch bundled skill was not found");
+  }
+
+  const content = readFileSync(skill.path, "utf8");
+
+  expect(skill.description).toContain("AnySearch");
+  expect(content).toContain("/mcp add anysearch");
+  expect(content).toContain("ANYSEARCH_API_KEY");
+  expect(content).toContain("get_sub_domains");
+  expect(content).toContain("batch_search");
+  expect(content).toContain("extract");
+  // Vertical/discovery params must never be invented from the REST API's
+  // tag/params shape — the skill must send agents to the live MCP schema.
+  expect(content).toContain("Do not guess field names");
+});
+
 test("scopes the memory filesystem skill to repository operations", async () => {
   const skills = await getBundledSkills();
   const skill = skills.find(
