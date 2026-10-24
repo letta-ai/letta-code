@@ -30,7 +30,7 @@ system prompt or explicit user-supplied provider/API message roles.
 
 Development and distribution use different runtimes. `bun run dev` runs the
 TypeScript source with Bun, while the published package exposes a Node-targeted
-`letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
+`letta.js` bundle and requires Node ^22.23.4, ^24.22.1, or ^26.12.1. When behavior depends on the
 runtime, test both the Bun source path and the built Node artifact.
 
 The interactive TUI, headless mode, and websocket listener also have separate
@@ -277,7 +277,7 @@ directory first. Otherwise the run reads and mutates your real
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
-- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (>= 22.19), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
+- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (^22.23.4, ^24.22.1, or ^26.12.1), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
 - **`setTimeout(fn, 0)` fires on the next tick, not never.** For "no timeout" behavior, check the timeout value before scheduling the timer instead of passing 0.
 - **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
 - **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
