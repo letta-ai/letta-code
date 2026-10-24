@@ -314,6 +314,12 @@ export interface Backend {
     options?: ModelsListOptions,
   ): Promise<Awaited<ReturnType<APIClient["models"]["list"]>>>;
 
+  /**
+   * Mark backend-side model inventory caches stale so the next listModels()
+   * refetches them. The availability cache calls this before each refetch.
+   */
+  markModelInventoryStale?(): void;
+
   readChatGPTUsage?(
     providerName: string,
     signal?: AbortSignal,

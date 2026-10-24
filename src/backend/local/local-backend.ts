@@ -323,6 +323,10 @@ export class LocalBackend extends HeadlessBackend {
     }) as never;
   }
 
+  markModelInventoryStale(): void {
+    this.piModelsRuntime.markAccountModelsStale();
+  }
+
   override async createAgent(
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
