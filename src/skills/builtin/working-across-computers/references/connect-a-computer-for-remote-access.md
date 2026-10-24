@@ -18,7 +18,7 @@ curl -sS -X POST "$LETTA_BASE_URL/v1/environments/connect-token" \
 
 The response is `{ "deviceCode": "...", "organizationId": "...", "expiresIn": 900 }`. A 403 means this sandbox key does not resolve to an owner; tell the user and fall back to Option 2.
 
-Ask the user to install [Node.js 22.19 or newer](https://nodejs.org/en/download) if they do not have it, then run this **on the computer they want to connect**, filling in both values from the response:
+Ask the user to install [Node.js ^22.23.4, ^24.22.1, or ^26.12.1](https://nodejs.org/en/download) if they do not have it, then run this **on the computer they want to connect**, filling in both values from the response:
 
 ```bash
 npm install -g @letta-ai/letta-code
@@ -31,7 +31,7 @@ The command signs in as the owner. Send it only to that person: a DM, or the thr
 
 ## Option 2: CLI server (browser sign-in)
 
-Ask the user to install [Node.js 22.19 or newer](https://nodejs.org/en/download), then run these commands in a terminal **on the target computer**:
+Ask the user to install [Node.js ^22.23.4, ^24.22.1, or ^26.12.1](https://nodejs.org/en/download), then run these commands in a terminal **on the target computer**:
 
 ```bash
 npm install -g @letta-ai/letta-code

@@ -140,7 +140,7 @@ describe("command planning", () => {
     const serialized = sandboxed.args.join(" ");
     expect(sandboxed.command).toBe("/usr/bin/docker");
     expect(serialized).toContain("/tmp/probe-root:/watch:rw");
-    expect(serialized).toContain("node:22.18.0-bookworm@sha256:");
+    expect(serialized).toContain("node:22.23.4-bookworm@sha256:");
     expect(serialized).toContain("--cap-drop ALL");
     expect(serialized).toContain("--read-only");
     expect(serialized).toContain("--env ANTHROPIC_API_KEY");
