@@ -71,9 +71,15 @@ nothing errors. Agents just stop taking in new messages mid-turn for every
 user, and it goes unnoticed for days. Agents changing this code to fit some
 other feature have broken it before.
 
-**How it works:** whenever the next request is about to go to the model (a tool
-return, a user message, anything), take everything in the queue and send it
-with that request. That's steering, and it has no conditions.
+**How it works:** Letta Code steers, it doesn't queue. Whenever the next
+request is about to go to the model (a tool return, a user message, anything),
+the listener drains every coalescable item at the head of the queue (user and
+agent messages, background task notifications, cron prompts, mod
+continuations) and sends them with that request. There is deliberately no mode
+that holds input until the turn ends. A batch only splits at real boundaries: a
+different conversation, connection, model selection, or image policy, or a
+`noCoalesce` input (the OpenAI-compatible App Server path, where each HTTP
+request needs its own turn). Who sent an input is never a boundary.
 
 **Don't make the queue decide what gets through.** If a feature needs to
 restrict something (MCP access, identity, permissions), enforce it where that
