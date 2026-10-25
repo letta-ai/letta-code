@@ -1,0 +1,23 @@
+name: Diagnose standalone OAuth
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/diagnose-standalone-oauth.yml
+      - src/standalone-entry.test.ts
+
+jobs:
+  full-windows-shard:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Reproduce main's complete Windows shard
+        shell: bash
+        # Diagnostic only: bypass PR family selection, keeping main's test order.
+        run: GITHUB_EVENT_NAME=workflow_dispatch node scripts/run-unit-tests.cjs --shard 1/8
