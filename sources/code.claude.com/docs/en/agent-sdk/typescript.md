@@ -309,12 +309,13 @@ function getSessionMessages(
 | `options.dir` | `string` | `undefined` | Project directory to find the session in. When omitted, searches all projects |
 | `options.limit` | `number` | `undefined` | Maximum number of messages to return |
 | `options.offset` | `number` | `undefined` | Number of messages to skip from the start |
+| `options.includeSystemMessages` | `boolean` | `false` | When `true`, also return system messages such as compact boundaries alongside user and assistant messages |
 
 #### Return type: `SessionMessage`
 
 | Property | Type | Description |
 | :- | :- | :- |
-| `type` | `"user" \| "assistant"` | Message role |
+| `type` | `"user" \| "assistant" \| "system"` | Message role. `"system"` appears only when `options.includeSystemMessages` is `true` |
 | `uuid` | `string` | Unique message identifier |
 | `session_id` | `string` | Session this message belongs to |
 | `message` | `unknown` | Raw message payload from the transcript |
@@ -632,13 +633,19 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
   }): Promise<SDKControlReloadPluginsResponse>;
   reloadSkills(): Promise<SDKControlReloadSkillsResponse>;
   reloadOutputStyles(): Promise<SDKControlReloadOutputStylesResponse>;
+  seedReadState(path: string, mtime: number): Promise<void>;
   accountInfo(): Promise<AccountInfo>;
   reconnectMcpServer(serverName: string): Promise<void>;
   toggleMcpServer(serverName: string, enabled: boolean): Promise<void>;
   setMcpServers(servers: Record<string, McpServerConfig>): Promise<McpSetServersResult>;
+  setMcpPermissionModeOverride(
+    serverName: string,
+    mode: 'default' | 'auto' | null
+  ): Promise<{ warning?: string }>;
   readMcpResource(serverName: string, uri: string): Promise<SDKControlMcpReadResourceResponse>;
   streamInput(stream: AsyncIterable<SDKUserMessage>): Promise<void>;
   stopTask(taskId: string): Promise<void>;
+  backgroundTasks(toolUseId?: string): Promise<boolean>;
   close(): void;
 }
 ```
@@ -665,14 +672,54 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
 | `reloadPlugins(options?)` | Reloads plugins from disk, so plugins you install or edit mid-session reach the running session. Resolves with an [`SDKControlReloadPluginsResponse`](#sdkcontrolreloadpluginsresponse) listing the session's commands, subagents, plugins, and MCP server status. Requires Agent SDK v0.2.85 or later. The [`holdOnCacheImpact` option](#sdkcontrolreloadpluginsresponse) requires Agent SDK v0.3.268 or later |
 | `reloadSkills()` | Reloads skills from disk, so skills you add or edit mid-session become available to the running session. Resolves with an [`SDKControlReloadSkillsResponse`](#sdkcontrolreloadskillsresponse) listing the skills available after the reload. Requires Agent SDK v0.3.163 or later |
 | `reloadOutputStyles()` | Re-reads [output styles](https://code.claude.com/docs/en/output-styles.md) from disk, so a style file you add or edit mid-session becomes available to the running session. Resolves with an [`SDKControlReloadOutputStylesResponse`](#sdkcontrolreloadoutputstylesresponse) listing the style names available after the reload. Requires Agent SDK v0.3.261 or later |
+| `seedReadState(path, mtime)` | Marks a file as already read so a later Edit doesn't fail with `File has not been read yet`. See [`seedReadState()`](#seedreadstate). Requires TypeScript SDK v0.2.83 or later |
 | `accountInfo()` | Returns account information |
 | `reconnectMcpServer(serverName)` | Reconnect an MCP server by name. If the name also matches an entry in a settings file such as `.mcp.json` or `~/.claude.json`, Claude Code reconnects the server you configured through [`mcpServers`](#options) or `setMcpServers()`, not the settings-file entry. That resolution order requires Claude Code v2.1.257 or later |
 | `toggleMcpServer(serverName, enabled)` | Enable or disable an MCP server by name, with the same name resolution as `reconnectMcpServer()`. Disabling a server disconnects it and removes its tools. See [`toggleMcpServer()`](#togglemcpserver) for the Claude Code version this needs for each kind of server |
 | `setMcpServers(servers)` | Replace the MCP servers this method manages: servers added through it and [in-process SDK servers](#createsdkmcpserver). Resolves with an [`McpSetServersResult`](#mcpsetserversresult) naming which servers were added and removed, and any errors; that section says which other servers stay connected |
+| `setMcpPermissionModeOverride(serverName, mode)` | Overrides the permission mode for one MCP server's tools with a stricter mode than the session's, or clears the override with `null`. Only available in streaming input mode. See [`setMcpPermissionModeOverride()`](#setmcppermissionmodeoverride). Requires TypeScript SDK v0.3.187 or later |
 | `readMcpResource(serverName, uri)` | *Alpha.* Reads one MCP Apps `ui://` resource from a connected MCP server so your application can render a tool's widget. Resolves with an [`SDKControlMcpReadResourceResponse`](#sdkcontrolmcpreadresourceresponse). Requires TypeScript Agent SDK v0.3.280 or later |
 | `streamInput(stream)` | Stream input messages to the query for multi-turn conversations |
 | `stopTask(taskId)` | Stop a running background task by ID |
+| `backgroundTasks(toolUseId?)` | Moves the running Bash commands and subagents that the turn is waiting on to the background, the same as pressing Ctrl+B in the interactive terminal. See [`backgroundTasks()`](#backgroundtasks). Requires TypeScript SDK v0.2.139 or later |
 | `close()` | Close the query and terminate the underlying process. Forcefully ends the query and cleans up all resources |
+
+#### `setMcpPermissionModeOverride()`
+
+Overrides the permission mode for one MCP server's tools with a stricter mode than the session's, or clears the override with `null`. Use it when a session runs in a mode that skips per-action prompts but one server's tools should still be reviewed. Requires TypeScript SDK v0.3.187 or later.
+
+Pass one of three values as `mode`:
+
+* `'default'`: Claude Code evaluates that server's tool calls as [Manual mode](https://code.claude.com/docs/en/permission-modes.md#available-modes) does.
+* `'auto'`: Claude Code routes that server's tool calls through the [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) classifier. Claude Code rejects this value when the classifier isn't available to the session.
+* `null`: clears the override.
+
+The override only takes effect while the session is in a mode that skips per-action prompts: `bypassPermissions` or `auto`. In any other session mode Claude Code ignores the override, so it can never widen what the session allows.
+
+The promise resolves with `{ warning }` when no server by that name is known yet. Claude Code stores the override anyway and applies it once a server with that exact name connects, so the warning is a typo check, not a failure.
+
+Only available in streaming input mode, the same constraint as `setModel()` and `setPermissionMode()`.
+
+#### `seedReadState()`
+
+Marks a file as already read so a later Edit doesn't fail with `File has not been read yet`. Use it when your application has dropped an earlier `Read` result from the conversation context and Claude will edit that file next. Requires TypeScript SDK v0.2.83 or later.
+
+Pass `mtime` as the file's modification time at the moment of that earlier read, in whole milliseconds since the epoch, for example `Math.floor(stat.mtimeMs)`. If the file on disk changed after that time, Claude Code skips the mark.
+
+The promise resolves whether or not the file was marked, so a resolved promise doesn't tell you which happened.
+
+#### `backgroundTasks()`
+
+Moves the running Bash commands and subagents that the turn is waiting on to the background, the same as pressing Ctrl+B in the interactive terminal. Pass the `toolUseId` of a tool call to background only the Bash command or subagent that call started, or omit it to background every foreground task. Requires TypeScript SDK v0.2.139 or later.
+
+Each backgrounded tool call returns to Claude immediately with a running-in-the-background result, the turn continues, and Claude Code emits an [`SDKTaskNotificationMessage`](#sdktasknotificationmessage) when the task finishes.
+
+In a session where background tasks are enabled, the promise resolves to a boolean:
+
+* **`true`**: a task was backgrounded, or you omitted `toolUseId`.
+* **`false`**: the `toolUseId` you passed matched no foreground task.
+
+If background tasks are disabled for the session, such as with [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars), the promise rejects instead and nothing is backgrounded.
 
 #### `applyFlagSettings()`
 
@@ -1472,10 +1519,19 @@ type SDKMessage =
   | SDKPermissionDeniedMessage
   | SDKPromptSuggestionMessage
   | SDKAPIRetryMessage
+  | SDKControlRequestProgressMessage
+  | SDKModelRefusalFallbackMessage
+  | SDKModelRefusalNoFallbackMessage
   | SDKMirrorErrorMessage
   | SDKInformationalMessage
   | SDKConversationResetMessage;
 ```
+
+Three messages in this union report control-request progress and model refusals. Each has `type: "system"`, so tell them apart by the `subtype` listed with each one:
+
+* `SDKControlRequestProgressMessage`, `subtype: "control_request_progress"`: reports progress on a long-running control request that your client sent. `request_id` matches the message to that request, and `status` is `"started"` or `"api_retry"`. Requires Agent SDK v0.3.203 or later.
+* `SDKModelRefusalFallbackMessage`, `subtype: "model_refusal_fallback"`: emitted when the model ends the stream with a refusal and the turn is retried on a fallback model. Carries `original_model` and `fallback_model`. Requires Agent SDK v0.3.170 or later.
+* `SDKModelRefusalNoFallbackMessage`, `subtype: "model_refusal_no_fallback"`: emitted when the model ends the stream with a refusal and no retry runs, for example because no fallback model is configured. Carries `original_model`. Requires Agent SDK v0.3.193 or later.
 
 ### `SDKAssistantMessage`
 
@@ -1636,6 +1692,7 @@ type SDKResultMessage =
       stop_reason: string | null;
       ttft_ms?: number;
       ttft_stream_ms?: number;
+      time_to_request_ms?: number;
       user_message_uuid?: string;
       user_message_uuids?: string[];
       resume_reason?: string;
@@ -1701,6 +1758,7 @@ Several fields on the result carry diagnostic detail beyond `subtype`:
 * `api_error_status`: the HTTP status code of the API error that terminated the conversation. Absent or `null` when the turn ended without an API error.
 * `ttft_ms`: time to first token in milliseconds, measured when the first complete assistant message arrives. Present on the success arm only.
 * `ttft_stream_ms`: time in milliseconds until the first `message_start` stream event, when the response stream opens. Lower than `ttft_ms`; the gap between the two is time spent streaming the first message. Present on the success arm only.
+* `time_to_request_ms`: time in milliseconds from the start of the turn until Claude Code sends the API request. Present on the success arm only. Requires Claude Code v2.1.162 or later.
 * `user_message_uuid`: the `uuid` of the message you sent that this turn answered. See [`user_message_uuid`](#user_message_uuid) for which results carry it.
 * `user_message_uuids`: the `uuid`s of every message you sent that Claude Code answered in this turn. See [`user_message_uuids`](#user_message_uuids).
 * `resume_reason`: why this turn continues one that a restart interrupted. Present on both arms. See [`resume_reason`](#resume_reason).
