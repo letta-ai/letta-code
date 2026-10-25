@@ -117,7 +117,7 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`gcpAuthRefresh`](#gcpauthrefresh) | Refresh [Google Cloud credentials](https://code.claude.com/docs/en/google-vertex-ai.md#advanced-credential-configuration) with your own command | Authentication and providers | Any file |
 | [`hooks`](#hooks) | Run your own commands as [hooks](https://code.claude.com/docs/en/hooks.md) at points in Claude Code's lifecycle | Hooks and automation | Any file |
 | [`httpHookAllowedEnvVars`](#httphookallowedenvvars) | Limit which env vars [HTTP hooks](https://code.claude.com/docs/en/hooks.md) can put in headers | Hooks and automation | Any file |
-| [`idleCompaction`](#idlecompaction) | Stop Claude Code from compacting a long conversation while your terminal session is idle | Memory and context | Any file |
+| [`idleCompaction`](#idlecompaction) | Stop Claude Code from compacting a long conversation that you've stepped away from | Memory and context | Any file |
 | [`includeCoAuthoredBy`](#includecoauthoredby) | Deprecated; use `attribution` to hide or change commit and PR attribution | Git and attribution | Any file |
 | [`includeGitInstructions`](#includegitinstructions) | Remove the built-in commit and PR instructions from Claude's context | Git and attribution | Any file |
 | [`inputNeededNotifEnabled`](#inputneedednotifenabled) | Get a [push notification](https://code.claude.com/docs/en/remote-control.md#mobile-push-notifications) when Claude is waiting on you | Remote, desktop, and notifications | Any file |
@@ -2415,11 +2415,15 @@ In a `-p` run or an Agent SDK session, Claude Code ignores this key. The SDK tur
 
 ### `idleCompaction`
 
-Idle compaction [compacts](https://code.claude.com/docs/en/context-window.md#what-survives-compaction) a long conversation that you've stepped away from, shortly before its prompt cache expires. Your next message then sends a summary instead of the whole conversation. When you come back, the conversation shows a line that starts with `Compacted while idle, before the prompt cache expired`.
+Idle compaction [compacts](https://code.claude.com/docs/en/context-window.md#what-survives-compaction) a long conversation that you've stepped away from. Your next message then sends a summary instead of the whole conversation. Once compacted, the conversation shows a notice:
+
+* **Terminal**: a line that starts with `Compacted while idle, before the prompt cache expired`
+* **[VS Code chat panel](#idle-compaction-in-vs-code-and-the-desktop-app)**: a notice that includes `a summary written while you were away`
+* **[Desktop app](#idle-compaction-in-vs-code-and-the-desktop-app)**: the same notice, inside a row whose label includes `Claude Code notice`. If you don't see that row or its text, switch to the [Verbose view mode](https://code.claude.com/docs/en/desktop.md#switch-view-modes).
 
 Idle compaction is on by default for conversations that meet all of these conditions:
 
-* **Session**: you're in an interactive terminal session
+* **Session**: you're in an interactive terminal session, or in the VS Code extension's chat panel or the desktop app's Code tab on an [account that Anthropic selects](#idle-compaction-in-vs-code-and-the-desktop-app)
 * **Auto-compaction**: [`autoCompactEnabled`](#autocompactenabled) is on
 * **Prompt cache**: the conversation is on the [one-hour prompt cache TTL](https://code.claude.com/docs/en/prompt-caching.md#which-ttl-each-request-gets)
 * **Feature flags**: Claude Code can [fetch feature flags from Anthropic](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching)
@@ -2441,7 +2445,7 @@ To turn idle compaction off, set this key to `false`.
 }
 ```
 
-To turn idle compaction off or on from inside a session, run `/config` and change the **Idle compaction** row. Your choice is saved to your user settings and applies right away. The row requires Claude Code v2.1.302 or later. If you run one of those versions and `/config` doesn't show the row, check for these causes:
+To turn idle compaction off or on from inside a terminal session, run `/config` and change the **Idle compaction** row. Your choice is saved to your user settings and applies right away. The row requires Claude Code v2.1.302 or later. If you run one of those versions and `/config` doesn't show the row, check for these causes:
 
 * **Another settings source sets the key**: a value in managed settings, the `--settings` flag, or a project or local settings file overrides your user settings. Change the key in that source instead
 * **Feature flags are unavailable**: where Claude Code can't [fetch feature flags from Anthropic](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching), idle compaction doesn't run, so there is nothing to turn off
@@ -2461,6 +2465,18 @@ At the default, a conversation on a 200K context window auto-compacts before it 
   }
 }
 ```
+
+#### Idle compaction in VS Code and the desktop app
+
+A notice like this one means Claude Code [replaced your earlier conversation with a summary](https://code.claude.com/docs/en/context-window.md#what-survives-compaction) that Claude now works from:
+
+```text theme={null}
+Compacted using a summary written while you were away · turn off with "idleCompaction": false in settings.json
+```
+
+You don't need to do anything. To turn idle compaction off, set `idleCompaction` to `false` in `~/.claude/settings.json` or another [settings file](https://code.claude.com/docs/en/settings.md#settings-files-and-who-they-affect).
+
+In the VS Code extension's chat panel and the desktop app's Code tab, idle compaction runs for accounts that Anthropic selects. Claude Code writes the summary while you're away, then compacts with it only if your next message comes an hour or more after the last request.
 
 ### `plansDirectory`
 
@@ -3522,6 +3538,7 @@ When you set it to `true`, Claude Code changes which hooks and hook-like command
 
 * **Managed and SDK hooks run**: hooks from managed settings and hooks the [Agent SDK](https://code.claude.com/docs/en/agent-sdk/overview.md) registers in process
 * **Force-enabled plugin hooks run**: hooks from plugins your managed settings force-enable through [`enabledPlugins`](#enabledplugins). Claude Code matches on the full `plugin@marketplace` ID, so a plugin with the same name from a different marketplace stays blocked. This lets you distribute vetted hooks through an organization marketplace while blocking everything else. A [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) in such a plugin loads only when it [counts as your organization's](https://code.claude.com/docs/en/plugins/mods/admin.md#install-your-organizations-mods)
+* **Monitors from other plugins are blocked**: a plugin's [monitors](https://code.claude.com/docs/en/plugins/components.md#monitors) don't start unless the plugin is force-enabled. Requires Claude Code v2.1.310 or later
 * **Everything else is blocked**: user, project, and local hooks, hooks and mods from other installed plugins, and hooks declared in agent frontmatter. [Mods built into Claude Code](https://code.claude.com/docs/en/plugins/mods/overview.md#mods-built-into-claude-code) keep running. To block only users' mods, set [`allowManagedModsOnly`](https://code.claude.com/docs/en/plugins/mods/admin#set-options-on-the-built-in-guard) instead.
 * **Command-sourced plugins are disabled**: Claude Code also disables plugins with a [`command` source](https://code.claude.com/docs/en/plugins/marketplace-reference#command-plugin-source), including plugins force-enabled in managed `enabledPlugins`, unless you set [`disableCommandPluginSources`](#disablecommandpluginsources) to `false` explicitly
 * **Marketplace `headersHelper` commands are blocked**: Claude Code also blocks marketplace [`headersHelper` commands](https://code.claude.com/docs/en/plugins/host-marketplace#authenticate-archive-downloads) unless [`disableCommandPluginSources`](#disablecommandpluginsources) is explicitly set to `false`, except for a marketplace that managed settings themselves declare. Requires Claude Code v2.1.238 or later

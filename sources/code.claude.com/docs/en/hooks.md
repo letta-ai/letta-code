@@ -1426,7 +1426,7 @@ In addition to the [common input fields](#common-input-fields), Setup hooks rece
 
 Setup hooks can't block; execution continues on any exit code. On every exit code, Claude Code discards a Setup hook's [JSON output fields](#json-output), such as `systemMessage`, `continue`, and `hookSpecificOutput.additionalContext`. With `-p`, a Setup hook's stdout, stderr, and exit code appear in the run's output only as [`hook_response` events](https://code.claude.com/docs/en/headless#read-session-metadata) when you launch with `--output-format stream-json --verbose`.
 
-Setup hooks have access to `CLAUDE_ENV_FILE`. Variables written to that file persist into subsequent Bash commands for the session, as in [SessionStart hooks](#persist-environment-variables). Only `type: "command"` hooks run on `Setup`. A `type: "mcp_tool"` hook on `Setup` is always skipped, as described under [MCP tool hook fields](#mcp-tool-hook-fields).
+Setup hooks have access to `CLAUDE_ENV_FILE`. If your hook writes variables to that file, they persist into subsequent Bash commands for the session, as in [SessionStart hooks](#persist-environment-variables). Only `type: "command"` hooks run on `Setup`. A `type: "mcp_tool"` hook on `Setup` is always skipped, as described under [MCP tool hook fields](#mcp-tool-hook-fields).
 
 ### InstructionsLoaded
 
@@ -1482,6 +1482,12 @@ block certain types of prompts.
 Apart from a command hook you run with [`async: true`](#run-hooks-in-the-background), a `UserPromptSubmit` command, HTTP, or MCP tool hook that reaches its timeout is canceled and its output, including any `additionalContext`, is discarded. The prompt still reaches Claude without that context. To block the prompt instead, set [`onFailure: "block"`](#block-the-action-when-a-hook-fails) on a command or HTTP hook. The transcript shows a notice naming the hook, the timeout that fired, and that the output was discarded.
 
 An [Agent SDK callback hook](https://code.claude.com/docs/en/agent-sdk/hooks.md) on `UserPromptSubmit` that reaches its timeout blocks the prompt with a message naming the hook and the timeout, because a callback there can be acting as a policy gate that must not fail open. The session continues.
+
+#### `Esc` during a prompt check
+
+If you press `Esc` or interrupt the session while hooks are still checking a prompt, the check stops and the prompt doesn't reach Claude. Text you typed at the terminal returns to the prompt input, and the hooks check it again when you resend it.
+
+A hook can block the prompt at the same moment you interrupt. The prompt then stays blocked: you see that hook's [block message](#what-a-blocked-prompt-leaves-behind), and the text doesn't return to the input.
 
 #### UserPromptSubmit input
 
@@ -2970,7 +2976,7 @@ Claude Code acts on the blocking decision from a ConfigChange hook's JSON output
 
 Runs when a shell command in the main conversation changes the working directory, for example when Claude executes a `cd` command. Use this to react to directory changes: reload environment variables, activate project-specific toolchains, or run setup scripts automatically. Pairs with [FileChanged](#filechanged) for tools like [direnv](https://direnv.net/) that manage per-directory environment.
 
-CwdChanged hooks have access to [`CLAUDE_ENV_FILE`](#persist-environment-variables). Variables written to that file persist into subsequent Bash commands until the next CwdChanged event, when Claude Code clears them.
+CwdChanged hooks have access to [`CLAUDE_ENV_FILE`](#persist-environment-variables). If your hook writes variables to that file, they persist into subsequent Bash commands until the next CwdChanged event, when Claude Code clears them.
 
 CwdChanged doesn't support matchers and fires on every occurrence.
 
@@ -3135,7 +3141,10 @@ Runs when Claude Code creates a worktree in cases such as these:
 * Claude Code isolates a [background session](https://code.claude.com/docs/en/agent-view.md#how-file-edits-are-isolated) in its own worktree
 * [`claude remote-control`](https://code.claude.com/docs/en/remote-control#start-a-remote-control-session) in `worktree` mode starts a session in its own worktree
 
-When Claude runs `git worktree add` through the Bash tool rather than calling `EnterWorktree`, your WorktreeCreate hook doesn't run. To inspect or block that command, add a [`PreToolUse`](#pretooluse) hook with the `Bash` matcher.
+A WorktreeCreate hook doesn't run for a worktree Claude adds through Bash, and a plugin's hook doesn't run for the one created when you launch with `--worktree` and [`--tmux`](https://code.claude.com/docs/en/cli-reference#cli-flags):
+
+* **`git worktree add` through Bash**: to inspect or block that command, add a [`PreToolUse`](#pretooluse) hook with the `Bash` matcher.
+* **`--worktree` with `--tmux`**: Claude Code creates the worktree before it loads plugins, so a WorktreeCreate hook from a plugin doesn't run. To have your hook run with both flags, define it in a [settings file](#configuration) instead. Before v2.1.300, a plugin's WorktreeCreate hook didn't run with `--worktree` alone either.
 
 By default Claude Code creates the isolated working copy with `git worktree`. Configuring a WorktreeCreate hook replaces that default git behavior, letting you use a different version control system like SVN, Perforce, or Mercurial.
 

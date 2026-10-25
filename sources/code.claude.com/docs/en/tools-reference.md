@@ -258,7 +258,7 @@ These checks must pass for an edit to apply. Before any of them, a path matched 
 
 A file that changed on disk after Claude last read it can still be edited when `old_string` matches the current content exactly and unambiguously and Claude Code can read the file without prompting. Matching against the file's current content keeps this safe, and the result notes that the file carries other changes so Claude re-reads it before edits that depend on surrounding content. In any other case, such as a stale `old_string` or one that matches more than once without `replace_all`, Claude reads the file again before editing.
 
-Claude can also edit a file without a separate Read after it views the file with a Bash command such as `cat` or `grep`. Those commands are `cat`, `nl`, `bat`, `batcat`, `head`, `tail`, `sed -n 'X,Yp'`, `grep`, `egrep`, `fgrep`, and `rg`, each run on one file with no pipes or redirects. A search that prints no matches doesn't count as a read, nor does any command outside this list.
+Claude can also edit a file without a separate Read after viewing it with a Bash command such as `cat` or `grep`. Those commands are `cat`, `nl`, `bat`, `batcat`, `head`, `tail`, `sed -n 'X,Yp'`, `grep`, `egrep`, `fgrep`, and `rg`, each run on one file with no pipes or redirects. If the command printed none of the file's text, as when a search matches nothing, the read-before-edit check still applies.
 
 When Claude views a file this way, Claude Code also loads any [subdirectory `CLAUDE.md`](https://code.claude.com/docs/en/memory#how-claude-md-files-load) and [path-scoped rules](https://code.claude.com/docs/en/memory.md#path-specific-rules) that apply to that file. See [Read and Edit permission rules](https://code.claude.com/docs/en/permissions.md#read-and-edit) for which Bash commands your `Read` and `Edit` deny rules cover.
 
@@ -383,7 +383,10 @@ When Monitor runs a command, it uses the same [permission rules as Bash](https:/
 
 The [WebSocket source](#websocket-source) has its own approval prompt, which the classifier also decides in auto mode.
 
-The tool is not available on Amazon Bedrock, Google Cloud's Agent Platform, or Microsoft Foundry. It is also not available when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set. On Windows, the tool is available only when [Git Bash](https://code.claude.com/docs/en/setup.md#set-up-on-windows) is installed.
+Monitor needs a minimum version or Git Bash in these cases:
+
+* **Minimum version**: on Amazon Bedrock, Claude Platform on AWS, Google Cloud's Agent Platform, or Microsoft Foundry, or with `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` set, Monitor requires Claude Code v2.1.310 or later. The requirement applies when [feature-flag fetching](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching) is off
+* **Windows**: the tool is available only when [Git Bash](https://code.claude.com/docs/en/setup.md#set-up-on-windows) is installed
 
 Plugins can declare monitors that start automatically when the plugin is active, instead of asking Claude to start them. See [plugin monitors](https://code.claude.com/docs/en/plugins/components.md#monitors).
 

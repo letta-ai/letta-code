@@ -659,6 +659,8 @@ While the panel is open, you can:
 
 To rebind the keys that scroll the file list or change the comparison, see [Diff panel actions](https://code.claude.com/docs/en/keybindings.md#diff-panel-actions).
 
+During an unfinished merge, rebase, cherry-pick, or revert, the panel keeps showing the changes it last read from git, so it doesn't fill with the operation's incoming changes. It updates at its first refresh after the operation ends, for example when Claude next edits a file.
+
 ### Diff dialog
 
 The diff dialog opens as a bordered block above the prompt and lists your changed files with their added and removed line counts. It compares them against `HEAD`, or against whatever you last [chose in the diff panel](#diff-panel) for this repository.
