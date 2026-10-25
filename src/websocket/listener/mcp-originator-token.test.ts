@@ -20,7 +20,6 @@ import { enqueueInboundUserMessage } from "./inbound-queue";
 import { ordinaryInputIdentity } from "./input-disposition";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
-import { getMcpOriginatorScope } from "./mcp-originator-scope";
 import { createListenerMessageHandler } from "./message-router";
 import { consumeQueuedTurn } from "./queue";
 import { setActiveRuntime } from "./runtime";
@@ -457,7 +456,7 @@ describe("MCP originator batch resolution", () => {
     ["sr-1", false, "sr-1", true],
     ["sr-1", true, "sr-1", false],
   ] as const) {
-    test(`partitions FIFO ${firstId}/${firstPresent} then ${secondId}/${secondPresent}`, () => {
+    test(`merges FIFO ${firstId}/${firstPresent} then ${secondId}/${secondPresent} unattributed`, () => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
         "agent-1",
@@ -468,14 +467,15 @@ describe("MCP originator batch resolution", () => {
       enqueueMessage(runtime, "first", firstId, firstPresent);
       enqueueMessage(runtime, "second", secondId, secondPresent);
       const consumed = consumeQueuedTurn(runtime);
-      expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe(firstId);
-      expect(consumed?.queuedTurn.messages).toHaveLength(1);
-      expect(runtime.queueRuntime.readyLength).toBe(1);
-      expect(getMcpOriginatorToken("sr-2")).toBe("mst_two.secret-b");
-      expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
-      expect(
-        consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId,
-      ).toBe(secondId);
+      // Steering drains both; the mixed batch carries no originator and
+      // retires each constituent's held token.
+      expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+      expect(consumed?.queuedTurn.messages).toHaveLength(2);
+      expect(runtime.queueRuntime.length).toBe(0);
+      expect(getMcpOriginatorToken("sr-1")).toBeUndefined();
+      expect(getMcpOriginatorToken("sr-2")).toBe(
+        secondId === "sr-2" ? undefined : "mst_two.secret-b",
+      );
     });
   }
 
@@ -485,7 +485,7 @@ describe("MCP originator batch resolution", () => {
     "mod_continue",
   ] as const) {
     for (const processFirst of [true, false]) {
-      test(`${kind} partitions from attributed work, processFirst=${processFirst}`, () => {
+      test(`${kind} merges with attributed work unattributed, processFirst=${processFirst}`, () => {
         const runtime = getOrCreateScopedRuntime(
           createRuntime(),
           "agent-1",
@@ -504,17 +504,11 @@ describe("MCP originator batch resolution", () => {
         if (processFirst) enqueueProcess();
         enqueueMessage(runtime, "A", "sr-1", true);
         if (!processFirst) enqueueProcess();
-        const first = consumeQueuedTurn(runtime);
-        expect(first?.queuedTurn.messages).toHaveLength(1);
-        expect(first?.queuedTurn.mcpOriginatorSuperRunId).toBe(
-          processFirst ? undefined : "sr-1",
-        );
-        expect(first?.queuedTurn.processOwnedTurn === true).toBe(processFirst);
-        const second = consumeQueuedTurn(runtime);
-        expect(second?.queuedTurn.messages).toHaveLength(1);
-        expect(second?.queuedTurn.processOwnedTurn === true).toBe(
-          !processFirst,
-        );
+        const consumed = consumeQueuedTurn(runtime);
+        expect(consumed?.queuedTurn.messages).toHaveLength(2);
+        // Process-owned work never rides the client message's token.
+        expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+        expect(consumed?.queuedTurn.processOwnedTurn).toBeUndefined();
         expect(runtime.queueRuntime.length).toBe(0);
       });
     }
@@ -531,18 +525,13 @@ describe("MCP originator batch resolution", () => {
     if (!missing) throw new Error("Missing queue item");
     runtime.queuedMessagesByItemId.delete(missing.id);
     enqueueMessage(runtime, "A", "sr-1", true);
-    expect(
-      consumeQueuedTurn(runtime, null)?.queuedTurn.mcpOriginatorSuperRunId,
-    ).toBeUndefined();
-    expect(runtime.queueRuntime.length).toBe(1);
-    expect(consumeQueuedTurn(runtime, null)).toBeNull();
-    expect(runtime.queueRuntime.length).toBe(1);
-    expect(consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId).toBe(
-      "sr-1",
-    );
+    const consumed = consumeQueuedTurn(runtime);
+    expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+    expect(consumed?.queuedTurn.messages).toHaveLength(2);
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
-  test("prefix counts READY items while preserving a paused incompatible item", () => {
+  test("drains every READY item while preserving a paused item", () => {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -553,37 +542,12 @@ describe("MCP originator batch resolution", () => {
     enqueueMessage(runtime, "A first", "sr-1", true, true);
     enqueueMessage(runtime, "A second", "sr-1", true, true);
     enqueueMessage(runtime, "ready B", "sr-2", true, true);
-    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(2);
-    expect(runtime.queueRuntime.length).toBe(2);
+    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(3);
+    expect(runtime.queueRuntime.length).toBe(1);
     expect(runtime.queueRuntime.pausedCount).toBe(1);
-    expect(runtime.queuedMessagesByItemId.size).toBe(2);
-    expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(1);
     runtime.queueRuntime.resume();
     expect(consumeQueuedTurn(runtime)?.queuedTurn.messages).toHaveLength(1);
-  });
-
-  test("active constraint cannot skip B to reach A or mutate ownership maps", () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    enqueueMessage(runtime, "B", "sr-2", true);
-    enqueueMessage(runtime, "A", "sr-1", true);
-    const before = runtime.queueRuntime.peekReady();
-    expect(
-      consumeQueuedTurn(
-        runtime,
-        getMcpOriginatorScope({
-          mcpOriginatorSuperRunId: "sr-1",
-          mcpOriginatorTokenPresent: true,
-        }),
-      ),
-    ).toBeNull();
-    expect(runtime.queueRuntime.peekReady()).toEqual(before);
-    expect(runtime.queuedMessagesByItemId.size).toBe(2);
-    expect(runtime.dequeuedInputIdentitiesByBatchId.size).toBe(0);
-    expect(runtime.dequeuedClientMessageIdsByBatchId.size).toBe(0);
   });
 
   test("an id-unanimous batch with uniform token presence stays attributed", () => {

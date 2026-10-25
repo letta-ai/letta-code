@@ -41,7 +41,6 @@ export function buildAppServerInfoResponse(
       runtime_external_tools_update: true,
       structured_outputs: options.backend === "api",
       write_file_base64: true,
-      mcp_originator_queue_isolation: true,
       split_channels: false,
     },
   };

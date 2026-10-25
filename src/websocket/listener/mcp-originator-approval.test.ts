@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
 import {
   clearMcpOriginatorTokens,
   getMcpOriginatorToken,
@@ -13,15 +14,22 @@ import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createQueuedTurnConsumer } from "./turn-finalizer";
 import type { IncomingMessage } from "./types";
 
-afterEach(clearMcpOriginatorTokens);
+afterEach(() => {
+  clearMcpOriginatorTokens();
+  resetMcpOriginatorAuthority();
+});
 
 for (const [queuedId, recovery] of [
   ["B", false],
   [undefined, false],
   ["A", false],
   [undefined, true],
+  ["B", true],
 ] as const) {
-  test(`A tool result only appends compatible head ${queuedId}, recovery=${recovery}`, async () => {
+  test(`A tool result appends queued ${queuedId} unless recovering, recovery=${recovery}`, async () => {
+    // Steering drains every queued input regardless of originator; only a
+    // recovery continuation (approval results alone) leaves the queue alone.
+    const drained = !recovery;
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
@@ -114,13 +122,6 @@ for (const [queuedId, recovery] of [
           };
           expect(runtime.queueRuntime.length).toBe(0);
           enqueueInboundUserMessage(runtime, queued, "queued-actor");
-          // A compatible item behind B must never be skipped over.
-          if (queuedId !== "A")
-            enqueueInboundUserMessage(
-              runtime,
-              { ...queued, mcpOriginatorSuperRunId: "A" },
-              "queued-actor",
-            );
           return [result];
         },
         ensureSecretsHydrated: async () => {},
@@ -140,31 +141,27 @@ for (const [queuedId, recovery] of [
     });
     expect(result.kind).toBe("terminal");
     expect(JSON.stringify(sent)).toContain("A-result");
-    expect(checkpoints).toBe(queuedId === "A" ? 1 : 0);
+    expect(checkpoints).toBe(drained ? 1 : 0);
     expect(revision.current).toBe(
-      queuedId === "A" ? "queued-revision" : "original-revision",
+      drained ? "queued-revision" : "original-revision",
     );
-    expect(ownership.durableInputIdentities).toHaveLength(
-      queuedId === "A" ? 2 : 1,
+    expect(ownership.durableInputIdentities).toHaveLength(drained ? 2 : 1);
+    expect(actor).toBe(drained ? "queued-actor" : "original-actor");
+    expect(runtime.queueRuntime.length).toBe(drained ? 0 : 1);
+    expect(runtime.queuedMessagesByItemId.size).toBe(drained ? 0 : 1);
+    expect(JSON.stringify(sent).includes('"queued"')).toBe(drained);
+    // A mixed-origin drain retires the queued run's token (origin swap).
+    expect(getMcpOriginatorToken("B")).toBe(
+      drained && queuedId === "B" ? undefined : "token-B",
     );
-    expect(actor).toBe(queuedId === "A" ? "queued-actor" : "original-actor");
-    expect(runtime.queueRuntime.length).toBe(queuedId === "A" ? 0 : 2);
-    expect(runtime.queuedMessagesByItemId.size).toBe(queuedId === "A" ? 0 : 2);
-    expect(JSON.stringify(sent).includes('"queued"')).toBe(queuedId === "A");
-    expect(getMcpOriginatorToken("B")).toBe("token-B");
-    expect(JSON.stringify(socketEvents).includes("user_message")).toBe(
-      queuedId === "A",
-    );
+    expect(JSON.stringify(socketEvents).includes("user_message")).toBe(drained);
     expect(JSON.stringify(socketEvents).includes('"content":"queued"')).toBe(
-      queuedId === "A",
+      drained,
     );
-    if (queuedId !== "A") {
+    if (!drained) {
       expect(
         consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId,
       ).toBe(queuedId);
-      expect(
-        consumeQueuedTurn(runtime)?.queuedTurn.mcpOriginatorSuperRunId,
-      ).toBe("A");
     }
   });
 }
