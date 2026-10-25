@@ -65,7 +65,8 @@ console.log(auth.apiKey);
 
   if (execution.status !== 0) {
     throw new Error(
-      `Standalone OAuth probe failed with status ${execution.status}\nstdout:\n${execution.stdout}\nstderr:\n${execution.stderr}`,
+      `Standalone OAuth probe failed with status ${execution.status}, signal ${execution.signal}\nspawn error: ${execution.error ?? "none"}\nstdout:\n${execution.stdout}\nstderr:\n${execution.stderr}`,
+      { cause: execution.error },
     );
   }
   expect(execution.stderr).toBe("");
