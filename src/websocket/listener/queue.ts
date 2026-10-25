@@ -10,7 +10,6 @@ import type {
   QueueBlockedReason,
   QueueItem,
 } from "@/queue/queue-runtime";
-import { isCoalescable } from "@/queue/queue-runtime";
 import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -164,7 +163,7 @@ function buildQueuedTurnMessage(
           item.actingUserId ?? undefined,
         ),
       );
-    } else if (isCoalescable(item.kind) && "text" in item) {
+    } else {
       // Not a client message: no originator delivery, votes unattributed.
       messageOriginatorIds.push(undefined);
       originatorVotes.push(null);
@@ -297,7 +296,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
 } | null {
   const queuedItems = runtime.queueRuntime.peekReady();
   const firstQueuedItem = queuedItems[0];
-  if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
+  if (!firstQueuedItem) {
     return null;
   }
 
@@ -314,10 +313,7 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
-    if (
-      !isCoalescable(item.kind) ||
-      !hasSameQueueScope(firstQueuedItem, item)
-    ) {
+    if (!hasSameQueueScope(firstQueuedItem, item)) {
       break;
     }
     const incoming = runtime.queuedMessagesByItemId.get(item.id);

@@ -65,16 +65,6 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   content?: MessageCreate["content"];
 };
 
-export type ApprovalResultQueueItem = QueueItemBase & {
-  kind: "approval_result";
-  text: string;
-};
-
-export type OverlayActionQueueItem = QueueItemBase & {
-  kind: "overlay_action";
-  text: string;
-};
-
 export type CronPromptQueueItem = QueueItemBase & {
   kind: "cron_prompt";
   /** XML-wrapped prompt text. */
@@ -93,21 +83,9 @@ export type QueueItem =
   | MessageQueueItem
   | TaskNotificationQueueItem
   | CronPromptQueueItem
-  | ApprovalResultQueueItem
-  | OverlayActionQueueItem
   | ModContinueQueueItem;
 
-// ── Coalescability ───────────────────────────────────────────────
-
-/** Coalescable items can be merged into a single submission batch. */
-export function isCoalescable(kind: QueueItemKind): boolean {
-  return (
-    kind === "message" ||
-    kind === "task_notification" ||
-    kind === "cron_prompt" ||
-    kind === "mod_continue"
-  );
-}
+// ── Scope ────────────────────────────────────────────────────────
 
 function hasSameScope(a: QueueItem, b: QueueItem): boolean {
   return (
@@ -123,7 +101,7 @@ export interface DequeuedBatch {
   items: QueueItem[];
   /**
    * Number of items that were merged into this batch.
-   * Equal to items.length for coalescable batches; 1 for barrier items.
+   * Always equal to items.length.
    */
   mergedCount: number;
   /** Queue length after this batch was removed. */
@@ -178,8 +156,8 @@ export interface QueueCallbacks {
 
 export interface QueueRuntimeOptions {
   /**
-   * Soft limit. When reached, the oldest coalescable item is dropped
-   * to make room for a new one. Default: 100.
+   * Soft limit. When reached, the oldest item is dropped to make room for a
+   * new one. Default: 100.
    */
   maxItems?: number;
   /**
@@ -221,9 +199,7 @@ export class QueueRuntime {
    * Add an item to the queue. Returns the enqueued item (with assigned id
    * and enqueuedAt), or null if the hard ceiling was reached.
    *
-   * - If at soft limit and item is coalescable: drops oldest coalescable item.
-   * - If at soft limit and item is a barrier: allows overflow (soft limit only
-   *   applies to coalescable items).
+   * - If at soft limit: drops the oldest item.
    * - If at hard ceiling: rejects all item kinds, fires onDropped("buffer_limit").
    */
   enqueue(
@@ -235,7 +211,7 @@ export class QueueRuntime {
     if (
       options.preserveExisting &&
       (this.store.length >= this.hardMaxItems ||
-        (this.store.length >= this.maxItems && isCoalescable(input.kind)))
+        this.store.length >= this.maxItems)
     ) {
       return null;
     }
@@ -252,10 +228,9 @@ export class QueueRuntime {
       return null;
     }
 
-    // Soft limit: only drop coalescable items
-    if (this.store.length >= this.maxItems && isCoalescable(input.kind)) {
-      const dropIdx = this.store.findIndex((i) => isCoalescable(i.kind));
-      const dropped = dropIdx !== -1 ? this.store[dropIdx] : undefined;
+    // Soft limit: drop the oldest item
+    if (this.store.length >= this.maxItems) {
+      const dropped = this.store[0];
       if (dropped !== undefined) {
         if (!this.mutationAllowed("beforeDropped", dropped)) {
           const rejected = this.makeItem(input);
@@ -268,7 +243,7 @@ export class QueueRuntime {
           );
           return null;
         }
-        this.store.splice(dropIdx, 1);
+        this.store.shift();
         const item = this.makeItem(input);
         this.store.push(item);
         // queueLen after: same as before (one dropped, one added)
@@ -305,7 +280,7 @@ export class QueueRuntime {
    * prevent submission. Pass `null` when submission is allowed.
    *
    * Returns null if blocked or queue is empty.
-   * Returns a DequeuedBatch with coalescable items (or a single barrier).
+   * Returns a DequeuedBatch of same-scope ready items.
    */
   tryDequeue(blockedReason: QueueBlockedReason | null): DequeuedBatch | null {
     if (blockedReason !== null) {
@@ -337,19 +312,16 @@ export class QueueRuntime {
       return null;
     }
 
-    // Drain coalescable ready items from the first ready item onward. Paused
-    // items are skipped, never consumed; a ready barrier ends the batch.
+    // Drain ready items from the first ready item onward. Paused items are
+    // skipped, never consumed; a ready item from another scope ends the batch.
     const batch: QueueItem[] = [];
     const first = this.store.find((item) => !item.paused);
-    if (first && isCoalescable(first.kind)) {
+    if (first) {
       for (const item of this.store) {
         if (item.paused) continue;
-        if (!isCoalescable(item.kind) || !hasSameScope(first, item)) break;
+        if (!hasSameScope(first, item)) break;
         batch.push(item);
       }
-    } else if (first) {
-      // First ready item is a barrier: dequeue it alone
-      batch.push(first);
     }
 
     if (batch.length === 0) {
@@ -376,7 +348,7 @@ export class QueueRuntime {
 
   /**
    * Caller-controlled dequeue: removes exactly the first `n` items (or all
-   * available if fewer exist) without applying the coalescable/barrier policy.
+   * available if fewer exist) without applying the scope-batching policy.
    * Used when the caller has already decided how many items to consume (e.g.
    * headless coalescing loop, listen one-message-per-turn).
    * Returns null if queue is empty or n <= 0.
