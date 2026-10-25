@@ -771,7 +771,9 @@ Claude Code runs each callback with a timeout, which you set in seconds with the
 
 When a callback exceeds its timeout, Claude Code cancels it and discards its output, and the session continues rather than hanging. What happens next depends on the event:
 
-* `PreToolUse`: Claude Code blocks the tool call. In its place, Claude receives a tool result saying the hook didn't respond before its timeout, and the turn continues. Before v2.1.210, Claude Code reported the timeout to Claude as a user rejection, which made unattended sessions stop and wait for input.
+* `PreToolUse`: Claude Code blocks the tool call. If every other hook returned nothing or only an `allow` decision, the tool result tells Claude the hook didn't respond before its timeout, and the turn continues. If another of your hooks already denied the call, its deny still reaches Claude: the tool result includes that hook's reason, and the timeout text can follow it.
+
+  Before v2.1.210, Claude Code reported the timeout to Claude as a user rejection, which made unattended sessions stop and wait for input.
 * `PostToolUse` and `PostToolUseFailure`: Claude Code keeps the tool result and the turn continues.
 * `UserPromptSubmit` and [`UserPromptExpansion`](https://code.claude.com/docs/en/hooks#userpromptexpansion): Claude Code blocks the prompt with a message naming the hook and the timeout, and the session continues. Before v2.1.208, Claude Code ended the query with `error_during_execution` when a callback on these events timed out.
 * `Stop` and `SubagentStop`: the timed-out callback counts as returning no decision. The agent or subagent stops as if that callback had allowed it, and a decision from your other hooks on the event still applies. Before Claude Code v2.1.273, a timed-out `Stop` or `SubagentStop` callback counted as a failed hook run, and Claude Code discarded the decisions of your other hooks on the event.

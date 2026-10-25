@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.310:docs:8b8d1200b53bde627141320620fc009a44cf7f7c5479e178fae24e5339812a92:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
+  "candidate_id": "claude@2.1.310:docs:6bc3226c3b52960215ceef5198ad6a73bb73f0f3bb940b735199aa3277a84e9a:runtime:6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1",
   "package_version": "2.1.310",
   "npm_integrity": "sha512-EySpBwaocdU1nc9r7JH+GOlnMsbXc764d3HX7NL8fr7qqdxz2MiXI9hqf/rzeE/XgU23HHFltIqhb+Fq6G1CVw==",
   "npm_published_at": "2026-10-23T21:20:46.540Z",
@@ -80,7 +80,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/hooks.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/hooks.md",
-        "hash": "cb989402cb14b1ac8ca85ffdb3edd7093c1a08a9ff0ce3207caa4f0b59f842c8",
+        "hash": "fd0706dee09c3cdeb76c21a68723e0184e50e2eb4fac48dd3f2ae1a08e4f3b92",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/hooks.md"
       },
@@ -218,7 +218,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "65c93cdd9ca5e10374d7ea7a15c6d1e6534c9f7e86898d488501d6360ca6d211",
+        "hash": "2bfc12bff2d2381bee24004f2cd80cdb2f4bbcdc30129e94747fe614520efecd",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -662,13 +662,13 @@
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "3ce0f8a007da9192d076b08ca1aa9332b28c12f443189066e3534b1595eaeb47",
+        "hash": "511ca59bb8bd2f6c9131dd6c621cdf0933f956050180c57839eb1c6afe76abca",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
       "https://code.claude.com/docs/en/how-claude-code-works.md": {
         "url": "https://code.claude.com/docs/en/how-claude-code-works.md",
-        "hash": "0e27ec5df14be0571ab8a247a45ddecf28b67792706cde8fa5ab02fcbf2befa0",
+        "hash": "148f87b89f7341cffa6d81fc33a3cacf10033d31addc79685b4878bcb4b7d112",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/how-claude-code-works.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "8b8d1200b53bde627141320620fc009a44cf7f7c5479e178fae24e5339812a92"
+    "digest": "6bc3226c3b52960215ceef5198ad6a73bb73f0f3bb940b735199aa3277a84e9a"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1623,7 +1623,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "probe-task",
+              "description": "Probe task for exercising task tools",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1674,7 +1674,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: probe-task",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1685,8 +1685,8 @@
     ],
     "digest": "6c3f494f37f48edb5a7d5b911a674068690426283c6354ac996efbdf79d323a1"
   },
-  "fetched_at": "2026-10-25T14:24:39.648Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40201982432",
-  "state_commit_parent": "fb429d0dfb8512ab2bc27dd2375c8dd6d7cf44d5",
-  "analysis_parent_sha": "fb429d0dfb8512ab2bc27dd2375c8dd6d7cf44d5"
+  "fetched_at": "2026-10-25T16:26:36.081Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40211564054",
+  "state_commit_parent": "921fe1e318a22c4d7ef81d5c6073e555e0ab39e1",
+  "analysis_parent_sha": "921fe1e318a22c4d7ef81d5c6073e555e0ab39e1"
 }

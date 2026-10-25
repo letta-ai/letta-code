@@ -1830,13 +1830,17 @@ Claude Code omits the field in these cases:
 * Turns that answer no message of yours, or answer a message you sent without a `uuid`
 * Results that answer no message you sent, such as the zeroed result after a crashed worker process
 
+When a [`UserPromptSubmit`](https://code.claude.com/docs/en/hooks#userpromptsubmit) hook blocks a message that starts its own turn, or stops it with `continue: false`, you still get a result for that message. It's a success result with `is_error: false` and `num_turns: 0`, its `result` is the [block message](https://code.claude.com/docs/en/hooks.md#what-a-blocked-prompt-leaves-behind) or [stop message](https://code.claude.com/docs/en/hooks.md#json-output), and it echoes the message's `uuid` under the same rules as any other result. The result has no `terminal_reason`, and nothing on it besides the `result` text says a hook ended the turn. A message that a hook blocks while another turn is running may get no result: see [`user_message_uuids`](#user_message_uuids).
+
 #### `user_message_uuids`
 
 The `uuid`s of every message you sent that Claude Code answered in this turn. When you send several messages close together, Claude Code can merge them into one turn, and `user_message_uuid` then names only the last of them. To match the reply to any of the merged messages, look for that message's `uuid` anywhere in this list. Requires Agent SDK v0.3.259 or later.
 
 Claude Code sets the list together with `user_message_uuid` on each reply frame that carries that field and on the result. For the full set of turn frames that echo the answered message's `uuid`, and the version each requires, see [`user_message_uuid`](#user_message_uuid). The list always contains `user_message_uuid` and holds at most 64 entries.
 
-When Claude Code picks up a regular message you sent while a turn was running, it adds that message's `uuid` to the result's list.
+When Claude Code picks up a regular message you sent while a turn was running, it adds that message's `uuid` to the result's list. When a [`UserPromptSubmit`](https://code.claude.com/docs/en/hooks#userpromptsubmit) hook blocks the message at pickup, Claude Code drops it instead: the message never reaches Claude and isn't kept for a later turn. You get no result for it, and its `uuid` appears in no result's list. If a hook can block messages, set a timeout on waiting for a result that lists a message you sent while a turn was running.
+
+That holds when the hook's output is a block alone. If the output sets `continue: false`, even beside `decision: "block"`, or the hook is a prompt hook that answers [`ok: false`](https://code.claude.com/docs/en/hooks#response-schema) without `continueOnBlock: true`, Claude Code stops the message instead of dropping it. The message waits for its own turn, you get a result for it, and its text stays in the conversation, so Claude sees it on the next turn.
 
 When a first reply or result carries `user_message_uuid` without the list, it came from an earlier Claude Code version, so fall back to the single field.
 
