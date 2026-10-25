@@ -428,8 +428,6 @@ export type QueueMessageKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
-  | "approval_result"
-  | "overlay_action"
   | "mod_continue";
 
 export type QueueMessageSource =

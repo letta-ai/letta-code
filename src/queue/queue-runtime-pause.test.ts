@@ -129,25 +129,6 @@ describe("dequeue paths skip paused items", () => {
     expect(q.tryDequeue(null)).toBeNull();
     expect(blocked).toEqual(["paused_by_user"]);
   });
-
-  test("tryDequeue takes a ready barrier alone even behind a paused message", () => {
-    const q = new QueueRuntime();
-    q.enqueue(userMsg("parked"));
-    q.enqueue({
-      kind: "approval_result",
-      source: "system",
-      text: "ok",
-    } as EnqueueInput);
-    q.enqueue(notification("n1"));
-    q.pause();
-
-    const batch = q.tryDequeue(null);
-    expect(batch?.items.map((i) => i.kind)).toEqual(["approval_result"]);
-    expect(q.items.map((i) => i.kind)).toEqual([
-      "message",
-      "task_notification",
-    ]);
-  });
 });
 
 describe("QueueRuntime.resume", () => {

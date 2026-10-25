@@ -59,11 +59,9 @@ describe("QueueItemEnqueuedEvent wire shape", () => {
       message: true,
       task_notification: true,
       cron_prompt: true,
-      approval_result: true,
-      overlay_action: true,
       mod_continue: true,
     } satisfies Record<QueueItemKind, true>;
-    expect(Object.keys(kinds)).toHaveLength(6);
+    expect(Object.keys(kinds)).toHaveLength(4);
   });
 });
 

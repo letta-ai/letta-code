@@ -366,16 +366,13 @@ export type QueueItemSource =
  * Kind of content carried by the queue item.
  * - message: User or system text to send to the agent
  * - task_notification: Background task completed notification
- * - approval_result: Tool approval/denial result
- * - overlay_action: AskUserQuestion or other overlay action
+ * - cron_prompt: Scheduled (cron) task prompt
  * - mod_continue: Follow-up turn injected by a mod's turn_end { continue }
  */
 export type QueueItemKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
-  | "approval_result"
-  | "overlay_action"
   | "mod_continue";
 
 /**
