@@ -245,12 +245,20 @@ describe("stale approval recovery races another client", () => {
   async function recover(
     snapshots: Array<Array<ReturnType<typeof call>>>,
     send: () => Promise<{ kind: "stream"; stream: never }>,
+    opts: {
+      drains?: unknown[];
+      batches?: Record<string, string>;
+    } = {},
   ) {
     const runtime = getOrCreateScopedRuntime(
       createRuntime(),
       "agent-1",
       "conv-1",
     );
+    for (const [id, batch] of Object.entries(opts.batches ?? {})) {
+      runtime.pendingApprovalBatchByToolCallId.set(id, batch);
+    }
+    const batchesAtSend: Array<Map<string, string>> = [];
     const turnLease = runtime.turnLifecycle.begin({
       origin: "message",
       workingDirectory: process.cwd(),
@@ -275,13 +283,17 @@ describe("stale approval recovery races another client", () => {
         prepareToolExecutionContext: async () => createPreparedToolContext(),
         sendApprovalContinuation: async (_conversationId, messages) => {
           sent.push(JSON.stringify(messages));
+          batchesAtSend.push(new Map(runtime.pendingApprovalBatchByToolCallId));
           return send();
         },
         drainRecoveryStream: async () =>
-          ({ stopReason: "end_turn", apiDurationMs: 0 }) as never,
+          (opts.drains?.shift() ?? {
+            stopReason: "end_turn",
+            apiDurationMs: 0,
+          }) as never,
       },
     );
-    return { result, sent };
+    return { result, sent, batchesAtSend };
   }
   const stream = async () => ({ kind: "stream" as const, stream: {} as never });
 
@@ -331,5 +343,42 @@ describe("stale approval recovery races another client", () => {
     });
 
     await expect(result).rejects.toThrow("Approval continuation conflict");
+  });
+
+  test("a second round of requires_approval gets its own batch", async () => {
+    const { result, sent, batchesAtSend } = await recover(
+      [[call("call-1")]],
+      stream,
+      {
+        drains: [
+          {
+            stopReason: "requires_approval",
+            approvals: [call("call-2")],
+            apiDurationMs: 0,
+          },
+        ],
+      },
+    );
+
+    await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toContain("call-2");
+    expect([...(batchesAtSend[1]?.keys() ?? [])]).toEqual(["call-2"]);
+    expect(batchesAtSend[1]?.get("call-2")).not.toBe(
+      batchesAtSend[0]?.get("call-1"),
+    );
+  });
+
+  test("control: one round mixing two existing batches still fails closed", async () => {
+    const { result, sent } = await recover(
+      [[call("call-1"), call("call-2")]],
+      stream,
+      { batches: { "call-1": "batch-a", "call-2": "batch-b" } },
+    );
+
+    await expect(result).rejects.toThrow(
+      "Ambiguous pending approval batch mapping during recovery",
+    );
+    expect(sent).toEqual([]);
   });
 });

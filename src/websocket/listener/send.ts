@@ -25,6 +25,7 @@ import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
+  clearPendingApprovalBatchIds,
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
 } from "./approval";
@@ -514,6 +515,9 @@ export async function resolveStaleApprovals(
       if (drainResult.stopReason !== "requires_approval") {
         return drainResult;
       }
+      // This round is resolved; drop its batch mapping so the next round's
+      // approvals get their own batch instead of looking ambiguous.
+      clearPendingApprovalBatchIds(runtime, pendingApprovals);
       pendingApprovals = drainResult.approvals || [];
     } finally {
       runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);
