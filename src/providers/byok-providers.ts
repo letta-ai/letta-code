@@ -708,6 +708,27 @@ export async function getProviderById(
   return getProviderByIdRequest(providerId);
 }
 
+interface ProviderRemovalDeps {
+  getById?: typeof getProviderById;
+  deleteById?: typeof deleteProvider;
+}
+
+/**
+ * Remove a BYOK provider by its storage ID without resolving it through the
+ * provider collection. The point read preserves remove-by-name's missing-row
+ * no-op while ensuring base providers cannot flow into the delete endpoint.
+ */
+export async function removeProviderById(
+  providerId: string,
+  options: ProviderOperationOptions = {},
+  deps: ProviderRemovalDeps = {},
+): Promise<void> {
+  const existing = await (deps.getById ?? getProviderById)(providerId, options);
+  if (existing) {
+    await (deps.deleteById ?? deleteProvider)(providerId, options);
+  }
+}
+
 /**
  * Get a provider by name.
  */
