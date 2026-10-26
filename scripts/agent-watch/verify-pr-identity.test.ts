@@ -21,6 +21,25 @@ function pullRequest(
   };
 }
 
+function apiPullRequest(
+  overrides: Partial<{
+    body: string | null;
+    draft: boolean;
+    html_url: string;
+    number: number;
+    user: { login: string } | null;
+  }> = {},
+) {
+  return {
+    body: marker,
+    draft: true,
+    html_url: "https://github.com/letta-ai/letta-code/pull/123",
+    number: 123,
+    user: { login: "amelia-letta" },
+    ...overrides,
+  };
+}
+
 function enforce(
   pullRequests: WatcherPullRequest[],
   closed: string[] = [],
@@ -37,80 +56,130 @@ function enforce(
 }
 
 describe("findWatcherPullRequests", () => {
-  test("uses server-side body search instead of truncating all open pull requests", () => {
+  test("finds a marker PR omitted from every bounded search attempt", () => {
     const calls: string[][] = [];
+    let waits = 0;
     const result = findWatcherPullRequests(
       { repo: "letta-ai/letta-code", marker },
       (args) => {
         calls.push(args);
-        return JSON.stringify([pullRequest({ number: 1001 })]);
+        return args[0] === "pr" ? "[]" : JSON.stringify([[apiPullRequest()]]);
+      },
+      () => {
+        waits += 1;
       },
     );
 
-    expect(result.map((candidate) => candidate.number)).toEqual([1001]);
-    expect(calls).toEqual([
-      [
-        "pr",
-        "list",
-        "--repo",
-        "letta-ai/letta-code",
-        "--state",
-        "open",
-        "--search",
-        `${marker} in:body`,
-        "--limit",
-        "1000",
-        "--json",
-        "author,body,isDraft,number,url",
-      ],
+    expect(result.map((candidate) => candidate.number)).toEqual([123]);
+    expect(calls.filter(([command]) => command === "pr")).toHaveLength(3);
+    expect(calls.at(-1)?.slice(0, 6)).toEqual([
+      "api",
+      "--method",
+      "GET",
+      "--paginate",
+      "--slurp",
+      "repos/letta-ai/letta-code/pulls",
     ]);
+    expect(waits).toBe(2);
   });
 
-  test("rejects fuzzy search candidates without the exact marker", () => {
+  test("does not miss a duplicate omitted from server-side search", () => {
+    const duplicate = apiPullRequest({
+      html_url: "https://github.com/letta-ai/letta-code/pull/124",
+      number: 124,
+    });
     const result = findWatcherPullRequests(
       { repo: "letta-ai/letta-code", marker },
-      () =>
-        JSON.stringify([
-          pullRequest({ body: "Pi ai watch 1.0.0 1.0.1", number: 999 }),
-          pullRequest(),
-        ]),
+      (args) =>
+        args[0] === "pr"
+          ? JSON.stringify([pullRequest()])
+          : JSON.stringify([[apiPullRequest(), duplicate]]),
+      () => {},
+    );
+
+    expect(result.map((candidate) => candidate.number)).toEqual([123, 124]);
+    expect(() => enforce(result)).toThrow("Multiple open watcher PRs");
+  });
+
+  test("proves persistent absence authoritatively and fails closed on API failure", () => {
+    const absent = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      (args) => (args[0] === "pr" ? "[]" : "[[]]"),
+      () => {},
+    );
+    expect(absent).toEqual([]);
+
+    expect(() =>
+      findWatcherPullRequests(
+        { repo: "letta-ai/letta-code", marker },
+        (args) => {
+          if (args[0] === "pr") throw new Error("search unavailable");
+          throw new Error("authoritative listing unavailable");
+        },
+        () => {},
+      ),
+    ).toThrow("authoritative listing unavailable");
+  });
+
+  test("checks every authoritative page beyond 1,000 open pull requests", () => {
+    const pages = Array.from({ length: 10 }, (_, page) =>
+      Array.from({ length: 100 }, (_, index) =>
+        apiPullRequest({
+          body: "unrelated",
+          number: page * 100 + index + 1,
+        }),
+      ),
+    );
+    pages.push([apiPullRequest({ number: 1_001 })]);
+    const result = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      (args) => (args[0] === "pr" ? "[]" : JSON.stringify(pages)),
+      () => {},
+    );
+
+    expect(result.map((candidate) => candidate.number)).toEqual([1_001]);
+  });
+
+  test("rejects fuzzy authoritative candidates and keeps every exact match", () => {
+    const result = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      (args) =>
+        args[0] === "pr"
+          ? JSON.stringify([pullRequest()])
+          : JSON.stringify([
+              [
+                apiPullRequest({
+                  body: "Pi ai watch 1.0.0 1.0.1",
+                  number: 999,
+                }),
+                apiPullRequest(),
+              ],
+            ]),
+      () => {},
     );
 
     expect(result.map((candidate) => candidate.number)).toEqual([123]);
   });
 
-  test("returns every exact match and no result when none are exact", () => {
-    const duplicate = pullRequest({
-      number: 124,
-      url: "https://github.com/letta-ai/letta-code/pull/124",
-    });
-    const exact = findWatcherPullRequests(
-      { repo: "letta-ai/letta-code", marker },
-      () => JSON.stringify([pullRequest(), duplicate]),
-    );
-    const none = findWatcherPullRequests(
-      { repo: "letta-ai/letta-code", marker },
-      () => JSON.stringify([pullRequest({ body: null })]),
-    );
-
-    expect(exact.map((candidate) => candidate.number)).toEqual([123, 124]);
-    expect(none).toEqual([]);
-  });
-
-  test("passes shell metacharacters as one command argument", () => {
+  test("passes shell metacharacters as one search argument", () => {
     const unsafeMarker = 'Watcher: $(touch /tmp/pwned); "quoted"';
-    let command: string[] = [];
+    const calls: string[][] = [];
     findWatcherPullRequests(
       { repo: "letta-ai/letta-code", marker: unsafeMarker },
       (args) => {
-        command = args;
-        return "[]";
+        calls.push(args);
+        return args[0] === "pr" ? "[]" : "[[]]";
       },
+      () => {},
     );
 
-    expect(command[command.indexOf("--search") + 1]).toBe(
-      `${unsafeMarker} in:body`,
-    );
+    for (const command of calls.filter(([name]) => name === "pr")) {
+      expect(command[command.indexOf("--search") + 1]).toBe(
+        `${unsafeMarker} in:body`,
+      );
+    }
+    expect(calls.at(-1)).toContain("state=open");
+    expect(calls.at(-1)).toContain("per_page=100");
   });
 });
 
