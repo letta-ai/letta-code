@@ -363,9 +363,19 @@ describe("runSharedMemorySubcommand", () => {
     ).toBe(false);
   });
 
-  test("missing repository ids retain not-found guidance", async () => {
-    const request = mock(async () => {
-      throw new ApiRequestError("API error (404): not found", 404, "not found");
+  test("missing repository ids retain not-found guidance after name fallback", async () => {
+    const request = mock(async (method: string, path: string) => {
+      if (path === "/v1/repositories/repo-missing") {
+        throw new ApiRequestError(
+          "API error (404): not found",
+          404,
+          "not found",
+        );
+      }
+      if (method === "GET" && path === "/v1/repositories?limit=50&offset=0") {
+        return { repositories: [], has_next_page: false };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
     });
 
     const code = await runSharedMemorySubcommand(["history", "repo-missing"], {
@@ -374,8 +384,71 @@ describe("runSharedMemorySubcommand", () => {
     });
 
     expect(code).toBe(1);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(2);
     expect(errors.join("\n")).toContain("Repository not found: repo-missing");
+  });
+
+  test("point lookup 404 falls back to an exact repo-prefixed name", async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const request = mock(async (method: string, path: string) => {
+      calls.push({ method, path });
+      if (path === "/v1/repositories/repo-shared-notes") {
+        throw new ApiRequestError(
+          "API error (404): not found",
+          404,
+          "not found",
+        );
+      }
+      if (path === "/v1/repositories?limit=50&offset=0") {
+        return {
+          repositories: [
+            { id: "repository-decoy", name: "repo-shared-notes-copy" },
+          ],
+          has_next_page: true,
+        };
+      }
+      if (path === "/v1/repositories?limit=50&offset=50") {
+        return {
+          repositories: [{ id: "repository-exact", name: "repo-shared-notes" }],
+          has_next_page: false,
+        };
+      }
+      if (path === "/v1/repositories/repository-exact/versions?limit=20") {
+        return { commits: [] };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(
+      ["history", "repo-shared-notes"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(calls.slice(0, 3)).toEqual([
+      { method: "GET", path: "/v1/repositories/repo-shared-notes" },
+      { method: "GET", path: "/v1/repositories?limit=50&offset=0" },
+      { method: "GET", path: "/v1/repositories?limit=50&offset=50" },
+    ]);
+    expect(JSON.parse(logs.join("\n")).repository).toBe("repo-shared-notes");
+  });
+
+  test("non-404 point lookup failures do not fall back to listing", async () => {
+    const request = mock(async () => {
+      throw new ApiRequestError("API error (403): forbidden", 403, "forbidden");
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "repo-private"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toContain("API error (403): forbidden");
   });
 
   test("repository names remain exact across all repository pages", async () => {

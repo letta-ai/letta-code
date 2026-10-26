@@ -172,9 +172,9 @@ async function resolveRepositoryReferenceFromApi(
   if (!trimmed) return null;
 
   // Repository ids have a point-lookup endpoint. Avoid turning a known id into
-  // an organization-wide paginated scan. A 404 still has the same user-facing
-  // "not found" behavior as an id omitted from the old list response, while
-  // authorization and other API failures continue to surface unchanged.
+  // an organization-wide paginated scan. Names may also start with `repo-`, so
+  // a 404 falls through to exact-name resolution; authorization and other API
+  // failures continue to surface unchanged.
   if (trimmed.startsWith("repo-")) {
     try {
       return await request<RepositorySummary>(
@@ -182,8 +182,9 @@ async function resolveRepositoryReferenceFromApi(
         `/v1/repositories/${encodeURIComponent(trimmed)}`,
       );
     } catch (error) {
-      if (error instanceof ApiRequestError && error.status === 404) return null;
-      throw error;
+      if (!(error instanceof ApiRequestError && error.status === 404)) {
+        throw error;
+      }
     }
   }
 
