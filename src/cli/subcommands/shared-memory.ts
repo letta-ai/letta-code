@@ -136,6 +136,7 @@ async function listOrgRepositories(
 }
 
 const AGENT_REPOSITORIES_PAGE_SIZE = 50;
+const MAX_AGENT_REPOSITORY_PAGES = 100;
 
 function parseAgentRepositoryPage(response: unknown): {
   repositories: AgentRepositorySummary[];
@@ -178,22 +179,28 @@ async function listAgentRepositories(
   agentId: string,
 ): Promise<AgentRepositorySummary[]> {
   const repositories: AgentRepositorySummary[] = [];
-  let offset = 0;
-  for (;;) {
+  for (
+    let pageIndex = 0;
+    pageIndex < MAX_AGENT_REPOSITORY_PAGES;
+    pageIndex += 1
+  ) {
+    const offset = pageIndex * AGENT_REPOSITORIES_PAGE_SIZE;
     const response = await request<unknown>(
       "GET",
       `/v1/agents/${encodeURIComponent(agentId)}/repositories?limit=${AGENT_REPOSITORIES_PAGE_SIZE}&offset=${offset}`,
     );
     const page = parseAgentRepositoryPage(response);
     repositories.push(...page.repositories);
-    const hasNextPage =
-      page.hasNextPage ??
-      page.repositories.length === AGENT_REPOSITORIES_PAGE_SIZE;
-    if (!hasNextPage) break;
-    offset += AGENT_REPOSITORIES_PAGE_SIZE;
+    // Legacy Cloud ignores limit/offset and omits has_next_page. Only an
+    // explicit true proves pagination is supported and another page exists.
+    if (page.hasNextPage !== true) {
+      return repositories.filter(
+        (repository) => !repository.is_primary && repository.name !== "memory",
+      );
+    }
   }
-  return repositories.filter(
-    (repository) => !repository.is_primary && repository.name !== "memory",
+  throw new Error(
+    `Agent repositories pagination exceeded ${MAX_AGENT_REPOSITORY_PAGES} pages`,
   );
 }
 

@@ -356,7 +356,50 @@ describe("runSharedMemorySubcommand", () => {
     ).toBe(false);
   });
 
-  test("attach falls back to complete paginated lists only when status is unavailable", async () => {
+  test("attach treats an exact legacy page without pagination metadata as complete", async () => {
+    let listCalls = 0;
+    const { request } = makeRequest({
+      getAgentRepository: () => {
+        throw new ApiRequestError("not found", 404, "not found");
+      },
+      listAgentRepositories: () => {
+        listCalls += 1;
+        if (listCalls > 1) {
+          throw new Error("legacy response must not request another page");
+        }
+        return {
+          repositories: [
+            { id: "repo-1", name: "shared-notes", is_primary: false },
+            ...Array.from({ length: 49 }, (_, index) => ({
+              id: `repo-other-${index}`,
+              name: `other-${index}`,
+              is_primary: false,
+            })),
+          ],
+        };
+      },
+    });
+    const mountDir = createMountFor("shared-notes");
+    const code = await runSharedMemorySubcommand(
+      ["attach", "shared-notes", "--agent", MOUNT_AGENT_ID],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        syncRepositories: async () => ({
+          mounted: 1,
+          skipped: 0,
+          failed: 0,
+          summaries: [`shared-notes: ${mountDir}`],
+        }),
+        recompileAgent: async () => {},
+        attachPoll: { intervalMs: 0, attempts: 2 },
+      },
+    );
+    expect(code).toBe(0);
+    expect(listCalls).toBe(1);
+  });
+
+  test("attach follows explicit legacy pagination until has_next_page is false", async () => {
     const { request, calls } = makeRequest({
       getAgentRepository: () => {
         throw new ApiRequestError("not found", 404, "not found");
@@ -409,6 +452,37 @@ describe("runSharedMemorySubcommand", () => {
     expect(
       calls.some((call) => call.path.endsWith("?limit=50&offset=50")),
     ).toBe(true);
+  });
+
+  test("attach bounds explicit legacy pagination from a lying server", async () => {
+    let listCalls = 0;
+    const { request } = makeRequest({
+      getAgentRepository: () => {
+        throw new ApiRequestError(
+          "method not allowed",
+          405,
+          "method not allowed",
+        );
+      },
+      listAgentRepositories: () => {
+        listCalls += 1;
+        if (listCalls > 100) throw new Error("test pagination escape hatch");
+        return { repositories: [], has_next_page: true };
+      },
+    });
+    const code = await runSharedMemorySubcommand(
+      ["attach", "shared-notes", "--agent", "agent-xyz"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        attachPoll: { intervalMs: 0, attempts: 2 },
+      },
+    );
+    expect(code).toBe(1);
+    expect(errors.join("\n")).toContain(
+      "Agent repositories pagination exceeded 100 pages",
+    );
+    expect(listCalls).toBe(100);
   });
 
   for (const status of [401, 500]) {
