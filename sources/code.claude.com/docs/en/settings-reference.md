@@ -5525,7 +5525,10 @@ Reject the `--plugin-dir`, `--plugin-url`, `--agents`, and `--mcp-config` CLI fl
 
 Claude Code still accepts a `--mcp-config` whose servers are all in-process `type: "sdk"` entries, so the Agent SDK and VS Code extension keep working. Users can still add servers with `claude mcp add` or a `.mcp.json` file; for per-server control, set [`allowedMcpServers`](https://code.claude.com/docs/en/managed-mcp) as well. Requires Claude Code v2.1.193 or later.
 
-The same check covers plugin folders named in the [`CLAUDE_CODE_PLUGIN_DIRS`](https://code.claude.com/docs/en/env-vars#variables) environment variable, which requires Claude Code v2.1.280 or later. When the variable names a folder, Claude Code exits with the same error, and the error says to unset the variable.
+`disableSideloadFlags` also rejects plugin folders from these sources:
+
+* **The [`CLAUDE_CODE_PLUGIN_DIRS`](https://code.claude.com/docs/en/env-vars#variables) environment variable**: when the variable names a plugin folder, Claude Code exits at startup with an error that names the variable and says to unset it. Requires Claude Code v2.1.280 or later
+* **The Agent SDK [`addPlugins`](https://code.claude.com/docs/en/agent-sdk/typescript#load-more-plugin-folders-with-addplugins) option**: when an application passes plugin folders to `reloadPlugins()` in `addPlugins`, that call fails with an error. The session keeps running with the plugins it already had. Requires Claude Code v2.1.301 or later
 
 In cloud sessions, Claude Code also ignores server-delivered mid-session MCP updates, the path behind cloud session configuration and SDK `setMcpServers()` calls that reach those sessions. In-process `type: "sdk"` entries and a Claude Tag session's Slack tools stay exempt there too. Before v2.1.268, both this drop and the startup drop also removed a Claude Tag session's Slack tools. Before v2.1.239, a server-delivered `--mcp-config` blocked a cloud session from starting.
 
