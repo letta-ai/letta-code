@@ -9,6 +9,7 @@ import {
   createOrUpdateProvider as createOrUpdateProviderRequest,
   createProvider as createProviderRequest,
   deleteProvider as deleteProviderRequest,
+  getProviderById as getProviderByIdRequest,
   getProviderByName as getProviderByNameRequest,
   listProviders as listApiProviders,
   type ProviderResponse,
@@ -28,6 +29,7 @@ import {
 import {
   createOrUpdateLocalProvider,
   deleteLocalProvider,
+  getLocalProviderById,
   getLocalProviderByName,
   isLocalProviderTypeSupported,
   LOCAL_PROVIDER_NO_API_KEY,
@@ -690,8 +692,20 @@ export async function isProviderConnected(
   providerName: string,
   options: ProviderOperationOptions = {},
 ): Promise<boolean> {
-  const providers = await listProviders(options);
-  return providers.some((p) => p.name === providerName);
+  return (await getProviderByName(providerName, options)) !== null;
+}
+
+/**
+ * Get a provider by ID.
+ */
+export async function getProviderById(
+  providerId: string,
+  options: ProviderOperationOptions = {},
+): Promise<ProviderResponse | null> {
+  if (useLocalProviderStore(options.target)) {
+    return getLocalProviderById(providerId);
+  }
+  return getProviderByIdRequest(providerId);
 }
 
 /**
