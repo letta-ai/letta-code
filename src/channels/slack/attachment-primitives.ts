@@ -26,9 +26,10 @@ export type SlackAttachmentReadClient = {
     replies(args: {
       channel: string;
       ts: string;
+      oldest?: string;
+      latest?: string;
       limit?: number;
       inclusive?: boolean;
-      cursor?: string;
     }): Promise<unknown>;
   };
 };
@@ -61,7 +62,6 @@ type SlackMessageLike = {
 
 type SlackMessagePage = {
   messages?: SlackMessageLike[];
-  response_metadata?: { next_cursor?: string };
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -151,11 +151,6 @@ export function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   return Array.from(deduped.values()).slice(0, MAX_SLACK_ATTACHMENTS);
 }
 
-function nextCursor(page: SlackMessagePage): string | undefined {
-  const value = page.response_metadata?.next_cursor;
-  return isNonEmptyString(value) ? value.trim() : undefined;
-}
-
 /**
  * Find the exact Slack message and return only its files.
  *
@@ -172,22 +167,18 @@ export async function resolveSlackMessageFiles(params: {
   client: SlackAttachmentReadClient;
 }): Promise<SlackFileLike[] | null> {
   if (isNonEmptyString(params.threadTs)) {
-    let cursor: string | undefined;
-    do {
-      const page = (await params.client.conversations.replies({
-        channel: params.channelId,
-        ts: params.threadTs,
-        limit: 200,
-        inclusive: true,
-        ...(cursor ? { cursor } : {}),
-      })) as SlackMessagePage;
-      const message = (page.messages ?? []).find(
-        (entry) => entry.ts === params.messageTs,
-      );
-      if (message) return collectSlackFiles(message);
-      cursor = nextCursor(page);
-    } while (cursor);
-    return null;
+    const page = (await params.client.conversations.replies({
+      channel: params.channelId,
+      ts: params.threadTs,
+      oldest: params.messageTs,
+      latest: params.messageTs,
+      inclusive: true,
+      limit: 1,
+    })) as SlackMessagePage;
+    const message = (page.messages ?? []).find(
+      (entry) => entry.ts === params.messageTs,
+    );
+    return message ? collectSlackFiles(message) : null;
   }
 
   const page = (await params.client.conversations.history({
