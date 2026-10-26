@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   enforceWatcherPrIdentity,
+  findWatcherPullRequests,
   parseArgs,
   type WatcherPullRequest,
 } from "./verify-pr-identity.ts";
@@ -34,6 +35,84 @@ function enforce(
     closePullRequest: (candidate) => closed.push(candidate.url),
   });
 }
+
+describe("findWatcherPullRequests", () => {
+  test("uses server-side body search instead of truncating all open pull requests", () => {
+    const calls: string[][] = [];
+    const result = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      (args) => {
+        calls.push(args);
+        return JSON.stringify([pullRequest({ number: 1001 })]);
+      },
+    );
+
+    expect(result.map((candidate) => candidate.number)).toEqual([1001]);
+    expect(calls).toEqual([
+      [
+        "pr",
+        "list",
+        "--repo",
+        "letta-ai/letta-code",
+        "--state",
+        "open",
+        "--search",
+        `${marker} in:body`,
+        "--limit",
+        "1000",
+        "--json",
+        "author,body,isDraft,number,url",
+      ],
+    ]);
+  });
+
+  test("rejects fuzzy search candidates without the exact marker", () => {
+    const result = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      () =>
+        JSON.stringify([
+          pullRequest({ body: "Pi ai watch 1.0.0 1.0.1", number: 999 }),
+          pullRequest(),
+        ]),
+    );
+
+    expect(result.map((candidate) => candidate.number)).toEqual([123]);
+  });
+
+  test("returns every exact match and no result when none are exact", () => {
+    const duplicate = pullRequest({
+      number: 124,
+      url: "https://github.com/letta-ai/letta-code/pull/124",
+    });
+    const exact = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      () => JSON.stringify([pullRequest(), duplicate]),
+    );
+    const none = findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker },
+      () => JSON.stringify([pullRequest({ body: null })]),
+    );
+
+    expect(exact.map((candidate) => candidate.number)).toEqual([123, 124]);
+    expect(none).toEqual([]);
+  });
+
+  test("passes shell metacharacters as one command argument", () => {
+    const unsafeMarker = 'Watcher: $(touch /tmp/pwned); "quoted"';
+    let command: string[] = [];
+    findWatcherPullRequests(
+      { repo: "letta-ai/letta-code", marker: unsafeMarker },
+      (args) => {
+        command = args;
+        return "[]";
+      },
+    );
+
+    expect(command[command.indexOf("--search") + 1]).toBe(
+      `${unsafeMarker} in:body`,
+    );
+  });
+});
 
 describe("enforceWatcherPrIdentity", () => {
   test("returns the matching Amelia draft PR", () => {

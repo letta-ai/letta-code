@@ -95,22 +95,34 @@ function runGh(args: string[]): string {
   return result.stdout;
 }
 
-function main(): void {
-  const args = parseArgs(process.argv.slice(2));
-  const pullRequests = JSON.parse(
-    runGh([
+export function findWatcherPullRequests(
+  args: Pick<Args, "repo" | "marker">,
+  executeGh: (command: string[]) => string = runGh,
+): WatcherPullRequest[] {
+  const candidates = JSON.parse(
+    executeGh([
       "pr",
       "list",
       "--repo",
       args.repo,
       "--state",
       "open",
+      "--search",
+      `${args.marker} in:body`,
       "--limit",
       "1000",
       "--json",
       "author,body,isDraft,number,url",
     ]),
   ) as WatcherPullRequest[];
+  return candidates.filter((pullRequest) =>
+    pullRequest.body?.includes(args.marker),
+  );
+}
+
+function main(): void {
+  const args = parseArgs(process.argv.slice(2));
+  const pullRequests = findWatcherPullRequests(args);
   const verified = enforceWatcherPrIdentity({
     ...args,
     pullRequests,
