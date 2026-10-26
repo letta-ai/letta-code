@@ -59,6 +59,7 @@ export type SpawnRemoteFollowTask = (args: {
 }) => { taskId: string; outputFile: string; subagentId: string };
 
 export interface RemoteExternalCodingAgentLaunch {
+  reasoning_effort?: string;
   type: ExternalCodingAgentType;
   computer: string;
   prompt: string;
@@ -354,6 +355,9 @@ export async function launchRemoteExternalCodingAgent(
         prompt: params.prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
+        ...(params.reasoning_effort !== undefined
+          ? { reasoning_effort: params.reasoning_effort }
+          : {}),
         ...(params.mcp ? { mcp: params.mcp } : {}),
       },
       tool_call_id: toolCallId,

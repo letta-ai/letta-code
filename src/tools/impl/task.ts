@@ -54,6 +54,7 @@ import {
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
+import { validateExternalReasoningEffort } from "./external-reasoning-effort";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
@@ -630,6 +631,11 @@ export async function launchSubagent(
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const requestedType = args.subagent_type;
+  const effortError = validateExternalReasoningEffort(
+    requestedType,
+    args.reasoning_effort,
+  );
+  if (effortError) return { success: false, error: effortError };
   const externalCodingAgentType =
     typeof requestedType === "string" &&
     isExternalCodingAgentType(requestedType)
@@ -757,6 +763,7 @@ export async function launchSubagent(
       return launchRemoteExternalCodingAgent(
         {
           type: externalCodingAgentType,
+          reasoning_effort: args.reasoning_effort,
           computer: resolvedComputer.computer,
           prompt: inputPrompt,
           description,
@@ -804,6 +811,7 @@ export async function launchSubagent(
         ) =>
           runExternalCodingAgent({
             type: externalCodingAgentType,
+            reasoning_effort: args.reasoning_effort,
             prompt,
             model,
             parentAgentId,

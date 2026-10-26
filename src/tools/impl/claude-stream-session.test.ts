@@ -565,3 +565,16 @@ describe("Claude stream sessions", () => {
     expect(await running).toMatchObject({ success: false, error: "cancelled" });
   });
 });
+
+test("Claude effort is session-only and omitted by default", () => {
+  const baseline = buildClaudeStreamArgs({});
+  expect(baseline).not.toContain("--effort");
+  expect(buildClaudeStreamArgs({ reasoning_effort: "high" })).toEqual([
+    ...baseline,
+    "--effort",
+    "high",
+  ]);
+  expect(() => buildClaudeStreamArgs({ reasoning_effort: "ultra" })).toThrow(
+    "Invalid reasoning_effort for claude-code",
+  );
+});
