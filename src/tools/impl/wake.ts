@@ -407,7 +407,7 @@ async function cancelWake(
     }
     throw error;
   }
-  if (cloud.conversation_id !== scope.conversationId) {
+  if ((cloud.conversation_id ?? "default") !== scope.conversationId) {
     throw new Error(`Wake ${id} was not found in the current conversation.`);
   }
 
