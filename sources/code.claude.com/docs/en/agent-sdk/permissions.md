@@ -42,7 +42,7 @@ In the TypeScript SDK, if you set a custom tool's `permission_policy` to [`alway
 
 Apply the active [permission mode](#permission-modes):
 
-* In `bypassPermissions` mode, Claude Code approves everything that reaches this step except recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths), which fall through instead.
+* In `bypassPermissions` mode, Claude Code approves everything that reaches this step except recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) and Bash commands flagged [`Dangerous rm operation not ruled out`](https://code.claude.com/docs/en/permission-modes#dangerous-rm-operation-not-ruled-out), which fall through instead.
 * In `acceptEdits` mode, Claude Code approves the file operations listed under [Accept edits mode](#accept-edits-mode-acceptedits).
 * In `plan` mode, Claude Code sends file-edit tools to your `canUseTool` callback regardless of allow rules.
 * In other modes, the request falls through.
@@ -51,7 +51,7 @@ Apply the active [permission mode](#permission-modes):
 
 Check `allow` rules (from `allowed_tools` and settings.json). If a rule matches, the tool is approved. A call the tool approves on its own is resolved at this step too, with no rule needed: for example a file read inside your working directories or a [read-only Bash command](https://code.claude.com/docs/en/permissions.md#read-only-commands).
 
-Recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) aren't approved by an allow rule. Whether they then reach your callback depends on the permission mode: in an Agent SDK session in `auto` mode, for example, Claude Code denies them by default without calling it. The [Critical paths mode table](https://code.claude.com/docs/en/permission-modes.md#critical-path-removals-in-each-permission-mode) lists what each mode does with them.
+Recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) aren't approved by an allow rule, and commands flagged `Dangerous rm operation not ruled out` aren't approved by a `Bash` or `Bash(*)` rule. Whether they then reach your callback depends on the permission mode: in an Agent SDK session in `auto` mode, for example, Claude Code denies them by default without calling it. The [Critical paths mode table](https://code.claude.com/docs/en/permission-modes.md#critical-path-removals-in-each-permission-mode) lists what each mode does with them.
 
 An allow rule doesn't approve a read from a [network path](https://code.claude.com/docs/en/permissions.md#network-paths).
 
@@ -101,10 +101,16 @@ Use `//path` for an absolute filesystem path: a deny rule of `Edit(//secrets/**)
 > If calls to a tool in `allowed_tools` still reach your `canUseTool` callback, or are denied in `dontAsk` mode, check whether they're [reads from network paths](https://code.claude.com/docs/en/permissions.md#network-paths) or among the following calls. No allow rule approves these calls. In `dontAsk` mode, which never prompts, Claude Code denies them without calling `canUseTool`, and in the other permission modes you handle them as each item says:
 >
 > * `AskUserQuestion`, MCP tools marked [`_meta["anthropic/requiresUserInteraction"]`](https://code.claude.com/docs/en/mcp#require-approval-for-a-specific-tool), and connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools): answer them in the callback. [Handle clarifying questions](https://code.claude.com/docs/en/agent-sdk/user-input.md#handle-clarifying-questions) shows how to answer `AskUserQuestion`, and a connector call arrives with the reason `Your organization requires approval for this tool`
+>
 > * Custom tools your application marks [`always_ask`](https://code.claude.com/docs/en/agent-sdk/custom-tools#require-approval-for-specific-tools): decide the call in the callback. To stop these calls arriving, [change the policy mid-session](https://code.claude.com/docs/en/agent-sdk/typescript.md#mcpsdkserverconfigwithinstance). In `auto`, `plan`, and `bypassPermissions` mode the call can instead be approved before the callback, in the cases listed under [Permission modes that can approve an `always_ask` call](https://code.claude.com/docs/en/agent-sdk/typescript#permission-modes-that-can-approve-an-always_ask-call)
+>
 > * Recognized `rm` and `rmdir` [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths): in `default`, `acceptEdits`, and `bypassPermissions` mode, allow or deny the removal in the callback, where [`decisionReason`](https://code.claude.com/docs/en/agent-sdk/typescript#canusetool) starts with `Dangerous rm`. For `auto` and `plan` mode, see [Critical-path removals in each permission mode](https://code.claude.com/docs/en/permission-modes.md#critical-path-removals-in-each-permission-mode). The check that recognizes these removals [can miss some commands](https://code.claude.com/docs/en/permission-modes.md#critical-paths)
 >
-> Coverage depends on the entry's form: a bare name like `Read` or `mcp__github__get_issue` auto-approves every call to that tool apart from those exceptions and [reads from network paths](https://code.claude.com/docs/en/permissions.md#network-paths), while a scoped rule like `Bash(npm test *)` auto-approves only matching calls, and other `Bash` calls that need approval still fall through to the callback. For checks that must run on every tool call, use a [`PreToolUse` hook](https://code.claude.com/docs/en/agent-sdk/hooks): hooks run before every other step, and a hook deny applies even in `bypassPermissions` mode.
+> * **Bare name**: an entry like `Read` or `mcp__github__get_issue` auto-approves every call to that tool apart from the [actions no mode auto-approves](https://code.claude.com/docs/en/permission-modes.md#actions-no-mode-auto-approves) and [reads from network paths](https://code.claude.com/docs/en/permissions.md#network-paths).
+>
+> * **Scoped rule**: an entry like `Bash(npm test *)` auto-approves only matching calls, and other `Bash` calls that need approval still fall through to the callback.
+>
+> For checks that must run on every tool call, use a [`PreToolUse` hook](https://code.claude.com/docs/en/agent-sdk/hooks): hooks run before every other step, and a hook deny applies even in `bypassPermissions` mode.
 
 For a locked-down agent, pair `allowedTools` with `permissionMode: "dontAsk"`:
 
@@ -268,6 +274,7 @@ Both apply only to paths inside the working directory or `additionalDirectories`
 * Works on a path outside that scope
 * Writes to a protected path
 * Removes a path that Claude Code recognizes as a [critical path](https://code.claude.com/docs/en/permission-modes.md#critical-paths) with `rm` or `rmdir`
+* Runs [`touch`](https://code.claude.com/docs/en/permission-modes#auto-approve-file-edits-with-acceptedits-mode) with, for example, an option, a glob, or a `timeout 5` or `LANG=C` prefix
 
 **Use when:** you trust Claude's edits and want faster iteration, such as during prototyping or when working in an isolated directory.
 
@@ -289,7 +296,7 @@ If your `PreToolUse` hook returns `allow` for a recognized critical-path removal
 
 #### Bypass permissions mode (`bypassPermissions`)
 
-Auto-approves tool uses without prompting, except the cases listed in the warning below. Hooks still execute and can block operations if needed. On Linux and macOS, Claude Code refuses to start in this mode as root or under `sudo` outside a [recognized sandbox](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode), and the query fails before the first turn.
+Auto-approves tool uses without prompting, except the [actions no mode auto-approves](https://code.claude.com/docs/en/permission-modes.md#actions-no-mode-auto-approves). Hooks still execute and can block operations if needed. On Linux and macOS, Claude Code refuses to start in this mode as root or under `sudo` outside a [recognized sandbox](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode), and the query fails before the first turn.
 
 > [!WARNING]
 >

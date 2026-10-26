@@ -2037,13 +2037,13 @@ List additional XPC and Mach service names the macOS sandbox may look up. Tools 
 * **Type**: array of strings, each a service name; a single trailing `*` matches a prefix, and `"*"` alone matches every service
 * **Default**: unset
 
-This allows every service under the `com.apple.coresimulator.` prefix:
+This allows every service under the `com.apple.CoreSimulator.` prefix:
 
 ```json settings.json theme={null}
 {
   "sandbox": {
     "network": {
-      "allowMachLookup": ["com.apple.coresimulator.*"]
+      "allowMachLookup": ["com.apple.CoreSimulator.*"]
     }
   }
 }
@@ -4729,12 +4729,12 @@ Check out only the listed directories in each worktree through git sparse-checko
 * **Type**: array of strings, directory paths relative to the repository root
 * **Default**: unset, so each worktree checks out the whole tree
 
-This example checks out only `packages/my-app` and `shared/utils`, plus root-level files, in each worktree:
+Include `.claude` in the list so that each worktree also has the repository's `.claude/settings.json` and `.claude/rules/`. This example checks out only `.claude`, `packages/my-app`, and `shared/utils`, plus root-level files, in each worktree:
 
 ```json settings.json theme={null}
 {
   "worktree": {
-    "sparsePaths": ["packages/my-app", "shared/utils"]
+    "sparsePaths": [".claude", "packages/my-app", "shared/utils"]
   }
 }
 ```
