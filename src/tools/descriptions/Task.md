@@ -34,9 +34,11 @@ Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding
 
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
 
+Use `subagent_type: "cursor"` to run Cursor's coding agent in the selected checkout. A new session requires `model` set to a Cursor model ID and `CURSOR_API_KEY` in the agent's secrets or execution environment. Cursor runs locally through its SDK, not in a Cursor-hosted VM. It runs shell commands and edits without per-tool Letta approvals; only delegate work you authorize it to perform. Its `cursor_...` ID works with `SendAgentMessage` and `TaskStop`. A declined in-flight message becomes a tracked follow-up turn after the current run, not a delivered steer. Follow-ups preserve the original checkout, model, and MCP discovery reminder.
+
 Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
 
-Claude Code and Codex automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
+Claude Code, Codex, and Cursor automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
 
 ```typescript
 Agent({
@@ -161,6 +163,8 @@ Pass `computer` to run the subagent's turn on another connected computer instead
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
 `subagent_type: "claude-code"` and `subagent_type: "codex"` also accept `computer`: the CLI runs on that connected computer, where it must be installed and signed in. If the result says it isn't installed or signed in there, don't run it on this machine instead.
+
+`subagent_type: "cursor"` also accepts `computer`; the selected computer needs a Letta Code version with Cursor support and a Cursor API key. It uses that computer's checkout, not Cursor cloud hosting.
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 

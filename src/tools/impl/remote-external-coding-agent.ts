@@ -88,6 +88,7 @@ const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  cursor: "Cursor",
 };
 
 export function formatRemoteStartupError(

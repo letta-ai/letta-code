@@ -1,5 +1,7 @@
 # SendAgentMessage
 
+Cursor workers return `cursor_...` IDs. Messages steer the current run when Cursor accepts them; otherwise they start a tracked follow-up after that run finishes. Idle sessions resume in their original checkout with their original model.
+
 Send a message without waiting for its answer. Letta-to-Letta messages require
 the Cloud backend and fail on the local backend (`agent-local-` IDs). Use this
 to coordinate with an agent already working, including an Agent child, or to
