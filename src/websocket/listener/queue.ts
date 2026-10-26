@@ -10,7 +10,6 @@ import type {
   QueueBlockedReason,
   QueueItem,
 } from "@/queue/queue-runtime";
-import { isCoalescable } from "@/queue/queue-runtime";
 import { buildTaskNotificationContent } from "@/queue/turn-queue-runtime";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -25,11 +24,6 @@ import {
 } from "./connection";
 import { getInboundImageFailureMode } from "./image-policy";
 import { getInboundClientMessageIds } from "./inbound-queue";
-import {
-  getMcpOriginatorScope,
-  type McpOriginatorScope,
-  sameMcpOriginatorScope,
-} from "./mcp-originator-scope";
 import {
   emitDequeuedUserMessage,
   emitLoopStatusUpdate,
@@ -169,7 +163,7 @@ function buildQueuedTurnMessage(
           item.actingUserId ?? undefined,
         ),
       );
-    } else if (isCoalescable(item.kind) && "text" in item) {
+    } else {
       // Not a client message: no originator delivery, votes unattributed.
       messageOriginatorIds.push(undefined);
       originatorVotes.push(null);
@@ -296,30 +290,15 @@ export function shouldProcessInboundMessageDirectly(
   );
 }
 
-export function consumeQueuedTurn(
-  runtime: ConversationRuntime,
-  activeScope?: McpOriginatorScope,
-): {
+export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;
 } | null {
   const queuedItems = runtime.queueRuntime.peekReady();
   const firstQueuedItem = queuedItems[0];
-  if (!firstQueuedItem || !isCoalescable(firstQueuedItem.kind)) {
+  if (!firstQueuedItem) {
     return null;
   }
-
-  const firstScope = getMcpOriginatorScope(
-    firstQueuedItem.kind === "message"
-      ? runtime.queuedMessagesByItemId.get(firstQueuedItem.id)
-      : undefined,
-  );
-  // Omitted means a new turn; null explicitly constrains an unattributed continuation.
-  if (
-    activeScope !== undefined &&
-    !sameMcpOriginatorScope(firstScope, activeScope)
-  )
-    return null;
 
   let queueLen = 0;
   let hasMessage = false;
@@ -334,18 +313,7 @@ export function consumeQueuedTurn(
   const isNoCoalesce = (candidate: (typeof queuedItems)[number]): boolean =>
     candidate.kind === "message" && candidate.noCoalesce === true;
   for (const item of queuedItems) {
-    if (
-      !isCoalescable(item.kind) ||
-      !hasSameQueueScope(firstQueuedItem, item) ||
-      !sameMcpOriginatorScope(
-        firstScope,
-        getMcpOriginatorScope(
-          item.kind === "message"
-            ? runtime.queuedMessagesByItemId.get(item.id)
-            : undefined,
-        ),
-      )
-    ) {
+    if (!hasSameQueueScope(firstQueuedItem, item)) {
       break;
     }
     const incoming = runtime.queuedMessagesByItemId.get(item.id);

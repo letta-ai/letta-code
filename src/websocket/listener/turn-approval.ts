@@ -46,7 +46,6 @@ import {
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
-import type { McpOriginatorScope } from "./mcp-originator-scope";
 import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import {
@@ -157,7 +156,6 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
-  activeOriginatorScope?: McpOriginatorScope;
   allowQueuedContinuation?: boolean;
   onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void | Promise<void>;
   /** This turn's output is owned by an in-process caller, not a relay client. */
@@ -873,7 +871,7 @@ export async function handleApprovalStop(params: {
   const consumedQueuedTurn =
     params.allowQueuedContinuation === false
       ? null
-      : consumeQueuedTurn(runtime, params.activeOriginatorScope ?? null);
+      : consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     await params.onConsumeQueuedTurn?.(queuedTurn);
