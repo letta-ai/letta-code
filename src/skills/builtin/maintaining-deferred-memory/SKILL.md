@@ -58,6 +58,8 @@ Discovery runs through the `MEMORY.md` chain, one level at a time:
 
 After adding or moving a file, trace the path a future request would take from root `MEMORY.md` to the file. If any step depends on knowing the file already exists, fix the index.
 
+Indexes are the only way the agent finds deferred memory: it opens a file only when every entry on the path from root names what it is looking for. Keep them accurate as memory changes. Whenever you add, move, or substantially change what a directory holds, reread its entry in each parent `MEMORY.md` up to root and rewrite it to name the topics the directory now covers, in the words a future request would use. An entry written when the directory was new goes stale as it fills, and a topic no entry mentions is effectively lost.
+
 ## Design for progressive disclosure
 
 Each level should give the agent enough to decide whether to go deeper, and nothing it would have to read past to decide.

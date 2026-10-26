@@ -35,20 +35,6 @@ function makeTask(
   return { kind: "task_notification", source: "task_notification", text };
 }
 
-function makeApproval(): Omit<
-  Extract<QueueItem, { kind: "approval_result" }>,
-  "id" | "enqueuedAt"
-> {
-  return { kind: "approval_result", source: "system", text: "{}" };
-}
-
-function makeOverlay(): Omit<
-  Extract<QueueItem, { kind: "overlay_action" }>,
-  "id" | "enqueuedAt"
-> {
-  return { kind: "overlay_action", source: "system", text: "plan_mode" };
-}
-
 function makeContinue(
   text = "keep going",
 ): Omit<Extract<QueueItem, { kind: "mod_continue" }>, "id" | "enqueuedAt"> {
@@ -101,7 +87,7 @@ describe("enqueue basics", () => {
 });
 
 describe("bounded buffer — soft limit", () => {
-  test("drops oldest coalescable when at soft limit", () => {
+  test("drops oldest item when at soft limit", () => {
     const dropped: QueueItem[] = [];
     const q = new QueueRuntime({
       maxItems: 2,
@@ -119,19 +105,7 @@ describe("bounded buffer — soft limit", () => {
     expect(q.length).toBe(2);
   });
 
-  test("barrier items not dropped at soft limit", () => {
-    const dropped: QueueItem[] = [];
-    const q = new QueueRuntime({
-      maxItems: 1,
-      callbacks: { onDropped: (item) => dropped.push(item) },
-    });
-    q.enqueue(makeApproval()); // fills to capacity (barrier)
-    q.enqueue(makeApproval()); // another barrier — soft limit exceeded, not dropped
-    expect(dropped).toHaveLength(0);
-    expect(q.length).toBe(2);
-  });
-
-  test("coalescable drop resumes when new coalescable arrives at capacity", () => {
+  test("soft-limit drop repeats for each arrival at capacity", () => {
     const dropped: QueueItem[] = [];
     const q = new QueueRuntime({
       maxItems: 2,
@@ -147,30 +121,9 @@ describe("bounded buffer — soft limit", () => {
 });
 
 describe("bounded buffer — hard ceiling", () => {
-  test("returns null when hardMaxItems reached, fires onDropped(buffer_limit)", () => {
-    const dropped: [QueueItem, string][] = [];
-    const q = new QueueRuntime({
-      maxItems: 1,
-      hardMaxItems: 2,
-      callbacks: {
-        onDropped: (item, reason) => dropped.push([item, reason]),
-      },
-    });
-    q.enqueue(makeApproval()); // 1
-    q.enqueue(makeApproval()); // 2 (soft barrier overflow)
-    const result = q.enqueue(makeApproval()); // hard ceiling
-    expect(result).toBeNull();
-    expect(dropped).toHaveLength(1);
-    expect(dropped.at(0)?.[1]).toBe("buffer_limit");
-    expect(q.length).toBe(2); // unchanged
-  });
-
-  test("hard ceiling applies to coalescable items too", () => {
-    // maxItems == hardMaxItems: soft drop would normally kick in for coalescable,
-    // but hard ceiling fires first since there's no room even after a drop.
-    // With hardMaxItems=2 and maxItems=2: soft limit drops oldest coalescable,
-    // so length stays at 2 — enqueue succeeds. To force coalescable rejection,
-    // use hardMaxItems=1 (maxItems clamped to 1 as well).
+  test("hard ceiling rejects before the soft-limit drop", () => {
+    // maxItems == hardMaxItems: the hard ceiling check runs first, so the new
+    // item is rejected instead of evicting the oldest one.
     const dropped: string[] = [];
     const q = new QueueRuntime({
       maxItems: 1,
@@ -178,7 +131,7 @@ describe("bounded buffer — hard ceiling", () => {
       callbacks: { onDropped: (_item, reason) => dropped.push(reason) },
     });
     q.enqueue(makeMsg("a")); // length 1 = at hard ceiling
-    const rejected = q.enqueue(makeMsg("b")); // hard ceiling — coalescable rejected
+    const rejected = q.enqueue(makeMsg("b")); // hard ceiling — rejected
     expect(rejected).toBeNull();
     expect(dropped).toEqual(["buffer_limit"]);
     expect(q.length).toBe(1); // unchanged
@@ -194,9 +147,9 @@ describe("bounded buffer — hard ceiling", () => {
         onDropped: (item) => dropped.push(item),
       },
     });
-    q.enqueue(makeApproval());
+    q.enqueue(makeMsg("a"));
 
-    expect(q.enqueue(makeApproval())).toBeNull();
+    expect(q.enqueue(makeMsg("b"))).toBeNull();
     expect(dropped).toEqual([]);
     expect(q.length).toBe(1);
   });
@@ -321,55 +274,6 @@ describe("dequeue coalescable items", () => {
     const result = q.tryDequeue(null);
     expect(result).toBeNull();
     expect(batches).toHaveLength(0);
-  });
-});
-
-// ── Dequeue — barrier ─────────────────────────────────────────────
-
-describe("dequeue barrier items", () => {
-  test("barrier item at head dequeued alone", () => {
-    const q = new QueueRuntime();
-    q.enqueue(makeApproval());
-    q.enqueue(makeMsg("following"));
-    const batch = q.tryDequeue(null);
-    expect(batch).not.toBeNull();
-    expect(batch?.items).toHaveLength(1);
-    expect(batch?.items.at(0)?.kind).toBe("approval_result");
-    expect(q.length).toBe(1); // message still in queue
-  });
-
-  test("coalescable items before barrier dequeued as batch, barrier stays", () => {
-    const q = new QueueRuntime();
-    q.enqueue(makeMsg("a"));
-    q.enqueue(makeMsg("b"));
-    q.enqueue(makeOverlay()); // barrier
-    q.enqueue(makeMsg("c")); // after barrier
-    const batch = q.tryDequeue(null);
-    expect(batch?.items).toHaveLength(2);
-    expect(batch?.items.at(0)?.kind).toBe("message");
-    expect(batch?.items.at(1)?.kind).toBe("message");
-    expect(q.length).toBe(2); // overlay + msg still queued
-  });
-
-  test("mixed [msg, msg, overlay, msg]: first dequeue gets [msg, msg]", () => {
-    const q = new QueueRuntime();
-    q.enqueue(makeMsg("1"));
-    q.enqueue(makeMsg("2"));
-    q.enqueue(makeOverlay());
-    q.enqueue(makeMsg("3"));
-
-    const b1 = q.tryDequeue(null);
-    expect(b1?.items.map((i) => i.kind)).toEqual(["message", "message"]);
-
-    const b2 = q.tryDequeue(null); // overlay alone
-    expect(b2?.items).toHaveLength(1);
-    expect(b2?.items.at(0)?.kind).toBe("overlay_action");
-
-    const b3 = q.tryDequeue(null); // remaining msg
-    expect(b3?.items).toHaveLength(1);
-    expect(b3?.items.at(0)?.kind).toBe("message");
-
-    expect(q.isEmpty).toBe(true);
   });
 });
 
@@ -576,17 +480,6 @@ describe("consumeItems", () => {
     expect(q.length).toBe(1); // unchanged
   });
 
-  test("respects barrier items — does not skip them", () => {
-    // consumeItems(2) with [approval_result, message] should consume both
-    // since it ignores the barrier policy
-    const q = new QueueRuntime();
-    q.enqueue(makeApproval());
-    q.enqueue(makeMsg("a"));
-    const result = q.consumeItems(2);
-    expect(result?.mergedCount).toBe(2);
-    expect(q.length).toBe(0);
-  });
-
   test("resets blockedEmittedForNonEmpty when queue drains", () => {
     const blocked: string[] = [];
     const q = new QueueRuntime({
@@ -708,15 +601,11 @@ describe("removeItem", () => {
     ).toBeNull();
     expect(q.length).toBe(2);
     expect(dropped).toEqual([]);
-    q.enqueue(makeApproval());
-    expect(q.enqueue(makeApproval(), { preserveExisting: true })).toBeNull();
-    expect(q.length).toBe(3);
-    expect(dropped).toEqual([]);
     expect(
       q
-        .consumeItems(3)
+        .consumeItems(2)
         ?.items.map((item) => ("content" in item ? item.content : undefined)),
-    ).toEqual(["first", "second", undefined]);
+    ).toEqual(["first", "second"]);
   });
 
   test("resets blockedEmittedForNonEmpty when queue becomes empty", () => {
