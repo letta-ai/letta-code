@@ -58,6 +58,8 @@ Discovery runs through the `MEMORY.md` chain, one level at a time:
 
 After adding or moving a file, trace the path a future request would take from root `MEMORY.md` to the file. If any step depends on knowing the file already exists, fix the index.
 
+When you change what a directory holds, reread its entry in each parent `MEMORY.md` up to root, and rewrite any entry that no longer says what the directory holds. An entry written when the directory was new goes stale as it fills.
+
 ## Design for progressive disclosure
 
 Each level should give the agent enough to decide whether to go deeper, and nothing it would have to read past to decide.
