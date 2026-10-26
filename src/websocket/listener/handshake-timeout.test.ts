@@ -4,11 +4,13 @@ import type { AddressInfo } from "node:net";
 import { createServer, type Server, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import WebSocket from "ws";
 import { settingsManager } from "@/settings-manager";
 import {
   startListenerClient,
   stopListenerClient,
 } from "@/websocket/listen-client";
+import { createListenerSocket } from "@/websocket/listener/handshake-deadline";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -128,6 +130,7 @@ test(
     await waitFor(
       () => retryAttempts.includes(1) && tcpSockets.length >= 2,
       "hung handshake never errored, closed, and retried",
+      15_000, // generous vs the 100ms handshake timeout + 1s retry backoff
     );
     expect(
       logs.some((line) => line.includes("control socket error")),
@@ -136,3 +139,14 @@ test(
   },
   { timeout: 20_000 },
 );
+
+test("a listener socket stuck CONNECTING is terminated at the deadline", async () => {
+  const socket = createListenerSocket(new URL(wsUrl), "access-token");
+  const closed = new Promise<number>((resolve) =>
+    socket.once("close", (code: number) => resolve(code)),
+  );
+  socket.on("error", () => {});
+  expect(socket.readyState).toBe(WebSocket.CONNECTING);
+  expect(await closed).toBe(1006);
+  expect(socket.readyState).toBe(WebSocket.CLOSED);
+});
