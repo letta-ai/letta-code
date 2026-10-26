@@ -128,16 +128,28 @@ describe("pre-stream recovery lease boundaries", () => {
   test.each([
     {
       name: "attributed",
+      agentId: "agent-1",
       queuedUser: "cloud-user-charles",
-      expectedActor: "cloud-user-charles",
+      expectedActor: null,
     },
-    { name: "unattributed", queuedUser: undefined, expectedActor: null },
+    {
+      name: "unattributed",
+      agentId: "agent-1",
+      queuedUser: undefined,
+      expectedActor: null,
+    },
+    {
+      name: "conversation-owned",
+      agentId: null,
+      queuedUser: undefined,
+      expectedActor: null,
+    },
   ])(
-    "an $name queued user's identity survives pre-stream approval recovery",
-    async ({ queuedUser, expectedActor }) => {
+    "an $name queued user's work waits for a new turn after pre-stream approval recovery",
+    async ({ queuedUser, expectedActor, agentId }) => {
       const runtime = getOrCreateScopedRuntime(
         createRuntime(),
-        "agent-1",
+        agentId,
         "conv-1",
       );
       const turnLease = runtime.turnLifecycle.begin({
@@ -149,8 +161,10 @@ describe("pre-stream recovery lease boundaries", () => {
         runtime,
         {
           type: "message",
-          agentId: "agent-1",
+          agentId,
           conversationId: "conv-1",
+          mcpOriginatorSuperRunId: "queued-run",
+          mcpOriginatorTokenPresent: true,
           messages: [
             {
               role: "user",
@@ -175,6 +189,12 @@ describe("pre-stream recovery lease boundaries", () => {
         turnLease,
         {
           retrieveAgent: async () => ({ id: "agent-1" }) as never,
+          retrieveConversation: async () =>
+            ({
+              id: "conv-1",
+              agent_id: null,
+              model: "openai/gpt-5.6-luna",
+            }) as never,
           getResumeData: async () => ({
             pendingApproval: approval,
             pendingApprovals: [approval],
@@ -199,18 +219,17 @@ describe("pre-stream recovery lease boundaries", () => {
 
       expect(result?.stopReason).toBe("end_turn");
       expect(sentActingUserId).toBe(expectedActor);
-      if (queuedUser) {
-        expect(JSON.stringify(sentMessages)).toContain(
-          '"attribution":{"acting_user_id":"cloud-user-charles"}',
-        );
-      } else {
-        expect(JSON.stringify(sentMessages)).not.toContain("acting_user_id");
-      }
+      expect(JSON.stringify(sentMessages)).toContain("call-1");
+      expect(JSON.stringify(sentMessages)).not.toContain(
+        "message from Charles",
+      );
+      expect(runtime.queueRuntime.length).toBe(1);
+      expect(runtime.queuedMessagesByItemId.size).toBe(1);
       expect(
         runtime.listener.clientMessageIdsByRunIdByConversation
           ?.get(runtime.key)
           ?.get("run-recovery"),
-      ).toEqual(["cm-charles"]);
+      ).toBeUndefined();
     },
   );
 });

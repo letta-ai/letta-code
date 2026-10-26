@@ -4,7 +4,7 @@ import { buildCreateAgentRequest } from "@/agent/create-agent-request";
 import { getModelUpdateArgs } from "@/agent/model";
 import type { MemoryPromptMode } from "@/agent/prompt-assets";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
-import { getBackend } from "@/backend";
+import { type Backend, getBackend } from "@/backend";
 import {
   createEphemeralConversation as createEphemeralConversationRequest,
   type EphemeralConversationCreateBody,
@@ -48,23 +48,30 @@ export async function buildEphemeralConversationCreateBody(
   };
 }
 
-function projectEphemeralAgent(
-  conversationId: string,
-  body: EphemeralConversationCreateBody,
-): AgentState {
+/** Local compatibility state only; the conversation still has no agent. */
+export function projectConversationState(conversation: {
+  id: string;
+  model?: string | null;
+  system?: string | null;
+  model_settings?: unknown;
+  context_window_limit?: number | null;
+}): AgentState {
+  if (!conversation.model) {
+    throw new Error("Cannot resume a conversation without a persisted model.");
+  }
   return {
-    id: conversationId,
+    id: conversation.id,
     name: "Ephemeral conversation",
-    system: body.system,
+    system: conversation.system ?? "",
     tools: [],
     memory: { blocks: [] },
     llm_config: {
-      handle: body.model,
-      model: body.model,
-      context_window: body.context_window_limit ?? undefined,
-      model_settings: body.model_settings ?? {},
+      handle: conversation.model,
+      model: conversation.model,
+      context_window: conversation.context_window_limit ?? undefined,
+      model_settings: conversation.model_settings ?? {},
     },
-    model_settings: body.model_settings ?? {},
+    model_settings: conversation.model_settings ?? {},
     message_buffer_autoclear: false,
   } as unknown as AgentState;
 }
@@ -75,9 +82,25 @@ export async function createEphemeralConversation(
   const body = await buildEphemeralConversationCreateBody(options);
   const conversation = await createEphemeralConversationRequest(body);
   return {
-    agent: projectEphemeralAgent(conversation.id, body),
+    agent: projectConversationState({ ...body, id: conversation.id }),
     conversationId: conversation.id,
   };
+}
+
+/** Load compatibility state without replacing a conversation's history owner. */
+export async function retrieveResumeState(
+  agentId: string | null,
+  conversationId: string,
+  backend: Pick<
+    Backend,
+    "retrieveAgent" | "retrieveConversation"
+  > = getBackend(),
+): Promise<AgentState> {
+  return agentId
+    ? backend.retrieveAgent(agentId)
+    : projectConversationState(
+        await backend.retrieveConversation(conversationId),
+      );
 }
 
 export async function createLocalEphemeralConversation(

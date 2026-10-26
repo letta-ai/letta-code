@@ -282,6 +282,7 @@ export function createChannelInboundRouter(deps: {
         turnSources: [
           buildChannelTurnSource(discordResult.route, preparedMessage),
         ],
+        defaultPermissionMode: config.defaultPermissionMode,
       });
       return;
     }
@@ -404,6 +405,9 @@ export function createChannelInboundRouter(deps: {
       route,
       content,
       turnSources: [buildChannelTurnSource(route, preparedMessage)],
+      ...(isDiscordChannelAccount(config) || isSlackChannelAccount(config)
+        ? { defaultPermissionMode: config.defaultPermissionMode }
+        : {}),
     });
   }
 

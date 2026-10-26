@@ -7,13 +7,13 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  renameSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
 import {
   acquireDurableFileLock,
   currentDurableLockOwner,
@@ -416,7 +416,7 @@ function writeDurableStore(path: string, store: DurableStore): void {
     } finally {
       closeSync(fd);
     }
-    renameSync(temporaryPath, path);
+    renameSyncWithRetry(temporaryPath, path);
     fsyncDirectory(dirname(path));
   } catch (error) {
     try {

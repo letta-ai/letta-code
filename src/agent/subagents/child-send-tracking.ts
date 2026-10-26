@@ -6,7 +6,10 @@ import {
 } from "@/agent/subagent-state";
 import { type Backend, getBackend } from "@/backend";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
-import { getExactSuperRun } from "@/backend/api/conversation-enqueue";
+import {
+  getEnqueueAgentId,
+  getExactSuperRun,
+} from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
@@ -105,10 +108,10 @@ export function trackChildSend(input: TrackChildSendInput): string {
     false,
   );
   updateSubagent(subagentId, {
-    agentId: receipt.agent_id,
+    agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
     superRunId: receipt.super_run_id,
-    agentURL: buildAgentReference(receipt.agent_id, {
+    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
       conversationId: receipt.conversation_id,
     }),
   });

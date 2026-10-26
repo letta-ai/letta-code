@@ -12,6 +12,7 @@ import {
   isChatGPTUsageProvider,
   isProviderTargetLoading,
   nextProviderConnectionName,
+  postResetOptionIndex,
   providerApiKeyFromInput,
   providerManageActionLabel,
   providerManageActions,
@@ -333,6 +334,41 @@ describe("ProviderSelector connected provider actions", () => {
         chatgptWorkProvider,
       ]),
     ).toBe("2 connected");
+  });
+
+  test("offers a reset only for ChatGPT accounts with a spendable credit", () => {
+    const labels = (resettable: string[]) =>
+      providerManageActions(
+        codexProvider,
+        "local",
+        [chatgptDefaultProvider, chatgptWorkProvider],
+        resettable,
+      ).map((action) => providerManageActionLabel(action, codexProvider));
+
+    expect(labels([])).not.toContain("Use a reset on chatgpt-work");
+    expect(labels(["chatgpt-work"])).toEqual([
+      "Disconnect chatgpt-plus-pro",
+      "Disconnect chatgpt-work",
+      "Use a reset on chatgpt-work",
+      "Refresh usage",
+      "Back",
+    ]);
+  });
+
+  test("returns to Refresh usage after a reset, never Disconnect", () => {
+    const actions = providerManageActions(
+      codexProvider,
+      "local",
+      [chatgptDefaultProvider],
+      ["chatgpt-plus-pro"],
+    );
+    expect(actions[0]).toEqual({
+      type: "disconnect",
+      name: "chatgpt-plus-pro",
+    });
+    expect(actions[postResetOptionIndex(actions)]).toEqual({
+      type: "refresh-usage",
+    });
   });
 
   test("surfaces connect-another only for API ChatGPT OAuth providers", () => {

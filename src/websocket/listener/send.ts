@@ -7,6 +7,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
+import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { sendMessageStream } from "@/agent/message";
 import {
   buildFreshDenialApprovals,
@@ -32,7 +33,6 @@ import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
-import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
@@ -41,18 +41,14 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { emitDequeuedUserMessage, emitRetryDelta } from "./protocol-outbound";
-import { consumeQueuedTurn } from "./queue";
+import { emitRetryDelta } from "./protocol-outbound";
 import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
-import {
-  createTurnCorrelation,
-  type TurnCorrelation,
-} from "./turn-correlation";
+import type { TurnCorrelation } from "./turn-correlation";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
@@ -291,13 +287,16 @@ export async function resolveStaleApprovals(
   deps: {
     getResumeData?: typeof getResumeDataFromBackend;
     retrieveAgent?: RetrieveAgent;
+    retrieveConversation?: ReturnType<
+      typeof getBackend
+    >["retrieveConversation"];
     prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     drainRecoveryStream?: typeof drainRecoveryStreamWithEmission;
     authorityGuard?: () => boolean;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
-  if (!runtime.agentId) return null;
+  if (!runtime.agentId && runtime.conversationId === "default") return null;
 
   const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
   const prepareToolExecutionContext =
@@ -320,9 +319,11 @@ export async function resolveStaleApprovals(
   const backend = getBackend();
   let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
   try {
-    agent = await (deps.retrieveAgent
-      ? deps.retrieveAgent(runtime.agentId)
-      : backend.retrieveAgent(runtime.agentId));
+    agent = await retrieveResumeState(runtime.agentId, runtime.conversationId, {
+      retrieveAgent: deps.retrieveAgent ?? backend.retrieveAgent.bind(backend),
+      retrieveConversation:
+        deps.retrieveConversation ?? backend.retrieveConversation.bind(backend),
+    });
   } catch (err) {
     assertCurrentTurnLease();
     if (isBackendNotFoundError(err)) {
@@ -364,10 +365,9 @@ export async function resolveStaleApprovals(
     agent_id: runtime.agentId,
     conversation_id: recoveryConversationId,
   } as const;
-  const modAdapters = await ensureListenerModAdaptersForAgent(
-    runtime.listener,
-    runtime.agentId,
-  );
+  const modAdapters = runtime.agentId
+    ? await ensureListenerModAdaptersForAgent(runtime.listener, runtime.agentId)
+    : [];
   const preparedToolContext = await prepareToolExecutionContext({
     connectionId: resolveTurnExecutionConnectionId(
       runtime.listener,
@@ -382,7 +382,9 @@ export async function resolveStaleApprovals(
       runtime.agentId,
       runtime.conversationId,
     ),
-    modContext: createListenerAgentModContext(runtime.agentId),
+    ...(runtime.agentId
+      ? { modContext: createListenerAgentModContext(runtime.agentId) }
+      : {}),
     modAdapters,
     modEvents: createListenerModEvents(modAdapters),
   });
@@ -391,7 +393,7 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
-  let recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
+  const recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
@@ -412,7 +414,7 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      let continuationInput = createTurnInputState([
+      const continuationInput = createTurnInputState([
         {
           type: "approval",
           approvals: approvalResults,
@@ -420,21 +422,6 @@ export async function resolveStaleApprovals(
         },
       ]);
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-      const consumedQueuedTurn = consumeQueuedTurn(runtime);
-      if (consumedQueuedTurn) {
-        const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        recoveryActingUserId = queuedTurn.actingUserId;
-        recoveryTurnCorrelation = createTurnCorrelation(
-          runtime,
-          queuedTurn,
-          dequeuedBatch.batchId,
-        );
-        continuationInput = appendQueuedTurnToInput(
-          continuationInput,
-          queuedTurn,
-        );
-        emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
-      }
 
       const continuationMessagesWithSkillContent = injectQueuedSkillContent(
         continuationInput.messages,

@@ -18,6 +18,7 @@ import {
   resolveServerLifecycleOutput,
 } from "@/cli/subcommands/lifecycle-output";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
+import { shouldUseNonInteractiveListenerOutput } from "@/cli/subcommands/listen-output-mode";
 import { createListenerProcessAnchorPromise } from "@/cli/subcommands/listen-process-anchor";
 import { printListenUsage } from "@/cli/subcommands/listen-usage";
 import {
@@ -639,6 +640,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             connectedId,
             readiness,
             startChannelGateway,
+            (error) =>
+              logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
           );
           if (!ready) return;
           sessionLog.log("Local channel listener ready.");
@@ -764,7 +767,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       }
     };
 
-    if (debugMode || lifecycleOutput) {
+    if (shouldUseNonInteractiveListenerOutput(debugMode, !!lifecycleOutput)) {
+      const printPlainLines = debugMode || !lifecycleOutput; // lifecycle owns stdout
       const startNonInteractiveClient = async (
         connId: string,
         url: string,
@@ -787,7 +791,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           onStatusChange: (status) => {
             sessionLog.log(`status: ${status}`);
             readiness.setStatus(status);
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(`[${formatTimestamp()}] status: ${status}`);
             }
           },
@@ -798,10 +802,12 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               connectedId,
               readiness,
               startChannelGateway,
+              (error) =>
+                logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Connected. Awaiting instructions.`,
               );
@@ -813,7 +819,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
             sessionLog.log(
               `Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
             );
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Reconnecting (attempt ${attempt}, retry in ${Math.round(nextRetryIn / 1000)}s)`,
               );
@@ -821,7 +827,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           },
           onNeedsReregister: async (replacement) => {
             readiness.setCloudReconnecting();
-            if (debugMode) {
+            if (printPlainLines) {
               console.log(
                 `[${formatTimestamp()}] Computer connection expired, re-registering...`,
               );
@@ -918,6 +924,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
               connectedId,
               readiness,
               startChannelGateway,
+              (error) =>
+                logListenerMessage(`[ChannelGateway] startup failed: ${error}`),
             );
             if (!ready) return;
             sessionLog.log("Connected. Awaiting instructions.");

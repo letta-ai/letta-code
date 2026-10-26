@@ -1,3 +1,6 @@
+// Must match cloud-api’s 1008 reason in letta-cloud/libs/utils-server/src/lib/handleEnvironmentConnection/handleEnvironmentConnection.ts:114.
+export const CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON = "Environment not found";
+
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds

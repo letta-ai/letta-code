@@ -142,7 +142,7 @@ export async function resolveDesktopEnvironmentConnectionId(
 
   if (matches.length === 0) {
     throw new Error(
-      "Desktop Local is unavailable. Open Letta Desktop and wait for its computer connection to come online.",
+      "No Desktop Local computer is online. Run `letta teleport list` and choose a connected computer by name, device ID, or connection ID. To connect a computer, run `letta server` on it.",
     );
   }
   if (matches.length > 1) {

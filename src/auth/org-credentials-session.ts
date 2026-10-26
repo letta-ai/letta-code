@@ -17,6 +17,54 @@ type SignedIn = OrgCredentials & { apiKey: string };
 type RefreshAccessToken = typeof refreshAccessToken;
 
 /**
+ * Release an awaited promise when the caller's abort signal fires
+ * (evil-shub round-9 P1). A JOINER of an in-flight refresh cannot cancel
+ * the underlying fetch — other waiters may hold it — but without this race
+ * the joiner awaits a promise it does not control with no bound at all
+ * (OrgCredentialSession.pending accumulates immortal waiters while the
+ * keepalive tick guard is held). The underlying promise keeps running to
+ * settlement; both handlers are attached from the start so its late
+ * settlement or rejection is consumed and never surfaces unhandled.
+ */
+function raceWithSignal<T>(
+  promise: Promise<T>,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) {
+    return Promise.reject(abortError(signal));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      signal.removeEventListener("abort", onAbort);
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(value);
+      },
+      (error: unknown) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      },
+    );
+  });
+}
+
+function abortError(signal: AbortSignal): Error {
+  const reason: unknown = signal.reason;
+  return reason instanceof Error
+    ? reason
+    : new Error(
+        `[org-credentials-session] access-token wait aborted${
+          reason === undefined ? "" : `: ${String(reason)}`
+        }`,
+      );
+}
+
+/**
  * A `letta server --org` process signs in to one organization. Every
  * credential reader in the process (API client, memfs git, subagents, shell
  * env) consults this session before the ambient `LETTA_API_KEY` or the global
@@ -48,13 +96,21 @@ export class OrgCredentialSession {
     return this.current.apiKey;
   }
 
-  async getAccessToken(): Promise<string> {
-    if (this.pending) return this.pending;
+  async getAccessToken(options?: { signal?: AbortSignal }): Promise<string> {
+    // Joiner: the in-flight refresh may have been started without a signal
+    // by someone else — await it bounded by OUR budget rather than not at
+    // all. The starter path needs no race: its signal reaches the fetch
+    // itself, so the pending promise settles when the budget fires.
+    if (this.pending) return raceWithSignal(this.pending, options?.signal);
     const credentials = this.current;
     if (!needsRefresh(credentials) || !credentials.refreshToken) {
       return credentials.apiKey;
     }
-    const pending = this.refresh(credentials, credentials.refreshToken);
+    const pending = this.refresh(
+      credentials,
+      credentials.refreshToken,
+      options?.signal,
+    );
     this.pending = pending;
     try {
       return await pending;
@@ -66,6 +122,7 @@ export class OrgCredentialSession {
   private async refresh(
     credentials: SignedIn,
     refreshToken: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     const now = Date.now();
     try {
@@ -74,6 +131,7 @@ export class OrgCredentialSession {
         this.deviceId,
         this.deviceName,
         this.refreshTokens,
+        signal !== undefined ? { signal } : undefined,
       );
       const next: SignedIn = {
         apiKey: tokens.access_token,
@@ -131,8 +189,10 @@ export function activateOrgCredentials(
 }
 
 /** Undefined means an ordinary CLI process, never an organization fallback. */
-export function getOrgAccessToken(): Promise<string> | undefined {
-  return session?.getAccessToken();
+export function getOrgAccessToken(options?: {
+  signal?: AbortSignal;
+}): Promise<string> | undefined {
+  return session?.getAccessToken(options);
 }
 
 /**
@@ -140,8 +200,10 @@ export function getOrgAccessToken(): Promise<string> | undefined {
  * sign-in for `letta server --org`, else the Desktop token. Undefined means
  * the caller should fall through to the ambient key and the global sign-in.
  */
-export async function getSessionAccessToken(): Promise<string | undefined> {
-  return (await getOrgAccessToken()) ?? getDesktopAccessToken();
+export async function getSessionAccessToken(options?: {
+  signal?: AbortSignal;
+}): Promise<string | undefined> {
+  return (await getOrgAccessToken(options)) ?? getDesktopAccessToken();
 }
 
 /** Sync counterpart for readers that cannot await; may lag one refresh. */

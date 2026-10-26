@@ -1,5 +1,5 @@
 import { getAgentRuntimeStatus } from "@/backend/api/agents";
-import { apiRequest } from "@/backend/api/request";
+import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { debugWarn } from "@/utils/debug";
 import {
   isInboundTeleportExpected,
@@ -242,6 +242,37 @@ export function revokeRecoveryClaims(
   }
 }
 
+type ClaimRefusals = { generation?: string; count: number; refused: boolean };
+const refusalCounts = new WeakMap<object, ClaimRefusals>();
+
+function recoveryRefusals(listener: ConversationRuntime["listener"]) {
+  const generation = listener.connectionGeneration ?? undefined;
+  let state = refusalCounts.get(listener);
+  if (!state || state.generation !== generation) {
+    state = { generation, count: 0, refused: false };
+    refusalCounts.set(listener, state);
+  }
+  return state;
+}
+
+/** Consume refusals once per recovery pass; keep all durable records untouched. */
+export function recoveryRetryDelay(
+  listener: ConversationRuntime["listener"],
+  base: number,
+): number {
+  const state = recoveryRefusals(listener);
+  if (!state.refused) return base;
+  state.refused = false;
+  if (++state.count === 5)
+    debugWarn(
+      "recovery",
+      "Recovery refused because another connection owns the conversation; abandoned until the next reconnect",
+    );
+  return state.count >= 5
+    ? Infinity
+    : Math.min(base * 2 ** (state.count - 1), 300_000);
+}
+
 export async function acquireRecoveryClaim(
   runtime: ConversationRuntime,
   onLost: () => void = () => {},
@@ -308,8 +339,17 @@ export async function acquireRecoveryClaim(
     );
     runtime.listener.activeRecoveryClaims ??= new Set();
     runtime.listener.activeRecoveryClaims.add(claim);
+    refusalCounts.delete(runtime.listener);
     return claim;
   } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      error.status === 409 &&
+      /"owner_mismatch"/.test(error.responseText)
+    ) {
+      recoveryRefusals(runtime.listener).refused = true;
+      return null;
+    }
     debugWarn("recovery", "Recovery claim acquisition failed", error);
     return null;
   }

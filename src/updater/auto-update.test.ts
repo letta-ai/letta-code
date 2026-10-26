@@ -301,6 +301,11 @@ describe("getSelfUpdateStatus", () => {
 });
 
 describe("update config resolution", () => {
+  test("install commands default to no timeout, while prefix queries stay bounded", () => {
+    expect(buildUpdateExecOptions().timeout).toBe(0);
+    expect(buildUpdateExecOptions(5000).timeout).toBe(5000);
+  });
+
   test("buildUpdateExecOptions enables shell on Windows for npm.cmd shims", () => {
     expect(buildUpdateExecOptions(5000, "win32")).toEqual({
       timeout: 5000,

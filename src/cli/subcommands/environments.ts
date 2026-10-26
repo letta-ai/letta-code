@@ -31,11 +31,12 @@ Legacy aliases:
 
 List options:
   --limit <n>       Max results (default: 50)
-  --after <id>      Pagination cursor from a previous computer id
+  --after <id>      The id of the last record from the previous page
   --online-only     Only include computers with a fresh active connection
 
 Notes:
   - Output is JSON only.
+  - Pass nextCursor to --after to advance, including with --online-only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
   - Use letta computers current to get this computer's stable deviceId.
   - Prefer deviceId or connectionName for --computer and Agent(computer=...).
@@ -67,6 +68,7 @@ function formatEnvironmentForCli(
   options: { onlineOnly: boolean; currentConnectionId?: string | null },
 ) {
   const formatted = {
+    id: environment.id,
     deviceId: environment.deviceId,
     connectionName: environment.connectionName,
     connectionId: environment.connectionId ?? null,
@@ -226,6 +228,9 @@ export async function runEnvironmentsSubcommand(
     JSON.stringify(
       {
         ...result,
+        nextCursor: result.hasNextPage
+          ? (result.connections.at(-1)?.id ?? null)
+          : null,
         connections,
       },
       null,

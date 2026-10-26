@@ -188,7 +188,10 @@ describe("result envelope parsing", () => {
     expect(state.finalError).toBe("local boom");
   });
 
-  test("captures the enqueue receipt from a queued envelope", () => {
+  test.each([
+    { agent_id: "agent-1" },
+    { agent_id: null, parent_agent_id: "agent-parent" },
+  ])("captures the enqueue receipt from a queued envelope: %j", (identity) => {
     const state = freshState();
     processStreamEvent(
       JSON.stringify({
@@ -197,7 +200,7 @@ describe("result envelope parsing", () => {
         is_error: false,
         result: null,
         status: "queued",
-        agent_id: "agent-1",
+        ...identity,
         conversation_id: "conv-1",
         client_message_id: "cm-1",
         super_run_id: "sr-1",
@@ -209,7 +212,7 @@ describe("result envelope parsing", () => {
     );
     expect(state.enqueueReceipt).toEqual({
       status: "queued",
-      agent_id: "agent-1",
+      ...identity,
       conversation_id: "conv-1",
       client_message_id: "cm-1",
       super_run_id: "sr-1",
