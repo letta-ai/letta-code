@@ -127,21 +127,26 @@ export async function listCloudSchedules(
 export async function getCloudSchedule(
   agentId: string,
   scheduleId: string,
+  actingUserId?: string,
 ): Promise<CloudSchedule> {
   return apiRequest<CloudSchedule>(
     "GET",
     `${schedulePath(agentId)}/${encodeURIComponent(scheduleId)}`,
+    undefined,
+    actingUserRequestOptions(actingUserId),
   );
 }
 
 export async function deleteCloudSchedule(
   agentId: string,
   scheduleId: string,
+  actingUserId?: string,
 ): Promise<void> {
   await apiRequest<{ success: boolean }>(
     "DELETE",
     `${schedulePath(agentId)}/${encodeURIComponent(scheduleId)}`,
     {},
+    actingUserRequestOptions(actingUserId),
   );
 }
 
