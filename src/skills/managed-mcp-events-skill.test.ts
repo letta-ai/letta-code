@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { readFile, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   parseManagedEventArgs,
@@ -74,7 +75,7 @@ describe("using-mcp-tools managed event helper", () => {
 
   test("reads trigger configuration from a file and targets one agent attachment", async () => {
     const configPath = join(
-      "/tmp",
+      tmpdir(),
       `managed-event-${process.pid}-${Date.now()}.json`,
     );
     temporaryFiles.push(configPath);
