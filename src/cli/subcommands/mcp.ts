@@ -403,6 +403,10 @@ function serverName(target: ServerTarget): string {
     : target.server.serverName;
 }
 
+function serverAliasGroup(alias: string): string {
+  return (alias.split("__")[0] ?? "").replace(/_+$/, "");
+}
+
 async function buildToolCatalog(
   deps: McpSubcommandDependencies,
   agentId: string,
@@ -426,11 +430,11 @@ async function buildToolCatalog(
     ? servers.filter((target) => target.kind === options.targetKind)
     : servers;
   if (options.serverAliasGroup !== undefined) {
-    // Trailing underscores can overlap the __ delimiter. Load those aliases
-    // together so cross-server tool-name collisions keep their existing suffixes.
+    // Trailing underscores and minted suffixes (foo_ -> foo__2) can overlap
+    // the delimiter. Group both server aliases and call names identically.
     activeServers = servers.filter(
       (target) =>
-        aliases.get(serverKey(target))?.replace(/_+$/, "") ===
+        serverAliasGroup(aliases.get(serverKey(target)) ?? "") ===
         options.serverAliasGroup,
     );
   } else if (options.serverSelector) {
@@ -918,7 +922,7 @@ export function createAgentMcpSession(
   return {
     callTool: async (toolName, args, options) =>
       callCatalogTool(
-        await load((toolName.split("__")[1] ?? "").replace(/_+$/, "")),
+        await load(serverAliasGroup(toolName.slice("mcp__".length))),
         deps,
         agentId,
         toolName,
@@ -933,9 +937,7 @@ export function createAgentMcpSession(
           kind: target.kind,
         })),
       );
-      const groups = new Set(
-        [...aliases.values()].map((alias) => alias.replace(/_+$/, "")),
-      );
+      const groups = new Set([...aliases.values()].map(serverAliasGroup));
       const loaded = await Promise.all([...groups].map(load));
       return loaded.flatMap((catalog) =>
         catalog.tools.map((tool) => tool.schema),
