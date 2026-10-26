@@ -30,6 +30,11 @@
 
           bunDeps = pkgs.bun2nix.fetchBunDeps {
             bunNix = ./bun.nix;
+            overrides = pkgs.bun2nix.patchedDependenciesToOverrides {
+              patchedDependencies = lib.mapAttrs
+                (_: path: "${src}/${path}")
+                packageJson.patchedDependencies;
+            };
           };
 
           nativeBuildInputs = [
