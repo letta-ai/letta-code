@@ -37,7 +37,7 @@ export async function resolveSkillsAgentByName(
 ): Promise<string> {
   const normalizedName = name.toLowerCase();
   const matches: AgentState[] = [];
-  const query = { name, limit: AGENT_LOOKUP_PAGE_SIZE };
+  const query = { query_text: name, limit: AGENT_LOOKUP_PAGE_SIZE };
   let page: unknown = await backend.listAgents(query);
 
   while (true) {

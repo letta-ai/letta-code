@@ -46,7 +46,7 @@ describe("skills agent resolver", () => {
     expect(listAgents).toHaveBeenCalledTimes(0);
   });
 
-  test("keeps exact-name ambiguity detection complete across API pages", async () => {
+  test("keeps mixed-case duplicate ambiguity complete across API pages", async () => {
     const firstPageAgents = [
       agent("agent-first", "Target"),
       ...Array.from({ length: 99 }, (_, index) =>
@@ -54,7 +54,7 @@ describe("skills agent resolver", () => {
       ),
     ];
     const secondPage = {
-      items: [agent("agent-second", "target")],
+      items: [agent("agent-second", "TARGET")],
       hasNextPage: () => false,
     };
     const firstPage = {
@@ -62,47 +62,59 @@ describe("skills agent resolver", () => {
       hasNextPage: () => true,
       getNextPage: mock(async () => secondPage),
     };
-    const listAgents = mock(async () => firstPage);
-    const backend = {
-      listAgents,
-      retrieveAgent: mock(async () => agent("unused", "Unused")),
-    } as unknown as AgentLookupBackend;
-
-    await expect(resolveSkillsAgentByName("Target", backend)).rejects.toThrow(
-      'Multiple agents found with name "Target". Pass --agent with an agent id instead.',
-    );
-
-    expect(listAgents).toHaveBeenCalledTimes(1);
-    expect(listAgents).toHaveBeenCalledWith({ name: "Target", limit: 100 });
-    expect(firstPage.getNextPage).toHaveBeenCalledTimes(1);
-  });
-
-  test("keeps exact-name lookup complete for local plain-object pages", async () => {
-    const firstPageAgents = Array.from({ length: 100 }, (_, index) =>
-      agent(`agent-unrelated-${index}`, `Unrelated ${index}`),
-    );
-    const listAgents = mock(async (params?: { after?: string | null }) => {
-      if (params?.after) {
-        return { items: [agent("agent-target", "Target")] };
-      }
-      return { items: firstPageAgents };
+    const listAgents = mock(async (params?: { query_text?: string | null }) => {
+      if (!params?.query_text) return { items: [] };
+      return firstPage;
     });
     const backend = {
       listAgents,
       retrieveAgent: mock(async () => agent("unused", "Unused")),
     } as unknown as AgentLookupBackend;
 
-    await expect(resolveSkillsAgentByName("Target", backend)).resolves.toBe(
+    await expect(resolveSkillsAgentByName("target", backend)).rejects.toThrow(
+      'Multiple agents found with name "target". Pass --agent with an agent id instead.',
+    );
+
+    expect(listAgents).toHaveBeenCalledTimes(1);
+    expect(listAgents).toHaveBeenCalledWith({
+      query_text: "target",
+      limit: 100,
+    });
+    expect(firstPage.getNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  test("finds a mixed-case exact name on a later plain-object page", async () => {
+    const firstPageAgents = Array.from({ length: 100 }, (_, index) =>
+      agent(`agent-unrelated-${index}`, `Unrelated ${index}`),
+    );
+    const listAgents = mock(
+      async (params?: {
+        after?: string | null;
+        query_text?: string | null;
+      }) => {
+        if (!params?.query_text) return { items: [] };
+        if (params.after) {
+          return { items: [agent("agent-target", "Target")] };
+        }
+        return { items: firstPageAgents };
+      },
+    );
+    const backend = {
+      listAgents,
+      retrieveAgent: mock(async () => agent("unused", "Unused")),
+    } as unknown as AgentLookupBackend;
+
+    await expect(resolveSkillsAgentByName("target", backend)).resolves.toBe(
       "agent-target",
     );
 
     expect(listAgents).toHaveBeenCalledTimes(2);
     expect(listAgents).toHaveBeenNthCalledWith(1, {
-      name: "Target",
+      query_text: "target",
       limit: 100,
     });
     expect(listAgents).toHaveBeenNthCalledWith(2, {
-      name: "Target",
+      query_text: "target",
       limit: 100,
       after: "agent-unrelated-99",
     });
