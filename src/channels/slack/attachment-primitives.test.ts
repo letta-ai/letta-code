@@ -165,6 +165,58 @@ test("resolveSlackMessageFiles returns null when a bounded reply has no exact ro
   ).resolves.toBeNull();
 });
 
+test("resolveSlackMessageFiles treats malformed replies payloads as missing", async () => {
+  for (const payload of [
+    null,
+    [],
+    { messages: null },
+    { messages: "invalid" },
+  ]) {
+    const client = createClient({ replies: async () => payload });
+
+    await expect(
+      resolveSlackMessageFiles({
+        channelId: "C123",
+        threadTs: "100.1",
+        messageTs: "100.2",
+        client,
+      }),
+    ).resolves.toBeNull();
+  }
+});
+
+test("resolveSlackMessageFiles ignores unexpected reply rows", async () => {
+  const client = createClient({
+    replies: async () => ({
+      messages: [
+        null,
+        "invalid",
+        42,
+        { ts: 100.2, files: [{ id: "FNUMERIC" }] },
+        { ts: "100.2", files: [{ id: "FEXACT" }] },
+      ],
+    }),
+  });
+
+  await expect(
+    resolveSlackMessageFiles({
+      channelId: "C123",
+      threadTs: "100.1",
+      messageTs: "100.2",
+      client,
+    }),
+  ).resolves.toEqual([
+    {
+      id: "FEXACT",
+      name: undefined,
+      mimetype: undefined,
+      size: undefined,
+      url_private: undefined,
+      url_private_download: undefined,
+    },
+  ]);
+});
+
 test("resolveSlackMessageFiles uses an exact history lookup outside a thread", async () => {
   const history = mock(async () => ({
     messages: [

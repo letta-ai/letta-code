@@ -55,13 +55,9 @@ type SlackAttachmentLike = {
 };
 
 type SlackMessageLike = {
-  ts?: string;
+  ts: string;
   files?: unknown[];
   attachments?: unknown[];
-};
-
-type SlackMessagePage = {
-  messages?: SlackMessageLike[];
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -72,6 +68,25 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseSlackMessages(value: unknown): SlackMessageLike[] {
+  const page = asRecord(value);
+  if (!page || !Array.isArray(page.messages)) return [];
+
+  return page.messages
+    .map((entry): SlackMessageLike | null => {
+      const message = asRecord(entry);
+      if (!message || !isNonEmptyString(message.ts)) return null;
+      return {
+        ts: message.ts,
+        files: Array.isArray(message.files) ? message.files : undefined,
+        attachments: Array.isArray(message.attachments)
+          ? message.attachments
+          : undefined,
+      };
+    })
+    .filter((entry): entry is SlackMessageLike => Boolean(entry));
 }
 
 function normalizeSlackFileLike(value: unknown): SlackFileLike | null {
@@ -167,30 +182,30 @@ export async function resolveSlackMessageFiles(params: {
   client: SlackAttachmentReadClient;
 }): Promise<SlackFileLike[] | null> {
   if (isNonEmptyString(params.threadTs)) {
-    const page = (await params.client.conversations.replies({
+    const messages = parseSlackMessages(
+      await params.client.conversations.replies({
+        channel: params.channelId,
+        ts: params.threadTs,
+        oldest: params.messageTs,
+        latest: params.messageTs,
+        inclusive: true,
+        limit: 1,
+      }),
+    );
+    const message = messages.find((entry) => entry.ts === params.messageTs);
+    return message ? collectSlackFiles(message) : null;
+  }
+
+  const messages = parseSlackMessages(
+    await params.client.conversations.history({
       channel: params.channelId,
-      ts: params.threadTs,
       oldest: params.messageTs,
       latest: params.messageTs,
       inclusive: true,
       limit: 1,
-    })) as SlackMessagePage;
-    const message = (page.messages ?? []).find(
-      (entry) => entry.ts === params.messageTs,
-    );
-    return message ? collectSlackFiles(message) : null;
-  }
-
-  const page = (await params.client.conversations.history({
-    channel: params.channelId,
-    oldest: params.messageTs,
-    latest: params.messageTs,
-    inclusive: true,
-    limit: 1,
-  })) as SlackMessagePage;
-  const message = (page.messages ?? []).find(
-    (entry) => entry.ts === params.messageTs,
+    }),
   );
+  const message = messages.find((entry) => entry.ts === params.messageTs);
   return message ? collectSlackFiles(message) : null;
 }
 
