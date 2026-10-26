@@ -10,9 +10,9 @@ import {
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { resolveEnvironmentConnectionId } from "@/backend/api/environments";
 import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
 import { apiRequest } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { settingsManager } from "@/settings-manager";
 import {

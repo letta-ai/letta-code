@@ -3,6 +3,7 @@ import type {
   EnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
+import { ApiRequestError } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
 import { runEnvironmentsSubcommand } from "./environments";
 
@@ -40,6 +41,60 @@ async function runList(args: string[], list: typeof listEnvironments) {
     log.mockRestore();
   }
 }
+
+test("current resolves its known device through the point endpoint", async () => {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const deviceId = spyOn(
+    settingsManager,
+    "getOrCreateDeviceId",
+  ).mockReturnValue("test-current-device");
+  let listCalls = 0;
+  try {
+    expect(
+      await runEnvironmentsSubcommand(["current"], {
+        initializeSettings: async () => {},
+        getEnvironmentConnection: async (id) => {
+          expect(id).toBeTruthy();
+          return environment("current");
+        },
+        listEnvironments: async () => {
+          listCalls += 1;
+          throw new Error("current must not list environments");
+        },
+      }),
+    ).toBe(0);
+    expect(listCalls).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+      id: "current",
+      isCurrent: true,
+    });
+  } finally {
+    deviceId.mockRestore();
+    log.mockRestore();
+  }
+});
+
+test("current preserves the friendly not-found result from a point lookup", async () => {
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(
+      await runEnvironmentsSubcommand(["current"], {
+        initializeSettings: async () => {},
+        getEnvironmentConnection: async () => {
+          throw new ApiRequestError("not found", 404, "not found");
+        },
+        listEnvironments: async () => {
+          throw new Error("current must not list environments");
+        },
+      }),
+    ).toBe(1);
+    expect(error).toHaveBeenCalledWith(
+      "No online computer found for this device. Start one with `letta server` and try again.",
+    );
+  } finally {
+    error.mockRestore();
+  }
+});
 
 test("--limit 1 advances by record id even when device ids are shared", async () => {
   const records = [environment("env-1"), environment("env-2")];

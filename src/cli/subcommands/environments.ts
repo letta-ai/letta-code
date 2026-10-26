@@ -2,13 +2,16 @@ import { parseArgs } from "node:util";
 import { getRuntimeEnvironmentDeviceId } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
+  getEnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
+import { ApiRequestError } from "@/backend/api/request";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version.ts";
 
 type EnvironmentsSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
+  getEnvironmentConnection?: typeof getEnvironmentConnection;
   listEnvironments?: typeof listEnvironments;
 };
 
@@ -173,13 +176,20 @@ export async function runEnvironmentsSubcommand(
   const savedName = settingsManager.getListenerEnvName();
   const currentVersion = getVersion();
   if (action === "current") {
-    const result = await list({ limit: 100, onlineOnly: true });
-    const current = findCurrentEnvironment(result.connections, {
-      deviceId,
-      savedName,
-      currentVersion,
-    });
-    if (!current) {
+    const get = deps.getEnvironmentConnection ?? getEnvironmentConnection;
+    let environment: EnvironmentConnection;
+    try {
+      environment = await get(deviceId);
+    } catch (error) {
+      if (!(error instanceof ApiRequestError) || error.status !== 404)
+        throw error;
+      console.error(
+        "No online computer found for this device. Start one with `letta server` and try again.",
+      );
+      return 1;
+    }
+    const current = { ...environment, isOnline: isOnline(environment) };
+    if (!current.isOnline || !current.connectionId) {
       console.error(
         "No online computer found for this device. Start one with `letta server` and try again.",
       );

@@ -80,10 +80,8 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import {
-  resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
-} from "./backend/api/environments";
+import { resolveAgentSandboxConnectionId } from "./backend/api/environments";
+import { resolveEnvironmentConnectionId } from "./backend/environment-lookup";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
