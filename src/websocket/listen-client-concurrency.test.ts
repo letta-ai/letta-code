@@ -1157,11 +1157,12 @@ describe("listen-client multi-worker concurrency", () => {
       toolName: "Write",
       toolArgs: '{"file_path":"foo.ts"}',
     };
-    getResumeDataMock.mockResolvedValueOnce({
+    const r = {
       pendingApproval: approval,
       pendingApprovals: [approval],
       messageHistory: [],
-    });
+    };
+    getResumeDataMock.mockResolvedValueOnce(r).mockResolvedValueOnce(r);
 
     const queuedMessageInput = {
       kind: "message",
@@ -2253,21 +2254,14 @@ describe("listen-client multi-worker concurrency", () => {
       ),
     );
 
-    getResumeDataMock.mockResolvedValueOnce({
-      pendingApproval: {
-        toolCallId: "tool-1",
-        toolName: "Read",
-        toolArgs: "{}",
-      },
-      pendingApprovals: [
-        {
-          toolCallId: "tool-1",
-          toolName: "Read",
-          toolArgs: "{}",
-        },
-      ],
+    const pending = { toolCallId: "tool-1", toolName: "Read", toolArgs: "{}" };
+    const r = {
+      pendingApproval: pending,
+      pendingApprovals: [pending],
       messageHistory: [],
-    });
+    };
+    // Initial fetch, then the still-pending re-check before the denial.
+    getResumeDataMock.mockResolvedValueOnce(r).mockResolvedValueOnce(r);
 
     const parentAbortController = new AbortController();
     const turnLease = runtime.turnLifecycle.begin({
