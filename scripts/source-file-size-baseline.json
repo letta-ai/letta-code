@@ -18,6 +18,7 @@
   "src/cli/helpers/reflection-transcript.ts": 1926,
   "src/cli/mods/local-mod-loader.test.ts": 1043,
   "src/cli/reflection-transcript.test.ts": 1084,
+  "src/cli/subcommands/mcp.ts": 1043,
   "src/cli/subcommands/skills.ts": 1264,
   "src/headless.ts": 4851,
   "src/hooks/integration.test.ts": 1147,
