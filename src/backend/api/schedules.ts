@@ -13,7 +13,7 @@
  */
 
 import { actingUserRequestOptions } from "@/agent/acting-user";
-import { apiRequest } from "./request";
+import { ApiRequestError, apiRequest } from "./request";
 
 // ── Wire types (mirror the cloud scheduledMessages contract) ────────
 
@@ -107,9 +107,16 @@ export async function createCloudSchedule(
   );
 }
 
+export interface ListCloudSchedulesOptions {
+  limit?: number;
+  after?: string;
+  name?: string;
+  conversationId?: string;
+}
+
 export async function listCloudSchedules(
   agentId: string,
-  options: { limit?: number; after?: string } = {},
+  options: ListCloudSchedulesOptions = {},
 ): Promise<ListCloudSchedulesResponse> {
   return apiRequest<ListCloudSchedulesResponse>(
     "GET",
@@ -119,9 +126,106 @@ export async function listCloudSchedules(
       query: {
         limit: options.limit ?? 100,
         after: options.after,
+        name: options.name,
+        conversation_id: options.conversationId,
       },
     },
   );
+}
+
+type ListCloudSchedulesRequest = typeof listCloudSchedules;
+
+export interface ExactCloudScheduleFilter {
+  name?: string;
+  conversationId?: string;
+}
+
+function matchesExactFilter(
+  schedule: CloudSchedule,
+  filter: ExactCloudScheduleFilter,
+): boolean {
+  if (filter.name !== undefined && schedule.name !== filter.name) return false;
+  if (filter.conversationId !== undefined) {
+    const conversationId = schedule.conversation_id ?? "default";
+    if (conversationId !== filter.conversationId) return false;
+  }
+  return true;
+}
+
+async function collectCloudSchedulePages(
+  agentId: string,
+  filter: ExactCloudScheduleFilter,
+  request: ListCloudSchedulesRequest,
+  sendFilter: boolean,
+): Promise<{ schedules: CloudSchedule[]; filterWasHonored: boolean }> {
+  const schedules: CloudSchedule[] = [];
+  let after: string | undefined;
+  do {
+    const response = await request(agentId, {
+      limit: 100,
+      ...(after !== undefined && { after }),
+      ...(sendFilter && filter.name !== undefined && { name: filter.name }),
+      ...(sendFilter &&
+        filter.conversationId !== undefined && {
+          conversationId: filter.conversationId,
+        }),
+    });
+    if (
+      sendFilter &&
+      response.scheduled_messages.some(
+        (schedule) => !matchesExactFilter(schedule, filter),
+      )
+    ) {
+      return { schedules: [], filterWasHonored: false };
+    }
+    schedules.push(
+      ...response.scheduled_messages.filter((schedule) =>
+        matchesExactFilter(schedule, filter),
+      ),
+    );
+    after = response.has_next_page
+      ? response.scheduled_messages.at(-1)?.id
+      : undefined;
+  } while (after);
+  return { schedules, filterWasHonored: true };
+}
+
+function isUnsupportedFilterError(error: unknown): boolean {
+  return (
+    error instanceof ApiRequestError &&
+    (error.status === 400 || error.status === 422)
+  );
+}
+
+/**
+ * Lists every schedule matching exact predicates. New servers filter before
+ * pagination; older servers safely fall back to the legacy unfiltered scan.
+ */
+export async function listCloudSchedulesByExactMatch(
+  agentId: string,
+  filter: ExactCloudScheduleFilter,
+  request: ListCloudSchedulesRequest = listCloudSchedules,
+): Promise<CloudSchedule[]> {
+  // The API currently stores some default-conversation schedules as NULL. Until
+  // the server defines how `conversation_id=default` treats those rows, retain
+  // the legacy normalization so they cannot disappear from client lookups.
+  const canUseFilter = filter.conversationId !== "default";
+  if (canUseFilter) {
+    try {
+      const filtered = await collectCloudSchedulePages(
+        agentId,
+        filter,
+        request,
+        true,
+      );
+      if (filtered.filterWasHonored) return filtered.schedules;
+    } catch (error) {
+      if (!isUnsupportedFilterError(error)) throw error;
+    }
+  }
+
+  return (await collectCloudSchedulePages(agentId, filter, request, false))
+    .schedules;
 }
 
 export async function getCloudSchedule(

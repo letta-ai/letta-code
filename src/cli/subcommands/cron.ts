@@ -25,6 +25,7 @@ import {
   getCloudSchedule,
   listCloudScheduleHistory,
   listCloudSchedules,
+  listCloudSchedulesByExactMatch,
 } from "@/backend/api/schedules";
 import {
   addTask,
@@ -419,14 +420,10 @@ async function handleList(values: CronArgValues): Promise<number> {
   if (agentId && canManageCloudSchedules(agentId)) {
     try {
       await ensureSettingsForCloud();
-      const response = await listCloudSchedules(agentId);
-      for (const schedule of response.scheduled_messages) {
-        if (
-          conversationId &&
-          (schedule.conversation_id ?? "default") !== conversationId
-        ) {
-          continue;
-        }
+      const schedules = conversationId
+        ? await listCloudSchedulesByExactMatch(agentId, { conversationId })
+        : (await listCloudSchedules(agentId)).scheduled_messages;
+      for (const schedule of schedules) {
         output.push(formatCloudScheduleOutput(schedule));
       }
     } catch (err) {
