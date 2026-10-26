@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { getRepositoryMountDir } from "@/agent/memory-git";
+import { ApiRequestError } from "@/backend/api/request";
 import {
   resolveRepositoryReference,
   resolveSharedMemoryAgentId,
@@ -34,13 +35,25 @@ function makeRequest(
       if (method === "GET" && path.startsWith("/v1/repositories?")) {
         return { repositories: REPOSITORIES, has_next_page: false };
       }
-      if (method === "GET" && /\/v1\/agents\/.*\/repositories$/.test(path)) {
+      if (
+        method === "GET" &&
+        /\/v1\/agents\/.*\/repositories\/[^/?]+$/.test(path)
+      ) {
+        const handler = overrides.getAgentRepository;
+        if (handler) return handler(method, path, body);
+        return { attached: true };
+      }
+      if (
+        method === "GET" &&
+        /\/v1\/agents\/.*\/repositories(?:\?|$)/.test(path)
+      ) {
         const handler = overrides.listAgentRepositories;
         if (handler) return handler(method, path, body);
         return {
           repositories: [
             { id: "repo-2", name: "agent-forum", is_primary: false },
           ],
+          has_next_page: false,
         };
       }
       if (method === "POST" && /\/v1\/agents\/.*\/repositories$/.test(path)) {
@@ -192,8 +205,11 @@ describe("runSharedMemorySubcommand", () => {
     });
   });
 
-  test("attach resolves by name, polls, syncs mounts, and recompiles", async () => {
-    const { request, calls } = makeRequest();
+  test("attach resolves by name, polls false to true, syncs mounts, and recompiles", async () => {
+    let statusChecks = 0;
+    const { request, calls } = makeRequest({
+      getAgentRepository: () => ({ attached: ++statusChecks >= 2 }),
+    });
     const mountDir = createMountFor("agent-forum");
     const syncRepositories = mock(async () => ({
       mounted: 1,
@@ -215,17 +231,26 @@ describe("runSharedMemorySubcommand", () => {
         syncRepositories: syncRepositories as never,
         invalidateClientSkills,
         recompileAgent,
+        attachPoll: { intervalMs: 0, attempts: 3 },
       },
     );
     expect(code).toBe(0);
+    const attachCallIndex = calls.findIndex(
+      (call) =>
+        call.method === "POST" &&
+        call.path === `/v1/agents/${MOUNT_AGENT_ID}/repositories` &&
+        (call.body as { repository_id: string }).repository_id === "repo-2",
+    );
+    const statusCalls = calls.filter(
+      (call) =>
+        call.method === "GET" &&
+        call.path === `/v1/agents/${MOUNT_AGENT_ID}/repositories/repo-2`,
+    );
+    expect(attachCallIndex).toBeGreaterThanOrEqual(0);
+    expect(statusCalls).toHaveLength(2);
     expect(
-      calls.some(
-        (call) =>
-          call.method === "POST" &&
-          call.path === `/v1/agents/${MOUNT_AGENT_ID}/repositories` &&
-          (call.body as { repository_id: string }).repository_id === "repo-2",
-      ),
-    ).toBe(true);
+      calls.indexOf(statusCalls[0] as (typeof calls)[number]),
+    ).toBeGreaterThan(attachCallIndex);
     expect(syncRepositories).toHaveBeenCalledWith(MOUNT_AGENT_ID);
     expect(invalidateClientSkills).toHaveBeenCalledTimes(1);
     expect(recompileAgent).toHaveBeenCalledWith(MOUNT_AGENT_ID);
@@ -295,8 +320,8 @@ describe("runSharedMemorySubcommand", () => {
   });
 
   test("attach fails cleanly when the repository never becomes visible", async () => {
-    const { request } = makeRequest({
-      listAgentRepositories: () => ({ repositories: [] }),
+    const { request, calls } = makeRequest({
+      getAgentRepository: () => ({ attached: false }),
     });
     const syncRepositories = mock(async () => ({
       mounted: 0,
@@ -317,6 +342,150 @@ describe("runSharedMemorySubcommand", () => {
     expect(code).toBe(1);
     expect(errors.join("\n")).toContain("did not appear");
     expect(syncRepositories).not.toHaveBeenCalled();
+    expect(
+      calls.filter(
+        (call) => call.path === "/v1/agents/agent-xyz/repositories/repo-1",
+      ),
+    ).toHaveLength(3);
+    expect(
+      calls.some(
+        (call) =>
+          call.path.includes("/v1/agents/") &&
+          call.path.includes("repositories?limit="),
+      ),
+    ).toBe(false);
+  });
+
+  test("attach falls back to complete paginated lists only when status is unavailable", async () => {
+    const { request, calls } = makeRequest({
+      getAgentRepository: () => {
+        throw new ApiRequestError("not found", 404, "not found");
+      },
+      listAgentRepositories: (_method, path) => {
+        const offset = new URL(`https://example.test${path}`).searchParams.get(
+          "offset",
+        );
+        if (offset === "0") {
+          return {
+            repositories: Array.from({ length: 50 }, (_, index) => ({
+              id: `repo-other-${index}`,
+              name: `other-${index}`,
+              is_primary: false,
+            })),
+            has_next_page: true,
+          };
+        }
+        return {
+          repositories: [
+            { id: "repo-1", name: "shared-notes", is_primary: false },
+          ],
+          has_next_page: false,
+        };
+      },
+    });
+    const mountDir = createMountFor("shared-notes");
+    const code = await runSharedMemorySubcommand(
+      ["attach", "shared-notes", "--agent", MOUNT_AGENT_ID],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        syncRepositories: async () => ({
+          mounted: 1,
+          skipped: 0,
+          failed: 0,
+          summaries: [`shared-notes: ${mountDir}`],
+        }),
+        recompileAgent: async () => {},
+        attachPoll: { intervalMs: 0, attempts: 2 },
+      },
+    );
+    expect(code).toBe(0);
+    expect(
+      calls.filter(
+        (call) =>
+          call.path === `/v1/agents/${MOUNT_AGENT_ID}/repositories/repo-1`,
+      ),
+    ).toHaveLength(1);
+    expect(
+      calls.some((call) => call.path.endsWith("?limit=50&offset=50")),
+    ).toBe(true);
+  });
+
+  for (const status of [401, 500]) {
+    test(`attach surfaces status endpoint HTTP ${status} without list fallback`, async () => {
+      const { request, calls } = makeRequest({
+        getAgentRepository: () => {
+          throw new ApiRequestError("status failed", status, "status failed");
+        },
+      });
+      const code = await runSharedMemorySubcommand(
+        ["attach", "shared-notes", "--agent", "agent-xyz"],
+        {
+          initializeSettings: async () => {},
+          request: request as never,
+          attachPoll: { intervalMs: 0, attempts: 3 },
+        },
+      );
+      expect(code).toBe(1);
+      expect(errors.join("\n")).toContain("status failed");
+      expect(
+        calls.some(
+          (call) =>
+            call.path.includes("/v1/agents/") &&
+            call.path.includes("repositories?limit="),
+        ),
+      ).toBe(false);
+    });
+  }
+
+  test("attach rejects a malformed status response", async () => {
+    const { request, calls } = makeRequest({
+      getAgentRepository: () => ({ attached: "yes" }),
+    });
+    const code = await runSharedMemorySubcommand(
+      ["attach", "shared-notes", "--agent", "agent-xyz"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        attachPoll: { intervalMs: 0, attempts: 3 },
+      },
+    );
+    expect(code).toBe(1);
+    expect(errors.join("\n")).toContain("Invalid repository attachment status");
+    expect(
+      calls.some(
+        (call) =>
+          call.path.includes("/v1/agents/") &&
+          call.path.includes("repositories?limit="),
+      ),
+    ).toBe(false);
+  });
+
+  test("attach preserves cancellation from the status request", async () => {
+    const cancellation = new DOMException(
+      "The operation was aborted",
+      "AbortError",
+    );
+    const { request, calls } = makeRequest({
+      getAgentRepository: () => {
+        throw cancellation;
+      },
+    });
+    const code = await runSharedMemorySubcommand(
+      ["attach", "shared-notes", "--agent", "agent-xyz"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        attachPoll: { intervalMs: 0, attempts: 3 },
+      },
+    );
+    expect(code).toBe(1);
+    expect(errors.join("\n")).toContain("The operation was aborted");
+    expect(
+      calls.filter(
+        (call) => call.path === "/v1/agents/agent-xyz/repositories/repo-1",
+      ),
+    ).toHaveLength(1);
   });
 
   test("attach requires an agent id", async () => {
