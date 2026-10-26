@@ -353,6 +353,21 @@ export async function resolveStaleApprovals(
   let pendingApprovals = resumeData.pendingApprovals || [];
   if (pendingApprovals.length === 0) return null;
 
+  // Another client may resolve these calls while we prepare or send the
+  // denial; re-read the server and keep only the calls still pending.
+  const filterStillPending = async (approvals: typeof pendingApprovals) => {
+    const fresh = await getResumeDataImpl(agent, requestedConversationId, {
+      includeMessageHistory: false,
+      throwOnReadError: true,
+    }).catch((err: unknown) => {
+      if (isBackendNotFoundError(err)) return null;
+      throw err;
+    });
+    assertCurrentTurnLease();
+    const ids = new Set(fresh?.pendingApprovals?.map((a) => a.toolCallId));
+    return approvals.filter((a) => ids.has(a.toolCallId));
+  };
+
   const recoveryConversationId = runtime.conversationId;
   const recoveryWorkingDirectory =
     runtime.activeWorkingDirectory ??
@@ -395,6 +410,7 @@ export async function resolveStaleApprovals(
     preparedToolContext.preparedToolContext.loadedToolNames;
   const recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
+  pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
@@ -456,8 +472,19 @@ export async function resolveStaleApprovals(
           allowApprovalRecovery: false,
           authorityGuard: deps.authorityGuard,
         },
-      );
+      ).catch(async (sendError: unknown) => {
+        // If the server rejected the denial because nothing is pending
+        // anymore, recovery is done; otherwise surface the original error.
+        assertCurrentTurnLease();
+        const stillPending = await filterStillPending(pendingApprovals).catch(
+          () => null,
+        );
+        assertCurrentTurnLease();
+        if (stillPending?.length === 0) return null;
+        throw sendError;
+      });
       assertCurrentTurnLease();
+      if (recoverySendResult === null) return null;
       if (recoverySendResult.kind !== "stream") {
         throw new Error(
           "Approval recovery send resolved without a continuation stream",
