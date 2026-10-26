@@ -149,6 +149,43 @@ describe("public Slack message ingress policy", () => {
       "<@UALICE> hi",
     );
   });
+
+  test("drops unmentioned top-level channel messages by default", () => {
+    expect(
+      resolveSlackMessageIngressPolicy({
+        message: {
+          channel: "C123",
+          user: "U123",
+          text: "standup in five",
+          ts: "100.3",
+        },
+        botUserId: "UBOT",
+        appMentionEventWillHandleMentions: true,
+      }),
+    ).toEqual({ shouldRoute: false, reason: "top_level_channel_message" });
+  });
+
+  test("accepts unmentioned top-level channel messages in listen mode", () => {
+    const result = resolveSlackMessageIngressPolicy({
+      message: {
+        channel: "C123",
+        user: "U123",
+        text: "standup in five",
+        ts: "100.3",
+      },
+      botUserId: "UBOT",
+      appMentionEventWillHandleMentions: true,
+      listenMode: true,
+    });
+
+    expect(result).toMatchObject({
+      shouldRoute: true,
+      chatType: "channel",
+      threadId: "100.3",
+      wasMentioned: false,
+      effectiveMention: false,
+    });
+  });
 });
 
 describe("public Slack attachment primitives", () => {

@@ -72,6 +72,10 @@ export interface ResolveSlackMessageIngressPolicyParams {
   botUserId?: string | null;
   isAgentThread?: boolean;
   appMentionEventWillHandleMentions?: boolean;
+  // Listen mode accepts unmentioned top-level channel messages so they can be
+  // observed without a mention. They still route through listen-only routes,
+  // which keep outbound replies disabled.
+  listenMode?: boolean;
 }
 
 export interface ResolveSlackAppMentionIngressPolicyParams {
@@ -257,7 +261,11 @@ export function resolveSlackMessageIngressPolicy(
       ? (firstNonEmptyString(message.thread_ts) ?? null)
       : (firstNonEmptyString(message.thread_ts, message.ts) ?? null);
 
-  if (chatType === "channel" && !isNonEmptyString(message.thread_ts)) {
+  if (
+    chatType === "channel" &&
+    !isNonEmptyString(message.thread_ts) &&
+    params.listenMode !== true
+  ) {
     return { shouldRoute: false, reason: "top_level_channel_message" };
   }
 

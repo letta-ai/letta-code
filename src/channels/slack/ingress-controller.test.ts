@@ -562,3 +562,83 @@ test("slack adapter auto-routes replies after threaded file uploads", async () =
     }),
   );
 });
+
+test("slack adapter drops unmentioned top-level channel messages by default", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "standup in five",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).not.toHaveBeenCalled();
+});
+
+test("slack adapter forwards unmentioned top-level channel messages in listen mode", async () => {
+  const adapter = createSlackAdapter({
+    ...slackAccountDefaults,
+    channel: "slack",
+    enabled: true,
+    mode: "socket",
+    botToken: "xoxb-test-token-1234567890",
+    appToken: "xapp-test-token-1234567890",
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    listenMode: true,
+  });
+
+  const onMessage = mock(async () => {});
+  adapter.onMessage = onMessage;
+
+  await adapter.start();
+  const app = FakeSlackApp.instances[0];
+  const handler = app?.messageHandler;
+  if (!handler) {
+    throw new Error("Expected Slack message handler");
+  }
+
+  await handler({
+    message: {
+      channel: "C123",
+      user: "U123",
+      text: "standup in five",
+      ts: "1712800000.000100",
+    },
+  });
+
+  expect(onMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      channel: "slack",
+      chatId: "C123",
+      text: "standup in five",
+      messageId: "1712800000.000100",
+      threadId: "1712800000.000100",
+      chatType: "channel",
+      isMention: false,
+      routedBy: "thread",
+    }),
+  );
+});

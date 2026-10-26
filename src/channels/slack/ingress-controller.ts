@@ -185,6 +185,7 @@ export function createSlackIngressController(params: {
         message: rawMessage,
         botUserId: params.getBotUserId(),
         appMentionEventWillHandleMentions: true,
+        listenMode: config.listenMode === true,
       });
       if (!basePolicy.shouldRoute) return;
       if (
@@ -222,6 +223,7 @@ export function createSlackIngressController(params: {
         botUserId: params.getBotUserId(),
         isAgentThread,
         appMentionEventWillHandleMentions: true,
+        listenMode: config.listenMode === true,
       });
       if (!policy.shouldRoute) return;
       rememberMessageThread(policy.messageId, policy.threadId);
