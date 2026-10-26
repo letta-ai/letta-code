@@ -40,6 +40,7 @@ import {
 import { completeInitialConnectionStartup } from "./connection-state-sync";
 import {
   CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON,
+  getListenerSocketOptions,
   INITIAL_RETRY_DELAY_MS,
   MAX_RETRY_ATTEMPTS,
   MAX_RETRY_DELAY_MS,
@@ -718,11 +719,11 @@ async function connectWithRetry(
 
   const streamUrl = supportsSplitStatusChannels ? new URL(url) : null;
   if (streamUrl) streamUrl.searchParams.set("channel", "stream");
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  const socket = new WebSocket(url.toString(), { headers });
+  const socketOptions = getListenerSocketOptions(apiKey);
+  const socket = new WebSocket(url.toString(), socketOptions);
   let streamSocket =
     streamUrl && !pairIdentity
-      ? new WebSocket(streamUrl.toString(), { headers })
+      ? new WebSocket(streamUrl.toString(), socketOptions)
       : null;
 
   const lifecycleLog = createListenerLifecycleLog(opts);
@@ -789,7 +790,7 @@ async function connectWithRetry(
             identity: pairIdentity,
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
-              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              streamSocket = new WebSocket(streamUrl.toString(), socketOptions);
               return streamSocket;
             },
             trackListenerError,
