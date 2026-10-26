@@ -65,12 +65,9 @@ async function listCompleteEnvironmentCollection(
   }
 }
 
-async function tryExactEnvironmentList(
+async function tryFilteredEnvironmentList(
   list: typeof listEnvironments,
-  query: Pick<
-    ListEnvironmentsOptions,
-    "connectionName" | "onlineOnly" | "source"
-  >,
+  query: Pick<ListEnvironmentsOptions, "onlineOnly" | "source">,
 ): Promise<EnvironmentConnection[] | null> {
   let response: Awaited<ReturnType<typeof listEnvironments>>;
   try {
@@ -82,8 +79,6 @@ async function tryExactEnvironmentList(
 
   const rowsMatch = response.connections.every(
     (environment) =>
-      (query.connectionName === undefined ||
-        environment.connectionName === query.connectionName) &&
       (query.source === undefined ||
         matchesSource(environment, query.source)) &&
       (!query.onlineOnly || isEnvironmentOnline(environment)),
@@ -154,39 +149,31 @@ export async function resolveEnvironmentConnectionId(
       throw error;
   }
 
-  // The point route above handles stable device IDs. For names, ask new servers
-  // for the exact remote rows in one bounded request. Empty results still fall
-  // back because the selector may instead be an environment or connection ID.
-  const exact =
-    trimmed.length <= 255
-      ? await tryExactEnvironmentList(list, {
-          connectionName: trimmed,
-          source: "remote",
-        })
-      : null;
-  if (exact && exact.length > 0) {
-    return selectEnvironment(trimmed, exact);
-  }
-
-  // Older servers may reject or ignore the selectors. Read every unfiltered
-  // page so exact IDs, later-page names, ambiguity, and offline errors retain
-  // their pre-filter semantics.
+  // A generic selector can be a connection ID, environment ID, device ID, or
+  // name. The list API can filter names, but that subset cannot prove that the
+  // same string is not a higher-priority explicit ID or a local name. Read the
+  // complete actor-visible collection before resolving any non-device selector.
   const connections = await listCompleteEnvironmentCollection(list);
-  const matches = connections.filter(
+  const explicitMatches = connections.filter(
     (environment) =>
       environment.connectionId === trimmed ||
       environment.id === trimmed ||
-      environment.deviceId === trimmed ||
-      environment.connectionName === trimmed,
+      environment.deviceId === trimmed,
   );
-  return selectEnvironment(trimmed, matches);
+  if (explicitMatches.length > 0) {
+    return selectEnvironment(trimmed, explicitMatches);
+  }
+  return selectEnvironment(
+    trimmed,
+    connections.filter((environment) => environment.connectionName === trimmed),
+  );
 }
 
 export async function resolveDesktopEnvironmentConnectionId(
   deps: Pick<EnvironmentLookupDeps, "list"> = {},
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
   const list = deps.list ?? listEnvironments;
-  const filtered = await tryExactEnvironmentList(list, {
+  const filtered = await tryFilteredEnvironmentList(list, {
     onlineOnly: true,
     source: "remote",
   });

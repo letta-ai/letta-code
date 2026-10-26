@@ -387,8 +387,8 @@ describe("launchRemoteExternalCodingAgent", () => {
       }
       expect(url.pathname).toBe("/v1/environments");
       expect(url.searchParams.get("limit")).toBe("100");
-      expect(url.searchParams.get("connectionName")).toBe("brad-box");
-      expect(url.searchParams.get("source")).toBe("remote");
+      expect(url.searchParams.has("connectionName")).toBe(false);
+      expect(url.searchParams.has("source")).toBe(false);
       return Response.json({
         connections: [environment(true)],
         hasNextPage: false,

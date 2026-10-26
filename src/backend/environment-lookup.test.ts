@@ -69,7 +69,7 @@ describe("Computer environment resolution", () => {
     expect(listCalls).toBe(0);
   });
 
-  test("uses the bounded exact-name and remote-source fast path", async () => {
+  test("resolves an exact name after one complete bounded page", async () => {
     const selected = environment({ connectionName: "Work Mac" });
     const calls: Parameters<typeof listEnvironments>[0][] = [];
 
@@ -82,79 +82,104 @@ describe("Computer environment resolution", () => {
     });
 
     expect(result).toEqual({ connectionId: "conn-1", environment: selected });
-    expect(calls).toEqual([
-      { limit: 100, connectionName: "Work Mac", source: "remote" },
-    ]);
+    expect(calls).toEqual([{ limit: 100 }]);
   });
 
-  test("falls back to complete pagination when a server ignores the filter", async () => {
+  test("prefers an explicit connection ID over another device's exact name", async () => {
+    const explicit = environment({
+      id: "env-explicit",
+      connectionId: "selector",
+      deviceId: "device-explicit",
+      connectionName: "Explicit",
+    });
+    const named = environment({
+      id: "env-named",
+      connectionId: "conn-named",
+      deviceId: "device-named",
+      connectionName: "selector",
+    });
+
+    await expect(
+      resolveEnvironmentConnectionId("selector", {
+        get: missingPointLookup,
+        list: async (options = {}) =>
+          options.connectionName
+            ? { connections: [named], hasNextPage: false }
+            : { connections: [named, explicit], hasNextPage: false },
+      }),
+    ).resolves.toEqual({ connectionId: "selector", environment: explicit });
+  });
+
+  test("prefers an explicit environment ID over another device's exact name", async () => {
+    const explicit = environment({
+      id: "selector",
+      connectionId: "conn-explicit",
+      deviceId: "device-explicit",
+      connectionName: "Explicit",
+    });
+    const named = environment({
+      id: "env-named",
+      connectionId: "conn-named",
+      deviceId: "device-named",
+      connectionName: "selector",
+    });
+
+    await expect(
+      resolveEnvironmentConnectionId("selector", {
+        get: missingPointLookup,
+        list: async (options = {}) =>
+          options.connectionName
+            ? { connections: [named], hasNextPage: false }
+            : { connections: [named, explicit], hasNextPage: false },
+      }),
+    ).resolves.toEqual({
+      connectionId: "conn-explicit",
+      environment: explicit,
+    });
+  });
+
+  test("rejects one exact name shared by local and remote devices", async () => {
+    const remote = environment({ connectionName: "Desktop" });
+    const local = environment({
+      id: "env-local",
+      connectionId: "local-connection",
+      deviceId: "device-local",
+      connectionName: "Desktop",
+      organizationId: "local",
+    });
+
+    await expect(
+      resolveEnvironmentConnectionId("Desktop", {
+        get: missingPointLookup,
+        list: async (options = {}) =>
+          options.connectionName
+            ? { connections: [remote], hasNextPage: false }
+            : { connections: [remote, local], hasNextPage: false },
+      }),
+    ).rejects.toThrow('Computer "Desktop" is ambiguous');
+  });
+
+  test("finds an explicit listener ID on a later complete page", async () => {
     const decoy = environment({
       id: "env-decoy",
-      deviceId: "device-decoy",
+      connectionId: "conn-decoy",
       connectionName: "Other",
     });
-    const selected = environment({ connectionName: "Work Mac" });
-    const calls: Parameters<typeof listEnvironments>[0][] = [];
-
-    const result = await resolveEnvironmentConnectionId("Work Mac", {
-      get: missingPointLookup,
-      list: async (options = {}) => {
-        calls.push(options);
-        if (options.connectionName) {
-          return { connections: [decoy], hasNextPage: true };
-        }
-        if (!options.after) {
-          return { connections: [decoy], hasNextPage: true };
-        }
-        return { connections: [selected], hasNextPage: false };
-      },
-    });
-
-    expect(result.environment).toBe(selected);
-    expect(calls).toEqual([
-      { limit: 100, connectionName: "Work Mac", source: "remote" },
-      { limit: 100 },
-      { limit: 100, after: "env-decoy" },
-    ]);
-  });
-
-  test("falls back when an older server rejects exact selectors", async () => {
-    const selected = environment({ connectionName: "Work Mac" });
-    const calls: Parameters<typeof listEnvironments>[0][] = [];
-
-    const result = await resolveEnvironmentConnectionId("Work Mac", {
-      get: missingPointLookup,
-      list: async (options = {}) => {
-        calls.push(options);
-        if (options.connectionName) {
-          throw new ApiRequestError("bad query", 400, "bad query");
-        }
-        return { connections: [selected], hasNextPage: false };
-      },
-    });
-
-    expect(result.environment).toBe(selected);
-    expect(calls).toEqual([
-      { limit: 100, connectionName: "Work Mac", source: "remote" },
-      { limit: 100 },
-    ]);
-  });
-
-  test("finds explicit listener ids through the complete fallback", async () => {
     const selected = environment();
-    const list: typeof listEnvironments = async (options = {}) => {
-      if (options.connectionName) {
-        return { connections: [], hasNextPage: false };
-      }
-      return { connections: [selected], hasNextPage: false };
-    };
+    const calls: Parameters<typeof listEnvironments>[0][] = [];
 
     await expect(
       resolveEnvironmentConnectionId("env-1", {
         get: missingPointLookup,
-        list,
+        list: async (options = {}) => {
+          calls.push(options);
+          return options.after
+            ? { connections: [selected], hasNextPage: false }
+            : { connections: [decoy], hasNextPage: true };
+        },
       }),
     ).resolves.toEqual({ connectionId: "conn-1", environment: selected });
+    expect(calls).toEqual([{ limit: 100 }, { limit: 100, after: "env-decoy" }]);
   });
 
   test("selects the freshest online listener for one device name", async () => {
@@ -274,6 +299,72 @@ describe("Desktop environment resolution", () => {
     });
     expect(calls).toEqual([{ limit: 100, onlineOnly: true, source: "remote" }]);
   });
+  test("falls back when an older server rejects the source selector", async () => {
+    const selected = environment({
+      deviceId: "desktop:installation:user-1",
+      connectionId: "conn-desktop",
+      listenerInstanceId: "desktop-primary:installation",
+    });
+    const calls: Parameters<typeof listEnvironments>[0][] = [];
+
+    await expect(
+      resolveDesktopEnvironmentConnectionId({
+        list: async (options = {}) => {
+          calls.push(options);
+          if (options.source) {
+            throw new ApiRequestError("bad query", 400, "bad query");
+          }
+          return { connections: [selected], hasNextPage: false };
+        },
+      }),
+    ).resolves.toEqual({
+      connectionId: "conn-desktop",
+      environment: selected,
+    });
+    expect(calls).toEqual([
+      { limit: 100, onlineOnly: true, source: "remote" },
+      { limit: 100, onlineOnly: true },
+    ]);
+  });
+
+  test("falls back through all pages when a server ignores source", async () => {
+    const local = environment({
+      id: "env-local",
+      connectionId: "local-connection",
+      deviceId: "device-local",
+      organizationId: "local",
+    });
+    const selected = environment({
+      id: "env-desktop",
+      deviceId: "desktop:installation:user-1",
+      connectionId: "conn-desktop",
+      listenerInstanceId: "desktop-primary:installation",
+    });
+    const calls: Parameters<typeof listEnvironments>[0][] = [];
+
+    await expect(
+      resolveDesktopEnvironmentConnectionId({
+        list: async (options = {}) => {
+          calls.push(options);
+          if (options.source) {
+            return { connections: [local], hasNextPage: true };
+          }
+          return options.after
+            ? { connections: [selected], hasNextPage: false }
+            : { connections: [local], hasNextPage: true };
+        },
+      }),
+    ).resolves.toEqual({
+      connectionId: "conn-desktop",
+      environment: selected,
+    });
+    expect(calls).toEqual([
+      { limit: 100, onlineOnly: true, source: "remote" },
+      { limit: 100, onlineOnly: true },
+      { limit: 100, after: "env-local", onlineOnly: true },
+    ]);
+  });
+
   test("paginates the full remote collection before checking ambiguity", async () => {
     const first = environment({
       id: "env-desktop-1",
