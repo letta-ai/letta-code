@@ -31,7 +31,7 @@
     },
     "mcp": {
       "type": "object",
-      "description": "Claude Code, Codex, and Cursor automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",
+      "description": "External coding workers automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",
       "properties": {
         "inherit": {
           "type": "boolean",
