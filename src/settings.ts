@@ -4,7 +4,10 @@
 import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
-import { resolveGlobalSettingsPath } from "./utils/settings-path.js";
+import {
+  resolveGlobalSettingsPath,
+  shouldIsolateHomeProjectConfig,
+} from "./utils/settings-path.js";
 
 export interface Settings {
   lastAgent: string | null;
@@ -113,6 +116,7 @@ function getProjectSettingsPath(): string {
  * Returns null if file doesn't exist
  */
 export async function loadProjectSettings(): Promise<ProjectSettings | null> {
+  if (shouldIsolateHomeProjectConfig(process.cwd())) return null;
   const settingsPath = getProjectSettingsPath();
 
   try {
@@ -136,6 +140,7 @@ export async function loadProjectSettings(): Promise<ProjectSettings | null> {
 export async function saveProjectSettings(
   settings: ProjectSettings,
 ): Promise<void> {
+  if (shouldIsolateHomeProjectConfig(process.cwd())) return;
   const settingsPath = getProjectSettingsPath();
   const dirPath = join(process.cwd(), ".letta");
 
