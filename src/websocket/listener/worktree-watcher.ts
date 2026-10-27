@@ -172,6 +172,8 @@ async function handleNewWorktree(params: {
   });
 }
 
+export const __worktreeWatcherTestUtils = { handleNewWorktree };
+
 async function waitForDirectoryCreation(
   parentDir: string,
   targetName: string,
