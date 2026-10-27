@@ -174,7 +174,7 @@ You can also allow specific commands in `.claude/settings.json` so Claude doesn'
 
 ## Work effectively with Claude Code
 
-These tips help you get better results from Claude Code. For more on specific prompts, verification, and planning, see [Best practices](https://code.claude.com/docs/en/best-practices.md).
+These tips help you get better results from Claude Code. For more on specific prompts, verification, and the rules worth enforcing rather than prompting for, see [Best practices](https://code.claude.com/docs/en/best-practices.md).
 
 ### Ask Claude Code for help
 

@@ -396,7 +396,7 @@ Press `Esc` to interrupt the turn without submitting your draft. Claude Code kee
 Claude Code runs some commands as soon as you send them instead of queueing them, among them `/model`, `/effort`, and `/fast`. Each of the three changes a setting: the model, the effort level, or fast mode. Whether Claude Code applies the new setting to the turn Claude is already working on, or only from your next turn, differs by command:
 
 * [`/model`](https://code.claude.com/docs/en/model-config#setting-your-model): once you confirm the [cache warning](https://code.claude.com/docs/en/prompt-caching.md#switching-models), if Claude Code shows one, Claude Code applies your change to the next request it makes in that turn
-* [`/effort`](https://code.claude.com/docs/en/model-config#adjust-effort-level): once you confirm the [cache warning](https://code.claude.com/docs/en/prompt-caching.md#changing-effort-level), if Claude Code shows one, Claude Code applies your change to the next request it makes in that turn
+* `/effort`: the next message you send runs at the new level. To [start it in the turn Claude is already working on](https://code.claude.com/docs/en/model-config.md#when-a-new-effort-level-starts), queue a message while Claude is running tool calls
 * [`/fast`](https://code.claude.com/docs/en/fast-mode#toggle-fast-mode): Claude Code keeps the fast mode setting that was active when the turn started, so your speed change applies from your next turn. If your current model doesn't support fast mode, turning it on also [switches your model](https://code.claude.com/docs/en/prompt-caching.md#turning-on-fast-mode), and Claude Code uses the new model from its next request in that turn
 
 ### Background a session with messages queued
