@@ -71,7 +71,6 @@ async function start(command: CursorWorkerStart): Promise<void> {
       "shell",
       "read",
       "edit",
-      "write",
       "grep",
       "glob",
       "ls",
