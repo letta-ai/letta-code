@@ -33,18 +33,13 @@ import { homedir } from "node:os";
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
-import {
-  getLocalBackendCrossAgentTreeRoot,
-  getLocalBackendStorageDir,
-} from "@/utils/local-backend-paths";
-import {
-  hasGlobalConfigDirOverride,
-  resolveGlobalConfigDir,
-} from "@/utils/settings-path";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
-import { canonicalizeRoot } from "./sandbox-policy";
+import {
+  canonicalizeRoot,
+  getCrossBackendAgentsTreeRoots,
+} from "./sandbox-policy";
 
 // --------------------------------------------------------------------------
 // Allowed agents
@@ -124,18 +119,6 @@ export interface CrossAgentTargets {
 const UNRESOLVED_AGENT_ID = "<unresolved>";
 
 /**
- * The agents-tree root on this machine, e.g. `/home/user/.letta/agents`,
- * normalized (forward slashes, no trailing slash).
- */
-function getAgentsTreeRoot(homeDir: string, env: NodeJS.ProcessEnv): string {
-  const configDir = hasGlobalConfigDirOverride(env)
-    ? resolveGlobalConfigDir(env, homeDir)
-    : `${homeDir}/.letta`;
-  const normalizedConfig = configDir.replace(/\\/g, "/").replace(/\/+$/, "");
-  return `${normalizedConfig}/agents`;
-}
-
-/**
  * Normalize a path for structural comparison: forward slashes, no
  * trailing slash, preserving a bare `/` as root.
  */
@@ -163,29 +146,19 @@ export type AgentsTreeClassification =
   | { kind: "agent"; id: string };
 
 /**
- * Every cross-agent memory tree on this machine, normalized. A target under any
- * of these (and not belonging to self/parent) is denied:
- *   - API backend:   `<home>/.letta/agents`
- *   - local backend: `<storage>/memfs` — storage is `$LETTA_LOCAL_BACKEND_DIR`
- *     or `<home>/.letta/lc-local-backend`
- * Both share the `<root>/<agentId>/...` shape, so {@link classifyPathUnderRoot}
- * resolves the agent id regardless of backend. The local root is always included
- * (a no-op when local backend is unused — no files live there) so a single agent
- * can't read a *local* peer's memory via in-process Read/Edit/Write even though
- * the kernel sandbox can't see those non-forking tools.
+ * Every cross-agent memory tree on this machine, normalized. This includes API
+ * and local-backend trees under both the active product config root and legacy
+ * HOME-local Letta root, plus an explicit local-backend storage override. All
+ * share the `<root>/<agentId>/...` shape, so {@link classifyPathUnderRoot}
+ * resolves the agent id regardless of backend or product.
  */
 function getCrossAgentTreeRoots(
   homeDir: string,
   env: NodeJS.ProcessEnv,
 ): string[] {
-  return [
-    getAgentsTreeRoot(homeDir, env),
-    normalizePathForCompare(
-      getLocalBackendCrossAgentTreeRoot(
-        getLocalBackendStorageDir(homeDir, env),
-      ),
-    ),
-  ];
+  return getCrossBackendAgentsTreeRoots({ homeDir, env }).map(
+    normalizePathForCompare,
+  );
 }
 
 /**

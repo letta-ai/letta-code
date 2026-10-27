@@ -173,6 +173,27 @@ test("cross-agent policy defaults to both backend agents trees", () => {
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
 });
 
+test("product isolation walls off active and legacy API and local trees", () => {
+  const home = makeTempDir();
+  const productRoot = join(home, ".dream");
+  const roots = getCrossBackendAgentsTreeRoots({
+    homeDir: home,
+    env: {
+      HOME: home,
+      LETTA_CONFIG_DIR: productRoot,
+    } as NodeJS.ProcessEnv,
+  });
+
+  expect(new Set(roots)).toEqual(
+    new Set(
+      [productRoot, join(home, ".letta")].flatMap((configRoot) => [
+        canonicalizeRoot(join(configRoot, "agents")),
+        canonicalizeRoot(join(configRoot, "lc-local-backend", "memfs")),
+      ]),
+    ),
+  );
+});
+
 test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {
   const tree = getDefaultAgentsTreeRoot();
   const agentDir = join(tree, "abc");

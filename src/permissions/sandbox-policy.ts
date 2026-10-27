@@ -1,4 +1,5 @@
 import { existsSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -47,23 +48,42 @@ export interface CrossBackendAgentsTreeRootsOptions {
 }
 
 /**
- * Every cross-agent memory tree the kernel sandbox must wall off. API/cloud
- * agents live under `~/.letta/agents`; local-backend agents live under
- * `<storage>/memfs`. A process running in either backend must deny both trees,
- * then carve back only the current/parent agent roots it is allowed to touch.
+ * Every cross-agent memory tree the kernel sandbox must wall off. This includes
+ * the active product config root and the legacy HOME-local Letta root when they
+ * differ, because Dream and ordinary Letta Code can coexist on one machine.
+ * Each config root can contain API/cloud agents under `agents/` and local
+ * backend agents under `lc-local-backend/memfs/`; an explicit local-backend
+ * storage override is guarded too.
  */
 export function getCrossBackendAgentsTreeRoots(
   options: CrossBackendAgentsTreeRootsOptions = {},
 ): string[] {
   const homeDir = options.homeDir;
   const env = options.env ?? process.env;
+  const resolvedHome = homeDir ?? env.HOME ?? homedir();
+  const configRoots = new Set([
+    resolveGlobalConfigDir(env, resolvedHome),
+    join(resolvedHome, ".letta"),
+  ]);
   const localBackendStorageDir =
     options.localBackendStorageDir ?? getLocalBackendStorageDir(homeDir, env);
+  const roots = new Set<string>();
 
-  return [
-    getDefaultAgentsTreeRoot(homeDir, env),
+  for (const configRoot of configRoots) {
+    roots.add(canonicalizeRoot(join(configRoot, "agents")));
+  }
+  roots.add(
     canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(localBackendStorageDir)),
-  ];
+  );
+  for (const configRoot of configRoots) {
+    roots.add(
+      canonicalizeRoot(
+        getLocalBackendCrossAgentTreeRoot(join(configRoot, "lc-local-backend")),
+      ),
+    );
+  }
+
+  return [...roots];
 }
 
 /**
