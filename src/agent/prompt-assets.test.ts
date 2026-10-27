@@ -6,7 +6,7 @@ import {
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
-import memoryV2Prompt from "@/agent/subagents/builtin/memory-v2.md";
+import memoryV2Prompt from "@/agent/subagents/builtin/memory-repair.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
@@ -134,10 +134,13 @@ describe("buildSystemPrompt", () => {
   });
 
   test.each(["memfs", "local-memfs", "root-memfs"] as const)(
-    "%s defers delegation policy to the Agent tool and keeps direct editing",
+    "%s loads memory skills before direct editing",
     (mode) => {
       const result = buildSystemPrompt("letta", mode);
-      expect(result).toContain("`memory` subagent's entry in the Agent tool");
+      expect(result).toContain(
+        "Before editing memory, load the relevant skills",
+      );
+      expect(result).not.toContain("`memory` subagent");
       expect(result).not.toContain("**Memory upkeep during another task:**");
       expect(result).toContain("git commit --author=");
       expect(result).not.toContain("Delegate all memory changes");

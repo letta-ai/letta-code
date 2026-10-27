@@ -84,11 +84,14 @@ import {
  * fetch_webpage). These agents operate on local memory/git state and have
  * no use for internet access. Spawning them with `--base-tools none`
  * keeps their tool list minimal.
- *
  * fork/recall are excluded because they deploy the parent agent and
  * never trigger fresh agent creation, so base tools are out of scope.
  */
-const NO_BASE_TOOL_SUBAGENT_TYPES = new Set(["reflection", "memory", "init"]);
+const NO_BASE_TOOL_SUBAGENT_TYPES = new Set([
+  "reflection",
+  "memory-repair",
+  "init",
+]);
 
 // ============================================================================
 // Helper Functions
@@ -202,7 +205,7 @@ export function buildSubagentArgs(
     if (type === "reflection" && runtimePlatform !== "win32") {
       args.push("--no-system-info-reminder");
     }
-    if (type === "reflection" || type === "memory") {
+    if (type === "reflection" || type === "memory-repair") {
       args.push("--no-skills");
     }
 

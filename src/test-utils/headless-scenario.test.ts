@@ -20,7 +20,7 @@ beforeEach(() => {
     join(root, "agents", "a-worker.json"),
     JSON.stringify({
       id: "a-worker",
-      tags: ["type:memory", "parent:z-primary"],
+      tags: ["type:memory-repair", "parent:z-primary"],
     }),
   );
   writeFileSync(

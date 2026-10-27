@@ -235,7 +235,7 @@ test("post-turn conflict launches a memory task and only guards the checkout", a
   );
   expect(jobs).toHaveLength(1);
   expect(jobs[0]).toMatchObject({
-    subagentType: "memory",
+    subagentType: "memory-repair",
     memoryRepairToken: expect.any(String),
     parentScope: {
       agentId: "agent-memory-repair-test",
@@ -283,7 +283,7 @@ test("invalid committed memory launches repair and only guards the checkout", as
 
   expect(jobs).toHaveLength(1);
   expect(jobs[0]).toMatchObject({
-    subagentType: "memory",
+    subagentType: "memory-repair",
     description: "Repair invalid committed memory",
     memoryRepairToken: "invalid-history",
   });

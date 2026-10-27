@@ -72,7 +72,7 @@ for (const mode of [
         parentConversationId: original.id,
         backendMode: "local",
         localBackendStorageDir: storageDir,
-        subagentType: isRepair ? "memory" : "general-purpose",
+        subagentType: isRepair ? "memory-repair" : "general-purpose",
         launchProfile: "memory-subagent",
         inheritedPrimaryRoot: memoryDir,
         memoryScope: { primaryRoot: memoryDir, writableRoots: [memoryDir] },

@@ -52,7 +52,7 @@ test("ephemeral launches stay local and reject explicit computer routing", () =>
 test("memory workers remain confined processes, without an inherited listener route", () => {
   const env = composeSubagentChildEnv({
     parentProcessEnv: { [LISTENER_CONNECTION_ENV]: "conn-parent" },
-    subagentType: "memory",
+    subagentType: "memory-repair",
     parentAgentId: "agent-parent",
     launchProfile: "memory-subagent",
     inheritedPrimaryRoot: "/memory",

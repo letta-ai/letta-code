@@ -62,7 +62,7 @@ test("memory workers receive a silent task-log contract instead of a reply instr
     parentProcessEnv: {},
     parentAgentId: "agent-parent",
     parentConversationId: "conv-parent",
-    subagentType: "memory",
+    subagentType: "memory-repair",
     launchProfile: "memory-subagent",
     inheritedPrimaryRoot: "/memory",
   });
