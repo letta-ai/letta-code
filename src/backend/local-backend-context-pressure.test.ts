@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
@@ -51,6 +52,95 @@ async function collect(
 }
 
 describe("LocalBackend context pressure", () => {
+  test("compacts before dispatch after a large MemFS commit (#4893)", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-memory-pressure-"));
+    try {
+      const contexts: Context[] = [];
+      const order: string[] = [];
+      const backend = new LocalBackend({
+        storageDir,
+        stream: (_model, context) => {
+          order.push("provider");
+          contexts.push(context);
+          const message = assistantMessage("provider response");
+          if (contexts.length === 1) {
+            message.usage = {
+              ...emptyLocalUsage(),
+              input: 7_100,
+              output: 100,
+              totalTokens: 7_200,
+            };
+          }
+          return streamFromMessage(message);
+        },
+        complete: async () => {
+          order.push("compaction");
+          return assistantMessage("compacted memory conversation");
+        },
+      });
+      const agent = await backend.createAgent({
+        name: "Memory Pressure",
+        system: "base {CORE_MEMORY}",
+        model: "openai/gpt-5.5",
+        context_window_limit: 10_000,
+        model_settings: {
+          provider_type: "openai",
+        },
+        compaction_settings: { mode: "all" },
+      });
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      });
+      await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "first" }],
+        }),
+      );
+
+      const memoryDir = join(storageDir, "memfs", agent.id, "memory");
+      const memory = `Updated persona: ${"m".repeat(12_000)}`;
+      await writeFile(
+        join(memoryDir, "persona.md"),
+        `---\nname: "Persona"\ndescription: "Who the agent is"\n---\n${memory}\n`,
+        "utf8",
+      );
+      execFileSync("git", ["add", "persona.md"], { cwd: memoryDir });
+      execFileSync("git", ["commit", "-m", "test memory update"], {
+        cwd: memoryDir,
+      });
+
+      const chunks = await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "next" }],
+        }),
+      );
+
+      expect(order).toEqual(["provider", "compaction", "provider"]);
+      expect(contexts).toHaveLength(2);
+      expect(JSON.stringify(contexts[1]?.messages)).toContain(
+        "compacted memory conversation",
+      );
+      expect(JSON.stringify(contexts[1]?.messages)).toContain(memory);
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "event_message",
+          event_type: "compaction",
+          event_data: { trigger: "context_window_limit" },
+        }),
+      );
+      expect(chunks).toContainEqual(
+        expect.objectContaining({
+          message_type: "stop_reason",
+          stop_reason: "end_turn",
+        }),
+      );
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("persists preflight compaction before dispatching the provider request", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-context-pressure-"),
