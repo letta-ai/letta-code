@@ -76,7 +76,10 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (target && target.type !== "opencode") {
+        if (
+          target &&
+          (target.type === "claude-code" || target.type === "codex")
+        ) {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {

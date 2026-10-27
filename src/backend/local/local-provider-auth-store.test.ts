@@ -9,6 +9,7 @@ import {
 import {
   createOrUpdateLocalProvider,
   getLocalOAuthApiKey,
+  getLocalProviderById,
   getLocalProviderRecordByName,
   setLocalOAuthProvider,
 } from "./local-provider-auth-store";
@@ -22,6 +23,24 @@ describe("local OAuth provider storage", () => {
         .splice(0)
         .map((storageDir) => rm(storageDir, { recursive: true, force: true })),
     );
+  });
+
+  test("resolves a derived provider ID directly", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-id-"));
+    storageDirs.push(storageDir);
+    const created = await createOrUpdateLocalProvider({
+      storageDir,
+      providerType: "openai",
+      providerName: "lc-openai",
+      apiKey: "secret-key",
+    });
+
+    expect(
+      await getLocalProviderById("local-provider-lc-openai", storageDir),
+    ).toEqual(created);
+    expect(
+      await getLocalProviderById("local-provider-missing", storageDir),
+    ).toBeNull();
   });
 
   test("persists keyed and keyless OpenAI-compatible connections with their base URL", async () => {

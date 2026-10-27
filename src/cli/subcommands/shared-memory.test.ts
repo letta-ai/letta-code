@@ -35,6 +35,14 @@ function makeRequest(
       if (method === "GET" && path.startsWith("/v1/repositories?")) {
         return { repositories: REPOSITORIES, has_next_page: false };
       }
+      if (method === "GET" && /^\/v1\/repositories\/[^/]+$/.test(path)) {
+        const repositoryId = decodeURIComponent(
+          path.slice("/v1/repositories/".length),
+        );
+        const repository = REPOSITORIES.find(({ id }) => id === repositoryId);
+        if (repository) return repository;
+        throw new Error(`Repository not found: ${repositoryId}`);
+      }
       if (
         method === "GET" &&
         /\/v1\/agents\/.*\/repositories\/[^/?]+$/.test(path)
@@ -570,6 +578,157 @@ describe("runSharedMemorySubcommand", () => {
     });
     expect(code).toBe(1);
     expect(errors.join("\n")).toContain("Agent id required");
+  });
+
+  test("repository ids use point lookup without listing or pagination", async () => {
+    const { request, calls } = makeRequest();
+    const code = await runSharedMemorySubcommand(
+      ["detach", "repo-2", "--agent", "agent-xyz"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+        recompileAgent: async () => {},
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(calls[0]).toEqual({
+      method: "GET",
+      path: "/v1/repositories/repo-2",
+      body: undefined,
+    });
+    expect(
+      calls.some(
+        ({ method, path }) =>
+          method === "GET" && path.startsWith("/v1/repositories?"),
+      ),
+    ).toBe(false);
+  });
+
+  test("missing repository ids retain not-found guidance after name fallback", async () => {
+    const request = mock(async (method: string, path: string) => {
+      if (path === "/v1/repositories/repo-missing") {
+        throw new ApiRequestError(
+          "API error (404): not found",
+          404,
+          "not found",
+        );
+      }
+      if (method === "GET" && path === "/v1/repositories?limit=50&offset=0") {
+        return { repositories: [], has_next_page: false };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "repo-missing"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(1);
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(errors.join("\n")).toContain("Repository not found: repo-missing");
+  });
+
+  test("point lookup 404 falls back to an exact repo-prefixed name", async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const request = mock(async (method: string, path: string) => {
+      calls.push({ method, path });
+      if (path === "/v1/repositories/repo-shared-notes") {
+        throw new ApiRequestError(
+          "API error (404): not found",
+          404,
+          "not found",
+        );
+      }
+      if (path === "/v1/repositories?limit=50&offset=0") {
+        return {
+          repositories: [
+            { id: "repository-decoy", name: "repo-shared-notes-copy" },
+          ],
+          has_next_page: true,
+        };
+      }
+      if (path === "/v1/repositories?limit=50&offset=50") {
+        return {
+          repositories: [{ id: "repository-exact", name: "repo-shared-notes" }],
+          has_next_page: false,
+        };
+      }
+      if (path === "/v1/repositories/repository-exact/versions?limit=20") {
+        return { commits: [] };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(
+      ["history", "repo-shared-notes"],
+      {
+        initializeSettings: async () => {},
+        request: request as never,
+      },
+    );
+
+    expect(code).toBe(0);
+    expect(calls.slice(0, 3)).toEqual([
+      { method: "GET", path: "/v1/repositories/repo-shared-notes" },
+      { method: "GET", path: "/v1/repositories?limit=50&offset=0" },
+      { method: "GET", path: "/v1/repositories?limit=50&offset=50" },
+    ]);
+    expect(JSON.parse(logs.join("\n")).repository).toBe("repo-shared-notes");
+  });
+
+  test("non-404 point lookup failures do not fall back to listing", async () => {
+    const request = mock(async () => {
+      throw new ApiRequestError("API error (403): forbidden", 403, "forbidden");
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "repo-private"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toContain("API error (403): forbidden");
+  });
+
+  test("repository names remain exact across all repository pages", async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const request = mock(async (method: string, path: string) => {
+      calls.push({ method, path });
+      if (method === "GET" && path === "/v1/repositories?limit=50&offset=0") {
+        return {
+          repositories: [{ id: "repo-decoy", name: "shared-notes-copy" }],
+          has_next_page: true,
+        };
+      }
+      if (method === "GET" && path === "/v1/repositories?limit=50&offset=50") {
+        return {
+          repositories: [{ id: "repo-exact", name: "shared-notes" }],
+          has_next_page: false,
+        };
+      }
+      if (
+        method === "GET" &&
+        path === "/v1/repositories/repo-exact/versions?limit=20"
+      ) {
+        return { commits: [] };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "shared-notes"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(0);
+    expect(calls.slice(0, 2)).toEqual([
+      { method: "GET", path: "/v1/repositories?limit=50&offset=0" },
+      { method: "GET", path: "/v1/repositories?limit=50&offset=50" },
+    ]);
+    expect(JSON.parse(logs.join("\n")).repository).toBe("shared-notes");
   });
 
   test("detach deletes the link and recompiles", async () => {

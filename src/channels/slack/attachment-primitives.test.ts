@@ -79,32 +79,16 @@ test("collectSlackFiles caps one Slack message at eight attachments", () => {
   );
 });
 
-test("resolveSlackMessageFiles hydrates a thin app_mention from the exact paginated reply", async () => {
-  const replies = mock(async (args: Record<string, unknown>) => {
-    if (!args.cursor) {
-      return {
-        messages: [
-          {
-            ts: "100.1",
-            files: [{ id: "FUNRELATED", name: "unrelated.png" }],
-          },
-        ],
-        response_metadata: { next_cursor: "page-2" },
-      };
-    }
-    return {
-      messages: [
-        {
-          ts: "100.2",
-          files: [{ id: "FEXACT", name: "exact.png" }],
-        },
-        {
-          ts: "100.3",
-          files: [{ id: "FLATER", name: "later.png" }],
-        },
-      ],
-    };
-  });
+test("resolveSlackMessageFiles uses one bounded request for a thread reply", async () => {
+  const replies = mock(async () => ({
+    messages: [
+      {
+        ts: "100.2",
+        files: [{ id: "FEXACT", name: "exact.png" }],
+      },
+    ],
+    response_metadata: { next_cursor: "must-not-be-followed" },
+  }));
   const client = createClient({ replies });
 
   await expect(
@@ -124,19 +108,113 @@ test("resolveSlackMessageFiles hydrates a thin app_mention from the exact pagina
       url_private_download: undefined,
     },
   ]);
-  expect(replies).toHaveBeenNthCalledWith(1, {
+  expect(replies).toHaveBeenCalledTimes(1);
+  expect(replies).toHaveBeenCalledWith({
     channel: "C123",
     ts: "100.1",
-    limit: 200,
+    oldest: "100.2",
+    latest: "100.2",
     inclusive: true,
+    limit: 1,
   });
-  expect(replies).toHaveBeenNthCalledWith(2, {
-    channel: "C123",
-    ts: "100.1",
-    limit: 200,
-    inclusive: true,
-    cursor: "page-2",
+});
+
+test("resolveSlackMessageFiles validates the exact thread reply timestamp", async () => {
+  const client = createClient({
+    replies: async () => ({
+      messages: [
+        { ts: "100.19", files: [{ id: "FOLDER" }] },
+        { ts: "100.2", files: [{ id: "FEXACT" }] },
+      ],
+    }),
   });
+
+  await expect(
+    resolveSlackMessageFiles({
+      channelId: "C123",
+      threadTs: "100.1",
+      messageTs: "100.2",
+      client,
+    }),
+  ).resolves.toEqual([
+    {
+      id: "FEXACT",
+      name: undefined,
+      mimetype: undefined,
+      size: undefined,
+      url_private: undefined,
+      url_private_download: undefined,
+    },
+  ]);
+});
+
+test("resolveSlackMessageFiles returns null when a bounded reply has no exact row", async () => {
+  const client = createClient({
+    replies: async () => ({
+      messages: [{ ts: "100.20", files: [{ id: "FNEARBY" }] }],
+    }),
+  });
+
+  await expect(
+    resolveSlackMessageFiles({
+      channelId: "C123",
+      threadTs: "100.1",
+      messageTs: "100.2",
+      client,
+    }),
+  ).resolves.toBeNull();
+});
+
+test("resolveSlackMessageFiles treats malformed replies payloads as missing", async () => {
+  for (const payload of [
+    null,
+    [],
+    { messages: null },
+    { messages: "invalid" },
+  ]) {
+    const client = createClient({ replies: async () => payload });
+
+    await expect(
+      resolveSlackMessageFiles({
+        channelId: "C123",
+        threadTs: "100.1",
+        messageTs: "100.2",
+        client,
+      }),
+    ).resolves.toBeNull();
+  }
+});
+
+test("resolveSlackMessageFiles ignores unexpected reply rows", async () => {
+  const client = createClient({
+    replies: async () => ({
+      messages: [
+        null,
+        "invalid",
+        42,
+        { ts: 100.2, files: [{ id: "FNUMERIC" }] },
+        { ts: "100.2", files: [{ id: "FEXACT" }] },
+      ],
+    }),
+  });
+
+  await expect(
+    resolveSlackMessageFiles({
+      channelId: "C123",
+      threadTs: "100.1",
+      messageTs: "100.2",
+      client,
+    }),
+  ).resolves.toEqual([
+    {
+      id: "FEXACT",
+      name: undefined,
+      mimetype: undefined,
+      size: undefined,
+      url_private: undefined,
+      url_private_download: undefined,
+    },
+  ]);
 });
 
 test("resolveSlackMessageFiles uses an exact history lookup outside a thread", async () => {

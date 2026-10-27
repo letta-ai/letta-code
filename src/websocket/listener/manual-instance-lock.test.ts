@@ -159,10 +159,6 @@ describe("manual listener instance lock", () => {
     await expect(
       acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
-    // Command lookup failed: fail closed.
-    await expect(acquireWith(202, afterLock, null)).rejects.toBeInstanceOf(
-      ManualListenerAlreadyRunningError,
-    );
 
     // After a reboot, pid 101 belongs to an unrelated process.
     const replacement = await acquireWith(

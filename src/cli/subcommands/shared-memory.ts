@@ -221,6 +221,37 @@ export function resolveRepositoryReference(
   );
 }
 
+async function resolveRepositoryReferenceFromApi(
+  request: typeof apiRequest,
+  reference: string,
+): Promise<RepositorySummary | null> {
+  const trimmed = reference.trim();
+  if (!trimmed) return null;
+
+  // Repository ids have a point-lookup endpoint. Avoid turning a known id into
+  // an organization-wide paginated scan. Names may also start with `repo-`, so
+  // a 404 falls through to exact-name resolution; authorization and other API
+  // failures continue to surface unchanged.
+  if (trimmed.startsWith("repo-")) {
+    try {
+      return await request<RepositorySummary>(
+        "GET",
+        `/v1/repositories/${encodeURIComponent(trimmed)}`,
+      );
+    } catch (error) {
+      if (!(error instanceof ApiRequestError && error.status === 404)) {
+        throw error;
+      }
+    }
+  }
+
+  // The repository list contract currently exposes only limit and offset; it
+  // has no exact-name filter. Keep scanning every page and match locally rather
+  // than using a lossy search or silently missing exact names on later pages.
+  const repositories = await listOrgRepositories(request);
+  return resolveRepositoryReference(repositories, trimmed);
+}
+
 const DEFAULT_ATTACH_POLL = { intervalMs: 1_000, attempts: 15 };
 
 function parseRepositoryAttachmentStatus(response: unknown): boolean {
@@ -402,8 +433,10 @@ export async function runSharedMemorySubcommand(
         console.error(`Usage: letta shared-memory ${action} <name-or-id>`);
         return 1;
       }
-      const repositories = await listOrgRepositories(request);
-      const repository = resolveRepositoryReference(repositories, reference);
+      const repository = await resolveRepositoryReferenceFromApi(
+        request,
+        reference,
+      );
       if (!repository) {
         console.error(
           `Repository not found: ${reference}. Run \`letta shared-memory list\` to see available repositories.`,
