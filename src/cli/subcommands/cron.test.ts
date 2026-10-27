@@ -446,3 +446,25 @@ describe("cron add execution targeting", () => {
     }
   });
 });
+
+describe("cron help", () => {
+  test("documents every flag that cron add requires", async () => {
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+
+    expect(await runCronSubcommand(["add", "--help"])).toBe(0);
+
+    const help = logs.join("\n");
+    for (const flag of ["--name", "--description", "--prompt"]) {
+      expect(help).toContain(`${flag} <`);
+    }
+    const addUsageLines = help
+      .split("\n")
+      .filter((line) => line.trim().startsWith("letta cron add"));
+    expect(addUsageLines).toHaveLength(3);
+    for (const line of addUsageLines) {
+      expect(line).toContain("--name <name>");
+      expect(line).toContain("--description <text>");
+    }
+  });
+});
