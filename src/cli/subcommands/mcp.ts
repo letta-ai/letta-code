@@ -403,6 +403,10 @@ function serverName(target: ServerTarget): string {
     : target.server.serverName;
 }
 
+function serverAliasGroup(alias: string): string {
+  return (alias.split("__")[0] ?? "").replace(/_+$/, "");
+}
+
 async function buildToolCatalog(
   deps: McpSubcommandDependencies,
   agentId: string,
@@ -410,9 +414,11 @@ async function buildToolCatalog(
     serverSelector?: string;
     toolName?: string;
     targetKind?: ServerTarget["kind"];
+    servers?: ServerTarget[];
+    serverAliasGroup?: string;
   } = {},
 ): Promise<ToolCatalog> {
-  const servers = await listUnifiedServers(deps, agentId);
+  const servers = options.servers ?? (await listUnifiedServers(deps, agentId));
   const aliases = assignMcpServerAliases(
     servers.map((target) => ({
       key: serverKey(target),
@@ -423,7 +429,15 @@ async function buildToolCatalog(
   let activeServers = options.targetKind
     ? servers.filter((target) => target.kind === options.targetKind)
     : servers;
-  if (options.serverSelector) {
+  if (options.serverAliasGroup !== undefined) {
+    // Trailing underscores and minted suffixes (foo_ -> foo__2) can overlap
+    // the delimiter. Group both server aliases and call names identically.
+    activeServers = servers.filter(
+      (target) =>
+        serverAliasGroup(aliases.get(serverKey(target)) ?? "") ===
+        options.serverAliasGroup,
+    );
+  } else if (options.serverSelector) {
     const selectedKey = serverKey(
       resolveServer(servers, options.serverSelector),
     );
@@ -867,32 +881,75 @@ export interface AgentMcpSession {
 }
 
 /**
- * Like callAgentMcpTool, but builds the agent's catalog (and any local server
- * connections) once on first use and reuses it until close().
+ * Resolve server identities once, then load only servers a script uses.
+ * Concurrent calls share each server's catalog and connection until close().
  */
 export function createAgentMcpSession(
   agentId: string,
   deps: McpSubcommandDependencies = {},
 ): AgentMcpSession {
-  let catalog: Promise<ToolCatalog> | undefined;
+  let servers: Promise<ServerTarget[]> | undefined;
+  const catalogs = new Map<string, Promise<ToolCatalog>>();
   let closed = false;
-  const load = () => {
+  const getServers = () => {
     if (closed) throw new Error("MCP session is closed");
-    catalog ??= buildToolCatalog(deps, agentId).catch((error: unknown) => {
-      catalog = undefined;
+    servers ??= listUnifiedServers(deps, agentId).catch((error: unknown) => {
+      servers = undefined;
       throw error;
     });
+    return servers;
+  };
+  const load = (alias: string) => {
+    if (closed) throw new Error("MCP session is closed");
+    let catalog = catalogs.get(alias);
+    if (!catalog) {
+      catalog = getServers()
+        .then((servers) => {
+          if (closed) throw new Error("MCP session is closed");
+          return buildToolCatalog(deps, agentId, {
+            servers,
+            serverAliasGroup: alias,
+          });
+        })
+        .catch((error: unknown) => {
+          catalogs.delete(alias);
+          throw error;
+        });
+      catalogs.set(alias, catalog);
+    }
     return catalog;
   };
   return {
     callTool: async (toolName, args, options) =>
-      callCatalogTool(await load(), deps, agentId, toolName, args, options),
-    listTools: async () => (await load()).tools.map((tool) => tool.schema),
+      callCatalogTool(
+        await load(serverAliasGroup(toolName.slice("mcp__".length))),
+        deps,
+        agentId,
+        toolName,
+        args,
+        options,
+      ),
+    listTools: async () => {
+      const aliases = assignMcpServerAliases(
+        (await getServers()).map((target) => ({
+          key: serverKey(target),
+          name: serverName(target),
+          kind: target.kind,
+        })),
+      );
+      const groups = new Set([...aliases.values()].map(serverAliasGroup));
+      const loaded = await Promise.all([...groups].map(load));
+      return loaded.flatMap((catalog) =>
+        catalog.tools.map((tool) => tool.schema),
+      );
+    },
     close: async () => {
       closed = true;
-      const pending = catalog;
-      catalog = undefined;
-      await (await pending?.catch(() => undefined))?.close();
+      const pending = [...catalogs.values()];
+      catalogs.clear();
+      await Promise.allSettled(
+        pending.map(async (catalog) => (await catalog).close()),
+      );
     },
   };
 }

@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { APIConnectionError } from "@letta-ai/letta-client/core/error";
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Message,
+  Run,
+} from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ChatGPTUsageSnapshot,
   normalizeCloudChatGPTUsageResponse,
@@ -349,6 +352,9 @@ export interface Backend {
     runId?: string | null,
   ): Promise<Awaited<ReturnType<APIClient["agents"]["messages"]["cancel"]>>>;
 
+  /** Latest run created for this conversation, or null when none exists. */
+  latestConversationRun(conversationId: string): Promise<Run | null>;
+
   retrieveRun(
     runId: string,
     options?: RunRetrieveOptions,
@@ -677,6 +683,16 @@ export class APIBackend implements Backend {
     throw new Error(
       "API backend does not support exact cancellation for conversations with agent_id:null",
     );
+  }
+
+  async latestConversationRun(conversationId: string): Promise<Run | null> {
+    const client = await this.getClient();
+    const runs = await client.runs.list({
+      conversation_id: conversationId,
+      order: "desc",
+      limit: 1,
+    });
+    return runs.getPaginatedItems()[0] ?? null;
   }
 
   async retrieveRun(runId: string, options?: RunRetrieveOptions) {
