@@ -1464,7 +1464,7 @@ type McpHttpServerConfig = {
 
 #### `McpSdkServerConfigWithInstance`
 
-The configuration for an in-process MCP server, one that [`createSdkMcpServer()`](#createsdkmcpserver) creates and that runs inside your application's process. It is the object `createSdkMcpServer()` returns, plus an optional `tools` list of [`McpServerToolPolicy`](#mcpservertoolpolicy) entries that you add yourself. To require approval for calls to one of the server's tools, or to deny them, add an entry that names the tool.
+Configuration for an in-process MCP server. It is what [`createSdkMcpServer()`](#createsdkmcpserver) returns, plus an optional `tools` list of [`McpServerToolPolicy`](#mcpservertoolpolicy) entries that you add.
 
 ```typescript theme={null}
 type McpSdkServerConfigWithInstance = {
@@ -1476,9 +1476,9 @@ type McpSdkServerConfigWithInstance = {
 };
 ```
 
-To set a policy, spread the object `createSdkMcpServer()` returns into a new object in `mcpServers` and add the `tools` list to that new object. The `tools` option of `createSdkMcpServer()` itself is a different list, which holds the tool definitions and doesn't accept policy entries. The policy list requires Agent SDK v0.3.301 or later, and [`McpServerToolPolicy`](#mcpservertoolpolicy) describes what each `permission_policy` value does.
+To require approval for calls to one of the server's tools, or deny them, add a policy entry naming the tool. Spread what `createSdkMcpServer()` returns into an object under `mcpServers` and put the entry in a `tools` list on that object, because the function's `tools` option accepts tool definitions and not policy entries. The policy list requires Agent SDK v0.3.301 or later, and [`McpServerToolPolicy`](#mcpservertoolpolicy) describes what each `permission_policy` value does.
 
-This example pre-approves every tool on the `records` server with an `allowedTools` wildcard, then marks `delete_record` as `always_ask` so that calls to it go to `canUseTool` anyway. With the `destructiveHint: true` annotation, the call still reaches the callback if the session runs in `auto` mode, where the auto mode [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) could otherwise approve it.
+In this script, an `allowedTools` wildcard pre-approves every tool on the `records` server, but `delete_record` is marked `always_ask`, so calls to it go to `canUseTool` anyway. With the `destructiveHint: true` annotation, the call still reaches the callback if the session runs in `auto` mode, where the auto mode [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) could otherwise approve it.
 
 ```typescript theme={null}
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
@@ -1517,7 +1517,7 @@ for await (const message of query({
 }
 ```
 
-When Claude calls the tool, the script prints `Approval requested for mcp__records__delete_record` before the `delete_record` tool runs, although the `allowedTools` entry would otherwise have approved the call.
+When Claude calls `delete_record`, the script prints `Approval requested for mcp__records__delete_record`.
 
 To change or lift a tool's policy while the session runs, pass the server's config with a new `tools` value to [`setMcpServers()`](#mcpsetserversresult). The `tools` value you pass takes effect from Claude's next call to that server's tools:
 
@@ -1556,7 +1556,7 @@ If you pass neither `canUseTool` nor `permissionPromptToolName`, or set [`permis
 
 ##### Permission modes that can approve an `always_ask` call
 
-In `auto`, `plan`, and `bypassPermissions` mode, a call to a tool marked [`always_ask`](#permission-policy-values) can be approved before it reaches your `canUseTool` callback. Find your session's mode in this list to see when that approval happens and what to set so the call reaches your callback anyway:
+In `auto`, `plan`, and `bypassPermissions` mode, a call to a tool marked [`always_ask`](#permission-policy-values) can be approved before it reaches your `canUseTool` callback.
 
 * **`auto`**: the auto mode [classifier](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) reviews the call and can allow it. To make every call reach your callback in `auto` mode, set `destructiveHint: true` in the tool's [annotations](#toolannotations)
 * **`plan`**: while [auto mode is available](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode) to the session, calls to an `always_ask` tool annotated `readOnlyHint: true` go to the auto mode classifier, which can allow them. Calls to other `always_ask` tools reach your callback. To make a read-only tool's calls reach your callback too, add `destructiveHint: true` to that tool's annotations alongside `readOnlyHint: true`. Alternatively, set [`useAutoModeDuringPlan`](https://code.claude.com/docs/en/settings-reference#useautomodeduringplan) to `false`, which turns the classifier off during planning
@@ -5210,7 +5210,7 @@ Claude Code sends `_meta` only when the [`capabilities`](#sdksystemmessage) arra
 
 #### When a tool's `_meta.ui` holds only `visibility`
 
-If your server declares `ui.resourceUri` for a tool but the `_meta.ui` your application receives holds only `visibility`, the `ui` object the server sent failed one of Claude Code's checks. Claude Code checks `ui` and `ui/resourceUri` separately, so one key can reach your application when the other fails. Compare the `_meta` in your server's `tools/list` response against the checks for each key:
+If your server declares `ui.resourceUri` for a tool but the `_meta.ui` your application receives holds only `visibility`, the `ui` object the server sent failed one of Claude Code's checks. Compare the `_meta` in your server's `tools/list` response against the checks for each key:
 
 * **`ui`**: reaches your application unchanged, including any members other than `resourceUri` and `visibility`, if all three checks pass:
 
