@@ -1,371 +1,103 @@
 ---
 name: creating-skills
-description: Guide for creating effective skills. Use when creating a new skill or updating an existing one that extends Letta Code's capabilities with specialized knowledge, workflows, or tool integrations, whether a user asks for it or a reusable workflow is worth capturing.
+description: Creates or updates an Agent Skill, the reusable procedural knowledge an agent loads on demand. Use when asked to write, save, update, or improve a skill, or to turn a workflow, correction, or repeated procedure into a skill an agent or repository can reuse.
 ---
 
 # Creating Skills
 
-This skill provides guidance for creating effective skills in Letta Code. For the complete official specification, see [agentskills.io](https://agentskills.io/specification).
+A skill is **procedural memory**: how to do a class of tasks. Write skills in the [Agent Skills format](https://agentskills.io/specification), and finish them without asking the user follow-up questions. Infer what you need from the conversation, the repository, and the task history.
 
-## About Skills
+## Is this a skill?
 
-Skills are modular, self-contained packages that extend Letta Code's capabilities by providing
-specialized knowledge, workflows, and tools. Think of them as "onboarding guides" for specific
-domains or tasks—they transform a Letta Code agent from a general-purpose agent into a specialized agent
-equipped with procedural knowledge that no model can fully possess.
+Letta agents have other kinds of memory. Put knowledge where it belongs:
 
-### What Skills Provide
+| Knowledge | Where it goes |
+|---|---|
+| How to do a recurring task: steps, commands, gotchas, validation | A skill |
+| Identity, preferences, and rules that apply in every turn | Core memory: root Markdown files in `$MEMORY_DIR`, which render in the system prompt |
+| Facts and references needed only sometimes | Deferred memory files in `$MEMORY_DIR` subdirectories, indexed by a `MEMORY.md` |
+| What happened in past conversations | Recall memory (message history), which is recorded automatically and searchable |
 
-1. Specialized workflows - Multi-step procedures for specific domains
-2. Tool integrations - Instructions for working with specific file formats or APIs
-3. Domain expertise - Company-specific knowledge, schemas, business logic
-4. Bundled resources - Scripts, references, and assets for complex and repetitive tasks
+Do not use a skill to store facts, preferences, or event logs. If the agent already handles the task correctly without the content, do not write it at all.
 
-## Core Principles
+## Choose an owner
 
-### Concise is Key
+Every skill belongs to an agent or to a project.
 
-The context window is a public good. Skills share the context window with everything else the Letta Code agent needs: system prompt, conversation history, other Skills' metadata, and the actual user request.
+- **Agent-owned skill**, at `$MEMORY_DIR/skills/<name>/SKILL.md`. Use it for a capability specific to this agent, such as its own tools, integrations, or workflows, that it carries across every project. It is part of the agent's memory, so it is not saved until committed: run `git -C "$MEMORY_DIR" add skills/<name> && git -C "$MEMORY_DIR" commit -m "Add <name> skill"`.
+- **Project-owned skill**, at `<repo>/.agents/skills/<name>/SKILL.md`. Use it for a procedure specific to one repository, such as building, testing, releasing, or debugging that code, that any agent or human working in the repo should share. It is part of the codebase, so it needs human approval: put it on a branch and open a pull request. Do not commit it directly to the default branch.
 
-**Default assumption: the Letta Code agent is already very capable.** Only add context the Letta Code agent doesn't already have. Challenge each piece of information: "Does the Letta Code agent really need this explanation?" and "Does this paragraph justify its token cost?"
+If the procedure only makes sense in one repository, the project owns it. If it is about how this agent works wherever it runs, the agent owns it. When both exist under the same name, the project skill takes precedence in that repository.
 
-Prefer concise examples over verbose explanations.
+New and edited skills are discovered automatically on the next turn.
 
-### Set Appropriate Degrees of Freedom
-
-Match the level of specificity to the task's fragility and variability:
-
-**High freedom (text-based instructions)**: Use when multiple approaches are valid, decisions depend on context, or heuristics guide the approach.
-
-**Medium freedom (pseudocode or scripts with parameters)**: Use when a preferred pattern exists, some variation is acceptable, or configuration affects behavior.
-
-**Low freedom (specific scripts, few parameters)**: Use when operations are fragile and error-prone, consistency is critical, or a specific sequence must be followed.
-
-Think of the Letta Code agent as exploring a path: a narrow bridge with cliffs needs specific guardrails (low freedom), while an open field allows many routes (high freedom).
-
-### Anatomy of a Skill
-
-Every skill consists of a required SKILL.md file and optional bundled resources:
+## Format
 
 ```
-processing-pdfs/
-├── SKILL.md (required)
-│   ├── YAML frontmatter metadata (required)
-│   │   ├── name: (required, must match directory name)
-│   │   └── description: (required)
-│   └── Markdown instructions (required)
-└── Bundled Resources (optional)
-    ├── scripts/          - Executable code (TypeScript/Python/Bash/etc.)
-    ├── references/       - Documentation intended to be loaded into context as needed
-    └── assets/           - Files used in output (templates, icons, fonts, etc.)
+<name>/
+├── SKILL.md          # Required: frontmatter + instructions
+├── scripts/          # Optional: executable code
+├── references/       # Optional: documentation loaded on demand
+└── assets/           # Optional: templates, schemas, data
 ```
 
-#### SKILL.md (required)
+Frontmatter must use only the fields defined by the specification:
 
-Every SKILL.md in Letta Code consists of:
+| Field | Required | Constraint |
+|---|---|---|
+| `name` | Yes | 1-64 characters: lowercase `a-z`, `0-9`, and `-`. No leading, trailing, or consecutive hyphens. Must match the directory name. |
+| `description` | Yes | 1-1024 characters. States what the skill does and when to use it. |
+| `license` | No | License name or bundled license file. |
+| `compatibility` | No | 1-500 characters. Only for real environment requirements. |
+| `metadata` | No | Map of string keys to string values. |
+| `allowed-tools` | No | Space-separated pre-approved tools. Experimental. |
 
-- **Frontmatter** (YAML): Contains `name` and `description` fields. These are the only fields that the Letta Code agent reads to determine when the skill gets used, thus it is very important to be clear and comprehensive in describing what the skill is, and when it should be used.
-- **Body** (Markdown): Instructions and guidance for using the skill. Only loaded AFTER the skill triggers (if at all).
+Quote any frontmatter value that contains `: `.
 
-#### Bundled Resources (optional)
+## Write the description
 
-##### Scripts (`scripts/`)
+The description is the only text an agent sees before deciding to load the skill, so it carries all triggering.
 
-Executable code (TypeScript/Python/Bash/etc.) for tasks that require deterministic reliability or are repeatedly rewritten.
+- Say what the skill does, then when to use it ("Use when...").
+- Describe the user's intent, not the skill's internals, and include the words users actually say.
+- Cover cases where the user does not name the domain directly.
+- Mark the boundary with adjacent skills when a near-miss request would load the wrong one.
 
-- **When to include**: When the same code is being rewritten repeatedly or deterministic reliability is needed
-- **Example**: `scripts/rotate-pdf.ts` for PDF rotation tasks
-- **Benefits**: Token efficient, deterministic, may be executed without loading into context
-- **Note**: Scripts may still need to be read by the Letta Code agent for patching or environment-specific adjustments
+## Write the body
 
-##### References (`references/`)
+The body loads in full when the skill activates and competes with everything else in context. Keep `SKILL.md` under 500 lines and about 5,000 tokens.
 
-Documentation and reference material intended to be loaded as needed into context to inform the Letta Code agent's process and thinking.
+- Add only what the agent would get wrong without it: project conventions, exact commands, non-obvious edge cases, and the specific tools or APIs to use.
+- Build from real material such as the task just completed, corrections the user made, runbooks, failures, and fixes. Generic best practice adds little.
+- Teach a reusable procedure, not the answer to one instance.
+- Give a default with a brief escape hatch, not a menu of equal options.
+- Be prescriptive only where the operation is fragile or order matters. Otherwise explain why, and leave the rest to judgment.
+- Keep a **Gotchas** section in `SKILL.md` for facts that defy reasonable assumptions. Add each future correction there.
+- Use templates for required output formats, checklists for multi-step workflows, and a validate-fix-repeat loop before destructive or batch steps.
 
-- **When to include**: For documentation that the Letta Code agent should reference while working
-- **Examples**: `references/finance.md` for financial schemas, `references/mnda.md` for company NDA template, `references/policies.md` for company policies, `references/api_docs.md` for API specifications
-- **Use cases**: Database schemas, API documentation, domain knowledge, company policies, detailed workflow guides
-- **Benefits**: Keeps SKILL.md lean, loaded only when the Letta Code agent determines it's needed
-- **Best practice**: If files are large (>10k words), include grep search patterns in SKILL.md
-- **Avoid duplication**: Information should live in either SKILL.md or references files, not both. Prefer references files for detailed information unless it's truly core to the skill—this keeps SKILL.md lean while making information discoverable without hogging the context window. Keep only essential procedural instructions and workflow guidance in SKILL.md; move detailed reference material, schemas, and examples to references files.
+Move detail into `references/` or `assets/`, and state when to read each file: "Read `references/api-errors.md` if the API returns a non-200 status." Use relative paths from the skill root and keep references one level deep.
 
-##### Assets (`assets/`)
+Add a script to `scripts/` only when agents would otherwise rewrite the same logic or when the step must be exact. Scripts must be non-interactive, document their dependencies, and print actionable errors.
 
-Files not intended to be loaded into context, but rather used within the output the Letta Code agent produces.
+## Validate
 
-- **When to include**: When the skill needs files that will be used in the final output
-- **Examples**: `assets/logo.png` for brand assets, `assets/slides.pptx` for PowerPoint templates, `assets/frontend-template/` for HTML/React boilerplate, `assets/font.ttf` for typography
-- **Use cases**: Templates, images, icons, boilerplate code, fonts, sample documents that get copied or modified
-- **Benefits**: Separates output resources from documentation, enables the Letta Code agent to use files without loading them into context
-
-#### What to Not Include in a Skill
-
-A skill should only contain essential files that directly support its functionality. Do NOT create extraneous documentation or auxiliary files, including:
-
-- README.md
-- INSTALLATION_GUIDE.md
-- QUICK_REFERENCE.md
-- CHANGELOG.md
-- etc.
-
-The skill should only contain the information needed for an AI agent to do the job at hand. It should not contain auxiliary context about the process that went into creating it, setup and testing procedures, user-facing documentation, etc. Creating additional documentation files just adds clutter and confusion.
-
-### Progressive Disclosure Design Principle
-
-Skills use a three-level loading system to manage context efficiently:
-
-1. **Metadata (name + description)** - Always in context (~100 words)
-2. **SKILL.md body** - When skill triggers (<5k words)
-3. **Bundled resources** - As needed by the Letta Code agent (Unlimited because scripts can be executed without reading into context window)
-
-#### Progressive Disclosure Patterns
-
-Keep SKILL.md body to the essentials and under 500 lines to minimize context bloat. Split content into separate files when approaching this limit. When splitting out content into other files, it is very important to reference them from SKILL.md and describe clearly when to read them, to ensure the reader of the skill knows they exist and when to use them.
-
-**Key principle:** When a skill supports multiple variations, frameworks, or options, keep only the core workflow and selection guidance in SKILL.md. Move variant-specific details (patterns, examples, configuration) into separate reference files.
-
-**Pattern 1: High-level guide with references**
-
-```markdown
-# PDF Processing
-
-## Quick start
-
-Extract text with pdfplumber:
-[code example]
-
-## Advanced features
-
-- **Form filling**: See [FORMS.md](FORMS.md) for complete guide
-- **API reference**: See [REFERENCE.md](REFERENCE.md) for all methods
-- **Examples**: See [EXAMPLES.md](EXAMPLES.md) for common patterns
-```
-
-The Letta Code agent loads FORMS.md, REFERENCE.md, or EXAMPLES.md only when needed.
-
-**Pattern 2: Domain-specific organization**
-
-For Skills with multiple domains, organize content by domain to avoid loading irrelevant context:
-
-```
-querying-bigquery/
-├── SKILL.md (overview and navigation)
-└── references/
-    ├── finance.md (revenue, billing metrics)
-    ├── sales.md (opportunities, pipeline)
-    ├── product.md (API usage, features)
-    └── marketing.md (campaigns, attribution)
-```
-
-When a user asks about sales metrics, the Letta Code agent only reads sales.md.
-
-Similarly, for skills supporting multiple frameworks or variants, organize by variant:
-
-```
-deploying-to-cloud/
-├── SKILL.md (workflow + provider selection)
-└── references/
-    ├── aws.md (AWS deployment patterns)
-    ├── gcp.md (GCP deployment patterns)
-    └── azure.md (Azure deployment patterns)
-```
-
-When the user chooses AWS, the Letta Code agent only reads aws.md.
-
-**Pattern 3: Conditional details**
-
-Show basic content, link to advanced content:
-
-```markdown
-# DOCX Processing
-
-## Creating documents
-
-Use docx-js for new documents. See [DOCX-JS.md](DOCX-JS.md).
-
-## Editing documents
-
-For simple edits, modify the XML directly.
-
-**For tracked changes**: See [REDLINING.md](REDLINING.md)
-**For OOXML details**: See [OOXML.md](OOXML.md)
-```
-
-The Letta Code agent reads REDLINING.md or OOXML.md only when the user needs those features.
-
-**Important guidelines:**
-
-- **Avoid deeply nested references** - Keep references one level deep from SKILL.md. All reference files should link directly from SKILL.md.
-- **Structure longer reference files** - For files longer than 100 lines, include a table of contents at the top so the Letta Code agent can see the full scope when previewing.
-
-## Skill Creation Process
-
-Skill creation involves these steps:
-
-1. Understand the skill with concrete examples
-2. Plan reusable skill contents (scripts, references, assets)
-3. Initialize the skill (run init-skill.ts)
-4. Edit the skill (implement resources and write SKILL.md)
-5. Package the skill if it will be distributed (run package-skill.ts)
-6. Iterate based on real usage
-
-Follow these steps in order, skipping only if there is a clear reason why they are not applicable.
-
-### Step 1: Understanding the Skill with Concrete Examples
-
-Skip this step only when the skill's usage patterns are already clearly understood. It remains valuable even when working with an existing skill.
-
-To create an effective skill, clearly understand concrete examples of how the skill will be used. Draw them from the material at hand first: the conversation or transcripts that motivated the skill, the commands and tool calls that worked, and the requests that would trigger it.
-
-For example, when building an `editing-images` skill, establish:
-
-- What functionality the skill should support: editing, rotating, anything else?
-- What concrete requests it should handle, such as "Remove the red-eye from this image" or "Rotate this image"
-- What a user would say that should trigger the skill
-
-If you are working with a user and these remain unclear, ask the most important questions first rather than many at once. If no one is available to ask, such as in a background or automated run, do not wait for answers: scope the skill to what the source material demonstrates and leave out functionality it does not support.
-
-Conclude this step when there is a clear sense of the functionality the skill should support.
-
-### Step 2: Planning the Reusable Skill Contents
-
-To turn concrete examples into an effective skill, analyze each example by:
-
-1. Considering how to execute on the example from scratch
-2. Identifying what scripts, references, and assets would be helpful when executing these workflows repeatedly
-
-Example: When building an `editing-pdfs` skill to handle queries like "Help me rotate this PDF," the analysis shows:
-
-1. Rotating a PDF requires re-writing the same code each time
-2. A `scripts/rotate-pdf.ts` script would be helpful to store in the skill
-
-Example: When designing a `building-frontend-apps` skill for queries like "Build me a todo app" or "Build me a dashboard to track my steps," the analysis shows:
-
-1. Writing a frontend webapp requires the same boilerplate HTML/React each time
-2. An `assets/hello-world/` template containing the boilerplate HTML/React project files would be helpful to store in the skill
-
-Example: When building a `querying-bigquery` skill to handle queries like "How many users have logged in today?" the analysis shows:
-
-1. Querying BigQuery requires re-discovering the table schemas and relationships each time
-2. A `references/schema.md` file documenting the table schemas would be helpful to store in the skill
-
-To establish the skill's contents, analyze each concrete example to create a list of the reusable resources to include: scripts, references, and assets.
-
-### Step 3: Initializing the Skill
-
-At this point, it is time to actually create the skill.
-
-Skip this step only if the skill being developed already exists, and iteration or packaging is needed. In this case, continue to the next step.
-
-When creating a new skill from scratch, always run the `init-skill.ts` script. The script conveniently generates a new template skill directory that automatically includes everything a skill requires, making the skill creation process much more efficient and reliable.
-
-Usage:
+Run the bundled validator, which enforces the specification's frontmatter and naming rules (the same checks as the [skills-ref](https://github.com/agentskills/agentskills/tree/main/skills-ref) reference validator, plus string-only `metadata` values):
 
 ```bash
-npx tsx <SKILL_DIR>/scripts/init-skill.ts <skill-name> --path <output-directory>
-```
-Where `<SKILL_DIR>` is the Skill Directory shown when the skill was loaded (visible in the injection header). If no Skill Directory is shown, create the skill directory and `SKILL.md` directly instead.
-
-The script:
-
-- Creates the skill directory at the specified path
-- Generates a SKILL.md template with proper frontmatter and TODO placeholders
-- Creates example resource directories: `scripts/`, `references/`, and `assets/`
-- Adds example files in each directory that can be customized or deleted
-
-After initialization, customize or remove the generated SKILL.md and example files as needed.
-
-### Step 4: Edit the Skill
-
-When editing the (newly-generated or existing) skill, remember that the skill is being created for another Letta Code agent instance to use. Include information that would be beneficial and non-obvious to the Letta Code agent. Consider what procedural knowledge, domain-specific details, or reusable assets would help another Letta Code agent instance execute these tasks more effectively.
-
-#### Learn Proven Design Patterns
-
-Consult these helpful guides based on your skill's needs:
-
-- **Multi-step processes**: See references/workflows.md for sequential workflows and conditional logic
-- **Specific output formats or quality standards**: See references/output-patterns.md for template and example patterns
-
-These files contain established best practices for effective skill design.
-
-#### Start with Reusable Skill Contents
-
-To begin implementation, start with the reusable resources identified above: `scripts/`, `references/`, and `assets/` files. Some resources come from outside the source material. For example, a `brand-guidelines` skill may need brand assets or templates in `assets/`, or documentation in `references/`. Ask the user for them if you are working with one; otherwise include only what is available and leave out resources you cannot supply.
-
-Added scripts must be tested by actually running them to ensure there are no bugs and that the output matches what is expected. If there are many similar scripts, only a representative sample needs to be tested to ensure confidence that they all work while balancing time to completion.
-
-Any example files and directories not needed for the skill should be deleted. The initialization script creates example files in `scripts/`, `references/`, and `assets/` to demonstrate structure, but most skills won't need all of them.
-
-#### Update SKILL.md
-
-**Writing Guidelines:** Always use imperative/infinitive form.
-
-##### Frontmatter
-
-Write the YAML frontmatter with `name` and `description`:
-
-**`name`** (required):
-- Use gerund form: `processing-pdfs`, `analyzing-data`, `creating-reports` (not `pdf-processor`)
-- Lowercase letters, numbers, and hyphens only
-- Must match the directory name exactly
-- Max 64 characters
-
-**`description`** (required):
-- Write in third person: "Processes PDF files..." (not "I help process..." or "You can use this to...")
-- Include both what the skill does AND when to use it
-- Include trigger keywords that help the agent identify relevant tasks
-- Max 1024 characters
-
-Example:
-```yaml
----
-name: processing-pdfs
-description: Extracts text and tables from PDF files, fills forms, and merges documents. Use when working with PDF files or when the user mentions PDFs, forms, or document extraction.
----
+npx tsx scripts/validate-skill.ts <path/to/skill>
 ```
 
-**Note:** The spec allows optional fields (`license`, `compatibility`, `metadata`, `allowed-tools`) but most skills don't need them. See [agentskills.io/specification](https://agentskills.io/specification) for details.
+Resolve `scripts/` relative to this skill's directory. Fix every error and run it again until it passes.
 
-##### Body
+## Test
 
-Write instructions for using the skill and its bundled resources.
+Validation proves only the format. Before reporting the skill as done:
 
-### Step 5: Packaging a Skill
+1. Run one or two realistic prompts the skill should handle in a fresh context, once with the skill and once without it. When updating a skill, use the previous version as the baseline. Keep the skill only if it changes the outcome. Cut instructions the agent ignored or did not need.
+2. Check triggering by confirming the description matches prompts that should load it and does not match near-miss prompts that need something else.
 
-Package the skill only when it needs to be distributed as a file, for example when sharing it with a user. Skills maintained in place, such as those under an agent's memory `skills/` directory, are used directly and need no packaging.
+For a high-traffic skill, use the systematic loops in [Evaluating skill output quality](https://agentskills.io/skill-creation/evaluating-skills) and [Optimizing skill descriptions](https://agentskills.io/skill-creation/optimizing-descriptions).
 
-To package a skill into a distributable .skill file, run the packaging script. The packaging process automatically validates the skill first to ensure it meets all requirements:
+## Report
 
-```bash
-npx tsx <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder>
-```
-
-Optional output directory specification:
-
-```bash
-npx tsx <SKILL_DIR>/scripts/package-skill.ts <path/to/skill-folder> ./dist
-```
-
-The packaging script will:
-
-1. **Validate** the skill automatically, checking:
-
-   - YAML frontmatter format and required fields
-   - Skill naming conventions and directory structure
-   - Description completeness and quality
-   - File organization and resource references
-
-2. **Package** the skill if validation passes, creating a .skill file named after the skill (e.g., `my-skill.skill`) that includes all files and maintains the proper directory structure for distribution. The .skill file is a zip file with a .skill extension.
-
-If validation fails, the script will report the errors and exit without creating a package. Fix any validation errors and run the packaging command again.
-
-### Step 6: Iterate
-
-Improve a skill when real usage shows it falling short, whether through user feedback or sessions where the skill was used. Usage with fresh context of how the skill performed is the best evidence.
-
-**Iteration workflow:**
-
-1. Use the skill on real tasks
-2. Notice struggles or inefficiencies
-3. Identify how SKILL.md or bundled resources should be updated
-4. Implement changes and test again
+State the skill's name, owner, and path, what it changes compared with the no-skill baseline, and the commit or pull request that published it.
