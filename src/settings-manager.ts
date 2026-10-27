@@ -1450,10 +1450,10 @@ class SettingsManager {
     workingDirectory: string = process.cwd(),
   ): void {
     const session: SessionRef = { agentId, conversationId };
-    this.setLocalLastSession(session, workingDirectory);
+    if (!shouldIsolateHomeProjectConfig(workingDirectory))
+      this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
   }
-
   // =====================================================================
   // Agent Pin Helpers (global-only, per-backend namespace)
   // =====================================================================

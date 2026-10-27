@@ -1,11 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveSettings as saveLegacySettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
 import {
+  isHomeWorkingDirectory,
   resolveGlobalConfigDir,
   resolveGlobalSettingsPath,
 } from "@/utils/settings-path";
@@ -62,6 +63,18 @@ describe("global settings path", () => {
       resolveGlobalSettingsPath({ LETTA_CONFIG_DIR: ".dream" }, "/fallback"),
     ).toThrow("LETTA_CONFIG_DIR must be absolute");
   });
+
+  test.skipIf(process.platform === "win32")(
+    "recognizes HOME through a filesystem alias",
+    async () => {
+      const realHome = join(testHomeDir, "real-home");
+      const linkedHome = join(testHomeDir, "linked-home");
+      await mkdir(realHome);
+      await symlink(realHome, linkedHome);
+
+      expect(isHomeWorkingDirectory(realHome, { HOME: linkedHome })).toBe(true);
+    },
+  );
 
   test("persists file-backed credentials only at the host-provided path", async () => {
     const settingsPath = join(testHomeDir, ".dream", "settings.json");

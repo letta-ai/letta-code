@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, resolve } from "node:path";
 
@@ -49,7 +50,17 @@ export function isHomeWorkingDirectory(
   env: NodeJS.ProcessEnv = process.env,
   fallbackHome: string = homedir(),
 ): boolean {
-  return resolve(workingDirectory) === resolve(env.HOME || fallbackHome);
+  const canonicalize = (path: string): string => {
+    const absolutePath = resolve(path);
+    try {
+      return realpathSync.native(absolutePath);
+    } catch {
+      return absolutePath;
+    }
+  };
+  return (
+    canonicalize(workingDirectory) === canonicalize(env.HOME || fallbackHome)
+  );
 }
 
 export function shouldIsolateHomeProjectConfig(
