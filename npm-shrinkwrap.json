@@ -387,6 +387,136 @@
         "node": ">=6.9.0"
       }
     },
+    "node_modules/@bufbuild/protobuf": {
+      "version": "1.10.0",
+      "resolved": "https://registry.npmjs.org/@bufbuild/protobuf/-/protobuf-1.10.0.tgz",
+      "integrity": "sha512-QDdVFLoN93Zjg36NoQPZfsVH9tZew7wKDKyV5qRdj8ntT4wQCOradQjRaTdwMhWUYsgKsvCINKKm87FdEk96Ag==",
+      "license": "(Apache-2.0 AND BSD-3-Clause)"
+    },
+    "node_modules/@connectrpc/connect": {
+      "version": "1.7.0",
+      "resolved": "https://registry.npmjs.org/@connectrpc/connect/-/connect-1.7.0.tgz",
+      "integrity": "sha512-iNKdJRi69YP3mq6AePRT8F/HrxWCewrhxnLMNm0vpqXAR8biwzRtO6Hjx80C6UvtKJ5sFmffQT7I4Baecz389w==",
+      "license": "Apache-2.0",
+      "peerDependencies": {
+        "@bufbuild/protobuf": "^1.10.0"
+      }
+    },
+    "node_modules/@connectrpc/connect-web": {
+      "version": "1.7.0",
+      "resolved": "https://registry.npmjs.org/@connectrpc/connect-web/-/connect-web-1.7.0.tgz",
+      "integrity": "sha512-qyP0YOnUPRWwCc/VfsoydMJvkb7EyUPr2q9sHgBuJzbADjiqck1gKH5V5ZPzPhTLBvmz5UvG+wiZ5sMRQHU1MQ==",
+      "license": "Apache-2.0",
+      "peerDependencies": {
+        "@bufbuild/protobuf": "^1.10.0",
+        "@connectrpc/connect": "1.7.0"
+      }
+    },
+    "node_modules/@cursor/sdk": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk/-/sdk-1.1.0.tgz",
+      "integrity": "sha512-QrqxwfgbT7e1oOsXzs0O86eGdPKA4VPOGU+v4vesZqRsPUIH/QKStWiE8/kV7eNQm1hEi9y2ijbeniZeXozgNA==",
+      "license": "SEE LICENSE IN LICENSE.md",
+      "dependencies": {
+        "@bufbuild/protobuf": "1.10.0",
+        "@connectrpc/connect": "^1.6.1",
+        "@connectrpc/connect-web": "^1.6.1",
+        "@statsig/js-client": "3.31.0"
+      },
+      "engines": {
+        "node": ">=22.13"
+      },
+      "optionalDependencies": {
+        "@cursor/sdk-darwin-arm64": "1.1.0",
+        "@cursor/sdk-darwin-x64": "1.1.0",
+        "@cursor/sdk-linux-arm64": "1.1.0",
+        "@cursor/sdk-linux-x64": "1.1.0",
+        "@cursor/sdk-win32-x64": "1.1.0"
+      },
+      "peerDependencies": {
+        "zod": "^3.25.0 || ^4.0.0"
+      }
+    },
+    "node_modules/@cursor/sdk-darwin-arm64": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk-darwin-arm64/-/sdk-darwin-arm64-1.1.0.tgz",
+      "integrity": "sha512-3ii4Yc4KtiHklMUGN6erAfJfDk6qYDi2lWdcj2NPFwidnGcRVrM5a2C28aG5wuqQPZrezdhD7zVYK/BmgwD3VQ==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "SEE LICENSE IN LICENSE.md",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "bin": {
+        "rg": "bin/rg"
+      }
+    },
+    "node_modules/@cursor/sdk-darwin-x64": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk-darwin-x64/-/sdk-darwin-x64-1.1.0.tgz",
+      "integrity": "sha512-hjRjNrnjqdom8/wUP00DAXttTSYxnKr8ZAbFZ0vf+Mo4zo6YtjTU0sewoadtuT9T0WGH2fI5SfZsSXyWMWOmqg==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "SEE LICENSE IN LICENSE.md",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "bin": {
+        "rg": "bin/rg"
+      }
+    },
+    "node_modules/@cursor/sdk-linux-arm64": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk-linux-arm64/-/sdk-linux-arm64-1.1.0.tgz",
+      "integrity": "sha512-olTKTyselLXGc06ehPtvoCFbSvZ3nZYh0J08b3e49YxdiOrXAIyE9IFD8tsOVaGkjHZISOL2PRWFBsOA03QmDQ==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "SEE LICENSE IN LICENSE.md",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "bin": {
+        "rg": "bin/rg"
+      }
+    },
+    "node_modules/@cursor/sdk-linux-x64": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk-linux-x64/-/sdk-linux-x64-1.1.0.tgz",
+      "integrity": "sha512-/gd/LRroo7qFDCFLnJOHc8HIEYQt020tFUZtdt6WB+SNGIeyUtflTqO97c1axU6IvH75QaNksMBdT0OEz4kNZg==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "SEE LICENSE IN LICENSE.md",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "bin": {
+        "rg": "bin/rg"
+      }
+    },
+    "node_modules/@cursor/sdk-win32-x64": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/@cursor/sdk-win32-x64/-/sdk-win32-x64-1.1.0.tgz",
+      "integrity": "sha512-pL1hQVaUPWEe7ReH6tqRY76BPASd58M0k1hJbXL00EFRtlnSoeDRCvVvOApvOQN/FBdP9DNbgqdWmETODc4jDQ==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "SEE LICENSE IN LICENSE.md",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "bin": {
+        "rg": "bin/rg.exe"
+      }
+    },
     "node_modules/@earendil-works/pi-ai": {
       "version": "0.99.2",
       "resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.99.2.tgz",
@@ -2149,6 +2279,21 @@
       "resolved": "https://registry.npmjs.org/@stablelib/base64/-/base64-1.0.1.tgz",
       "integrity": "sha512-1bnPQqSxSuc3Ii6MhBysoWCg58j97aUjuCSZrGSmDxNqtytIi0k8utUenAwTZN4V5mXXYGsVUI9zeBqy+jBOSQ==",
       "license": "MIT"
+    },
+    "node_modules/@statsig/client-core": {
+      "version": "3.31.0",
+      "resolved": "https://registry.npmjs.org/@statsig/client-core/-/client-core-3.31.0.tgz",
+      "integrity": "sha512-SuxQD6TmVszPG7FoMKwTk/uyBuVFk7XnxI3T/E0uyb7PL7GNjONtfsoh+NqBBVUJVse0CUeSFfgJPoZy1ZOslQ==",
+      "license": "ISC"
+    },
+    "node_modules/@statsig/js-client": {
+      "version": "3.31.0",
+      "resolved": "https://registry.npmjs.org/@statsig/js-client/-/js-client-3.31.0.tgz",
+      "integrity": "sha512-LFa5E0LjT6sTfZv3sNGoyRLSZ1078+agdgOA+Vm1ecjG+KbSOfBLTW7hMwimrJ29slRwbYDzbtKaPJo/R37N2g==",
+      "license": "ISC",
+      "dependencies": {
+        "@statsig/client-core": "3.31.0"
+      }
     },
     "node_modules/@types/hast": {
       "version": "3.0.5",
@@ -5458,6 +5603,7 @@
       "name": "@letta-ai/letta-code",
       "version": "0.34.25",
       "dependencies": {
+        "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^0.99.1",
         "@janhapke/sharp-electron": "0.35.3-electron.1",
         "@letta-ai/letta-agent-sdk": "0.8.38",

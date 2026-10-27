@@ -133,6 +133,11 @@ export const EXTERNAL_CODING_AGENT_DESCRIPTORS = [
       "Start a locally installed Codex coding session with mid-turn steering",
     recommendedModel: "configured Codex default",
   },
+  {
+    name: "cursor",
+    description: "Run Cursor's coding agent in the selected checkout",
+    recommendedModel: "explicit Cursor model ID required for a new session",
+  },
 ] as const;
 
 /**
@@ -156,6 +161,7 @@ const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
   "claude-code",
   "codex",
   "opencode",
+  "cursor",
 ]);
 
 // ============================================================================

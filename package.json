@@ -13,6 +13,7 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "cursor-worker.js",
     "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
     "scripts",
@@ -149,6 +150,7 @@
     "access": "public"
   },
   "dependencies": {
+    "@cursor/sdk": "1.1.0",
     "@earendil-works/pi-ai": "^0.99.1",
     "@janhapke/sharp-electron": "0.35.3-electron.1",
     "@letta-ai/letta-agent-sdk": "0.8.38",
@@ -275,7 +277,7 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-1x8a2Fgt2I6P9iN8EVZFwZkpduSmiXWAOMoNGT3vr0mmgncK2fEjapBA4uf5HmTbt4okCXepE5wsBWBiEOFztg==",
+  "lettaRuntimeGraphSha512": "sha512-ZJ9ZBCoeeXS4OtH4UcN8jiTwUjCqk1jcXlcKlGuNmqqL8i7wZGuSZT/GeOivTj2VtiQwx/NI6Qs24oi+We1GFA==",
   "patchedDependencies": {
     "@earendil-works/pi-ai@0.99.1": "patches/@earendil-works%2Fpi-ai@0.99.1.patch"
   }
