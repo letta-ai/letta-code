@@ -32,6 +32,8 @@ export type ShellSpawnOptions = {
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
+  /** Whether git worktree add should be attributed to the active conversation. */
+  trackExpectedWorktree?: boolean;
   /** Command before launcher and sandbox wrapping, used for completion metadata. */
   sourceCommand?: ShellSourceCommand;
   signal?: AbortSignal;
@@ -463,7 +465,9 @@ export function startShellProcess(
     );
   }
 
-  noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
+  if (options.trackExpectedWorktree !== false) {
+    noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
+  }
 
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
     launchOptions.sourceCommand ?? launcher,

@@ -87,6 +87,7 @@ export async function runGit(
     timeoutMs?: number;
     allowFailure?: boolean;
     signal?: AbortSignal;
+    trackExpectedWorktree?: boolean;
   } = {},
 ): Promise<GitResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
@@ -97,6 +98,7 @@ export async function runGit(
       env: buildNonInteractiveGitEnv(),
       signal: options.signal,
       timeoutMs,
+      trackExpectedWorktree: options.trackExpectedWorktree,
     });
   } catch (error) {
     const failure = error as Error & {
@@ -292,6 +294,7 @@ export async function addWorktreeSafely(params: {
         params.baseRef,
       ],
       params.repoRoot,
+      { trackExpectedWorktree: false },
     );
   } finally {
     await rm(emptyHooksDir, { recursive: true, force: true });
