@@ -92,7 +92,7 @@ You can't remap these shortcuts in the [keybindings configuration file](https://
 | `/` at start | Command or skill | See [commands](#commands) and [skills](https://code.claude.com/docs/en/skills.md) |
 | `!` at start | Shell mode | Run a command directly, add its output to the session, and have Claude respond to it |
 | `@` | File path mention | Trigger file path autocomplete. In sessions with [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging.md#message-another-session), when you type at least one letter after the `@`, Claude Code also suggests your other live sessions on this machine, so you can tell Claude to message the one you pick. Requires Claude Code v2.1.232 or later |
-| `:` | Emoji shortcode | Type a full `:name:` to insert the emoji, or two or more characters for suggestions. See [Emoji shortcodes](#emoji-shortcodes). Requires Claude Code v2.1.217 or later |
+| `:` | Emoji shortcode | Type a full `:name:` to insert the emoji, or two or more characters for suggestions. See [Emoji shortcodes](#emoji-shortcodes) |
 | `?` on empty input | Toggle the shortcut help panel | Typing `?` when the input already contains text inserts the character |
 
 ### Transcript viewer
@@ -197,7 +197,7 @@ Claude Code reads this setting from your user settings file, the `--settings` fl
 
 > [!NOTE]
 >
-> In vim NORMAL mode, if the cursor is at the beginning or end of input and can't move further, `j`/`k` and `↑`/`↓` navigate command history instead. `←` on an empty prompt opens [agent view](https://code.claude.com/docs/en/agent-view.md) from NORMAL mode as well as INSERT; before v2.1.219, `←` on an empty prompt did nothing in NORMAL mode.
+> In vim NORMAL mode, if the cursor is at the beginning or end of input and can't move further, `j`/`k` and `↑`/`↓` navigate command history instead. `←` on an empty prompt opens [agent view](https://code.claude.com/docs/en/agent-view.md) from NORMAL mode as well as INSERT.
 
 ### Editing (NORMAL mode)
 
@@ -513,7 +513,7 @@ To turn off You should know, use either of the following:
 
 ## Emoji shortcodes
 
-Type a `:` followed by an emoji shortcode in the prompt input to insert the emoji. Requires Claude Code v2.1.217 or later.
+Type a `:` followed by an emoji shortcode in the prompt input to insert the emoji.
 
 * Type a complete shortcode such as `:heart:` and Claude Code replaces it with ❤️ as soon as you type the closing `:`
 * Type `:` plus at least two characters of a name, such as `:hea`, to open a suggestion popup, then press `Tab` or `Enter` to insert the highlighted emoji

@@ -1293,7 +1293,7 @@ Claude Code keeps a Bash call sandboxed when it has one of these shapes, among o
 * A command starting with `sudo`, `eval`, or `xargs`
 * A `cd`, `pushd`, or `popd`, wherever it appears in the call
 * A command substitution, a subshell, or a control-flow block such as `if` or `for`
-* A redirection, such as `docker build . > build.log`, other than one that only duplicates a file descriptor, as `2>&1` does
+* A redirection, such as `docker build . > build.log` or a `<<EOF` heredoc, other than one that only duplicates a file descriptor, as `2>&1` does
 * A command name that comes from a variable
 * A `git clone`, `git init`, `git worktree add`, `git worktree move`, or `git bundle create` with a path argument that is absolute, starts with `~`, or contains a `..` segment
 
@@ -1521,7 +1521,7 @@ See [Keep developers from widening the policy](https://code.claude.com/docs/en/s
 
 ### `sandbox.filesystem.disabled`
 
-Skip filesystem isolation while keeping network isolation. Sandboxed commands get unrestricted read and write access to the host filesystem, and their network egress stays confined to [`network.allowedDomains`](#sandbox-network-alloweddomains). Use it when you sandbox to control where commands connect rather than what they write. Requires Claude Code v2.1.216 or later.
+Skip filesystem isolation while keeping network isolation. Sandboxed commands get unrestricted read and write access to the host filesystem, and their network egress stays confined to [`network.allowedDomains`](#sandbox-network-alloweddomains). Use it when you sandbox to control where commands connect rather than what they write.
 
 * **Scope**: [`User or managed`](#scopes). When managed settings configure `sandbox.filesystem` at all, or list a `sandbox.credentials.files` entry with `"mode": "deny"`, only managed settings can set it.
 * **Type**: Boolean
@@ -1545,7 +1545,7 @@ This leaves the filesystem open and confines network egress to GitHub and npm:
 }
 ```
 
-With the layer off, Claude Code doesn't enforce `denyRead` or `credentials.files` `deny` entries, while `credentials.envVars` entries and applied `mask` entries keep working. [`autoAllowBashIfSandboxed`](#sandbox-autoallowbashifsandboxed) still defaults to `true`, so set it to `false` to keep prompting. See [Disable filesystem isolation](https://code.claude.com/docs/en/sandboxing.md#disable-filesystem-isolation) for the full list of sources that can set it and what changes when isolation is off. Requires Claude Code v2.1.216 or later.
+With the layer off, Claude Code doesn't enforce `denyRead` or `credentials.files` `deny` entries, while `credentials.envVars` entries and applied `mask` entries keep working. [`autoAllowBashIfSandboxed`](#sandbox-autoallowbashifsandboxed) still defaults to `true`, so set it to `false` to keep prompting. See [Disable filesystem isolation](https://code.claude.com/docs/en/sandboxing.md#disable-filesystem-isolation) for the full list of sources that can set it and what changes when isolation is off.
 
 ### `sandbox.ignoreViolations`
 
@@ -2717,7 +2717,7 @@ Show emoji suggestions when you type `:` plus a shortcode in the prompt input, a
 }
 ```
 
-See [Emoji shortcodes](https://code.claude.com/docs/en/interactive-mode.md#emoji-shortcodes). Requires Claude Code v2.1.217 or later.
+See [Emoji shortcodes](https://code.claude.com/docs/en/interactive-mode.md#emoji-shortcodes).
 
 ### `fileSuggestion`
 
@@ -3692,7 +3692,7 @@ The `ultracode` effort setting, `/workflows`, and saved workflow commands are un
 
 ### `workflowSizeGuideline`
 
-Set the [agent count Claude aims for](https://code.claude.com/docs/en/workflows.md#set-a-size-guideline) in the dynamic workflows it writes. Claude Code sends the value to Claude as advice, not an enforced cap: `"small"` asks for fewer than 5 agents, `"medium"` fewer than 10, and `"large"` fewer than 50. Choose `"small"` when you want to bound what a workflow spends. Requires Claude Code v2.1.219 or later.
+Set the [agent count Claude aims for](https://code.claude.com/docs/en/workflows.md#set-a-size-guideline) in the dynamic workflows it writes. Claude Code sends the value to Claude as advice, not an enforced cap: `"small"` asks for fewer than 5 agents, `"medium"` fewer than 10, and `"large"` fewer than 50. Choose `"small"` when you want to bound what a workflow spends.
 
 * **Scope**: [`Any file`](#scopes). A value there takes precedence over the **Dynamic workflow size** choice in `/config`, which Claude Code stores in `~/.claude.json`, and Claude Code hides that row while a settings file sets the key.
 * **Type**: string, one of:
@@ -3707,8 +3707,6 @@ Set the [agent count Claude aims for](https://code.claude.com/docs/en/workflows.
   "workflowSizeGuideline": "small"
 }
 ```
-
-Requires Claude Code v2.1.219 or later; on v2.1.202 through v2.1.218, set the guideline in `/config` instead.
 
 ## Plugins and skills
 
