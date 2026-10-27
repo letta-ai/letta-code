@@ -14,6 +14,7 @@ import {
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
+  startupAutoUpdate,
 } from "@/updater/auto-update";
 
 test("Python wheels never query npm or self-install updates", async () => {
@@ -40,6 +41,40 @@ test("Python wheels never query npm or self-install updates", async () => {
   } finally {
     if (previous === undefined) delete process.env.LETTA_CODE_DISTRIBUTION;
     else process.env.LETTA_CODE_DISTRIBUTION = previous;
+  }
+});
+
+test("Windows startup never installs in place and returns the manual command", async () => {
+  const savedArgv1 = process.argv[1];
+  const savedEnv = {
+    LETTA_PACKAGE_MANAGER: process.env.LETTA_PACKAGE_MANAGER,
+    DISABLE_AUTOUPDATER: process.env.DISABLE_AUTOUPDATER,
+  };
+  process.argv[1] =
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@letta-ai\\letta-code\\letta.js";
+  process.env.LETTA_PACKAGE_MANAGER = "npm";
+  delete process.env.DISABLE_AUTOUPDATER;
+  try {
+    const fetchImpl = mock(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+      ),
+    ) as unknown as typeof fetch;
+    const autoUpdate = mock(async () => undefined);
+
+    const result = await startupAutoUpdate("win32", fetchImpl, autoUpdate);
+
+    expect(autoUpdate).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      latestVersion: "99.0.0",
+      manualUpdateCommand: buildInstallCommand("npm"),
+    });
+  } finally {
+    process.argv[1] = savedArgv1 ?? "";
+    for (const [key, value] of Object.entries(savedEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
 

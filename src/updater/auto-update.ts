@@ -502,6 +502,8 @@ export interface AutoUpdateResult {
   latestVersion?: string;
   /** True when the binary was updated and the user should restart */
   updateApplied?: boolean;
+  /** Set when an update is available but must be installed by the user */
+  manualUpdateCommand?: string;
 }
 
 /**
@@ -604,5 +606,29 @@ export async function manualUpdate(options?: {
   return {
     success: false,
     message: `Update failed: ${updateResult.error}\n\nTo update manually: ${installCmd}`,
+  };
+}
+
+/**
+ * Startup auto-update. Windows can't replace files a running process holds
+ * open (the CLI entry, native addons), so a global install over the live CLI
+ * can leave a partial install with the `letta` launchers deleted. On Windows,
+ * only check and return the command for the user to run after closing Letta
+ * Code.
+ */
+export async function startupAutoUpdate(
+  platform: NodeJS.Platform = process.platform,
+  fetchImpl: FetchImpl = fetch,
+  autoUpdate: typeof checkAndAutoUpdate = checkAndAutoUpdate,
+): Promise<AutoUpdateResult | undefined> {
+  if (platform !== "win32") return autoUpdate();
+  if (isPythonDistribution() || !isAutoUpdateEnabled() || isRunningLocally()) {
+    return undefined;
+  }
+  const result = await checkForUpdate(fetchImpl);
+  if (!result.updateAvailable || !result.latestVersion) return undefined;
+  return {
+    latestVersion: result.latestVersion,
+    manualUpdateCommand: buildInstallCommand(detectPackageManager()),
   };
 }

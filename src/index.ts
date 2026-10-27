@@ -645,8 +645,8 @@ async function main(): Promise<void> {
   }
 
   // Check for updates on startup (non-blocking)
-  const { checkAndAutoUpdate } = await import("@/updater/auto-update");
-  const autoUpdatePromise = startStartupAutoUpdateCheck(checkAndAutoUpdate);
+  const { startupAutoUpdate } = await import("@/updater/auto-update");
+  const autoUpdatePromise = startStartupAutoUpdateCheck(startupAutoUpdate);
 
   // Parse command-line arguments from a shared schema used by both TUI and headless flows.
   // Preprocess args to support legacy aliases before strict parsing.
