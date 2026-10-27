@@ -80,8 +80,6 @@ import {
   type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
-import { resolveAgentSandboxConnectionId } from "./backend/api/environments";
-import { resolveEnvironmentConnectionId } from "./backend/environment-lookup";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -120,10 +118,9 @@ import {
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
-  buildEnvironmentResponseMetadata,
-  isCloudEnvironmentSelector,
   type ListenerLaunchResult,
   type ReplyEnvironmentMetadata,
+  resolveListenerLaunchTarget,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
@@ -1934,30 +1931,21 @@ export async function handleHeadlessCommand(
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
 
   if (usesRemoteEnvironment) {
-    const agentId = publicAgentId ?? parentAgentId;
-    if (!agentId)
-      throw new Error(
-        "Listener delivery requires a conversation with an agent or parent agent.",
-      );
     const environmentSelector = explicitEnvironmentSelector ?? "";
-    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = environmentSelector
-      ? useCloudSandbox
-        ? await resolveAgentSandboxConnectionId(agentId, { conversationId })
-        : await resolveEnvironmentConnectionId(environmentSelector)
-      : null;
-    const connectionId =
-      environmentRouting?.connectionId ?? inheritedListenerConnectionId;
-    if (!connectionId)
-      throw new Error("No listener connection was resolved for this launch");
-    const responseEnvironment: ReplyEnvironmentMetadata = environmentRouting
-      ? buildEnvironmentResponseMetadata({
-          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
-          input: environmentSelector,
-          connectionId,
-          environment: environmentRouting.environment,
-        })
-      : { source: "same-environment" };
+    const target = await resolveListenerLaunchTarget({
+      selector: environmentSelector,
+      agentId: publicAgentId ?? parentAgentId,
+      conversationId,
+      inheritedConnectionId: inheritedListenerConnectionId,
+    });
+    if ("error" in target)
+      return reportStartupErrorAndExit(
+        "headless_environment_routing_failed",
+        new Error(target.error),
+        "headless_environment_routing",
+        outputFormat,
+      );
+    const { connectionId, responseEnvironment } = target;
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: isAgentLaunch || Boolean(values["no-wait"]),
       clientMessageId: values["client-message-id"],

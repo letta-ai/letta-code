@@ -324,7 +324,15 @@ describe("Codex app-server lifecycle", () => {
         parentAgentId: "parent",
         cwd: "/repo",
       },
-      { createTransport: () => second.transport() },
+      {
+        env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
+        createTransport: ({ env }) => {
+          if (process.platform !== "win32") {
+            expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
+          }
+          return second.transport();
+        },
+      },
     );
     expect(second.requests.map((request) => request.method)).toContain(
       "thread/resume",

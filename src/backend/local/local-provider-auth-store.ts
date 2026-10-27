@@ -212,6 +212,25 @@ export function getLocalProviderRecordByName(
   return readAuthFile(storageDir).providers[providerName] ?? null;
 }
 
+export function getLocalProviderRecordById(
+  providerIdValue: string,
+  storageDir?: string,
+): LocalProviderRecord | null {
+  const providers = readAuthFile(storageDir).providers;
+  const providerName = providerIdValue.startsWith("local-provider-")
+    ? providerIdValue.slice("local-provider-".length)
+    : undefined;
+  const direct = providerName ? providers[providerName] : undefined;
+  if (direct?.id === providerIdValue) return direct;
+
+  // Keep legacy auth files with non-derived IDs readable.
+  return (
+    Object.values(providers).find(
+      (provider) => provider.id === providerIdValue,
+    ) ?? null
+  );
+}
+
 export function getLocalProviderRecordByType(
   providerType: string,
   storageDir?: string,
@@ -228,6 +247,14 @@ export async function getLocalProviderByName(
   storageDir?: string,
 ): Promise<ProviderResponse | null> {
   const record = getLocalProviderRecordByName(providerName, storageDir);
+  return record ? providerResponse(record) : null;
+}
+
+export async function getLocalProviderById(
+  providerIdValue: string,
+  storageDir?: string,
+): Promise<ProviderResponse | null> {
+  const record = getLocalProviderRecordById(providerIdValue, storageDir);
   return record ? providerResponse(record) : null;
 }
 
@@ -294,9 +321,7 @@ export async function updateLocalProvider(
   storageDir?: string,
   options: { baseURL?: string; timeout?: LocalProviderTimeout } = {},
 ): Promise<ProviderResponse> {
-  const existing = listLocalProviderRecords(storageDir).find(
-    (provider) => provider.id === providerIdValue,
-  );
+  const existing = getLocalProviderRecordById(providerIdValue, storageDir);
   if (!existing) {
     throw new Error(`Local provider "${providerIdValue}" not found.`);
   }
@@ -318,9 +343,16 @@ export async function deleteLocalProvider(
   storageDir?: string,
 ): Promise<void> {
   const file = readAuthFile(storageDir);
-  const provider = Object.values(file.providers).find(
-    (record) => record.id === providerIdValue,
-  );
+  const providerName = providerIdValue.startsWith("local-provider-")
+    ? providerIdValue.slice("local-provider-".length)
+    : undefined;
+  const direct = providerName ? file.providers[providerName] : undefined;
+  const provider =
+    direct?.id === providerIdValue
+      ? direct
+      : Object.values(file.providers).find(
+          (record) => record.id === providerIdValue,
+        );
   if (!provider) return;
   delete file.providers[provider.name];
   writeAuthFile(file, storageDir);

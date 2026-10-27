@@ -13,9 +13,11 @@ import {
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
+  resolveAgentSandboxConnectionId,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { toolFilter } from "@/tools/filter";
 import type { ResultMessage, UsageStatistics } from "@/types/protocol";
 
@@ -109,6 +111,69 @@ export function isCloudEnvironmentSelector(
   if (typeof selector !== "string") return false;
   const normalized = selector.trim().toLowerCase();
   return normalized === "cloud" || normalized === "cloud-sandbox";
+}
+
+type EnvironmentRouting = {
+  connectionId: string;
+  environment: EnvironmentConnection;
+};
+
+/**
+ * Resolve `--computer` (or the inherited listener) to a connection for a
+ * listener launch. Failures such as an offline, unknown, or ambiguous
+ * computer come back as `{ error }` so the caller can report them; a thrown
+ * error here escapes as an unhandled rejection, which the fatal handler turns
+ * into a bare exit 1 with no message.
+ */
+export async function resolveListenerLaunchTarget(input: {
+  selector: string;
+  agentId: string | null | undefined;
+  conversationId: string;
+  inheritedConnectionId?: string | null;
+  resolveComputer?: (selector: string) => Promise<EnvironmentRouting>;
+  resolveCloudSandbox?: (
+    agentId: string,
+    options: { conversationId: string },
+  ) => Promise<EnvironmentRouting>;
+}): Promise<
+  | { connectionId: string; responseEnvironment: ReplyEnvironmentMetadata }
+  | { error: string }
+> {
+  const { selector, agentId } = input;
+  if (!agentId)
+    return {
+      error:
+        "Listener delivery requires a conversation with an agent or parent agent.",
+    };
+  const useCloudSandbox = isCloudEnvironmentSelector(selector);
+  let routing: EnvironmentRouting | null = null;
+  try {
+    if (selector)
+      routing = useCloudSandbox
+        ? await (input.resolveCloudSandbox ?? resolveAgentSandboxConnectionId)(
+            agentId,
+            { conversationId: input.conversationId },
+          )
+        : await (input.resolveComputer ?? resolveEnvironmentConnectionId)(
+            selector,
+          );
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) };
+  }
+  const connectionId = routing?.connectionId ?? input.inheritedConnectionId;
+  if (!connectionId)
+    return { error: "No listener connection was resolved for this launch" };
+  return {
+    connectionId,
+    responseEnvironment: routing
+      ? buildEnvironmentResponseMetadata({
+          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
+          input: selector,
+          connectionId,
+          environment: routing.environment,
+        })
+      : { source: "same-environment" },
+  };
 }
 
 export function getEnvironmentRoutedMessagingUnsupportedReason(

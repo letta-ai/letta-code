@@ -86,6 +86,7 @@ const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  cursor: "Cursor",
 };
 
 export function formatRemoteStartupError(
@@ -95,7 +96,7 @@ export function formatRemoteStartupError(
 ): string {
   const name = DISPLAY_NAMES[type];
   return code === "not_installed"
-    ? `${name} isn't installed on ${computer}. Install it there, or run a Letta subagent on that computer instead.`
+    ? `The Letta process on ${computer} couldn't find or start ${name}. Check its PATH and the CLI installation on that computer.`
     : `${name} is installed on ${computer} but not signed in. Sign in there, or run a Letta subagent on that computer instead.`;
 }
 

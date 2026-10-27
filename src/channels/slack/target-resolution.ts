@@ -19,6 +19,19 @@ export type SlackConversationRecord = {
 
 type SlackReadClient = {
   conversations: {
+    info: (args: { channel: string }) => Promise<{
+      ok?: boolean;
+      error?: string;
+      channel?: {
+        id?: string;
+        name?: string;
+        is_archived?: boolean;
+        is_channel?: boolean;
+        is_group?: boolean;
+        is_im?: boolean;
+        is_mpim?: boolean;
+      };
+    }>;
     list: (args: {
       exclude_archived?: boolean;
       limit?: number;
@@ -44,6 +57,10 @@ type SlackReadClient = {
       };
     }>;
   };
+};
+
+type SlackInfoClient = {
+  conversations: Pick<SlackReadClient["conversations"], "info">;
 };
 
 type SlackListClient = {
@@ -192,6 +209,47 @@ function findCachedSlackTarget(params: {
   };
 }
 
+export async function lookupSlackChannelById(
+  account: SlackChannelAccount,
+  chatId: string,
+  existingClient?: SlackInfoClient,
+): Promise<SlackConversationRecord | null> {
+  const client =
+    existingClient ??
+    (await createSlackWebApiClient<SlackReadClient>(account.botToken, {
+      retryConfig: {
+        retries: 0,
+      },
+    }));
+
+  const response = await client.conversations.info({ channel: chatId });
+  if (!response.ok) {
+    if (response.error === "channel_not_found") {
+      return null;
+    }
+    throw new Error(
+      `Failed to look up Slack channel ${chatId}: ${response.error ?? "unknown error"}`,
+    );
+  }
+
+  const channel = response.channel;
+  const isChannel = channel?.is_channel === true || channel?.is_group === true;
+  if (
+    channel?.id !== chatId ||
+    channel.is_archived ||
+    !isChannel ||
+    channel.is_im ||
+    channel.is_mpim
+  ) {
+    return null;
+  }
+
+  return {
+    id: channel.id,
+    name: channel.name,
+  };
+}
+
 export async function listSlackChannels(
   account: SlackChannelAccount,
   existingClient?: SlackListClient,
@@ -271,22 +329,11 @@ export async function openSlackDirectMessage(
   };
 }
 
-function findSlackChannelByTarget(params: {
+function findSlackChannelByName(params: {
   channels: SlackConversationRecord[];
-  normalizedTarget: NormalizedSlackTarget;
+  normalizedTarget: Extract<NormalizedSlackTarget, { kind: "name" }>;
 }): SlackConversationRecord | string | null {
   const normalizedTarget = params.normalizedTarget;
-  if (normalizedTarget.kind === "user") {
-    return null;
-  }
-  if (normalizedTarget.kind === "id") {
-    return (
-      params.channels.find(
-        (channel) => channel.id === normalizedTarget.chatId,
-      ) ?? null
-    );
-  }
-
   const matches = params.channels.filter(
     (channel) =>
       normalizeSlackChannelName(channel.name ?? "") === normalizedTarget.name,
@@ -319,6 +366,10 @@ function cacheSlackChannelTarget(params: {
 export async function resolveSlackMessageTarget(params: {
   account: SlackChannelAccount;
   target: string;
+  lookupChannelById?: (
+    account: SlackChannelAccount,
+    chatId: string,
+  ) => Promise<SlackConversationRecord | null>;
   lookupChannels?: (
     account: SlackChannelAccount,
   ) => Promise<SlackConversationRecord[]>;
@@ -362,16 +413,27 @@ export async function resolveSlackMessageTarget(params: {
     };
   }
 
-  const channels = await (params.lookupChannels ?? listSlackChannels)(
-    params.account,
-  );
-  const matchedChannel = findSlackChannelByTarget({
-    channels,
-    normalizedTarget,
-  });
-  if (typeof matchedChannel === "string") {
-    throw new Error(matchedChannel);
+  let matchedChannel: SlackConversationRecord | null;
+  if (normalizedTarget.kind === "id") {
+    const channel = await (params.lookupChannelById ?? lookupSlackChannelById)(
+      params.account,
+      normalizedTarget.chatId,
+    );
+    matchedChannel = channel?.id === normalizedTarget.chatId ? channel : null;
+  } else {
+    const channels = await (params.lookupChannels ?? listSlackChannels)(
+      params.account,
+    );
+    const namedChannel = findSlackChannelByName({
+      channels,
+      normalizedTarget,
+    });
+    if (typeof namedChannel === "string") {
+      throw new Error(namedChannel);
+    }
+    matchedChannel = namedChannel;
   }
+
   if (!matchedChannel) {
     throw new Error(
       `Unknown Slack MessageChannel target "${normalizedTarget.raw}" for account "${params.account.accountId}".`,

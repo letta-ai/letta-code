@@ -156,7 +156,53 @@ describe("cron run log", () => {
       entries: [{ ts: 2000 }],
     });
     expect(
+      readCronRunLogEntriesPage(logPath, { limit: 1, offset: 1 }),
+    ).toMatchObject({
+      total: 2,
+      offset: 1,
+      hasMore: false,
+      nextOffset: null,
+      entries: [{ ts: 1000 }],
+    });
+    expect(
       readCronRunLogEntriesPage(logPath, { runId: "run-1" }).entries,
     ).toEqual([expect.objectContaining({ runId: "run-1", ts: 1000 })]);
+  });
+
+  test("finds a requested run older than the unfiltered entry limit", () => {
+    const logPath = getCronRunLogPath("job-1");
+    appendCronRunLog(logPath, {
+      ts: 1,
+      jobId: "job-1",
+      action: "finished",
+      status: "ok",
+      runId: "requested-run",
+    });
+    const newerEntries = Array.from({ length: 5001 }, (_, index) => ({
+      ts: index + 2,
+      jobId: "job-1",
+      action: "finished",
+      status: "ok",
+      runId: `newer-run-${index}`,
+    }));
+    appendFileSync(
+      logPath,
+      `${newerEntries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
+    );
+
+    expect(
+      readCronRunLogEntriesPage(logPath, {
+        jobId: "job-1",
+        runId: "requested-run",
+        limit: 1,
+      }),
+    ).toEqual({
+      entries: [expect.objectContaining({ runId: "requested-run", ts: 1 })],
+      total: 1,
+      offset: 0,
+      limit: 1,
+      hasMore: false,
+      nextOffset: null,
+    });
   });
 });

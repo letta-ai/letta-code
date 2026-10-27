@@ -95,22 +95,80 @@ function runGh(args: string[]): string {
   return result.stdout;
 }
 
+interface GitHubPullRequest {
+  body: string | null;
+  draft: boolean;
+  html_url: string;
+  number: number;
+  user: { login: string } | null;
+}
+
+const SEARCH_ATTEMPTS = 3;
+
+export function findWatcherPullRequests(
+  args: Pick<Args, "repo" | "marker">,
+  executeGh: (command: string[]) => string = runGh,
+  waitForSearchIndex: () => void = () => Bun.sleepSync(1_000),
+): WatcherPullRequest[] {
+  for (let attempt = 0; attempt < SEARCH_ATTEMPTS; attempt += 1) {
+    let foundExactHint = false;
+    try {
+      const candidates = JSON.parse(
+        executeGh([
+          "pr",
+          "list",
+          "--repo",
+          args.repo,
+          "--state",
+          "open",
+          "--search",
+          `${args.marker} in:body`,
+          "--limit",
+          "1000",
+          "--json",
+          "author,body,isDraft,number,url",
+        ]),
+      ) as WatcherPullRequest[];
+      foundExactHint = candidates.some((pullRequest) =>
+        pullRequest.body?.includes(args.marker),
+      );
+    } catch {
+      // Search is only an acceleration hint. The authoritative list below must
+      // still prove presence, absence, and uniqueness.
+    }
+    if (foundExactHint) break;
+    if (attempt + 1 < SEARCH_ATTEMPTS) waitForSearchIndex();
+  }
+
+  const pages = JSON.parse(
+    executeGh([
+      "api",
+      "--method",
+      "GET",
+      "--paginate",
+      "--slurp",
+      `repos/${args.repo}/pulls`,
+      "-f",
+      "state=open",
+      "-f",
+      "per_page=100",
+    ]),
+  ) as GitHubPullRequest[][];
+  return pages
+    .flatMap((page) => page)
+    .filter((pullRequest) => pullRequest.body?.includes(args.marker))
+    .map((pullRequest) => ({
+      author: pullRequest.user,
+      body: pullRequest.body,
+      isDraft: pullRequest.draft,
+      number: pullRequest.number,
+      url: pullRequest.html_url,
+    }));
+}
+
 function main(): void {
   const args = parseArgs(process.argv.slice(2));
-  const pullRequests = JSON.parse(
-    runGh([
-      "pr",
-      "list",
-      "--repo",
-      args.repo,
-      "--state",
-      "open",
-      "--limit",
-      "1000",
-      "--json",
-      "author,body,isDraft,number,url",
-    ]),
-  ) as WatcherPullRequest[];
+  const pullRequests = findWatcherPullRequests(args);
   const verified = enforceWatcherPrIdentity({
     ...args,
     pullRequests,

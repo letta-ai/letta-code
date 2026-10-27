@@ -2,13 +2,50 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import {
   buildEnvironmentCreateMessageBody,
   buildEnvironmentLaunchResult,
   resolveEnvironmentMaxWaitMs,
+  resolveListenerLaunchTarget,
   waitForEnvironmentAssistantMessage,
 } from "@/headless-environment-response";
 import { toolFilter } from "@/tools/filter";
+
+test("an offline --computer resolves to a reportable error instead of throwing", async () => {
+  const now = Date.now();
+  const offline: EnvironmentConnection = {
+    id: "env-1",
+    connectionId: "conn-1",
+    deviceId: "f7a46670-7aaa-4742-bb41-b916fc314cd8",
+    connectionName: "Sergey-PC",
+    organizationId: "org-1",
+    podId: "pod-1",
+    connectedAt: now - 3_600_000,
+    lastHeartbeat: now - 3_600_000,
+    lastSeenAt: now - 3_600_000,
+    firstSeenAt: now - 7_200_000,
+  };
+  const result = await resolveListenerLaunchTarget({
+    selector: "Sergey-PC",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    resolveComputer: (selector) =>
+      resolveEnvironmentConnectionId(selector, {
+        get: async () => {
+          throw new ApiRequestError("not found", 404, "");
+        },
+        list: async () => ({
+          connections: [offline],
+          hasNextPage: false,
+        }),
+      }),
+  });
+  expect(result).toEqual({
+    error:
+      'Computer "Sergey-PC" is offline. Matched: Sergey-PC (f7a46670-7aaa-4742-bb41-b916fc314cd8, offline)',
+  });
+});
 
 test("launch envelopes preserve queued identity, failure text, and completed usage", () => {
   const base = {
