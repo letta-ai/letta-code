@@ -231,13 +231,10 @@ async function resolveCompletionSummary(
 export function spawnBackgroundSubagentTask(
   args: SpawnBackgroundSubagentTaskArgs,
 ): SpawnBackgroundSubagentTaskResult {
-  if (args.subagentType === "memory-repair" && args.environment?.trim()) {
+  if (args.subagentType === "memory" && args.environment?.trim()) {
     throw new Error(
       "Memory workers must run on the current machine; omit computer.",
     );
-  }
-  if (args.subagentType === "memory-repair" && !args.memoryRepairToken) {
-    throw new Error("Memory repair requires an attempt token");
   }
   assertBackgroundTaskCapacity();
 
@@ -267,9 +264,9 @@ export function spawnBackgroundSubagentTask(
     deps,
   } = args;
   const silentCompletion =
-    subagentType === "memory-repair" || requestedSilentCompletion;
+    subagentType === "memory" || requestedSilentCompletion;
   const shouldEmitCompletionNotification =
-    subagentType !== "memory-repair" &&
+    subagentType !== "memory" &&
     (emitCompletionNotification ?? !silentCompletion);
 
   const resolvedParentScope = resolveNotificationScope(parentScope);
@@ -335,7 +332,7 @@ export function spawnBackgroundSubagentTask(
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
   const workerMemoryDir =
-    subagentType === "memory-repair" && resolvedParentScope
+    subagentType === "memory" && resolvedParentScope
       ? (memoryScope?.primaryRoot ??
         getScopedMemoryFilesystemRoot(resolvedParentScope.agentId))
       : undefined;
@@ -371,12 +368,14 @@ export function spawnBackgroundSubagentTask(
     );
   };
   const memoryTask =
-    subagentType === "memory-repair" && resolvedParentScope && workerMemoryDir
+    subagentType === "memory" && resolvedParentScope && workerMemoryDir
       ? runBackgroundMemoryTask({
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
-          assignment: prompt,
-          repairToken: args.memoryRepairToken as string,
+          assignment: args.memoryRepairToken
+            ? prompt
+            : "You have been requested to revise an agent's memory in $MEMORY_DIR.",
+          repairToken: args.memoryRepairToken,
           signal: abortController.signal,
           subagentId,
           outputFile,
@@ -395,7 +394,7 @@ export function spawnBackgroundSubagentTask(
   const unsubscribe = memoryTask?.unsubscribe ?? (() => {});
   const subagentExecution =
     memoryTask?.execution ??
-    (subagentType === "memory-repair"
+    (subagentType === "memory"
       ? Promise.reject(
           new Error("Memory tasks require a parent conversation scope"),
         )
@@ -607,7 +606,7 @@ export function spawnBackgroundSubagentTask(
   // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
   const swallow = () => undefined;
   bgTask.completion =
-    subagentType === "memory-repair"
+    subagentType === "memory"
       ? taskLifecycle
       : subagentExecution.then(swallow, swallow);
   return { taskId, outputFile, subagentId };
@@ -617,16 +616,6 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
-  if (
-    args.subagent_type === "memory" ||
-    args.subagent_type === "memory-repair"
-  ) {
-    return {
-      success: false,
-      error:
-        "Memory edits belong in the parent agent; memory-repair is harness-only.",
-    };
-  }
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -885,7 +874,7 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
-  if (config.fork) {
+  if (config.fork && subagent_type !== "memory") {
     if (args.agent_id || args.conversation_id) {
       return {
         success: false,
@@ -931,11 +920,21 @@ export async function launchSubagent(
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
     clientMessageId: args.client_message_id,
-    forkedContext: config.fork,
+    forkedContext: subagent_type !== "memory" && config.fork,
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
   });
+
+  if (subagent_type === "memory") {
+    return {
+      success: true,
+      task_id: taskId,
+      output_file: outputFile,
+      agent_id: null,
+      conversation_id: null,
+    };
+  }
 
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
@@ -982,6 +981,9 @@ export async function task(args: TaskArgs): Promise<string> {
   }
   const result = await launchSubagent(args);
   if (!result.success) return `Error: ${result.error}`;
+  if (args.subagent_type === "memory") {
+    return `Memory task running in background (${result.task_id}). No completion notification will be sent. Output file: ${result.output_file}`;
+  }
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`

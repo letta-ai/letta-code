@@ -7,6 +7,11 @@ import {
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
 import { withMemoryOperation } from "@/agent/memory-operation";
+import {
+  buildReflectionMemoryScope,
+  createReflectionMemoryWorktree,
+  integrateMemoryWorkerWorktree,
+} from "@/agent/memory-worktree";
 import { recompileAgentSystemPrompt } from "@/agent/modify";
 import { getBackend } from "@/backend";
 import { debugWarn } from "@/utils/debug";
@@ -26,7 +31,7 @@ interface MemoryWorkerParams {
    * Set for a harness-launched conflict repair: the attempt token from
    * `claimMemoryConflictRepair`, which the worker advances or forgets.
    */
-  repairToken: string;
+  repairToken?: string;
   signal?: AbortSignal;
 }
 
@@ -62,7 +67,13 @@ const NO_WORKER: SubagentResult = { agentId: "", success: false, report: "" };
 /**
  * Run a memory worker under the checkout lease.
  *
- * Repair works on the checkout itself, where the unfinished Git operation lives.
+ * An update worker edits a private worktree of the memory repository, so the
+ * primary agent's own edits to the checkout are never touched: a cancelled
+ * worker is discarded outright, and a finished worker's commits are merged
+ * back before the lease is released. A merge that conflicts with the
+ * primary's changes keeps the worker's branch and reports it instead of
+ * guessing. A repair worker must work on the checkout itself, where the
+ * unfinished Git operation lives.
  *
  * Called inside the existing background task, never awaited by the primary.
  */
@@ -101,6 +112,13 @@ export async function runMemoryWorker(
     onMemoryChanged: deps.onMemoryChanged,
   };
   const { repairToken } = params;
+  if (repairToken === undefined) {
+    return withMemoryOperation(
+      params.memoryDir,
+      () => runUpdate(params, execute, helpers),
+      params.signal,
+    );
+  }
   try {
     return await withMemoryOperation(
       params.memoryDir,
@@ -151,6 +169,50 @@ async function settle(
   if (pushed || changed) onMemoryChanged?.();
   if (!syncError && changed && result.success) await recompile();
   return syncError ? failed(result, syncError) : result;
+}
+
+async function runUpdate(
+  params: MemoryWorkerParams,
+  execute: MemoryWorkerExecute,
+  helpers: Helpers,
+): Promise<SubagentResult> {
+  const worktree = await createReflectionMemoryWorktree({
+    parentMemoryDir: params.memoryDir,
+    label: "memory-worker",
+  });
+  let result: SubagentResult;
+  try {
+    result = await execute(
+      worktree.worktreeDir,
+      buildReflectionMemoryScope(worktree),
+    );
+  } catch (error) {
+    // A worker that crashed after committing still has commits worth
+    // keeping; they are merged and synced below and the task reports the
+    // failure, rather than silently leaving an unsynced checkout.
+    result = failed(
+      NO_WORKER,
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+  // A cancelled worker's edits are dropped with its worktree; nothing it did
+  // reaches the checkout, and no sync (with remote retries) runs.
+  const outcome = await integrateMemoryWorkerWorktree(worktree, {
+    discard: params.signal?.aborted === true,
+  });
+  switch (outcome.status) {
+    case "discarded":
+      return failed(result, "Memory worker cancelled");
+    case "merge_conflict":
+      return failed(
+        result,
+        `Memory changes conflict with the checkout; ${outcome.commitCount} commit(s) kept on ${outcome.branchName}`,
+      );
+    case "failed":
+      return failed(result, outcome.error);
+    default:
+      return settle(result, outcome.status === "merged", helpers);
+  }
 }
 
 /**

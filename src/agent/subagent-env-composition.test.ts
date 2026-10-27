@@ -48,7 +48,7 @@ describe("composeSubagentChildEnv", () => {
     const worker = composeSubagentChildEnv({
       parentProcessEnv: {},
       parentAgentId: PARENT_ID,
-      subagentType: "memory-repair",
+      subagentType: "memory",
       launchProfile: "memory-subagent",
       inheritedPrimaryRoot: PARENT_MEMORY_DIR,
     });

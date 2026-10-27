@@ -5,7 +5,15 @@ description: Diagnose and repair MemFS repository setup, remote sync, authentica
 
 # MemFS Repository Repair
 
-Use this skill when the Git repository behind an agent's memory is not setting up or syncing correctly. Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then make the edit directly with ordinary file tools so the agent with the context applies the memory guidance. Stage only changed files by explicit path and commit in the same shell call. Verify the repair before reporting success. While the harness reports a repair in progress, leave memory files and Git state to that repair worker, which edits `$MEMORY_DIR` in place.
+Use this skill only when the Git repository behind an agent's memory is not
+setting up or syncing correctly. For ordinary memory reads and edits, use the
+memory files without loading this skill. Delegate incidental upkeep during another
+task to the background `memory` subagent. When memory repair is the user's main
+request, diagnose and repair it directly, then verify the result before reporting
+success. If a memory worker you launched may still be running, wait for it: re-read
+its output file until it ends with `[Task completed]` or `[Task failed]` before
+editing memory files or changing Git state. While the harness reports a repair in
+progress, leave both alone as well; that worker edits `$MEMORY_DIR` in place.
 
 ## Current Model
 
@@ -114,7 +122,7 @@ cloud-backed agent's pending commits after the turn.
 The harness first tries a fast-forward pull. When a remote push is rejected
 because the remote moved, post-turn sync tries `git pull --rebase` and retries
 the push. If that rebase conflicts, the harness launches a fresh background
-internal `memory-repair` subagent to repair it. The primary conversation is not interrupted.
+`memory` subagent to repair it. The primary conversation is not interrupted.
 The harness retries normal sync after the worker finishes. The instructions
 below are for explicit troubleshooting; routine repairs run in the background.
 

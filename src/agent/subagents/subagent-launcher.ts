@@ -238,11 +238,10 @@ export function composeSubagentChildEnv(
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
     LETTA_CODE_AGENT_ROLE: "subagent",
-    [MEMORY_WORKER_SESSION_ENV]:
-      subagentType === "memory-repair" ? "1" : undefined,
+    [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",
     [SUBAGENT_LAUNCH_PROFILE_ENV]: launchProfile ?? "default",
-    ...((subagentType === "reflection" || subagentType === "memory-repair") && {
+    ...((subagentType === "reflection" || subagentType === "memory") && {
       [LETTA_MOD_CAPABILITY_PROFILE_ENV]: PROVIDERS_ONLY_MOD_CAPABILITY_PROFILE,
     }),
     // Replace inherited parent addresses even when the new scope is unknown.

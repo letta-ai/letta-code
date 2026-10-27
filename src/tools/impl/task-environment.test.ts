@@ -50,9 +50,9 @@ describe("spawnBackgroundSubagentTask environment threading", () => {
 test("direct helper rejects remote memory workers before registration", () => {
   expect(() =>
     spawnBackgroundSubagentTask({
-      subagentType: "memory-repair",
+      subagentType: "memory",
       prompt: "Remember the correction",
-      description: "memory-repair",
+      description: "memory",
       environment: "cloud",
       deps: {
         registerSubagentImpl: () => {

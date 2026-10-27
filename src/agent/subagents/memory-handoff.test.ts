@@ -101,7 +101,13 @@ test("repeated launches preserve separate read-only snapshots without inlining h
   if (process.platform !== "win32")
     expect((await stat(first.transcriptPath)).mode & 0o222).toBe(0);
   expect(first.prompt).toContain("Memory repository: /exact/parent/memory");
-  expect(first.prompt).toContain(params.assignment);
+  expect(first.prompt).not.toContain(params.assignment);
+  expect(first.prompt).toStartWith(
+    "You have been requested to revise an agent's memory in $MEMORY_DIR.",
+  );
+  expect(first.prompt).toContain(
+    `Parent transcript (read-only reference): ${first.transcriptPath}`,
+  );
   expect(first.prompt).not.toContain("old facts in parent history");
 });
 

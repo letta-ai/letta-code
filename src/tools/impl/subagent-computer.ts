@@ -50,7 +50,7 @@ export function acceptsDefaultComputer(input: {
   config: Pick<SubagentConfig, "fork" | "launchProfile">;
 }): boolean {
   return (
-    input.subagentType !== "memory-repair" &&
+    input.subagentType !== "memory" &&
     !input.config.fork &&
     input.config.launchProfile !== "memory-subagent"
   );
@@ -125,8 +125,7 @@ export function resolveLaunchComputer(input: {
 }): { computer?: string; error?: string } {
   const resolved = resolveSubagentComputer(input);
   if (!resolved.computer) return {};
-  if (input.subagentType === "memory-repair")
-    return { error: MEMORY_IS_LOCAL_ERROR };
+  if (input.subagentType === "memory") return { error: MEMORY_IS_LOCAL_ERROR };
 
   const hasRouting =
     input.hasEnvironmentRouting ?? backendSupportsEnvironmentRouting;

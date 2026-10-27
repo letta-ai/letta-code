@@ -164,9 +164,9 @@ function localScenarioPrompt(): string {
     "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
-    "Then, load the relevant memory skills and directly create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. " +
-    "The test harness checks the committed memory after the CLI exits. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory edit was committed, your final response must include the uppercase word BANANA. " +
+    'Then, call Agent with subagent_type "memory" and ask it to create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. ' +
+    "Continue immediately after delegation without waiting or polling; the test harness checks the committed memory after the CLI exits. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory task was launched, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
@@ -322,6 +322,15 @@ export async function validateLocalStorage(storageDir: string | undefined) {
   }
   if (typeof agent.id !== "string" || agent.id.length === 0) {
     throw new Error("Persisted local agent record is missing id");
+  }
+  if (
+    !agents.some(
+      (worker) =>
+        worker.tags?.includes("type:memory") &&
+        worker.tags.includes(`parent:${agent.id}`),
+    )
+  ) {
+    throw new Error("Local MemFS scenario did not launch a memory worker");
   }
 
   const memoryDir = join(storageDir, "memfs", agent.id, "memory");
