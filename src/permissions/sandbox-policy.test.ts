@@ -218,6 +218,7 @@ test("nested explicit storage is remasked after self carves", () => {
   expect(getPostCarveDeniedRoots(memoryPolicy)).toEqual([
     canonicalizeRoot(nestedTree),
   ]);
+  expect(memoryPolicy.writableRoots).toContain(canonicalizeRoot(selfMemory));
 });
 
 test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {

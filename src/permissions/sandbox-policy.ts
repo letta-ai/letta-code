@@ -218,9 +218,20 @@ function deriveWritableMemoryRootsForTrees(
   const out = new Set<string>();
   for (const root of memoryRoots) {
     const canon = canonicalizeRoot(root);
-    // Never re-carve a whole denied tree, or an ancestor that would re-expose
-    // that tree under bwrap's last-mount-wins semantics.
-    if (!isTreeOrAncestorOfTree(canon, canonicalTrees)) {
+    const isExactDeniedTree = canonicalTrees.includes(canon);
+    const isInsideDeniedTree = canonicalTrees.some(
+      (tree) => canon !== tree && isWithinRoot(canon, tree),
+    );
+
+    // A legitimate self-memory root can be both inside the primary agents tree
+    // and an ancestor of a second nested denied tree. The sandbox backends now
+    // remask nested denies after restores, so keep that self root writable.
+    // Continue rejecting a whole denied tree and broad outside ancestors such
+    // as HOME or `/`, which are never valid memory-scoped write carves.
+    if (
+      !isExactDeniedTree &&
+      (isInsideDeniedTree || !isTreeOrAncestorOfTree(canon, canonicalTrees))
+    ) {
       out.add(canon);
     }
   }
