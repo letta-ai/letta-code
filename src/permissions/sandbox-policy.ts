@@ -1,5 +1,4 @@
 import { existsSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -11,6 +10,10 @@ import {
   getLocalBackendCrossAgentTreeRoot,
   getLocalBackendStorageDir,
 } from "@/utils/local-backend-paths";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 
 /**
  * Builders that translate agent/memory context into a concrete
@@ -24,9 +27,16 @@ import {
  * nothing — i.e. a sandbox that allows everything. See `canonicalizeRoot`.
  */
 
-/** The per-agent tree to wall off, e.g. `/Users/me/.letta/agents`. */
-export function getDefaultAgentsTreeRoot(homeDir: string = homedir()): string {
-  return canonicalizeRoot(join(homeDir, ".letta", "agents"));
+/** The per-agent tree to wall off below the active product config root. */
+export function getDefaultAgentsTreeRoot(
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, ".letta");
+  return canonicalizeRoot(join(configDir, "agents"));
 }
 
 export interface CrossBackendAgentsTreeRootsOptions {
@@ -45,13 +55,13 @@ export interface CrossBackendAgentsTreeRootsOptions {
 export function getCrossBackendAgentsTreeRoots(
   options: CrossBackendAgentsTreeRootsOptions = {},
 ): string[] {
-  const homeDir = options.homeDir ?? homedir();
+  const homeDir = options.homeDir;
+  const env = options.env ?? process.env;
   const localBackendStorageDir =
-    options.localBackendStorageDir ??
-    getLocalBackendStorageDir(homeDir, options.env ?? process.env);
+    options.localBackendStorageDir ?? getLocalBackendStorageDir(homeDir, env);
 
   return [
-    getDefaultAgentsTreeRoot(homeDir),
+    getDefaultAgentsTreeRoot(homeDir, env),
     canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(localBackendStorageDir)),
   ];
 }
@@ -62,8 +72,15 @@ export function getCrossBackendAgentsTreeRoots(
  * under it (settings, logs, conversations, transcripts, memory) but not the
  * repo/home/temp — while the cross-agent tree nested inside it stays denied.
  */
-export function getLettaHomeRoot(homeDir: string = homedir()): string {
-  return canonicalizeRoot(join(homeDir, ".letta"));
+export function getLettaHomeRoot(
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, ".letta");
+  return canonicalizeRoot(configDir);
 }
 
 /**

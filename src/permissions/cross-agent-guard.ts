@@ -37,6 +37,10 @@ import {
   getLocalBackendCrossAgentTreeRoot,
   getLocalBackendStorageDir,
 } from "@/utils/local-backend-paths";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
@@ -123,9 +127,12 @@ const UNRESOLVED_AGENT_ID = "<unresolved>";
  * The agents-tree root on this machine, e.g. `/home/user/.letta/agents`,
  * normalized (forward slashes, no trailing slash).
  */
-function getAgentsTreeRoot(homeDir: string): string {
-  const normalizedHome = homeDir.replace(/\\/g, "/").replace(/\/+$/, "");
-  return `${normalizedHome}/.letta/agents`;
+function getAgentsTreeRoot(homeDir: string, env: NodeJS.ProcessEnv): string {
+  const configDir = hasGlobalConfigDirOverride(env)
+    ? resolveGlobalConfigDir(env, homeDir)
+    : `${homeDir}/.letta`;
+  const normalizedConfig = configDir.replace(/\\/g, "/").replace(/\/+$/, "");
+  return `${normalizedConfig}/agents`;
 }
 
 /**
@@ -172,7 +179,7 @@ function getCrossAgentTreeRoots(
   env: NodeJS.ProcessEnv,
 ): string[] {
   return [
-    getAgentsTreeRoot(homeDir),
+    getAgentsTreeRoot(homeDir, env),
     normalizePathForCompare(
       getLocalBackendCrossAgentTreeRoot(
         getLocalBackendStorageDir(homeDir, env),

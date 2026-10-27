@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   canonicalToolName,
   isFileToolName,
@@ -493,10 +494,9 @@ function detectSkillScript(
     /\/$/,
     "",
   );
-  const normalizedHomeDir = normalizePathSeparators(homedir()).replace(
-    /\/$/,
-    "",
-  );
+  const normalizedConfigDir = normalizePathSeparators(
+    resolveGlobalConfigDir(),
+  ).replace(/\/$/, "");
 
   const detect = (
     source: SkillSourceLabel,
@@ -523,7 +523,7 @@ function detectSkillScript(
   }
 
   const agentRegex = new RegExp(
-    `^${escapeRegex(normalizedHomeDir)}/\\.letta/agents/[^/]+/(?:memory/)?skills/(.+?)/scripts/`,
+    `^${escapeRegex(normalizedConfigDir)}/agents/[^/]+/(?:memory/)?skills/(.+?)/scripts/`,
   );
   const agentSkill = detect("agent-scoped", agentRegex);
   if (agentSkill) {
@@ -531,7 +531,7 @@ function detectSkillScript(
   }
 
   const globalRegex = new RegExp(
-    `^${escapeRegex(normalizedHomeDir)}/\\.letta/skills/(.+?)/scripts/`,
+    `^${escapeRegex(normalizedConfigDir)}/skills/(.+?)/scripts/`,
   );
   const globalSkill = detect("global", globalRegex);
   if (globalSkill) {

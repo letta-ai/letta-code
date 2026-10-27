@@ -202,15 +202,10 @@ export function getGlobalSkillsDir(
 
 /**
  * Get the agent-scoped skills directory for a specific agent.
- * Primary path is ~/.letta/agents/{id}/memory/skills/ (memfs).
+ * Primary path is <product-config>/agents/{id}/memory/skills/ (memfs).
  */
 export function getAgentSkillsDir(agentId: string): string {
-  return join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".letta/agents",
-    agentId,
-    "memory/skills",
-  );
+  return join(resolveGlobalStateDir(), "agents", agentId, "memory/skills");
 }
 
 /**
