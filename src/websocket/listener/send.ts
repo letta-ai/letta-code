@@ -47,6 +47,7 @@ import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
+import { canRecoverConversation } from "./recovery-ownership";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
 import type { TurnCorrelation } from "./turn-correlation";
@@ -286,6 +287,7 @@ export async function resolveStaleApprovals(
   socket: ListenerTransport,
   turnLease: TurnLease,
   deps: {
+    canRecover?: typeof canRecoverConversation;
     getResumeData?: typeof getResumeDataFromBackend;
     retrieveAgent?: RetrieveAgent;
     retrieveConversation?: ReturnType<
@@ -299,6 +301,7 @@ export async function resolveStaleApprovals(
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId && runtime.conversationId === "default") return null;
 
+  const canRecover = deps.canRecover ?? canRecoverConversation;
   const getResumeDataImpl = deps.getResumeData ?? getResumeDataFromBackend;
   const prepareToolExecutionContext =
     deps.prepareToolExecutionContext ?? prepareToolExecutionContextForScope;
@@ -316,6 +319,13 @@ export async function resolveStaleApprovals(
     }
   };
 
+  assertCurrentTurnLease();
+  // A current local turn lease does not prove server-side execution ownership.
+  // Do not cancel pending tools still owned by a different listener.
+  if (!(await canRecover(runtime))) {
+    assertCurrentTurnLease();
+    return null;
+  }
   assertCurrentTurnLease();
   const backend = getBackend();
   let agent: Awaited<ReturnType<typeof backend.retrieveAgent>>;
@@ -405,6 +415,11 @@ export async function resolveStaleApprovals(
     modEvents: createListenerModEvents(modAdapters),
   });
   assertCurrentTurnLease();
+  if (!(await canRecover(runtime))) {
+    assertCurrentTurnLease();
+    return null;
+  }
+  assertCurrentTurnLease();
   runtime.currentToolset = preparedToolContext.toolset;
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
@@ -413,6 +428,11 @@ export async function resolveStaleApprovals(
 
   pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
+    assertCurrentTurnLease();
+    if (!(await canRecover(runtime))) {
+      assertCurrentTurnLease();
+      return null;
+    }
     assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
     if (!recoveryBatchId) {
