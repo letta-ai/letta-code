@@ -249,11 +249,12 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 5. **source-file-size** — `scripts/check-source-file-size.js`; enforces the 1,000-line ceiling and ratchet
 6. **module-ownership** — `scripts/check-module-ownership.js`; protects orchestration modules from barrel imports/exports
 7. **test-mock-isolation** — `scripts/check-test-mock-isolation.js`; flags unsafe `mock.module` patterns
-8. **test-coverage** — `scripts/check-test-coverage.cjs`; checks source/test coverage policy
+8. **test-coverage** — `scripts/check-test-coverage.cjs`; fails when a `*.test.ts`/`*.test.tsx` under `src/` is not covered by the CI unit runner (`scripts/run-unit-tests.cjs` directory list); `src/integration-tests` is API-gated and deliberately excluded
 9. **skill-frontmatter** — checks every `SKILL.md` has a non-empty `name:` header
 10. **bundled-skill-scripts** — validates scripts shipped with bundled skills
-11. **biome** — format + lint across source files
-12. **typescript** — full `tsc --noEmit`
+11. **runtime-graph** — `bun run runtime-graph:verify`; fails when `package.json`'s dependency-graph declaration (`lettaRuntimeGraphSha512`) is stale; regenerate with `bun run runtime-graph:generate` after dependency changes
+12. **biome** — format + lint across source files
+13. **typescript** — full `tsc --noEmit`
 
 ### Environment Variables
 
@@ -314,6 +315,11 @@ directory first. Otherwise the run reads and mutates your real
 - **`bun.lock` churn.** Running `bun install` in a worktree may add
   `"configVersion": 0` due to a newer Bun version. Scrub with `git checkout
   main -- bun.lock` when the PR has no real package.json change.
+- **Dependency changes need the runtime graph regenerated.** `bun run
+  runtime-graph:generate` rewrites `npm-shrinkwrap.json` and the
+  `lettaRuntimeGraphSha512` declaration in `package.json`. `bun run check`
+  runs `runtime-graph:verify` and fails with a stale-declaration error if
+  you changed dependencies and only updated `bun.lock`.
 - **Desktop setup: never bare `npm install`.** Running bare `npm install` in the
   letta-code workspace can prune `nx-electron` (installed `--no-save` at repo
   root), breaking the electron IPC bridge. Always use canonical setup steps
@@ -770,6 +776,37 @@ Harness manages the worktree lifecycle (not the reflection agent):
 - Reflection settings are per-agent; trigger counter is per-conversation.
 - Counter increments on completed assistant steps (not user messages, not tool
   calls, not interrupted turns).
+
+---
+
+## External Coding Agent Workers
+
+Native coding CLIs (Claude Code, Codex, Cursor, OpenCode) run as background
+coding workers behind `Agent({ subagent_type: ... })`; `src/tools/descriptions/Task.md`
+documents the supported types and their steering via `SendAgentMessage`.
+`src/tools/impl/external-coding-agent.ts` (plus `external-coding-agent-task.ts`) is the
+shared dispatch seam; each worker has a `<name>-session.ts` (and `<name>-worker.ts`
+where a worker process is spawned) in `src/tools/impl/`.
+
+When adding a new worker, update every surface in one change: the session/worker
+implementation, dispatch registration in `src/tools/impl/external-coding-agent*.ts`,
+the subagent type registration in `src/agent/subagents/`, the user-facing docs
+(`Task.md`, `SendAgentMessage.md`) and `Task.json` schema, and connected-computer
+routing.
+
+Worker tests follow the existing OpenCode CI job in `.github/workflows/ci.yml`
+as the template, in three artifacts:
+
+- `*.test.ts` — unit tests run by the normal Bun suite.
+- `*.node-test.ts` — verifies the packaged Node path; bundle with
+  `bun build <file> --target=node --format=esm` and run with `node --test`.
+- `*.integration.ts` — live lifecycle against the provider API, gated on the
+  provider key env var (a GitHub Actions secret). If the secret is missing, CI
+  fails at setup; adding it is a repository-administrator action, not a code change.
+
+Set the CI job's `timeout-minutes` above the worst-case sum of its steps: the
+default 10-minute ceiling undercut this lifecycle pattern (three 180s Bun tests +
+a full `bun run build` + a 180s Node test can legitimately reach ~14 minutes).
 
 ---
 
