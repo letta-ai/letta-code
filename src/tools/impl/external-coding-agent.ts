@@ -23,9 +23,11 @@ import {
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import { runCursorTurn } from "./cursor-session";
 import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
@@ -40,6 +42,7 @@ export const EXTERNAL_CODING_AGENT_TYPES = [
   "claude-code",
   "codex",
   "opencode",
+  "cursor",
 ] as const;
 export type ExternalCodingAgentType =
   (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
@@ -127,6 +130,7 @@ const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
   opencode: "opencode_",
+  cursor: "cursor_",
 };
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -356,7 +360,8 @@ export function classifyExternalCodingAgentStartupError(
     return "not_installed";
   if (
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
-    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR)
+    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
+    error.startsWith("Cursor is not signed in:")
   )
     return "not_signed_in";
   return undefined;
@@ -495,7 +500,7 @@ export async function runExternalCodingAgent(
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
   )(options.parentAgentId);
-  const env: NodeJS.ProcessEnv = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     ...secretEnv,
     AGENT_ID: options.parentAgentId,
@@ -504,7 +509,7 @@ export async function runExternalCodingAgent(
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
-  };
+  });
   if (typeof options.actingUserId === "string") {
     env[ACTING_USER_ID_ENV] = options.actingUserId;
   } else if (
@@ -592,6 +597,18 @@ export async function runExternalCodingAgent(
           ),
       },
       env,
+    );
+  }
+  if (options.type === "cursor") {
+    return runCursorTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(formatExternalCodingAgentId("cursor", sessionId)),
+      },
+      env,
+      secretEnv,
     );
   }
   if (options.type === "codex") {

@@ -473,6 +473,14 @@ export class HeadlessBackend implements Backend {
     return this.cancelRunById(runId);
   }
 
+  async latestConversationRun(conversationId: string): Promise<Run | null> {
+    let latest: Run | null = null;
+    for (const run of this.runs.values()) {
+      if (run.conversation_id === conversationId) latest = run;
+    }
+    return latest;
+  }
+
   async retrieveRun(runId: string) {
     const run = this.runs.get(runId);
     if (!run) throw new LocalBackendNotFoundError("Run", runId);
