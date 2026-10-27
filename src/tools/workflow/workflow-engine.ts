@@ -18,6 +18,7 @@
 import { format } from "node:util";
 import vm from "node:vm";
 import { submitWorkflowDecision } from "./decide.ts";
+import { formatUsd } from "./format-stats.ts";
 import { appendJournalEntry } from "./journal.ts";
 import { parseWorkflowMeta, stripMetaExport } from "./meta.ts";
 import type {
@@ -125,7 +126,15 @@ async function executeScript(
   options: RunWorkflowOptions,
   meta: WorkflowMeta,
 ): Promise<WorkflowExecutionResult> {
-  const signal = options.signal ?? new AbortController().signal;
+  // The budget stops the run through its own controller so every cut point
+  // reports the budget error rather than a bare abort.
+  const budgetController = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, budgetController.signal])
+    : budgetController.signal;
+  const maxCostUsd = options.maxCostUsd;
+  let budgetError: Error | undefined;
+  const abortError = () => budgetError ?? new Error("Workflow aborted.");
   // Progress stops once the run has settled, not at abort: an interrupted
   // subagent still reports its outcome (and tokens) while the run drains.
   let settled = false;
@@ -150,6 +159,67 @@ async function executeScript(
   let toolCallCounter = 0;
   let agentsSpawned = 0;
   let totalTokens = 0;
+  let totalCostUsd = 0;
+  let costUnavailable = false;
+
+  function stopForBudget(message: string, code: string): void {
+    if (budgetError) return;
+    budgetError = Object.assign(new Error(message), { code });
+    budgetController.abort(budgetError);
+  }
+
+  function chargeCost(deltaUsd: number): void {
+    totalCostUsd += deltaUsd;
+    if (maxCostUsd !== undefined && totalCostUsd >= maxCostUsd) {
+      stopForBudget(
+        `Workflow cost budget of ${formatUsd(maxCostUsd)} reached.`,
+        "budget_exceeded",
+      );
+    }
+  }
+
+  /** A budget the run cannot measure is not enforced silently: stop instead. */
+  function markCostUnavailable(source: string): void {
+    costUnavailable = true;
+    if (maxCostUsd !== undefined) {
+      stopForBudget(
+        `Workflow cost budget cannot be enforced: ${source} reported usage without a cost estimate. Cost budgets require Letta Cloud.`,
+        "cost_unavailable",
+      );
+    }
+  }
+
+  /** Tracks one subagent's cumulative cost so live and final reports never double-count. */
+  function agentCostMeter(label: string) {
+    let charged = 0;
+    let unavailable = false;
+    return (costUsd: number | null | undefined) => {
+      if (costUsd === undefined || unavailable) return;
+      if (costUsd === null) {
+        unavailable = true;
+        markCostUnavailable(`agent "${label}"`);
+        return;
+      }
+      if (costUsd > charged) {
+        chargeCost(costUsd - charged);
+        charged = costUsd;
+      }
+    };
+  }
+
+  const budget = Object.freeze({
+    get limit() {
+      return maxCostUsd ?? null;
+    },
+    get spent() {
+      return totalCostUsd;
+    },
+    get remaining() {
+      return maxCostUsd === undefined
+        ? null
+        : Math.max(0, maxCostUsd - totalCostUsd);
+    },
+  });
 
   function trackCall<T>(pending: Promise<T>): Promise<T> {
     // Scripts can forget to await a call; that must not surface as an
@@ -226,7 +296,7 @@ async function executeScript(
     ) {
       throw new Error(`tools.${toolName}() arguments must be an object.`);
     }
-    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (signal.aborted) throw abortError();
     if (toolCallCounter >= maxTotalToolCalls) {
       throw new Error(
         `Lifetime tool call cap of ${maxTotalToolCalls} reached.`,
@@ -247,7 +317,7 @@ async function executeScript(
     };
     let result: WorkflowToolResult;
     try {
-      if (signal.aborted) throw new Error("Workflow aborted.");
+      if (signal.aborted) throw abortError();
       result = await call(toolName, (args ?? {}) as Record<string, unknown>);
     } catch (error) {
       journal(true, error instanceof Error ? error.message : String(error));
@@ -272,7 +342,7 @@ async function executeScript(
     questions: unknown,
     callOptions?: unknown,
   ): Promise<unknown> {
-    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (signal.aborted) throw abortError();
     if (decisionCounter >= maxTotalDecisions) {
       throw new Error(`Lifetime decision cap of ${maxTotalDecisions} reached.`);
     }
@@ -287,7 +357,7 @@ async function executeScript(
     decisionCounter++;
     await semaphore.acquire();
     try {
-      if (signal.aborted) throw new Error("Workflow aborted.");
+      if (signal.aborted) throw abortError();
       return await submitWorkflowDecision(
         {
           ...(callOptions as Record<string, unknown> | undefined),
@@ -297,6 +367,11 @@ async function executeScript(
         signal,
         (result) => {
           totalTokens += result.totalTokens;
+          if (typeof result.cost === "number" && Number.isFinite(result.cost)) {
+            chargeCost(result.cost);
+          } else {
+            markCostUnavailable("decide()");
+          }
           emit({ kind: "decision_usage", totalTokens: result.totalTokens });
           if (options.journalPath) {
             appendJournalEntry(options.journalPath, {
@@ -318,7 +393,7 @@ async function executeScript(
     if (typeof prompt !== "string" || !prompt.trim()) {
       throw new Error("agent() requires a non-empty prompt string.");
     }
-    if (signal.aborted) throw new Error("Workflow aborted.");
+    if (signal.aborted) throw abortError();
     if (callCounter >= maxTotalAgents) {
       throw new Error(`Lifetime agent cap of ${maxTotalAgents} reached.`);
     }
@@ -358,9 +433,10 @@ async function executeScript(
     const phase = opts.phase ?? currentPhase;
 
     emit({ kind: "agent", callIndex, label, phase, status: "queued" });
+    const meterCost = agentCostMeter(label);
     await semaphore.acquire();
     try {
-      if (signal.aborted) throw new Error("Workflow aborted.");
+      if (signal.aborted) throw abortError();
       emit({ kind: "agent", callIndex, label, phase, status: "running" });
       agentsSpawned++;
       if (!spawner)
@@ -379,7 +455,8 @@ async function executeScript(
             }
           },
           // Live usage so status rows can show tokens before the agent ends.
-          onUsage: (totalTokens) =>
+          onUsage: (totalTokens, costUsd) => {
+            meterCost(costUsd);
             emit({
               kind: "agent",
               callIndex,
@@ -387,12 +464,14 @@ async function executeScript(
               phase,
               status: "running",
               totalTokens,
-            }),
+            });
+          },
         },
       );
       // Account for the outcome even when the run was aborted meanwhile: the
       // spawner returns what the interrupted subagent had already consumed.
       totalTokens += outcome.totalTokens ?? 0;
+      meterCost(outcome.costUsd);
       if (options.journalPath) {
         appendJournalEntry(options.journalPath, {
           callIndex,
@@ -414,7 +493,7 @@ async function executeScript(
         durationMs: outcome.durationMs,
         totalTokens: outcome.totalTokens,
       });
-      if (signal.aborted) throw new Error("Workflow aborted.");
+      if (signal.aborted) throw abortError();
       if (outcome.failed) {
         const worker = outcome.conversationId
           ? ` (${outcome.conversationId})`
@@ -509,7 +588,9 @@ async function executeScript(
     tools,
     listTools,
     describeTool,
-    ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
+    ...(spawner
+      ? { agent, decide, parallel, pipeline, phase, log, budget }
+      : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
   });
@@ -538,12 +619,10 @@ async function executeScript(
   }
 
   const abortRun = new Promise<never>((_resolve, reject) => {
-    if (signal.aborted) reject(new Error("Workflow aborted."));
-    signal.addEventListener(
-      "abort",
-      () => reject(new Error("Workflow aborted.")),
-      { once: true },
-    );
+    if (signal.aborted) reject(abortError());
+    signal.addEventListener("abort", () => reject(abortError()), {
+      once: true,
+    });
   });
   void abortRun.catch(() => {});
   // Whether the script returned, threw, or was aborted, wait for every
@@ -552,12 +631,29 @@ async function executeScript(
   const drain = async () => {
     while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
   };
+  const runCost = () => (costUnavailable ? null : totalCostUsd);
   try {
     const result = await Promise.race([pending, abortRun]);
     await drain();
-    return { meta, result, agentsSpawned, totalTokens };
+    return {
+      meta,
+      result,
+      agentsSpawned,
+      totalTokens,
+      totalCostUsd: runCost(),
+    };
   } catch (error) {
     await drain();
+    // Report the final spend: subagents interrupted by the stop still settle
+    // their usage while the run drains.
+    if (
+      budgetError &&
+      error === budgetError &&
+      maxCostUsd !== undefined &&
+      !costUnavailable
+    ) {
+      budgetError.message = `${budgetError.message} ${formatUsd(totalCostUsd)} spent of ${formatUsd(maxCostUsd)}.`;
+    }
     throw error;
   } finally {
     settled = true;
