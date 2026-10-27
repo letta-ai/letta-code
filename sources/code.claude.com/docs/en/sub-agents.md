@@ -352,7 +352,7 @@ The `model` field controls which model the subagent uses:
 * **Full model ID**: use a full model ID such as `claude-opus-5-5` or `claude-sonnet-5`. Accepts the same values as the `--model` flag
 * **inherit**: use the same model as the main conversation
 
-When Claude invokes a subagent, it can also pass a `model` parameter for that specific invocation. Claude Code resolves the subagent's model in this order:
+When Claude invokes a subagent, it can also pass a `model` parameter for that specific invocation. On an Agent tool call, that parameter takes a model alias: `sonnet`, `opus`, `haiku`, or `fable`. Claude can't pass a full model ID or `inherit` on that call. Claude Code resolves the subagent's model in this order:
 
 1. The per-invocation `model` parameter
 2. The subagent definition's `model` frontmatter, where `inherit` selects the main conversation's model

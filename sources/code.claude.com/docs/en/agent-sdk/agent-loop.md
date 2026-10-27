@@ -41,7 +41,7 @@ First, the SDK sends your prompt to Claude and yields a [`SystemMessage`](#messa
 
 That was four turns: three with tool calls, one final text-only response.
 
-You can cap the loop with `max_turns` / `maxTurns`, which counts tool-use turns only. For example, `max_turns=2` in the loop above would have stopped before the edit step. You can also use `max_budget_usd` / `maxBudgetUsd` to cap turns based on a spend threshold.
+You can cap the loop with `max_turns` / `maxTurns`. Count each turn with tool calls, plus one for the final text-only response. Without that extra turn, the run ends with a `ResultMessage` of subtype `error_max_turns` and no final response. For example, `max_turns=2` in the loop above would have stopped before the edit step. You can also use `max_budget_usd` / `maxBudgetUsd` to cap turns based on a spend threshold.
 
 Without limits, the loop runs until Claude finishes on its own, which is fine for well-scoped tasks but can run long on open-ended prompts ("improve this codebase"). Setting a budget is a good default for production agents. See [Turns and budget](#turns-and-budget) below for the option reference.
 
@@ -191,7 +191,7 @@ You can limit how many turns the loop takes, how much it costs, how deeply Claud
 
 | Option | What it controls | Default |
 | :- | :- | :- |
-| Max turns (`max_turns` / `maxTurns`) | Maximum tool-use round trips | No limit |
+| Max turns (`max_turns` / `maxTurns`) | Maximum number of [turns](#turns-and-messages) | No limit |
 | Max budget (`max_budget_usd` / `maxBudgetUsd`) | Estimated spend at which the loop stops | No limit |
 
 When either limit is hit, the SDK returns a `ResultMessage` with a corresponding error subtype (`error_max_turns` or `error_max_budget_usd`). See [Handle the result](#handle-the-result) for how to check these subtypes and [`ClaudeAgentOptions`](https://code.claude.com/docs/en/agent-sdk/python#claudeagentoptions) / [`Options`](https://code.claude.com/docs/en/agent-sdk/typescript#options) for syntax.

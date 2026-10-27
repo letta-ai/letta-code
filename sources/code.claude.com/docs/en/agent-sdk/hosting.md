@@ -192,7 +192,7 @@ For self-hosted options such as Docker, gVisor, and Firecracker, and detailed is
 
 The container needs your SDK's language runtime:
 
-* Python 3.10+ for the Python SDK, or Node.js 18+ for the TypeScript SDK
+* Python 3.10+ for the Python SDK, or Node.js 18.14+ for the TypeScript SDK
 * Both the TypeScript and Python SDKs bundle a native Claude Code binary for most installs, and the spawned CLI needs no separate Node.js install. See the [quickstart's install note](https://code.claude.com/docs/en/agent-sdk/quickstart.md) for the installs that need a separate native Claude Code install.
 
 The bundled binary is pinned to the SDK package version, so updating the SDK is how you update the CLI. The SDK follows semver: take patch releases continuously and review the [TypeScript](https://github.com/anthropics/claude-agent-sdk-typescript/blob/main/CHANGELOG.md) or [Python](https://github.com/anthropics/claude-agent-sdk-python/blob/main/CHANGELOG.md) changelog before taking a minor.
@@ -335,7 +335,7 @@ Plan around these in your deployment design.
 
 | Limitation | What to do |
 | - | - |
-| No top-level session timeout | A session does not time out on its own. Set `maxTurns` in TypeScript or `max_turns` in Python to bound how many tool-use round trips the agent takes before stopping. |
+| No top-level session timeout | A session doesn't time out on its own. Set `maxTurns` in TypeScript or `max_turns` in Python to bound how many [turns](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#turns-and-messages) the agent takes before stopping. |
 | Memory growth over long sessions | Cap session length or recycle subprocesses periodically. See [Scaling and concurrency](#scaling-and-concurrency). |
 | Large parallel-subagent fanouts can hit rate limits | Break work into smaller batches rather than issuing one wide dispatch. |
 | No per-subagent wall-clock deadline | Cap each [subagent](https://code.claude.com/docs/en/agent-sdk/subagents.md) with `maxTurns` in its `AgentDefinition`. `CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS` sets a stall watchdog that fires when a subagent stops producing output; it isn't a total-runtime deadline. |

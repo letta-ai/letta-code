@@ -328,6 +328,12 @@ When Claude Code can't enter the worktree directory at startup, it prints an err
 
 Claude Code refuses to create a worktree when `.claude`, `.claude/worktrees`, or the worktree directory itself is a symlink, and the error names the symlinked path. Remove the symlink and retry. Before v2.1.212, if the repository already contained a committed symlink at one of those paths, worktree creation followed it and could create files outside the repository.
 
+### A worktree Claude Code created has the original content of replaced objects
+
+If your repository uses [`git replace`](https://git-scm.com/docs/git-replace), the files in a worktree that Claude Code creates hold the original objects' content rather than the replacements your `refs/replace/` entries name. Claude Code runs the git commands that check out the worktree's files with `GIT_NO_REPLACE_OBJECTS=1`, ignoring any value you exported for that variable.
+
+To get the replaced content, [create the worktree yourself](#manage-worktrees-manually) with `git worktree add` and start Claude Code inside it.
+
 ### Git LFS files are pointer files in a worktree Claude Code created
 
 If you set up [Git LFS](https://git-lfs.com) with `git lfs install --local`, a worktree that Claude Code creates contains LFS pointer files instead of the real files. The `--local` flag writes the LFS filter into the repository's own `.git/config` rather than your global git config. A plain `git lfs install` writes to your global config and isn't affected. The same applies to any other [filter driver](https://git-scm.com/docs/gitattributes) defined in the repository's own config.

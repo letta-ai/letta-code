@@ -425,7 +425,8 @@ Pass settings keys through the [`settings`](https://code.claude.com/docs/en/agen
 
 Set `includeGitInstructions` to `false` to keep out the built-in commit and pull request instructions, which are part of the Bash tool's description and reach Claude even with a custom `systemPrompt`. With the minimal default, a custom `systemPrompt`, or a custom main-thread agent that has its own prompt, though, the session starts without the git status snapshot.
 
-If you set `CLAUDE_CODE_DISABLE_ATTACHMENTS`, Claude Code also sends `@` file mentions as plain text instead of expanding them into file content. The list of available subagents and background task notifications still arrive. To stop only `@` file mentions from expanding, set [`CLAUDE_CODE_DISABLE_FILE_MENTIONS=1`](https://code.claude.com/docs/en/env-vars#variables) instead, on Claude Code v2.1.299 or later. Claude then gets the mentioned paths plus a note to read them with its file tools.
+* If you set `CLAUDE_CODE_DISABLE_ATTACHMENTS`, Claude Code also sends `@` file mentions as plain text instead of expanding them into file content. The list of available subagents and background task notifications still arrive.
+* To stop only `@` file mentions from expanding, set [`CLAUDE_CODE_DISABLE_FILE_MENTIONS=1`](https://code.claude.com/docs/en/env-vars#variables) instead, on Claude Code v2.1.299 or later. Claude then gets the mentioned paths plus a note to read them with its file tools, and your `PreToolUse` hooks see each file read as a tool call.
 
 The following example is for an agent that carries its own commit rules in `append`. It sets both `attribution` keys to empty strings to remove the trailer and footer, and turns off `includeGitInstructions` so Claude Code's own commit workflow instructions don't compete with yours:
 

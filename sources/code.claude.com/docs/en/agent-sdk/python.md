@@ -880,7 +880,7 @@ class ClaudeAgentOptions:
 | `continue_conversation` | `bool` | `False` | Continue the most recent conversation |
 | `resume` | `str \| None` | `None` | Session ID to resume |
 | `session_id` | `str \| None` | `None` | Use a specific session ID instead of an auto-generated one. Must be a valid UUID. Can't be combined with `continue_conversation` or `resume` unless `fork_session` is also set |
-| `max_turns` | `int \| None` | `None` | Maximum agentic turns (tool-use round trips) |
+| `max_turns` | `int \| None` | `None` | Maximum agentic [turns](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#turns-and-messages) |
 | `max_budget_usd` | `float \| None` | `None` | Stop the query when the client-side cost estimate reaches this USD value. The estimate can pass this value, so [leave headroom](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#budget-headroom). Counts only the call's own spend; totals restored from a resumed session don't count. For accuracy caveats and reset behavior, see [Track cost and usage](https://code.claude.com/docs/en/agent-sdk/cost-tracking.md) |
 | `disallowed_tools` | `list[str]` | `[]` | Tools to deny. A bare name such as `"Bash"` removes the tool from Claude's context. A scoped rule such as `"Bash(rm *)"` leaves the tool available and denies matching calls in every permission mode, including `bypassPermissions`, for the command [as written](https://code.claude.com/docs/en/permissions.md#bash-rule-limits). See [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md#allow-and-deny-rules) |
 | `enable_file_checkpointing` | `bool` | `False` | Enable file change tracking for rewinding. See [File checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing.md) |
@@ -2568,7 +2568,9 @@ Each output shown is the value you read from [`UserMessage.tool_use_result`](#us
 
 ### Agent
 
-**Tool name:** `Agent`. The previous name `Task` is still accepted as an alias, and the `tools` list in the init [`SystemMessage`](#systemmessage) reports this tool as `Task` for backward compatibility.
+**Tool name:** `Agent`. The previous name `Task` is still accepted as an alias when this tool is available to the session.
+
+The `tools` list in the init [`SystemMessage`](#systemmessage) reports this tool as `Task` for backward compatibility.
 
 **Input:**
 
@@ -3642,7 +3644,7 @@ class SandboxNetworkConfig(TypedDict, total=False):
 | `deniedDomains` | `list[str]` | `[]` | Domain names that sandboxed processes cannot access. Takes precedence over `allowedDomains` |
 | `allowManagedDomainsOnly` | `bool` | `False` | Managed-settings only: when set in managed settings, ignore `allowedDomains` and `WebFetch(domain:...)` allow rules from non-managed settings sources. Has no effect when set via SDK options |
 | `allowUnixSockets` | `list[str]` | `[]` | macOS only: Unix socket paths that processes can access, such as the Docker socket. Ignored on Linux |
-| `allowAllUnixSockets` | `bool` | `False` | Allow access to all Unix sockets |
+| `allowAllUnixSockets` | `bool` | `False` | Allow access to all Unix sockets, and on Linux to VM sockets (`AF_VSOCK`) |
 | `allowLocalBinding` | `bool` | `False` | Allow processes to bind to local ports (for example, for dev servers) |
 | `allowMachLookup` | `list[str]` | `[]` | macOS only: XPC/Mach service names to allow. Supports a trailing wildcard |
 | `httpProxyPort` | `int` | `None` | HTTP proxy port for network requests |

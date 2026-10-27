@@ -16,7 +16,7 @@ Use the Agent SDK to build an AI agent that reads your code, finds bugs, and fix
 
 ## Prerequisites
 
-* **Node.js 18+** or **Python 3.10+**
+* **Node.js 18.14+** or **Python 3.10+**
 * An **Anthropic account**. If you don't have one, [sign up here](https://platform.claude.com/).
 
 ## Setup
