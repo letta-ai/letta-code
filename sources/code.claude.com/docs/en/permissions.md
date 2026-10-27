@@ -314,7 +314,7 @@ Claude Code also checks the files a `tee` command writes, including in a pipelin
 
 ### PowerShell
 
-PowerShell permission rules use the same shape as Bash rules. Wildcards with `*` match at any position, the `:*` suffix is equivalent to a trailing ` *`, and a bare `PowerShell` or `PowerShell(*)` matches every command. This configuration allows `Get-ChildItem` and `git commit` commands while blocking `Remove-Item`:
+PowerShell permission rules use the same shape as [Bash rules](#wildcard-patterns), and a bare `PowerShell` or `PowerShell(*)` matches every command. This configuration allows `Get-ChildItem` and `git commit` commands while blocking `Remove-Item`:
 
 ```json theme={null}
 {

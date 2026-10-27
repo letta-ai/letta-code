@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.311:docs:1d5e68888cd2d26157180dbb856f7b77fa5764134e337699f81741afe0cb0885:runtime:0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13",
+  "candidate_id": "claude@2.1.311:docs:833dabf4f845177a03871c34aab63d167711f8128a7ed7b849dafdd635dd7b47:runtime:0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13",
   "package_version": "2.1.311",
   "npm_integrity": "sha512-7SgBitii1ZscdbRJXLcub7Vv2pfvH3wo7RrCKg4vZpklIfz9HgigJFFJGIjCY6jzoPDvbQcwwugvm3A8PTejzw==",
   "npm_published_at": "2026-10-26T19:47:57.395Z",
@@ -806,7 +806,7 @@
       },
       "https://code.claude.com/docs/en/permissions.md": {
         "url": "https://code.claude.com/docs/en/permissions.md",
-        "hash": "c161181cf0bb4989c68a81c89e4f5a8e59bcd689ae62f7d51af1b32949a9a335",
+        "hash": "de3c9f6aaea556426c639fbed3897f9d6527b634bfee234a92aed07012a370fb",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/permissions.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "1d5e68888cd2d26157180dbb856f7b77fa5764134e337699f81741afe0cb0885"
+    "digest": "833dabf4f845177a03871c34aab63d167711f8128a7ed7b849dafdd635dd7b47"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1623,7 +1623,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools.",
+              "description": "Probe task for exercising task tools",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1674,7 +1674,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1685,8 +1685,8 @@
     ],
     "digest": "0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13"
   },
-  "fetched_at": "2026-10-27T02:37:30.833Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40439348172",
-  "state_commit_parent": "fb60bd4b02f564eb12f8eac552042e1e8d8371f7",
-  "analysis_parent_sha": "fb60bd4b02f564eb12f8eac552042e1e8d8371f7"
+  "fetched_at": "2026-10-27T04:30:52.624Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40450021672",
+  "state_commit_parent": "056d81309272acc424dbf4c08cbdaa6979c48a2a",
+  "analysis_parent_sha": "056d81309272acc424dbf4c08cbdaa6979c48a2a"
 }
