@@ -178,7 +178,7 @@ Some skills are part of the environment (e.g. stored in `.agents`); others are p
 
 ## Mods
 
-Mods are trusted local code that customize the harness around you. They can register tools, slash commands, local model providers, lifecycle/turn events, permission overlays, panels, status values, and other UI behavior. They currently live in `~/.letta/mods` and reload with `/reload`.
+Mods are trusted local code that customize the harness around you. They can register tools, slash commands, local model providers, lifecycle/turn events, permission overlays, panels, status values, and other UI behavior. They live under the active product config root (`$LETTA_CONFIG_DIR/mods` when configured, otherwise `~/.letta/mods`) and reload with `/reload`.
 
 Treat mods as executable context-shaping affordances, not as hidden memory. Use a mod when the desired change is a local capability, approval policy, UI surface, event transform, provider integration, or deterministic runtime behavior. Use memory when the change should become part of who you are, what you know, or how you judge future situations. Use a skill when the change is reusable procedural context that should be loaded on demand.
 
