@@ -33,12 +33,34 @@ export function hasGlobalConfigDirOverride(
   return Boolean(env.LETTA_CONFIG_DIR?.trim());
 }
 
+/** Resolve product state while preserving the legacy LETTA_HOME test/cron override. */
+export function resolveGlobalStateDir(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackHome: string = homedir(),
+): string {
+  const legacyHome = env.LETTA_HOME?.trim();
+  if (!hasGlobalConfigDirOverride(env) && legacyHome)
+    return normalize(legacyHome);
+  return resolveGlobalConfigDir(env, fallbackHome);
+}
+
 export function isHomeWorkingDirectory(
   workingDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
   fallbackHome: string = homedir(),
 ): boolean {
   return resolve(workingDirectory) === resolve(env.HOME || fallbackHome);
+}
+
+export function shouldIsolateHomeProjectConfig(
+  workingDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackHome: string = homedir(),
+): boolean {
+  return (
+    hasGlobalConfigDirOverride(env) &&
+    isHomeWorkingDirectory(workingDirectory, env, fallbackHome)
+  );
 }
 
 export function isProjectSettingsPathGlobal(

@@ -755,6 +755,18 @@ describe("Hooks Loader", () => {
           },
         }),
       );
+      writeFileSync(
+        join(lettaSettingsDir, "settings.local.json"),
+        JSON.stringify({
+          hooks: {
+            Notification: [
+              {
+                hooks: [{ type: "command", command: "echo letta-local" }],
+              },
+            ],
+          },
+        }),
+      );
       await settingsManager.reset();
       process.env.LETTA_CONFIG_DIR = dreamSettingsDir;
       await settingsManager.initialize();
@@ -767,6 +779,10 @@ describe("Hooks Loader", () => {
         "echo dream-global",
       );
       expect(await loadProjectHooks(fakeHome)).toEqual({});
+      expect(await loadProjectLocalHooks(fakeHome)).toEqual({});
+      expect(() =>
+        settingsManager.updateLocalProjectSettings({ hooks: {} }, fakeHome),
+      ).toThrow(/LETTA_CONFIG_DIR/);
     });
   });
 });

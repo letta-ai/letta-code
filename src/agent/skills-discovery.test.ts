@@ -8,7 +8,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
-import { discoverSkills, getBundledSkills } from "@/agent/skills";
+import {
+  discoverSkills,
+  getBundledSkills,
+  getGlobalSkillsDir,
+} from "@/agent/skills";
+
+test("global skills follow the product config root", () => {
+  expect(
+    getGlobalSkillsDir({
+      HOME: "/Users/alice",
+      LETTA_CONFIG_DIR: "/Users/alice/.dream",
+    }),
+  ).toBe(join("/Users/alice", ".dream", "skills"));
+});
 
 test("scopes the memory filesystem skill to repository operations", async () => {
   const skills = await getBundledSkills();

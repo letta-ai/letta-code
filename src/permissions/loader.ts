@@ -8,6 +8,7 @@ import { dirname, join, resolve } from "node:path";
 import { exists, readFile, writeFile } from "@/utils/fs.js";
 import {
   hasGlobalConfigDirOverride,
+  isHomeWorkingDirectory,
   isProjectSettingsPathGlobal,
   resolveGlobalSettingsPath,
 } from "@/utils/settings-path";
@@ -79,12 +80,13 @@ function getPermissionSourcePaths(workingDirectory: string): string[] {
   const sources = [legacyUserSettingsPath, userSettingsPath].filter(
     (path): path is string => Boolean(path),
   );
-  if (!isProjectSettingsPathGlobal(workingDirectory)) {
-    sources.push(
-      join(workingDirectory, ".letta", "settings.json"),
-      join(workingDirectory, ".letta", "settings.local.json"),
-    );
-  }
+  if (!isProjectSettingsPathGlobal(workingDirectory))
+    sources.push(join(workingDirectory, ".letta", "settings.json"));
+  if (
+    !hasGlobalConfigDirOverride() ||
+    !isHomeWorkingDirectory(workingDirectory)
+  )
+    sources.push(join(workingDirectory, ".letta", "settings.local.json"));
   return sources;
 }
 
@@ -348,6 +350,16 @@ export async function savePermissionRule(
   scope: "project" | "local" | "user",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
+  if (
+    scope !== "user" &&
+    hasGlobalConfigDirOverride() &&
+    isHomeWorkingDirectory(workingDirectory)
+  ) {
+    throw new Error(
+      `Cannot save ${scope} permissions under HOME while LETTA_CONFIG_DIR is set`,
+    );
+  }
+
   const normalizedWorkingDirectory = resolve(workingDirectory);
 
   // Determine settings file path based on scope

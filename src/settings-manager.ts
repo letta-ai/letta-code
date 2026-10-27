@@ -47,6 +47,7 @@ import {
 import {
   isProjectSettingsPathGlobal,
   resolveGlobalSettingsPath,
+  shouldIsolateHomeProjectConfig,
 } from "./utils/settings-path.js";
 
 /**
@@ -996,9 +997,7 @@ class SettingsManager {
     return join(workingDirectory, ".letta", "settings.local.json");
   }
 
-  /**
-   * Load local project settings (.letta/settings.local.json)
-   */
+  /** Load local project settings (.letta/settings.local.json). */
   async loadLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): Promise<LocalProjectSettings> {
@@ -1008,6 +1007,11 @@ class SettingsManager {
       return { ...cached };
     }
 
+    if (shouldIsolateHomeProjectConfig(workingDirectory)) {
+      const defaults = { ...DEFAULT_LOCAL_PROJECT_SETTINGS };
+      this.localProjectSettings.set(workingDirectory, defaults);
+      return defaults;
+    }
     const settingsPath = this.getLocalProjectSettingsPath(workingDirectory);
 
     try {
@@ -1049,9 +1053,7 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Get local project settings (synchronous, from memory)
-   */
+  /** Get local project settings (synchronous, from memory). */
   getLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): LocalProjectSettings {
@@ -1064,13 +1066,15 @@ class SettingsManager {
     return { ...cached };
   }
 
-  /**
-   * Update local project settings (synchronous in-memory, async persist)
-   */
+  /** Update local project settings (synchronous in-memory, async persist). */
   updateLocalProjectSettings(
     updates: Partial<LocalProjectSettings>,
     workingDirectory: string = process.cwd(),
   ): void {
+    if (shouldIsolateHomeProjectConfig(workingDirectory))
+      throw new Error(
+        "Cannot save project-local settings under HOME while LETTA_CONFIG_DIR is set",
+      );
     const current = this.localProjectSettings.get(workingDirectory);
     if (!current) {
       throw new Error(
@@ -1080,8 +1084,6 @@ class SettingsManager {
 
     const updated = { ...current, ...updates };
     this.localProjectSettings.set(workingDirectory, updated);
-
-    // Persist asynchronously (track promise for testing)
     const writePromise = this.persistLocalProjectSettings(workingDirectory)
       .catch((error) => {
         console.error("Failed to persist local project settings:", error);
@@ -1092,9 +1094,7 @@ class SettingsManager {
     this.pendingWrites.add(writePromise);
   }
 
-  /**
-   * Persist local project settings to disk (private helper)
-   */
+  /** Persist local project settings to disk. */
   private async persistLocalProjectSettings(
     workingDirectory: string,
   ): Promise<void> {

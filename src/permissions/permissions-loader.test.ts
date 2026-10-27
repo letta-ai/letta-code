@@ -388,6 +388,37 @@ test("Explicit config does not reload ~/.letta as project settings from HOME", a
   expect(permissions.allow).not.toContain("Bash(letta:*)");
 });
 
+test("Default config still loads HOME project-local permissions", async () => {
+  process.env.HOME = testDir;
+  delete process.env.LETTA_CONFIG_DIR;
+  await Bun.write(
+    join(testDir, ".letta", "settings.local.json"),
+    JSON.stringify({ permissions: { allow: ["Bash(home-local:*)"] } }),
+  );
+
+  const permissions = await loadPermissions(testDir);
+
+  expect(permissions.allow).toContain("Bash(home-local:*)");
+});
+
+test("Explicit config rejects project permission writes from HOME", async () => {
+  process.env.HOME = testDir;
+  process.env.LETTA_CONFIG_DIR = join(testDir, ".dream");
+
+  await expect(
+    savePermissionRule("Bash(leak:*)", "allow", "project", testDir),
+  ).rejects.toThrow(/under HOME/);
+  await expect(
+    savePermissionRule("Bash(leak:*)", "allow", "local", testDir),
+  ).rejects.toThrow(/under HOME/);
+  expect(
+    await Bun.file(join(testDir, ".letta", "settings.json")).exists(),
+  ).toBe(false);
+  expect(
+    await Bun.file(join(testDir, ".letta", "settings.local.json")).exists(),
+  ).toBe(false);
+});
+
 test("Save permission to deny list", async () => {
   const projectDir = join(testDir, "project");
   await savePermissionRule("Read(.env)", "deny", "project", projectDir);
