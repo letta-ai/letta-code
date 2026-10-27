@@ -18,7 +18,7 @@ import {
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
-import { getPostCarveDeniedRoots } from "@/sandbox/policy";
+import { getOrderedSandboxPathRules } from "@/sandbox/policy";
 
 const tempDirs: string[] = [];
 
@@ -201,24 +201,38 @@ test("nested explicit storage is remasked after self carves", () => {
   const selfRoot = join(agentsTree, "self");
   const selfMemory = join(selfRoot, "memory");
   const nestedTree = join(selfMemory, "local-store", "memfs");
+  const innerSelfMemory = join(nestedTree, "self", "memory");
   const deniedRoots = [agentsTree, nestedTree];
 
   const parentPolicy = buildCrossAgentSandboxPolicy({
-    selfRoots: [selfMemory],
+    selfRoots: [selfMemory, innerSelfMemory],
     agentsTreeRoots: deniedRoots,
   });
   const memoryPolicy = buildMemorySubagentSandboxPolicy({
-    memoryRoots: [selfMemory],
+    memoryRoots: [selfMemory, innerSelfMemory],
     agentsTreeRoots: deniedRoots,
   });
 
-  expect(getPostCarveDeniedRoots(parentPolicy)).toEqual([
-    canonicalizeRoot(nestedTree),
-  ]);
-  expect(getPostCarveDeniedRoots(memoryPolicy)).toEqual([
-    canonicalizeRoot(nestedTree),
-  ]);
   expect(memoryPolicy.writableRoots).toContain(canonicalizeRoot(selfMemory));
+  expect(memoryPolicy.writableRoots).toContain(
+    canonicalizeRoot(innerSelfMemory),
+  );
+
+  for (const policy of [parentPolicy, memoryPolicy]) {
+    const rules = getOrderedSandboxPathRules(policy);
+    const indexOf = (kind: string, root: string) =>
+      rules.findIndex(
+        (rule) => rule.kind === kind && rule.root === canonicalizeRoot(root),
+      );
+    const outerSelfIndex = indexOf("writable", selfMemory);
+    const nestedDenyIndex = indexOf("deny", nestedTree);
+    const innerSelfIndex = indexOf("writable", innerSelfMemory);
+    expect(outerSelfIndex).toBeGreaterThan(-1);
+    expect(nestedDenyIndex).toBeGreaterThan(-1);
+    expect(innerSelfIndex).toBeGreaterThan(-1);
+    expect(outerSelfIndex).toBeLessThan(nestedDenyIndex);
+    expect(innerSelfIndex).toBeGreaterThan(nestedDenyIndex);
+  }
 });
 
 test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {
