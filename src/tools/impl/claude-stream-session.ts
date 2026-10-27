@@ -7,6 +7,7 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
   type ExternalToolCallListener,
   formatExternalToolCallArgs,
@@ -381,13 +382,13 @@ async function launchSession(
     options.sessionId ??
     deps.createSessionId?.() ??
     randomUUID();
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     // Claude Code refuses bypassPermissions as root unless told it is sandboxed.
     IS_SANDBOX: "1",
-  };
+  });
   const abortController = new AbortController();
   const abortFromUpstream = () =>
     abortController.abort(
