@@ -202,15 +202,14 @@ async function commitAgentMainViaGit(
         changed: false,
       };
     }
-    await runGit(dir, [
+    // The fresh clone has no identity; the rebase below commits too.
+    const identity = [
       "-c",
       `user.name=${request.author.name}`,
       "-c",
       `user.email=${request.author.email}`,
-      "commit",
-      "-m",
-      request.message,
-    ]);
+    ];
+    await runGit(dir, [...identity, "commit", "-m", request.message]);
     const push = () =>
       runGit(dir, ["push", "origin", `HEAD:${DEFAULT_BRANCH}`], token);
     try {
@@ -224,7 +223,13 @@ async function commitAgentMainViaGit(
         ["fetch", "--depth", "1", "origin", DEFAULT_BRANCH],
         token,
       );
-      await runGit(dir, ["rebase", "--onto", "FETCH_HEAD", "HEAD~1"]);
+      await runGit(dir, [
+        ...identity,
+        "rebase",
+        "--onto",
+        "FETCH_HEAD",
+        "HEAD~1",
+      ]);
       await push();
     }
     const head = await runGit(dir, ["rev-parse", "HEAD"]);

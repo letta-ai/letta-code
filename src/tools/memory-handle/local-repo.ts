@@ -216,6 +216,10 @@ async function commitLocal(
       } catch {
         try {
           await runGit(root, [
+            "-c",
+            `user.name=${request.author.name}`,
+            "-c",
+            `user.email=${request.author.email}`,
             "merge",
             "--no-edit",
             "-m",

@@ -106,6 +106,38 @@ describe("memory handle over a local repository", () => {
     expect(log[0]?.email).toBe("agent-test@letta.com");
   });
 
+  test("merges a concurrently advanced checked-out branch without a git identity", async () => {
+    const dir = memoryRepo();
+    // Advance main in the checkout while the handle commits in its worktree,
+    // so the fast-forward fails and the merge-commit fallback runs.
+    writeFileSync(
+      join(dir, ".git", "hooks", "pre-commit"),
+      `#!/bin/sh\nunset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE\ngit -C "${dir}" -c user.name=Human -c user.email=human@example.com commit -q --no-verify --allow-empty -m human\n`,
+      { mode: 0o755 },
+    );
+    git(dir, "config", "--unset", "user.name");
+    git(dir, "config", "--unset", "user.email");
+    git(dir, "config", "user.useConfigOnly", "true");
+    const saved = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = "/dev/null";
+    try {
+      const memory = await openMemoryHandle(dir, context());
+      const result = await memory
+        .commit({ message: "add other" })
+        .put("other.md", "other\n")
+        .send();
+      expect(result.changed).toBe(true);
+    } finally {
+      if (saved === undefined) delete process.env.GIT_CONFIG_GLOBAL;
+      else process.env.GIT_CONFIG_GLOBAL = saved;
+    }
+    expect(git(dir, "log", "-1", "--format=%P").split(" ")).toHaveLength(2);
+    expect(git(dir, "log", "-1", "--format=%s|%cn <%ce>")).toBe(
+      "merge(memory): add other|Tester <agent-test@letta.com>",
+    );
+    expect(readFileSync(join(dir, "other.md"), "utf8")).toBe("other\n");
+  });
+
   test("the repository's pre-commit hook rejects invalid memory", async () => {
     const dir = memoryRepo();
     const head = git(dir, "rev-parse", "HEAD");
