@@ -165,8 +165,8 @@ function localScenarioPrompt(): string {
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
     "Then, load the relevant memory skills and directly create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. " +
-    "Continue immediately after delegation without waiting or polling; the test harness checks the committed memory after the CLI exits. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory task was launched, your final response must include the uppercase word BANANA. " +
+    "The test harness checks the committed memory after the CLI exits. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory edit was committed, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
