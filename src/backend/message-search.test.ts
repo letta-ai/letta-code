@@ -379,6 +379,68 @@ describe("message search backend routing", () => {
     }
   });
 
+  test("streams a large image-heavy transcript and finds text matches", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-message-search-"));
+    try {
+      const messages: unknown[] = [];
+      for (let index = 0; index < 40; index += 1) {
+        const timestamp = Date.UTC(2026, 0, 1, 0, index);
+        const text =
+          index === 7
+            ? "LARGE_NEEDLE once"
+            : index === 23
+              ? "LARGE_NEEDLE twice LARGE_NEEDLE"
+              : `filler message ${index}`;
+        messages.push(
+          { id: `user-${index}`, role: "user", content: text, timestamp },
+          {
+            id: `result-${index}`,
+            role: "toolResult",
+            toolCallId: `call-${index}`,
+            toolName: "ViewImage",
+            content: [
+              { type: "text", text: `screenshot ${index}` },
+              {
+                type: "image",
+                mimeType: "image/png",
+                data: "A".repeat(1024 * 1024),
+              },
+            ],
+            isError: false,
+            timestamp: timestamp + 1,
+          },
+        );
+      }
+      await writeLegacySearchTranscript({
+        storageDir,
+        directory: "large",
+        conversationId: "conv-large",
+        messages,
+      });
+
+      const results = searchLocalTranscriptMessages(storageDir, {
+        query: "large_needle",
+        limit: 10,
+      });
+      // BM25 order is unchanged by streaming: the denser match ranks first.
+      expect(results.map((result) => result.message_id)).toEqual([
+        "user-23",
+        "user-7",
+      ]);
+      expect(results.map((result) => result.conversation_id)).toEqual([
+        "conv-large",
+        "conv-large",
+      ]);
+      expect(
+        searchLocalTranscriptMessages(storageDir, {
+          query: '"screenshot 31"',
+        }).map((result) => result.message_id),
+      ).toEqual(["result-31"]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("searches legacy local transcript rows with date filters", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-message-search-"));
     try {
