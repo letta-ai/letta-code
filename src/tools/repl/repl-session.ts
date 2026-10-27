@@ -150,6 +150,7 @@ export class ReplSession {
     this.context = vm.createContext({
       tools: toolHooks.tools,
       memory: toolHooks.memory,
+      harness: toolHooks.harness,
       listTools: toolHooks.listTools,
       describeTool: toolHooks.describeTool,
       agent,

@@ -87,6 +87,7 @@ export interface ToolHooksConfig {
 export interface ToolHooks {
   tools: object;
   memory: object;
+  harness: object;
   listTools(): Promise<Array<{ name: string; description: string }>>;
   describeTool(name: unknown): Promise<WorkflowToolInfo | undefined>;
   /** Forget cached tool metadata after the bindings change. */
@@ -187,9 +188,46 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
       ),
   });
 
+  // `harness.load(agentId, { ref? })`: a typed view of an agent's
+  // memory-backed state over the same `memory.open` handle and permissions.
+  const harness = Object.freeze({
+    load: (agentId?: unknown, options?: unknown) =>
+      config.track(
+        (async () => {
+          const bindings = config.bindings();
+          if (!bindings.openMemory) {
+            throw new Error("harness is unavailable: no invoking tool scope.");
+          }
+          const target = agentId;
+          if (typeof target !== "string" || !target) {
+            throw new Error("harness.load() takes an agent ID.");
+          }
+          if (
+            options !== undefined &&
+            (!options || typeof options !== "object" || Array.isArray(options))
+          ) {
+            throw new Error("harness.load() options must be an object.");
+          }
+          const ref = (options as { ref?: unknown } | undefined)?.ref;
+          if (ref !== undefined && (typeof ref !== "string" || !ref)) {
+            throw new Error("ref must be a non-empty string.");
+          }
+          if (config.signal().aborted) throw new Error(config.abortedMessage);
+          const { loadHarnessSnapshot } = await import(
+            "@/tools/memory-handle/harness"
+          );
+          const repo = (await bindings.openMemory({
+            agentId: target,
+          })) as Parameters<typeof loadHarnessSnapshot>[0];
+          return loadHarnessSnapshot(repo, ref);
+        })(),
+      ),
+  });
+
   return {
     tools,
     memory,
+    harness,
     /** `[{ name, description }]` for every tool callable through `tools`. */
     async listTools() {
       return (await loadToolInfo()).map(({ name, description }) => ({

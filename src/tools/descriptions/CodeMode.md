@@ -4,6 +4,8 @@ Call built-in tools with `await tools.<name>(args)` and MCP tools with `await to
 
 `memory.open(path | { agentId } | { repoId })` opens a Git-backed memory repository: `read(path, { ref? })` (null if missing), `list({ path?, ref? })`, `log({ path?, ref?, limit? })`, `diff({ ref, base? })`, and `commit({ message, branch?, base? }).put(path, text).delete(path).send()`. Commits run the repository's memory validation, follow permission rules like file writes, and default to the repository's main branch; a new `branch` is created from `base`. Committing to your own hosted memory's main branch refreshes your system prompt.
 
+`harness.load(agentId, { ref? })` returns a typed snapshot of an agent's memory: `index` (root MEMORY.md text), `core` (root core memory blocks by name: `{ description, body }`), `memory.list(dir?)`/`memory.get(path)` (deferred memory), `skills` (by name: `{ description, body, files }`), and `repo` (the `memory.open` handle). `edit({ message?, branch? })` stages `index.set(text)`, `core.put(name, { description, body })`/`core.delete(name)`, `memory.put(path, { description, body } | indexText)`/`memory.delete(path)`, and `skills.put(name, { description, body, files? })`/`skills.delete(name)`, then `send()` commits them together to a new branch (never main) based on the snapshot.
+
 Returns `{ result, output }`. Like Bash, a script still running after a brief wait continues in the background and its result arrives as a task notification; `run_in_background: true` returns the task ID immediately. TaskStop aborts it.
 
 Nested calls follow permission rules; calls that need approval fail, so call those tools directly. This is not a security sandbox.

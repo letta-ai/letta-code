@@ -314,6 +314,7 @@ async function executeScript(
   const context = vm.createContext({
     tools: toolHooks.tools,
     memory: toolHooks.memory,
+    harness: toolHooks.harness,
     listTools: toolHooks.listTools,
     describeTool: toolHooks.describeTool,
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
