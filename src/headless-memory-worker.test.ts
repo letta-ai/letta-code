@@ -96,7 +96,7 @@ for (const mode of [
             ? [
                 "--new-agent",
                 "--system",
-                "memory",
+                "memory-repair",
                 "--model",
                 "anthropic/claude-sonnet-4-6",
               ]
