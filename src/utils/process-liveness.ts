@@ -1,4 +1,5 @@
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { basename } from "node:path";
 import { promisify } from "node:util";
 
 /** Signal 0 checks existence without delivering anything; EPERM means alive but not ours. */
@@ -65,4 +66,36 @@ export async function isSameProcessRunning(
   if (!identity.started) return true;
   const started = await getProcessStartTime(identity.pid);
   return started === null || started === identity.started;
+}
+
+/** The pid's command line via `ps`, or null on Windows or when ps fails. */
+export function getProcessCommand(pid: number): string | null {
+  if (process.platform === "win32") return null;
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+      encoding: "utf-8",
+      timeout: 1000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * True only when a live pid is positively identified as non-letta, i.e. its
+ * command neither mentions letta nor runs this process's entry script or
+ * runtime (dev/bun-run instances). Our own pid, Windows, and a failed `ps`
+ * lookup all report false so the owner stays held.
+ */
+export function isPidReusedByNonLetta(
+  pid: number,
+  getCommand: (pid: number) => string | null = getProcessCommand,
+): boolean {
+  const command = pid === process.pid ? null : getCommand(pid);
+  if (!command || /letta/i.test(command)) return false;
+  const script = process.argv[1];
+  if (script && command.includes(script)) return false;
+  const argv0 = command.split(/\s+/)[0] ?? "";
+  return basename(argv0) !== basename(process.execPath);
 }

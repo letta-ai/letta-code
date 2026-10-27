@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
+import { basename } from "node:path";
 import {
   getProcessStartTime,
+  isPidReusedByNonLetta,
   isProcessAlive,
   isSameProcessRunning,
 } from "./process-liveness";
@@ -35,4 +37,18 @@ test("a recorded start time distinguishes a reused pid from the original", async
   expect(
     await isSameProcessRunning({ pid: process.pid, started: "1970-01-01" }),
   ).toBe(false);
+});
+
+test("a reused pid is reclaimable only when positively identified as non-letta", () => {
+  const reused = (command: string | null, pid = 999_999) =>
+    isPidReusedByNonLetta(pid, () => command);
+  expect(reused("/usr/libexec/unrelated --flag")).toBe(true);
+  expect(reused("node /usr/local/bin/letta server")).toBe(false);
+  // Dev/bun-run instances: same runtime or entry script, no "letta" in argv.
+  expect(reused(`${process.execPath} run src/index.ts`)).toBe(false);
+  expect(reused(`/elsewhere/${basename(process.execPath)} x.ts`)).toBe(false);
+  expect(reused(`/usr/bin/env ${process.argv[1]}`)).toBe(false);
+  // A failed lookup and our own pid keep the owner held.
+  expect(reused(null)).toBe(false);
+  expect(reused("/usr/libexec/unrelated", process.pid)).toBe(false);
 });

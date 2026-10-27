@@ -148,6 +148,55 @@ return {
   });
 }, 15000);
 
+test.each(["everything", "everything_", "_"])(
+  "parallel calls to %s do not start unrelated servers",
+  async (name) => {
+    settingsManager.setMcpServers(agentId, [
+      {
+        name,
+        transport: "stdio",
+        command: process.execPath,
+        args: [serverPath],
+      },
+      {
+        name: "unused",
+        transport: "stdio",
+        command: join(home, "must-not-start"),
+      },
+    ]);
+    const result = await run(`
+return await Promise.all(Array.from({ length: 36 }, (_, i) =>
+  tools[${JSON.stringify(`mcp__${name}__echo`)}]({ message: String(i) })
+));`);
+    expect(result).toMatchObject({ status: "success" });
+    expect(JSON.parse(result.toolReturn as string).result).toEqual(
+      Array.from({ length: 36 }, (_, i) => `Echo: ${i}`),
+    );
+  },
+  15000,
+);
+
+test("MCP calls resolve collision-generated aliases containing the delimiter", async () => {
+  settingsManager.setMcpServers(
+    agentId,
+    ["foo_", "foo__"].map((name) => ({
+      name,
+      transport: "stdio",
+      command: process.execPath,
+      args: [serverPath],
+    })),
+  );
+  const result = await run(
+    `const echoed = await tools.mcp__foo__2__echo({message: 'collision'});
+return {echoed, listed: (await listTools()).some(t => t.name === 'mcp__foo__2__echo')};`,
+  );
+  expect(result).toMatchObject({ status: "success" });
+  expect(JSON.parse(result.toolReturn as string).result).toEqual({
+    echoed: "Echo: collision",
+    listed: true,
+  });
+}, 15000);
+
 test("a scoped owning agent runs built-ins without a conversation lookup", async () => {
   const conversationId = "conv-not-stored";
   await expect(
