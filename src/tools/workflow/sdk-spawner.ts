@@ -242,11 +242,20 @@ interface DrainedTurn {
   error?: string;
   structuredOutput?: unknown;
   totalTokens?: number;
+  costUsd?: number | null;
 }
 
-/** Token usage observed so far on a query; shared so an early stop keeps it. */
+/** Usage observed so far on a query; shared so an early stop keeps it. */
 interface RunningUsage {
   totalTokens?: number;
+  costUsd?: number;
+  /** A usage record arrived without `estimated_cost_usd`. */
+  unpriced?: boolean;
+}
+
+/** Cumulative cost, or null once any step was unpriced. */
+function runningCost(usage: RunningUsage): number | null | undefined {
+  return usage.unpriced ? null : usage.costUsd;
 }
 
 /**
@@ -265,13 +274,32 @@ function usageTokensFromEvent(
     : undefined;
 }
 
+/**
+ * Letta Cloud adds the step's list-price USD as `estimated_cost_usd`; it is
+ * null for unpriced models and absent on servers and backends that do not
+ * report cost. Both leave the run without an enforceable cost.
+ */
+function recordUsageCost(
+  event: Record<string, unknown> | undefined,
+  usage: RunningUsage,
+): boolean {
+  if (!event || event.message_type !== "usage_statistics") return false;
+  const cost = event.estimated_cost_usd;
+  if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) {
+    usage.costUsd = (usage.costUsd ?? 0) + cost;
+  } else {
+    usage.unpriced = true;
+  }
+  return true;
+}
+
 /** Consume the query stream to its result; `stop` is called on a runaway. */
 async function drainTurn(
   query: SdkQuery,
   usage: RunningUsage,
   stop: (reason: string) => void,
   maxToolCalls: number,
-  onUsage?: (totalTokens: number) => void,
+  onUsage?: (totalTokens: number, costUsd?: number | null) => void,
   onStarted?: (conversationId: string) => void,
   model?: string,
 ): Promise<DrainedTurn> {
@@ -296,7 +324,9 @@ async function drainTurn(
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
-        onUsage?.(usage.totalTokens);
+      }
+      if (recordUsageCost(message.event, usage)) {
+        onUsage?.(usage.totalTokens ?? 0, runningCost(usage));
       }
     }
     if (message.type === "tool_call") {
@@ -325,6 +355,7 @@ async function drainTurn(
     error,
     structuredOutput,
     totalTokens: usage.totalTokens,
+    costUsd: runningCost(usage),
   };
 }
 
@@ -579,6 +610,7 @@ export function createSdkSpawner(
         success: false,
         error: reason,
         totalTokens: usage.totalTokens,
+        costUsd: runningCost(usage),
       });
     };
     const abort = () => stop("Workflow subagent interrupted");
@@ -596,8 +628,8 @@ export function createSdkSpawner(
           usage,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
-          (totalTokens) => {
-            if (!finished) hooks?.onUsage?.(totalTokens);
+          (totalTokens, costUsd) => {
+            if (!finished) hooks?.onUsage?.(totalTokens, costUsd);
           },
           (id) => {
             if (resumeId && id !== resumeId) {
@@ -627,6 +659,7 @@ export function createSdkSpawner(
         ...(turn.totalTokens !== undefined
           ? { totalTokens: turn.totalTokens }
           : {}),
+        ...(turn.costUsd !== undefined ? { costUsd: turn.costUsd } : {}),
         ...(query.conversationId
           ? { conversationId: query.conversationId }
           : {}),
