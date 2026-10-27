@@ -7,6 +7,7 @@ import { getAgentSkillsDir } from "@/agent/skills";
 import { getGlobalAgentsDir } from "@/agent/subagents";
 import { analyzeApprovalContext } from "@/permissions/analyzer";
 import { extractTargetAgentPaths } from "@/permissions/cross-agent-guard";
+import { matchesBashPattern } from "@/permissions/matcher";
 import {
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
@@ -81,12 +82,14 @@ test("durable listener execution state follows the product config root", () => {
   expect(targets.anyAgentScoped).toBe(true);
   expect(targets.agentIds).toContain("agent-other");
 
+  const skillCommand = `npx tsx ${productRoot}/agents/agent-test/memory/skills/finding-agents/scripts/main.ts --help`;
   const approval = analyzeApprovalContext(
     "Bash",
-    {
-      command: `npx tsx ${productRoot}/agents/agent-test/memory/skills/finding-agents/scripts/main.ts --help`,
-    },
+    { command: skillCommand },
     "/workspace",
   );
   expect(approval.approveAlwaysText).toContain("agent-scoped skill");
+  expect(
+    matchesBashPattern(`Bash(${skillCommand})`, approval.recommendedRule),
+  ).toBe(true);
 });

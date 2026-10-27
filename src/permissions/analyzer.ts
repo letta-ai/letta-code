@@ -552,16 +552,18 @@ function detectSkillScript(
 }
 
 function buildSkillScriptRule(command: string, skillRootPath: string): string {
-  const normalizedCommand = normalizePathSeparators(command).trim();
+  const originalCommand = command.trim();
+  const normalizedCommand = normalizePathSeparators(originalCommand);
   const rootIndex = normalizedCommand.indexOf(skillRootPath);
   if (rootIndex === -1) {
-    return `Bash(${normalizedCommand})`;
+    return `Bash(${originalCommand})`;
   }
 
-  const rulePrefix = normalizedCommand.slice(
-    0,
-    rootIndex + skillRootPath.length,
-  );
+  // Separator normalization is only for locating the skill root. Replacing a
+  // slash is length-preserving, so slice the original command at the same
+  // index; persisted Windows rules must retain the backslashes of the command
+  // they are expected to match.
+  const rulePrefix = originalCommand.slice(0, rootIndex + skillRootPath.length);
   return `Bash(${rulePrefix}:*)`;
 }
 
