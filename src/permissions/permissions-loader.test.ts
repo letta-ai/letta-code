@@ -11,16 +11,23 @@ import {
 } from "@/permissions/loader";
 
 let testDir: string;
+const originalConfigDir = process.env.LETTA_CONFIG_DIR;
+const originalHome = process.env.HOME;
 
 beforeEach(async () => {
   // Create a temporary test directory for project files
   testDir = await mkdtemp(join(tmpdir(), "letta-test-"));
+  delete process.env.LETTA_CONFIG_DIR;
 });
 
 afterEach(async () => {
   resetPermissionLoaderCacheForTests();
   // Clean up test directory
   await rm(testDir, { recursive: true, force: true });
+  if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+  else process.env.LETTA_CONFIG_DIR = originalConfigDir;
+  if (originalHome === undefined) delete process.env.HOME;
+  else process.env.HOME = originalHome;
 });
 
 // ============================================================================
@@ -339,6 +346,46 @@ test("User settings paths prefer ~/.letta and keep XDG as legacy fallback", () =
 
   expect(paths.canonical).toBe(join(homeDir, ".letta", "settings.json"));
   expect(paths.legacy).toBe(join(xdgConfigHome, "letta", "settings.json"));
+});
+
+test("User settings paths isolate an explicit config directory", () => {
+  const homeDir = join("tmp", "home-test");
+  const configDir = join("/tmp", "dream-test");
+  const paths = getUserSettingsPaths({ configDir, homeDir });
+
+  expect(paths.canonical).toBe(join(configDir, "settings.json"));
+  expect(paths.legacy).toBeUndefined();
+});
+
+test("User permission writes use the explicit config directory", async () => {
+  const configDir = join(testDir, ".dream");
+  process.env.LETTA_CONFIG_DIR = configDir;
+
+  await savePermissionRule("Bash(dream:*)", "allow", "user", testDir);
+
+  const settings = await Bun.file(join(configDir, "settings.json")).json();
+  expect(settings.permissions.allow).toContain("Bash(dream:*)");
+  expect(
+    await Bun.file(join(testDir, ".letta", "settings.json")).exists(),
+  ).toBe(false);
+});
+
+test("Explicit config does not reload ~/.letta as project settings from HOME", async () => {
+  process.env.HOME = testDir;
+  process.env.LETTA_CONFIG_DIR = join(testDir, ".dream");
+  await Bun.write(
+    join(testDir, ".letta", "settings.json"),
+    JSON.stringify({ permissions: { allow: ["Bash(letta:*)"] } }),
+  );
+  await Bun.write(
+    join(testDir, ".dream", "settings.json"),
+    JSON.stringify({ permissions: { allow: ["Bash(dream:*)"] } }),
+  );
+
+  const permissions = await loadPermissions(testDir);
+
+  expect(permissions.allow).toContain("Bash(dream:*)");
+  expect(permissions.allow).not.toContain("Bash(letta:*)");
 });
 
 test("Save permission to deny list", async () => {

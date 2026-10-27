@@ -1,10 +1,10 @@
 // src/settings.ts
-// Manages user settings stored in ~/.letta/settings.json and project settings in ./.letta/settings.local.json
+// Manages user settings and project settings in ./.letta/settings.local.json
 
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { PermissionRules } from "./permissions/types";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
+import { resolveGlobalSettingsPath } from "./utils/settings-path.js";
 
 export interface Settings {
   lastAgent: string | null;
@@ -32,11 +32,11 @@ const DEFAULT_SETTINGS: Settings = {
 };
 
 function getSettingsPath(): string {
-  return join(homedir(), ".letta", "settings.json");
+  return resolveGlobalSettingsPath();
 }
 
 /**
- * Load settings from ~/.letta/settings.json
+ * Load global settings
  * If the file doesn't exist, creates it with default settings
  */
 export async function loadSettings(): Promise<Settings> {
@@ -63,13 +63,16 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 /**
- * Save settings to ~/.letta/settings.json
+ * Save global settings
  */
 export async function saveSettings(settings: Settings): Promise<void> {
   const settingsPath = getSettingsPath();
 
   try {
-    await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2), {
+      directoryMode: 0o700,
+      mode: 0o600,
+    });
   } catch (error) {
     console.error("Error saving settings:", error);
     throw error;

@@ -3,8 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   type AgentBackendMode,
   isAgentIdCompatibleWithBackend,
@@ -45,6 +44,10 @@ import {
   type SecureTokens,
   setSecureTokens,
 } from "./utils/secrets.js";
+import {
+  isProjectSettingsPathGlobal,
+  resolveGlobalSettingsPath,
+} from "./utils/settings-path.js";
 
 /**
  * Reference to a session (agent + conversation pair).
@@ -879,12 +882,11 @@ class SettingsManager {
     if (!this.settings) return;
 
     const settingsPath = this.getSettingsPath();
-    const home = process.env.HOME || homedir();
-    const dirPath = join(home, ".letta");
+    const dirPath = dirname(settingsPath);
 
     try {
       if (!exists(dirPath)) {
-        await mkdir(dirPath, { recursive: true });
+        await mkdir(dirPath, { recursive: true, mode: 0o700 });
       }
 
       // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
@@ -923,7 +925,10 @@ class SettingsManager {
         }
       }
 
-      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2), {
+        directoryMode: 0o700,
+        mode: 0o600,
+      });
     } catch (error) {
       console.error("Error saving settings:", error);
       throw error;
@@ -974,9 +979,7 @@ class SettingsManager {
   }
 
   private getSettingsPath(): string {
-    // Use ~/.letta/ like other AI tools (.claude, .cursor, etc.)
-    const home = process.env.HOME || homedir();
-    return join(home, ".letta", "settings.json");
+    return resolveGlobalSettingsPath();
   }
 
   private getProjectSettingsPath(workingDirectory: string): string {
@@ -986,10 +989,7 @@ class SettingsManager {
   private isProjectSettingsPathCollidingWithGlobal(
     workingDirectory: string,
   ): boolean {
-    return (
-      resolve(this.getProjectSettingsPath(workingDirectory)) ===
-      resolve(this.getSettingsPath())
-    );
+    return isProjectSettingsPathGlobal(workingDirectory);
   }
 
   private getLocalProjectSettingsPath(workingDirectory: string): string {
