@@ -154,7 +154,7 @@
     "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
-    "@modelcontextprotocol/sdk": "1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
     "@pierre/diffs": "1.2.2",
     "@scarf/scarf": "^1.4.0",
     "@shikijs/langs": "4.0.2",
@@ -275,7 +275,7 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-75ArKlsNj6BLjfiYR7ejV9jl0U3L7r1mXtWLYoNBVFkpR+NgT29dy3I6c7xawN3klfWjTCPVa5kpHtS7gVbD0A==",
+  "lettaRuntimeGraphSha512": "sha512-1x8a2Fgt2I6P9iN8EVZFwZkpduSmiXWAOMoNGT3vr0mmgncK2fEjapBA4uf5HmTbt4okCXepE5wsBWBiEOFztg==",
   "patchedDependencies": {
     "@earendil-works/pi-ai@0.99.1": "patches/@earendil-works%2Fpi-ai@0.99.1.patch"
   }
