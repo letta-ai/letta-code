@@ -554,7 +554,10 @@ function detectSkillScript(
 function buildSkillScriptRule(command: string, skillRootPath: string): string {
   const originalCommand = command.trim();
   const normalizedCommand = normalizePathSeparators(originalCommand);
-  const rootIndex = normalizedCommand.indexOf(skillRootPath);
+  // Bind the rule to the occurrence that actually enters the skill's scripts
+  // directory. A bare textual mention of the root earlier in a compound command
+  // must not truncate the persisted prefix and authorize unrelated suffixes.
+  const rootIndex = normalizedCommand.indexOf(`${skillRootPath}/scripts/`);
   if (rootIndex === -1) {
     return `Bash(${originalCommand})`;
   }

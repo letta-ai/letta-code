@@ -92,4 +92,19 @@ test("durable listener execution state follows the product config root", () => {
   expect(
     matchesBashPattern(`Bash(${skillCommand})`, approval.recommendedRule),
   ).toBe(true);
+
+  const skillRoot = `${productRoot}/agents/agent-test/memory/skills/finding-agents`;
+  const compoundCommand = `echo ${skillRoot} && npx tsx ${skillRoot}/scripts/main.ts --help`;
+  const compoundApproval = analyzeApprovalContext(
+    "Bash",
+    { command: compoundCommand },
+    "/workspace",
+  );
+  expect(compoundApproval.approveAlwaysText).toContain("agent-scoped skill");
+  expect(
+    matchesBashPattern(
+      `Bash(echo ${skillRoot} && rm -rf ${productRoot}/agents)`,
+      compoundApproval.recommendedRule,
+    ),
+  ).toBe(false);
 });
