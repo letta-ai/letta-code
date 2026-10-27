@@ -29,7 +29,10 @@ const NESTED_DENY = buildFsSandboxPolicy({
     "/home/u/.letta/agents",
     "/home/u/.letta/agents/self/memory/local-store/memfs",
   ],
-  writableRoots: ["/home/u/.letta/agents/self"],
+  writableRoots: [
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self/memory/local-store/memfs/self/memory",
+  ],
   restrictWrites: false,
 });
 
@@ -100,22 +103,27 @@ test("base writable is bound BEFORE the tmpfs mask, self memory after", () => {
   expect(self).toBeGreaterThan(mask);
 });
 
-test("a denied tree nested below a carve is remasked after the restore", () => {
+test("nested deny ordering preserves a legitimate inner self carve", () => {
   const args = buildBwrapArgs(NESTED_DENY);
   const nested = "/home/u/.letta/agents/self/memory/local-store/memfs";
-  const nestedMasks = args.flatMap((arg, index) =>
-    arg === "--tmpfs" && args[index + 1] === nested ? [index] : [],
+  const nestedMask = args.findIndex(
+    (arg, index) => arg === "--tmpfs" && args[index + 1] === nested,
   );
-  const self = tripleIndex(
+  const outerSelf = tripleIndex(
     args,
     "--bind-try",
     "/home/u/.letta/agents/self",
     "/home/u/.letta/agents/self",
   );
+  const innerSelf = tripleIndex(
+    args,
+    "--bind-try",
+    `${nested}/self/memory`,
+    `${nested}/self/memory`,
+  );
 
-  expect(nestedMasks).toHaveLength(2);
-  expect(nestedMasks[0]).toBeLessThan(self);
-  expect(nestedMasks[1]).toBeGreaterThan(self);
+  expect(nestedMask).toBeGreaterThan(outerSelf);
+  expect(innerSelf).toBeGreaterThan(nestedMask);
 });
 
 test("network is not unshared and parent death tears down the sandbox", () => {

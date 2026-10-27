@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 
-import { buildFsSandboxPolicy, normalizeSandboxPath } from "@/sandbox/policy";
+import {
+  buildFsSandboxPolicy,
+  getOrderedSandboxPathRules,
+  normalizeSandboxPath,
+} from "@/sandbox/policy";
 
 test("normalizeSandboxPath strips trailing slashes and forward-slashes", () => {
   expect(normalizeSandboxPath("/a/b/")).toBe("/a/b");
@@ -36,4 +40,26 @@ test("buildFsSandboxPolicy drops empty/whitespace roots and defaults", () => {
   expect(policy.writableRoots).toEqual([]);
   expect(policy.readonlyRoots).toEqual([]);
   expect(policy.restrictWrites).toBe(false);
+});
+
+test("path rules alternate by specificity and exact denies win", () => {
+  const policy = buildFsSandboxPolicy({
+    deniedRoots: ["/agents", "/agents/self/local/memfs", "/exact"],
+    writableRoots: [
+      "/agents/self",
+      "/agents/self/local/memfs/self/memory",
+      "/exact",
+    ],
+  });
+
+  expect(
+    getOrderedSandboxPathRules(policy).map(({ kind, root }) => [kind, root]),
+  ).toEqual([
+    ["deny", "/agents"],
+    ["writable", "/exact"],
+    ["deny", "/exact"],
+    ["writable", "/agents/self"],
+    ["deny", "/agents/self/local/memfs"],
+    ["writable", "/agents/self/local/memfs/self/memory"],
+  ]);
 });

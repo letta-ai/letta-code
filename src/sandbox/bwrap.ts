@@ -1,4 +1,4 @@
-import { type FsSandboxPolicy, getPostCarveDeniedRoots } from "./policy.js";
+import { type FsSandboxPolicy, getOrderedSandboxPathRules } from "./policy.js";
 
 /**
  * Linux bubblewrap backend.
@@ -22,8 +22,7 @@ import { type FsSandboxPolicy, getPostCarveDeniedRoots } from "./policy.js";
  * backing up the process-group kill in `shell-runner.ts`.
  *
  * Mount order matters — later operations layer over earlier ones: root → dev →
- * proc → base writable → mask denied → restore readonly → restore writable →
- * remask denied roots nested below those restores.
+ * proc → base writable → broad-to-narrow deny/self rules.
  * The base-writable binds come BEFORE the masks so a denied root nested inside a
  * broad base carve (the cross-agent tree under `~/.letta`) is still masked.
  */
@@ -56,35 +55,22 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
     args.push("--bind-try", root, root);
   }
 
-  // Mask each denied root with an empty tmpfs.
-  //
-  // A restore below may itself contain another denied tree when supported
-  // product/local-storage roots overlap. Those nested denies are remasked after
-  // every restore below; see getPostCarveDeniedRoots.
-  for (const root of policy.deniedRoots) {
-    args.push("--tmpfs", root);
-  }
-
-  // Restore readonly/writable carveouts on top of the masks. Use the `-try`
-  // variants: a carve-out root may not exist on disk yet — e.g. the
-  // `memory-worktrees` sibling that `resolveAllowedMemoryRoots` always lists but
-  // which is created lazily. Plain `--ro-bind`/`--bind` abort the *entire*
-  // sandbox when the source is missing, so a not-yet-created root would fail the
-  // spawn outright; `-try` skips a missing source (nothing to expose anyway, and
-  // the denied-root masks above still hold). Seatbelt tolerates non-existent
-  // paths natively, so this keeps the two backends behaviorally aligned.
-  for (const root of policy.readonlyRoots) {
-    args.push("--ro-bind-try", root, root);
-  }
-
-  for (const root of policy.writableRoots) {
-    args.push("--bind-try", root, root);
-  }
-
-  // A restored ancestor re-exposes every mount below it. Re-mask any denied
-  // subtree nested inside a readonly/writable restore so the narrow deny wins.
-  for (const root of getPostCarveDeniedRoots(policy)) {
-    args.push("--tmpfs", root);
+  // Apply deny and self-carve rules from broadest path to narrowest path. This
+  // supports alternating overlap shapes (deny → outer self → nested deny →
+  // inner self) without erasing a legitimate inner carve. Use `-try` binds so a
+  // lazily-created memory root does not abort the entire spawn.
+  for (const rule of getOrderedSandboxPathRules(policy)) {
+    switch (rule.kind) {
+      case "deny":
+        args.push("--tmpfs", rule.root);
+        break;
+      case "readonly":
+        args.push("--ro-bind-try", rule.root, rule.root);
+        break;
+      case "writable":
+        args.push("--bind-try", rule.root, rule.root);
+        break;
+    }
   }
 
   args.push("--die-with-parent");

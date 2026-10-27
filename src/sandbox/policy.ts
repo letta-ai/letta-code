@@ -32,10 +32,10 @@ import { posix, win32 } from "node:path";
  * to do its work, minus the other-agent directories in `deniedRoots`.
  *
  * Specificity is expressed through ordering, not nesting depth. The emitted
- * order is: global write-deny → `baseWritableRoots` → `deniedRoots` →
- * `writableRoots` → `readonlyRoots` → nested `deniedRoots` that sit below a
- * carve. The final remask prevents an allowed ancestor from reopening a more
- * specific denied tree.
+ * order is: global write-deny → `baseWritableRoots` → the remaining denied and
+ * self-carve rules from broadest path to narrowest path. This permits the
+ * required deny → outer self → nested deny → inner self alternation while
+ * keeping the most specific path authoritative.
  */
 export interface FsSandboxPolicy {
   baseWritableRoots: string[];
@@ -88,23 +88,55 @@ export function buildFsSandboxPolicy(
   };
 }
 
+export type SandboxPathRuleKind = "deny" | "readonly" | "writable";
+
+export interface SandboxPathRule {
+  kind: SandboxPathRuleKind;
+  root: string;
+  /** Index in the corresponding policy array, used for stable backend names. */
+  index: number;
+}
+
 /**
- * Denied roots that must be emitted again after readonly/writable carve-outs.
+ * Compile deny/self-carve rules in broad-to-narrow path order.
  *
- * Both sandbox backends use last-rule/mount-wins semantics. A self carve is
- * normally a descendant of one denied agents tree, but supported custom config
- * or local-storage roots can place a second denied tree below that carve. In
- * that shape, restoring the self root would otherwise reopen the nested tree.
+ * Both sandbox backends use last-rule/mount-wins semantics. Sorting by depth
+ * supports alternating overlap shapes such as primary deny → outer self carve
+ * → nested backend deny → inner backend self carve. For an exact same path,
+ * deny sorts last and therefore fails closed.
  */
-export function getPostCarveDeniedRoots(policy: FsSandboxPolicy): string[] {
-  const carveRoots = [...policy.writableRoots, ...policy.readonlyRoots];
-  return policy.deniedRoots.filter((deniedRoot) =>
-    carveRoots.some(
-      (carveRoot) =>
-        deniedRoot === carveRoot ||
-        deniedRoot.startsWith(carveRoot === "/" ? "/" : `${carveRoot}/`),
-    ),
-  );
+export function getOrderedSandboxPathRules(
+  policy: FsSandboxPolicy,
+): SandboxPathRule[] {
+  const rules: Array<SandboxPathRule & { order: number }> = [];
+  let order = 0;
+  const append = (kind: SandboxPathRuleKind, roots: string[]) => {
+    roots.forEach((root, index) => {
+      rules.push({ kind, root, index, order: order++ });
+    });
+  };
+
+  append("deny", policy.deniedRoots);
+  append("readonly", policy.readonlyRoots);
+  append("writable", policy.writableRoots);
+
+  const samePathPriority: Record<SandboxPathRuleKind, number> = {
+    readonly: 0,
+    writable: 1,
+    deny: 2,
+  };
+  const depth = (root: string) => root.split("/").filter(Boolean).length;
+
+  return rules
+    .sort((a, b) => {
+      const depthDifference = depth(a.root) - depth(b.root);
+      if (depthDifference !== 0) return depthDifference;
+      if (a.root === b.root) {
+        return samePathPriority[a.kind] - samePathPriority[b.kind];
+      }
+      return a.order - b.order;
+    })
+    .map(({ kind, root, index }) => ({ kind, root, index }));
 }
 
 /**

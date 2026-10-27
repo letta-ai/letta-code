@@ -35,7 +35,10 @@ const NESTED_DENY = buildFsSandboxPolicy({
     "/home/u/.letta/agents",
     "/home/u/.letta/agents/self/memory/local-store/memfs",
   ],
-  writableRoots: ["/home/u/.letta/agents/self"],
+  writableRoots: [
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self/memory/local-store/memfs/self/memory",
+  ],
   restrictWrites: false,
 });
 
@@ -119,18 +122,22 @@ test("base writable is layered: after global write-deny, before the deny, self a
   expect(self).toBeGreaterThan(deny);
 });
 
-test("a denied tree nested below a carve is repeated after the allow", () => {
+test("nested deny ordering preserves a legitimate inner self carve", () => {
   const { profile, defines } = buildSeatbeltProfile(NESTED_DENY);
-  const selfAllow = profile.indexOf(
+  const outerSelf = profile.indexOf(
     '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
   );
-  const postDeny = profile.indexOf(
-    '(deny file-read* file-write* (subpath (param "POST_DENIED_0")))',
+  const nestedDeny = profile.indexOf(
+    '(deny file-read* file-write* (subpath (param "DENIED_1")))',
+  );
+  const innerSelf = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_1")))',
   );
 
-  expect(postDeny).toBeGreaterThan(selfAllow);
+  expect(nestedDeny).toBeGreaterThan(outerSelf);
+  expect(innerSelf).toBeGreaterThan(nestedDeny);
   expect(defines).toContainEqual({
-    name: "POST_DENIED_0",
+    name: "DENIED_1",
     value: "/home/u/.letta/agents/self/memory/local-store/memfs",
   });
 });
