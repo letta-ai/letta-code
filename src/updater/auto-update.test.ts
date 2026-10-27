@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  acquireUpdateLock,
   buildInstallCommand,
   buildLatestVersionUrl,
   buildUpdateExecOptions,
@@ -611,6 +612,45 @@ describe("checkAndAutoUpdate install guards", () => {
 
     expect(runCommand).toHaveBeenCalledTimes(1);
     expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("two takeovers of the same stale lock yield exactly one owner", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+
+    const results = await Promise.all([
+      acquireUpdateLock(lockPath),
+      acquireUpdateLock(lockPath),
+    ]);
+    const winners = results.filter((release) => release !== null);
+
+    expect(winners).toHaveLength(1);
+    const owner = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    expect(owner.pid).toBe(process.pid);
+    expect(owner.createdAt).toBeGreaterThan(Date.now() - 60e3);
+    // The stale lock moved aside during takeover is cleaned up.
+    expect(fs.readdirSync(testDir)).toEqual(["auto-update.lock"]);
+
+    winners[0]?.();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("an error while acquiring the lock skips the install", async () => {
+    // The lock's parent is a regular file, so the lock can never be created.
+    const blocker = path.join(testDir, "not-a-dir");
+    fs.writeFileSync(blocker, "");
+    const runCommand = installMock();
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl,
+      runCommand,
+      lockPath: path.join(blocker, "auto-update.lock"),
+    });
+
+    expect(result).toBeUndefined();
+    expect(runCommand).not.toHaveBeenCalled();
   });
 
   test("concurrent update checks run a single install", async () => {

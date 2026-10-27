@@ -2,14 +2,17 @@ import {
   type ExecFileOptionsWithStringEncoding,
   execFile,
 } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   accessSync,
   closeSync,
   constants,
+  linkSync,
   mkdirSync,
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   statSync,
   unlinkSync,
   writeSync,
@@ -428,7 +431,9 @@ interface UpdateLockOwner {
   createdAt: number;
 }
 
-function readUpdateLockOwner(lockPath: string): UpdateLockOwner | null {
+function readUpdateLockOwner(
+  lockPath: string,
+): { owner: UpdateLockOwner; raw: string } | null {
   try {
     const raw = readFileSync(lockPath, "utf8");
     try {
@@ -438,18 +443,22 @@ function readUpdateLockOwner(lockPath: string): UpdateLockOwner | null {
         typeof parsed.createdAt === "number"
       ) {
         return {
-          pid: parsed.pid,
-          started:
-            typeof parsed.started === "string" ? parsed.started : undefined,
-          createdAt: parsed.createdAt,
+          owner: {
+            pid: parsed.pid,
+            started:
+              typeof parsed.started === "string" ? parsed.started : undefined,
+            createdAt: parsed.createdAt,
+          },
+          raw,
         };
       }
     } catch {
       // Fall through: a torn or foreign file is judged by its mtime alone.
     }
-    return { pid: 0, createdAt: statSync(lockPath).mtimeMs };
-  } catch {
-    return null;
+    return { owner: { pid: 0, createdAt: statSync(lockPath).mtimeMs }, raw };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
   }
 }
 
@@ -469,13 +478,51 @@ function tryCreateUpdateLock(lockPath: string, contents: string): boolean {
   return true;
 }
 
+function removeQuietly(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best effort.
+  }
+}
+
+/**
+ * Move a stale lock aside so exactly one contender can replace it. rename is
+ * atomic: when several processes judge the same lock stale, only one rename
+ * succeeds and the rest see ENOENT. Returns true only for that winner.
+ */
+function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
+  const asidePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(lockPath, asidePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    if (readFileSync(asidePath, "utf8") === staleRaw) return true;
+    // Another contender already replaced the stale lock and we moved its
+    // fresh lock aside. Put it back without overwriting anything, and back off.
+    try {
+      linkSync(asidePath, lockPath);
+    } catch {
+      // A newer lock already exists; leave it.
+    }
+    return false;
+  } finally {
+    removeQuietly(asidePath);
+  }
+}
+
 /**
  * Machine-wide lock so only one global install runs at a time. Concurrent
  * `npm install -g` runs of the same package race on npm's bin and package
  * swaps and can leave the install broken. Returns a release function, or null
- * when another live (or recent) update holds the lock.
+ * when the update should be skipped: another live (or recent) update holds the
+ * lock, another process won a stale-lock takeover, or the lock could not be
+ * acquired at all. It never lets an install run unlocked.
  */
-async function acquireUpdateLock(
+export async function acquireUpdateLock(
   lockPath: string,
 ): Promise<(() => void) | null> {
   const started = (await getOwnProcessStartTime()) ?? undefined;
@@ -483,7 +530,8 @@ async function acquireUpdateLock(
     pid: process.pid,
     started,
     createdAt: Date.now(),
-  } satisfies UpdateLockOwner);
+    nonce: randomUUID(),
+  });
   const release = () => {
     try {
       if (readFileSync(lockPath, "utf8") === contents) unlinkSync(lockPath);
@@ -496,22 +544,25 @@ async function acquireUpdateLock(
     mkdirSync(dirname(lockPath), { recursive: true });
     if (tryCreateUpdateLock(lockPath, contents)) return release;
 
-    const owner = readUpdateLockOwner(lockPath);
-    if (owner) {
+    const current = readUpdateLockOwner(lockPath);
+    if (current) {
+      const { owner, raw } = current;
       const recent = Date.now() - owner.createdAt < UPDATE_LOCK_STALE_MS;
       if (recent || (await isSameProcessRunning(owner))) {
         debugLog("Another update holds the lock; skipping:", lockPath);
         return null;
       }
-      debugLog("Taking over stale update lock:", lockPath);
-      unlinkSync(lockPath);
+      if (!takeOverStaleLock(lockPath, raw)) {
+        debugLog("Another process took over the stale lock; skipping");
+        return null;
+      }
+      debugLog("Took over stale update lock:", lockPath);
     }
-    // Exclusive create again so two processes taking over cannot both win.
+    // Exclusive create so a contender that slipped in first still wins alone.
     return tryCreateUpdateLock(lockPath, contents) ? release : null;
   } catch (error) {
-    // An unusable lock location must not disable updates entirely.
-    debugLog("Update lock unavailable, continuing without it:", error);
-    return () => {};
+    debugLog("Could not acquire update lock; skipping update:", error);
+    return null;
   }
 }
 
