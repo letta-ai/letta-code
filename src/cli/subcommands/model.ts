@@ -26,6 +26,7 @@ function printUsage(): void {
   console.log(`Usage:
   letta model get [--default] [--agent <id> | --conversation <id>]
   letta model list [--byok | --hosted] [--structured-outputs]
+  letta model list --worker <claude-code|codex|opencode>
   letta model set [handle] [--reasoning <level>] [--model-settings <json>] [--default] [--agent <id> | --conversation <id>]
 
   get   Show the effective model, context limit, and full redacted model_settings.
@@ -44,6 +45,7 @@ Options:
   --byok               List only BYOK/user-configured models
   --hosted             List only hosted (non-BYOK) models
   --structured-outputs List only models supporting structured outputs
+  --worker <name>      List an external worker's native models on this computer
   --help, -h           Show this help
 
 Without target flags, infer AGENT_ID and CONVERSATION_ID from the session.
@@ -101,6 +103,7 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         byok: { type: "boolean" },
         hosted: { type: "boolean" },
         "structured-outputs": { type: "boolean" },
+        worker: { type: "string" },
       },
       strict: true,
       allowPositionals: true,
@@ -127,6 +130,8 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
     }
     if (action !== "set" && values.reasoning !== undefined)
       throw new Error("--reasoning is only supported by model set");
+    if (values.worker !== undefined && action !== "list")
+      throw new Error("--worker is only supported by model list");
     if (action !== "set" && values["model-settings"] !== undefined)
       throw new Error("--model-settings is only supported by model set");
     // Validate before resolving targets so bad input never causes a write.
@@ -151,6 +156,15 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
         throw new Error(
           "model list lists the backend catalog, not an agent; omit target flags",
         );
+      }
+      if (values.worker !== undefined) {
+        if (values.byok || values.hosted || values["structured-outputs"])
+          throw new Error("Backend model filters cannot be used with --worker");
+        const { listExternalWorkerModels } = await import(
+          "@/tools/impl/external-worker-models"
+        );
+        await printJson(await listExternalWorkerModels(values.worker));
+        return 0;
       }
       await settingsManager.initialize();
       const local = getBackend().capabilities.localModelCatalog;

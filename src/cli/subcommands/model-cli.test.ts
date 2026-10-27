@@ -226,6 +226,22 @@ describe("model CLI", () => {
     }
   }, 30000);
 
+  for (const args of [
+    ["get", "--worker", "codex"],
+    ["set", "opus", "--worker", "claude-code"],
+    ["list", "--worker", "unknown"],
+    ["list", "--worker", "codex", "--byok"],
+    ["list", "--worker", "codex", "--hosted"],
+    ["list", "--worker", "codex", "--structured-outputs"],
+    ["list", "--worker", "codex", "--agent", "agent-example"],
+  ]) {
+    test(`rejects invalid worker discovery options: ${args.join(" ")}`, async () => {
+      const result = await cli(args);
+      expect(result.code, result.stderr).toBe(1);
+      expect(result.stdout.trim()).toBe("");
+    }, 30000);
+  }
+
   test("filters the local inventory as BYOK, with no hosted models", async () => {
     const byok = await cli(["list", "--byok"]);
     expect(byok.code, byok.stderr).toBe(0);

@@ -30,6 +30,8 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 ## External Coding Agents
 
+Discover native model IDs with `letta model list --worker claude-code`, `--worker codex`, or `--worker opencode`. Run discovery in the worker's execution environment and checkout; it uses that environment's credentials and configuration, not Letta's model catalog. Pass a returned `id` as `model`, or omit `model` to keep the worker's configured default.
+
 Use `subagent_type: "claude-code"` or `subagent_type: "codex"` to start a coding worker through the corresponding locally installed CLI. These types use the same background task lifecycle and completion notifications as Letta subagents, but they do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`.
 
 The initial receipt includes a synthetic `claude_...` or `codex_...` agent ID as soon as the native session starts. Pass that ID to `SendAgentMessage` to steer active work or start one tracked follow-up turn when idle.
