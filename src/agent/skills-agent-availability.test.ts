@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { buildClientSkillsPayload } from "@/agent/client-skills";
-import { isSkillAvailableForAgent, type Skill } from "@/agent/skills";
+import {
+  getBundledSkillAllowlistForSourceTags,
+  isSkillAvailableForAgent,
+  type Skill,
+} from "@/agent/skills";
 import { readSkillContent } from "@/tools/impl/skill";
 
 const baseSkill: Skill = {
@@ -110,5 +114,46 @@ describe("isSkillAvailableForAgent", () => {
       const skill: Skill = { ...baseSkill, id };
       expect(isSkillAvailableForAgent(skill, "agent-local-123")).toBe(true);
     }
+  });
+});
+
+describe("getBundledSkillAllowlistForSourceTags", () => {
+  const slackExcluded = [
+    "context-doctor",
+    "initializing-memory",
+    "managing-shared-memory",
+  ];
+
+  test("returns no allowlist for untagged or non-excluding runtimes", async () => {
+    expect(await getBundledSkillAllowlistForSourceTags([])).toBeUndefined();
+    expect(
+      await getBundledSkillAllowlistForSourceTags(["origin:schedule"]),
+    ).toBeUndefined();
+  });
+
+  test("Slack payload drops exactly the Slack exclusions", async () => {
+    const allowlist = await getBundledSkillAllowlistForSourceTags([
+      "channel:slack",
+    ]);
+    const allBundled = (
+      await buildClientSkillsPayload({
+        agentId: "agent-123",
+        skillSources: ["bundled"],
+        attachedRepositories: [],
+      })
+    ).clientSkills.map((skill) => skill.name);
+    const slackBundled = (
+      await buildClientSkillsPayload({
+        agentId: "agent-123",
+        skillSources: [],
+        bundledSkills: allowlist,
+        attachedRepositories: [],
+      })
+    ).clientSkills.map((skill) => skill.name);
+
+    expect(allBundled).toEqual(expect.arrayContaining(slackExcluded));
+    expect(slackBundled).toEqual(
+      allBundled.filter((id) => !slackExcluded.includes(id)),
+    );
   });
 });

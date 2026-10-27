@@ -177,6 +177,37 @@ export function isSkillAvailableForAgent(
   return true;
 }
 
+/** Bundled skills hidden from runtimes started for a channel source tag. */
+const CHANNEL_EXCLUDED_BUNDLED_SKILLS = new Map<string, ReadonlySet<string>>([
+  [
+    "channel:slack",
+    new Set([
+      "context-doctor",
+      "initializing-memory",
+      "managing-shared-memory",
+    ]),
+  ],
+]);
+
+/**
+ * Bundled skill IDs to expose for a runtime started with these conversation
+ * source tags. Undefined means no tag excludes anything.
+ */
+export async function getBundledSkillAllowlistForSourceTags(
+  sourceTags: readonly string[],
+): Promise<string[] | undefined> {
+  const excluded = new Set(
+    sourceTags.flatMap((tag) => [
+      ...(CHANNEL_EXCLUDED_BUNDLED_SKILLS.get(tag) ?? []),
+    ]),
+  );
+  if (excluded.size === 0) return undefined;
+  const bundledSkills = await getBundledSkills();
+  return bundledSkills
+    .map((skill) => skill.id)
+    .filter((id) => !excluded.has(id));
+}
+
 /**
  * Canonical directory where project skills are stored.
  */

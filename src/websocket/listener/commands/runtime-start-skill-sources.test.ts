@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
+import { getBundledSkills } from "@/agent/skills";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -120,6 +121,69 @@ describe("runtime_start skill sources", () => {
       expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual({
         sources: ["global", "project"],
       });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
+  test("excludes Slack memory-admin bundled skills only for Slack gateway runtimes", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "runtime-skills-"));
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executionMode: "deterministic",
+      });
+      __testSetBackend(backend);
+      const agent = await backend.createAgent({
+        name: "Slack gateway worker",
+        model: "anthropic/claude-sonnet-4-6",
+      } as AgentCreateBody);
+      const listener = createRuntime();
+      const context = {
+        socket: {} as WebSocket,
+        connectionId: "test-connection",
+        runtime: listener,
+        safeSocketSend: () => true,
+        runDetachedListenerTask: () => {},
+        getOrCreateScopedRuntime,
+        replaySyncStateForRuntime: async () => {},
+      };
+      const gatewayStart = {
+        type: "runtime_start" as const,
+        agent_id: agent.id,
+        conversation_id: "default",
+        preserve_skill_sources: true,
+        recover_approvals: false,
+      };
+
+      await handleRuntimeStartCommand(
+        { ...gatewayStart, request_id: "runtime-plain-gateway" },
+        context,
+      );
+      const plain = getOrCreateScopedRuntime(listener, agent.id, "default");
+      expect(plain.skillSources).toBeUndefined();
+      expect(plain.bundledSkills).toBeUndefined();
+
+      await handleRuntimeStartCommand(
+        {
+          ...gatewayStart,
+          request_id: "runtime-slack-gateway",
+          conversation_source_tags: ["channel:slack"],
+        },
+        context,
+      );
+      const slack = getOrCreateScopedRuntime(listener, agent.id, "default");
+      const excluded = [
+        "context-doctor",
+        "initializing-memory",
+        "managing-shared-memory",
+      ];
+      const allBundled = (await getBundledSkills()).map((skill) => skill.id);
+      expect(allBundled).toEqual(expect.arrayContaining(excluded));
+      expect(slack.skillSources).toEqual(["global", "agent", "project"]);
+      expect(slack.bundledSkills).toEqual(
+        allBundled.filter((id) => !excluded.includes(id)),
+      );
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

@@ -10,6 +10,8 @@ import type WebSocket from "ws";
 import { buildCreatedAgentTags, MEMFS_DISABLED_TAG } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
+import { ALL_SKILL_SOURCES } from "@/agent/skill-sources";
+import { getBundledSkillAllowlistForSourceTags } from "@/agent/skills";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
 import {
   createEphemeralConversation,
@@ -421,6 +423,23 @@ async function applyRuntimeStartState(
       sources: skillSources,
       ...(bundledSkills ? { bundledSkills } : {}),
     });
+  } else if (scopedRuntime.skillSources === undefined) {
+    // Channel gateways preserve skill sources and tag the conversation; apply
+    // that channel's bundled-skill exclusions through the allowlist override.
+    const bundledSkills = await getBundledSkillAllowlistForSourceTags(
+      parsed.conversation_source_tags ?? [],
+    );
+    if (bundledSkills) {
+      const skillSources = ALL_SKILL_SOURCES.filter(
+        (source) => source !== "bundled",
+      );
+      scopedRuntime.skillSources = skillSources;
+      scopedRuntime.bundledSkills = bundledSkills;
+      context.runtime.skillSourcesByConversation.set(scopedRuntime.key, {
+        sources: skillSources,
+        bundledSkills,
+      });
+    }
   }
 
   if (parsed.mode) {
