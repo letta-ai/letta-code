@@ -1,4 +1,4 @@
-import type { FsSandboxPolicy } from "./policy.js";
+import { type FsSandboxPolicy, getPostCarveDeniedRoots } from "./policy.js";
 
 /**
  * macOS Seatbelt backend.
@@ -80,6 +80,16 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
     const name = `READONLY_${i}`;
     defines.push({ name, value: root });
     lines.push(`(allow file-read* (subpath (param "${name}")))`);
+  });
+
+  // 6. A self carve can contain another denied tree when supported product or
+  // local-storage roots overlap. Seatbelt is last-match-wins, so repeat those
+  // nested denies after every restore to keep the narrower subtree walled off.
+  getPostCarveDeniedRoots(policy).forEach((root, i) => {
+    const name = `POST_DENIED_${i}`;
+    defines.push({ name, value: root });
+    lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
+    lines.push(`(allow file-read-metadata (literal (param "${name}")))`);
   });
 
   return { profile: `${lines.join("\n")}\n`, defines };

@@ -30,6 +30,15 @@ const LETTA_SCOPED = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+const NESTED_DENY = buildFsSandboxPolicy({
+  deniedRoots: [
+    "/home/u/.letta/agents",
+    "/home/u/.letta/agents/self/memory/local-store/memfs",
+  ],
+  writableRoots: ["/home/u/.letta/agents/self"],
+  restrictWrites: false,
+});
+
 test("profile is allow-default with a denied root walled off", () => {
   const { profile } = buildSeatbeltProfile(CROSS_AGENT);
   expect(profile).toContain("(version 1)");
@@ -108,6 +117,22 @@ test("base writable is layered: after global write-deny, before the deny, self a
   expect(deny).toBeGreaterThan(base);
   // ...and self memory is re-carved AFTER the deny (so self wins again).
   expect(self).toBeGreaterThan(deny);
+});
+
+test("a denied tree nested below a carve is repeated after the allow", () => {
+  const { profile, defines } = buildSeatbeltProfile(NESTED_DENY);
+  const selfAllow = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
+  );
+  const postDeny = profile.indexOf(
+    '(deny file-read* file-write* (subpath (param "POST_DENIED_0")))',
+  );
+
+  expect(postDeny).toBeGreaterThan(selfAllow);
+  expect(defines).toContainEqual({
+    name: "POST_DENIED_0",
+    value: "/home/u/.letta/agents/self/memory/local-store/memfs",
+  });
 });
 
 test("defines map every param referenced in the profile", () => {

@@ -1,4 +1,4 @@
-import type { FsSandboxPolicy } from "./policy.js";
+import { type FsSandboxPolicy, getPostCarveDeniedRoots } from "./policy.js";
 
 /**
  * Linux bubblewrap backend.
@@ -22,7 +22,8 @@ import type { FsSandboxPolicy } from "./policy.js";
  * backing up the process-group kill in `shell-runner.ts`.
  *
  * Mount order matters — later operations layer over earlier ones: root → dev →
- * proc → base writable → mask denied → restore readonly → restore writable.
+ * proc → base writable → mask denied → restore readonly → restore writable →
+ * remask denied roots nested below those restores.
  * The base-writable binds come BEFORE the masks so a denied root nested inside a
  * broad base carve (the cross-agent tree under `~/.letta`) is still masked.
  */
@@ -57,15 +58,9 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
 
   // Mask each denied root with an empty tmpfs.
   //
-  // HAZARD (ancestor carve-out): the restore binds below run *after* these
-  // masks, and bwrap is last-mount-wins for overlapping paths. A carve-out must
-  // therefore be a *descendant of* (or disjoint from) every denied root — never
-  // an ancestor. An ancestor carve-out (e.g. binding `/tmp` writable when the
-  // agents tree lives under `/tmp`) re-binds the whole subtree on top of the
-  // mask and silently re-exposes the denied roots. Callers must not produce
-  // such roots; this is why the memory-subagent profile scopes writes to memory
-  // roots and does not carve a temp dir. (Seatbelt has no equivalent: it matches
-  // most-specific deny rules, independent of order.)
+  // A restore below may itself contain another denied tree when supported
+  // product/local-storage roots overlap. Those nested denies are remasked after
+  // every restore below; see getPostCarveDeniedRoots.
   for (const root of policy.deniedRoots) {
     args.push("--tmpfs", root);
   }
@@ -84,6 +79,12 @@ export function buildBwrapArgs(policy: FsSandboxPolicy): string[] {
 
   for (const root of policy.writableRoots) {
     args.push("--bind-try", root, root);
+  }
+
+  // A restored ancestor re-exposes every mount below it. Re-mask any denied
+  // subtree nested inside a readonly/writable restore so the narrow deny wins.
+  for (const root of getPostCarveDeniedRoots(policy)) {
+    args.push("--tmpfs", root);
   }
 
   args.push("--die-with-parent");

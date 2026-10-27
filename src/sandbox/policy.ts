@@ -33,8 +33,9 @@ import { posix, win32 } from "node:path";
  *
  * Specificity is expressed through ordering, not nesting depth. The emitted
  * order is: global write-deny → `baseWritableRoots` → `deniedRoots` →
- * `writableRoots` → `readonlyRoots`. So a broad base carve is overridden by a
- * nested deny, which is in turn overridden by a still-more-specific self carve.
+ * `writableRoots` → `readonlyRoots` → nested `deniedRoots` that sit below a
+ * carve. The final remask prevents an allowed ancestor from reopening a more
+ * specific denied tree.
  */
 export interface FsSandboxPolicy {
   baseWritableRoots: string[];
@@ -85,6 +86,25 @@ export function buildFsSandboxPolicy(
     writableRoots: normalizeRoots(options.writableRoots ?? []),
     restrictWrites: options.restrictWrites ?? false,
   };
+}
+
+/**
+ * Denied roots that must be emitted again after readonly/writable carve-outs.
+ *
+ * Both sandbox backends use last-rule/mount-wins semantics. A self carve is
+ * normally a descendant of one denied agents tree, but supported custom config
+ * or local-storage roots can place a second denied tree below that carve. In
+ * that shape, restoring the self root would otherwise reopen the nested tree.
+ */
+export function getPostCarveDeniedRoots(policy: FsSandboxPolicy): string[] {
+  const carveRoots = [...policy.writableRoots, ...policy.readonlyRoots];
+  return policy.deniedRoots.filter((deniedRoot) =>
+    carveRoots.some(
+      (carveRoot) =>
+        deniedRoot === carveRoot ||
+        deniedRoot.startsWith(carveRoot === "/" ? "/" : `${carveRoot}/`),
+    ),
+  );
 }
 
 /**

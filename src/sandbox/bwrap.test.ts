@@ -24,6 +24,15 @@ const LETTA_SCOPED = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+const NESTED_DENY = buildFsSandboxPolicy({
+  deniedRoots: [
+    "/home/u/.letta/agents",
+    "/home/u/.letta/agents/self/memory/local-store/memfs",
+  ],
+  writableRoots: ["/home/u/.letta/agents/self"],
+  restrictWrites: false,
+});
+
 /** Find the index of a flag+operands triple in the bwrap arg list. */
 function tripleIndex(args: string[], flag: string, a: string, b: string) {
   for (let i = 0; i < args.length - 2; i++) {
@@ -89,6 +98,24 @@ test("base writable is bound BEFORE the tmpfs mask, self memory after", () => {
   expect(mask).toBeGreaterThan(base);
   // ...and self memory is re-bound AFTER the mask so it reappears.
   expect(self).toBeGreaterThan(mask);
+});
+
+test("a denied tree nested below a carve is remasked after the restore", () => {
+  const args = buildBwrapArgs(NESTED_DENY);
+  const nested = "/home/u/.letta/agents/self/memory/local-store/memfs";
+  const nestedMasks = args.flatMap((arg, index) =>
+    arg === "--tmpfs" && args[index + 1] === nested ? [index] : [],
+  );
+  const self = tripleIndex(
+    args,
+    "--bind-try",
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self",
+  );
+
+  expect(nestedMasks).toHaveLength(2);
+  expect(nestedMasks[0]).toBeLessThan(self);
+  expect(nestedMasks[1]).toBeGreaterThan(self);
 });
 
 test("network is not unshared and parent death tears down the sandbox", () => {
