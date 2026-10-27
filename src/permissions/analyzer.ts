@@ -452,8 +452,10 @@ function normalizePathSeparators(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function parseAbsoluteCommandPaths(command: string): string[] {
-  const normalized = command.replace(/\\"/g, '"').replace(/\\'/g, "'");
+export function parseAbsoluteCommandPaths(command: string): string[] {
+  const normalized = normalizePathSeparators(
+    command.replace(/\\"/g, '"').replace(/\\'/g, "'"),
+  );
   const candidates: string[] = [];
 
   // Prefer explicit quoted paths first.
