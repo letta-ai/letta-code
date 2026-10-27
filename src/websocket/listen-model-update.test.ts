@@ -788,10 +788,9 @@ describe("local channel gateway model command wiring", () => {
     expect(source).toContain('modelIdentifier.toLowerCase() === "list"');
     expect(source).toContain("client.request<ListModelsResponseMessage>(");
     expect(source).toContain("client.request<UpdateModelResponseMessage>(");
-    expect(source).toContain("settingsManager.getRecentModels()");
-    expect(source).toContain(
-      "settingsManager.addRecentModel(response.model_handle ?? modelIdentifier)",
-    );
+    expect(source).toContain(".getRecentModels()");
+    expect(source).toContain("settingsManager.addRecentModel({");
+    expect(source).toContain("modelId: response.model_id ?? modelIdentifier");
     expect(source).toContain("gateway.updateModelStatus(");
   });
 });
