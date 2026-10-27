@@ -1,4 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -174,6 +178,70 @@ describe("external coding agent MCP metadata", () => {
 });
 
 describe("external coding agent output and preflight", () => {
+  test.skipIf(process.platform === "win32").each([
+    ["claude-code", false],
+    ["codex", false],
+    ["claude-code", true],
+    ["codex", true],
+  ] as const)(
+    "finds %s native installs (existing wrapper: %s)",
+    async (type, wrapper) => {
+      const home = mkdtempSync(join(tmpdir(), "external-cli-path-"));
+      const bin = join(home, ".local", "bin");
+      const executable = type === "claude-code" ? "claude" : "codex";
+      mkdirSync(bin, { recursive: true });
+      // Exercise real OS executable lookup, not a mocked preflight.
+      const script = (source: string) =>
+        `#!/bin/sh\nprintf '%s\\n' '{"loggedIn":true,"session_id":"${SESSION_ID}","result":"${source}"}'\n`;
+      writeFileSync(join(bin, executable), script("native"), { mode: 0o755 });
+      const wrapperBin = join(home, "wrappers");
+      if (wrapper) {
+        mkdirSync(wrapperBin);
+        writeFileSync(join(wrapperBin, executable), script("wrapper"), {
+          mode: 0o755,
+        });
+      }
+      const originalPath = wrapper
+        ? `${wrapperBin}:/usr/bin:/bin`
+        : "/usr/bin:/bin";
+      const inheritedEnv = { HOME: home, PATH: originalPath };
+      const runWorker = (env: NodeJS.ProcessEnv) => {
+        expect(env.PATH).toBe(`${originalPath}:${bin}`);
+        const child = spawnSync(executable, [], { env, encoding: "utf8" });
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        expect(JSON.parse(child.stdout).result).toBe(
+          wrapper ? "wrapper" : "native",
+        );
+        return child.stdout;
+      };
+      try {
+        const result = await runExternalCodingAgent(
+          { type, prompt: "test", parentAgentId: "parent", cwd: home },
+          {
+            env: inheritedEnv,
+            resolveSecretEnv: async () => ({}),
+            runProcess: async (_command, { env }) => ({
+              exitCode: 0,
+              stdout: runWorker(env),
+              stderr: "",
+            }),
+            runCodexTurn: async (_options, deps) => ({
+              agentId: "parent",
+              success: true,
+              report: runWorker(deps?.env ?? {}),
+            }),
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.success).toBe(true);
+        expect(inheritedEnv.PATH).toBe(originalPath);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   test.each(["claude-code", "codex"] as const)(
     "does not start %s preflight after cancellation",
     async (type) => {
