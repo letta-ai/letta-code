@@ -32,9 +32,11 @@ afterEach(() => {
 });
 
 test("durable listener execution state follows the product config root", () => {
-  const productRoot = join("/Users/alice", ".dream");
+  const homeRoot = join(process.cwd(), ".product-state-home");
+  const productRoot = join(homeRoot, ".dream");
   const normalizedProductRoot = productRoot.replace(/\\/g, "/");
-  process.env.HOME = "/Users/alice";
+  const normalizedLegacyRoot = join(homeRoot, ".letta").replace(/\\/g, "/");
+  process.env.HOME = homeRoot;
   process.env.LETTA_CONFIG_DIR = productRoot;
   const serverUrl = "https://api.example.test";
 
@@ -61,7 +63,9 @@ test("durable listener execution state follows the product config root", () => {
     expect(normalizedStatePath.startsWith(`${normalizedProductRoot}/`)).toBe(
       true,
     );
-    expect(normalizedStatePath.startsWith("/Users/alice/.letta/")).toBe(false);
+    expect(normalizedStatePath.startsWith(`${normalizedLegacyRoot}/`)).toBe(
+      false,
+    );
   }
   expect(
     getLettaHomeRoot("/fallback-home", process.env).replace(/\\/g, "/"),
