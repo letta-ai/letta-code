@@ -72,6 +72,9 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
       // resolving an allowed worktree path. Metadata does not expose contents.
       lines.push(`(allow file-read-metadata (literal (param "${name}")))`);
     } else if (rule.kind === "readonly") {
+      // Revoke a broader writable ancestor before re-allowing reads. A still
+      // narrower writable descendant is emitted later and can opt back in.
+      lines.push(`(deny file-write* (subpath (param "${name}")))`);
       lines.push(`(allow file-read* (subpath (param "${name}")))`);
     } else {
       lines.push(`(allow file-read* file-write* (subpath (param "${name}")))`);

@@ -62,4 +62,19 @@ test("path rules alternate by specificity and exact denies win", () => {
     ["deny", "/agents/self/local/memfs"],
     ["writable", "/agents/self/local/memfs/self/memory"],
   ]);
+
+  for (const deniedRoots of [
+    ["/same", "/other"],
+    ["/other", "/same"],
+  ]) {
+    const collision = buildFsSandboxPolicy({
+      deniedRoots,
+      writableRoots: ["/same"],
+    });
+    expect(
+      getOrderedSandboxPathRules(collision)
+        .filter((rule) => rule.root === "/same")
+        .map((rule) => rule.kind),
+    ).toEqual(["writable", "deny"]);
+  }
 });

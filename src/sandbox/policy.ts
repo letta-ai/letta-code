@@ -108,11 +108,10 @@ export interface SandboxPathRule {
 export function getOrderedSandboxPathRules(
   policy: FsSandboxPolicy,
 ): SandboxPathRule[] {
-  const rules: Array<SandboxPathRule & { order: number }> = [];
-  let order = 0;
+  const rules: SandboxPathRule[] = [];
   const append = (kind: SandboxPathRuleKind, roots: string[]) => {
     roots.forEach((root, index) => {
-      rules.push({ kind, root, index, order: order++ });
+      rules.push({ kind, root, index });
     });
   };
 
@@ -127,16 +126,13 @@ export function getOrderedSandboxPathRules(
   };
   const depth = (root: string) => root.split("/").filter(Boolean).length;
 
-  return rules
-    .sort((a, b) => {
-      const depthDifference = depth(a.root) - depth(b.root);
-      if (depthDifference !== 0) return depthDifference;
-      if (a.root === b.root) {
-        return samePathPriority[a.kind] - samePathPriority[b.kind];
-      }
-      return a.order - b.order;
-    })
-    .map(({ kind, root, index }) => ({ kind, root, index }));
+  return rules.sort((a, b) => {
+    const depthDifference = depth(a.root) - depth(b.root);
+    if (depthDifference !== 0) return depthDifference;
+    const pathDifference = a.root.localeCompare(b.root);
+    if (pathDifference !== 0) return pathDifference;
+    return samePathPriority[a.kind] - samePathPriority[b.kind];
+  });
 }
 
 /**

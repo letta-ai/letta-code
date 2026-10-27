@@ -42,6 +42,11 @@ const NESTED_DENY = buildFsSandboxPolicy({
   restrictWrites: false,
 });
 
+const NESTED_READONLY = buildFsSandboxPolicy({
+  readonlyRoots: ["/scope/locked"],
+  writableRoots: ["/scope", "/scope/locked/open"],
+});
+
 test("profile is allow-default with a denied root walled off", () => {
   const { profile } = buildSeatbeltProfile(CROSS_AGENT);
   expect(profile).toContain("(version 1)");
@@ -140,6 +145,26 @@ test("nested deny ordering preserves a legitimate inner self carve", () => {
     name: "DENIED_1",
     value: "/home/u/.letta/agents/self/memory/local-store/memfs",
   });
+});
+
+test("readonly child revokes writable parent before inner writable restore", () => {
+  const { profile } = buildSeatbeltProfile(NESTED_READONLY);
+  const outerWritable = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
+  );
+  const readonlyWriteDeny = profile.indexOf(
+    '(deny file-write* (subpath (param "READONLY_0")))',
+  );
+  const readonlyReadAllow = profile.indexOf(
+    '(allow file-read* (subpath (param "READONLY_0")))',
+  );
+  const innerWritable = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_1")))',
+  );
+
+  expect(readonlyWriteDeny).toBeGreaterThan(outerWritable);
+  expect(readonlyReadAllow).toBeGreaterThan(readonlyWriteDeny);
+  expect(innerWritable).toBeGreaterThan(readonlyReadAllow);
 });
 
 test("defines map every param referenced in the profile", () => {

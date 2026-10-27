@@ -36,6 +36,11 @@ const NESTED_DENY = buildFsSandboxPolicy({
   restrictWrites: false,
 });
 
+const NESTED_READONLY = buildFsSandboxPolicy({
+  readonlyRoots: ["/scope/locked"],
+  writableRoots: ["/scope", "/scope/locked/open"],
+});
+
 /** Find the index of a flag+operands triple in the bwrap arg list. */
 function tripleIndex(args: string[], flag: string, a: string, b: string) {
   for (let i = 0; i < args.length - 2; i++) {
@@ -124,6 +129,26 @@ test("nested deny ordering preserves a legitimate inner self carve", () => {
 
   expect(nestedMask).toBeGreaterThan(outerSelf);
   expect(innerSelf).toBeGreaterThan(nestedMask);
+});
+
+test("readonly child overrides writable parent before inner writable restore", () => {
+  const args = buildBwrapArgs(NESTED_READONLY);
+  const outerWritable = tripleIndex(args, "--bind-try", "/scope", "/scope");
+  const readonlyChild = tripleIndex(
+    args,
+    "--ro-bind-try",
+    "/scope/locked",
+    "/scope/locked",
+  );
+  const innerWritable = tripleIndex(
+    args,
+    "--bind-try",
+    "/scope/locked/open",
+    "/scope/locked/open",
+  );
+
+  expect(readonlyChild).toBeGreaterThan(outerWritable);
+  expect(innerWritable).toBeGreaterThan(readonlyChild);
 });
 
 test("network is not unshared and parent death tears down the sandbox", () => {
