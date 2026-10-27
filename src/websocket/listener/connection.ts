@@ -61,7 +61,9 @@ function refreshLegacySingleConnection(runtime: ListenerRuntime): void {
   const live = [...runtime.connections.values()].filter((connection) =>
     isListenerTransportOpen(connection.writer),
   );
-  const only = live.length === 1 ? live[0] : null;
+  const only =
+    live.find(({ id }) => id === runtime.connectionId) ??
+    (live.length === 1 ? live[0] : null);
   // Keep the process-scoped transport stable across relay socket replacement.
   // Turn continuations may capture this handle before a transient disconnect.
   runtime.transport = runtime.processTransport ?? only?.writer ?? null;
@@ -435,6 +437,31 @@ export function suspendListenerConnection(
   const closed = closeListenerConnection(runtime, connectionId);
   getResumeStates(runtime).set(connectionId, resumeState);
   return closed;
+}
+
+/** Move the relay's suspended subscriptions to its newly registered identity. */
+export function resumeListenerConnectionIdentity(
+  runtime: ListenerRuntime,
+  previousId: string,
+  nextId: string,
+): void {
+  const states = getResumeStates(runtime);
+  const previous = states.get(previousId);
+  states.delete(previousId);
+  if (previous) states.set(nextId, previous);
+  for (const conversation of runtime.conversationRuntimes.values()) {
+    for (const [itemId, message] of conversation.queuedMessagesByItemId) {
+      if (message.connectionId === previousId) {
+        conversation.queuedMessagesByItemId.set(itemId, {
+          ...message,
+          connectionId: nextId,
+        });
+      }
+    }
+    if (conversation.activeConnectionId === previousId) {
+      conversation.activeConnectionId = nextId;
+    }
+  }
 }
 
 class ProcessRuntimeTransport implements RuntimeTransport {

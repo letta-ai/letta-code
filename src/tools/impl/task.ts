@@ -149,6 +149,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * a normal task notification event.
    */
   emitCompletionNotification?: boolean;
+  /** Whether this entry claims the parent runtime; false for remote caller presentation. */
+  claimsParentRuntime?: boolean;
   /** Publish the truncated final report on the subagent state snapshot. */
   publishResult?: boolean;
   /**
@@ -253,6 +255,7 @@ export function spawnBackgroundSubagentTask(
     silentCompletion: requestedSilentCompletion,
     emitCompletionNotification,
     publishResult,
+    claimsParentRuntime,
     completionSummary,
     onComplete,
     transcriptPath,
@@ -297,6 +300,7 @@ export function spawnBackgroundSubagentTask(
     silentCompletion,
     resolvedParentScope,
     prompt,
+    claimsParentRuntime,
   );
 
   const taskId = getNextTaskId();
@@ -735,7 +739,11 @@ export async function launchSubagent(
   let effectiveConversationId = args.conversation_id;
 
   const callerNotification = args.notifyCaller
-    ? { emitCompletionNotification: false, publishResult: true }
+    ? {
+        emitCompletionNotification: false,
+        publishResult: true,
+        claimsParentRuntime: false,
+      }
     : {};
   if (isExternalCodingAgent) {
     const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();

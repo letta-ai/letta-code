@@ -1,4 +1,4 @@
-FROM public.ecr.aws/docker/library/node:22.19-bookworm-slim
+FROM public.ecr.aws/docker/library/node:22.23.4-bookworm-slim
 
 ARG LETTA_CODE_VERSION=latest
 

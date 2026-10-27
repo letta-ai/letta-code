@@ -5,7 +5,11 @@ import type { AvailableSkillSummary } from "@/types/protocol_v2";
 import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
-import { getSkillSources, getSkillsDirectory } from "./context";
+import {
+  getBundledSkillAllowlist,
+  getSkillSources,
+  getSkillsDirectory,
+} from "./context";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
 import {
   discoverSharedMemorySkills,
@@ -113,6 +117,7 @@ function getWatcher(): ClientSkillsWatcher {
 function computeCacheKey(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
+  bundledSkills: string[] | undefined;
   cwd: string;
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
@@ -124,6 +129,9 @@ function computeCacheKey(components: {
   return [
     components.agentId ?? "",
     [...components.skillSources].sort().join(","),
+    components.bundledSkills
+      ? [...components.bundledSkills].sort().join(",")
+      : "*",
     components.cwd,
     components.configuredSkillsDirectory ?? "",
     components.legacySkillsDirectory,
@@ -358,6 +366,8 @@ export interface BuildClientSkillsPayloadOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs to expose when skillSources omits "bundled". */
+  bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
@@ -390,6 +400,7 @@ function resolveSkillDiscoveryContext(
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   skillSources: SkillSource[];
+  bundledSkills: string[] | undefined;
 } {
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const configuredSkillsDirectory =
@@ -400,12 +411,17 @@ function resolveSkillDiscoveryContext(
     PROJECT_SKILLS_DIR,
   );
   const skillSources = options.skillSources ?? getSkillSources();
+  // The allowlist only adds bundled skills that the sources would otherwise drop.
+  const bundledSkills = skillSources.includes("bundled")
+    ? undefined
+    : (options.bundledSkills ?? getBundledSkillAllowlist());
   return {
     workingDirectory,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   };
 }
 
@@ -414,6 +430,8 @@ export interface DiscoverClientSideSkillsOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs to expose when skillSources omits "bundled". */
+  bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
 }
@@ -433,6 +451,31 @@ async function collectClientSideSkills(
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [...options.sharedMemoryErrors];
+
+  if (options.bundledSkills?.length) {
+    const allowed = new Set(options.bundledSkills);
+    try {
+      const discovery = await discoverSkillsFn(
+        options.primaryProjectSkillsDirectory,
+        options.agentId,
+        { sources: ["bundled"] },
+      );
+      errors.push(...discovery.errors);
+      for (const skill of discovery.skills) {
+        if (
+          allowed.has(skill.id) &&
+          isSkillAvailableForAgent(skill, options.agentId)
+        ) {
+          skillsById.set(skill.id, skill);
+        }
+      }
+    } catch (error) {
+      errors.push({
+        path: "bundled",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   const nonProjectSources =
     options.skillSources?.filter(
@@ -561,6 +604,7 @@ export async function discoverClientSideSkills(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   } = resolveSkillDiscoveryContext(options);
   const sharedMemoryContext = await resolveSharedMemorySkillsContext({
     agentId: options.agentId,
@@ -572,6 +616,7 @@ export async function discoverClientSideSkills(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
+    bundledSkills,
     primaryProjectSkillsDirectory,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
@@ -602,6 +647,7 @@ export async function buildClientSkillsPayload(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
@@ -630,6 +676,7 @@ export async function buildClientSkillsPayload(
   const cacheComponents = {
     agentId: options.agentId,
     skillSources,
+    bundledSkills,
     cwd: workingDirectory,
     configuredSkillsDirectory,
     legacySkillsDirectory,
@@ -655,6 +702,7 @@ export async function buildClientSkillsPayload(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
+    bundledSkills,
     primaryProjectSkillsDirectory,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,

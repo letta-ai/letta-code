@@ -13,9 +13,16 @@ import {
   peekOrgAccessToken,
 } from "./org-credentials-session";
 
-const refreshAccessTokenMock = mock(async (): Promise<TokenResponse> => {
-  throw new Error("refreshAccessToken not mocked");
-});
+const refreshAccessTokenMock = mock(
+  async (
+    _refreshToken?: string,
+    _deviceId?: string,
+    _deviceName?: string,
+    _signal?: AbortSignal,
+  ): Promise<TokenResponse> => {
+    throw new Error("refreshAccessToken not mocked");
+  },
+);
 
 const activateOrgCredentials: typeof activate = (
   organizationId,
@@ -136,5 +143,69 @@ describe("org credential session", () => {
     // A retained SDK client reads the live token on its next request.
     expect(client.apiKey).toBe("second-token");
     expect(await getOrgAccessToken()).toBe("second-token");
+  });
+
+  describe("abort-bounded refresh waits (evil-shub round-9 P1)", () => {
+    function activateExpiringOrg(): void {
+      activateOrgCredentials("org-123", "org-device", {
+        apiKey: "stale-org-token",
+        refreshToken: "org-refresh-token",
+        tokenExpiresAt: Date.now() + 60 * 1000, // inside the refresh window
+      });
+    }
+
+    test("the refresh STARTER passes its abort signal to the refresh call", async () => {
+      activateExpiringOrg();
+      refreshAccessTokenMock.mockResolvedValue({
+        access_token: "fresh-org-token",
+        refresh_token: "rotated-org-refresh",
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+
+      const controller = new AbortController();
+      expect(await getOrgAccessToken({ signal: controller.signal })).toBe(
+        "fresh-org-token",
+      );
+      expect(refreshAccessTokenMock).toHaveBeenCalledTimes(1);
+      expect(refreshAccessTokenMock.mock.calls[0]?.[3]).toBe(controller.signal);
+    });
+
+    test("a JOINER on an in-flight refresh is released when its own signal fires, while the refresh keeps running for the starter", async () => {
+      activateExpiringOrg();
+      let resolveRefresh: ((tokens: TokenResponse) => void) | undefined;
+      refreshAccessTokenMock.mockImplementation(
+        () =>
+          new Promise<TokenResponse>((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+
+      // The starter owns the in-flight refresh (no signal).
+      const starter = getOrgAccessToken();
+      // The joiner waits on the same in-flight refresh with an abort budget.
+      const controller = new AbortController();
+      const joinerPending = getOrgAccessToken({ signal: controller.signal });
+      if (!joinerPending) throw new Error("expected an active org session");
+      const joiner = joinerPending.then(
+        () => "resolved",
+        (error: unknown) =>
+          `rejected:${error instanceof Error ? error.name : "unknown"}`,
+      );
+
+      controller.abort(new Error("request budget exceeded"));
+      expect(await joiner).toBe("rejected:Error");
+      expect(refreshAccessTokenMock).toHaveBeenCalledTimes(1);
+
+      // The underlying refresh still completes for the starter — the joiner's
+      // budget release never cancelled the shared flight.
+      resolveRefresh?.({
+        access_token: "fresh-org-token",
+        refresh_token: "rotated-org-refresh",
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+      expect(await starter).toBe("fresh-org-token");
+    });
   });
 });

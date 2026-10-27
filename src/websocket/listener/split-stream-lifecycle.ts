@@ -1,9 +1,9 @@
 import { WebSocket } from "ws";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
 import { getActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
-import type { ListenerRuntime } from "./types";
+import type { ListenerRuntime, StartListenerOptions } from "./types";
 
 type TrackListenerError = (
   errorType: string,
@@ -353,12 +353,45 @@ export async function preparePairedListenerTransport(params: {
   return { kind: "ready", transport: streamSocket, streamSocket };
 }
 
+export type ListenerLifecycleLog = (message: string) => void;
+
+/** Lifecycle lines go to the session log even when debug output is off. */
+export function createListenerLifecycleLog(
+  opts: Pick<StartListenerOptions, "onLog">,
+): ListenerLifecycleLog {
+  return (message) => {
+    if (opts.onLog) {
+      opts.onLog(`[Listen] ${message}`);
+      return;
+    }
+    debugLog("Listen", message);
+  };
+}
+
+const MAX_CLOSE_REASON_LENGTH = 120;
+
+/** Close code and (truncated) reason only; frame payloads are never logged. */
+export function formatListenerSocketClose(
+  channel: "control" | "stream",
+  code: number,
+  reason: Buffer,
+): string {
+  const text = reason.toString();
+  const truncated =
+    text.length > MAX_CLOSE_REASON_LENGTH
+      ? `${text.slice(0, MAX_CLOSE_REASON_LENGTH)}...`
+      : text;
+  return `${channel} socket closed (code=${code}, reason=${JSON.stringify(truncated)})`;
+}
+
 export function attachSplitStreamSocketHandlers(params: {
   runtime: ListenerRuntime;
   streamSocket: WebSocket;
   trackListenerError: TrackListenerError;
+  log?: ListenerLifecycleLog;
 }): void {
   params.streamSocket.on("error", (error: Error) => {
+    params.log?.(`stream socket error: ${error.message}`);
     params.trackListenerError(
       "listener_stream_socket_error",
       error,
@@ -368,11 +401,7 @@ export function attachSplitStreamSocketHandlers(params: {
       console.error("[Listen] Stream WebSocket error:", error);
   });
   params.streamSocket.on("close", (code: number, reason: Buffer) => {
-    if (isDebugEnabled()) {
-      console.log(
-        `[Listen] Stream WebSocket closed (code: ${code}, reason: ${reason.toString()})`,
-      );
-    }
+    params.log?.(formatListenerSocketClose("stream", code, reason));
     terminateControlAfterStreamClose(
       params.runtime,
       params.streamSocket,

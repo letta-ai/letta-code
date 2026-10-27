@@ -29,6 +29,7 @@ import {
   verifySchedulerLease,
   withLock,
 } from "@/cron/cron-file";
+import { __testOverridePidReuseProbe } from "@/cron/process-identity";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -59,6 +60,7 @@ afterEach(() => {
   __testFailNextRefreshSchedulerLease(false);
   __testThrowNextRefreshSchedulerLease(false);
   __testOverrideReadProcessIdentity(null);
+  __testOverridePidReuseProbe(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
@@ -748,6 +750,39 @@ describe("scheduler lease", () => {
         process_start_ticks: "200",
         boot_id: "boot-a",
       }),
+    );
+  });
+
+  test("without /proc identity, reclaims a pre-boot lease only when its live pid is not letta", () => {
+    __testOverrideReadProcessIdentity(() => null);
+    const writePreBootOwner = () =>
+      writeFileSync(
+        _CRON_PATH,
+        JSON.stringify({
+          version: 1,
+          scheduler_owner: {
+            pid: process.ppid,
+            token: "pre-boot-token",
+            started_at: new Date(Date.now() - 86_400_000).toISOString(),
+          },
+          tasks: [],
+        }),
+      );
+    const probe = (command: string | null) =>
+      __testOverridePidReuseProbe({
+        platform: "darwin",
+        bootTimeMs: () => Date.now() - 3_600_000,
+        getProcessCommand: () => command,
+      });
+
+    writePreBootOwner();
+    probe("node /usr/local/bin/letta server");
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+
+    probe("/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird");
+    const token = claimSchedulerLease();
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
     );
   });
 });

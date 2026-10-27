@@ -105,7 +105,6 @@ import {
 } from "@/cli/helpers/tool-name-mapping";
 import { finishTuiTurn } from "@/cli/helpers/tui-turn-lifecycle";
 import type { LocalModAdapter } from "@/cli/mods/use-local-mod-adapter";
-import { SYSTEM_ALERT_OPEN, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runStopHooks } from "@/hooks";
 import { getTurnStartCancel } from "@/mods/turn-start-cancel";
 import type { ApprovalContext } from "@/permissions/analyzer";
@@ -138,7 +137,7 @@ import {
 } from "./model-config";
 import { sendDesktopNotification } from "./notifications";
 import { isRetriableError } from "./retry";
-import { stripSystemReminders } from "./system-reminders";
+import { getRestorableUserText } from "./system-reminders";
 import { prepareTuiQueuedTurn } from "./turn-input";
 import type {
   AppendError,
@@ -1116,35 +1115,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
                   if (serverApprovals && serverApprovals.length > 0) {
                     // Preserve user message (filter system reminders to avoid re-inject)
-                    const userMessage = currentInput.find(
-                      (item) => item?.type === "message",
-                    );
-                    if (userMessage && "content" in userMessage) {
-                      const content = userMessage.content;
-                      let textToRestore = "";
-                      if (typeof content === "string") {
-                        textToRestore = stripSystemReminders(content);
-                      } else if (Array.isArray(content)) {
-                        // Extract text parts, filtering out system reminders
-                        textToRestore = content
-                          .filter(
-                            (c): c is { type: "text"; text: string } =>
-                              typeof c === "object" &&
-                              c !== null &&
-                              "type" in c &&
-                              c.type === "text" &&
-                              "text" in c &&
-                              typeof c.text === "string" &&
-                              !c.text.includes(SYSTEM_REMINDER_OPEN) &&
-                              !c.text.includes(SYSTEM_ALERT_OPEN),
-                          )
-                          .map((c) => c.text)
-                          .join("\n");
-                      }
-                      if (textToRestore.trim()) {
-                        setRestoredInput(textToRestore);
-                      }
-                    }
+                    const textToRestore = getRestorableUserText(currentInput);
+                    if (textToRestore) setRestoredInput(textToRestore);
 
                     // Clear all stale approval state before setting new approvals
                     setApprovalResults([]);
@@ -1179,7 +1151,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     sendDesktopNotification("Approval needed");
                     return;
                   }
-                  // No approvals found - fall through to error handling below
+                  // Nothing is pending anymore (e.g. another client already
+                  // resolved these calls): drop our approval payload and
+                  // retry the plain message instead of failing the turn.
+                  const plainInput = rebuildInputWithFreshDenials(
+                    currentInput,
+                    [],
+                    "",
+                  );
+                  if (
+                    plainInput.length > 0 &&
+                    llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+                  ) {
+                    llmApiErrorRetriesRef.current += 1;
+                    currentInput = plainInput;
+                    buffersRef.current.interrupted = false;
+                    continue;
+                  }
+                  // Otherwise fall through to error handling below
                 } catch {
                   // Fetch failed - fall through to error handling below
                 }
@@ -2239,35 +2228,8 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
               if (serverApprovals && serverApprovals.length > 0) {
                 // Preserve user message (filter system reminders to avoid re-inject)
-                const userMessage = currentInput.find(
-                  (item) => item?.type === "message",
-                );
-                if (userMessage && "content" in userMessage) {
-                  const content = userMessage.content;
-                  let textToRestore = "";
-                  if (typeof content === "string") {
-                    textToRestore = stripSystemReminders(content);
-                  } else if (Array.isArray(content)) {
-                    // Extract text parts, filtering out system reminders
-                    textToRestore = content
-                      .filter(
-                        (c): c is { type: "text"; text: string } =>
-                          typeof c === "object" &&
-                          c !== null &&
-                          "type" in c &&
-                          c.type === "text" &&
-                          "text" in c &&
-                          typeof c.text === "string" &&
-                          !c.text.includes(SYSTEM_REMINDER_OPEN) &&
-                          !c.text.includes(SYSTEM_ALERT_OPEN),
-                      )
-                      .map((c) => c.text)
-                      .join("\n");
-                  }
-                  if (textToRestore.trim()) {
-                    setRestoredInput(textToRestore);
-                  }
-                }
+                const textToRestore = getRestorableUserText(currentInput);
+                if (textToRestore) setRestoredInput(textToRestore);
 
                 // Clear all stale approval state before setting new approvals
                 setApprovalResults([]);
@@ -2302,7 +2264,24 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 sendDesktopNotification("Approval needed");
                 return;
               }
-              // No approvals found - fall through to error handling below
+              // Nothing is pending anymore (e.g. another client already
+              // resolved these calls): drop our approval payload and retry
+              // the plain message instead of failing the turn.
+              const plainInput = rebuildInputWithFreshDenials(
+                currentInput,
+                [],
+                "",
+              );
+              if (
+                plainInput.length > 0 &&
+                llmApiErrorRetriesRef.current < LLM_API_ERROR_MAX_RETRIES
+              ) {
+                llmApiErrorRetriesRef.current += 1;
+                currentInput = plainInput;
+                buffersRef.current.interrupted = false;
+                continue;
+              }
+              // Otherwise fall through to error handling below
             } catch {
               // Fetch failed - fall through to error handling below
             }

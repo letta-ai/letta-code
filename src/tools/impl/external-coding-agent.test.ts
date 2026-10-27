@@ -530,32 +530,36 @@ describe("external coding agent vault secrets", () => {
 });
 
 describe("external coding agent reminder composition", () => {
-  test("opencode forwards MCP without discovering or forwarding skills", async () => {
-    let discovered = false;
-    let received: string | undefined;
-    const result = await runExternalCodingAgent(
-      {
-        type: "opencode",
-        parentAgentId: "parent",
-        prompt: "test",
-        mcpReminder: "MCP",
-      },
-      {
-        resolveSkillsReminder: async () => {
-          discovered = true;
-          return "skills";
+  test.each(["opencode", "cursor"] as const)(
+    "%s forwards MCP without discovering or forwarding skills",
+    async (type) => {
+      let discovered = false;
+      let received: string | undefined;
+      const result = await runExternalCodingAgent(
+        {
+          type,
+          parentAgentId: "parent",
+          prompt: "test",
+          mcpReminder: "MCP",
         },
-        resolveSecretEnv: async () => ({}),
-        runOpenCodeTurn: async (options) => {
-          received = options.mcpReminder;
-          return { agentId: "parent", report: "done", success: true };
+        {
+          resolveSkillsReminder: async () => {
+            discovered = true;
+            return "skills";
+          },
+          resolveSecretEnv: async () => ({}),
+          [type === "cursor" ? "runCursorTurn" : "runOpenCodeTurn"]:
+            async (options: { mcpReminder?: string }) => {
+              received = options.mcpReminder;
+              return { agentId: "parent", report: "done", success: true };
+            },
         },
-      },
-    );
-    expect(result.success).toBe(true);
-    expect(discovered).toBe(false);
-    expect(received).toBe("MCP");
-  });
+      );
+      expect(result.success).toBe(true);
+      expect(discovered).toBe(false);
+      expect(received).toBe("MCP");
+    },
+  );
 
   for (const type of ["claude-code", "codex"] as const) {
     test.each([

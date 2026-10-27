@@ -137,5 +137,47 @@ export function buildListModelsEntries(
     nativeHandles.add(model.handle);
     return [buildNativeModelEntry(model)];
   });
-  return [...presetEntries, ...nativeEntries];
+  const byokHandles = new Set(
+    availableModels
+      .filter((model) => model.providerCategory === "byok")
+      .map((model) => model.handle),
+  );
+  return disambiguateByokLabels(
+    [...presetEntries, ...nativeEntries],
+    byokHandles,
+  );
+}
+
+function providerNameFromHandle(handle: string): string | undefined {
+  const slashIndex = handle.indexOf("/");
+  return slashIndex > 0 ? handle.slice(0, slashIndex) : undefined;
+}
+
+/**
+ * Two BYOK connections of the same provider type (for example two ChatGPT
+ * accounts) resolve to the same preset label, so the picker shows identical
+ * rows that route to different accounts. Suffix the connection name onto
+ * BYOK rows whose label collides with another BYOK row.
+ */
+function disambiguateByokLabels(
+  entries: ListModelsResponseModelEntry[],
+  byokHandles: ReadonlySet<string>,
+): ListModelsResponseModelEntry[] {
+  const labelCounts = new Map<string, number>();
+  for (const entry of entries) {
+    if (!byokHandles.has(entry.handle)) continue;
+    labelCounts.set(entry.label, (labelCounts.get(entry.label) ?? 0) + 1);
+  }
+  return entries.map((entry) => {
+    const isByokRow = byokHandles.has(entry.handle);
+    const providerName = providerNameFromHandle(entry.handle);
+    if (
+      !isByokRow ||
+      !providerName ||
+      (labelCounts.get(entry.label) ?? 0) < 2
+    ) {
+      return entry;
+    }
+    return { ...entry, label: `${entry.label} · ${providerName}` };
+  });
 }

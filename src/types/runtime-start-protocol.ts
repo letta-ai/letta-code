@@ -40,6 +40,12 @@ export interface RuntimeStartCommand {
   workspace_sandbox?: { root: string; isolation_root: string };
   skill_sources?: readonly ("bundled" | "global" | "agent" | "project")[];
   /** Preserve the current override when skill_sources is omitted. */ preserve_skill_sources?: boolean;
+  /**
+   * Bundled skill IDs to expose when skill_sources omits "bundled". Lets a
+   * caller drop the generic bundled catalog but keep specific bundled skills.
+   * Set and cleared together with skill_sources.
+   */
+  bundled_skills?: readonly string[];
   /** Optional client metadata for diagnostics/future protocol negotiation. */
   client_info?: RuntimeStartClientInfo;
   /** Whether to probe backend state for stale pending approvals before replaying state. Defaults to true. */

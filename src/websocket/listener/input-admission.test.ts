@@ -361,6 +361,8 @@ test("a throwing status callback rejects then recovers the same id exactly once"
   const acknowledgements: Array<{
     accepted: boolean;
     disposition?: "started" | "queued";
+    duplicate?: boolean;
+    mayRecreateOwner?: () => boolean;
   }> = [];
   const trackListenerError = mock(() => {});
   const processIncomingMessage = mock(async () => {});
@@ -410,6 +412,8 @@ test("a throwing status callback rejects then recovers the same id exactly once"
   expect(acknowledgements.at(-1)).toEqual({
     accepted: true,
     disposition: "started",
+    duplicate: true,
+    mayRecreateOwner: expect.any(Function),
   });
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);
   expect(
@@ -435,6 +439,8 @@ test("a queued stable ID survives a throwing status callback without replay", as
   const acknowledgements: Array<{
     accepted: boolean;
     disposition?: "started" | "queued";
+    duplicate?: boolean;
+    mayRecreateOwner?: () => boolean;
   }> = [];
   const processQueuedTurn = mock(async () => {});
   const dispatch = (): void =>
@@ -474,7 +480,12 @@ test("a queued stable ID survives a throwing status callback without replay", as
 
   expect(acknowledgements).toEqual([
     { accepted: true, disposition: "queued" },
-    { accepted: true, disposition: "started" },
+    {
+      accepted: true,
+      disposition: "started",
+      duplicate: true,
+      mayRecreateOwner: expect.any(Function),
+    },
   ]);
   expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(listener.acceptedInputDispositionLedger.entries.size).toBe(1);

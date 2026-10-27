@@ -25,6 +25,7 @@ import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
+  clearPendingApprovalBatchIds,
   rememberPendingApprovalBatchIds,
   resolveRecoveryBatchId,
 } from "./approval";
@@ -33,7 +34,6 @@ import {
   LLM_API_ERROR_MAX_RETRIES,
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
-import { appendQueuedTurnToInput } from "./continuation-input";
 import { getConversationWorkingDirectory } from "./cwd";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
@@ -42,18 +42,14 @@ import {
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
-import { emitDequeuedUserMessage, emitRetryDelta } from "./protocol-outbound";
-import { consumeQueuedTurn } from "./queue";
+import { emitRetryDelta } from "./protocol-outbound";
 import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
 import { injectQueuedSkillContent } from "./skill-injection";
 import type { ListenerTransport } from "./transport";
-import {
-  createTurnCorrelation,
-  type TurnCorrelation,
-} from "./turn-correlation";
+import type { TurnCorrelation } from "./turn-correlation";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
@@ -358,6 +354,21 @@ export async function resolveStaleApprovals(
   let pendingApprovals = resumeData.pendingApprovals || [];
   if (pendingApprovals.length === 0) return null;
 
+  // Another client may resolve these calls while we prepare or send the
+  // denial; re-read the server and keep only the calls still pending.
+  const filterStillPending = async (approvals: typeof pendingApprovals) => {
+    const fresh = await getResumeDataImpl(agent, requestedConversationId, {
+      includeMessageHistory: false,
+      throwOnReadError: true,
+    }).catch((err: unknown) => {
+      if (isBackendNotFoundError(err)) return null;
+      throw err;
+    });
+    assertCurrentTurnLease();
+    const ids = new Set(fresh?.pendingApprovals?.map((a) => a.toolCallId));
+    return approvals.filter((a) => ids.has(a.toolCallId));
+  };
+
   const recoveryConversationId = runtime.conversationId;
   const recoveryWorkingDirectory =
     runtime.activeWorkingDirectory ??
@@ -398,8 +409,9 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
-  let recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
+  const recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
 
+  pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
     const recoveryBatchId = resolveRecoveryBatchId(runtime, pendingApprovals);
@@ -419,7 +431,7 @@ export async function resolveStaleApprovals(
     }
 
     try {
-      let continuationInput = createTurnInputState([
+      const continuationInput = createTurnInputState([
         {
           type: "approval",
           approvals: approvalResults,
@@ -427,21 +439,6 @@ export async function resolveStaleApprovals(
         },
       ]);
       let recoveryTurnCorrelation: TurnCorrelation | undefined;
-      const consumedQueuedTurn = consumeQueuedTurn(runtime);
-      if (consumedQueuedTurn) {
-        const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-        recoveryActingUserId = queuedTurn.actingUserId;
-        recoveryTurnCorrelation = createTurnCorrelation(
-          runtime,
-          queuedTurn,
-          dequeuedBatch.batchId,
-        );
-        continuationInput = appendQueuedTurnToInput(
-          continuationInput,
-          queuedTurn,
-        );
-        emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
-      }
 
       const continuationMessagesWithSkillContent = injectQueuedSkillContent(
         continuationInput.messages,
@@ -476,8 +473,19 @@ export async function resolveStaleApprovals(
           allowApprovalRecovery: false,
           authorityGuard: deps.authorityGuard,
         },
-      );
+      ).catch(async (sendError: unknown) => {
+        // If the server rejected the denial because nothing is pending
+        // anymore, recovery is done; otherwise surface the original error.
+        assertCurrentTurnLease();
+        const stillPending = await filterStillPending(pendingApprovals).catch(
+          () => null,
+        );
+        assertCurrentTurnLease();
+        if (stillPending?.length === 0) return null;
+        throw sendError;
+      });
       assertCurrentTurnLease();
+      if (recoverySendResult === null) return null;
       if (recoverySendResult.kind !== "stream") {
         throw new Error(
           "Approval recovery send resolved without a continuation stream",
@@ -507,6 +515,9 @@ export async function resolveStaleApprovals(
       if (drainResult.stopReason !== "requires_approval") {
         return drainResult;
       }
+      // This round is resolved; drop its batch mapping so the next round's
+      // approvals get their own batch instead of looking ambiguous.
+      clearPendingApprovalBatchIds(runtime, pendingApprovals);
       pendingApprovals = drainResult.approvals || [];
     } finally {
       runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);

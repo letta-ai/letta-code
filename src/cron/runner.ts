@@ -162,7 +162,7 @@ export function validateTargetDevice(
   if (environment?.organizationId === "local") {
     return {
       ok: false,
-      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine (or enable remote access in the desktop app) to connect it.`,
+      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine to connect it.`,
     };
   }
 
@@ -232,7 +232,7 @@ export interface BuildCloudScheduleParams {
   cron: string;
   recurring: boolean;
   scheduledFor?: Date;
-  /** Optional connected computer to execute on (offline → sandbox fallback). */
+  /** Optional connected computer to execute on (offline → occurrence fails, no fallback). */
   targetDeviceId?: string;
 }
 
@@ -259,8 +259,8 @@ export interface BuiltCloudSchedule {
 export const CLOUD_CRON_UTC_NOTE =
   "Recurring Cloud schedules currently interpret cron expressions in UTC (timezone support is tracked in LET-9815).";
 
-export const CLOUD_DEVICE_FALLBACK_NOTE =
-  "If the target computer is offline when the schedule fires, execution falls back to the agent's cloud sandbox.";
+export const CLOUD_DEVICE_OFFLINE_NOTE =
+  "If the target computer is offline when the schedule fires, that occurrence fails (TARGET_DEVICE_UNAVAILABLE) and does not run; omit --computer to run in the Cloud sandbox.";
 
 export function buildCloudScheduleInput(
   params: BuildCloudScheduleParams,
@@ -281,7 +281,7 @@ export function buildCloudScheduleInput(
 
   const targetDeviceId = params.targetDeviceId?.trim();
   if (targetDeviceId) {
-    notes.push(CLOUD_DEVICE_FALLBACK_NOTE);
+    notes.push(CLOUD_DEVICE_OFFLINE_NOTE);
   }
 
   return {

@@ -120,7 +120,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Install dependencies
         env:
@@ -240,6 +240,29 @@ jobs:
           bun test ./src/tools/impl/opencode-session.integration.ts
           bun build src/tools/impl/opencode-session.node-test.ts --target=node --format=esm --outfile="$RUNNER_TEMP/opencode-node-test.mjs"
           node --test "$RUNNER_TEMP/opencode-node-test.mjs"
+
+  cursor-integration:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Cursor native lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run native Cursor tests
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          CURSOR_TEST_MODEL: claude-haiku-5-5
+        run: |
+          bun test ./src/tools/impl/cursor-session.integration.ts
+          bun run build
+          bun build src/tools/impl/cursor-session.node-test.ts --target=node --format=esm --outfile=cursor-lifecycle-test.mjs
+          node --test cursor-lifecycle-test.mjs
 
   build:
     needs: classify
@@ -420,10 +443,10 @@ jobs:
         if: ${{ github.event_name != 'push' }}
         run: bun pm pack
 
-  node18-smoke:
+  node22-smoke:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
-    name: Node 18 Smoke Test
+    name: Node 22 Smoke Test
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -444,15 +467,15 @@ jobs:
       - name: Build bundle
         run: bun run build
 
-      - name: Setup Node 18
+      - name: Setup Node 22
         uses: actions/setup-node@v6
         with:
-          node-version: "18"
+          node-version: "22.23.4"
 
       - name: Verify Node version
         run: node --version
 
-      - name: CLI smoke test (Node 18)
+      - name: CLI smoke test (Node 22)
         run: node ./letta.js --help
 
   headless:

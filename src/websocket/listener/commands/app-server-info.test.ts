@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { APP_SERVER_PROTOCOL_VERSION } from "@/types/app-server-info";
+import {
+  APP_SERVER_PROTOCOL_VERSION,
+  isAppServerInfoResponseMessage,
+} from "@/types/app-server-info";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { buildAppServerInfoResponse } from "./app-server-info";
 
@@ -65,5 +68,6 @@ describe("app-server info protocol", () => {
       { backend: "api", version: "0.32.14" },
     );
     expect(response.capabilities.structured_outputs).toBe(true);
+    expect(isAppServerInfoResponseMessage(response)).toBe(true);
   });
 });
