@@ -106,6 +106,7 @@ export interface WorkflowSpawnerHandle {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  openMemory?: (target: unknown) => Promise<unknown>;
   /**
    * Re-capture the invoking turn's model, permission mode, tools, and working
    * directory for later spawns, keeping the spawner's continuation state.
@@ -267,6 +268,7 @@ function toolOptions(handle: WorkflowSpawnerHandle) {
       ? { builtinToolNames: handle.builtinToolNames }
       : {}),
     ...(handle.listTools ? { listTools: handle.listTools } : {}),
+    ...(handle.openMemory ? { openMemory: handle.openMemory } : {}),
   };
 }
 

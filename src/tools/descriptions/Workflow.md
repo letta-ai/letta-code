@@ -6,6 +6,8 @@ Scripts that call `agent()` or `decide()` spend money on subagents and model cal
 
 Scripts can call tools directly: `await tools.<name>(args)` for this turn's built-in tools and `await tools.mcp__server__tool(args)` for the agent's MCP tools, subject to the user's permission rules. `await listTools()` returns `[{ name, description }]`; `await describeTool(name)` returns `{ name, description, inputSchema }`, or `undefined` for an unknown tool.
 
+`memory.open(path | { agentId } | { repoId })` opens a Git-backed memory repository: `read(path, { ref? })` (null if missing), `list({ path?, ref? })`, `log({ path?, ref?, limit? })`, `diff({ ref, base? })`, and `commit({ message, branch?, base? }).put(path, text).delete(path).send()`. Commits run the repository's memory validation, follow permission rules like file writes, and default to the repository's main branch; a new `branch` is created from `base`. Committing to your own hosted memory's main branch refreshes your system prompt.
+
 Scripts are plain JavaScript and must begin with `export const meta = {...}`, a pure literal (no variables, calls, or interpolation). Pass the work list via `args`. Prefer `pipeline()` so each item moves to its next stage as soon as it is ready. Await `agent()` calls: failures reject with the cause, `callIndex`, and `conversationId` when available. `parallel()` and `pipeline()` let siblings finish, then reject if any callback failed; a failed pipeline item skips its remaining stages. Catch errors explicitly inside callbacks for best-effort processing.
 
   export const meta = {

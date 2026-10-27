@@ -4,6 +4,7 @@ A cell is an async function body: use `await`, and `return` the value you want t
 
 Globals:
 - `tools.<name>(args)` calls a built-in tool and `tools.mcp__server__tool(args)` calls an MCP tool; `listTools()` and `describeTool(name)` list them. Failed calls throw. Calls follow permission rules; calls that need approval fail, so call those tools directly.
+- `memory.open(path | { agentId } | { repoId })` opens a Git-backed memory repository: `read(path, { ref? })` (null if missing), `list({ path?, ref? })`, `log({ path?, ref?, limit? })`, `diff({ ref, base? })`, and `commit({ message, branch?, base? }).put(path, text).delete(path).send()`. Commits run the repository's memory validation, follow permission rules like file writes, and default to the repository's main branch; a new `branch` is created from `base`. Committing to your own hosted memory's main branch refreshes your system prompt.
 - `agent(prompt, opts?)` runs a worker and resolves to its final reply.
 - `agent.start(prompt, opts?)` returns a worker handle immediately: `w.send(msg)` interrupts the current turn and continues the worker's conversation with `msg` (`{ interrupt: false }` queues it instead); `w.pause()` interrupts and holds; `w.resume(msg?)` continues; `w.interrupt()` stops the current turn; `w.stop()` closes the worker; `w.result()` resolves to the latest reply once nothing is running or queued; `w.info()` reports `{ id, status, conversationId, turns, lastResult, lastError }`.
 - `agent.get(id)` returns a worker by id, label, or conversation ID; `agent.list()` lists all workers.

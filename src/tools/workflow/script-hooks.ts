@@ -69,6 +69,8 @@ export interface ScriptToolBindings {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** Backs `memory.open(target)`; see tools/memory-handle. */
+  openMemory?: (target: unknown) => Promise<unknown>;
 }
 
 export interface ToolHooksConfig {
@@ -84,6 +86,7 @@ export interface ToolHooksConfig {
 
 export interface ToolHooks {
   tools: object;
+  memory: object;
   listTools(): Promise<Array<{ name: string; description: string }>>;
   describeTool(name: unknown): Promise<WorkflowToolInfo | undefined>;
   /** Forget cached tool metadata after the bindings change. */
@@ -170,8 +173,23 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
     return result.structuredContent ?? mcpContentValue(result.content);
   }
 
+  const memory = Object.freeze({
+    open: (target?: unknown) =>
+      config.track(
+        (async () => {
+          const open = config.bindings().openMemory;
+          if (!open) {
+            throw new Error("memory is unavailable: no invoking tool scope.");
+          }
+          if (config.signal().aborted) throw new Error(config.abortedMessage);
+          return open(target);
+        })(),
+      ),
+  });
+
   return {
     tools,
+    memory,
     /** `[{ name, description }]` for every tool callable through `tools`. */
     async listTools() {
       return (await loadToolInfo()).map(({ name, description }) => ({

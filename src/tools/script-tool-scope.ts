@@ -1,4 +1,10 @@
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { join } from "node:path";
+import {
+  getConversationId,
+  getCurrentAgentId,
+  getCurrentAgentName,
+} from "@/agent/context";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getBackend } from "@/backend";
 import {
   getCurrentWorkingDirectory,
@@ -18,6 +24,7 @@ export interface ScriptToolScope {
   callTool: WorkflowToolCaller;
   builtinToolNames: string[];
   listTools(): Promise<WorkflowToolInfo[]>;
+  openMemory(target: unknown): Promise<unknown>;
   cleanup(): Promise<void>;
 }
 
@@ -101,7 +108,87 @@ export async function createScriptToolScope(
     );
     return mcpSession;
   };
+  // `memory` writes are judged as the equivalent file-tool calls, so the
+  // cross-agent guard, own-memory allowance, sandbox, and rules all apply.
+  // Hosted agent memory maps onto that agent's MemFS path for the same checks.
+  const requirePermission = async (
+    toolName: string,
+    toolArgs: Record<string, unknown>,
+    label: string,
+  ) => {
+    signal?.throwIfAborted();
+    const { decision, reason } = await manager.checkToolPermission(
+      toolName,
+      toolArgs,
+      permissionCwd,
+      permissionModeState && { ...permissionModeState },
+      parentAgentId ?? undefined,
+    );
+    if (decision === "allow") return;
+    throw new Error(
+      decision === "deny"
+        ? `${label} is denied${reason ? `: ${reason}` : " by permission rules."}`
+        : `${label} needs approval, which a script cannot request; add an allow rule.`,
+    );
+  };
+  const agentName = (() => {
+    try {
+      return getCurrentAgentName();
+    } catch {
+      return null;
+    }
+  })();
+  const conversationId = getConversationId();
+  const openMemory = async (target: unknown) => {
+    const { openMemoryHandle } = await import(
+      "@/tools/memory-handle/memory-handle"
+    );
+    return openMemoryHandle(target, {
+      cwd: permissionCwd,
+      agentId: parentAgentId,
+      agentName,
+      checkRead: async (readTarget) => {
+        if ("repoId" in readTarget) return;
+        const path =
+          "path" in readTarget
+            ? readTarget.path
+            : getScopedMemoryFilesystemRoot(readTarget.agentId);
+        await requirePermission("Read", { file_path: path }, "memory read");
+      },
+      checkWrite: async (write) => {
+        const root =
+          write.path ??
+          (write.agentId
+            ? getScopedMemoryFilesystemRoot(write.agentId)
+            : undefined);
+        if (!root) {
+          await requirePermission(
+            "MemoryWrite",
+            { repo_id: write.repoId, branch: write.branch },
+            "MemoryWrite",
+          );
+          return;
+        }
+        for (const path of write.paths) {
+          await requirePermission(
+            "Write",
+            { file_path: join(root, path) },
+            `memory write to ${path}`,
+          );
+        }
+      },
+      onOwnMainCommit: async () => {
+        if (!parentAgentId) return;
+        const { recompileAgentSystemPrompt } = await import("@/agent/modify");
+        await recompileAgentSystemPrompt(
+          conversationId ?? "default",
+          parentAgentId,
+        );
+      },
+    });
+  };
   return {
+    openMemory,
     builtinToolNames,
     listTools: async () => {
       const mcpTools = parentAgentId
