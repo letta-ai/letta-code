@@ -385,7 +385,7 @@ letta channels pair --channel <channel> --code <code> --agent <agent-id> --conve
 letta server --channels <channel>
 ```
 
-Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
+Channel state lives under `${LETTA_CONFIG_DIR:-$HOME/.letta}/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
 
 `letta channels configure <channel>` is an interactive TTY wizard. Do not launch it as unattended work or claim setup succeeded while it is waiting for input; hand the authorization/setup step to the user.
 

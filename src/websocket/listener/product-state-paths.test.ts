@@ -33,6 +33,7 @@ afterEach(() => {
 
 test("durable listener execution state follows the product config root", () => {
   const productRoot = join("/Users/alice", ".dream");
+  const normalizedProductRoot = productRoot.replace(/\\/g, "/");
   process.env.HOME = "/Users/alice";
   process.env.LETTA_CONFIG_DIR = productRoot;
   const serverUrl = "https://api.example.test";
@@ -56,10 +57,15 @@ test("durable listener execution state follows the product config root", () => {
     getManagedToolsDir(process.env),
     getLettaShimDir({ ...process.env, LETTA_SANDBOX: "1" }),
   ]) {
-    expect(statePath.startsWith(`${productRoot}/`)).toBe(true);
-    expect(statePath.startsWith("/Users/alice/.letta/")).toBe(false);
+    const normalizedStatePath = statePath.replace(/\\/g, "/");
+    expect(normalizedStatePath.startsWith(`${normalizedProductRoot}/`)).toBe(
+      true,
+    );
+    expect(normalizedStatePath.startsWith("/Users/alice/.letta/")).toBe(false);
   }
-  expect(getLettaHomeRoot("/fallback-home", process.env)).toBe(productRoot);
+  expect(
+    getLettaHomeRoot("/fallback-home", process.env).replace(/\\/g, "/"),
+  ).toBe(normalizedProductRoot);
 
   const targets = extractTargetAgentPaths(
     "Read",
