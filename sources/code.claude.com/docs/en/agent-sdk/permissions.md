@@ -43,6 +43,7 @@ In the TypeScript SDK, if you set a custom tool's `permission_policy` to [`alway
 Apply the active [permission mode](#permission-modes):
 
 * In `bypassPermissions` mode, Claude Code approves everything that reaches this step except recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) and Bash commands flagged [`Dangerous rm operation not ruled out`](https://code.claude.com/docs/en/permission-modes#dangerous-rm-operation-not-ruled-out), which fall through instead.
+  * To run those removals with no prompt, see [Turn off the critical-path removal prompt](https://code.claude.com/docs/en/permission-modes.md#turn-off-the-critical-path-removal-prompt-in-bypasspermissions-mode).
 * In `acceptEdits` mode, Claude Code approves the file operations listed under [Accept edits mode](#accept-edits-mode-acceptedits).
 * In `plan` mode, Claude Code sends file-edit tools to your `canUseTool` callback regardless of allow rules.
 * In other modes, the request falls through.
@@ -305,7 +306,7 @@ Auto-approves tool uses without prompting, except the [actions no mode auto-appr
 > `allowed_tools` does not constrain this mode. Every tool is approved, not just the ones you listed. These controls still apply:
 >
 > * Deny rules, explicit `ask` rules, and hooks are evaluated before the mode check and can still block a tool.
-> * Connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools), tools that require user interaction, and recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) still fall through to your `canUseTool` callback. The check that recognizes these removals [can miss some commands](https://code.claude.com/docs/en/permission-modes.md#critical-paths). Outside a [cloud session](https://code.claude.com/docs/en/claude-code-on-the-web.md), calls to custom tools your application [marks `always_ask`](https://code.claude.com/docs/en/agent-sdk/custom-tools#require-approval-for-specific-tools) fall through to the callback too.
+> * Connector tools [your organization set to `ask`](https://code.claude.com/docs/en/mcp#organization-controls-on-connector-tools), tools that require user interaction, and recognized [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths) still fall through to your `canUseTool` callback. The check that recognizes these removals [can miss some commands](https://code.claude.com/docs/en/permission-modes.md#critical-paths), and you can [turn off the critical-path removal prompt](https://code.claude.com/docs/en/permission-modes.md#turn-off-the-critical-path-removal-prompt-in-bypasspermissions-mode). Outside a [cloud session](https://code.claude.com/docs/en/claude-code-on-the-web.md), calls to custom tools your application [marks `always_ask`](https://code.claude.com/docs/en/agent-sdk/custom-tools#require-approval-for-specific-tools) fall through to the callback too.
 > * The [cross-session messaging safeguards](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) still apply.
 
 #### Plan mode (`plan`)

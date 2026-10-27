@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.311:docs:833dabf4f845177a03871c34aab63d167711f8128a7ed7b849dafdd635dd7b47:runtime:0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13",
+  "candidate_id": "claude@2.1.311:docs:358ac775423d73656b5725617bdfbe58d0d26235e433f547154e0818c7804c15:runtime:0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13",
   "package_version": "2.1.311",
   "npm_integrity": "sha512-7SgBitii1ZscdbRJXLcub7Vv2pfvH3wo7RrCKg4vZpklIfz9HgigJFFJGIjCY6jzoPDvbQcwwugvm3A8PTejzw==",
   "npm_published_at": "2026-10-26T19:47:57.395Z",
@@ -122,7 +122,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/permissions.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/permissions.md",
-        "hash": "939b3406cdef01555a879cfe9957c1d71245c5aa147d6b45924693a5f0db9a27",
+        "hash": "3397602f7b8540462ef7795268b02a0bc895c95c1d32413237bee92bbeb1cb3a",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/permissions.md"
       },
@@ -560,7 +560,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "09850337bb86c460436fcc00148f40134216bcf24fd0bf84ff400fc6a6c28abb",
+        "hash": "fe1d8bc378457e0359fc9aec453d39a7634f9085fce0478ebfffc69ab30bbb4a",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -1124,13 +1124,13 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "11690fbd68f047e26f815ddecfca589e112c0618cc9d48db51f9e05d96d655fa",
+        "hash": "e683c6796b2c73b721fdb055c47d2b5ecc32e533a7c527b5d4ef0930a432131c",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "0b062367ed54712ecd9e1a3d6b5d67e4eedc860e01962202176ce5e48f1915dc",
+        "hash": "70064d76e67c335615d678ee493c16e9315e89a17813c31365ffbca673f89d11",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "833dabf4f845177a03871c34aab63d167711f8128a7ed7b849dafdd635dd7b47"
+    "digest": "358ac775423d73656b5725617bdfbe58d0d26235e433f547154e0818c7804c15"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1623,7 +1623,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "probe-task",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1674,7 +1674,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: probe-task",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1685,8 +1685,8 @@
     ],
     "digest": "0a17102e39f8d1d08c22d80ef2fc3ae486878869c4849aafc57945902652dc13"
   },
-  "fetched_at": "2026-10-27T04:30:52.624Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40450021672",
-  "state_commit_parent": "056d81309272acc424dbf4c08cbdaa6979c48a2a",
-  "analysis_parent_sha": "056d81309272acc424dbf4c08cbdaa6979c48a2a"
+  "fetched_at": "2026-10-27T18:23:20.414Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40559294733",
+  "state_commit_parent": "28ed368931bcff7a5ea4fbf5ea1970dc1ca906db",
+  "analysis_parent_sha": "28ed368931bcff7a5ea4fbf5ea1970dc1ca906db"
 }
