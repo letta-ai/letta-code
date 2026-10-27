@@ -70,6 +70,18 @@ Add the model at the source that owns it. A hosted preset belongs in the server 
 
 Only change this repository when the model needs Letta Code-specific compatibility behavior, such as preserving an established CLI alias or recognizing a new provider for toolset selection. Keep that logic narrow and derive the handle and metadata from the runtime catalog rather than copying model definitions here.
 
+### External coding-worker catalogs
+
+External coding workers (Cursor, Claude Code, Codex, OpenCode) do not use the
+Letta model catalog. `letta model list` lists only the Letta backend's models;
+worker model handles come from each worker's own SDK/CLI catalog using the
+worker's own credentials, and must not be added to the catalog sources above.
+
+Cursor models come from `Cursor.models.list()` on `@cursor/sdk` with the same
+API key the worker uses; the catalog includes a `default`/Auto entry. Discovery
+must run with the same computer and account as execution. See the
+`cursor-worker-integration` skill for worker-specific behavior.
+
 ### Step 3: Test the Model
 
 Test with headless mode:
