@@ -10,6 +10,7 @@ import type { SpawnBackgroundSubagentTaskArgs } from "@/tools/impl/task";
 import {
   formatAttachedRepositoriesPostTurnSyncReminders,
   formatAttachedRepositoryPostTurnSyncReminder,
+  formatMemoryPostTurnSyncReminder,
   runPostTurnMemorySync,
 } from "./memory-git-sync";
 
@@ -345,50 +346,76 @@ test("push failures report automatic retry without assigning foreground repair",
   expect(messages[0]).toContain("Do not inspect or repair memory");
 });
 
-test("a conflict is reported to the primary only once repair has run on it", async () => {
-  const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
-  const reminders: string[] = [];
-  const spawn = spawnInto(jobs);
-  const claims: MemoryConflictRepairClaim[] = [
-    { status: "claimed", token: "attempt" },
-    { status: "in_progress" },
-    { status: "attempted" },
-  ];
-  const run = () =>
-    runPostTurnMemorySync(
-      {
-        agentId: "agent-memory-repair-test",
-        enqueueReminder: (text) => {
-          reminders.push(text);
+test.each(["conflict", "invalid"] as const)(
+  "%s offers an approved reset only after automatic repair finishes",
+  async (status) => {
+    const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
+    const reminders: string[] = [];
+    const spawn = spawnInto(jobs);
+    const claims: MemoryConflictRepairClaim[] = [
+      { status: "claimed", token: "attempt" },
+      { status: "in_progress" },
+      { status: "attempted" },
+    ];
+    const run = () =>
+      runPostTurnMemorySync(
+        {
+          agentId: "agent-memory-repair-test",
+          enqueueReminder: (text) => {
+            reminders.push(text);
+          },
         },
-      },
-      {
-        syncMemory: async () => conflict,
-        syncAttachedRepositories: async () => ({ results: [] }),
-        repairMemory: (params) =>
-          ensureMemoryRepair(params, spawn, async () => {
-            const claim = claims.shift();
-            if (!claim) throw new Error("unexpected claim");
-            return claim;
-          }),
-      },
+        {
+          syncMemory: async () => ({ ...conflict, status, localOnly: false }),
+          syncAttachedRepositories: async () => ({ results: [] }),
+          repairMemory: (params) =>
+            ensureMemoryRepair(params, spawn, async () => {
+              const claim = claims.shift();
+              if (!claim) throw new Error("unexpected claim");
+              return claim;
+            }),
+        },
+      );
+    await run();
+    expect(jobs).toHaveLength(1);
+    expect(reminders).toHaveLength(1);
+    expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
+    expect(reminders[0]).not.toContain("letta memory reset");
+    // The worker is still running, so the primary only sees the checkout guard.
+    await run();
+    expect(jobs).toHaveLength(1);
+    expect(reminders).toHaveLength(2);
+    expect(reminders[1]).toContain("MEMORY REPAIR RUNNING");
+    expect(reminders[1]).toContain("Do not inspect, edit, or run Git commands");
+    expect(reminders[1]).not.toContain("letta memory reset");
+    // A failed attempt stays suppressed; recovery is an explicit destructive action.
+    await run();
+    expect(jobs).toHaveLength(1);
+    expect(reminders).toHaveLength(3);
+    expect(reminders[2]).toContain(
+      status === "conflict" ? "MEMORY GIT CONFLICT" : "MEMORY REPAIR FAILED",
     );
-  await run();
-  expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(1);
-  expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
-  // The worker is still running, so the primary only sees the checkout guard.
-  await run();
-  expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(2);
-  expect(reminders[1]).toContain("MEMORY REPAIR RUNNING");
-  // The worker ran and could not resolve it: report without assigning repair.
-  await run();
-  expect(jobs).toHaveLength(1);
-  expect(reminders).toHaveLength(3);
-  expect(reminders[2]).toContain("MEMORY GIT CONFLICT");
-  expect(reminders[2]).toContain("Do not interrupt the current task");
-});
+    expect(reminders[2]).toContain(
+      "user approves discarding local changes and unpushed commits",
+    );
+    expect(reminders[2]).toContain(
+      "letta memory reset --agent agent-memory-repair-test --force",
+    );
+    expect(reminders[2]).not.toContain("Leave the repository unchanged");
+  },
+);
+
+test.each(["conflict", "invalid"] as const)(
+  "local-only %s does not offer a hosted reset",
+  (status) => {
+    const reminder = formatMemoryPostTurnSyncReminder(
+      { ...conflict, status },
+      "agent-local",
+    );
+    expect(reminder).toContain("no hosted copy to reset to");
+    expect(reminder).not.toContain("letta memory reset");
+  },
+);
 
 test("post-turn sync is skipped while another writer owns the checkout", async () => {
   const home = mkdtempSync(join(tmpdir(), "memory-git-sync-home-"));
