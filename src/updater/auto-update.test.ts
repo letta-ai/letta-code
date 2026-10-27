@@ -494,3 +494,144 @@ describe("checkForUpdate with fetch", () => {
     );
   });
 });
+
+describe("checkAndAutoUpdate install guards", () => {
+  const savedEnv: Record<string, string | undefined> = {};
+  const envKeys = [
+    "LETTA_CODE_AGENT_ROLE",
+    "LETTA_PACKAGE_MANAGER",
+    "DISABLE_AUTOUPDATER",
+    "LETTA_CODE_DISTRIBUTION",
+    "LETTA_UPDATE_REGISTRY_BASE_URL",
+  ];
+  let originalArgv1: string;
+  let testDir: string;
+  let lockPath: string;
+  // Far above any real pid limit, so it is never alive.
+  const deadPid = 2 ** 30;
+
+  const fetchImpl = mock(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+    ),
+  ) as unknown as typeof fetch;
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    // bun skips the npm-only prefix lookup, so every command is the install.
+    process.env.LETTA_PACKAGE_MANAGER = "bun";
+    originalArgv1 = process.argv[1] || "";
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), "letta-update-lock-"));
+    lockPath = path.join(testDir, "auto-update.lock");
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+    process.argv[1] = originalArgv1;
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  function installMock() {
+    return mock(() => Promise.resolve({ stdout: "", stderr: "" }));
+  }
+
+  test("subagent processes never check for or install updates", async () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    const runCommand = installMock();
+    const fetchSpy = mock(fetchImpl);
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+      runCommand,
+      lockPath,
+    });
+
+    expect(result).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("installs and releases the lock when no other update is running", async () => {
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("skips the install while a live process holds the lock", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+    const runCommand = installMock();
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl,
+      runCommand,
+      lockPath,
+    });
+
+    expect(result).toBeUndefined();
+    expect(runCommand).not.toHaveBeenCalled();
+    // The holder's lock is left alone.
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+  });
+
+  test("skips the install while a recent lock exists, even from a dead pid", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() }),
+    );
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  test("takes over a stale lock from a dead pid", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("concurrent update checks run a single install", async () => {
+    let finishInstall: () => void = () => {};
+    const installDone = new Promise<void>((resolve) => {
+      finishInstall = resolve;
+    });
+    const runCommand = mock(async () => {
+      await installDone;
+      return { stdout: "", stderr: "" };
+    });
+
+    const first = checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+    while (runCommand.mock.calls.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+    finishInstall();
+    await first;
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+});
