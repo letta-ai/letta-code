@@ -17,7 +17,7 @@ let root: string;
 let cwd: string;
 const oldHome = process.env.HOME;
 const parentAgentId = "agent-cursor-integration";
-const model = process.env.CURSOR_TEST_MODEL ?? "composer-2.5";
+const model = process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5";
 
 beforeAll(async () => {
   if (!process.env.CURSOR_API_KEY)

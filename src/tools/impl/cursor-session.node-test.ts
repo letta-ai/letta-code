@@ -18,7 +18,7 @@ test(
     try {
       const first = await runCursorTurn({
         ...options,
-        model: process.env.CURSOR_TEST_MODEL ?? "composer-2.5",
+        model: process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5",
         prompt: "Remember NODE_PROOF_681. Reply with that phrase.",
       });
       assert.equal(first.success, true, first.error);
