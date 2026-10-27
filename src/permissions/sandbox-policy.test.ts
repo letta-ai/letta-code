@@ -18,6 +18,7 @@ import {
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
+import { getPostCarveDeniedRoots } from "@/sandbox/policy";
 
 const tempDirs: string[] = [];
 
@@ -192,6 +193,31 @@ test("product isolation walls off active and legacy API and local trees", () => 
       ]),
     ),
   );
+});
+
+test("nested explicit storage is remasked after self carves", () => {
+  const home = makeTempDir();
+  const agentsTree = join(home, ".letta", "agents");
+  const selfRoot = join(agentsTree, "self");
+  const selfMemory = join(selfRoot, "memory");
+  const nestedTree = join(selfMemory, "local-store", "memfs");
+  const deniedRoots = [agentsTree, nestedTree];
+
+  const parentPolicy = buildCrossAgentSandboxPolicy({
+    selfRoots: [selfMemory],
+    agentsTreeRoots: deniedRoots,
+  });
+  const memoryPolicy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [selfMemory],
+    agentsTreeRoots: deniedRoots,
+  });
+
+  expect(getPostCarveDeniedRoots(parentPolicy)).toEqual([
+    canonicalizeRoot(nestedTree),
+  ]);
+  expect(getPostCarveDeniedRoots(memoryPolicy)).toEqual([
+    canonicalizeRoot(nestedTree),
+  ]);
 });
 
 test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {

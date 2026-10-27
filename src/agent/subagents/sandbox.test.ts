@@ -169,6 +169,7 @@ test("wraps a LOCAL subagent with the memory-subagent profile (deny-list against
   expect(defineValues(result?.args ?? [], "-DDENIED_")).toEqual([
     `0=${getDefaultAgentsTreeRoot()}`,
     `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(storageDir))}`,
+    `2=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
   ]);
 });
 
