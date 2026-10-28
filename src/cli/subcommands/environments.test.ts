@@ -114,7 +114,7 @@ test("current reconciles an offline point row with the complete list", async () 
         },
       }),
     ).toBe(0);
-    expect(calls).toEqual([{ limit: 100 }]);
+    expect(calls).toEqual([{ limit: 100, onlineOnly: true }]);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
       id: "current",
       isCurrent: true,

@@ -156,10 +156,14 @@ export async function resolveEnvironmentConnectionId(
   }
 
   // A generic selector can be a connection ID, environment ID, device ID, or
-  // name. The list API can filter names, but that subset cannot prove that the
-  // same string is not a higher-priority explicit ID or a local name. Read the
-  // complete actor-visible collection before resolving any non-device selector.
-  const connections = await listCompleteEnvironmentCollection(list);
+  // name. Without a point identity, read the complete actor-visible collection
+  // before resolving it. When the point row exists but is stale, only online
+  // rows can supersede it; excluding historical offline rows keeps startup
+  // reconciliation bounded for actors with a large environment history.
+  const connections = await listCompleteEnvironmentCollection(
+    list,
+    pointMatch ? { onlineOnly: true } : {},
+  );
   const explicitMatches = connections.filter(
     (environment) =>
       environment.connectionId === trimmed ||

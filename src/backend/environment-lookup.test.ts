@@ -88,7 +88,7 @@ describe("Computer environment resolution", () => {
         },
       }),
     ).resolves.toEqual({ connectionId: "conn-online", environment: online });
-    expect(calls).toEqual([{ limit: 100 }]);
+    expect(calls).toEqual([{ limit: 100, onlineOnly: true }]);
   });
 
   test("resolves an exact name after one complete bounded page", async () => {
