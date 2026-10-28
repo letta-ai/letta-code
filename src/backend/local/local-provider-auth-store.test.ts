@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,6 +12,7 @@ import {
   getLocalOAuthApiKey,
   getLocalProviderById,
   getLocalProviderRecordByName,
+  LOCAL_PROVIDER_NO_API_KEY,
   setLocalOAuthProvider,
 } from "./local-provider-auth-store";
 
@@ -24,6 +26,45 @@ describe("local OAuth provider storage", () => {
         .map((storageDir) => rm(storageDir, { recursive: true, force: true })),
     );
   });
+
+  test.each(["\r", "\n", "\t", " ", "\0", "\u007f", "\u0085"])(
+    "rejects an API key containing %j without writing auth.json",
+    async (separator) => {
+      const storageDir = await mkdtemp(join(tmpdir(), "local-invalid-key-"));
+      storageDirs.push(storageDir);
+      await expect(
+        createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openai",
+          providerName: "lc-openai",
+          apiKey: `  secret${separator}key  `,
+        }),
+      ).rejects.toThrow(
+        "API key for lc-openai contains whitespace or line breaks. Paste only the key.",
+      );
+      expect(existsSync(join(storageDir, "providers", "auth.json"))).toBe(
+        false,
+      );
+    },
+  );
+
+  test.each(["secret-key", LOCAL_PROVIDER_NO_API_KEY])(
+    "saves a single-token key %j after trimming",
+    async (key) => {
+      const storageDir = await mkdtemp(join(tmpdir(), "local-valid-key-"));
+      storageDirs.push(storageDir);
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "ollama",
+        providerName: "ollama",
+        apiKey: ` \t${key}\r\n`,
+      });
+      expect(getLocalProviderRecordByName("ollama", storageDir)?.auth).toEqual({
+        type: "api",
+        key,
+      });
+    },
+  );
 
   test("resolves a derived provider ID directly", async () => {
     const storageDir = await mkdtemp(join(tmpdir(), "local-provider-id-"));
