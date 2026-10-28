@@ -31,7 +31,7 @@ function usage(totalTokens: number, cost?: number | null): SdkStreamMessage {
     event: {
       message_type: "usage_statistics",
       total_tokens: totalTokens,
-      ...(cost !== undefined ? { estimated_cost_usd: cost } : {}),
+      ...(cost !== undefined ? { cost_usd: cost } : {}),
     },
   };
 }
@@ -43,7 +43,7 @@ const RESULT: SdkStreamMessage = {
 };
 
 describe("createSdkSpawner cost reporting", () => {
-  test("sums per-step estimated_cost_usd and reports it live", async () => {
+  test("sums per-step cost_usd and reports it live", async () => {
     const seen: Array<[number, number | null | undefined]> = [];
     const outcome = await createSdkSpawner(
       fakeClient([usage(1_000, 0.01), usage(2_000, 0.025), RESULT]),

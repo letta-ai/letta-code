@@ -77,7 +77,7 @@ export interface SubagentOutcome {
   totalTokens?: number;
   /**
    * Server-estimated list-price USD for the session: the sum of each step's
-   * `estimated_cost_usd`. Null once any step reported usage without one.
+   * `cost_usd`. Null once any step reported usage without one.
    */
   costUsd?: number | null;
 }
