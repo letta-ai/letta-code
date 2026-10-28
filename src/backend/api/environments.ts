@@ -62,7 +62,6 @@ export interface ListEnvironmentsOptions {
   limit?: number;
   after?: string;
   onlineOnly?: boolean;
-  deviceId?: string;
   connectionName?: string;
   source?: EnvironmentSource;
 }
@@ -79,7 +78,6 @@ export async function listEnvironments(
         limit: options.limit,
         after: options.after,
         onlineOnly: options.onlineOnly,
-        deviceId: options.deviceId,
         connectionName: options.connectionName,
         source: options.source,
       },

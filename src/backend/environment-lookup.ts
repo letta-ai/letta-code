@@ -41,7 +41,7 @@ function isUnsupportedSelectorError(error: unknown): boolean {
 
 async function listCompleteEnvironmentCollection(
   list: typeof listEnvironments,
-  options: Pick<ListEnvironmentsOptions, "deviceId" | "onlineOnly"> = {},
+  options: Pick<ListEnvironmentsOptions, "onlineOnly"> = {},
 ): Promise<EnvironmentConnection[]> {
   const connections: EnvironmentConnection[] = [];
   let after: string | undefined;
@@ -62,27 +62,6 @@ async function listCompleteEnvironmentCollection(
       );
     }
     after = next;
-  }
-}
-
-async function listOnlineDeviceEnvironments(
-  list: typeof listEnvironments,
-  deviceId: string,
-): Promise<EnvironmentConnection[]> {
-  const listDeviceRows = async (
-    options: Pick<ListEnvironmentsOptions, "deviceId" | "onlineOnly">,
-  ) =>
-    (await listCompleteEnvironmentCollection(list, options)).filter(
-      (environment) => environment.deviceId === deviceId,
-    );
-  try {
-    return await listDeviceRows({
-      onlineOnly: true,
-      deviceId,
-    });
-  } catch (error) {
-    if (!isUnsupportedSelectorError(error)) throw error;
-    return listDeviceRows({ onlineOnly: true });
   }
 }
 
@@ -162,60 +141,25 @@ export async function resolveEnvironmentConnectionId(
 
   const get = deps.get ?? getEnvironmentConnection;
   const list = deps.list ?? listEnvironments;
-  let pointMatch: EnvironmentConnection | undefined;
   try {
-    pointMatch = await get(trimmed);
-    if (
-      isEnvironmentOnline(pointMatch) &&
-      typeof pointMatch.connectionId === "string"
-    ) {
-      return selectEnvironment(trimmed, [pointMatch]);
-    }
-    if (pointMatch.deviceId !== trimmed) {
-      try {
-        const refreshed = await get(pointMatch.deviceId);
-        if (refreshed.deviceId === pointMatch.deviceId) {
-          pointMatch = refreshed;
-          if (
-            isEnvironmentOnline(pointMatch) &&
-            typeof pointMatch.connectionId === "string"
-          ) {
-            return selectEnvironment(trimmed, [pointMatch]);
-          }
-        }
-      } catch (error) {
-        if (!(error instanceof ApiRequestError) || error.status !== 404)
-          throw error;
-      }
-    }
+    const environment = await get(trimmed);
+    return selectEnvironment(trimmed, [environment]);
   } catch (error) {
     if (!(error instanceof ApiRequestError) || error.status !== 404)
       throw error;
   }
 
   // A generic selector can be a connection ID, environment ID, device ID, or
-  // name. Without a point identity, read the complete actor-visible collection
-  // before resolving it. When the point row exists but is stale, only online
-  // rows for that device can supersede it; excluding unrelated devices and
-  // historical offline rows keeps startup reconciliation bounded.
-  const connections = pointMatch
-    ? await listOnlineDeviceEnvironments(list, pointMatch.deviceId)
-    : await listCompleteEnvironmentCollection(list);
+  // name. The list API can filter names, but that subset cannot prove that the
+  // same string is not a higher-priority explicit ID or a local name. Read the
+  // complete actor-visible collection before resolving any non-device selector.
+  const connections = await listCompleteEnvironmentCollection(list);
   const explicitMatches = connections.filter(
     (environment) =>
       environment.connectionId === trimmed ||
       environment.id === trimmed ||
       environment.deviceId === trimmed,
   );
-  if (pointMatch) {
-    const matchesById = new Map(
-      [pointMatch, ...explicitMatches].map((environment) => [
-        environment.id,
-        environment,
-      ]),
-    );
-    return selectEnvironment(trimmed, [...matchesById.values()]);
-  }
   if (explicitMatches.length > 0) {
     return selectEnvironment(trimmed, explicitMatches);
   }

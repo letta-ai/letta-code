@@ -88,49 +88,6 @@ test("current resolves its known device through the point endpoint", async () =>
   }
 });
 
-test("current reconciles an offline point row with online rows for its device", async () => {
-  const log = spyOn(console, "log").mockImplementation(() => {});
-  const restoreDeviceId = stubCurrentDeviceId();
-  const calls: Parameters<typeof listEnvironments>[0][] = [];
-  const stale = {
-    ...environment("current", false),
-    deviceId: "test-current-device",
-  };
-  const online = {
-    ...environment("current"),
-    deviceId: "test-current-device",
-  };
-  try {
-    expect(
-      await runEnvironmentsSubcommand(["current"], {
-        initializeSettings: async () => {},
-        getEnvironmentConnection: async () => stale,
-        listEnvironments: async (options = {}) => {
-          calls.push(options);
-          return {
-            connections: [online],
-            hasNextPage: false,
-          };
-        },
-      }),
-    ).toBe(0);
-    expect(calls).toEqual([
-      {
-        limit: 100,
-        onlineOnly: true,
-        deviceId: "test-current-device",
-      },
-    ]);
-    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
-      id: "current",
-      isCurrent: true,
-    });
-  } finally {
-    restoreDeviceId();
-    log.mockRestore();
-  }
-});
-
 test("current preserves the friendly not-found result from a point lookup", async () => {
   const error = spyOn(console, "error").mockImplementation(() => {});
   const restoreDeviceId = stubCurrentDeviceId();
@@ -141,10 +98,9 @@ test("current preserves the friendly not-found result from a point lookup", asyn
         getEnvironmentConnection: async () => {
           throw new ApiRequestError("not found", 404, "not found");
         },
-        listEnvironments: async () => ({
-          connections: [],
-          hasNextPage: false,
-        }),
+        listEnvironments: async () => {
+          throw new Error("current must not list environments");
+        },
       }),
     ).toBe(1);
     expect(error).toHaveBeenCalledWith(
