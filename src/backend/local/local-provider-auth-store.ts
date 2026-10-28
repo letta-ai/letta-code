@@ -288,7 +288,12 @@ export async function createOrUpdateLocalProvider(input: {
   const auth: LocalProviderAuth =
     input.providerType === "chatgpt_oauth"
       ? parseChatGPTOAuth(input.apiKey)
-      : { type: "api", key: input.apiKey };
+      : { type: "api", key: input.apiKey.trim() };
+  if (auth.type === "api" && /[\s\p{Cc}]/u.test(auth.key)) {
+    throw new Error(
+      `API key for ${input.providerName} contains whitespace or line breaks. Paste only the key.`,
+    );
+  }
   const next: LocalProviderRecord = {
     id: existing?.id ?? providerId(input.providerName),
     name: input.providerName,
