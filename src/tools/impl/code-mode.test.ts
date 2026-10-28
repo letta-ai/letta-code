@@ -33,6 +33,10 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
+import {
+  __testSeedSecretsCache,
+  clearSecretsCache,
+} from "@/utils/secrets-store";
 import { killBackgroundProcess } from "./kill-bash";
 import { backgroundProcesses, backgroundTasks } from "./process_manager";
 
@@ -234,6 +238,30 @@ test("a scoped owning agent runs built-ins without a conversation lookup", async
   expect(JSON.parse(result.toolReturn as string).result).toContain(
     "offline read",
   );
+});
+
+test("process.env has the Bash environment and agent secrets, and returned secrets are redacted", async () => {
+  const token = "script-env-secret-value-0123456789";
+  __testSeedSecretsCache(agentId, { DEMO_TOKEN: token });
+  try {
+    const result = await run(
+      "return { agent: process.env.AGENT_ID, matches: process.env.DEMO_TOKEN === args.expected, token: process.env.DEMO_TOKEN, exit: typeof process.exit };".replace(
+        "args.expected",
+        JSON.stringify(token),
+      ),
+    );
+    expect(result.status).toBe("success");
+    const text = result.toolReturn as string;
+    expect(text).not.toContain(token);
+    expect(JSON.parse(text).result).toEqual({
+      agent: agentId,
+      matches: true,
+      token: "DEMO_TOKEN=<REDACTED>",
+      exit: "undefined",
+    });
+  } finally {
+    clearSecretsCache(agentId);
+  }
 });
 
 test("strict-mode nested calls need approval and do not write", async () => {

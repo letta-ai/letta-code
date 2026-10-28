@@ -22,6 +22,8 @@ export interface ScriptToolScope {
   callTool: WorkflowToolCaller;
   builtinToolNames: string[];
   listTools(): Promise<WorkflowToolInfo[]>;
+  /** What a Bash command sees, plus every secret of the invoking agent. */
+  env: Readonly<Record<string, string>>;
   cleanup(): Promise<void>;
 }
 
@@ -188,8 +190,22 @@ export async function createScriptToolScope(
     );
     return mcpSession;
   };
+  // Bash injects only the secrets a command references; `process.env` reads
+  // are synchronous, so load the agent's whole vault up front. Tool results
+  // and queued messages already redact these values.
+  const { getShellEnv } = await import("@/tools/impl/shell-env");
+  const secrets = await import("@/utils/secrets-store");
+  // Like Bash, an unreachable vault leaves secrets unset rather than failing.
+  if (parentAgentId)
+    await secrets.ensureSecretsLoaded(parentAgentId).catch(() => undefined);
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(getShellEnv())) {
+    if (typeof value === "string") env[key] = value;
+  }
+  if (parentAgentId) Object.assign(env, secrets.loadSecrets(parentAgentId));
   return {
     builtinToolNames,
+    env,
     listTools: async () => {
       const mcpTools = parentAgentId
         ? await (await mcp()).listTools().catch(() => [])
