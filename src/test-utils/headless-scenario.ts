@@ -164,9 +164,10 @@ function localScenarioPrompt(): string {
     "I want to test local backend tool calling abilities (do not ask for clarifications; this is an automated CI runner). " +
     "First, run a shell command to output exactly LOCAL_SHELL_ONE. " +
     "Then, try running two shell commands in parallel to output exactly LOCAL_PARALLEL_TWO and LOCAL_PARALLEL_THREE. " +
-    "Then, load the relevant memory skills and directly create or update `reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`, and commit the change. " +
-    "The test harness checks the committed memory after the CLI exits. " +
-    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the memory edit was committed, your final response must include the uppercase word BANANA. " +
+    "Then, load the relevant memory skill and wait for its result. Directly create or update `$MEMORY_DIR/reference/ci/local-backend.md` with description `Local backend CI scenario` and body text `LOCAL_MEMFS_SCENARIO_OK`. " +
+    'Wait for the file write to finish, then commit it in the MemFS git repository. Verify the committed file with `git -C "$MEMORY_DIR" show HEAD:reference/ci/local-backend.md`. ' +
+    "The test harness independently checks that commit after the CLI exits. Wait for each tool result before reporting success; a planned tool call is not a completed edit. " +
+    "IMPORTANT FINAL RESPONSE RULE: If and only if every shell command succeeded and the verified committed memory file contains the marker, your final response must include the uppercase word BANANA. " +
     "If any step failed, do not include BANANA."
   );
 }
