@@ -7,6 +7,7 @@ import {
   deleteCloudSchedule,
   getCloudSchedule,
   listCloudSchedules,
+  listCloudSchedulesByExactMatch,
 } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import {
@@ -231,21 +232,16 @@ async function listCurrentWakes(
   }
 
   try {
-    let after: string | undefined;
-    do {
-      args.signal?.throwIfAborted();
-      const page = await (deps.listCloud ?? listCloudSchedules)(scope.agentId, {
-        limit: 100,
-        after,
-      });
-      const matching = page.scheduled_messages.filter(
-        (schedule) => schedule.conversation_id === scope.conversationId,
-      );
-      wakes.push(...matching.map(cloudWakeRecord));
-      after = page.has_next_page
-        ? page.scheduled_messages.at(-1)?.id
-        : undefined;
-    } while (after);
+    const listCloud = deps.listCloud ?? listCloudSchedules;
+    const matching = await listCloudSchedulesByExactMatch(
+      scope.agentId,
+      { conversationId: scope.conversationId },
+      async (agentId, options) => {
+        args.signal?.throwIfAborted();
+        return listCloud(agentId, options);
+      },
+    );
+    wakes.push(...matching.map(cloudWakeRecord));
   } catch (error) {
     if (
       error instanceof ApiRequestError &&
@@ -411,7 +407,7 @@ async function cancelWake(
     }
     throw error;
   }
-  if (cloud.conversation_id !== scope.conversationId) {
+  if ((cloud.conversation_id ?? "default") !== scope.conversationId) {
     throw new Error(`Wake ${id} was not found in the current conversation.`);
   }
 
