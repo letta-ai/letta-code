@@ -67,8 +67,6 @@ Git Safety Protocol:
 3. You can call multiple tools in a single response. When multiple independent pieces of information are requested and all commands are likely to succeed, run multiple tool calls in parallel for optimal performance. run the following commands:
    - Add relevant untracked files to the staging area.
    - Create the commit with a message ending with:
-   👾 Generated with [Letta Code](https://letta.com)
-
    {{COMMIT_TRAILER}}
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
@@ -84,8 +82,6 @@ Important notes:
 - In order to ensure good formatting, ALWAYS pass the commit message as a single-quoted string with embedded newlines, a la this example:
 <example>
 git commit -m 'Commit message here.
-
-👾 Generated with [Letta Code](https://letta.com)
 
 {{COMMIT_TRAILER}}'
 </example>
