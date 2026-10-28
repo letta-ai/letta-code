@@ -18,6 +18,7 @@ if (testHome === originalHome) {
 const filesystemEnvKeys = [
   "LETTA_ARTIFACTS_DIR",
   "LETTA_CODE_DEV_BACKEND_DIR",
+  "LETTA_CONFIG_DIR",
   "LETTA_DEBUG_FILE",
   "LETTA_HOME",
   "LETTA_LISTENER_PERF_FILE",

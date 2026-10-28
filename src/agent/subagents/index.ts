@@ -18,6 +18,7 @@ import {
   parseCommaSeparatedList,
   parseFrontmatter,
 } from "@/utils/frontmatter";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
@@ -143,11 +144,8 @@ export const AGENTS_DIR = ".letta/agents";
 /**
  * Global directory for subagent files (in user's home directory)
  */
-function getGlobalAgentsDir(): string {
-  return join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".letta/agents",
-  );
+export function getGlobalAgentsDir(): string {
+  return join(resolveGlobalConfigDir(), "agents");
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();

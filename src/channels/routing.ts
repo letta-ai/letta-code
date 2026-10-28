@@ -2,7 +2,7 @@
  * Channel routing table.
  *
  * Maps platform chat IDs to Letta agent+conversation pairs.
- * Persisted in ~/.letta/channels/<channel>/routing.json. The file holds JSON
+ * Persisted below the active product's channels directory. The file holds JSON
  * content (it was originally misnamed `routing.yaml`; legacy files are migrated
  * on load — see #3076).
  */

@@ -29,7 +29,9 @@ describe("recallPromptForBackend", () => {
     expect(apiPrompt).not.toContain("transcript-backed exact text search");
     expect(localPrompt).toContain("transcript-backed full-text search");
     expect(localPrompt).toContain("Accessing the Underlying Files");
-    expect(localPrompt).toContain("~/.letta/lc-local-backend");
+    expect(localPrompt).toContain(
+      "${LETTA_CONFIG_DIR:-$HOME/.letta}/lc-local-backend",
+    );
     expect(localPrompt).not.toContain("--mode <mode>");
     expect(localPrompt).not.toContain("Semantic similarity search");
   });

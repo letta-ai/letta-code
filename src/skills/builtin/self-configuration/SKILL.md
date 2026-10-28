@@ -17,7 +17,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Memory and identity | Facts worth retaining, style preferences, persona changes, project knowledge, reusable skills | Edit `$MEMORY_DIR` files and sync the memory repo |
 | Server agent fields | Agent default model (only on explicit request), context limit, system prompt, compaction, agent name, description | Patch `/v1/agents/{agent_id}` |
 | Server conversation fields | Model/context changes for the current conversation (the normal target) | Patch `/v1/conversations/{conversation_id}` |
-| Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `~/.letta/settings.json`, `./.letta/settings.json`, or `./.letta/settings.local.json` |
+| Local settings | Permissions, environment variables, UI/runtime preferences, pinned agents, toolset overrides, reflection cadence | Edit `$LETTA_CONFIG_DIR/settings.json` when configured (otherwise `~/.letta/settings.json`), `./.letta/settings.json`, or `./.letta/settings.local.json` |
 | Mods | New deterministic tools, slash commands, providers, statusline behavior, or lightweight UI | Load `creating-mods`, `customizing-commands`, or `customizing-statusline` |
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
@@ -232,7 +232,7 @@ Settings scopes:
 
 | File | Scope | Typical contents |
 | --- | --- | --- |
-| `~/.letta/settings.json` | User/global | Permissions, env keys, experiments, UI/runtime preferences, agents[] entries |
+| `$LETTA_CONFIG_DIR/settings.json` when configured; otherwise `~/.letta/settings.json` | User/global | Permissions, env keys, experiments, UI/runtime preferences, agents[] entries |
 | `./.letta/settings.json` | Project/shared | Project settings committed with the repo |
 | `./.letta/settings.local.json` | Project-local | Personal project overrides, usually gitignored |
 
@@ -347,7 +347,7 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 
 1. Project skills: `.agents/skills/` with `.skills/` as legacy fallback
 2. Agent skills: `$MEMORY_DIR/skills/`
-3. Global skills: `~/.letta/skills/`
+3. Global skills: `$LETTA_CONFIG_DIR/skills/` when configured; otherwise `~/.letta/skills/`
 4. Bundled skills
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
@@ -385,7 +385,7 @@ letta channels pair --channel <channel> --code <code> --agent <agent-id> --conve
 letta server --channels <channel>
 ```
 
-Channel state lives under `~/.letta/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
+Channel state lives under `${LETTA_CONFIG_DIR:-$HOME/.letta}/channels/<channel>/` (`config.yaml`, `accounts.json`, routing/pairing files, and channel runtimes). Account tokens may be plaintext in `file` mode or keyring placeholders in `keyring`/`auto` mode. Configure storage with `channelCredentialsStore` (`file`, `keyring`, `auto`) or `LETTA_CHANNEL_CREDENTIALS_STORE`; do not treat keyring placeholders as usable secrets and do not print tokens. Channel configuration and pairing can route external messages to other agents/conversations; verify IDs and get human consent for interactive authorization.
 
 `letta channels configure <channel>` is an interactive TTY wizard. Do not launch it as unattended work or claim setup succeeded while it is waiting for input; hand the authorization/setup step to the user.
 

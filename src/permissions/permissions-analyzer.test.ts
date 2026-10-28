@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { analyzeApprovalContext } from "@/permissions/analyzer";
+import {
+  analyzeApprovalContext,
+  parseAbsoluteCommandPaths,
+} from "@/permissions/analyzer";
 
 // ============================================================================
 // Bash Command Analysis Tests
@@ -398,6 +401,16 @@ test("Skill script in agent-scoped skill suggests agent-scoped message", () => {
   );
   expect(context.approveAlwaysText).toBe(
     "Yes, and don't ask again for scripts in agent-scoped skill 'finding-agents'",
+  );
+});
+
+test("Windows skill script paths are normalized before approval analysis", () => {
+  expect(
+    parseAbsoluteCommandPaths(
+      String.raw`npx tsx C:\Users\alice\.dream\agents\agent-123\memory\skills\finding-agents\scripts\main.ts --help`,
+    ),
+  ).toContain(
+    "C:/Users/alice/.dream/agents/agent-123/memory/skills/finding-agents/scripts/main.ts",
   );
 });
 

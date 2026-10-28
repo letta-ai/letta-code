@@ -159,7 +159,7 @@ You — not the subagents — decide what becomes memory, and you write it. Synt
 
 ```bash
 node <SKILL_DIR>/scripts/history-coverage.mjs --prepared /tmp/letta-init-history \
-  --journal ~/.letta/workflows/executions/<id>/journal.jsonl \
+  --journal "${LETTA_CONFIG_DIR:-$HOME/.letta}/workflows/executions/<id>/journal.jsonl" \
   --retry-out /tmp/letta-init-history/retry.json
 ```
 

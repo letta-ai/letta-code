@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -13,6 +12,7 @@ import {
   getRuntimeContext,
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import type { CursorWorkerEvent, CursorWorkerStart } from "./cursor-worker";
 import type { ExternalToolCallListener } from "./external-tool-call";
@@ -225,7 +225,7 @@ export async function runCursorTurn(
       type: "start",
       sessionId: id,
       resume: !!options.resumeSessionId,
-      stateDir: join(homedir(), ".letta", "cursor-sessions", sessionKey),
+      stateDir: join(resolveGlobalConfigDir(), "cursor-sessions", sessionKey),
       cwd: options.cwd,
       model: options.model,
       reminder: options.mcpReminder,

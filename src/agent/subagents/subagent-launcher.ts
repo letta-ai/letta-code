@@ -21,6 +21,7 @@ import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   readSubagentDepth,
   SUBAGENT_DEPTH_ENV,
@@ -190,7 +191,7 @@ function resolveMemorySubagentScratchpad(
   const configuredTranscriptRoot = parentProcessEnv[TRANSCRIPT_ROOT_ENV];
   const transcriptRoot =
     configuredTranscriptRoot?.trim() ||
-    join(parentProcessEnv.HOME?.trim() || homedir(), ".letta", "transcripts");
+    join(resolveGlobalConfigDir(parentProcessEnv, homedir()), "transcripts");
   const scope = subagentId
     ? encodeURIComponent(subagentId)
     : crypto.randomUUID();

@@ -18,6 +18,7 @@ import {
   getDefaultAgentsTreeRoot,
   getLettaHomeRoot,
 } from "@/permissions/sandbox-policy";
+import { getOrderedSandboxPathRules } from "@/sandbox/policy";
 
 const tempDirs: string[] = [];
 
@@ -171,6 +172,67 @@ test("cross-agent policy defaults to both backend agents trees", () => {
   });
 
   expect(policy.deniedRoots).toEqual(getCrossBackendAgentsTreeRoots());
+});
+
+test("product isolation walls off active and legacy API and local trees", () => {
+  const home = makeTempDir();
+  const productRoot = join(home, ".dream");
+  const roots = getCrossBackendAgentsTreeRoots({
+    homeDir: home,
+    env: {
+      HOME: home,
+      LETTA_CONFIG_DIR: productRoot,
+    } as NodeJS.ProcessEnv,
+  });
+
+  expect(new Set(roots)).toEqual(
+    new Set(
+      [productRoot, join(home, ".letta")].flatMap((configRoot) => [
+        canonicalizeRoot(join(configRoot, "agents")),
+        canonicalizeRoot(join(configRoot, "lc-local-backend", "memfs")),
+      ]),
+    ),
+  );
+});
+
+test("nested explicit storage is remasked after self carves", () => {
+  const home = makeTempDir();
+  const agentsTree = join(home, ".letta", "agents");
+  const selfRoot = join(agentsTree, "self");
+  const selfMemory = join(selfRoot, "memory");
+  const nestedTree = join(selfMemory, "local-store", "memfs");
+  const innerSelfMemory = join(nestedTree, "self", "memory");
+  const deniedRoots = [agentsTree, nestedTree];
+
+  const parentPolicy = buildCrossAgentSandboxPolicy({
+    selfRoots: [selfMemory, innerSelfMemory],
+    agentsTreeRoots: deniedRoots,
+  });
+  const memoryPolicy = buildMemorySubagentSandboxPolicy({
+    memoryRoots: [selfMemory, innerSelfMemory],
+    agentsTreeRoots: deniedRoots,
+  });
+
+  expect(memoryPolicy.writableRoots).toContain(canonicalizeRoot(selfMemory));
+  expect(memoryPolicy.writableRoots).toContain(
+    canonicalizeRoot(innerSelfMemory),
+  );
+
+  for (const policy of [parentPolicy, memoryPolicy]) {
+    const rules = getOrderedSandboxPathRules(policy);
+    const indexOf = (kind: string, root: string) =>
+      rules.findIndex(
+        (rule) => rule.kind === kind && rule.root === canonicalizeRoot(root),
+      );
+    const outerSelfIndex = indexOf("writable", selfMemory);
+    const nestedDenyIndex = indexOf("deny", nestedTree);
+    const innerSelfIndex = indexOf("writable", innerSelfMemory);
+    expect(outerSelfIndex).toBeGreaterThan(-1);
+    expect(nestedDenyIndex).toBeGreaterThan(-1);
+    expect(innerSelfIndex).toBeGreaterThan(-1);
+    expect(outerSelfIndex).toBeLessThan(nestedDenyIndex);
+    expect(innerSelfIndex).toBeGreaterThan(nestedDenyIndex);
+  }
 });
 
 test("deriveSelfAgentRootsForTrees collapses in-tree memory roots to the agent dir", () => {
