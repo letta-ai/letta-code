@@ -15,7 +15,7 @@
     },
     "model": {
       "type": "string",
-      "description": "Optional except for new cursor sessions, which require a Cursor model ID. When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."
+      "description": "Optional except for new cursor sessions, which require a Cursor model ID (list IDs with `letta model list --worker cursor`). When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."
     },
     "agent_id": {
       "type": "string",

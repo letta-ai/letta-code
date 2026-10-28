@@ -26,7 +26,7 @@ function printUsage(): void {
   console.log(`Usage:
   letta model get [--default] [--agent <id> | --conversation <id>]
   letta model list [--byok | --hosted] [--structured-outputs]
-  letta model list --worker <claude-code|codex|opencode>
+  letta model list --worker <claude-code|codex|opencode|cursor>
   letta model set [handle] [--reasoning <level>] [--model-settings <json>] [--default] [--agent <id> | --conversation <id>]
 
   get   Show the effective model, context limit, and full redacted model_settings.

@@ -32,7 +32,7 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 Use `subagent_type: "claude-code"`, `"codex"`, or `"cursor"` to start an external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`.
 
-Discover native model IDs with `letta model list --worker claude-code`, `--worker codex`, or `--worker opencode`. Run discovery in the worker's execution environment and checkout; it uses that environment's credentials and configuration, not Letta's model catalog. Pass a returned `id` as `model`, or omit `model` to keep the worker's configured default.
+Discover native model IDs with `letta model list --worker claude-code`, `--worker codex`, `--worker opencode`, or `--worker cursor`. Run discovery in the worker's execution environment and checkout; it uses that environment's credentials and configuration, not Letta's model catalog. Pass a returned `id` as `model`, or omit `model` to keep the worker's configured default. Cursor has no default: a new `cursor` session requires a `model`, so pick one from `letta model list --worker cursor`. Its list is a curated subset; Cursor also accepts other model keys.
 
 Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
 

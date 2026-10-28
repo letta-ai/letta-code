@@ -3,6 +3,7 @@ import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process"
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { isRecord } from "@/utils/type-guards";
 import { listCodexModels } from "./codex-app-server";
+import { listCursorModels } from "./cursor-session";
 import { resolveExternalCodingAgentSecretEnv } from "./external-coding-agent";
 import { OpenCodeServer } from "./opencode-server";
 
@@ -10,6 +11,7 @@ interface WorkerModel {
   id: string;
   display_name: string;
   description?: string;
+  aliases?: string[];
 }
 
 async function listClaudeModels(
@@ -96,8 +98,8 @@ export async function listExternalWorkerModels(worker: string): Promise<{
   cwd: string;
   models: WorkerModel[];
 }> {
-  if (!["claude-code", "codex", "opencode"].includes(worker))
-    throw new Error("--worker must be claude-code, codex, or opencode");
+  if (!["claude-code", "codex", "opencode", "cursor"].includes(worker))
+    throw new Error("--worker must be claude-code, codex, opencode, or cursor");
   const agentId = process.env.AGENT_ID ?? process.env.LETTA_AGENT_ID;
   const secrets = agentId
     ? await resolveExternalCodingAgentSecretEnv(agentId)
@@ -127,21 +129,32 @@ export async function listExternalWorkerModels(worker: string): Promise<{
       const catalog =
         worker === "codex"
           ? await listCodexModels(cwd, env)
-          : await listClaudeModels(cwd, env);
+          : worker === "cursor"
+            ? await listCursorModels(cwd, env)
+            : await listClaudeModels(cwd, env);
       for (const model of catalog) {
         if (!isRecord(model))
           throw new Error("Invalid native model catalog entry");
-        const id = worker === "codex" ? model.model : model.value;
+        const id =
+          worker === "codex"
+            ? model.model
+            : worker === "cursor"
+              ? model.id
+              : model.value;
         if (typeof id !== "string" || typeof model.displayName !== "string")
           throw new Error(
             "Native model catalog entry is missing its ID or name",
           );
+        const aliases = Array.isArray(model.aliases)
+          ? model.aliases.filter((alias) => typeof alias === "string")
+          : [];
         models.push({
           id,
           display_name: model.displayName,
           ...(typeof model.description === "string" && {
             description: model.description,
           }),
+          ...(aliases.length > 0 && { aliases }),
         });
       }
     }
