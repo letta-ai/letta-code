@@ -10,7 +10,10 @@ import {
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { listEnvironments } from "@/backend/api/environments";
+import {
+  isEnvironmentOnline,
+  listEnvironments,
+} from "@/backend/api/environments";
 import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
 import { apiRequest } from "@/backend/api/request";
 import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
@@ -387,12 +390,22 @@ describe("Startup Flow - Integration", () => {
           });
           expect(registered).toMatchObject({ hasNextPage: false });
           expect(registered.connections).toHaveLength(1);
-          const registeredDeviceId = registered.connections[0]?.deviceId;
-          if (!registeredDeviceId) {
+          const registeredEnvironment = registered.connections[0];
+          if (!registeredEnvironment) {
+            throw new Error("Connected listener registration was not returned");
+          }
+          expect(registeredEnvironment.connectionName).toBe(name);
+          expect(registeredEnvironment.organizationId).not.toBe("local");
+          expect(registeredEnvironment.connectionId?.startsWith("local-")).toBe(
+            false,
+          );
+          expect(isEnvironmentOnline(registeredEnvironment)).toBe(true);
+          if (!registeredEnvironment.deviceId) {
             throw new Error("Connected listener did not expose a device ID");
           }
-          ({ connectionId } =
-            await resolveEnvironmentConnectionId(registeredDeviceId));
+          ({ connectionId } = await resolveEnvironmentConnectionId(
+            registeredEnvironment.deviceId,
+          ));
           const parent = await apiRequest<{ id: string }>(
             "POST",
             "/v1/agents/",
