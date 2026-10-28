@@ -90,7 +90,7 @@ export async function runCursorTurn(
       );
     if (!options.resumeSessionId && !options.model)
       throw new Error(
-        "Cursor requires an explicit model on the first Agent call; use a model ID from Cursor's catalog.",
+        "Cursor requires an explicit model on the first Agent call; pick an ID from `letta model list --worker cursor`.",
       );
     const lifetime = new AbortController();
     const actor =
@@ -327,6 +327,58 @@ export async function sendCursorMessage(
   } finally {
     if (locks.get(sessionKey) === operation) locks.delete(sessionKey);
   }
+}
+
+/** Cursor's curated catalog via the SDK worker; the API also accepts other model keys. */
+export async function listCursorModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  timeoutMs = 30_000,
+): Promise<unknown[]> {
+  if (!env.CURSOR_API_KEY)
+    throw new Error(
+      "Cursor is not signed in: add CURSOR_API_KEY to the agent's secrets or the selected computer's environment.",
+    );
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const running = spawnManagedWorkloadProcess(
+    process.execPath,
+    [resolveCursorWorkerPath()],
+    { cwd, env, signal: controller.signal },
+  );
+  let event: CursorWorkerEvent | undefined;
+  let stderr = "";
+  const output = createInterface({ input: running.process.stdout });
+  output.on("line", (line) => {
+    if (line.startsWith("letta-cursor:"))
+      event = JSON.parse(line.slice("letta-cursor:".length));
+  });
+  running.process.stderr.on("data", (chunk) => {
+    stderr = (stderr + chunk).slice(-2000);
+  });
+  running.process.on("error", (error) => {
+    stderr = error.message;
+  });
+  running.process.stdin.on("error", () => {});
+  running.process.stdin.end(`${JSON.stringify({ type: "models" })}\n`);
+  try {
+    await running.completion;
+  } finally {
+    clearTimeout(timer);
+    output.close();
+  }
+  if (event?.type === "models") {
+    if (!Array.isArray(event.models))
+      throw new Error("Cursor did not return a model catalog");
+    return event.models;
+  }
+  throw new Error(
+    controller.signal.aborted
+      ? "Cursor model discovery timed out"
+      : event?.type === "error"
+        ? event.error
+        : `Cursor exited without a model catalog: ${stderr}`,
+  );
 }
 
 export async function closeCursorSessions(): Promise<void> {

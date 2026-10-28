@@ -7,7 +7,9 @@ import { createInterface } from "node:readline";
 import {
   Agent,
   type AgentOptions,
+  Cursor,
   JsonlLocalAgentStore,
+  type ModelListItem,
   type Run,
   type RunResult,
 } from "@cursor/sdk";
@@ -28,6 +30,7 @@ export type CursorWorkerEvent =
   | { type: "tool"; id: string; name: string; args: unknown }
   | { type: "steer"; id: number; delivered: boolean; error?: string }
   | { type: "result"; result: RunResult }
+  | { type: "models"; models: ModelListItem[] }
   | { type: "error"; error: string };
 
 function emit(event: CursorWorkerEvent): void {
@@ -54,7 +57,7 @@ async function start(command: CursorWorkerStart): Promise<void> {
       : { cwd: command.cwd, model: command.model, reminder: command.reminder };
   if (!config.model)
     throw new Error(
-      "Cursor requires an explicit model on the first Agent call; use a model ID from Cursor's catalog.",
+      "Cursor requires an explicit model on the first Agent call; pick an ID from `letta model list --worker cursor`.",
     );
   if (!command.resume) {
     await writeFile(configPath, JSON.stringify(config), {
@@ -113,10 +116,17 @@ async function start(command: CursorWorkerStart): Promise<void> {
 input.on("line", (line) => {
   const command = JSON.parse(line) as
     | CursorWorkerStart
+    | { type: "models" }
     | { type: "steer"; id: number; prompt: string };
-  if (command.type === "start" && !started) {
+  if ((command.type === "start" || command.type === "models") && !started) {
     started = true;
-    void start(command)
+    void (
+      command.type === "models"
+        ? Cursor.models
+            .list({ apiKey: process.env.CURSOR_API_KEY })
+            .then((models) => emit({ type: "models", models }))
+        : start(command)
+    )
       .catch(async (error: unknown) => {
         await cancel().catch(() => undefined);
         emit({

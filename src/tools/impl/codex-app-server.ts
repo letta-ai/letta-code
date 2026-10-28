@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
+import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
@@ -97,6 +98,62 @@ export interface CodexAppServerDependencies {
 const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
+
+/** Read the native catalog without creating a thread or starting a turn. */
+export async function listCodexModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  const controller = new AbortController();
+  const running = spawnManagedWorkloadProcess(
+    "codex",
+    ["app-server", "--stdio"],
+    {
+      cwd,
+      env,
+      signal: controller.signal,
+    },
+  );
+  running.process.stdin.on("error", () => {});
+  const transport: CodexAppServerTransport = {
+    stdin: running.process.stdin,
+    stdout: running.process.stdout,
+    stderr: running.process.stderr,
+    kill: () => controller.abort(),
+    exited: running.completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
+    })),
+  };
+  const client = new CodexAppServerClient(
+    transport,
+    () => {},
+    () => {},
+  );
+  const timer = setTimeout(() => client.dispose(), 30_000);
+  try {
+    await client.initialize();
+    const models: unknown[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.request("model/list", { cursor, limit: 100 });
+      if (!Array.isArray(page.data))
+        throw new Error("Codex did not return a model catalog");
+      models.push(...page.data);
+      cursor =
+        typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+      if (cursor && cursors.has(cursor))
+        throw new Error("Codex repeated a model catalog cursor");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  } finally {
+    clearTimeout(timer);
+    client.dispose();
+    await running.completion;
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
