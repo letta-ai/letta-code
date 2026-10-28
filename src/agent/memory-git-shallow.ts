@@ -15,6 +15,9 @@ import { debugLog, debugWarn } from "@/utils/debug";
  */
 export const MEMORY_CLONE_DEPTH_ENV = "LETTA_MEMORY_CLONE_DEPTH";
 
+// Git parses --depth through an int-sized option on supported platforms.
+const MAX_GIT_CLONE_DEPTH = 2_147_483_647;
+
 /** Run git in a directory. Injected so this module stays off memory-git's cycle. */
 export type MemoryGitRunner = (
   cwd: string,
@@ -33,7 +36,11 @@ export function resolveMemoryCloneDepth(
   const raw = env[MEMORY_CLONE_DEPTH_ENV]?.trim();
   if (!raw) return undefined;
   const depth = Number(raw);
-  if (!Number.isSafeInteger(depth) || depth <= 0) {
+  if (
+    !Number.isSafeInteger(depth) ||
+    depth <= 0 ||
+    depth > MAX_GIT_CLONE_DEPTH
+  ) {
     debugWarn(
       "memfs-git",
       `Ignoring invalid ${MEMORY_CLONE_DEPTH_ENV}=${raw}; cloning full history`,

@@ -86,10 +86,24 @@ describe("resolveMemoryCloneDepth", () => {
     expect(resolveMemoryCloneDepth({ [MEMORY_CLONE_DEPTH_ENV]: " 5 " })).toBe(
       5,
     );
+    expect(
+      resolveMemoryCloneDepth({
+        [MEMORY_CLONE_DEPTH_ENV]: "2147483647",
+      }),
+    ).toBe(2_147_483_647);
   });
 
   test("falls back to a full clone when unset or malformed", () => {
-    for (const value of [undefined, "", "0", "-1", "1.5", "deep"]) {
+    for (const value of [
+      undefined,
+      "",
+      "0",
+      "-1",
+      "1.5",
+      "deep",
+      "2147483648",
+      String(Number.MAX_SAFE_INTEGER),
+    ]) {
       expect(
         resolveMemoryCloneDepth(
           value === undefined ? {} : { [MEMORY_CLONE_DEPTH_ENV]: value },
