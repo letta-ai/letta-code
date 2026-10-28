@@ -96,11 +96,13 @@ payload as a user message.
   unreadable receipt means deletion was accepted but remains unconfirmed; list
   webhooks before treating the capability URL as removed or retrying.
 - Normal update output additionally requires the returned webhook ID and
-  `enabled` state to match the requested operation; normal rotate output
-  requires the returned webhook ID to match. Canonical but contradictory 2xx
+  `enabled` state (or `target_device_id` for `update --computer`) to match the
+  requested operation; normal rotate output requires the returned webhook ID
+  to match. Canonical but contradictory 2xx
   records receive the same accepted/reconcile envelope and are never printed as
   ordinary success.
-- Normal create output also requires returned name and enabled state to match.
+- Normal create output also requires returned name, enabled state, and
+  `target_device_id` to match.
   An explicitly supplied preprompt must round-trip exactly; when preprompt is
   omitted, the server-owned default is accepted only as a nonblank string, while
   missing, null, empty, whitespace-only, and non-string values are contradictory.
@@ -206,6 +208,24 @@ printf '%s' "$WEBHOOK_SECURITY_KEY" | \
 The caller sends `Authorization: Basic <base64("webhook:<security-key>")>`.
 Do not print that header or the key. The helper derives it internally for test
 requests when the same key is piped through stdin.
+
+### Run webhook turns on a connected computer
+
+By default, webhook-triggered conversations run in the agent's Cloud sandbox.
+To run them on a connected computer instead, get its device ID from
+`letta computers list` and pass it with `--computer` on `create` or `update`:
+
+```bash
+node <SKILL_DIR>/scripts/manage-agent-webhooks.mjs update \
+  --webhook-id webhook-agent-... \
+  --computer <deviceId>
+```
+
+`list` shows the target as `target_device_id` (`null` means Cloud). If the
+computer is offline when a request arrives, that delivery fails; it does not
+fall back to Cloud. An unknown device ID returns `404 targetDeviceNotFound`.
+Pass `--computer cloud` to `update` to clear the target and go back to the
+Cloud sandbox.
 
 ### Test acceptance
 

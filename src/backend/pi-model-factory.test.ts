@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -44,6 +44,37 @@ async function withEnv<T>(
 describe("pi model factory", () => {
   afterEach(() => {
     clearRegisteredPiProviders();
+  });
+
+  test("rejects a legacy stored key without leaking it", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "pi-invalid-key-"));
+    const badKey = "secret\r\nnotification";
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "openai",
+        providerName: "openai",
+        apiKey: "valid-key",
+      });
+      const authPath = join(storageDir, "providers", "auth.json");
+      const file = JSON.parse(await readFile(authPath, "utf8"));
+      file.providers.openai.auth.key = badKey;
+      await writeFile(authPath, JSON.stringify(file));
+      const result = resolvePiModelForAgent(
+        "openai/gpt-4o",
+        {},
+        { localProviderAuthStorageDir: storageDir },
+      );
+      await expect(result).rejects.toThrow(
+        "API key for openai is not a valid header value. Reconnect this provider with /connect.",
+      );
+      await result.catch((error: Error) => {
+        expect(error.message).not.toContain(badKey);
+        expect(error.message).not.toContain("secret");
+      });
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 
   test("defaults always-on zAI GLM models to a valid thinking level", () => {

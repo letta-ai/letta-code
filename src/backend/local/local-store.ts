@@ -108,7 +108,6 @@ import {
   overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
   readJsonFile,
-  readJsonlFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
   repairSyntheticConversationTimestamps,
@@ -124,6 +123,7 @@ import {
   validateUnreadTranscriptHead,
   writeLocalTranscriptManifest,
 } from "./local-transcript";
+import { readLocalTranscriptRowsForHistory } from "./local-transcript-history";
 import type {
   LocalAgentRecord,
   StoredConversation,
@@ -2136,12 +2136,12 @@ export class LocalStore {
     const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) return undefined;
 
-    const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
     const conversation = this.conversations.get(key);
+    const inContextIds = conversation?.in_context_message_ids ?? [];
     const transcript = localTranscriptRowsResult(
-      rawRows,
+      readLocalTranscriptRowsForHistory(metadata.messagesPath, inContextIds),
       metadata.messageFormat,
-      conversation?.in_context_message_ids ?? [],
+      inContextIds,
     );
     assertNoLegacyUiMessageRows(
       transcript.messages,

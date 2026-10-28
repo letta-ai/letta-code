@@ -23,7 +23,7 @@ export interface RunBackgroundMemoryTaskParams {
   memoryDir: string;
   assignment: string;
   /** Set for a harness-launched Git or validation repair: its attempt token. */
-  repairToken?: string;
+  repairToken: string;
   signal: AbortSignal;
   subagentId: string;
   outputFile: string;
@@ -33,7 +33,7 @@ export interface RunBackgroundMemoryTaskParams {
   ) => string;
   /**
    * Spawn the worker with the handoff prompt, optional transcript snapshot,
-   * and the memory scope of the private worktree it must edit.
+   * and the memory scope of the checkout it must repair.
    */
   execute: (
     assignment: string,
@@ -84,7 +84,7 @@ export function runBackgroundMemoryTask(
           ...scope,
           memoryDir: workerDir,
           assignment: params.assignment,
-          repairOnly: params.repairToken !== undefined,
+          repairOnly: true,
           signal: params.signal,
         },
         async (handoff) => {
@@ -162,7 +162,7 @@ export async function ensureMemoryRepair(
   } catch (error) {
     // Capacity or checkout errors must not become unhandled rejections, and
     // an attempt that never launched must not block the next turn's retry.
-    debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
+    debugWarn("memory", `Could not launch repair: ${String(error)}`);
     if (claim?.status === "claimed") {
       await clearMemoryConflictRepair(params.result.memoryDir, claim.token);
     }
