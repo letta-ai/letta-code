@@ -107,6 +107,11 @@
       "reason": "Renders the reasoning picker while replacing the shared runtime model catalog; shared batches can retain prior catalog or Ink state."
     },
     {
+      "path": "src/cli/app/InkStaticRetention.test.tsx",
+      "timeoutMs": 15000,
+      "reason": "Renders multi-megabyte static transcripts that leave the Bun process near 2 GB RSS and garbage-collecting for seconds afterward; on macOS CI the next suite's CLI subprocesses then exceed their kill timers."
+    },
+    {
       "path": "src/cli/message-search-cache-warm.test.ts",
       "timeoutMs": 15000,
       "reason": "Uses a top-level Bun module mock for backend search."
