@@ -19,6 +19,7 @@ import {
 import {
   createBuffers,
   findLastAssistantText,
+  onChunk,
   toLines,
 } from "@/cli/helpers/accumulator";
 import { telemetry } from "@/telemetry";
@@ -771,6 +772,7 @@ async function handleIncomingMessageInner(
 
       const approvalResult = await handleApprovalStop({
         approvals,
+        onChunk: (chunk) => onChunk(buffers, chunk),
         runtime,
         socket,
         agentId,
