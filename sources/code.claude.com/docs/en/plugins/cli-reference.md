@@ -638,7 +638,7 @@ Claude Code prints the file it validated, any errors and warnings with their pat
 | Exit code | Verdict line | Meaning |
 | :- | :- | :- |
 | `0` | `Validation passed` or `Validation passed with warnings` | The manifest loads. With `--strict`, no warnings either |
-| `1` | `Validation failed` or `Validation failed (--strict treats warnings as errors)` | An error, or a warning under `--strict` |
+| `1` | `Validation failed` or `Validation failed (--strict treats warnings as errors)` | An error, or a warning under `--strict`. [Advice](#advice-on-the-readme) doesn't count, with or without `--strict` |
 | `2` | `Unexpected error during validation: <reason>` | The validator itself failed, such as on an unreadable path |
 
 With `--json`, Claude Code writes the report to stdout as one JSON object with these top-level fields:
@@ -649,8 +649,38 @@ With `--json`, Claude Code writes the report to stdout as one JSON object with t
 * `manifest`: the manifest's own result, or `null` for a run without a manifest
 * `contents`: per-file results, each naming its `file` and carrying `errors`, `warnings`, and `notes` arrays
   * `gatingHooks`: whether each [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) hook that can refuse an action, such as a `tool.call` hook, has a [`.catch` handler](https://code.claude.com/docs/en/plugins/mods/events#handle-a-hook-that-fails). Each item gives `module`, `pattern`, `hook`, and `hasCatch`. Requires Claude Code v2.1.290 or later
+* `advice`: the [advice](#advice-on-the-readme) of the run, each entry naming the README as `file` and carrying a `message` and the `installLine` to paste. Empty when there is none. Requires Claude Code v2.1.295 or later
 
 On exit `2`, the command writes nothing to stdout. The error message goes to stderr.
+
+#### Advice on the README
+
+An `Advice` block in the output of `claude plugin validate` means a plugin's README has no line that installs the plugin from a marketplace, and it gives you a line to add. Advice isn't an error or a warning. It doesn't change the verdict line or the exit code, with or without `--strict`. It requires Claude Code v2.1.295 or later.
+
+For example, validating the `acme-tools` marketplace's directory prints this advice for its `deploy-helper` plugin:
+
+```text theme={null}
+Validating marketplace manifest: /path/to/acme-tools/.claude-plugin/marketplace.json
+
+ℹ Advice (does not change the verdict):
+
+  ❯ /path/to/acme-tools/plugins/deploy-helper/README.md: This README has no line that installs "deploy-helper" from a marketplace. Add the install line, which works in one step on Claude Code 2.1.275 or later.
+      /plugin install deploy-helper --marketplace acme/tools
+
+✔ Validation passed
+```
+
+To clear the advice, paste the suggested line into the README it names, then run `claude plugin validate` again in your shell. The `Advice` block is gone.
+
+If the suggested line holds the placeholder `<owner>/<repo>`, pasting it unchanged doesn't clear the advice. Get the real source first:
+
+* **You validated the plugin's own directory**: when the marketplace lists the plugin from a directory inside its own, validate that directory instead. When it lists the plugin from somewhere else, such as a GitHub repository, fill in `<owner>/<repo>` yourself
+* **You validated the marketplace's directory**: Claude Code fills in the source from the `origin` remote of the `.git` directory at the top of that directory. When it can't use that remote, such as when there is none, replace `<owner>/<repo>` with your marketplace's source yourself
+
+An install line you already wrote counts when `plugin install`, or its short form `plugin i`, is followed on the same line by either of these. The `/plugin` and `claude plugin` spellings both count:
+
+* `<plugin>@<marketplace>`, such as `/plugin install deploy-helper@acme-tools`
+* The plugin's name and `--marketplace <source>`, such as `/plugin install deploy-helper --marketplace acme/tools`
 
 ## claude plugin marketplace commands
 
