@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildMemoryCloneArgs,
-  hasMergeBaseWithUpstreamAfterDeepening,
+  getMemoryMergeBaseStatusAfterDeepening,
   isShallowMemoryRepo,
   MEMORY_CLONE_DEPTH_ENV,
   resolveMemoryCloneDepth,
@@ -180,7 +180,7 @@ describe("git operations on a shallow memory checkout", () => {
   });
 });
 
-describe("hasMergeBaseWithUpstreamAfterDeepening", () => {
+describe("getMemoryMergeBaseStatusAfterDeepening", () => {
   test("reports the merge base a shallow checkout can already see", async () => {
     const fixture = makeMemoryRemote();
     const dir = cloneMemory(fixture, "slack-v2", SLACK_V2_ENV);
@@ -189,8 +189,8 @@ describe("hasMergeBaseWithUpstreamAfterDeepening", () => {
     git(fixture.seed, ["push", "origin", "main"]);
     git(dir, ["fetch", "origin", "main"]);
 
-    expect(await hasMergeBaseWithUpstreamAfterDeepening(dir, runGit)).toBe(
-      true,
+    expect(await getMemoryMergeBaseStatusAfterDeepening(dir, runGit)).toBe(
+      "connected",
     );
     // Nothing was missing, so the checkout stays shallow.
     expect(await isShallowMemoryRepo(dir, runGit)).toBe(true);
@@ -207,8 +207,8 @@ describe("hasMergeBaseWithUpstreamAfterDeepening", () => {
     git(fixture.seed, ["push", "--force", "origin", "main"]);
     git(dir, ["fetch", "origin", "main"]);
 
-    expect(await hasMergeBaseWithUpstreamAfterDeepening(dir, runGit)).toBe(
-      true,
+    expect(await getMemoryMergeBaseStatusAfterDeepening(dir, runGit)).toBe(
+      "connected",
     );
     expect(await isShallowMemoryRepo(dir, runGit)).toBe(false);
     // Having recovered the history, the diverged pull rebases instead of
@@ -219,6 +219,69 @@ describe("hasMergeBaseWithUpstreamAfterDeepening", () => {
     );
   });
 
+  test("keeps a failed unshallow inconclusive instead of authorizing reset", async () => {
+    const calls: string[] = [];
+    const status = await getMemoryMergeBaseStatusAfterDeepening(
+      "/unused",
+      async (_cwd, args) => {
+        calls.push(args.join(" "));
+        if (args[0] === "merge-base") {
+          throw Object.assign(new Error("no merge base"), { code: 1 });
+        }
+        if (args[0] === "rev-parse") {
+          return { stdout: "true", stderr: "" };
+        }
+        throw new Error("fetch timed out");
+      },
+    );
+
+    expect(status).toBe("indeterminate");
+    expect(calls).toEqual([
+      "merge-base HEAD @{u}",
+      "rev-parse --is-shallow-repository",
+      "fetch --unshallow origin",
+      "rev-parse --is-shallow-repository",
+    ]);
+  });
+
+  test("handles another pull winning the unshallow race", async () => {
+    let mergeBaseChecks = 0;
+    let shallowChecks = 0;
+    const status = await getMemoryMergeBaseStatusAfterDeepening(
+      "/unused",
+      async (_cwd, args) => {
+        if (args[0] === "merge-base") {
+          mergeBaseChecks += 1;
+          if (mergeBaseChecks === 1) {
+            throw Object.assign(new Error("no merge base"), { code: 1 });
+          }
+          return { stdout: "base\n", stderr: "" };
+        }
+        if (args[0] === "rev-parse") {
+          shallowChecks += 1;
+          return {
+            stdout: shallowChecks === 1 ? "true" : "false",
+            stderr: "",
+          };
+        }
+        throw new Error("repository is already complete");
+      },
+    );
+
+    expect(status).toBe("connected");
+  });
+
+  test("keeps merge-base execution failures inconclusive", async () => {
+    const status = await getMemoryMergeBaseStatusAfterDeepening(
+      "/unused",
+      async () => {
+        throw Object.assign(new Error("upstream unavailable"), { code: 128 });
+      },
+    );
+
+    expect(status).toBe("indeterminate");
+  });
+
   test("reports no merge base for genuinely unrelated full clones", async () => {
     const fixture = makeMemoryRemote();
     const dir = cloneMemory(fixture, "default", DEFAULT_ENV);
@@ -227,8 +290,8 @@ describe("hasMergeBaseWithUpstreamAfterDeepening", () => {
     git(dir, ["branch", "-M", "main"]);
     git(dir, ["branch", "--set-upstream-to", "origin/main", "main"]);
 
-    expect(await hasMergeBaseWithUpstreamAfterDeepening(dir, runGit)).toBe(
-      false,
+    expect(await getMemoryMergeBaseStatusAfterDeepening(dir, runGit)).toBe(
+      "unrelated",
     );
   });
 });

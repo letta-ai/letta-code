@@ -62,7 +62,7 @@ export function buildMemoryCloneArgs(
 export async function isShallowMemoryRepo(
   memoryDir: string,
   runGit: MemoryGitRunner,
-): Promise<boolean> {
+): Promise<boolean | undefined> {
   try {
     const { stdout } = await runGit(memoryDir, [
       "rev-parse",
@@ -70,19 +70,31 @@ export async function isShallowMemoryRepo(
     ]);
     return stdout.trim() === "true";
   } catch {
-    return false;
+    return undefined;
   }
 }
 
-async function hasMergeBaseWithUpstream(
+export type MemoryMergeBaseStatus = "connected" | "unrelated" | "indeterminate";
+
+function gitExitCode(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const details = error as Error & { code?: unknown; status?: unknown };
+  if (typeof details.code === "number") return details.code;
+  if (typeof details.status === "number") return details.status;
+  return undefined;
+}
+
+async function getMergeBaseStatus(
   memoryDir: string,
   runGit: MemoryGitRunner,
-): Promise<boolean> {
+): Promise<MemoryMergeBaseStatus> {
   try {
     await runGit(memoryDir, ["merge-base", "HEAD", "@{u}"]);
-    return true;
-  } catch {
-    return false;
+    return "connected";
+  } catch (error) {
+    // `git merge-base` exits 1 only when no merge base exists. Other failures
+    // (missing upstream, I/O, timeout) must not authorize destructive recovery.
+    return gitExitCode(error) === 1 ? "unrelated" : "indeterminate";
   }
 }
 
@@ -97,12 +109,16 @@ async function hasMergeBaseWithUpstream(
  * the rest of the history once before concluding the histories are unrelated;
  * a full clone is unaffected because it is never shallow.
  */
-export async function hasMergeBaseWithUpstreamAfterDeepening(
+export async function getMemoryMergeBaseStatusAfterDeepening(
   memoryDir: string,
   runGit: MemoryGitRunner,
-): Promise<boolean> {
-  if (await hasMergeBaseWithUpstream(memoryDir, runGit)) return true;
-  if (!(await isShallowMemoryRepo(memoryDir, runGit))) return false;
+): Promise<MemoryMergeBaseStatus> {
+  const initialStatus = await getMergeBaseStatus(memoryDir, runGit);
+  if (initialStatus !== "unrelated") return initialStatus;
+
+  const initiallyShallow = await isShallowMemoryRepo(memoryDir, runGit);
+  if (initiallyShallow === undefined) return "indeterminate";
+  if (!initiallyShallow) return "unrelated";
 
   debugLog(
     "memfs-git",
@@ -111,11 +127,16 @@ export async function hasMergeBaseWithUpstreamAfterDeepening(
   try {
     await runGit(memoryDir, ["fetch", "--unshallow", "origin"]);
   } catch (error) {
-    debugWarn(
-      "memfs-git",
-      `Failed to unshallow memory repo: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return false;
+    // Another pull can win the race and make this checkout complete before our
+    // fetch runs. Re-check before treating the fetch failure as inconclusive.
+    const stillShallow = await isShallowMemoryRepo(memoryDir, runGit);
+    if (stillShallow !== false) {
+      debugWarn(
+        "memfs-git",
+        `Failed to unshallow memory repo: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return "indeterminate";
+    }
   }
-  return hasMergeBaseWithUpstream(memoryDir, runGit);
+  return getMergeBaseStatus(memoryDir, runGit);
 }

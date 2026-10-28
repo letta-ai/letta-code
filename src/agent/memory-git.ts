@@ -19,7 +19,7 @@ import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
 import {
   buildMemoryCloneArgs,
-  hasMergeBaseWithUpstreamAfterDeepening,
+  getMemoryMergeBaseStatusAfterDeepening as getMergeBaseStatus,
 } from "@/agent/memory-git-shallow";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
@@ -1612,7 +1612,9 @@ export async function pullMemory(
   } catch {
     const runMemoryGit = (cwd: string, gitArgs: string[]) =>
       runGitWithRetry(cwd, gitArgs, token, { operation: gitArgs[0] });
-    if (!(await hasMergeBaseWithUpstreamAfterDeepening(dir, runMemoryGit))) {
+    const mergeBaseStatus = await getMergeBaseStatus(dir, runMemoryGit);
+    const canReset = mergeBaseStatus !== "indeterminate";
+    if (mergeBaseStatus === "unrelated") {
       try {
         const summary = await recoverMemoryPullByResettingToRemote(dir, token);
         return {
@@ -1628,7 +1630,6 @@ export async function pullMemory(
         );
       }
     }
-
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
@@ -1640,7 +1641,7 @@ export async function pullMemory(
       );
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
-      if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
+      if (canReset && isRecoverableMemoryPullHistoryError(rebaseErr)) {
         try {
           const summary = await recoverMemoryPullByResettingToRemote(
             dir,
@@ -1661,7 +1662,6 @@ export async function pullMemory(
           );
         }
       }
-
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
       const failureSummary = `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`;
