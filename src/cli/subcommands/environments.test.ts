@@ -88,7 +88,7 @@ test("current resolves its known device through the point endpoint", async () =>
   }
 });
 
-test("current reconciles an offline point row with the complete list", async () => {
+test("current reconciles an offline point row with online rows for its device", async () => {
   const log = spyOn(console, "log").mockImplementation(() => {});
   const restoreDeviceId = stubCurrentDeviceId();
   const calls: Parameters<typeof listEnvironments>[0][] = [];
@@ -114,7 +114,13 @@ test("current reconciles an offline point row with the complete list", async () 
         },
       }),
     ).toBe(0);
-    expect(calls).toEqual([{ limit: 100, onlineOnly: true }]);
+    expect(calls).toEqual([
+      {
+        limit: 100,
+        onlineOnly: true,
+        deviceId: "test-current-device",
+      },
+    ]);
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
       id: "current",
       isCurrent: true,

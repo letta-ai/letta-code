@@ -69,7 +69,7 @@ describe("Computer environment resolution", () => {
     expect(listCalls).toBe(0);
   });
 
-  test("falls back to the complete list when the point row is not online yet", async () => {
+  test("falls back to the device's online rows when the point row is stale", async () => {
     const stale = environment({
       connectionId: null,
       lastHeartbeat: null,
@@ -88,7 +88,9 @@ describe("Computer environment resolution", () => {
         },
       }),
     ).resolves.toEqual({ connectionId: "conn-online", environment: online });
-    expect(calls).toEqual([{ limit: 100, onlineOnly: true }]);
+    expect(calls).toEqual([
+      { limit: 100, onlineOnly: true, deviceId: "device-1" },
+    ]);
   });
 
   test("resolves an exact name after one complete bounded page", async () => {

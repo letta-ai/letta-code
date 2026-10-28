@@ -41,7 +41,7 @@ function isUnsupportedSelectorError(error: unknown): boolean {
 
 async function listCompleteEnvironmentCollection(
   list: typeof listEnvironments,
-  options: Pick<ListEnvironmentsOptions, "onlineOnly"> = {},
+  options: Pick<ListEnvironmentsOptions, "deviceId" | "onlineOnly"> = {},
 ): Promise<EnvironmentConnection[]> {
   const connections: EnvironmentConnection[] = [];
   let after: string | undefined;
@@ -158,11 +158,11 @@ export async function resolveEnvironmentConnectionId(
   // A generic selector can be a connection ID, environment ID, device ID, or
   // name. Without a point identity, read the complete actor-visible collection
   // before resolving it. When the point row exists but is stale, only online
-  // rows can supersede it; excluding historical offline rows keeps startup
-  // reconciliation bounded for actors with a large environment history.
+  // rows for that device can supersede it; excluding unrelated devices and
+  // historical offline rows keeps startup reconciliation bounded.
   const connections = await listCompleteEnvironmentCollection(
     list,
-    pointMatch ? { onlineOnly: true } : {},
+    pointMatch ? { onlineOnly: true, deviceId: pointMatch.deviceId } : {},
   );
   const explicitMatches = connections.filter(
     (environment) =>
