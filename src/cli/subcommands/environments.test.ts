@@ -22,6 +22,23 @@ function environment(id: string, online = true): EnvironmentConnection {
   };
 }
 
+function stubCurrentDeviceId(deviceId = "test-current-device"): () => void {
+  const original = process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+  process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = deviceId;
+  const persistedDeviceId = spyOn(
+    settingsManager,
+    "getOrCreateDeviceId",
+  ).mockReturnValue(deviceId);
+  return () => {
+    persistedDeviceId.mockRestore();
+    if (original === undefined) {
+      delete process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID;
+    } else {
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = original;
+    }
+  };
+}
+
 async function runList(args: string[], list: typeof listEnvironments) {
   const log = spyOn(console, "log").mockImplementation(() => {});
   const deviceId = spyOn(
@@ -44,10 +61,7 @@ async function runList(args: string[], list: typeof listEnvironments) {
 
 test("current resolves its known device through the point endpoint", async () => {
   const log = spyOn(console, "log").mockImplementation(() => {});
-  const deviceId = spyOn(
-    settingsManager,
-    "getOrCreateDeviceId",
-  ).mockReturnValue("test-current-device");
+  const restoreDeviceId = stubCurrentDeviceId();
   let listCalls = 0;
   try {
     expect(
@@ -69,17 +83,51 @@ test("current resolves its known device through the point endpoint", async () =>
       isCurrent: true,
     });
   } finally {
-    deviceId.mockRestore();
+    restoreDeviceId();
+    log.mockRestore();
+  }
+});
+
+test("current reconciles an offline point row with the complete list", async () => {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const restoreDeviceId = stubCurrentDeviceId();
+  const calls: Parameters<typeof listEnvironments>[0][] = [];
+  const stale = {
+    ...environment("current", false),
+    deviceId: "test-current-device",
+  };
+  const online = {
+    ...environment("current"),
+    deviceId: "test-current-device",
+  };
+  try {
+    expect(
+      await runEnvironmentsSubcommand(["current"], {
+        initializeSettings: async () => {},
+        getEnvironmentConnection: async () => stale,
+        listEnvironments: async (options = {}) => {
+          calls.push(options);
+          return {
+            connections: [online],
+            hasNextPage: false,
+          };
+        },
+      }),
+    ).toBe(0);
+    expect(calls).toEqual([{ limit: 100 }]);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({
+      id: "current",
+      isCurrent: true,
+    });
+  } finally {
+    restoreDeviceId();
     log.mockRestore();
   }
 });
 
 test("current preserves the friendly not-found result from a point lookup", async () => {
   const error = spyOn(console, "error").mockImplementation(() => {});
-  const deviceId = spyOn(
-    settingsManager,
-    "getOrCreateDeviceId",
-  ).mockReturnValue("test-current-device");
+  const restoreDeviceId = stubCurrentDeviceId();
   try {
     expect(
       await runEnvironmentsSubcommand(["current"], {
@@ -87,16 +135,17 @@ test("current preserves the friendly not-found result from a point lookup", asyn
         getEnvironmentConnection: async () => {
           throw new ApiRequestError("not found", 404, "not found");
         },
-        listEnvironments: async () => {
-          throw new Error("current must not list environments");
-        },
+        listEnvironments: async () => ({
+          connections: [],
+          hasNextPage: false,
+        }),
       }),
     ).toBe(1);
     expect(error).toHaveBeenCalledWith(
       "No online computer found for this device. Start one with `letta server` and try again.",
     );
   } finally {
-    deviceId.mockRestore();
+    restoreDeviceId();
     error.mockRestore();
   }
 });

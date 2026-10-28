@@ -5,7 +5,7 @@ import {
   getEnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
-import { ApiRequestError } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version.ts";
 
@@ -179,10 +179,19 @@ export async function runEnvironmentsSubcommand(
     const get = deps.getEnvironmentConnection ?? getEnvironmentConnection;
     let environment: EnvironmentConnection;
     try {
-      environment = await get(deviceId);
+      ({ environment } = await resolveEnvironmentConnectionId(deviceId, {
+        get,
+        list,
+      }));
     } catch (error) {
-      if (!(error instanceof ApiRequestError) || error.status !== 404)
+      const message = error instanceof Error ? error.message : "";
+      if (
+        !message.startsWith(`Computer "${deviceId}" not found`) &&
+        !message.startsWith(`Computer "${deviceId}" is offline`) &&
+        !message.startsWith(`Computer "${deviceId}" has no active connection`)
+      ) {
         throw error;
+      }
       console.error(
         "No online computer found for this device. Start one with `letta server` and try again.",
       );
