@@ -1,9 +1,11 @@
+import { randomUUID } from "node:crypto";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getBackend } from "@/backend";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
 } from "@/runtime-context";
+import { serializeClientTools } from "@/tools/client-tool-serialization";
 import type {
   WorkflowToolCaller,
   WorkflowToolInfo,
@@ -22,9 +24,7 @@ export interface ScriptToolScope {
 }
 
 const SCRIPT_EXCLUDED_TOOLS = new Set([
-  "Agent",
   "AskUserQuestion",
-  "SendAgentMessage",
   "Workflow",
   "CodeMode",
 ]);
@@ -73,18 +73,21 @@ export async function createScriptToolScope(
     ? manager.getExecutionContextPermissionModeState(toolContextId)
     : undefined;
   const permissionCwd = getCurrentWorkingDirectory();
-  const builtinSchemas = [
-    ...(toolContextId
-      ? (manager
-          .getExecutionContextById(toolContextId)
-          ?.toolRegistry.values() ?? [])
-      : []),
-  ]
-    .map((tool) => ({
-      ...tool.schema,
-      name: manager.getServerToolName(tool.schema.name),
-    }))
-    .filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
+  const context = toolContextId
+    ? manager.getExecutionContextById(toolContextId)
+    : undefined;
+  // Use the same captured, filtered definitions sent with this turn, including
+  // controller-owned tools and overrides. Never consult live registrations.
+  const builtinSchemas = (
+    context
+      ? serializeClientTools(
+          context.toolRegistry,
+          context.externalTools,
+          context.modTools,
+          manager.getServerToolName,
+        )
+      : []
+  ).filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
   const builtinToolNames = builtinSchemas.map((schema) => schema.name);
   const builtins = new Set(builtinToolNames);
   let mcpSession:
@@ -110,7 +113,7 @@ export async function createScriptToolScope(
         ...builtinSchemas.map((schema) => ({
           name: schema.name,
           description: schema.description,
-          inputSchema: schema.input_schema as Record<string, unknown>,
+          inputSchema: schema.parameters as Record<string, unknown>,
         })),
         ...mcpTools.map((tool) => ({
           name: tool.name,
@@ -121,12 +124,15 @@ export async function createScriptToolScope(
     },
     callTool: async (toolName, toolArgs) => {
       signal?.throwIfAborted();
+      const toolCallId = `script-${randomUUID()}`;
       const { decision } = await manager.checkToolPermission(
         toolName,
         toolArgs,
         permissionCwd,
         permissionModeState && { ...permissionModeState },
         parentAgentId ?? undefined,
+        toolContextId,
+        toolCallId,
       );
       if (decision !== "allow") {
         throw new Error(
@@ -137,6 +143,7 @@ export async function createScriptToolScope(
       }
       if (builtins.has(toolName)) {
         const result = await manager.executeTool(toolName, toolArgs, {
+          toolCallId,
           ...(toolContextId ? { toolContextId } : {}),
           ...(signal ? { signal } : {}),
         });
