@@ -1,6 +1,6 @@
 Run a JavaScript async function body that calls tools and returns only the results you need.
 
-Call built-in and harness-provided tools with `await tools.<name>(args)` and MCP tools with `await tools.mcp__server__tool(args)`; `listTools()` and `describeTool(name)` list tools and their schemas. Failed calls throw. `args` holds optional input, and `console.log()` output is captured. Scripts can call `tools.Agent` and `tools.SendAgentMessage` when available in this turn. Agent runs spend money on model calls; spawn agents only when the user explicitly requests subagents or a skill calls for them. Use Workflow for its `agent()` / `decide()` orchestration API.
+Call built-in and harness-provided tools with `await tools.<name>(args)` and MCP tools with `await tools.mcp__server__tool(args)`; `listTools()` and `describeTool(name)` list tools and their schemas. Failed calls throw. `args` holds optional input, and `console.log()` output is captured. Scripts can call `tools.Agent` and `tools.SendAgentMessage` when available in this turn.
 
 Returns `{ result, output }`. Like Bash, a script still running after a brief wait continues in the background and its result arrives as a task notification; `run_in_background: true` returns the task ID immediately. TaskStop aborts it.
 
