@@ -969,3 +969,5 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+- Never reference non-public code, data, or internal systems in commits, pull requests, or code comments in this repository; keep that context in internal tickets and cite only the ticket ID.
