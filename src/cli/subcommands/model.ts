@@ -160,6 +160,8 @@ export async function runModelSubcommand(argv: string[]): Promise<number> {
       if (values.worker !== undefined) {
         if (values.byok || values.hosted || values["structured-outputs"])
           throw new Error("Backend model filters cannot be used with --worker");
+        // Agent-vault worker secrets are fetched through the configured backend.
+        await settingsManager.initialize();
         const { listExternalWorkerModels } = await import(
           "@/tools/impl/external-worker-models"
         );
