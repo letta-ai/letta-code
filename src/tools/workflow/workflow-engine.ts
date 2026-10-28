@@ -315,6 +315,7 @@ async function executeScript(
     tools: toolHooks.tools,
     memory: toolHooks.memory,
     harness: toolHooks.harness,
+    swap: toolHooks.swap,
     listTools: toolHooks.listTools,
     describeTool: toolHooks.describeTool,
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),

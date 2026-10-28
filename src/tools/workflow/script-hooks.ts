@@ -1,3 +1,4 @@
+import { swap } from "@/tools/memory-handle/swap";
 /**
  * Script-facing hooks shared by the workflow engine and the Repl tool: the
  * `tools` proxy, `listTools()`, `describeTool()`, `parallel()`, and
@@ -88,6 +89,7 @@ export interface ToolHooks {
   tools: object;
   memory: object;
   harness: object;
+  swap: typeof swap;
   listTools(): Promise<Array<{ name: string; description: string }>>;
   describeTool(name: unknown): Promise<WorkflowToolInfo | undefined>;
   /** Forget cached tool metadata after the bindings change. */
@@ -228,6 +230,7 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
     tools,
     memory,
     harness,
+    swap,
     /** `[{ name, description }]` for every tool callable through `tools`. */
     async listTools() {
       return (await loadToolInfo()).map(({ name, description }) => ({
