@@ -1,0 +1,75 @@
+import { describe, expect, test } from "bun:test";
+import { isReadOnlyShellCommand } from "./read-only-shell";
+
+describe("read-only shell write and execute flags", () => {
+  test.each([
+    "sed 's/a/b/g' f",
+    "sed -n '1,20p' f",
+    "sed -ne '1p' f",
+    "sort -rn -k2",
+    "tree -L 2",
+    "xxd -l 64 f",
+    "yq -o json . f",
+    "less -N f",
+    "git tag",
+    "git tag -l",
+    "git tag --contains HEAD",
+    "git remote",
+    "git remote -v",
+    "git remote show origin",
+    "git remote get-url origin",
+  ])("allows read-only form: %s", (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(true);
+  });
+
+  test.each([
+    "cat <(cmd)",
+    "diff <(a) <(b)",
+    "cat >(cmd)",
+    "sed -i 's/a/b/' f",
+    "sed --in-place=.bak 's/a/b/' f",
+    "sed --in-p=.bak 's/a/b/' f",
+    "sed -ni 's/a/b/' f",
+    "sed -Ei 's/a/b/' f",
+    "sed -f script.sed f",
+    "sed --file=script.sed f",
+    "sed --fi=script.sed f",
+    "sed 'e whoami' f",
+    "sed '1w output' f",
+    "sed '1W output' f",
+    "sed 's/a/b/e' f",
+    "sed 's/a/b/w output' f",
+    "sed 's/a/b/W output' f",
+    "sort -o output.txt input.txt",
+    "sort -rooutput input.txt",
+    "sort --output=output.txt input.txt",
+    "sort --out=output.txt input.txt",
+    "sort --compress-program=gzip input.txt",
+    "sort --compress=gzip input.txt",
+    "tree -o output.txt",
+    "tree -R",
+    "tree -Lo output.txt",
+    "yq -i . f",
+    "yq --inplace . f",
+    "yq --inp . f",
+    "xxd input.bin output.hex",
+    "less -o log.txt f",
+    "less -O log.txt f",
+    "less --log-file=log.txt f",
+    "less --log=log.txt f",
+    "less +G f",
+    "git tag v1.0",
+    "git tag -d v1.0",
+    "git tag -a v1.0",
+    "git tag -s v1.0",
+    "git tag -f v1.0",
+    "git tag -m message v1.0",
+    "git tag -F message.txt v1.0",
+    "git tag -u key v1.0",
+    "git remote add origin url",
+    "git remote remove origin",
+    "git remote set-url origin url",
+  ])("requires approval for write or execute form: %s", (command) => {
+    expect(isReadOnlyShellCommand(command)).toBe(false);
+  });
+});

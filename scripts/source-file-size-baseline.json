@@ -30,7 +30,7 @@
   "src/mods/package-installer.ts": 1201,
   "src/mods/package-registry.ts": 1033,
   "src/permissions/read-only-shell.test.ts": 1253,
-  "src/permissions/read-only-shell.ts": 1969,
+  "src/permissions/read-only-shell.ts": 1899,
   "src/settings-manager.test.ts": 1635,
   "src/settings-manager.ts": 2092,
   "src/tools/manager.ts": 2609,

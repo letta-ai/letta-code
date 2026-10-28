@@ -3,6 +3,14 @@ import { resolve } from "node:path";
 import { getAllowedMemoryPrefixes } from "./agent-memory-prefixes";
 
 import { isPathWithinRoots, normalizeMemoryPath } from "./memory-paths";
+import {
+  hasUnsafeSafeListCommandFlags,
+  hasUnsafeSedArgs,
+  hasUnsafeSortArgs,
+  isReadOnlyGitBranchArgs,
+  isReadOnlyGitRemoteArgs,
+  isReadOnlyGitTagArgs,
+} from "./read-only-command-flags";
 import { isReadOnlyLettaCommand } from "./read-only-letta";
 import {
   extractDashCArgument,
@@ -390,87 +398,6 @@ function hasUnsafeGitFlags(tokens: string[]): boolean {
     }
     return false;
   });
-}
-
-function isReadOnlyGitBranchArgs(args: string[]): boolean {
-  if (args.length === 0) {
-    return true;
-  }
-
-  const readOnlyFlags = new Set([
-    "--list",
-    "-l",
-    "--show-current",
-    "-a",
-    "--all",
-    "-r",
-    "--remotes",
-    "-v",
-    "-vv",
-    "--verbose",
-  ]);
-
-  // Filter flags that narrow which branches are listed — purely read-only.
-  // Each optionally accepts a commit/object as the next positional argument.
-  const readOnlyFilterFlags = new Set([
-    "--contains",
-    "--no-contains",
-    "--merged",
-    "--no-merged",
-    "--points-at",
-  ]);
-
-  let sawReadOnlyFlag = false;
-  let sawListFlag = false;
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (!arg) {
-      continue;
-    }
-
-    if (readOnlyFlags.has(arg)) {
-      sawReadOnlyFlag = true;
-      if (arg === "--list" || arg === "-l") {
-        sawListFlag = true;
-      }
-      continue;
-    }
-
-    if (arg === "--format") {
-      if (typeof args[i + 1] !== "string") {
-        return false;
-      }
-      sawReadOnlyFlag = true;
-      i += 1;
-      continue;
-    }
-
-    if (arg.startsWith("--format=")) {
-      sawReadOnlyFlag = true;
-      continue;
-    }
-
-    // Filter flags like --contains, --merged, etc. take an optional commit arg.
-    if (readOnlyFilterFlags.has(arg)) {
-      sawReadOnlyFlag = true;
-      // Consume the optional commit/branch argument if present.
-      if (typeof args[i + 1] === "string" && !args[i + 1]?.startsWith("-")) {
-        i += 1;
-      }
-      continue;
-    }
-
-    // Pattern arguments are read-only only when listing explicitly.
-    if (sawListFlag && !arg.startsWith("-")) {
-      sawReadOnlyFlag = true;
-      continue;
-    }
-
-    return false;
-  }
-
-  return sawReadOnlyFlag;
 }
 
 function isReadOnlyGitGrepArgs(
@@ -1082,6 +1009,9 @@ function isSafeSegment(
     return false;
   }
 
+  const args = tokens.slice(1);
+  if (hasUnsafeSafeListCommandFlags(command, args)) return false;
+
   if (ALWAYS_SAFE_COMMANDS.has(command)) {
     if (command === "cd") {
       if (options.allowExternalPaths) {
@@ -1105,13 +1035,7 @@ function isSafeSegment(
   }
 
   if (command === "sed") {
-    const usesInPlace = tokens.some(
-      (token) =>
-        token === "-i" || token.startsWith("-i") || token === "--in-place",
-    );
-    if (usesInPlace) {
-      return false;
-    }
+    if (hasUnsafeSedArgs(args)) return false;
 
     const hasExternalPath =
       !options.allowExternalPaths &&
@@ -1145,6 +1069,12 @@ function isSafeSegment(
     }
     if (subcommand === "branch") {
       return isReadOnlyGitBranchArgs(tokens.slice(subcommandIndex + 1));
+    }
+    if (subcommand === "tag") {
+      return isReadOnlyGitTagArgs(tokens.slice(subcommandIndex + 1));
+    }
+    if (subcommand === "remote") {
+      return isReadOnlyGitRemoteArgs(tokens.slice(subcommandIndex + 1));
     }
     return true;
   }
@@ -1182,7 +1112,7 @@ function isSafeSegment(
     return isSafeFindInvocation(tokens);
   }
   if (command === "sort") {
-    return !/\s-o\b/.test(segment);
+    return !hasUnsafeSortArgs(tokens.slice(1));
   }
   return false;
 }
