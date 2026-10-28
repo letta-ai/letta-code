@@ -202,6 +202,11 @@ test.each([
           loop_status: loop(input.clientMessageId),
         });
         wire.emit({
+          type: "update_queue",
+          runtime: scope,
+          queue: [],
+        });
+        wire.emit({
           type: "stream_delta",
           runtime: scope,
           delta: {
