@@ -23,8 +23,7 @@ import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
-import memoryAgentMd from "./builtin/memory.md";
-import memoryV2AgentMd from "./builtin/memory-v2.md";
+import memoryRepairAgentMd from "./builtin/memory-repair.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
@@ -33,7 +32,7 @@ const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   initAgentMd,
-  memoryAgentMd,
+  memoryRepairAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -42,16 +41,12 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   initAgentMd,
-  memoryAgentMd,
+  memoryRepairAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
 
-const MEMFS_V2_BUILTIN_SOURCES = [
-  initV2AgentMd,
-  memoryV2AgentMd,
-  reflectionV2AgentMd,
-];
+const MEMFS_V2_BUILTIN_SOURCES = [initV2AgentMd, reflectionV2AgentMd];
 
 // ============================================================================
 // Types
@@ -489,7 +484,12 @@ async function discoverSubagentsFromDir(
 
       try {
         const config = await parseSubagentFile(filePath, configsByName);
-        if (config && !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name)) {
+        if (
+          config &&
+          !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name) &&
+          config.name !== "memory-repair" &&
+          config.name !== "memory"
+        ) {
           // Check for duplicate names (later directories override earlier ones)
           const existingIndex = subagents.findIndex(
             (s) => s.name === config.name,
@@ -615,11 +615,13 @@ export async function getModelFacingSubagentDescriptors(
 > {
   const configs = await getAllSubagentConfigs(workingDirectory);
   return [
-    ...Object.entries(configs).map(([name, config]) => ({
-      name,
-      description: config.description,
-      recommendedModel: config.recommendedModel,
-    })),
+    ...Object.entries(configs)
+      .filter(([name]) => name !== "memory-repair" && name !== "memory")
+      .map(([name, config]) => ({
+        name,
+        description: config.description,
+        recommendedModel: config.recommendedModel,
+      })),
     ...EXTERNAL_CODING_AGENT_DESCRIPTORS,
   ];
 }

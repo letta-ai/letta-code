@@ -34,7 +34,7 @@ mock.module("@/agent/subagents", () => ({
   getAllSubagentConfigs: async () => ({
     "general-purpose": config,
     fork: { ...config, name: "fork", fork: true },
-    memory: { ...config, name: "memory" },
+    "memory-repair": { ...config, name: "memory-repair" },
   }),
   clearSubagentConfigCache: () => {},
   discoverSubagents: async () => ({ subagents: [], errors: [] }),
@@ -171,12 +171,10 @@ describe("task computer routing", () => {
       capabilities.environmentRouting = routing;
       const result = await task({
         ...launchArgs,
-        subagent_type: "memory",
+        subagent_type: "memory-repair",
         computer: " office-mac ",
       });
-      expect(result).toContain(
-        "Memory workers must run on the current machine",
-      );
+      expect(result).toContain("memory-repair is harness-only");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -250,12 +248,14 @@ describe("task computer routing", () => {
       }
     });
 
-    test("a memory worker ignores the default instead of failing", async () => {
+    test("the internal repair worker cannot be dispatched by an agent", async () => {
       setDefaultComputer("cloud");
-      const result = await task({ ...launchArgs, subagent_type: "memory" });
+      const result = await task({
+        ...launchArgs,
+        subagent_type: "memory-repair",
+      });
 
-      expect(result).not.toContain("Error:");
-      expect(result).toContain("Memory task running in background");
+      expect(result).toContain("memory-repair is harness-only");
       expect(receivedEnvironment).toBeUndefined();
     });
 

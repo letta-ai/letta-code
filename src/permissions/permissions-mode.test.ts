@@ -66,7 +66,7 @@ test("default mode - auto-approves the sandboxed memory worker", () => {
   const result = checkPermission(
     "Agent",
     {
-      subagent_type: "memory",
+      subagent_type: "memory-repair",
       prompt: "Remember that the user prefers tabs",
       description: "Update memory",
     },

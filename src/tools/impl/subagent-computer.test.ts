@@ -110,7 +110,9 @@ describe("resolveSubagentComputer", () => {
   });
 
   test("a subagent named memory ignores the default even without the profile", () => {
-    expect(resolve(undefined, implementation, "cloud", "memory")).toEqual({
+    expect(
+      resolve(undefined, implementation, "cloud", "memory-repair"),
+    ).toEqual({
       computer: undefined,
       source: "none",
     });
@@ -150,7 +152,7 @@ describe("acceptsDefaultComputer", () => {
   test.each([
     ["fork", "fork", forked],
     ["memory-subagent", "reflection", memory],
-    ["memory by name", "memory", implementation],
+    ["memory by name", "memory-repair", implementation],
   ])("rejects %s", (_label, subagentType, config) => {
     expect(acceptsDefaultComputer({ subagentType, config })).toBe(false);
   });
@@ -197,7 +199,7 @@ describe("resolveLaunchComputer", () => {
   });
 
   test("rejects an explicit computer for a memory worker", () => {
-    const result = launch("office-mac", { subagentType: "memory" });
+    const result = launch("office-mac", { subagentType: "memory-repair" });
     expect(result.error).toContain(
       "Memory workers must run on the current machine",
     );
@@ -205,7 +207,7 @@ describe("resolveLaunchComputer", () => {
 
   test("never turns the env default into a memory worker error", () => {
     expect(
-      launch(undefined, { value: "cloud", subagentType: "memory" }),
+      launch(undefined, { value: "cloud", subagentType: "memory-repair" }),
     ).toEqual({});
   });
 

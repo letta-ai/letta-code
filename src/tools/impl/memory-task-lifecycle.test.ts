@@ -12,8 +12,8 @@ afterEach(() => backgroundTasks.clear());
 test("shutdown drains memory tasks from every conversation but does not wait for unrelated agents", async () => {
   const completed: string[] = [];
   for (const [id, subagentType] of [
-    ["first", "memory"],
-    ["switched", "memory"],
+    ["first", "memory-repair"],
+    ["switched", "memory-repair"],
     ["other", "general-purpose"],
   ] as const) {
     backgroundTasks.set(id, {
@@ -25,7 +25,7 @@ test("shutdown drains memory tasks from every conversation but does not wait for
       startTime: new Date(),
       runtimeScope: { agentId: "agent-parent", conversationId: id },
       completion:
-        subagentType === "memory"
+        subagentType === "memory-repair"
           ? Bun.sleep(20).then(() => {
               completed.push(id);
             })
@@ -56,10 +56,10 @@ test.skipIf(process.platform === "win32")(
     try {
       await once(running.process.stdout, "data");
       let settled = false;
-      backgroundTasks.set("memory", {
+      backgroundTasks.set("memory-repair", {
         description: "test",
-        subagentType: "memory",
-        subagentId: "memory",
+        subagentType: "memory-repair",
+        subagentId: "memory-repair",
         status: "running",
         outputFile: "",
         startTime: new Date(),
@@ -85,10 +85,10 @@ function runningMemoryTask(
   controller: AbortController,
   completion: Promise<void>,
 ) {
-  backgroundTasks.set("memory", {
+  backgroundTasks.set("memory-repair", {
     description: "test",
-    subagentType: "memory",
-    subagentId: "memory",
+    subagentType: "memory-repair",
+    subagentId: "memory-repair",
     status: "running",
     outputFile: "",
     startTime: new Date(),

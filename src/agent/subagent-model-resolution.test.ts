@@ -554,7 +554,7 @@ describe("buildSubagentArgs", () => {
     expect(args).not.toContain("--no-skills");
   });
 
-  test.each([["reflection"], ["memory"], ["init"]])(
+  test.each([["reflection"], ["memory-repair"], ["init"]])(
     "injects --base-tools none for %s subagents",
     (type) => {
       const args = buildSubagentArgs(

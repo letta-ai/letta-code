@@ -13,6 +13,7 @@ import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
   getBuiltinSubagentNames,
+  getModelFacingSubagentDescriptors,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -69,11 +70,33 @@ describe("built-in subagents", () => {
     expect(configs.fork?.allowedTools).toBe("all");
   });
 
+  test("memory repair is internal and cannot be overridden", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "repair.md",
+      "---\nname: memory-repair\ndescription: override\n---\nOverride",
+    );
+    const configs = await getAllSubagentConfigs(tempDir);
+    expect(configs.memory).toBeUndefined();
+    expect(configs["memory-repair"]?.systemPrompt).toContain(
+      "Repair only the reported",
+    );
+    expect(configs["memory-repair"]?.skills).toEqual([
+      "syncing-memory-filesystem",
+      "maintaining-core-memory",
+      "maintaining-deferred-memory",
+    ]);
+    const descriptors = await getModelFacingSubagentDescriptors(tempDir);
+    expect(descriptors.map(({ name }) => name)).not.toContain("memory");
+    expect(descriptors.map(({ name }) => name)).not.toContain("memory-repair");
+  });
+
   test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
     expect(configs.reflection?.launchProfile).toBe("memory-subagent");
-    expect(configs.memory?.launchProfile).toBe("memory-subagent");
+    expect(configs["memory-repair"]?.launchProfile).toBe("memory-subagent");
     expect(configs.init?.launchProfile).toBe("memory-subagent");
   });
 
@@ -120,8 +143,8 @@ Custom prompt body`,
     const hiddenFileTools = ["Read", "Write", "Glob", "Grep"];
 
     expect(configs.reflection?.allowedTools).toContain("Edit");
-    expect(configs.memory?.fork).toBe(false);
-    expect(configs.memory?.allowedTools).toEqual([
+    expect(configs["memory-repair"]?.fork).toBe(false);
+    expect(configs["memory-repair"]?.allowedTools).toEqual([
       "Bash",
       "Read",
       "Edit",
@@ -142,17 +165,17 @@ Custom prompt body`,
 
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
-    expect(configs.memory?.systemPrompt).toContain(
-      "background memory subagent",
+    expect(configs["memory-repair"]?.systemPrompt).toContain(
+      "Repair only the reported",
     );
-    expect(configs.memory?.systemPrompt).not.toContain("git push");
+    expect(configs["memory-repair"]?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
 
   test("selects v2 writer prompts for unchanged built-ins on either backend", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory"]) {
+    for (const name of ["reflection", "init"]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -161,10 +184,6 @@ Custom prompt body`,
         "memfs-v2",
         false,
       );
-      if (name === "memory") {
-        expect(resolved.fork).toBe(false);
-        expect(resolved.systemPrompt).toContain("read the parent transcript");
-      }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       if (name === "init") {
@@ -174,15 +193,11 @@ Custom prompt body`,
         expect(resolved.systemPrompt).toContain("`name` and `description`");
       } else {
         // writers get the v2 layout from the preloaded memory skills
-        expect(config.skills).toEqual([
-          "creating-skills",
-          ...(name === "memory" ? ["syncing-memory-filesystem"] : []),
-        ]);
+        expect(config.skills).toEqual(["creating-skills"]);
         expect(resolved.skills).toEqual([
           "creating-skills",
           "maintaining-core-memory",
           "maintaining-deferred-memory",
-          ...(name === "memory" ? ["syncing-memory-filesystem"] : []),
         ]);
       }
 
@@ -205,7 +220,7 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      memory: ["## Git", "(memory): <summary>"],
+      "memory-repair": ["## Git", "(memory): <summary>"],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];
@@ -234,9 +249,9 @@ Custom prompt body`,
 
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
-    expect(configs.memory?.systemPrompt).not.toContain("git push");
+    expect(configs["memory-repair"]?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
-    expect(configs.memory?.systemPrompt).not.toContain(
+    expect(configs["memory-repair"]?.systemPrompt).not.toContain(
       "local backend git-backed memory filesystem",
     );
     expect(configs.reflection?.systemPrompt).not.toContain(
