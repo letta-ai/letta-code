@@ -156,7 +156,7 @@ Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
 ## Running on Another Computer
 
-Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. Memory workers must run on the current machine; do not set `computer` for `subagent_type: "memory"`. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
+Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
@@ -164,7 +164,7 @@ External coding workers also accept `computer`: the worker runs on that connecte
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
-Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. `fork`, `recall`, and memory workers ignore the default and always start here, because their inherited context describes this machine's files.
+Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. `fork` and `recall` ignore the default and always start here, because their inherited context describes this machine's files.
 
 ```typescript
 // Fork this conversation and run the work on a connected computer

@@ -174,9 +174,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain(
-        "Memory workers must run on the current machine",
-      );
+      expect(result).toContain("memory is harness-only");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -250,12 +248,14 @@ describe("task computer routing", () => {
       }
     });
 
-    test("a memory worker ignores the default instead of failing", async () => {
+    test("the internal repair worker cannot be dispatched by an agent", async () => {
       setDefaultComputer("cloud");
-      const result = await task({ ...launchArgs, subagent_type: "memory" });
+      const result = await task({
+        ...launchArgs,
+        subagent_type: "memory",
+      });
 
-      expect(result).not.toContain("Error:");
-      expect(result).toContain("Memory task running in background");
+      expect(result).toContain("memory is harness-only");
       expect(receivedEnvironment).toBeUndefined();
     });
 
