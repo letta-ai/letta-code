@@ -1035,16 +1035,11 @@ function isSafeSegment(
   }
 
   if (command === "sed") {
-    if (hasUnsafeSedArgs(args)) return false;
-
-    const hasExternalPath =
-      !options.allowExternalPaths &&
-      tokens.slice(1).some((t) => hasDisallowedPathArg(t, options));
-
-    if (hasExternalPath) {
-      return false;
-    }
-    return true;
+    return !hasUnsafeSedArgs(
+      args,
+      (file) =>
+        !options.allowExternalPaths && hasDisallowedPathArg(file, options),
+    );
   }
 
   if (command === "git") {

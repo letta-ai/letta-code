@@ -57,37 +57,154 @@ export function hasUnsafeSafeListCommandFlags(
   return false;
 }
 
-function stripSedAddresses(script: string): string {
-  const address = String.raw`(?:\d+|\$|\/(?:\\.|[^/])*\/)`;
-  return script.replace(
-    new RegExp(`^\\s*${address}(?:\\s*,\\s*${address})?\\s*`),
-    "",
-  );
+class SedScriptParser {
+  private cursor = 0;
+
+  constructor(private readonly script: string) {}
+
+  parse(): boolean {
+    return this.parseStatements(false) && this.cursor === this.script.length;
+  }
+
+  private skipSpaces(): void {
+    while (
+      this.script[this.cursor] === " " ||
+      this.script[this.cursor] === "\t"
+    ) {
+      this.cursor += 1;
+    }
+  }
+
+  private parseStatements(inBlock: boolean): boolean {
+    while (this.cursor < this.script.length) {
+      this.skipSpaces();
+      while (/^[;\n]$/.test(this.script[this.cursor] ?? "")) {
+        this.cursor += 1;
+        this.skipSpaces();
+      }
+      if (inBlock && this.script[this.cursor] === "}") {
+        this.cursor += 1;
+        return true;
+      }
+      if (this.cursor === this.script.length) return !inBlock;
+      if (!this.parseStatement()) return false;
+      this.skipSpaces();
+      const next = this.script[this.cursor];
+      if (next !== undefined && next !== ";" && next !== "\n" && next !== "}") {
+        return false;
+      }
+    }
+    return !inBlock;
+  }
+
+  private parseStatement(): boolean {
+    this.parseAddressRange();
+    this.skipSpaces();
+    if (this.script[this.cursor] === "!") {
+      this.cursor += 1;
+      this.skipSpaces();
+    }
+
+    const command = this.script[this.cursor++];
+    if (!command) return false;
+    if (command === "{") return this.parseStatements(true);
+    if (command === "s") return this.parseSubstitution();
+    if (command === "y") return this.parseDelimitedFields(2);
+    if (command === "#") {
+      while (
+        this.cursor < this.script.length &&
+        this.script[this.cursor] !== "\n"
+      ) {
+        this.cursor += 1;
+      }
+      return true;
+    }
+    if (command === ":" || "btT".includes(command)) {
+      while (/^[^;\n}\s]$/.test(this.script[this.cursor] ?? "")) {
+        this.cursor += 1;
+      }
+      return true;
+    }
+    return "pPl=nNdDqQgGhHxz".includes(command);
+  }
+
+  private parseAddressRange(): void {
+    const start = this.cursor;
+    if (!this.parseAddress()) return;
+    this.skipSpaces();
+    if (this.script[this.cursor] !== ",") return;
+    this.cursor += 1;
+    this.skipSpaces();
+    if (/^[+~]$/.test(this.script[this.cursor] ?? "")) {
+      this.cursor += 1;
+      if (!this.parseDigits()) this.cursor = start;
+    } else if (!this.parseAddress()) this.cursor = start;
+  }
+
+  private parseAddress(): boolean {
+    if (this.script[this.cursor] === "$") {
+      this.cursor += 1;
+      return true;
+    }
+    if (this.script[this.cursor] === "/") return this.parseRegex("/");
+    if (this.script[this.cursor] === "\\") {
+      const delimiter = this.script[this.cursor + 1];
+      if (!delimiter || delimiter === "\n" || delimiter === "\\") return false;
+      this.cursor += 2;
+      return this.parseUntilDelimiter(delimiter);
+    }
+    if (!this.parseDigits()) return false;
+    if (this.script[this.cursor] === "~") {
+      this.cursor += 1;
+      return this.parseDigits();
+    }
+    return true;
+  }
+
+  private parseRegex(delimiter: string): boolean {
+    this.cursor += 1;
+    return this.parseUntilDelimiter(delimiter);
+  }
+
+  private parseDigits(): boolean {
+    const start = this.cursor;
+    while (/^\d$/.test(this.script[this.cursor] ?? "")) this.cursor += 1;
+    return this.cursor > start;
+  }
+
+  private parseUntilDelimiter(delimiter: string): boolean {
+    while (this.cursor < this.script.length) {
+      if (this.script[this.cursor] === "\\") this.cursor += 2;
+      else if (this.script[this.cursor] === delimiter) {
+        this.cursor += 1;
+        return true;
+      } else if (this.script[this.cursor] === "\n") return false;
+      else this.cursor += 1;
+    }
+    return false;
+  }
+
+  private parseDelimitedFields(fieldCount: number): boolean {
+    const delimiter = this.script[this.cursor];
+    if (!delimiter || /[\\\n;]/.test(delimiter)) return false;
+    this.cursor += 1;
+    for (let field = 0; field < fieldCount; field += 1) {
+      if (!this.parseUntilDelimiter(delimiter)) return false;
+    }
+    return true;
+  }
+
+  private parseSubstitution(): boolean {
+    if (!this.parseDelimitedFields(2)) return false;
+    while (/^[gpiImM\d]$/.test(this.script[this.cursor] ?? "")) {
+      this.cursor += 1;
+    }
+    return true;
+  }
 }
 
 function hasUnsafeSedScript(script: string): boolean {
-  return script.split(/[;\n{}]/).some((statement) => {
-    const command = stripSedAddresses(statement);
-    if (/^[ewW](?:\s|$)/.test(command)) return true;
-    if (!command.startsWith("s") || command.length < 2) return false;
-
-    const delimiter = command[1];
-    if (!delimiter || /[\\\n]/.test(delimiter)) return false;
-    let cursor = 2;
-    for (let field = 0; field < 2; field += 1) {
-      let foundDelimiter = false;
-      while (cursor < command.length) {
-        if (command[cursor] === "\\") cursor += 2;
-        else if (command[cursor] === delimiter) {
-          cursor += 1;
-          foundDelimiter = true;
-          break;
-        } else cursor += 1;
-      }
-      if (!foundDelimiter) return false;
-    }
-    return /[ewW]/.test(command.slice(cursor).trim());
-  });
+  return !new SedScriptParser(script).parse();
 }
 
 function getSedScripts(args: string[]): string[] | null {
@@ -121,10 +238,45 @@ function getSedScripts(args: string[]): string[] | null {
   return scripts;
 }
 
-export function hasUnsafeSedArgs(args: string[]): boolean {
+function getSedInputFiles(args: string[]): string[] {
+  const files: string[] = [];
+  let hasScript = false;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (arg === "--") {
+      if (!hasScript) {
+        hasScript = true;
+        index += 1;
+      }
+      files.push(...args.slice(index + 1));
+      break;
+    }
+    if (arg === "-e" || arg === "--expression") {
+      hasScript = true;
+      index += 1;
+    } else if (arg.startsWith("--expression=")) hasScript = true;
+    else if (/^-[^-]*e/.test(arg)) {
+      hasScript = true;
+      if (!arg.slice(arg.indexOf("e", 1) + 1)) index += 1;
+    } else if (!arg.startsWith("-")) {
+      if (hasScript) files.push(arg);
+      else hasScript = true;
+    }
+  }
+  return files;
+}
+
+export function hasUnsafeSedArgs(
+  args: string[],
+  isUnsafeInputFile: (file: string) => boolean = () => false,
+): boolean {
   if (hasDeniedOption(args, "if", ["--in-place", "--file"])) return true;
   const scripts = getSedScripts(args);
-  return scripts === null || scripts.some(hasUnsafeSedScript);
+  return (
+    scripts === null ||
+    scripts.some(hasUnsafeSedScript) ||
+    getSedInputFiles(args).some(isUnsafeInputFile)
+  );
 }
 
 export function hasUnsafeSortArgs(args: string[]): boolean {
