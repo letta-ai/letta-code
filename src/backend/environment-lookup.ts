@@ -141,9 +141,15 @@ export async function resolveEnvironmentConnectionId(
 
   const get = deps.get ?? getEnvironmentConnection;
   const list = deps.list ?? listEnvironments;
+  let pointMatch: EnvironmentConnection | undefined;
   try {
-    const environment = await get(trimmed);
-    return selectEnvironment(trimmed, [environment]);
+    pointMatch = await get(trimmed);
+    if (
+      isEnvironmentOnline(pointMatch) &&
+      typeof pointMatch.connectionId === "string"
+    ) {
+      return selectEnvironment(trimmed, [pointMatch]);
+    }
   } catch (error) {
     if (!(error instanceof ApiRequestError) || error.status !== 404)
       throw error;
@@ -160,6 +166,15 @@ export async function resolveEnvironmentConnectionId(
       environment.id === trimmed ||
       environment.deviceId === trimmed,
   );
+  if (pointMatch) {
+    const matchesById = new Map(
+      [pointMatch, ...explicitMatches].map((environment) => [
+        environment.id,
+        environment,
+      ]),
+    );
+    return selectEnvironment(trimmed, [...matchesById.values()]);
+  }
   if (explicitMatches.length > 0) {
     return selectEnvironment(trimmed, explicitMatches);
   }

@@ -76,6 +76,10 @@ test("current resolves its known device through the point endpoint", async () =>
 
 test("current preserves the friendly not-found result from a point lookup", async () => {
   const error = spyOn(console, "error").mockImplementation(() => {});
+  const deviceId = spyOn(
+    settingsManager,
+    "getOrCreateDeviceId",
+  ).mockReturnValue("test-current-device");
   try {
     expect(
       await runEnvironmentsSubcommand(["current"], {
@@ -92,6 +96,7 @@ test("current preserves the friendly not-found result from a point lookup", asyn
       "No online computer found for this device. Start one with `letta server` and try again.",
     );
   } finally {
+    deviceId.mockRestore();
     error.mockRestore();
   }
 });

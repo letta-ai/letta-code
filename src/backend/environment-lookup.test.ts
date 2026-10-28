@@ -69,6 +69,28 @@ describe("Computer environment resolution", () => {
     expect(listCalls).toBe(0);
   });
 
+  test("falls back to the complete list when the point row is not online yet", async () => {
+    const stale = environment({
+      connectionId: null,
+      lastHeartbeat: null,
+    });
+    const online = environment({
+      connectionId: "conn-online",
+    });
+    const calls: Parameters<typeof listEnvironments>[0][] = [];
+
+    await expect(
+      resolveEnvironmentConnectionId("device-1", {
+        get: async () => stale,
+        list: async (options = {}) => {
+          calls.push(options);
+          return { connections: [online], hasNextPage: false };
+        },
+      }),
+    ).resolves.toEqual({ connectionId: "conn-online", environment: online });
+    expect(calls).toEqual([{ limit: 100 }]);
+  });
+
   test("resolves an exact name after one complete bounded page", async () => {
     const selected = environment({ connectionName: "Work Mac" });
     const calls: Parameters<typeof listEnvironments>[0][] = [];
