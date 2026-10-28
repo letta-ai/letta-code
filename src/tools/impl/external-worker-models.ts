@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { isRecord } from "@/utils/type-guards";
 import { listCodexModels } from "./codex-app-server";
 import { listCursorModels } from "./cursor-session";
@@ -91,8 +92,26 @@ async function listClaudeModels(
   }
 }
 
+function listNativeModels(
+  worker: string,
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  if (worker === "codex") return listCodexModels(cwd, env);
+  if (worker === "cursor") return listCursorModels(cwd, env);
+  return listClaudeModels(cwd, env);
+}
+
+export interface ExternalWorkerModelDependencies {
+  env?: NodeJS.ProcessEnv;
+  listNativeModels?: typeof listNativeModels;
+}
+
 /** Native IDs, not Letta backend handles. No inference or persistent sessions. */
-export async function listExternalWorkerModels(worker: string): Promise<{
+export async function listExternalWorkerModels(
+  worker: string,
+  deps: ExternalWorkerModelDependencies = {},
+): Promise<{
   worker: string;
   computer: "local";
   cwd: string;
@@ -100,11 +119,13 @@ export async function listExternalWorkerModels(worker: string): Promise<{
 }> {
   if (!["claude-code", "codex", "opencode", "cursor"].includes(worker))
     throw new Error("--worker must be claude-code, codex, opencode, or cursor");
-  const agentId = process.env.AGENT_ID ?? process.env.LETTA_AGENT_ID;
+  const baseEnv = deps.env ?? process.env;
+  const agentId = baseEnv.AGENT_ID ?? baseEnv.LETTA_AGENT_ID;
   const secrets = agentId
     ? await resolveExternalCodingAgentSecretEnv(agentId)
     : {};
-  const env = { ...process.env, ...secrets };
+  // Match worker launches: daemon/desktop launches don't source login-shell PATH.
+  const env = withNativeCliPath({ ...baseEnv, ...secrets });
   const cwd = process.cwd();
   const models: WorkerModel[] = [];
   try {
@@ -126,12 +147,11 @@ export async function listExternalWorkerModels(worker: string): Promise<{
         await server.close();
       }
     } else {
-      const catalog =
-        worker === "codex"
-          ? await listCodexModels(cwd, env)
-          : worker === "cursor"
-            ? await listCursorModels(cwd, env)
-            : await listClaudeModels(cwd, env);
+      const catalog = await (deps.listNativeModels ?? listNativeModels)(
+        worker,
+        cwd,
+        env,
+      );
       for (const model of catalog) {
         if (!isRecord(model))
           throw new Error("Invalid native model catalog entry");
