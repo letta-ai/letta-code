@@ -17,6 +17,10 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import {
+  buildMemoryCloneArgs,
+  getMemoryMergeBaseStatusAfterDeepening as getMergeBaseStatus,
+} from "@/agent/memory-git-shallow";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   getMemfsGitProxyRewriteConfig,
@@ -1124,15 +1128,6 @@ async function recoverMemoryPullByResettingToRemote(
     : `Recovered memory repo by resetting to origin/main (${remoteSha.slice(0, 7)}).`;
 }
 
-async function hasMergeBaseWithUpstream(memoryDir: string): Promise<boolean> {
-  try {
-    await runGit(memoryDir, ["merge-base", "HEAD", "@{u}"]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function prepareLocalOnlyMemoryRepoForGitOps(
   memoryDir: string,
   author: MemoryCommitAuthor,
@@ -1509,7 +1504,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
     getMemoryRepoDir(agentId),
     async (dir, fresh) => {
       if (fresh) {
-        await runGitWithRetry(dir, ["clone", url, "."], token, {
+        await runGitWithRetry(dir, buildMemoryCloneArgs(url), token, {
           operation: "clone memory repo",
           timeoutMs: GIT_CLONE_TIMEOUT_MS,
         });
@@ -1522,7 +1517,7 @@ export async function cloneMemoryRepo(agentId: string): Promise<void> {
             rmSync(tmpDir, { recursive: true, force: true });
           }
           mkdirSync(tmpDir, { recursive: true });
-          await runGitWithRetry(tmpDir, ["clone", url, "."], token, {
+          await runGitWithRetry(tmpDir, buildMemoryCloneArgs(url), token, {
             operation: "clone memory repo (tmp migration)",
             timeoutMs: GIT_CLONE_TIMEOUT_MS,
           });
@@ -1615,7 +1610,11 @@ export async function pullMemory(
       summary: updated ? output.trim() : "Already up to date",
     };
   } catch {
-    if (!(await hasMergeBaseWithUpstream(dir))) {
+    const runMemoryGit = (cwd: string, gitArgs: string[]) =>
+      runGitWithRetry(cwd, gitArgs, token, { operation: gitArgs[0] });
+    const mergeBaseStatus = await getMergeBaseStatus(dir, runMemoryGit);
+    const canReset = mergeBaseStatus !== "indeterminate";
+    if (mergeBaseStatus === "unrelated") {
       try {
         const summary = await recoverMemoryPullByResettingToRemote(dir, token);
         return {
@@ -1631,7 +1630,6 @@ export async function pullMemory(
         );
       }
     }
-
     // If ff-only fails (diverged), try rebase
     debugWarn("memfs-git", "Fast-forward pull failed, trying rebase");
     try {
@@ -1643,7 +1641,7 @@ export async function pullMemory(
       );
       return { updated: true, summary: (stdout + stderr).trim() };
     } catch (rebaseErr) {
-      if (isRecoverableMemoryPullHistoryError(rebaseErr)) {
+      if (canReset && isRecoverableMemoryPullHistoryError(rebaseErr)) {
         try {
           const summary = await recoverMemoryPullByResettingToRemote(
             dir,
@@ -1664,7 +1662,6 @@ export async function pullMemory(
           );
         }
       }
-
       const msg =
         rebaseErr instanceof Error ? rebaseErr.message : String(rebaseErr);
       const failureSummary = `Pull failed: ${msg}\nHint: verify remote and auth:\n- git -C ${dir} remote -v\n- git -C ${dir} config --get-regexp '^credential\\..*\\.helper$'`;
