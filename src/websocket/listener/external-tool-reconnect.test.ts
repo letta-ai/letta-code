@@ -150,7 +150,7 @@ describe("external tool calls across a websocket reconnect", () => {
 
     const call = callReply("call-reply");
     await waitFor(() => first.sent.length === 1);
-    // Cloudflare 1001 lands right after the frame was written.
+    // A transient close lands right after the frame was written.
     dropSocket(runtime, first);
 
     const second = createSocket(runtime, true);
@@ -160,7 +160,7 @@ describe("external tool calls across a websocket reconnect", () => {
     expect(result.status).toBe("success");
     expect(result.toolReturn).toBe("posted");
     expect(second.sent).toHaveLength(1);
-    // Same request_id so the cloud gateway dedupes a request that did arrive.
+    // Same request_id so the server can dedupe a request that did arrive.
     expect(second.sent[0]).toEqual(first.sent[0] as never);
     expect(runtime.pendingExternalToolCalls.size).toBe(0);
   });

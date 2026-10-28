@@ -344,9 +344,9 @@ export function handleExternalToolCallResponseCommand(
 
 /**
  * Resend requests still awaiting a response after the connection's socket was
- * replaced. A transient close (e.g. Cloudflare 1001) can drop a frame that was
+ * replaced. A transient close (e.g. code 1001) can drop a frame that was
  * written just before it; without a resend the call waits out its timeout.
- * Cloud gateways dedupe by request_id, so a request that did arrive is not
+ * The server dedupes by request_id, so a request that did arrive is not
  * executed twice.
  */
 export function resendPendingExternalToolCallsForConnection(
