@@ -65,6 +65,21 @@ async function listCompleteEnvironmentCollection(
   }
 }
 
+async function listOnlineDeviceEnvironments(
+  list: typeof listEnvironments,
+  deviceId: string,
+): Promise<EnvironmentConnection[]> {
+  try {
+    return await listCompleteEnvironmentCollection(list, {
+      onlineOnly: true,
+      deviceId,
+    });
+  } catch (error) {
+    if (!isUnsupportedSelectorError(error)) throw error;
+    return listCompleteEnvironmentCollection(list, { onlineOnly: true });
+  }
+}
+
 async function tryFilteredEnvironmentList(
   list: typeof listEnvironments,
   query: Pick<ListEnvironmentsOptions, "onlineOnly" | "source">,
@@ -160,10 +175,9 @@ export async function resolveEnvironmentConnectionId(
   // before resolving it. When the point row exists but is stale, only online
   // rows for that device can supersede it; excluding unrelated devices and
   // historical offline rows keeps startup reconciliation bounded.
-  const connections = await listCompleteEnvironmentCollection(
-    list,
-    pointMatch ? { onlineOnly: true, deviceId: pointMatch.deviceId } : {},
-  );
+  const connections = pointMatch
+    ? await listOnlineDeviceEnvironments(list, pointMatch.deviceId)
+    : await listCompleteEnvironmentCollection(list);
   const explicitMatches = connections.filter(
     (environment) =>
       environment.connectionId === trimmed ||

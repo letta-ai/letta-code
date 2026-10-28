@@ -93,6 +93,32 @@ describe("Computer environment resolution", () => {
     ]);
   });
 
+  test("retries stale point recovery without device filtering on older servers", async () => {
+    const stale = environment({
+      connectionId: null,
+      lastHeartbeat: null,
+    });
+    const online = environment({ connectionId: "conn-online" });
+    const calls: Parameters<typeof listEnvironments>[0][] = [];
+
+    await expect(
+      resolveEnvironmentConnectionId("device-1", {
+        get: async () => stale,
+        list: async (options = {}) => {
+          calls.push(options);
+          if (options.deviceId) {
+            throw new ApiRequestError("unsupported", 422, "unsupported");
+          }
+          return { connections: [online], hasNextPage: false };
+        },
+      }),
+    ).resolves.toEqual({ connectionId: "conn-online", environment: online });
+    expect(calls).toEqual([
+      { limit: 100, onlineOnly: true, deviceId: "device-1" },
+      { limit: 100, onlineOnly: true },
+    ]);
+  });
+
   test("resolves an exact name after one complete bounded page", async () => {
     const selected = environment({ connectionName: "Work Mac" });
     const calls: Parameters<typeof listEnvironments>[0][] = [];
