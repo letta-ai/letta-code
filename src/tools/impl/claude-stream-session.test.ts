@@ -206,7 +206,11 @@ describe("Claude stream sessions", () => {
     const fixture = transportFixture();
     let creates = 0;
     const deps = {
-      createTransport: () => {
+      env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
+      createTransport: ({ env }: { env: NodeJS.ProcessEnv }) => {
+        if (process.platform !== "win32") {
+          expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
+        }
         creates++;
         return fixture.transport;
       },

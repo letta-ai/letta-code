@@ -283,7 +283,9 @@ describe("local system prompt compilation", () => {
     const prompt = await resolveAndBuildSystemPrompt("default", "local-memfs");
 
     expect(prompt).toContain("$MEMORY_DIR");
-    expect(prompt).toContain("git commit --author=");
+    expect(prompt).toContain(
+      "Changes affect your future context only after they are committed to the MemFS git repo",
+    );
     expect(prompt).not.toContain(
       "Changes you commit and push sync to the Letta server",
     );
