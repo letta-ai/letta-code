@@ -220,7 +220,10 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      "memory-repair": ["## Git", "(memory): <summary>"],
+      "memory-repair": [
+        "Repair only the reported memory Git conflict",
+        "Commit but do not push",
+      ],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];

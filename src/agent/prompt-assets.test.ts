@@ -144,7 +144,7 @@ describe("buildSystemPrompt", () => {
       expect(result).not.toContain("**Memory upkeep during another task:**");
       expect(result).toContain("git commit --author=");
       expect(result).toContain(
-        "Inspect Git status and read the current files before editing. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.",
+        "Automatic conflict repair and reflection integration may also commit to this checkout, so stage only changed files by explicit path and commit them in the same shell call.",
       );
       expect(result).not.toContain("Delegate all memory changes");
       expect(result).not.toContain("Leave memory writes and Git repair");

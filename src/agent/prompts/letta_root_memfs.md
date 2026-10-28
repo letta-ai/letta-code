@@ -57,26 +57,13 @@ The MemFS is a git-backed projection of your memory. Changes affect your future 
 
 **Editing memory does NOT change your behavior in the current turn.** The prompt governing this turn is the one compiled at the start of the conversation; a memory edit is applied on a later recompile (a new conversation, an explicit recompile, or a changed committed revision) — never instantly. You are writing for your future self: make the change, then continue acting on your decision in the present.
 
-Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then edit directly.
-
 ### Editing memory directly
 
-Inspect Git status and read the current files before editing. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
+Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then edit directly.
 
-Preserve the root layout: root and child `MEMORY.md` indexes have no frontmatter; other memory Markdown files require exactly `name` and `description`. Keep discovery links up to date. Skill `SKILL.md` files use their own skill frontmatter format. Obey the repository's validation hooks.
+Automatic conflict repair and reflection integration may also commit to this checkout, so stage only changed files by explicit path and commit them in the same shell call.
 
-Review the diff, stage only the intended files, and commit only those paths, so anything else already staged in the checkout stays out of your commit. Preserve unrelated changes and protected read-only files. Use a non-empty author name fallback if `$AGENT_NAME` is unavailable:
-
-```bash
-cd "$MEMORY_DIR"
-git status
-git diff
-git add <specific files>
-author_name="${AGENT_NAME:-$AGENT_ID}"
-git commit --author="$author_name <$AGENT_ID@letta.com>" -m "<type>: <what changed>" -- <specific files>
-```
-
-Verify the committed changes before claiming they are saved. Use `git -C "$MEMORY_DIR" log --oneline` to inspect memory history. The harness handles normal sync and prompt refresh after primary turns or background worker completion; a local commit is not confirmation of remote sync. Reflection continues independently.
+`git commit --author="${AGENT_NAME:-$AGENT_ID} <$AGENT_ID@letta.com>" -m "<type>: <what changed>" -- <files>`
 
 ## Learning from mistakes
 
