@@ -13,6 +13,7 @@ import {
   clearSubagentConfigCache,
   getAllSubagentConfigs,
   getBuiltinSubagentNames,
+  getModelFacingSubagentDescriptors,
   resolveSubagentConfigForMemoryFormat,
 } from "@/agent/subagents";
 import { __testSetBackend, type Backend } from "@/backend";
@@ -69,6 +70,28 @@ describe("built-in subagents", () => {
     expect(configs.fork?.allowedTools).toBe("all");
   });
 
+  test("memory repair builtin is internal and cannot be overridden", async () => {
+    tempDir = createTempProjectDir();
+    writeCustomSubagent(
+      tempDir,
+      "repair.md",
+      "---\nname: memory\ndescription: override\n---\nOverride",
+    );
+    const configs = await getAllSubagentConfigs(tempDir);
+    expect(configs.memory).toBeDefined();
+    expect(configs.memory?.description).toBe(
+      "Internal repair of memory Git conflicts and invalid committed trees.",
+    );
+    expect(configs.memory?.systemPrompt).toContain("Repair only the reported");
+    expect(configs.memory?.skills).toEqual([
+      "syncing-memory-filesystem",
+      "maintaining-core-memory",
+      "maintaining-deferred-memory",
+    ]);
+    const descriptors = await getModelFacingSubagentDescriptors(tempDir);
+    expect(descriptors.map(({ name }) => name)).not.toContain("memory");
+  });
+
   test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 
@@ -81,7 +104,7 @@ describe("built-in subagents", () => {
     expect(getBuiltinSubagentNames().has("history-analyzer")).toBe(false);
   });
 
-  test.each(["claude-code", "codex", "opencode"])(
+  test.each(["claude-code", "codex", "opencode", "cursor"])(
     "does not allow custom files to override reserved %s adapter",
     async (name) => {
       tempDir = createTempProjectDir();
@@ -142,9 +165,7 @@ Custom prompt body`,
 
     expect(configs.init?.systemPrompt).toContain("Commit (1 bash call)");
     expect(configs.init?.systemPrompt).not.toContain("git push");
-    expect(configs.memory?.systemPrompt).toContain(
-      "background memory subagent",
-    );
+    expect(configs.memory?.systemPrompt).toContain("Repair only the reported");
     expect(configs.memory?.systemPrompt).not.toContain("git push");
     expect(configs.reflection?.systemPrompt).not.toContain("git push");
   });
@@ -152,7 +173,7 @@ Custom prompt body`,
   test("selects v2 writer prompts for unchanged built-ins on either backend", async () => {
     const configs = await getAllSubagentConfigs();
 
-    for (const name of ["reflection", "init", "memory"]) {
+    for (const name of ["reflection", "init"]) {
       const config = configs[name];
       expect(config).toBeDefined();
       if (!config) throw new Error(`Missing ${name} config`);
@@ -161,12 +182,6 @@ Custom prompt body`,
         "memfs-v2",
         false,
       );
-      if (name === "memory") {
-        expect(resolved.fork).toBe(false);
-        expect(resolved.systemPrompt).toContain(
-          "specific missing fact or ambiguity",
-        );
-      }
       expect(resolved.systemPrompt).not.toContain("MemFS v2");
       expect(resolved.systemPrompt).not.toContain("$MEMORY_DIR/system/");
       if (name === "init") {
@@ -203,7 +218,10 @@ Custom prompt body`,
         "### 5. Commit (1 bash call)",
         "feat(init): initialize memory for project",
       ],
-      memory: ["## Git", "(memory): <summary>"],
+      memory: [
+        "Repair only the reported memory Git conflict",
+        "Commit but do not push",
+      ],
     };
     for (const [name, phrases] of Object.entries(opsPhrases)) {
       const config = configs[name];

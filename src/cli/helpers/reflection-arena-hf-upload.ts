@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { loadSecrets } from "@/utils/secrets-store";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { getVersion } from "@/version";
 
 const execFile = promisify(execFileCb);
@@ -12,12 +13,17 @@ const execFile = promisify(execFileCb);
 const HF_REPO_ID = "letta-ai/reflection-arena";
 const HF_REPO_URL = `https://huggingface.co/datasets/${HF_REPO_ID}`;
 const GIT_TIMEOUT_MS = 60_000;
-const HF_CACHE_ROOT = join(
-  homedir(),
-  ".letta",
-  "reflection-arena",
-  "hf-upload",
-);
+export function getReflectionArenaHfCacheRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  fallbackHome: string = homedir(),
+): string {
+  return join(
+    resolveGlobalConfigDir(env, fallbackHome),
+    "reflection-arena",
+    "hf-upload",
+  );
+}
+const HF_CACHE_ROOT = getReflectionArenaHfCacheRoot();
 const HF_REPO_DIR = join(HF_CACHE_ROOT, "repo");
 
 export interface ReflectionArenaHfChoiceRow {

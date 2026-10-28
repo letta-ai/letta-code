@@ -12,12 +12,13 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { homedir, uptime } from "node:os";
+import { uptime } from "node:os";
 import path from "node:path";
 import {
   getProcessCommand,
   isPidReusedByNonLetta,
 } from "@/utils/process-liveness";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 export interface ManualListenerLockScope {
   serverUrl: string;
@@ -120,11 +121,11 @@ function isOwnerAlive(
   return !isPidReusedByNonLetta(record.pid, deps.getProcessCommand);
 }
 
-function getDefaultLockRoot(): string {
+export function getManualListenerLockRoot(): string {
   // The device id used in the registration key is stored under this same
-  // HOME-scoped `.letta` directory. An unrelated LETTA_HOME override must not
+  // product-scoped config directory. An unrelated LETTA_HOME override must not
   // split locks for processes that still share that device identity.
-  return path.join(process.env.HOME || homedir(), ".letta");
+  return resolveGlobalConfigDir();
 }
 
 export function normalizeManualListenerServerUrl(serverUrl: string): string {
@@ -318,7 +319,7 @@ export async function acquireManualListenerLock(
 ): Promise<ManualListenerLockHandle> {
   const scopeHash = getManualListenerScopeHash(scope);
   const deps: ManualListenerLockDeps = {
-    lockRoot: getDefaultLockRoot(),
+    lockRoot: getManualListenerLockRoot(),
     processId: process.pid,
     ownerToken: randomUUID(),
     isProcessAlive: defaultIsProcessAlive,

@@ -8,7 +8,7 @@
  */
 
 import { isLocalAgentId } from "@/agent/agent-id";
-import { listCloudSchedules } from "@/backend/api/schedules";
+import { listCloudSchedulesByExactMatch } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { listTasks } from "@/cron";
 
@@ -60,11 +60,11 @@ export async function resolveTaskName(
   if (options.agentId && canManageCloudSchedules(options.agentId)) {
     try {
       await ensureSettingsForCloud();
-      const response = await listCloudSchedules(options.agentId);
-      for (const schedule of response.scheduled_messages) {
-        if (schedule.name === name) {
-          matches.push({ id: schedule.id, store: "cloud" });
-        }
+      const schedules = await listCloudSchedulesByExactMatch(options.agentId, {
+        name,
+      });
+      for (const schedule of schedules) {
+        matches.push({ id: schedule.id, store: "cloud" });
       }
     } catch {
       // Name lookup is best-effort sugar on top of ID addressing: a failed

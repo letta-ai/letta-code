@@ -64,6 +64,7 @@ import {
   rejectPendingExternalToolCallsForConnection,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
+import { createListenerSocket } from "./handshake-deadline";
 import { recordListenerPong, startListenerPongHeartbeat } from "./heartbeat";
 import {
   getParsedRuntimeScope,
@@ -718,12 +719,9 @@ async function connectWithRetry(
 
   const streamUrl = supportsSplitStatusChannels ? new URL(url) : null;
   if (streamUrl) streamUrl.searchParams.set("channel", "stream");
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  const socket = new WebSocket(url.toString(), { headers });
+  const socket = createListenerSocket(url, apiKey);
   let streamSocket =
-    streamUrl && !pairIdentity
-      ? new WebSocket(streamUrl.toString(), { headers })
-      : null;
+    streamUrl && !pairIdentity ? createListenerSocket(streamUrl, apiKey) : null;
 
   const lifecycleLog = createListenerLifecycleLog(opts);
   const fileCommandSession = createFileCommandSession({
@@ -789,7 +787,7 @@ async function connectWithRetry(
             identity: pairIdentity,
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
-              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              streamSocket = createListenerSocket(streamUrl, apiKey);
               return streamSocket;
             },
             trackListenerError,

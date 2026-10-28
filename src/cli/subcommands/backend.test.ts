@@ -4,6 +4,11 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
+// Cold source startup can exceed 15s on CI. These tests check backend behavior,
+// not startup latency; allow each CLI process time to load the module graph.
+const CLI_TIMEOUT_MS = 60_000;
+const TEST_CLEANUP_MS = 5_000;
+
 let home: string;
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "letta-backend-"));
@@ -32,13 +37,22 @@ async function cli(args: string[]) {
       stderr: "pipe",
     },
   );
-  const timeout = setTimeout(() => child.kill(), 15_000);
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, CLI_TIMEOUT_MS);
   try {
     const [stdout, stderr, code] = await Promise.all([
       new Response(child.stdout).text(),
       new Response(child.stderr).text(),
       child.exited,
     ]);
+    if (timedOut) {
+      throw new Error(
+        `CLI ${JSON.stringify(args)} timed out after ${CLI_TIMEOUT_MS}ms\nstdout: ${stdout}\nstderr: ${stderr}`,
+      );
+    }
     return { stdout, stderr, code };
   } finally {
     clearTimeout(timeout);
@@ -52,26 +66,34 @@ async function savedPreference() {
   return settings.preferredBackendMode;
 }
 
-test("fresh credentialless backend reports Cloud, not an automatic Local default", async () => {
-  const result = await cli(["backend"]);
-  expect(result.code, result.stderr).toBe(0);
-  expect(result.stdout).toContain("Default backend: Letta Cloud (cloud)");
-  expect(result.stdout).not.toContain("Proceed locally selected");
-}, 20_000);
+test(
+  "fresh credentialless backend reports Cloud, not an automatic Local default",
+  async () => {
+    const result = await cli(["backend"]);
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toContain("Default backend: Letta Cloud (cloud)");
+    expect(result.stdout).not.toContain("Proceed locally selected");
+  },
+  CLI_TIMEOUT_MS + TEST_CLEANUP_MS,
+);
 
-test("backend local and cloud persist across CLI processes", async () => {
-  for (const [mode, stored, label] of [
-    ["local", "local", "local mode (local)"],
-    ["cloud", "api", "Letta Cloud (cloud)"],
-  ] as const) {
-    const changed = await cli(["backend", mode]);
-    expect(changed.code, changed.stderr).toBe(0);
-    expect(await savedPreference()).toBe(stored);
-    const nextProcess = await cli(["backend"]);
-    expect(nextProcess.code, nextProcess.stderr).toBe(0);
-    expect(nextProcess.stdout).toContain(`Default backend: ${label}`);
-  }
-}, 20_000);
+test(
+  "backend local and cloud persist across CLI processes",
+  async () => {
+    for (const [mode, stored, label] of [
+      ["local", "local", "local mode (local)"],
+      ["cloud", "api", "Letta Cloud (cloud)"],
+    ] as const) {
+      const changed = await cli(["backend", mode]);
+      expect(changed.code, changed.stderr).toBe(0);
+      expect(await savedPreference()).toBe(stored);
+      const nextProcess = await cli(["backend"]);
+      expect(nextProcess.code, nextProcess.stderr).toBe(0);
+      expect(nextProcess.stdout).toContain(`Default backend: ${label}`);
+    }
+  },
+  4 * CLI_TIMEOUT_MS + TEST_CLEANUP_MS,
+);
 
 test.each([
   { saved: "cloud", override: "local", stored: "api" },
@@ -99,12 +121,16 @@ test.each([
     expect(nextProcess.code, nextProcess.stderr).toBe(0);
     expect(nextProcess.stdout).toContain(`(${saved})`);
   },
-  20_000,
+  3 * CLI_TIMEOUT_MS + TEST_CLEANUP_MS,
 );
 
-test("fresh credentialless headless startup requires Cloud authentication", async () => {
-  const result = await cli(["-p", "Do not run without authentication"]);
-  expect(result.code).toBe(1);
-  expect(result.stderr).toContain("Missing LETTA_API_KEY");
-  expect(result.stderr).toContain("Headless mode requires an API key");
-}, 20_000);
+test(
+  "fresh credentialless headless startup requires Cloud authentication",
+  async () => {
+    const result = await cli(["-p", "Do not run without authentication"]);
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("Missing LETTA_API_KEY");
+    expect(result.stderr).toContain("Headless mode requires an API key");
+  },
+  CLI_TIMEOUT_MS + TEST_CLEANUP_MS,
+);

@@ -11,7 +11,6 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type AvailableModel,
@@ -23,6 +22,7 @@ import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const CATALOG_PATH = "/v1/models/catalog";
 const REFRESH_TTL_MS = 5 * 60 * 1000; // matches available-models cache TTL
@@ -61,7 +61,7 @@ interface RemoteCatalogEntry {
 function catalogCachePath(): string {
   const dir =
     process.env.LETTA_MODEL_CATALOG_CACHE_DIR ||
-    join(homedir(), ".letta", "cache");
+    join(resolveGlobalConfigDir(), "cache");
   return join(dir, "model-catalog.json");
 }
 

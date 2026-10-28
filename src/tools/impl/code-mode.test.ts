@@ -9,14 +9,24 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { clearAllSubagents } from "@/agent/subagent-state";
 import { configureBackendMode, getBackend } from "@/backend";
 import { resolveBackendMode } from "@/backend/backend-mode";
+import {
+  clearModPermissions,
+  registerModPermission,
+} from "@/mods/permission-registry";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { __resetClaudeSessionsForTests } from "@/tools/impl/claude-stream-session";
 import {
   clearCapturedToolExecutionContexts,
+  clearExternalTools,
   executeTool,
+  registerExternalTools,
+  setExternalToolExecutor,
 } from "@/tools/manager";
+import { createScriptToolScope } from "@/tools/script-tool-scope";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import {
   clearPendingMessages,
@@ -24,7 +34,7 @@ import {
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
 import { killBackgroundProcess } from "./kill-bash";
-import { backgroundProcesses } from "./process_manager";
+import { backgroundProcesses, backgroundTasks } from "./process_manager";
 
 const originalHome = process.env.HOME;
 const originalLocalDir = process.env.LETTA_LOCAL_BACKEND_DIR;
@@ -55,6 +65,8 @@ afterEach(async () => {
   setMessageQueueAdder(null);
   clearPendingMessages();
   clearCapturedToolExecutionContexts();
+  clearExternalTools();
+  clearModPermissions();
   await settingsManager.reset();
   configureBackendMode(originalMode);
   if (originalHome === undefined) delete process.env.HOME;
@@ -78,7 +90,16 @@ async function run(
   const { preparedToolContext } =
     await prepareToolExecutionContextForResolvedTarget({
       toolsetPreference: "letta",
-      clientToolAllowlist: ["CodeMode", "Read", "Write"],
+      clientToolAllowlist: [
+        "CodeMode",
+        "Read",
+        "Write",
+        "Agent",
+        "SendAgentMessage",
+        "AskUserQuestion",
+        "Workflow",
+        "fetch_thread",
+      ],
       workingDirectory: home,
       permissionModeState: { mode },
       runtimeContext: {
@@ -313,4 +334,255 @@ test("a script still running after the foreground wait yields, and TaskStop abor
   await new Promise((resolve) => setTimeout(resolve, 50));
   expect(backgroundProcesses.has(taskId as string)).toBe(false);
   expect(queued).toHaveLength(0);
+});
+
+// The manager, CodeMode runtime, schema discovery, and permissions are real;
+// only the hosting harness transport is replaced with an in-process executor.
+test("scripts discover and call captured harness-provided tools through the manager", async () => {
+  const calls: unknown[] = [];
+  registerExternalTools([
+    {
+      name: "fetch_thread",
+      description: "Fetch a thread supplied by the hosting harness",
+      parameters: {
+        type: "object",
+        properties: { thread: { type: "string" } },
+        required: ["thread"],
+      },
+    },
+    {
+      name: "hidden_harness_tool",
+      description: "Not selected for this turn",
+      parameters: {},
+    },
+  ]);
+  setExternalToolExecutor(async (_id, name, input, context) => {
+    calls.push({
+      name,
+      input,
+      conversationId: context?.tool.runtime?.conversationId,
+    });
+    // Registrations can change while a turn is running: discovery and calls
+    // must continue using the turn's captured definitions and executor.
+    clearExternalTools();
+    return {
+      content: [{ type: "text", text: `thread:${input.thread}` }],
+      isError: false,
+    };
+  });
+  const result = await run(`
+const schema = await describeTool('fetch_thread');
+const first = await tools.fetch_thread({thread: '123'});
+const second = await tools.fetch_thread({thread: '456'});
+return { first, second, schema, names: (await listTools()).map(t => t.name), hidden: typeof tools.hidden_harness_tool };
+`);
+  expect(result.status).toBe("success");
+  const output = JSON.parse(result.toolReturn as string).result;
+  expect(output.first).toBe("thread:123");
+  expect(output.second).toBe("thread:456");
+  expect(output.schema.inputSchema.required).toEqual(["thread"]);
+  expect(output.names).toContain("fetch_thread");
+  expect(output.names).not.toContain("hidden_harness_tool");
+  expect(output.hidden).toBe("undefined");
+  expect(calls).toEqual([
+    {
+      name: "fetch_thread",
+      input: { thread: "123" },
+      conversationId: undefined,
+    },
+    {
+      name: "fetch_thread",
+      input: { thread: "456" },
+      conversationId: undefined,
+    },
+  ]);
+});
+
+test("approval-required harness tools fail closed without invoking the transport", async () => {
+  let called = false;
+  registerExternalTools([
+    { name: "fetch_thread", description: "Fetch a thread", parameters: {} },
+  ]);
+  setExternalToolExecutor(async () => {
+    called = true;
+    return { content: [], isError: false };
+  });
+  const result = await run("return await tools.fetch_thread({});", "strict");
+  expect(result.status).toBe("error");
+  expect(result.toolReturn).toContain("needs approval");
+  expect(called).toBe(false);
+});
+
+test("Agent and SendAgentMessage are callable and discoverable while interactive orchestration tools stay excluded", async () => {
+  const { preparedToolContext } =
+    await prepareToolExecutionContextForResolvedTarget({
+      toolsetPreference: "letta",
+      clientToolAllowlist: [
+        "Agent",
+        "SendAgentMessage",
+        "AskUserQuestion",
+        "Workflow",
+        "CodeMode",
+      ],
+      workingDirectory: home,
+      permissionModeState: { mode: "strict" },
+      runtimeContext: { agentId, conversationId: "conv-script-parent" },
+    });
+  await runWithRuntimeContext(
+    { toolContextId: preparedToolContext.contextId },
+    async () => {
+      const scope = await createScriptToolScope(null);
+      try {
+        const listed = (await scope.listTools()).map((t) => t.name);
+        for (const name of ["Agent", "SendAgentMessage"]) {
+          expect(scope.builtinToolNames).toContain(name);
+          expect(listed).toContain(name);
+          await expect(scope.callTool(name, {})).rejects.toThrow(
+            "needs approval",
+          );
+        }
+        for (const name of ["AskUserQuestion", "Workflow", "CodeMode"]) {
+          expect(scope.builtinToolNames).not.toContain(name);
+          expect(listed).not.toContain(name);
+        }
+      } finally {
+        await scope.cleanup();
+      }
+    },
+  );
+  const result = await run(
+    `return [typeof tools.Agent, typeof tools.SendAgentMessage, typeof tools.AskUserQuestion, typeof tools.Workflow, typeof tools.CodeMode];`,
+  );
+  expect(JSON.parse(result.toolReturn as string).result).toEqual([
+    "function",
+    "function",
+    "undefined",
+    "undefined",
+    "undefined",
+  ]);
+});
+
+test.skipIf(process.platform === "win32")(
+  "a script-launched Agent delivers its background notification to the invoking conversation",
+  async () => {
+    const originalPath = process.env.PATH;
+    const bin = join(home, "bin");
+    mkdirSync(bin);
+    // Replace only the external model CLI. The Agent implementation, background
+    // task lifecycle, manager context, and notification queue remain real.
+    writeFileSync(
+      join(bin, "claude"),
+      `#!${process.execPath}
+if (process.argv.includes("auth")) {
+  console.log(JSON.stringify({loggedIn: true})); process.exit(0);
+}
+const send = value => console.log(JSON.stringify(value));
+const rl = require("node:readline").createInterface({input: process.stdin});
+rl.on("line", line => {
+  if (JSON.parse(line).type !== "user") return;
+  send({type: "system", subtype: "init", session_id: "11111111-1111-4111-8111-111111111111"});
+  send({type: "result", is_error: false, result: "Completed script task"});
+});
+`,
+      { mode: 0o755 },
+    );
+    process.env.PATH = `${bin}:${originalPath}`;
+    try {
+      const result = await run(
+        `return await tools.Agent({
+      subagent_type: 'claude-code', prompt: 'Perform a task', description: 'Script task', mcp: {inherit: false}
+    });`,
+        "unrestricted",
+        undefined,
+        "conv-script-notification",
+      );
+      expect(result.status).toBe("success");
+      const receipt = JSON.parse(result.toolReturn as string).result;
+      expect(receipt).toContain("Task");
+      await waitFor(() =>
+        queued.some((message) => message.kind === "task_notification"),
+      );
+      expect(queued).toContainEqual(
+        expect.objectContaining({
+          kind: "task_notification",
+          agentId,
+          conversationId: "conv-script-notification",
+          text: expect.stringContaining("Completed script task"),
+        }),
+      );
+    } finally {
+      for (const task of backgroundTasks.values())
+        task.abortController?.abort();
+      backgroundTasks.clear();
+      clearAllSubagents();
+      __resetClaudeSessionsForTests();
+      process.env.PATH = originalPath;
+    }
+  },
+  15000,
+);
+
+test("nested calls use the captured turn's approval permission overlays", async () => {
+  const calls: unknown[] = [];
+  registerExternalTools([
+    { name: "fetch_thread", description: "Fetch a thread", parameters: {} },
+  ]);
+  setExternalToolExecutor(async () => {
+    calls.push("executed");
+    return { content: [], isError: false };
+  });
+  registerModPermission({
+    id: "script-turn-gate",
+    description: "Block this conversation",
+    path: join(home, "gate.ts"),
+    owner: {
+      id: "global:script-turn-gate",
+      path: join(home, "gate.ts"),
+      scope: "global",
+      generation: 1,
+    },
+    activationSignal: new AbortController().signal,
+    check(event) {
+      if (
+        event.phase === "approval" &&
+        event.toolName === "fetch_thread" &&
+        event.conversationId === "conv-gated-script"
+      ) {
+        return { decision: "deny", reason: "Conversation gate" };
+      }
+      return undefined;
+    },
+  });
+  const result = await run(
+    "return await tools.fetch_thread({});",
+    "unrestricted",
+    undefined,
+    "conv-gated-script",
+  );
+  expect(result.status).toBe("error");
+  expect(result.toolReturn).toContain("denied by permission rules");
+  expect(calls).toEqual([]);
+});
+
+test("parallel harness calls receive distinct manager tool-call IDs", async () => {
+  const ids: string[] = [];
+  registerExternalTools([
+    { name: "fetch_thread", description: "Fetch a thread", parameters: {} },
+  ]);
+  setExternalToolExecutor(async (id, _name, input) => {
+    ids.push(id);
+    return {
+      content: [{ type: "text", text: String(input.thread) }],
+      isError: false,
+    };
+  });
+  const result = await run(
+    `return await Promise.all(Array.from({length: 20}, (_, thread) => tools.fetch_thread({thread})));`,
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.toolReturn as string).result).toEqual(
+    Array.from({ length: 20 }, (_, i) => String(i)),
+  );
+  expect(ids).toHaveLength(20);
+  expect(new Set(ids).size).toBe(20);
 });

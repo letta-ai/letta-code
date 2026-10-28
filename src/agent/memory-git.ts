@@ -12,7 +12,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
@@ -29,6 +29,7 @@ import {
 } from "@/utils/checkout-readiness";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getAuthToken } from "./memory-auth";
@@ -84,13 +85,12 @@ export interface CommitMemoryWriteResult {
   committed: boolean;
   sha?: string;
 }
-
-/** Get the agent root directory (~/.letta/agents/{id}/) */
+/** Get the agent root directory below the active product config root. */
 export function getAgentRootDir(agentId: string): string {
-  return join(homedir(), ".letta", "agents", agentId);
+  return join(resolveGlobalConfigDir(), "agents", agentId);
 }
 
-/** Get the git repo directory for memory (now ~/.letta/agents/{id}/memory/) */
+/** Get the git repo directory for memory. */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { applyCommitTrailer } from "@/tools/commit-trailer";
 import BashDescription from "@/tools/descriptions/Bash.md";
 import {
   buildBashDescriptionForPlatform,
@@ -7,7 +8,7 @@ import {
 
 describe("Bash Windows tool description", () => {
   test("keeps the base Bash description unchanged on non-Windows platforms", () => {
-    const baseDescription = BashDescription.trim();
+    const baseDescription = applyCommitTrailer(BashDescription.trim());
 
     expect(buildBashDescriptionForPlatform("darwin")).toBe(baseDescription);
     expect(buildBashDescriptionForPlatform("linux")).toBe(baseDescription);
@@ -30,7 +31,9 @@ describe("Bash Windows tool description", () => {
   test("appends Windows shell semantics and safety guidance on Windows", () => {
     const description = buildBashDescriptionForPlatform("win32");
 
-    expect(description.startsWith(BashDescription.trim())).toBe(true);
+    expect(
+      description.startsWith(applyCommitTrailer(BashDescription.trim())),
+    ).toBe(true);
     expect(description).toContain("Windows execution:");
     expect(description).toContain("does not run commands through bash");
     expect(description).toContain("PowerShell Core (`pwsh`)");

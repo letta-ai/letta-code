@@ -14,6 +14,7 @@ import {
   deleteTask,
   garbageCollect,
   getActiveTasks,
+  getCronFilePath,
   getTask,
   hasLiveSchedulerOwner,
   isProcessAlive,
@@ -41,6 +42,7 @@ const _LOCK_PATH = path.join(TEST_DIR, "crons.lock");
 // We need to use the module's own path resolution, so we'll set
 // LETTA_HOME to point to our test directory.
 const origHome = process.env.LETTA_HOME;
+const origConfigDir = process.env.LETTA_CONFIG_DIR;
 const origXdg = process.env.XDG_CONFIG_HOME;
 
 beforeEach(() => {
@@ -54,6 +56,7 @@ beforeEach(() => {
   // We'll test addTask/listTasks/deleteTask through the public API
   // by setting LETTA_HOME.
   process.env.LETTA_HOME = TEST_DIR;
+  delete process.env.LETTA_CONFIG_DIR;
 });
 
 afterEach(() => {
@@ -66,8 +69,17 @@ afterEach(() => {
   }
   if (origHome) process.env.LETTA_HOME = origHome;
   else delete process.env.LETTA_HOME;
+  if (origConfigDir) process.env.LETTA_CONFIG_DIR = origConfigDir;
+  else delete process.env.LETTA_CONFIG_DIR;
   if (origXdg) process.env.XDG_CONFIG_HOME = origXdg;
   else delete process.env.XDG_CONFIG_HOME;
+});
+
+test("product config root takes precedence over legacy LETTA_HOME", () => {
+  const productConfigDir = path.join(TEST_DIR, ".dream");
+  process.env.LETTA_CONFIG_DIR = productConfigDir;
+
+  expect(getCronFilePath()).toBe(path.join(productConfigDir, "crons.json"));
 });
 
 // ── Helper ──────────────────────────────────────────────────────────

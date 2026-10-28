@@ -6,9 +6,11 @@ import {
 } from "@/runtime-context";
 import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import { sendCodexMessage } from "@/tools/impl/codex-app-server";
+import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
   isExternalCodingAgentType,
   parseExternalCodingAgentId,
+  resolveExternalCodingAgentSecretEnv,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
@@ -135,39 +137,54 @@ export async function handleSubagentMessageCommand(
 
       let captureReservation: NativeSessionCaptureReservation | undefined;
       const source = target.type === "claude-code" ? "claude_code" : "codex";
+      const secrets =
+        target.type === "cursor"
+          ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
+          : {};
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), () =>
-          target.type === "claude-code"
-            ? (deps.sendClaude ?? sendClaudeMessage)({
-                sessionId: target.sessionId,
-                prompt: command.message,
-                parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
+          target.type === "cursor"
+            ? sendCursorMessage(
+                {
+                  sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
                 },
-              })
-            : (deps.sendCodex ?? sendCodexMessage)({
-                threadId: target.sessionId,
-                prompt: command.message,
-                parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
-                },
-              }),
+                { ...process.env, ...secrets },
+                secrets,
+              )
+            : target.type === "claude-code"
+              ? (deps.sendClaude ?? sendClaudeMessage)({
+                  sessionId: target.sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
+                  beforeStart: async () => {
+                    captureReservation = await (
+                      deps.reserveCapture ?? reserveNativeSessionCapture
+                    )(source, sessionId, {
+                      agentId: command.runtime.agent_id,
+                      conversationId: command.runtime.conversation_id,
+                      actingUserId: command.runtime.acting_user_id,
+                    });
+                  },
+                })
+              : (deps.sendCodex ?? sendCodexMessage)({
+                  threadId: target.sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
+                  beforeStart: async () => {
+                    captureReservation = await (
+                      deps.reserveCapture ?? reserveNativeSessionCapture
+                    )(source, sessionId, {
+                      agentId: command.runtime.agent_id,
+                      conversationId: command.runtime.conversation_id,
+                      actingUserId: command.runtime.acting_user_id,
+                    });
+                  },
+                }),
         ),
       );
       if (receipt.mode === "steered")

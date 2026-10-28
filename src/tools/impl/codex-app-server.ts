@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   type ExternalToolCall,
@@ -528,11 +529,11 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-  };
+  });
   const transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,

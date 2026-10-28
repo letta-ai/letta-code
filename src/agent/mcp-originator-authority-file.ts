@@ -18,9 +18,9 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { fsyncDirectory } from "@/websocket/listener/durable-file-lock";
 
 export type McpOriginatorAuthorityState = "live" | "headerless" | "terminal";
@@ -104,13 +104,16 @@ export function authorityPersistentPath(): string | null {
   } catch {
     serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
   }
+  return authorityPersistentPathForServer(serverUrl);
+}
+
+export function authorityPersistentPathForServer(serverUrl: string): string {
   const namespace = createHash("sha256")
     .update(serverUrl)
     .digest("hex")
     .slice(0, 24);
   return join(
-    homedir(),
-    ".letta",
+    resolveGlobalConfigDir(),
     "state",
     namespace,
     "mcp-originator-authority-v1.json",
