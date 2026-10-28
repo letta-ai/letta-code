@@ -61,7 +61,7 @@ Before editing memory, load the relevant skills: `maintaining-core-memory` for r
 
 ### Editing memory directly
 
-Inspect Git status and read the current files before editing. Stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
+Inspect Git status and read the current files before editing. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
 
 Preserve the root layout: root and child `MEMORY.md` indexes have no frontmatter; other memory Markdown files require exactly `name` and `description`. Keep discovery links up to date. Skill `SKILL.md` files use their own skill frontmatter format. Obey the repository's validation hooks.
 

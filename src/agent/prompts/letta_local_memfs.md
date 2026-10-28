@@ -49,7 +49,7 @@ Before editing memory, load the relevant skills: `maintaining-core-memory` for r
 
 ### Editing memory directly
 
-Inspect Git status and read the current files before editing. Stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
+Inspect Git status and read the current files before editing. Automatic conflict repair and reflection integration may also commit to this checkout while you work, so stage only the files you changed by explicit path (never `git add -A` or `git add .`) and commit them in the same shell call.
 
 Memory Markdown files must start with YAML frontmatter containing a non-empty `description:` field. Preserve existing frontmatter and discovery links. The MemFS pre-commit hook validates frontmatter and prevents changes to protected `read_only` files. Skill `SKILL.md` files use their own skill frontmatter format.
 
