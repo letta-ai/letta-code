@@ -6,7 +6,7 @@ import {
   shouldRecommendDefaultPrompt,
 } from "@/agent/prompt-assets";
 import initV2Prompt from "@/agent/subagents/builtin/init-v2.md";
-import memoryV2Prompt from "@/agent/subagents/builtin/memory-repair.md";
+import memoryV2Prompt from "@/agent/subagents/builtin/memory.md";
 import reflectionV2Prompt from "@/agent/subagents/builtin/reflection-v2.md";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import initializingMemoryPrompt from "@/skills/builtin/initializing-memory/SKILL.md";
@@ -134,18 +134,16 @@ describe("buildSystemPrompt", () => {
   });
 
   test.each(["memfs", "local-memfs", "root-memfs"] as const)(
-    "%s loads memory skills before direct editing",
+    "%s omits redundant direct-edit guidance",
     (mode) => {
       const result = buildSystemPrompt("letta", mode);
-      expect(result).toContain(
+      expect(result).not.toContain("### Editing memory directly");
+      expect(result).not.toContain(
         "Before editing memory, load the relevant skills",
       );
+      expect(result).not.toContain("git commit --author=");
       expect(result).not.toContain("`memory` subagent");
       expect(result).not.toContain("**Memory upkeep during another task:**");
-      expect(result).toContain("git commit --author=");
-      expect(result).toContain(
-        "Automatic conflict repair and reflection integration may also commit to this checkout, so stage only changed files by explicit path and commit them in the same shell call.",
-      );
       expect(result).not.toContain("Delegate all memory changes");
       expect(result).not.toContain("Leave memory writes and Git repair");
     },

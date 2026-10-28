@@ -72,7 +72,7 @@ for (const mode of [
         parentConversationId: original.id,
         backendMode: "local",
         localBackendStorageDir: storageDir,
-        subagentType: isRepair ? "memory-repair" : "general-purpose",
+        subagentType: isRepair ? "memory" : "general-purpose",
         launchProfile: "memory-subagent",
         inheritedPrimaryRoot: memoryDir,
         memoryScope: { primaryRoot: memoryDir, writableRoots: [memoryDir] },
@@ -96,7 +96,7 @@ for (const mode of [
             ? [
                 "--new-agent",
                 "--system",
-                "memory-repair",
+                "memory",
                 "--model",
                 "anthropic/claude-sonnet-4-6",
               ]

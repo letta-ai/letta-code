@@ -140,7 +140,7 @@ export async function ensureMemoryRepair(
     if (claim.status !== "claimed") return claim.status === "in_progress";
     const invalid = params.result.status === "invalid";
     spawn({
-      subagentType: "memory-repair",
+      subagentType: "memory",
       description: invalid
         ? "Repair invalid committed memory"
         : "Repair memory Git conflict",
@@ -162,7 +162,7 @@ export async function ensureMemoryRepair(
   } catch (error) {
     // Capacity or checkout errors must not become unhandled rejections, and
     // an attempt that never launched must not block the next turn's retry.
-    debugWarn("memory-repair", `Could not launch repair: ${String(error)}`);
+    debugWarn("memory", `Could not launch repair: ${String(error)}`);
     if (claim?.status === "claimed") {
       await clearMemoryConflictRepair(params.result.memoryDir, claim.token);
     }
@@ -181,7 +181,7 @@ export async function finishBackgroundMemoryTasks(
     const pending = [...backgroundTasks.values()]
       .filter(
         (task) =>
-          task.subagentType === "memory-repair" &&
+          task.subagentType === "memory" &&
           (!agentId || task.runtimeScope?.agentId === agentId) &&
           (!conversationId ||
             task.runtimeScope?.conversationId === conversationId),

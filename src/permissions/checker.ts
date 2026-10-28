@@ -769,7 +769,7 @@ const SAFE_AUTO_APPROVE_SUBAGENT_TYPES = new Set([
   "Recall",
   "reflection", // Memory reflection - writes constrained by memory-subagent sandbox
   "Reflection",
-  "memory-repair", // Memory repair worker - repairs its memory checkout under the same sandbox
+  "memory", // Memory repair worker - repairs its memory checkout under the same sandbox
 ]);
 
 /**

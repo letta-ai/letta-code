@@ -23,7 +23,7 @@ import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
-import memoryRepairAgentMd from "./builtin/memory-repair.md";
+import memoryAgentMd from "./builtin/memory.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
@@ -32,7 +32,7 @@ const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   initAgentMd,
-  memoryRepairAgentMd,
+  memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -41,7 +41,7 @@ const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
   initAgentMd,
-  memoryRepairAgentMd,
+  memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
@@ -487,7 +487,6 @@ async function discoverSubagentsFromDir(
         if (
           config &&
           !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name) &&
-          config.name !== "memory-repair" &&
           config.name !== "memory"
         ) {
           // Check for duplicate names (later directories override earlier ones)
@@ -616,7 +615,7 @@ export async function getModelFacingSubagentDescriptors(
   const configs = await getAllSubagentConfigs(workingDirectory);
   return [
     ...Object.entries(configs)
-      .filter(([name]) => name !== "memory-repair" && name !== "memory")
+      .filter(([name]) => name !== "memory")
       .map(([name, config]) => ({
         name,
         description: config.description,

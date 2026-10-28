@@ -114,7 +114,7 @@ cloud-backed agent's pending commits after the turn.
 The harness first tries a fast-forward pull. When a remote push is rejected
 because the remote moved, post-turn sync tries `git pull --rebase` and retries
 the push. If that rebase conflicts, the harness launches a fresh background
-internal `memory-repair` subagent to repair it. The primary conversation is not interrupted.
+internal `memory` subagent to repair it. The primary conversation is not interrupted.
 The harness retries normal sync after the worker finishes. The instructions
 below are for explicit troubleshooting; routine repairs run in the background.
 

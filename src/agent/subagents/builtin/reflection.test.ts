@@ -16,8 +16,8 @@ import reflectionPrompt from "./reflection.md";
 test.each([
   ["reflection", "memfs-v1", "Bash,Edit"],
   ["reflection", "memfs-v2", "Bash,Edit"],
-  ["memory-repair", "memfs-v1", "Bash,Read,Edit,Write"],
-  ["memory-repair", "memfs-v2", "Bash,Read,Edit,Write"],
+  ["memory", "memfs-v1", "Bash,Read,Edit,Write"],
+  ["memory", "memfs-v2", "Bash,Read,Edit,Write"],
 ] as const)(
   "%s %s launch loads its bundled memory skills without expanding tools",
   async (type, format, tools) => {
@@ -54,7 +54,7 @@ test.each([
       );
       const creating = `<creating-skills>\n${creatingSkills}\n</creating-skills>`;
       expect(loaded).toBe(
-        type === "memory-repair"
+        type === "memory"
           ? `<loaded_skills>\n<syncing-memory-filesystem>\n${syncingMemory}\n</syncing-memory-filesystem>\n\n<maintaining-core-memory>\n${maintainingCoreMemory}\n</maintaining-core-memory>\n\n<maintaining-deferred-memory>\n${maintainingDeferredMemory}\n</maintaining-deferred-memory>\n</loaded_skills>`
           : format === "memfs-v2"
             ? `<loaded_skills>\n${creating}\n\n<maintaining-core-memory>\n${maintainingCoreMemory}\n</maintaining-core-memory>\n\n<maintaining-deferred-memory>\n${maintainingDeferredMemory}\n</maintaining-deferred-memory>\n</loaded_skills>`

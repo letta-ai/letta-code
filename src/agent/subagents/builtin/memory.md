@@ -1,5 +1,5 @@
 ---
-name: memory-repair
+name: memory
 description: Internal repair of memory Git conflicts and invalid committed trees.
 tools: Bash, Read, Edit, Write
 model: inherit
