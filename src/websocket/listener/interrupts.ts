@@ -646,6 +646,34 @@ export function getInterruptApprovalsForEmission(
   return runtime.pendingInterruptedResults;
 }
 
+/** Emits the terminal tool frames for results parked by an aborted turn. */
+export function emitInterruptApprovals(
+  socket: ListenerTransport,
+  runtime: ConversationRuntime,
+  params: {
+    lastExecutionResults: ApprovalResult[] | null;
+    runId?: string;
+    agentId: string | null;
+    conversationId: string;
+  },
+): void {
+  const approvals = getInterruptApprovalsForEmission(runtime, params);
+  if (!approvals) return;
+  const { runId, agentId, conversationId } = params;
+  emitToolExecutionFinishedEvents(socket, runtime, {
+    approvals,
+    runId,
+    agentId,
+    conversationId,
+  });
+  emitInterruptToolReturnMessage(
+    socket,
+    runtime,
+    approvals,
+    runId || undefined,
+  );
+}
+
 export function populateInterruptQueue(
   runtime: ConversationRuntime,
   input: InterruptPopulateInput,

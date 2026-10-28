@@ -28,12 +28,7 @@ import { isCloudApiDeploymentInterrupted } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
 import { EMPTY_RESPONSE_MAX_RETRIES } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import {
-  emitInterruptToolReturnMessage,
-  emitToolExecutionFinishedEvents,
-  getInterruptApprovalsForEmission,
-  populateInterruptQueue,
-} from "./interrupts";
+import { emitInterruptApprovals, populateInterruptQueue } from "./interrupts";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { emitRetryDelta, emitRuntimeStateUpdates } from "./protocol-outbound";
 import {
@@ -141,6 +136,7 @@ async function handleIncomingMessageInner(
     emptyResponseRetries = 0,
     chatgptPlanSwaps = 0,
     lastApprovalContinuationAccepted = false,
+    continuationSendFailed = false,
     activeDequeuedBatchId = dequeuedBatchId;
   const chatgptExhaustedProviders = new Set<string>();
   const turnCorrelation =
@@ -151,6 +147,15 @@ async function handleIncomingMessageInner(
   let lastExecutingToolCallIds: string[] = [];
   let lastNeedsUserInputToolCallIds: string[] = [];
   const durabilityOwnership = createTurnDurabilityOwnership();
+  const recordApprovalProgress = (
+    progress: Parameters<typeof durabilityOwnership.record>[0],
+  ) => {
+    ({
+      lastExecutionResults,
+      lastExecutingToolCallIds,
+      lastNeedsUserInputToolCallIds,
+    } = durabilityOwnership.record(progress));
+  };
   const interruptedRevisionRef = { current: initialInterruptedRevision };
   durabilityOwnership.recordInput(msg);
   const turnLease =
@@ -802,6 +807,10 @@ async function handleIncomingMessageInner(
         recoveryLineageId,
         recoveryAuthorityStore,
         buildSendOptions,
+        onContinuationSendError: (progress) => {
+          continuationSendFailed = true;
+          recordApprovalProgress(progress);
+        },
         dependencies: recoveryEvidenceWriter
           ? { recordListenerWork: recoveryEvidenceWriter }
           : undefined,
@@ -826,11 +835,7 @@ async function handleIncomingMessageInner(
       pendingNormalizationInterruptedToolCallIds =
         approvalResult.pendingNormalizationInterruptedToolCallIds;
       turnToolContextId = approvalResult.turnToolContextId;
-      ({
-        lastExecutionResults,
-        lastExecutingToolCallIds,
-        lastNeedsUserInputToolCallIds,
-      } = durabilityOwnership.record(approvalResult));
+      recordApprovalProgress(approvalResult);
       lastApprovalContinuationAccepted =
         approvalResult.lastApprovalContinuationAccepted;
 
@@ -893,37 +898,31 @@ async function handleIncomingMessageInner(
       context: "listener_turn_processing",
       runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
     });
+    const canParkUnsentResults =
+      runtime.turnLifecycle.isCurrent(turnLease) &&
+      !lastApprovalContinuationAccepted;
+    // Executed results the server never accepted must ride the next input,
+    // whether the turn was aborted or the continuation POST itself failed.
+    if (
+      canParkUnsentResults &&
+      (turnAbortSignal.aborted || continuationSendFailed)
+    ) {
+      populateInterruptQueue(runtime, {
+        lastExecutionResults,
+        lastExecutingToolCallIds,
+        lastNeedsUserInputToolCallIds,
+        agentId,
+        conversationId,
+      });
+    }
     if (turnAbortSignal.aborted) {
-      if (
-        runtime.turnLifecycle.isCurrent(turnLease) &&
-        !lastApprovalContinuationAccepted
-      ) {
-        populateInterruptQueue(runtime, {
+      if (canParkUnsentResults) {
+        emitInterruptApprovals(socket, runtime, {
           lastExecutionResults,
-          lastExecutingToolCallIds,
-          lastNeedsUserInputToolCallIds,
+          runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
           agentId,
           conversationId,
         });
-        const approvalsForEmission = getInterruptApprovalsForEmission(runtime, {
-          lastExecutionResults,
-          agentId,
-          conversationId,
-        });
-        if (approvalsForEmission) {
-          emitToolExecutionFinishedEvents(socket, runtime, {
-            approvals: approvalsForEmission,
-            runId: runtime.activeRunId || msgRunIds[msgRunIds.length - 1],
-            agentId,
-            conversationId,
-          });
-          emitInterruptToolReturnMessage(
-            socket,
-            runtime,
-            approvalsForEmission,
-            runtime.activeRunId || msgRunIds[msgRunIds.length - 1] || undefined,
-          );
-        }
       }
 
       finishTurn({
