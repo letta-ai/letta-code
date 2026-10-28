@@ -332,7 +332,7 @@ When a command reaches its timeout before it finishes, Claude Code automatically
 * Background commands in a local session you work in from a terminal, the desktop app, or the VS Code extension have no time limit. In a session that runs unattended, such as a `-p` run or a cloud session, Claude Code stops a background command at its [time limit](https://code.claude.com/docs/en/tools-reference.md#time-limit-for-background-commands)
 * A background command that a foreground [subagent](https://code.claude.com/docs/en/sub-agents.md#run-subagents-in-foreground-or-background) started ends when that subagent's run ends, whether it finished, failed, or was interrupted; see [When a background command stops](https://code.claude.com/docs/en/tools-reference.md#when-a-background-command-stops) in the tools reference
 
-To turn off background commands, set the [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars#variables) environment variable to `1`. With it set, you also lose background subagents, background forked skills, and `Ctrl+B`. Starting in [bare mode](https://code.claude.com/docs/en/headless.md#start-faster-with-bare-mode) has the same effect.
+To turn off background commands, set the [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars#variables) environment variable to `1`. With it set, you also lose the `Ctrl+B` shortcut and [other background features](https://code.claude.com/docs/en/env-vars.md#variables), such as [running skills in the background](https://code.claude.com/docs/en/skills.md#run-skills-in-a-subagent). Starting in [bare mode](https://code.claude.com/docs/en/headless.md#start-faster-with-bare-mode) has the same effect.
 
 **Common backgrounded commands:**
 

@@ -938,7 +938,7 @@ For a skill with `context: fork`, Claude Code follows the rules in [Run skills i
 
 To keep working while Claude waits, press **Ctrl+B** in the terminal or click [**Run in background**](https://code.claude.com/docs/en/vs-code.md#move-a-running-command-or-subagent-to-the-background) in VS Code.
 
-If you set the [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars) environment variable to `1` instead of turning fork mode off, Claude waits for every subagent. Background commands are off too, and **Ctrl+B** doesn't move anything to the background.
+If you set the [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars) environment variable to `1` instead of turning fork mode off, Claude waits for subagents to finish before it continues. Background commands are off too, and **Ctrl+B** doesn't move anything to the background.
 
 #### Tools, permissions, and results of background subagents
 

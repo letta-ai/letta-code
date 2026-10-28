@@ -178,11 +178,20 @@ The cross-source keys include:
 * [`forceRemoteSettingsRefresh`](https://code.claude.com/docs/en/server-managed-settings)
 * `env`, merged per variable across the admin sources: each variable comes from the highest-priority source that defines it, so lower sources fill in variables the higher ones leave unset. A few variables follow their own rules; [Per-key exceptions across managed sources](https://code.claude.com/docs/en/server-managed-settings.md#per-key-exceptions-across-managed-sources) names each one. Requires Claude Code v2.1.223 or later. Before v2.1.223, Claude Code applied the selected source's whole `env` block only
 
-The [gateway login keys](#choose-a-delivery-mechanism) follow a separate rule. Claude Code never reads them from server-managed settings, so while server-managed settings are the selected source, the highest-ranked admin source on the machine that carries a policy key still supplies them. A value in an admin source ranked below that one, or in the HKCU registry, is ignored.
-
 [`allowedProviders`](https://code.claude.com/docs/en/settings-reference#allowedproviders) has its own rule: its entry's Scope note says how a list set on the machine combines with a server-managed one. Requires Claude Code v2.1.285 or later.
 
 When an admin source sets `allowManagedMcpServersOnly` or an `allowedMcpServers` list and that value isn't the one in force, `/status` and `claude doctor` name that source and key.
+
+#### Which managed source supplies login keys
+
+On a machine with an MDM policy or managed settings file, Claude Code takes the login keys from that policy or file, even for a key [remote settings](#how-claude-code-combines-managed-sources) also set. Settings from the claude.ai admin console are remote settings, so set login keys such as [`forceLoginOrgUUID`](https://code.claude.com/docs/en/settings-reference#forceloginorguuid) in the MDM policy or file.
+
+If a machine has both an MDM policy and a managed settings file, use the MDM policy. When that policy sets any [policy key](#how-claude-code-combines-managed-sources), Claude Code ignores login keys in the file, [even under `managedSourcesBehavior: "merge"`](#compose-every-managed-source).
+
+The login keys are:
+
+* `forceLoginOrgUUID` and `forceLoginMethod` set to `"claudeai"` or `"console"`: if the policy or file omits either key, the value in remote settings applies. Until every client runs v2.1.299 or later, set the keys in [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md) from claude.ai as well
+* The [gateway login keys](#choose-a-delivery-mechanism): Claude Code doesn't use a value in remote settings for the gateway sign-in
 
 ### Compose every managed source
 
@@ -199,8 +208,9 @@ This table shows how Claude Code combines each kind of key under `"merge"`. The 
 | Restriction allowlists | Takes the list whole from the highest-ranked source that sets it, without adding entries from lower sources | `availableModels`, `allowedMcpServers`, `strictKnownMarketplaces`, `allowedChannelPlugins`, and the `fallbackModel` chain |
 | Values taken whole | Takes the value whole from the highest-ranked source that sets it, without combining entries or fields from lower sources | `sandbox.credentials.awsPairs`, `sandbox.ripgrep` |
 | Provided MCP servers | Combines the server names from every source; when two sources set the same name, applies the higher-ranked source's whole entry | `managedMcpServers` |
-| Keys read from the highest-ranked source only | Ignores the key in every lower source, even when the highest-ranked source leaves it unset | Credential helpers such as `apiKeyHelper`, login pins such as `forceLoginOrgUUID`, `modelPicker`, `permissions.defaultMode` |
+| Keys read from the highest-ranked source only | Ignores the key in every lower source, even when the highest-ranked source leaves it unset | `modelPicker`, `permissions.defaultMode`, and credential helpers such as `apiKeyHelper` |
 | `env` | Merges per variable across admin sources under either setting, as [Keys read from every admin source](#keys-read-from-every-admin-source) describes | |
+| Login keys | Under either setting, takes them from the MDM policy or managed settings file, whichever is the higher-ranked one carrying a [policy key](#how-claude-code-combines-managed-sources), [ahead of remote settings](#which-managed-source-supplies-login-keys) | `forceLoginOrgUUID`, `forceLoginMethod`, and the [gateway login keys](#choose-a-delivery-mechanism) |
 | Every other key | Takes the value from the highest-ranked source that sets it | `model`, `cleanupPeriodDays` |
 
 To confirm which sources combined on a machine, [read the `Setting sources` line in `/status`](#read-the-source-in-/status); that section says what each label means.
@@ -228,7 +238,7 @@ A [`policyHelper`](https://code.claude.com/docs/en/settings-reference#policyhelp
 Claude Code also applies these checks to parent-supplied values on their own:
 
 * When any admin source sets `allowManagedPermissionRulesOnly`, Claude Code drops [parent-supplied](https://code.claude.com/docs/en/claude-apps-gateway#restrict-parent-settings) permission allow rules and `additionalDirectories` as it reads them, even when a higher-priority source leaves the key unset. The key's effect on your own permission rules comes from the managed settings Claude Code applies, or from parent settings you've chosen to merge
-* Claude Code enforces the `forceLoginOrgUUID` or `allowedMcpServers` value in the managed settings it applies and blocks a parent-supplied one. Outside the MCP allowlist lock, a value in a lower admin source that Claude Code doesn't apply neither applies nor blocks the parent's.
+* Claude Code enforces the `forceLoginOrgUUID` or `allowedMcpServers` value in the managed settings it applies and blocks a parent-supplied one. If you deliver more than one managed source, see [which source supplies `forceLoginOrgUUID`](#which-managed-source-supplies-login-keys).
 
   On Claude Code v2.1.273 or later, while `allowManagedMcpServersOnly` is on, the `allowedMcpServers` list from the highest-ranked admin source that sets one applies and blocks the parent's, as a [cross-source key](#keys-read-from-every-admin-source). The parent's list applies only when no admin source sets one. The [`managedSourcesBehavior`](https://code.claude.com/docs/en/settings-reference#managedsourcesbehavior) entry says which source supplies each key under `"merge"`. Before v2.1.223, a value in any admin source blocked the parent's
 * For `availableModels`, Claude Code enforces the value in the managed settings it applies and blocks a parent-supplied list

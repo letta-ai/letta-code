@@ -214,7 +214,7 @@ This applies to every worktree Claude Code creates with git: `--worktree` worktr
 
 ### Reuse a worktree name
 
-Passing `--worktree` a name whose directory already exists opens that existing worktree instead of creating a new one.
+If a worktree with the name you pass to `--worktree` already exists, Claude Code opens it instead of creating a new one. If Claude Code stops with an error containing `belongs to a different repository` or `is a leftover worktree`, see [The worktree directory `belongs to a different repository`](#belongs-to-a-different-repository).
 
 With the default `"fresh"` [base](#choose-the-base-branch), a reopened worktree resets to the repository's default branch instead of continuing at its old tip when all of the following hold:
 
@@ -352,6 +352,20 @@ In four rare cases, Claude Code creates no worktree at all: it can't tell which 
 ### Worktree creation fails in a partial clone
 
 An error containing `This repository is a partial clone` means Claude Code couldn't fetch every git object the worktree's starting commit needs. Take the step in the message's sentence ending in `try again`. Then retry from the shell where you took it: run `claude --worktree`, or start `claude` there and ask again.
+
+### `Can only use --worktree in a git repository`
+
+This error means you passed `--worktree` in a directory that isn't a git checkout, and no [`WorktreeCreate` hook](#non-git-version-control) is active.
+
+* In a folder with no version control, run `git init` there, create a first commit, then retry.
+* In a checkout of another version control system, set up the hook the message suggests.
+* To work in the directory directly, start Claude without `--worktree`.
+
+### The worktree directory `belongs to a different repository`
+
+The errors `belongs to a different repository` and `is a leftover worktree` both mean git ties the directory for the worktree name you passed to another location. This can happen after you copy or move a project.
+
+Pass a different worktree name. If the directory has no work to keep and you didn't copy or move a project, you can remove it and retry the same name. After a copy or move, that retry can fail with `is already checked out elsewhere in this repository`, so use a different name.
 
 ### Claude Code refuses to use a worktree
 
