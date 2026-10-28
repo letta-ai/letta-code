@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.312:docs:ce1d69227f0aa11bd0bcd6307ebf515b8dcfd4d4915a0e91ee9860c4f14ad473:runtime:ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b",
+  "candidate_id": "claude@2.1.312:docs:3a19650ab38a4accf1083cbe8a510a22081b5cb82854511486c35629b76ff0d2:runtime:ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b",
   "package_version": "2.1.312",
   "npm_integrity": "sha512-/gx8byG8VOm4YoNuT5tal/Ov5Z5oydJzZkmHCJcBFLbNGGpyYDbKA/CNdB+iIKwcLQC8pVwBoj6Dt7H3L2J5bw==",
   "npm_published_at": "2026-10-27T18:36:10.160Z",
@@ -14,7 +14,7 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "f9a44a894b0cf6375d66ac968462fa475e9a77b769f9392b1dd8577354a1ad42",
+    "index_hash": "34cf19d9efcfef7e40f786803a48e29957f33451b0ffbf776b74d382a3c2032c",
     "full_scan": false,
     "scanned_at": "2026-10-27T22:19:31.412Z",
     "pages": {
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "ce1d69227f0aa11bd0bcd6307ebf515b8dcfd4d4915a0e91ee9860c4f14ad473"
+    "digest": "3a19650ab38a4accf1083cbe8a510a22081b5cb82854511486c35629b76ff0d2"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1624,7 +1624,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "probe-task",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1675,7 +1675,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: probe-task",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1686,8 +1686,8 @@
     ],
     "digest": "ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b"
   },
-  "fetched_at": "2026-10-28T20:22:12.060Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40762442657",
-  "state_commit_parent": "4e0b140d810b6c36516058211460853a0a87b111",
-  "analysis_parent_sha": "4e0b140d810b6c36516058211460853a0a87b111"
+  "fetched_at": "2026-10-28T22:20:14.619Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40779014346",
+  "state_commit_parent": "ec0e118710d46f94edd8df833384373e49d6f735",
+  "analysis_parent_sha": "ec0e118710d46f94edd8df833384373e49d6f735"
 }

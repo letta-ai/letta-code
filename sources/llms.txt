@@ -184,7 +184,7 @@
 #### Use plugins
 
 - [Install and manage plugins](https://code.claude.com/docs/en/plugins/install.md): Install Claude Code plugins from a marketplace on any surface you use, choose an install scope, and update or remove them later.
-- [Anthropic's marketplaces](https://code.claude.com/docs/en/plugins/anthropic-marketplaces.md): Anthropic's official, community, and demo plugin marketplaces for Claude Code: their names, repositories, how you add each, and where to browse their plugins.
+- [Anthropic's marketplaces](https://code.claude.com/docs/en/plugins/anthropic-marketplaces.md): Anthropic's official and community plugin marketplaces for Claude Code: their names, repositories, how you add each, and where to browse their plugins.
 - [Code intelligence plugins](https://code.claude.com/docs/en/plugins/code-intelligence.md): Install a language server plugin so Claude sees type errors after edits and navigates code by symbol, and answer the LSP plugin recommendation dialog.
 - [Plugin security and trust](https://code.claude.com/docs/en/plugins/security.md): Decide whether to trust a plugin before you install it, from what a plugin can do on your machine to how to review one and remove it.
 
