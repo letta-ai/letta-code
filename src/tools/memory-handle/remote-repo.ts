@@ -25,22 +25,17 @@ import type {
   MemoryCommitResult,
   MemoryDiffEntry,
   MemoryLogEntry,
+  MemoryPromoteRequest,
   MemoryRepoBackend,
 } from "./types";
-
-export type RemoteMemoryTarget =
-  | { kind: "agent"; agentId: string }
-  | { kind: "repository"; repoId: string };
 
 const DEFAULT_BRANCH = "main";
 const LIST_PAGE_LIMIT = 1000;
 const CLONE_TIMEOUT_MS = 180_000;
 
-function proxyBaseUrl(target: RemoteMemoryTarget): string {
+function proxyBaseUrl(agentId: string): string {
   const base = getServerUrl().replace(/\/+$/, "");
-  return target.kind === "agent"
-    ? `${base}/v1/agents/${encodeURIComponent(target.agentId)}/memory/pierre`
-    : `${base}/v1/repositories/${encodeURIComponent(target.repoId)}/pierre`;
+  return `${base}/v1/agents/${encodeURIComponent(agentId)}/memory/pierre`;
 }
 
 function isNotFound(error: unknown): boolean {
@@ -58,7 +53,7 @@ async function branchExists(repo: Repo, branch: string): Promise<boolean> {
 }
 
 export async function openRemoteMemoryRepo(
-  target: RemoteMemoryTarget,
+  agentId: string,
 ): Promise<MemoryRepoBackend> {
   const token = await getAuthToken();
   if (!token) {
@@ -69,11 +64,11 @@ export async function openRemoteMemoryRepo(
   const storage = new GitStorage({
     name: "letta",
     token,
-    apiBaseUrl: proxyBaseUrl(target),
+    apiBaseUrl: proxyBaseUrl(agentId),
   });
   // The proxy route pins the authorized repository; this id is ignored.
   const repo = storage.repo({
-    id: target.kind === "agent" ? target.agentId : target.repoId,
+    id: agentId,
     defaultBranch: DEFAULT_BRANCH,
   });
 
@@ -133,8 +128,8 @@ export async function openRemoteMemoryRepo(
     },
 
     async commit(request) {
-      if (target.kind === "agent" && request.branch === DEFAULT_BRANCH) {
-        return commitAgentMainViaGit(target.agentId, token, request);
+      if (request.branch === DEFAULT_BRANCH) {
+        return commitAgentMainViaGit(agentId, token, request);
       }
       if (!(await branchExists(repo, request.branch))) {
         await repo.createBranch({
@@ -156,7 +151,93 @@ export async function openRemoteMemoryRepo(
       const result = await builder.send();
       return { sha: result.commitSha, branch: request.branch, changed: true };
     },
+
+    async promote(request) {
+      if (request.branch !== DEFAULT_BRANCH) {
+        throw new Error("promote() moves main only.");
+      }
+      return promoteAgentMainViaGit(agentId, token, request);
+    },
   };
+}
+
+/**
+ * The REST proxy refuses merges into an agent's main, so promotion pushes
+ * over the validated Git route. A non-force push is the compare-and-swap:
+ * the server rejects it as non-fast-forward once main has moved.
+ */
+async function promoteAgentMainViaGit(
+  agentId: string,
+  token: string,
+  request: MemoryPromoteRequest,
+): Promise<MemoryCommitResult> {
+  const tempDir = mkdtempSync(join(tmpdir(), "letta-memory-promote-"));
+  try {
+    const remote = getGitRemoteUrl(agentId);
+    await runGit(tempDir, ["init", "-q"]);
+    await runGit(
+      tempDir,
+      [
+        "fetch",
+        "-q",
+        remote,
+        `+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}`,
+        `+refs/heads/${request.ref}:refs/remotes/origin/source`,
+      ],
+      token,
+      { timeoutMs: CLONE_TIMEOUT_MS },
+    );
+    const sha = async (ref: string) =>
+      (await runGit(tempDir, ["rev-parse", ref])).stdout.trim();
+    const current = await sha(`refs/remotes/origin/${DEFAULT_BRANCH}`);
+    const source = await sha("refs/remotes/origin/source");
+    if (current !== request.expect) {
+      throw new Error(
+        `${DEFAULT_BRANCH} moved to ${current.slice(0, 12)}, not the expected ${request.expect.slice(0, 12)}; re-apply onto the new head.`,
+      );
+    }
+    try {
+      await runGit(tempDir, [
+        "merge-base",
+        "--is-ancestor",
+        request.expect,
+        source,
+      ]);
+    } catch {
+      throw new Error(
+        `${request.ref} does not descend from ${request.expect.slice(0, 12)}; re-apply onto ${DEFAULT_BRANCH}.`,
+      );
+    }
+    const names = await runGit(tempDir, [
+      "diff",
+      "--no-renames",
+      "--name-only",
+      "-z",
+      current,
+      source,
+    ]);
+    await request.authorize(names.stdout.split("\0").filter(Boolean));
+    if (source === current) {
+      return { sha: source, branch: DEFAULT_BRANCH, changed: false };
+    }
+    try {
+      await runGit(
+        tempDir,
+        ["push", remote, `${source}:refs/heads/${DEFAULT_BRANCH}`],
+        token,
+      );
+    } catch (error) {
+      if (isNonFastForwardPushError(error)) {
+        throw new Error(
+          `${DEFAULT_BRANCH} moved past ${request.expect.slice(0, 12)} during promotion; re-apply onto the new head.`,
+        );
+      }
+      throw error;
+    }
+    return { sha: source, branch: DEFAULT_BRANCH, changed: true };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function commitAgentMainViaGit(

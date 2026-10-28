@@ -52,6 +52,19 @@ export interface MemoryRepoBackend {
   }): Promise<MemoryLogEntry[]>;
   diff(options: { base: string; ref: string }): Promise<MemoryDiffEntry[]>;
   commit(request: MemoryCommitRequest): Promise<MemoryCommitResult>;
+  /**
+   * Fast-forward `branch` to `ref` only while it still points at `expect`;
+   * throws when the branch moved or `ref` does not descend from `expect`.
+   */
+  promote(request: MemoryPromoteRequest): Promise<MemoryCommitResult>;
+}
+
+export interface MemoryPromoteRequest {
+  branch: string;
+  ref: string;
+  expect: string;
+  /** Called with the changed paths after validation, before the branch moves. */
+  authorize(paths: string[]): Promise<void>;
 }
 
 /** Repository-relative POSIX path; rejects escapes before any write or read. */

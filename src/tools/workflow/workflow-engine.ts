@@ -313,7 +313,6 @@ async function executeScript(
 
   const context = vm.createContext({
     tools: toolHooks.tools,
-    memory: toolHooks.memory,
     harness: toolHooks.harness,
     swap: toolHooks.swap,
     listTools: toolHooks.listTools,

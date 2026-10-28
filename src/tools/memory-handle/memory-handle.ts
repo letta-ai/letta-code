@@ -1,20 +1,19 @@
 /**
- * The script `memory` binding: `memory.open(target)` returns a handle with
- * `read`, `list`, `log`, `diff`, and a `commit()` builder over one Git-backed
- * memory repository.
+ * The Git handle under the script `harness` binding (not a script global):
+ * `read`, `list`, `log`, `diff`, a `commit()` builder, and `promote()` over
+ * one agent memory repository.
  *
  * Targets:
- * - a path: a local Git checkout (relative paths resolve from the cwd);
  * - `{ agentId }`: that agent's MemFS — the local checkout on a local-only
  *   backend, otherwise the hosted repository;
- * - `{ repoId }`: a hosted shared repository.
+ * - a path: a local Git checkout (relative paths resolve from the cwd).
  */
 
 import { resolve } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getBackend } from "@/backend";
 import { openLocalMemoryRepo } from "./local-repo";
-import { openRemoteMemoryRepo, type RemoteMemoryTarget } from "./remote-repo";
+import { openRemoteMemoryRepo } from "./remote-repo";
 import {
   type MemoryAuthor,
   type MemoryChange,
@@ -31,7 +30,6 @@ export interface MemoryWriteTarget {
   /** Local repository root, absent for hosted targets. */
   path?: string;
   agentId?: string;
-  repoId?: string;
   branch: string;
   /** Repository-relative paths the commit changes. */
   paths: string[];
@@ -42,40 +40,29 @@ export interface MemoryHandleContext {
   /** Agent invoking the script; authors commits and owns "own memory". */
   agentId: string | null;
   agentName: string | null;
-  /** Read check: a local directory, or a hosted agent/repository. */
-  checkRead(
-    target: { path: string } | { agentId: string } | { repoId: string },
-  ): Promise<void>;
+  /** Read check: a local directory or an agent's memory. */
+  checkRead(target: { path: string } | { agentId: string }): Promise<void>;
   /** Write check; throws when the write is not allowed. */
   checkWrite(target: MemoryWriteTarget): Promise<void>;
   /** Called after a successful hosted commit to the agent's own `main`. */
   onOwnMainCommit?(sha: string): Promise<void>;
 }
 
-export type MemoryOpenTarget =
-  | string
-  | { agentId: string; repoId?: undefined }
-  | { repoId: string; agentId?: undefined };
+export type MemoryOpenTarget = string | { agentId: string };
 
 function parseTarget(
   target: unknown,
-):
-  | { kind: "path"; path: string }
-  | { kind: "agent"; agentId: string }
-  | { kind: "repository"; repoId: string } {
+): { kind: "path"; path: string } | { kind: "agent"; agentId: string } {
   if (typeof target === "string" && target.trim()) {
     return { kind: "path", path: target };
   }
   if (target && typeof target === "object" && !Array.isArray(target)) {
-    const { agentId, repoId } = target as Record<string, unknown>;
-    if (typeof agentId === "string" && agentId && repoId === undefined) {
+    const { agentId } = target as Record<string, unknown>;
+    if (typeof agentId === "string" && agentId) {
       return { kind: "agent", agentId };
     }
-    if (typeof repoId === "string" && repoId && agentId === undefined) {
-      return { kind: "repository", repoId };
-    }
   }
-  throw new Error("memory.open() takes a path, { agentId }, or { repoId }.");
+  throw new Error("Memory target must be a path or { agentId }.");
 }
 
 function optionObject(value: unknown, name: string): Record<string, unknown> {
@@ -130,22 +117,10 @@ export async function openMemoryHandle(
       target.kind === "agent"
         ? { path: local.root, agentId: target.agentId }
         : { path: local.root };
-  } else if (localOnly) {
-    throw new Error(
-      "Shared repositories are hosted; the local backend has no repository service.",
-    );
   } else {
-    const remote: RemoteMemoryTarget = target;
-    await context.checkRead(
-      target.kind === "agent"
-        ? { agentId: target.agentId }
-        : { repoId: target.repoId },
-    );
-    backend = await openRemoteMemoryRepo(remote);
-    writeTarget =
-      target.kind === "agent"
-        ? { agentId: target.agentId }
-        : { repoId: target.repoId };
+    await context.checkRead({ agentId: target.agentId });
+    backend = await openRemoteMemoryRepo(target.agentId);
+    writeTarget = { agentId: target.agentId };
   }
   const ownHostedMemory =
     !localOnly && target.kind === "agent" && target.agentId === context.agentId;
@@ -194,6 +169,40 @@ export async function openMemoryHandle(
         ref,
         base: optionalString(parsed, "base") ?? backend.defaultRef,
       });
+    },
+
+    /**
+     * Fast-forward `branch` (default main) to `ref` only while it still
+     * points at `expect`; throws if it moved, so callers re-apply and retry.
+     */
+    async promote(
+      options: unknown,
+    ): Promise<MemoryCommitResult & { recompiled: boolean }> {
+      const parsed = optionObject(options, "promote()");
+      const ref = optionalString(parsed, "ref");
+      const expect = optionalString(parsed, "expect");
+      if (!ref || !expect) {
+        throw new Error("promote() requires { ref, expect }.");
+      }
+      const branch = optionalString(parsed, "branch") ?? backend.defaultRef;
+      const result = await backend.promote({
+        branch,
+        ref,
+        expect,
+        authorize: (paths) =>
+          context.checkWrite({ ...writeTarget, branch, paths }),
+      });
+      let recompiled = false;
+      if (
+        result.changed &&
+        ownHostedMemory &&
+        branch === backend.defaultRef &&
+        context.onOwnMainCommit
+      ) {
+        await context.onOwnMainCommit(result.sha);
+        recompiled = true;
+      }
+      return { ...result, recompiled };
     },
 
     commit(options: unknown) {

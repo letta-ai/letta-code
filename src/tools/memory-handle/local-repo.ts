@@ -155,6 +155,57 @@ export async function openLocalMemoryRepo(
     },
 
     commit: (request) => commitLocal(root, request),
+
+    promote: (request) =>
+      withMemoryOperation(root, async () => {
+        const branchRef = `refs/heads/${request.branch}`;
+        const current = await revParse(root, branchRef);
+        const target = await revParse(root, request.ref);
+        if (!target) throw new Error(`Unknown ref: ${request.ref}`);
+        if (current !== request.expect) {
+          throw new Error(
+            `${request.branch} moved to ${current?.slice(0, 12) ?? "nothing"}, not the expected ${request.expect.slice(0, 12)}; re-apply onto the new head.`,
+          );
+        }
+        if (
+          (await tryGit(root, [
+            "merge-base",
+            "--is-ancestor",
+            request.expect,
+            target,
+          ])) === null
+        ) {
+          throw new Error(
+            `${request.ref} does not descend from ${request.expect.slice(0, 12)}; re-apply onto ${request.branch}.`,
+          );
+        }
+        const names = await runGit(root, [
+          "diff",
+          "--no-renames",
+          "--name-only",
+          "-z",
+          request.expect,
+          target,
+        ]);
+        await request.authorize(names.stdout.split("\0").filter(Boolean));
+        const checkedOut = (
+          await tryGit(root, ["symbolic-ref", "--quiet", "HEAD"])
+        )?.trim();
+        try {
+          if (checkedOut === branchRef) {
+            await runGit(root, ["merge", "--ff-only", target]);
+          } else {
+            await runGit(root, ["update-ref", branchRef, target, current]);
+          }
+        } catch (error) {
+          throw gitError(error);
+        }
+        return {
+          sha: target,
+          branch: request.branch,
+          changed: target !== current,
+        };
+      }),
   };
 }
 

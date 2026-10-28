@@ -148,7 +148,6 @@ export async function createScriptToolScope(
       agentId: parentAgentId,
       agentName,
       checkRead: async (readTarget) => {
-        if ("repoId" in readTarget) return;
         const path =
           "path" in readTarget
             ? readTarget.path
@@ -157,18 +156,7 @@ export async function createScriptToolScope(
       },
       checkWrite: async (write) => {
         const root =
-          write.path ??
-          (write.agentId
-            ? getScopedMemoryFilesystemRoot(write.agentId)
-            : undefined);
-        if (!root) {
-          await requirePermission(
-            "MemoryWrite",
-            { repo_id: write.repoId, branch: write.branch },
-            "MemoryWrite",
-          );
-          return;
-        }
+          write.path ?? getScopedMemoryFilesystemRoot(write.agentId ?? "");
         for (const path of write.paths) {
           await requirePermission(
             "Write",

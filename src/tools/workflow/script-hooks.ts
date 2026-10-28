@@ -70,7 +70,7 @@ export interface ScriptToolBindings {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
-  /** Backs `memory.open(target)`; see tools/memory-handle. */
+  /** Opens an agent memory handle for `harness`; see tools/memory-handle. */
   openMemory?: (target: unknown) => Promise<unknown>;
 }
 
@@ -87,7 +87,6 @@ export interface ToolHooksConfig {
 
 export interface ToolHooks {
   tools: object;
-  memory: object;
   harness: object;
   swap: typeof swap;
   listTools(): Promise<Array<{ name: string; description: string }>>;
@@ -176,59 +175,88 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
     return result.structuredContent ?? mcpContentValue(result.content);
   }
 
-  const memory = Object.freeze({
-    open: (target?: unknown) =>
-      config.track(
-        (async () => {
-          const open = config.bindings().openMemory;
-          if (!open) {
-            throw new Error("memory is unavailable: no invoking tool scope.");
-          }
-          if (config.signal().aborted) throw new Error(config.abortedMessage);
-          return open(target);
-        })(),
-      ),
-  });
+  type HarnessModule = typeof import("@/tools/memory-handle/harness");
+  type MemoryHandle = Parameters<HarnessModule["loadHarnessSnapshot"]>[0];
 
-  // `harness.load(agentId, { ref? })`: a typed view of an agent's
-  // memory-backed state over the same `memory.open` handle and permissions.
+  function optionsObject(options: unknown, what: string) {
+    if (options === undefined) return {} as Record<string, unknown>;
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new Error(`${what} options must be an object.`);
+    }
+    return options as Record<string, unknown>;
+  }
+
+  function refOption(value: unknown, key: string): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string" || !value) {
+      throw new Error(`${key} must be a non-empty string.`);
+    }
+    return value;
+  }
+
+  /** Runs `fn` with an agent's memory handle, tracked and abortable. */
+  function withAgentMemory<T>(
+    what: string,
+    agentId: unknown,
+    fn: (repo: MemoryHandle, module: HarnessModule) => Promise<T>,
+  ): Promise<T> {
+    return config.track(
+      (async () => {
+        const open = config.bindings().openMemory;
+        if (!open) {
+          throw new Error("harness is unavailable: no invoking tool scope.");
+        }
+        if (typeof agentId !== "string" || !agentId) {
+          throw new Error(`${what} takes an agent ID.`);
+        }
+        if (config.signal().aborted) throw new Error(config.abortedMessage);
+        const module = await import("@/tools/memory-handle/harness");
+        return fn((await open({ agentId })) as MemoryHandle, module);
+      })(),
+    );
+  }
+
+  // The only scripted route to agent memory: typed views, branch edits,
+  // revision diffs, and compare-and-swap promotion of a branch to main.
   const harness = Object.freeze({
-    load: (agentId?: unknown, options?: unknown) =>
-      config.track(
-        (async () => {
-          const bindings = config.bindings();
-          if (!bindings.openMemory) {
-            throw new Error("harness is unavailable: no invoking tool scope.");
-          }
-          const target = agentId;
-          if (typeof target !== "string" || !target) {
-            throw new Error("harness.load() takes an agent ID.");
-          }
-          if (
-            options !== undefined &&
-            (!options || typeof options !== "object" || Array.isArray(options))
-          ) {
-            throw new Error("harness.load() options must be an object.");
-          }
-          const ref = (options as { ref?: unknown } | undefined)?.ref;
-          if (ref !== undefined && (typeof ref !== "string" || !ref)) {
-            throw new Error("ref must be a non-empty string.");
-          }
-          if (config.signal().aborted) throw new Error(config.abortedMessage);
-          const { loadHarnessSnapshot } = await import(
-            "@/tools/memory-handle/harness"
-          );
-          const repo = (await bindings.openMemory({
-            agentId: target,
-          })) as Parameters<typeof loadHarnessSnapshot>[0];
-          return loadHarnessSnapshot(repo, ref);
-        })(),
-      ),
+    load: (agentId?: unknown, options?: unknown) => {
+      const ref = refOption(
+        optionsObject(options, "harness.load()").ref,
+        "ref",
+      );
+      return withAgentMemory("harness.load()", agentId, (repo, module) =>
+        module.loadHarnessSnapshot(repo, ref),
+      );
+    },
+    diff: (agentId?: unknown, options?: unknown) => {
+      const parsed = optionsObject(options, "harness.diff()");
+      const base = refOption(parsed.base, "base");
+      const ref = refOption(parsed.ref, "ref");
+      if (!base || !ref)
+        throw new Error("harness.diff() requires { base, ref }.");
+      return withAgentMemory("harness.diff()", agentId, (repo, module) =>
+        module.diffHarness(repo, base, ref),
+      );
+    },
+    accept: (agentId?: unknown, ref?: unknown, options?: unknown) => {
+      const source = refOption(ref, "ref");
+      const expect = refOption(
+        optionsObject(options, "harness.accept()").expect,
+        "expect",
+      );
+      if (!source || !expect) {
+        throw new Error(
+          "harness.accept() requires (agentId, ref, { expect }).",
+        );
+      }
+      return withAgentMemory("harness.accept()", agentId, (repo, module) =>
+        module.acceptHarness(repo, source, expect),
+      );
+    },
   });
 
   return {
     tools,
-    memory,
     harness,
     swap,
     /** `[{ name, description }]` for every tool callable through `tools`. */

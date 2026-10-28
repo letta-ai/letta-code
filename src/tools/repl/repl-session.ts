@@ -149,7 +149,6 @@ export class ReplSession {
     const log = (...messages: unknown[]) => this.log(format(...messages));
     this.context = vm.createContext({
       tools: toolHooks.tools,
-      memory: toolHooks.memory,
       harness: toolHooks.harness,
       swap: toolHooks.swap,
       listTools: toolHooks.listTools,

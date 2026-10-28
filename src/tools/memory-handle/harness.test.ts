@@ -5,7 +5,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installPreCommitHook } from "@/agent/memory-git-hooks";
 import { executeToolScript } from "@/tools/workflow/workflow-engine";
-import { loadHarnessSnapshot, swap } from "./harness";
+import {
+  acceptHarness,
+  diffHarness,
+  loadHarnessSnapshot,
+  swap,
+} from "./harness";
 import { type MemoryHandleContext, openMemoryHandle } from "./memory-handle";
 
 const dirs: string[] = [];
@@ -324,6 +329,136 @@ describe("harness edits", () => {
   });
 });
 
+type Doc = { name: string; description: string; body: string };
+
+describe("concurrent edits", () => {
+  test("diff, apply with line merges and conflicts, then accept main by compare-and-swap", async () => {
+    const dir = memoryRepo();
+    const handle = await openMemoryHandle(dir, context);
+    const h = await loadHarnessSnapshot(handle);
+    const design = (body: string) => ({
+      name: "design",
+      description: "Design notes.",
+      body,
+    });
+    // Two workers branch from the same main and both touch reference/design.
+    const a = await h
+      .edit({ branch: "proposal/a" })
+      .memory.put("reference/design", design("Use git.\nPrefer branches.\n"))
+      .prompts.update("persona", (p: Doc) => ({ ...p, body: "Dry. Direct.\n" }))
+      .commit("a");
+    const b = await h
+      .edit({ branch: "proposal/b" })
+      .memory.put("reference/design", design("Always use git.\n"))
+      .prompts.update("persona", (p: Doc) => ({ ...p, body: "Terse.\n" }))
+      .prompts.put("style", { description: "Style.", body: "Short.\n" })
+      .commit("b");
+
+    const da = await diffHarness(handle, a.base, a.branch);
+    expect(da.changes.map((c) => [c.path, c.op])).toEqual([
+      ["persona.md", "modify"],
+      ["reference/design.md", "modify"],
+    ]);
+
+    const merged = h.edit({ branch: "reconcile/1" });
+    expect(merged.apply(da.changes)).toEqual({
+      applied: ["persona.md", "reference/design.md"],
+      merged: [],
+      conflicts: [],
+    });
+    const db = await diffHarness(handle, b.base, b.branch);
+    const result = merged.apply(db.changes);
+    // design: a appended a line, b rewrote line 1 -> disjoint lines merge.
+    expect(result.applied).toEqual(["style.md"]);
+    expect(result.merged).toEqual(["reference/design.md"]);
+    expect(merged.memory.get("reference/design")).toMatchObject({
+      body: "Always use git.\nPrefer branches.",
+    });
+    // persona: both rewrote the same line -> conflict, ours left in place.
+    expect(result.conflicts).toEqual([
+      {
+        path: "persona.md",
+        base: FILES["persona.md"],
+        ours: "---\nname: persona\ndescription: Who I am.\n---\nDry. Direct.\n",
+        theirs: "---\nname: persona\ndescription: Who I am.\n---\nTerse.\n",
+      },
+    ]);
+    merged.prompts.update("persona", (p: Doc) => ({
+      ...p,
+      body: "Dry. Terse.\n",
+    }));
+    const reconciled = await merged.commit("reconcile");
+
+    // Someone else advances main first: accept refuses, nothing moves.
+    const main = git(dir, "rev-parse", "main");
+    expect(main).toBe(h.revision);
+    await h
+      .edit({ branch: "proposal/c" })
+      .prompts.put("tone", { description: "T.", body: "" })
+      .commit();
+    git(dir, "merge", "-q", "--ff-only", "proposal/c");
+    await expect(
+      acceptHarness(handle, reconciled.branch, reconciled.base),
+    ).rejects.toThrow(/moved/);
+    expect(git(dir, "rev-parse", "main")).not.toBe(reconciled.sha);
+
+    // Retry on the new head: reload, re-apply the reconciled changes, accept.
+    const h2 = await loadHarnessSnapshot(handle);
+    const retry = h2.edit({ branch: "reconcile/2" });
+    const again = retry.apply(
+      (await diffHarness(handle, reconciled.base, reconciled.branch)).changes,
+    );
+    expect(again.conflicts).toEqual([]);
+    const r2 = await retry.commit("reconcile on new main");
+    expect(await acceptHarness(handle, r2.branch, r2.base)).toEqual({
+      sha: r2.sha,
+      changed: true,
+    });
+    const final = await loadHarnessSnapshot(handle);
+    expect(final.revision).toBe(r2.sha);
+    expect(final.prompts.get("persona")).toMatchObject({
+      body: "Dry. Terse.",
+    });
+    expect(final.prompts.get("tone")).toMatchObject({ description: "T." });
+    expect(final.prompts.get("style")).toMatchObject({ body: "Short." });
+  });
+
+  test("accept refuses a ref that does not descend from expect", async () => {
+    const dir = memoryRepo();
+    const handle = await openMemoryHandle(dir, context);
+    const h = await loadHarnessSnapshot(handle);
+    git(dir, "checkout", "-q", "--orphan", "stray");
+    git(dir, "commit", "-q", "--allow-empty", "-m", "stray");
+    git(dir, "checkout", "-q", "main");
+    await expect(acceptHarness(handle, "stray", h.revision)).rejects.toThrow(
+      /does not descend/,
+    );
+  });
+
+  test("apply leaves add/delete collisions as conflicts", () => {
+    return (async () => {
+      const h = await load(memoryRepo());
+      const e = h.edit({ branch: "x" });
+      e.prompts.put("style", { description: "Ours.", body: "" });
+      const result = e.apply([
+        {
+          path: "style.md",
+          op: "add",
+          after: "---\nname: style\ndescription: Theirs.\n---\n",
+        },
+        { path: "human.md", op: "delete", before: "stale\n" },
+      ]);
+      expect(result.applied).toEqual([]);
+      expect(result.conflicts.map((c) => c.path)).toEqual([
+        "style.md",
+        "human.md",
+      ]);
+      expect(e.prompts.get("style")).toMatchObject({ description: "Ours." });
+      expect(e.prompts.get("human")).not.toBeNull();
+    })();
+  });
+});
+
 describe("swap", () => {
   test("replaces exactly one match unless all is set", () => {
     expect(swap("a b a", "b", "c")).toBe("a c a");
@@ -334,6 +469,28 @@ describe("swap", () => {
 });
 
 describe("script harness global", () => {
+  test("scripts diff and accept through the scope binding", async () => {
+    const dir = memoryRepo();
+    const result = await executeToolScript({
+      script: `
+        const h = await harness.load('agent-x')
+        const r = await h.edit({ branch: 'proposal/s' })
+          .prompts.put('style', { description: 'S.', body: '' }).commit()
+        const d = await harness.diff('agent-x', { base: r.base, ref: r.branch })
+        const a = await harness.accept('agent-x', r.branch, { expect: r.base })
+        return { ops: d.changes.map(c => c.op + ' ' + c.path), moved: a.sha === r.sha }
+      `,
+      openMemory: async () => openMemoryHandle(dir, context),
+    });
+    expect(result).toEqual({ ops: ["add style.md"], moved: true });
+  });
+
+  test("harness fails clearly without an invoking scope", async () => {
+    await expect(
+      executeToolScript({ script: "return harness.load('agent-x')" }),
+    ).rejects.toThrow("harness is unavailable");
+  });
+
   test("scripts load an agent's harness and swap through the scope binding", async () => {
     const dir = memoryRepo();
     const opened: unknown[] = [];
@@ -351,6 +508,9 @@ describe("script harness global", () => {
       },
     });
     expect(opened).toEqual([{ agentId: "agent-x" }]);
+    await expect(
+      executeToolScript({ script: "return typeof memory" }),
+    ).resolves.toBe("undefined");
     expect(result).toEqual({
       prompts: ["human", "persona"],
       branch: "proposal/s",

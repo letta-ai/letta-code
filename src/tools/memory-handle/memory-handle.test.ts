@@ -4,7 +4,6 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installPreCommitHook } from "@/agent/memory-git-hooks";
-import { executeToolScript } from "@/tools/workflow/workflow-engine";
 import {
   type MemoryHandleContext,
   type MemoryWriteTarget,
@@ -175,25 +174,5 @@ describe("memory handle over a local repository", () => {
     expect(() => memory.commit({ message: "x" }).delete(".git/config")).toThrow(
       ".git",
     );
-  });
-});
-
-describe("script memory global", () => {
-  test("CodeMode scripts reach memory.open through the scope binding", async () => {
-    const dir = memoryRepo();
-    const result = await executeToolScript({
-      script: `const m = await memory.open(args.dir)
-const r = await m.commit({ message: 'from script', branch: 'scripted' }).put('MEMORY.md', '# Changed\\n').send()
-return { before: await m.read('MEMORY.md'), after: await m.read('MEMORY.md', { ref: r.branch }) }`,
-      args: { dir },
-      openMemory: (target) => openMemoryHandle(target, context()),
-    });
-    expect(result).toEqual({ before: "# Memory\n", after: "# Changed\n" });
-  });
-
-  test("memory.open fails clearly without an invoking scope", async () => {
-    await expect(
-      executeToolScript({ script: "return memory.open('.')" }),
-    ).rejects.toThrow("memory is unavailable");
   });
 });

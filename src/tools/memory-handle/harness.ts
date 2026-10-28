@@ -22,6 +22,7 @@ import { isCoreMemoryPath } from "@/agent/memory-format";
 import { validateMemoryFileFrontmatter } from "@/memory-frontmatter";
 import { parseFrontmatter } from "@/utils/frontmatter";
 import type { openMemoryHandle } from "./memory-handle";
+import { merge3 } from "./merge3";
 import { normalizeMemoryPath } from "./types";
 
 export { swap } from "./swap";
@@ -392,18 +393,15 @@ function isHarnessPath(path: string): boolean {
   return path.endsWith(".md") || path.startsWith(`${SKILLS}/`);
 }
 
-export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
-  const sourceRef = ref ?? repo.defaultBranch;
-  const [head] = await repo.log({ ref: sourceRef, limit: 1 });
-  if (!head) throw new Error(`Unknown ref: ${sourceRef}`);
+async function readTree(repo: MemoryHandle, ref: string) {
+  const [head] = await repo.log({ ref, limit: 1 });
+  if (!head) throw new Error(`Unknown ref: ${ref}`);
   const revision = head.sha;
   const paths = await repo.list({ ref: revision });
   if (!paths.includes(DOC)) {
-    throw new Error(
-      "harness requires the MemFS v2 layout (a root MEMORY.md); use memory.open() for this repository.",
-    );
+    throw new Error("harness requires the MemFS v2 layout (a root MEMORY.md).");
   }
-  const base: Tree = new Map(
+  const tree: Tree = new Map(
     await Promise.all(
       paths.map(
         async (path) =>
@@ -416,6 +414,71 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
       ),
     ),
   );
+  return { revision, tree };
+}
+
+/** File-level changes from one tree to another, sorted by path. */
+function treeChanges(from: Tree, to: Tree): HarnessChange[] {
+  const result: HarnessChange[] = [];
+  for (const path of [...new Set([...from.keys(), ...to.keys()])].sort()) {
+    const inFrom = from.has(path);
+    const inTo = to.has(path);
+    const before = from.get(path);
+    const after = to.get(path);
+    if (inFrom && !inTo) {
+      result.push({
+        path,
+        op: "delete",
+        ...(before !== undefined ? { before } : {}),
+      });
+    } else if (!inFrom && inTo) {
+      result.push({ path, op: "add", after: after ?? "" });
+    } else if (before !== after) {
+      result.push({
+        path,
+        op: "modify",
+        before: before ?? "",
+        after: after ?? "",
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Typed changes between two revisions: what `ref` changed relative to
+ * `base`. Pass a proposal's `base` (its edit's loaded revision) to read
+ * exactly what that proposal did.
+ */
+export async function diffHarness(
+  repo: MemoryHandle,
+  base: string,
+  ref: string,
+) {
+  const [from, to] = await Promise.all([
+    readTree(repo, base),
+    readTree(repo, ref),
+  ]);
+  return {
+    base: from.revision,
+    ref: to.revision,
+    changes: treeChanges(from.tree, to.tree),
+  };
+}
+
+/** Fast-forward `main` to `ref` only while main is still at `expect`. */
+export async function acceptHarness(
+  repo: MemoryHandle,
+  ref: string,
+  expect: string,
+) {
+  const result = await repo.promote({ ref, expect });
+  return { sha: result.sha, changed: result.changed };
+}
+
+export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
+  const sourceRef = ref ?? repo.defaultBranch;
+  const { revision, tree: base } = await readTree(repo, sourceRef);
   const snapshot = createViews(base);
 
   function edit(options?: unknown) {
@@ -427,7 +490,7 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
         : scalar(parsed.branch, "branch");
     if (branch === repo.defaultBranch) {
       throw new Error(
-        `edit() commits to a branch, not ${repo.defaultBranch}; use memory.open() to write ${repo.defaultBranch} directly.`,
+        `edit() commits to a branch, not ${repo.defaultBranch}; harness.accept() moves ${repo.defaultBranch} to it.`,
       );
     }
     const staged: Tree = new Map(base);
@@ -566,32 +629,93 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
     }
 
     function changes(): HarnessChange[] {
-      const result: HarnessChange[] = [];
-      for (const path of [
-        ...new Set([...base.keys(), ...staged.keys()]),
-      ].sort()) {
-        const inBase = base.has(path);
-        const inStaged = staged.has(path);
-        const before = base.get(path);
-        const after = staged.get(path);
-        if (inBase && !inStaged) {
-          result.push({
-            path,
-            op: "delete",
-            ...(before !== undefined ? { before } : {}),
-          });
-        } else if (!inBase && inStaged) {
-          result.push({ path, op: "add", after: after ?? "" });
-        } else if (before !== after) {
-          result.push({
-            path,
-            op: "modify",
-            before: before ?? "",
-            after: after ?? "",
-          });
-        }
+      return treeChanges(base, staged);
+    }
+
+    function validDocument(path: string, content: string): boolean {
+      if (!path.endsWith(".md") || path.startsWith(`${SKILLS}/`)) return true;
+      if (path === DOC || path.endsWith(`/${DOC}`)) {
+        return !content.startsWith("---");
       }
-      return result;
+      return (
+        validateMemoryFileFrontmatter({
+          path,
+          content,
+          previousContent: null,
+          format: "memfs-v2",
+        }).length === 0
+      );
+    }
+
+    /**
+     * Replay changes (from `harness.diff` or another edit's `diff()`) onto
+     * the staged tree. A change applies when the node still matches its
+     * `before`; concurrent edits to one document merge line by line when
+     * they touch different lines; anything else is returned as a conflict
+     * and left untouched.
+     */
+    function apply(input: unknown) {
+      if (!Array.isArray(input)) {
+        throw new Error("apply() takes an array of changes.");
+      }
+      const applied: string[] = [];
+      const merged: string[] = [];
+      const conflicts: {
+        path: string;
+        base?: string;
+        ours?: string;
+        theirs?: string;
+      }[] = [];
+      for (const raw of input) {
+        const change = record(raw, "change");
+        const path = normalizeMemoryPath(change.path);
+        if (!isHarnessPath(path)) {
+          throw new Error(`${path} is outside prompts, memory, and skills.`);
+        }
+        const op = change.op;
+        if (op !== "add" && op !== "modify" && op !== "delete") {
+          throw new Error(`Invalid change op for ${path}: ${String(op)}`);
+        }
+        const text = (key: "before" | "after") => {
+          const value = change[key];
+          if (value !== undefined && typeof value !== "string") {
+            throw new Error(`${path} ${key} must be a string.`);
+          }
+          return value as string | undefined;
+        };
+        const before = op === "add" ? undefined : (text("before") ?? "");
+        const after = op === "delete" ? undefined : (text("after") ?? "");
+        const ours = staged.has(path) ? (staged.get(path) ?? "") : undefined;
+        const set = (value: string | undefined) => {
+          if (value === undefined) staged.delete(path);
+          else staged.set(path, value);
+        };
+        if (ours === after) {
+          applied.push(path);
+          continue;
+        }
+        if (ours === before) {
+          set(after);
+          applied.push(path);
+          continue;
+        }
+        const combined =
+          op === "modify" && ours !== undefined && before !== undefined
+            ? merge3(before, ours, after ?? "")
+            : null;
+        if (combined !== null && validDocument(path, combined)) {
+          set(combined);
+          merged.push(path);
+          continue;
+        }
+        conflicts.push({
+          path,
+          ...(before !== undefined ? { base: before } : {}),
+          ...(ours !== undefined ? { ours } : {}),
+          ...(after !== undefined ? { theirs: after } : {}),
+        });
+      }
+      return { applied, merged, conflicts };
     }
 
     /** Link reports for directories whose body or direct children changed. */
@@ -670,6 +794,10 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
         (path, recursive) => deleteMemory(memoryPath(path), recursive),
       ),
       skills: namespace(views.skills, putSkill, deleteSkill),
+      apply(changes: unknown) {
+        live();
+        return apply(changes);
+      },
       /** Staged changes, a unified diff, and link drift in changed directories. */
       diff() {
         const changed = changes();
