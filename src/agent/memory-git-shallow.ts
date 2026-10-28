@@ -124,19 +124,24 @@ export async function getMemoryMergeBaseStatusAfterDeepening(
     "memfs-git",
     "No merge base in a shallow memory repo; fetching full history before recovery",
   );
+  let fetchError: unknown;
   try {
     await runGit(memoryDir, ["fetch", "--unshallow", "origin"]);
   } catch (error) {
-    // Another pull can win the race and make this checkout complete before our
-    // fetch runs. Re-check before treating the fetch failure as inconclusive.
-    const stillShallow = await isShallowMemoryRepo(memoryDir, runGit);
-    if (stillShallow !== false) {
-      debugWarn(
-        "memfs-git",
-        `Failed to unshallow memory repo: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return "indeterminate";
-    }
+    fetchError = error;
+  }
+
+  // Another pull can win the race and make a failing fetch harmless. Conversely,
+  // a shallow source can make fetch succeed while leaving this checkout shallow.
+  // Only a confirmed complete checkout can authorize unrelated-history recovery.
+  if ((await isShallowMemoryRepo(memoryDir, runGit)) !== false) {
+    debugWarn(
+      "memfs-git",
+      fetchError
+        ? `Failed to unshallow memory repo: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+        : "Memory repo remained shallow after fetching full history",
+    );
+    return "indeterminate";
   }
   return getMergeBaseStatus(memoryDir, runGit);
 }

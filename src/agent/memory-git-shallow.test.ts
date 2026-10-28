@@ -244,6 +244,23 @@ describe("getMemoryMergeBaseStatusAfterDeepening", () => {
     ]);
   });
 
+  test("keeps a successful fetch inconclusive when the checkout stays shallow", async () => {
+    const status = await getMemoryMergeBaseStatusAfterDeepening(
+      "/unused",
+      async (_cwd, args) => {
+        if (args[0] === "merge-base") {
+          throw Object.assign(new Error("no merge base"), { code: 1 });
+        }
+        if (args[0] === "rev-parse") {
+          return { stdout: "true", stderr: "" };
+        }
+        return { stdout: "", stderr: "" };
+      },
+    );
+
+    expect(status).toBe("indeterminate");
+  });
+
   test("handles another pull winning the unshallow race", async () => {
     let mergeBaseChecks = 0;
     let shallowChecks = 0;
