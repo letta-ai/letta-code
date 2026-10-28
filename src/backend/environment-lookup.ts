@@ -171,6 +171,23 @@ export async function resolveEnvironmentConnectionId(
     ) {
       return selectEnvironment(trimmed, [pointMatch]);
     }
+    if (pointMatch.deviceId !== trimmed) {
+      try {
+        const refreshed = await get(pointMatch.deviceId);
+        if (refreshed.deviceId === pointMatch.deviceId) {
+          pointMatch = refreshed;
+          if (
+            isEnvironmentOnline(pointMatch) &&
+            typeof pointMatch.connectionId === "string"
+          ) {
+            return selectEnvironment(trimmed, [pointMatch]);
+          }
+        }
+      } catch (error) {
+        if (!(error instanceof ApiRequestError) || error.status !== 404)
+          throw error;
+      }
+    }
   } catch (error) {
     if (!(error instanceof ApiRequestError) || error.status !== 404)
       throw error;

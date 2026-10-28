@@ -69,6 +69,35 @@ describe("Computer environment resolution", () => {
     expect(listCalls).toBe(0);
   });
 
+  test("refreshes a stale named point row through its stable device ID", async () => {
+    const stale = environment({
+      connectionId: null,
+      connectionName: "Work Mac",
+      lastHeartbeat: null,
+    });
+    const online = environment({
+      connectionId: "conn-online",
+      connectionName: "Work Mac",
+    });
+    const pointCalls: string[] = [];
+    let listCalls = 0;
+
+    await expect(
+      resolveEnvironmentConnectionId("Work Mac", {
+        get: async (selector) => {
+          pointCalls.push(selector);
+          return selector === "device-1" ? online : stale;
+        },
+        list: async () => {
+          listCalls += 1;
+          throw new Error("must not list after stable-device refresh");
+        },
+      }),
+    ).resolves.toEqual({ connectionId: "conn-online", environment: online });
+    expect(pointCalls).toEqual(["Work Mac", "device-1"]);
+    expect(listCalls).toBe(0);
+  });
+
   test("falls back to the device's online rows when the point row is stale", async () => {
     const stale = environment({
       connectionId: null,
