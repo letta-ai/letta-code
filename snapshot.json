@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.312:docs:a020eadd7e924756e302e42f0679a400359824073c093dfa64baec32c09ad18e:runtime:ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b",
+  "candidate_id": "claude@2.1.312:docs:e951f8bf89c3e2254e2c83060390dc2fe7fc45c9996a83aad911ca9e484760c9:runtime:ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b",
   "package_version": "2.1.312",
   "npm_integrity": "sha512-/gx8byG8VOm4YoNuT5tal/Ov5Z5oydJzZkmHCJcBFLbNGGpyYDbKA/CNdB+iIKwcLQC8pVwBoj6Dt7H3L2J5bw==",
   "npm_published_at": "2026-10-27T18:36:10.160Z",
@@ -1124,7 +1124,7 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "2b0937430f5f71fd7299eaaae5ebc0d389b8d8f6d56ffc73d6160b68d39c384c",
+        "hash": "3e61bb59ba30495277af107905960770c81dca87a15fff7bdd04844a63e9d759",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "a020eadd7e924756e302e42f0679a400359824073c093dfa64baec32c09ad18e"
+    "digest": "e951f8bf89c3e2254e2c83060390dc2fe7fc45c9996a83aad911ca9e484760c9"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1624,7 +1624,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "probe-task",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1675,7 +1675,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: probe-task",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1686,8 +1686,8 @@
     ],
     "digest": "ecbadab063cdfce9c7542f1b011aa27cb2f8f225702710c3779f876c5d653f8b"
   },
-  "fetched_at": "2026-10-28T04:24:12.960Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40631996270",
-  "state_commit_parent": "7cd2323d49cb2a4cf3a2263ba00d2e08c333bbe8",
-  "analysis_parent_sha": "7cd2323d49cb2a4cf3a2263ba00d2e08c333bbe8"
+  "fetched_at": "2026-10-28T16:23:49.911Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/40725307590",
+  "state_commit_parent": "c21175a061012e58f70e00fcacc46739594f128d",
+  "analysis_parent_sha": "c21175a061012e58f70e00fcacc46739594f128d"
 }
