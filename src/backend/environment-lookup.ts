@@ -69,14 +69,20 @@ async function listOnlineDeviceEnvironments(
   list: typeof listEnvironments,
   deviceId: string,
 ): Promise<EnvironmentConnection[]> {
+  const listDeviceRows = async (
+    options: Pick<ListEnvironmentsOptions, "deviceId" | "onlineOnly">,
+  ) =>
+    (await listCompleteEnvironmentCollection(list, options)).filter(
+      (environment) => environment.deviceId === deviceId,
+    );
   try {
-    return await listCompleteEnvironmentCollection(list, {
+    return await listDeviceRows({
       onlineOnly: true,
       deviceId,
     });
   } catch (error) {
     if (!isUnsupportedSelectorError(error)) throw error;
-    return listCompleteEnvironmentCollection(list, { onlineOnly: true });
+    return listDeviceRows({ onlineOnly: true });
   }
 }
 

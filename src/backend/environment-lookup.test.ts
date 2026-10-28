@@ -95,28 +95,64 @@ describe("Computer environment resolution", () => {
 
   test("retries stale point recovery without device filtering on older servers", async () => {
     const stale = environment({
+      deviceId: "selector",
       connectionId: null,
       lastHeartbeat: null,
     });
-    const online = environment({ connectionId: "conn-online" });
+    const online = environment({
+      id: "env-online",
+      deviceId: "selector",
+      connectionId: "conn-online",
+    });
+    const unrelated = environment({
+      id: "env-unrelated",
+      deviceId: "device-b",
+      connectionId: "selector",
+    });
     const calls: Parameters<typeof listEnvironments>[0][] = [];
 
     await expect(
-      resolveEnvironmentConnectionId("device-1", {
+      resolveEnvironmentConnectionId("selector", {
         get: async () => stale,
         list: async (options = {}) => {
           calls.push(options);
           if (options.deviceId) {
             throw new ApiRequestError("unsupported", 422, "unsupported");
           }
-          return { connections: [online], hasNextPage: false };
+          return {
+            connections: [unrelated, online],
+            hasNextPage: false,
+          };
         },
       }),
     ).resolves.toEqual({ connectionId: "conn-online", environment: online });
     expect(calls).toEqual([
-      { limit: 100, onlineOnly: true, deviceId: "device-1" },
+      { limit: 100, onlineOnly: true, deviceId: "selector" },
       { limit: 100, onlineOnly: true },
     ]);
+  });
+
+  test("rejects unrelated ID collisions when a server ignores device filtering", async () => {
+    const stale = environment({
+      deviceId: "selector",
+      connectionId: null,
+      lastHeartbeat: null,
+    });
+    const unrelated = environment({
+      id: "env-unrelated",
+      deviceId: "device-b",
+      connectionId: "selector",
+    });
+
+    await expect(
+      resolveEnvironmentConnectionId("selector", {
+        get: async () => stale,
+        list: async () => ({
+          connections: [unrelated],
+          hasNextPage: false,
+        }),
+      }),
+    ).rejects.toThrow('Computer "selector" is offline');
   });
 
   test("resolves an exact name after one complete bounded page", async () => {
