@@ -44,6 +44,10 @@ import {
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { emitRetryDelta } from "./protocol-outbound";
 import {
+  allRecordedResults,
+  recordedToolResults,
+} from "./recorded-tool-results";
+import {
   drainRecoveryStreamWithEmission,
   isApprovalToolCallDesyncError,
 } from "./recovery";
@@ -277,9 +281,12 @@ async function tryResumeBusyConversationStream(params: {
 }
 
 /**
- * Attempt to resolve stale pending approvals by fetching them from the backend
- * and auto-denying. This is the Phase 3 bounded recovery mechanism — it does NOT
- * touch pendingInterruptedResults (that's exclusively owned by handleIncomingMessage).
+ * Attempt to resolve stale pending approvals by fetching them from the backend.
+ * Calls whose result was already checkpointed in the interrupted-turn record are
+ * resolved with that result; only calls with no recorded result are auto-denied.
+ * This is the Phase 3 bounded recovery mechanism. Reusing recorded results also
+ * drops any parked pendingInterruptedResults, as recover-recorded-turn does, so
+ * stale denials for the same calls are not sent afterward.
  */
 export async function resolveStaleApprovals(
   runtime: ConversationRuntime,
@@ -295,6 +302,7 @@ export async function resolveStaleApprovals(
     sendApprovalContinuation?: typeof sendApprovalContinuationWithRetry;
     drainRecoveryStream?: typeof drainRecoveryStreamWithEmission;
     authorityGuard?: () => boolean;
+    readInterruptedTurn?: typeof readInterruptedTurn;
   } = {},
 ): Promise<Awaited<ReturnType<typeof drainRecoveryStreamWithEmission>> | null> {
   if (!runtime.agentId && runtime.conversationId === "default") return null;
@@ -409,7 +417,10 @@ export async function resolveStaleApprovals(
   runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
   runtime.currentLoadedTools =
     preparedToolContext.preparedToolContext.loadedToolNames;
-  const recoveryActingUserId = readInterruptedTurn(runtime)?.actingUserId;
+  const recoveryRecord = (deps.readInterruptedTurn ?? readInterruptedTurn)(
+    runtime,
+  );
+  const recoveryActingUserId = recoveryRecord?.actingUserId;
 
   pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
@@ -422,12 +433,30 @@ export async function resolveStaleApprovals(
     }
     rememberPendingApprovalBatchIds(runtime, pendingApprovals, recoveryBatchId);
 
-    const approvalResults = buildFreshDenialApprovals(
-      pendingApprovals,
-      STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+    // A call may have executed before its continuation was lost. Send its
+    // checkpointed result instead of claiming no result was recorded.
+    const pendingToolCallIds = pendingApprovals.map(
+      (approval) => approval.toolCallId,
     );
+    const approvalResults = recoveryRecord
+      ? recordedToolResults(recoveryRecord, pendingToolCallIds)
+      : buildFreshDenialApprovals(
+          pendingApprovals,
+          STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+        );
     if (approvalResults.length === 0) {
       return null;
+    }
+    if (
+      recoveryRecord &&
+      allRecordedResults(recoveryRecord).some((result) =>
+        pendingToolCallIds.includes(result.tool_call_id),
+      )
+    ) {
+      // These saved results replace any parked stale denials for the batch.
+      runtime.pendingInterruptedResults = null;
+      runtime.pendingInterruptedContext = null;
+      runtime.pendingInterruptedToolCallIds = null;
     }
 
     try {
