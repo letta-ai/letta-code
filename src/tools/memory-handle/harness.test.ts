@@ -287,6 +287,27 @@ describe("harness edits", () => {
     expect(git(dir, "branch", "--list", "proposal/x")).toBe("");
   });
 
+  test("a rejected commit keeps the staged edits for a retry", async () => {
+    const dir = memoryRepo();
+    let deny = true;
+    const handle = await openMemoryHandle(dir, {
+      ...context,
+      checkWrite: async () => {
+        if (deny) throw new Error("denied");
+      },
+    });
+    const e = (await loadHarnessSnapshot(handle)).edit({
+      branch: "proposal/r",
+    });
+    e.prompts.put("style", { description: "S.", body: "" });
+    await expect(e.commit()).rejects.toThrow(/denied/);
+    expect(e.prompts.get("style")).toMatchObject({ description: "S." });
+    deny = false;
+    const result = await e.commit();
+    expect(result.changed).toEqual(["style.md"]);
+    expect(() => e.prompts.delete("style")).toThrow(/already committed/);
+  });
+
   test("refuses to commit onto a branch that moved past the edit's base", async () => {
     const dir = memoryRepo();
     const h = await load(dir);

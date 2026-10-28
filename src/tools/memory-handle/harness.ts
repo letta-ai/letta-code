@@ -432,9 +432,16 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
     }
     const staged: Tree = new Map(base);
     const views = createViews(staged);
-    let committed = false;
+    // "committing" blocks staging while send() is in flight; a rejected
+    // send returns to "open" so the staged edits can be retried.
+    let state: "open" | "committing" | "committed" = "open";
     const live = () => {
-      if (committed) throw new Error("This edit was already committed.");
+      if (state === "committing") {
+        throw new Error("This edit is being committed.");
+      }
+      if (state === "committed") {
+        throw new Error("This edit was already committed.");
+      }
     };
     const removeUnder = (prefix: string) => {
       for (const path of children(staged, prefix)) staged.delete(path);
@@ -707,8 +714,15 @@ export async function loadHarnessSnapshot(repo: MemoryHandle, ref?: string) {
           if (change.op === "delete") commit.delete(change.path);
           else commit.put(change.path, change.after ?? "");
         }
-        committed = true;
-        const result = await commit.send();
+        state = "committing";
+        let result: Awaited<ReturnType<typeof commit.send>>;
+        try {
+          result = await commit.send();
+        } catch (error) {
+          state = "open";
+          throw error;
+        }
+        state = "committed";
         return {
           sha: result.sha,
           branch: result.branch,
