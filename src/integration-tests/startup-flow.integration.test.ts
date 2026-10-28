@@ -10,6 +10,7 @@ import {
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
+import { listEnvironments } from "@/backend/api/environments";
 import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
 import { apiRequest } from "@/backend/api/request";
 import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
@@ -378,7 +379,20 @@ describe("Startup Flow - Integration", () => {
               }
             });
           });
-          ({ connectionId } = await resolveEnvironmentConnectionId(name));
+          const registered = await listEnvironments({
+            limit: 100,
+            connectionName: name,
+            source: "remote",
+            onlineOnly: true,
+          });
+          expect(registered).toMatchObject({ hasNextPage: false });
+          expect(registered.connections).toHaveLength(1);
+          const registeredDeviceId = registered.connections[0]?.deviceId;
+          if (!registeredDeviceId) {
+            throw new Error("Connected listener did not expose a device ID");
+          }
+          ({ connectionId } =
+            await resolveEnvironmentConnectionId(registeredDeviceId));
           const parent = await apiRequest<{ id: string }>(
             "POST",
             "/v1/agents/",
