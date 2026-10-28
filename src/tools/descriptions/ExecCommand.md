@@ -33,7 +33,7 @@ Git Safety Protocol:
    - Create the commit with a message ending with:
    👾 Generated with [Letta Code](https://letta.com)
 
-   Co-Authored-By: Letta Code <noreply@letta.com>
+   {{COMMIT_TRAILER}}
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
 4. If the commit fails due to pre-commit hook: fix the issue and create a NEW commit
@@ -50,7 +50,7 @@ git commit -m 'Commit message here.
 
 👾 Generated with [Letta Code](https://letta.com)
 
-Co-Authored-By: Letta Code <noreply@letta.com>'
+{{COMMIT_TRAILER}}'
 </example>
 
 Use single quotes (not double quotes) and do NOT wrap the message in `$(...)` or backticks — single-quoting preserves the message verbatim (including `$VAR`, backticks, and other special characters) without needing escapes.
