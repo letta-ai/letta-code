@@ -254,12 +254,19 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
 export function shouldProcessInboundMessageDirectly(
   runtime: ConversationRuntime,
   parsed: IncomingMessage,
+  // A dispatch re-checking from inside its own chained callback is itself
+  // counted in pendingInboundDispatches.
+  ownPendingDispatches = 0,
 ): boolean {
   if (!shouldQueueInboundMessage(parsed)) {
     return false;
   }
 
+  // A direct dispatch that has not begun its turn still leaves the lifecycle
+  // idle. Routing another input directly would chain it behind that turn and
+  // hold its acknowledgement until the turn finishes.
   if (
+    runtime.pendingInboundDispatches > ownPendingDispatches ||
     runtime.queueRuntime.length > 0 ||
     runtime.queuePumpActive ||
     runtime.queuePumpScheduled ||

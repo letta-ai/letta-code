@@ -770,8 +770,9 @@ test("direct turn dispatched during previous turn cleanup keeps reporting its lo
   });
   await waitFor(() => turnAFinished, "turn A did not finish");
 
-  // Turn B arrives while A is still in cleanup. The router resolves the same
-  // runtime and, because the lifecycle is idle, routes it directly.
+  // Turn B arrives while A is still in cleanup. The lifecycle is idle, but A's
+  // dispatch is still pending, so the router would queue B. Callers that
+  // dispatch directly still chain B behind A's cleanup.
   const scopedRuntime = getOrCreateScopedRuntime(
     listener,
     scope.agent_id,
@@ -785,8 +786,9 @@ test("direct turn dispatched during previous turn cleanup keeps reporting its lo
     conversationId: scope.conversation_id,
     messages: [{ role: "user" as const, content: "printf MARKER" }],
   };
+  expect(scopedRuntime.turnLifecycle.kind).toBe("idle");
   expect(shouldProcessInboundMessageDirectly(scopedRuntime, incomingB)).toBe(
-    true,
+    false,
   );
 
   const approval = {

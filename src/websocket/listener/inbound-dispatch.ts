@@ -206,7 +206,7 @@ export function dispatchInboundMessageWhenReady(params: {
         }
         if (
           shouldQueueInboundMessage(incoming) &&
-          !shouldProcessInboundMessageDirectly(runtime, incoming)
+          !shouldProcessInboundMessageDirectly(runtime, incoming, 1)
         ) {
           // The replayable payload and queued disposition commit before the
           // volatile enqueue and before acknowledgement. A crash at either
