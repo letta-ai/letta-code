@@ -62,6 +62,7 @@ import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
   rejectPendingExternalToolCallsForConnection,
+  resendPendingExternalToolCallsForConnection,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
 import { recordListenerPong, startListenerPongHeartbeat } from "./heartbeat";
@@ -311,6 +312,7 @@ export async function startConnectedListenerRuntime(
     startupConnection.ingressReady = true;
     await opts.onConnectionReady?.(startupConnection);
     if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
+    resendPendingExternalToolCallsForConnection(runtime, startupConnection);
     startupComplete = true;
   } finally {
     clearStartupDeadline();

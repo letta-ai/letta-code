@@ -19,6 +19,7 @@ import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { isListenerTransportOpen } from "@/websocket/listener/transport";
 import type {
   ListenerConnectionId,
+  ListenerConnectionState,
   ListenerRuntime,
 } from "@/websocket/listener/types";
 
@@ -174,7 +175,9 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       !isListenerTransportOpen(connection.writer) ||
       runtime.intentionallyClosed
     ) {
-      throw new Error("External tool controller is not connected");
+      throw new Error(
+        "External tool controller is not connected; the tool call was not sent and is safe to retry.",
+      );
     }
     const writer = connection.writer;
 
@@ -199,6 +202,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       input,
     };
 
+    const requestFrame = JSON.stringify(request);
     const timeoutMs = context?.tool.timeoutMs ?? EXTERNAL_TOOL_CALL_TIMEOUT_MS;
     const result = await new Promise<{
       content: Array<{
@@ -220,6 +224,8 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 
       getPendingExternalToolCalls(runtime).set(requestKey, {
         connectionId: connection.id,
+        requestFrame,
+        sentOn: writer,
         resolve: (response) => {
           resolve({
             content: [...response.content],
@@ -231,7 +237,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       });
 
       try {
-        writer.send(JSON.stringify(request));
+        writer.send(requestFrame);
       } catch (error) {
         clearTimeout(timeout);
         getPendingExternalToolCalls(runtime).delete(requestKey);
@@ -334,6 +340,36 @@ export function handleExternalToolCallResponseCommand(
 
   pending.resolve(command.result);
   return true;
+}
+
+/**
+ * Resend requests still awaiting a response after the connection's socket was
+ * replaced. A transient close (e.g. Cloudflare 1001) can drop a frame that was
+ * written just before it; without a resend the call waits out its timeout.
+ * Cloud gateways dedupe by request_id, so a request that did arrive is not
+ * executed twice.
+ */
+export function resendPendingExternalToolCallsForConnection(
+  runtime: ListenerRuntime,
+  connection: Pick<ListenerConnectionState, "id" | "writer">,
+): void {
+  const pendingExternalToolCalls = getPendingExternalToolCalls(runtime);
+  for (const [requestKey, pending] of pendingExternalToolCalls) {
+    if (
+      pending.connectionId !== connection.id ||
+      pending.sentOn === connection.writer
+    ) {
+      continue;
+    }
+    try {
+      connection.writer.send(pending.requestFrame);
+      pending.sentOn = connection.writer;
+    } catch (error) {
+      clearTimeout(pending.timeout);
+      pendingExternalToolCalls.delete(requestKey);
+      pending.reject(error instanceof Error ? error : new Error(String(error)));
+    }
+  }
 }
 
 export function rejectPendingExternalToolCallsForConnection(
