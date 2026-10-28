@@ -156,6 +156,7 @@
     "@letta-ai/trajectory": "0.2.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "@pierre/diffs": "1.2.2",
+    "@pierre/storage": "1.16.2",
     "@scarf/scarf": "^1.4.0",
     "@shikijs/langs": "4.0.2",
     "cron-parser": "^5.6.1",
@@ -275,5 +276,5 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-cubBaizY8rbgiq9dfHU/uRyZBgkGvLfJc+8+ovpV1raZnQjE+tRsAKFAKP69UHWhNFRE49viVTyqmLIiSK8v8Q=="
+  "lettaRuntimeGraphSha512": "sha512-8w+5uYEBrsu8im2m6JeYplRUb30EcS/5pC8hVTkBFD8/OTAvCcMK5T3YCc9FHV87bD3aAZPt1e35g0qpQAZkpg=="
 }

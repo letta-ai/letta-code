@@ -134,6 +134,8 @@ export interface RunWorkflowOptions {
   builtinToolNames?: readonly string[];
   /** Lists callable tools; backs `listTools()` and `describeTool()`. */
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** Backs the `memory` global's `open(target)`. */
+  openMemory?: (target: unknown) => Promise<unknown>;
   /** Lifetime tool call cap (runaway-loop backstop). Default 1000. */
   maxTotalToolCalls?: number;
 }

@@ -62,6 +62,7 @@ export async function executeToolScript(
     | "callTool"
     | "builtinToolNames"
     | "listTools"
+    | "openMemory"
     | "onProgress"
   >,
 ): Promise<unknown> {
@@ -312,6 +313,8 @@ async function executeScript(
 
   const context = vm.createContext({
     tools: toolHooks.tools,
+    harness: toolHooks.harness,
+    swap: toolHooks.swap,
     listTools: toolHooks.listTools,
     describeTool: toolHooks.describeTool,
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),

@@ -1,3 +1,4 @@
+import { swap } from "@/tools/memory-handle/swap";
 /**
  * Script-facing hooks shared by the workflow engine and the Repl tool: the
  * `tools` proxy, `listTools()`, `describeTool()`, `parallel()`, and
@@ -69,6 +70,8 @@ export interface ScriptToolBindings {
   callTool?: WorkflowToolCaller;
   builtinToolNames?: readonly string[];
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** Opens an agent memory handle for `harness`; see tools/memory-handle. */
+  openMemory?: (target: unknown) => Promise<unknown>;
 }
 
 export interface ToolHooksConfig {
@@ -84,6 +87,8 @@ export interface ToolHooksConfig {
 
 export interface ToolHooks {
   tools: object;
+  harness: object;
+  swap: typeof swap;
   listTools(): Promise<Array<{ name: string; description: string }>>;
   describeTool(name: unknown): Promise<WorkflowToolInfo | undefined>;
   /** Forget cached tool metadata after the bindings change. */
@@ -170,8 +175,90 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
     return result.structuredContent ?? mcpContentValue(result.content);
   }
 
+  type HarnessModule = typeof import("@/tools/memory-handle/harness");
+  type MemoryHandle = Parameters<HarnessModule["loadHarnessSnapshot"]>[0];
+
+  function optionsObject(options: unknown, what: string) {
+    if (options === undefined) return {} as Record<string, unknown>;
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+      throw new Error(`${what} options must be an object.`);
+    }
+    return options as Record<string, unknown>;
+  }
+
+  function refOption(value: unknown, key: string): string | undefined {
+    if (value === undefined) return undefined;
+    if (typeof value !== "string" || !value) {
+      throw new Error(`${key} must be a non-empty string.`);
+    }
+    return value;
+  }
+
+  /** Runs `fn` with an agent's memory handle, tracked and abortable. */
+  function withAgentMemory<T>(
+    what: string,
+    agentId: unknown,
+    fn: (repo: MemoryHandle, module: HarnessModule) => Promise<T>,
+  ): Promise<T> {
+    return config.track(
+      (async () => {
+        const open = config.bindings().openMemory;
+        if (!open) {
+          throw new Error("harness is unavailable: no invoking tool scope.");
+        }
+        if (typeof agentId !== "string" || !agentId) {
+          throw new Error(`${what} takes an agent ID.`);
+        }
+        if (config.signal().aborted) throw new Error(config.abortedMessage);
+        const module = await import("@/tools/memory-handle/harness");
+        return fn((await open({ agentId })) as MemoryHandle, module);
+      })(),
+    );
+  }
+
+  // The only scripted route to agent memory: typed views, branch edits,
+  // revision diffs, and compare-and-swap promotion of a branch to main.
+  const harness = Object.freeze({
+    load: (agentId?: unknown, options?: unknown) => {
+      const ref = refOption(
+        optionsObject(options, "harness.load()").ref,
+        "ref",
+      );
+      return withAgentMemory("harness.load()", agentId, (repo, module) =>
+        module.loadHarnessSnapshot(repo, ref),
+      );
+    },
+    diff: (agentId?: unknown, options?: unknown) => {
+      const parsed = optionsObject(options, "harness.diff()");
+      const base = refOption(parsed.base, "base");
+      const ref = refOption(parsed.ref, "ref");
+      if (!base || !ref)
+        throw new Error("harness.diff() requires { base, ref }.");
+      return withAgentMemory("harness.diff()", agentId, (repo, module) =>
+        module.diffHarness(repo, base, ref),
+      );
+    },
+    accept: (agentId?: unknown, ref?: unknown, options?: unknown) => {
+      const source = refOption(ref, "ref");
+      const expect = refOption(
+        optionsObject(options, "harness.accept()").expect,
+        "expect",
+      );
+      if (!source || !expect) {
+        throw new Error(
+          "harness.accept() requires (agentId, ref, { expect }).",
+        );
+      }
+      return withAgentMemory("harness.accept()", agentId, (repo, module) =>
+        module.acceptHarness(repo, source, expect),
+      );
+    },
+  });
+
   return {
     tools,
+    harness,
+    swap,
     /** `[{ name, description }]` for every tool callable through `tools`. */
     async listTools() {
       return (await loadToolInfo()).map(({ name, description }) => ({
