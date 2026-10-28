@@ -11,7 +11,6 @@ import { mkdir, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve, sep } from "node:path";
 import { parseArgs, TextDecoder, TextEncoder } from "node:util";
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { isLocalAgentId } from "@/agent/agent-id";
 import type { MemoryPostTurnSyncResult } from "@/agent/memory-git";
 import {
@@ -24,6 +23,10 @@ import {
 } from "@/mods/package-installer";
 import { resolveDefaultGlobalModsDirectory } from "@/mods/paths";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import {
+  resolveSkillsAgentById,
+  resolveSkillsAgentByName,
+} from "./skills-agent-resolver";
 
 const HERMES_REPO_URL = "https://github.com/NousResearch/hermes-agent.git";
 const HERMES_OPTIONAL_SKILLS_DIR = "optional-skills";
@@ -156,38 +159,14 @@ function getExplicitAgentId(
     : null;
 }
 
-function paginatedItems<T>(page: unknown): T[] {
-  if (Array.isArray(page)) return page as T[];
-  const items = (page as { items?: unknown }).items;
-  return Array.isArray(items) ? (items as T[]) : [];
-}
-
-async function findAgentsByName(name: string): Promise<AgentState[]> {
+async function resolveAgentById(agentId: string): Promise<string> {
   const { getBackend } = await import("@/backend");
-  const backend = getBackend();
-  const page = await backend.listAgents({
-    query_text: name,
-    limit: 100,
-  } as never);
-  const normalizedName = name.toLowerCase();
-  return paginatedItems<AgentState>(page).filter(
-    (agent) => agent.name?.toLowerCase() === normalizedName,
-  );
+  return resolveSkillsAgentById(agentId, getBackend());
 }
 
 async function resolveAgentByName(name: string): Promise<string> {
-  const matches = await findAgentsByName(name);
-  if (matches.length === 0) {
-    throw new Error(`No agent found with name "${name}".`);
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      `Multiple agents found with name "${name}". Pass --agent with an agent id instead.`,
-    );
-  }
-  const id = matches[0]?.id;
-  if (!id) throw new Error(`Agent "${name}" did not include an id.`);
-  return id;
+  const { getBackend } = await import("@/backend");
+  return resolveSkillsAgentByName(name, getBackend());
 }
 
 async function promptForAgent(statusMessage: string): Promise<string> {
@@ -254,11 +233,11 @@ async function resolveAgentId(
   promptStatusMessage = "Working...",
 ): Promise<string> {
   const explicitAgent = getExplicitAgentId(values);
-  if (explicitAgent) return explicitAgent;
+  if (explicitAgent) return resolveAgentById(explicitAgent);
 
   if (typeof values.name === "string" && values.name.trim()) {
     const nameOrId = values.name.trim();
-    if (isAgentId(nameOrId)) return nameOrId;
+    if (isAgentId(nameOrId)) return resolveAgentById(nameOrId);
     return resolveAgentByName(nameOrId);
   }
 

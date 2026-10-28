@@ -55,7 +55,7 @@ Notes:
   - Run upload on the computer containing the local file, including a remote subagent.
   - Uploads are stored under /root/downloads in the conversation sandbox.
   - Downloads are limited to files under /root/downloads.
-  - desktop-link prints a chat.letta.com URL that opens the sandbox's live
+  - desktop-link prints a browser viewer URL that opens the sandbox's live
     desktop in a browser tab with no sign-in. Anyone with the link can view
     and control the desktop until expiresAt (about one hour); share it only
     with the person who needs it.
@@ -237,7 +237,9 @@ export async function runSandboxSubcommand(
       console.log(
         JSON.stringify(
           {
-            url: buildDesktopViewerUrl(desktop.url, desktop.expiresAt),
+            url:
+              desktop.viewerUrl ??
+              buildDesktopViewerUrl(desktop.url, desktop.expiresAt),
             expiresAt: desktop.expiresAt,
             ...targetOutput,
           },
