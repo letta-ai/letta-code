@@ -51,6 +51,9 @@ For a single clip, read [references/cinematography.md](references/cinematography
 For multiple shots or a sequence, read
 [references/storytelling.md](references/storytelling.md).
 
+For worked examples at the right level of detail, see
+[references/example-prompts.md](references/example-prompts.md).
+
 A timestamped shot list ending on the payoff helps multi-beat clips.
 
 ## Full workflow (drop-in)
