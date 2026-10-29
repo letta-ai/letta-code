@@ -514,7 +514,7 @@ async function runGenerateText(
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-    ...(headers ? { headers } : {}),
+    headers,
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
     // Mirrors Pi's createSummarizationOptions, which passes the session
     // thinking level into summarization requests. Required for adaptive

@@ -104,11 +104,14 @@ describe("PiStreamAdapter OpenCode Go session routing", () => {
         await drain(adapter.stream(input(model, "conv-opencode-1")));
         await drain(adapter.stream(input(model, "conv-opencode-2")));
 
-        expect(capturedHeaders).toEqual([
-          { "x-opencode-session": "conv-opencode-1" },
-          { "x-opencode-session": "conv-opencode-1" },
-          { "x-opencode-session": "conv-opencode-2" },
-        ]);
+        expect(capturedHeaders).toEqual(
+          ["conv-opencode-1", "conv-opencode-1", "conv-opencode-2"].map(
+            (conversationId) => ({
+              "x-letta-request-kind": "turn",
+              "x-opencode-session": conversationId,
+            }),
+          ),
+        );
       } finally {
         if (previousKey === undefined) delete process.env.OPENCODE_API_KEY;
         else process.env.OPENCODE_API_KEY = previousKey;

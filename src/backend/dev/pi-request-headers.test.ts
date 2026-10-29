@@ -12,6 +12,7 @@ describe("resolvePiRequestHeaders", () => {
       }),
     ).toEqual({
       "x-existing": "value",
+      "x-letta-request-kind": "turn",
       "x-opencode-session": "conv-opencode-1",
     });
   });
@@ -24,34 +25,20 @@ describe("resolvePiRequestHeaders", () => {
         conversationId: "conv-opencode-1",
         requestKind: "turn",
       }),
-    ).toEqual({ "x-opencode-session": "conv-opencode-1" });
+    ).toEqual({
+      "x-letta-request-kind": "turn",
+      "x-opencode-session": "conv-opencode-1",
+    });
   });
 
-  test("leaves another provider's headers unchanged", () => {
-    const configuredHeaders = { "x-existing": "value" };
-    expect(
-      resolvePiRequestHeaders({
-        provider: "openai",
-        configuredHeaders,
-        conversationId: "conv-openai-1",
-        requestKind: "turn",
-      }),
-    ).toBe(configuredHeaders);
-  });
-
-  test("tells a self-hosted endpoint whether a request is a turn or a compaction", () => {
-    for (const provider of [
-      "llama-cpp",
-      "lmstudio",
-      "ollama",
-      "openai-compatible",
-    ]) {
+  test("tells every provider whether a request is a turn or a compaction", () => {
+    for (const provider of ["llama-cpp", "openai", "anthropic"]) {
       for (const requestKind of ["turn", "compaction"] as const) {
         expect(
           resolvePiRequestHeaders({
             provider,
             configuredHeaders: { "x-existing": "value" },
-            conversationId: "conv-local-1",
+            conversationId: "conv-1",
             requestKind,
           }),
         ).toEqual({
@@ -62,16 +49,14 @@ describe("resolvePiRequestHeaders", () => {
     }
   });
 
-  test("does not send the request kind to hosted providers", () => {
-    for (const provider of ["openai", "anthropic", "ollama-cloud"]) {
-      expect(
-        resolvePiRequestHeaders({
-          provider,
-          configuredHeaders: undefined,
-          conversationId: "conv-hosted-1",
-          requestKind: "compaction",
-        }),
-      ).toBeUndefined();
-    }
+  test("uses the request kind over a configured value", () => {
+    expect(
+      resolvePiRequestHeaders({
+        provider: "llama-cpp",
+        configuredHeaders: { "x-letta-request-kind": "turn" },
+        conversationId: "conv-1",
+        requestKind: "compaction",
+      }),
+    ).toEqual({ "x-letta-request-kind": "compaction" });
   });
 });
