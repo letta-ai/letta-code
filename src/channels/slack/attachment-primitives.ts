@@ -189,7 +189,8 @@ export async function resolveSlackMessageFiles(params: {
         oldest: params.messageTs,
         latest: params.messageTs,
         inclusive: true,
-        limit: 1,
+        // Slack may lead with the thread root even when the bounds pin a reply.
+        limit: 2,
       }),
     );
     const message = messages.find((entry) => entry.ts === params.messageTs);

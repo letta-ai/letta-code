@@ -115,8 +115,29 @@ test("resolveSlackMessageFiles uses one bounded request for a thread reply", asy
     oldest: "100.2",
     latest: "100.2",
     inclusive: true,
-    limit: 1,
+    limit: 2,
   });
+});
+
+test("resolveSlackMessageFiles resolves reply files when Slack leads with the thread root", async () => {
+  const messages = [
+    { ts: "100.1", files: [{ id: "FROOT" }] },
+    { ts: "100.2", files: [{ id: "FREPLY" }] },
+  ];
+  const client = createClient({
+    replies: async (args) => ({
+      messages: messages.slice(0, Number(args.limit)),
+    }),
+  });
+
+  const files = await resolveSlackMessageFiles({
+    channelId: "C123",
+    threadTs: "100.1",
+    messageTs: "100.2",
+    client,
+  });
+
+  expect(files?.map((file) => file.id)).toEqual(["FREPLY"]);
 });
 
 test("resolveSlackMessageFiles validates the exact thread reply timestamp", async () => {
