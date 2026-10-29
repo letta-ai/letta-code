@@ -649,6 +649,24 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    const verbosity = input.agent.model_settings.verbosity;
+    if (
+      (resolved.model.api === "openai-responses" ||
+        resolved.model.api === "openai-codex-responses") &&
+      (verbosity === "low" || verbosity === "medium" || verbosity === "high")
+    ) {
+      // pi-ai's streamSimple drops textVerbosity (including for Codex), so
+      // forward the saved setting at the same payload seam as output effort.
+      const existing = options.onPayload;
+      options.onPayload = async (payload, model) => {
+        const next = (await existing?.(payload, model)) ?? payload;
+        if (!isRecord(next)) return next;
+        return {
+          ...next,
+          text: { ...(isRecord(next.text) ? next.text : {}), verbosity },
+        };
+      };
+    }
     if (resolved.model.api === "openai-responses") {
       // pi-ai replays OpenAI Responses output items from transcript history.
       // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the
