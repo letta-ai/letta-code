@@ -411,10 +411,12 @@ function computeListenerQueueBlockedReason(
  * Turn-boundary status re-emit (LET-11174). Queue frames are emitted only on
  * change and loop frames only on transition, so one lost frame leaves
  * downstream status consumers stale until the next change happens to land.
- * Re-sending the full snapshot at turn start and turn end bounds any silent
- * frame loss to a single turn. Both frames coalesce as status-class snapshots
- * on the outbound wire, so unchanged re-emits cost at most one extra frame
- * each per boundary.
+ * Re-sending the full snapshot at turn end bounds any silent frame loss to a
+ * single turn. It is not sent at dequeue: the turn owner publishes its loop
+ * snapshot after acquiring the lease, and an idle loop sent before that would
+ * read as a completed turn. Both frames coalesce as status-class snapshots on
+ * the outbound wire, so an unchanged re-emit costs at most one extra frame
+ * each.
  */
 function emitTurnBoundaryStatus(
   runtime: ConversationRuntime,
@@ -584,9 +586,14 @@ async function drainQueuedMessages(
           dequeuedBatch,
         ),
       );
-      // Turn start boundary: unconditional snapshot even when nothing changed.
+      // Dequeue does not acquire the turn lease. Publishing the idle loop
+      // here, after the user echo, would falsely signal a completed turn.
+      // The turn owner publishes its loop snapshot after acquiring the lease.
       emitQueuePumpBoundary(() =>
-        emitTurnBoundaryStatus(runtime, turnTransport),
+        emitQueueUpdate(turnTransport, runtime, {
+          agent_id: runtime.agentId,
+          conversation_id: runtime.conversationId,
+        }),
       );
 
       const preTurnStatus =
