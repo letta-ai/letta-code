@@ -1,4 +1,4 @@
-// Real Cursor SDK/provider, selected explicitly by the Cursor CI job.
+// Real Cursor SDK/provider, selected from Cursor's live catalog by the CI job.
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { getSubagents, subscribe } from "@/agent/subagent-state";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { closeCursorSessions, sendCursorMessage } from "./cursor-session";
+import { resolveCursorTestModel } from "./cursor-test-model";
 import { runExternalCodingAgent } from "./external-coding-agent";
 import { backgroundTasks } from "./process_manager";
 import { send_agent_message } from "./send-agent-message";
@@ -17,7 +18,7 @@ let root: string;
 let cwd: string;
 const oldHome = process.env.HOME;
 const parentAgentId = "agent-cursor-integration";
-const model = process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5";
+let model: string;
 
 beforeAll(async () => {
   if (!process.env.CURSOR_API_KEY)
@@ -27,6 +28,7 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "letta-cursor-"));
   cwd = join(root, "project");
   await mkdir(cwd);
+  model = await resolveCursorTestModel(cwd);
   process.env.HOME = root;
   await settingsManager.initialize();
 });
