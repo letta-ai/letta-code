@@ -56,6 +56,10 @@ export function isLocalSelfCompactionMode(mode: LocalCompactionMode): boolean {
   return mode === "self_compact_all" || mode === "self_compact_sliding_window";
 }
 
+export function isLocalSlidingWindowMode(mode: LocalCompactionMode): boolean {
+  return mode === "sliding_window" || mode === "self_compact_sliding_window";
+}
+
 /**
  * The agent's own request context for self-compaction: the summary request is
  * the turn's system prompt, history, and tools, plus the compaction prompt as
@@ -144,7 +148,8 @@ Write in first person as a factual record of what occurred. Be concise but thoro
 
 Keep your summary under ${ALL_WORD_LIMIT} words. Only output the summary.`;
 
-export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
+function slidingWindowCompactionPrompt(evictedMessages: string): string {
+  return `${evictedMessages} are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
 
 1.**High level goals**: What is the high level goal and ongoing task? Capture the user's explicit requests and intent in detail. If there is an existing summary in the transcript, make sure to take it into consideration to continue tracking the higher level goals and long-term progress.
 
@@ -162,6 +167,10 @@ export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages ar
 Write in first person as a factual record of what occurred. Be thorough and detailed - the goal is to preserve enough context that the recent messages make sense and important information isn't lost to prevent duplicate work or repeated mistakes.
 
 Keep your summary under ${SLIDING_WORD_LIMIT} words. Only output the summary.`;
+}
+
+export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT =
+  slidingWindowCompactionPrompt("The following messages");
 
 const SELF_COMPACTION_INSTRUCTIONS =
   "Write the summary as your reply to this message. Do NOT continue the conversation, respond to questions in it, or call any tools: respond with ONLY the summary as text.";
@@ -169,9 +178,8 @@ const SELF_COMPACTION_INSTRUCTIONS =
 export const LOCAL_SELF_ALL_COMPACTION_PROMPT = `${LOCAL_ALL_COMPACTION_PROMPT}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
 
 // In self mode the evicted messages come before the prompt, not after it.
-export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT.replace(
-  "The following messages are being evicted",
-  "The messages above are being evicted",
+export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompactionPrompt(
+  "The messages above",
 )}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
 
 // Ends the history with an assistant message before the summary request, as
@@ -837,7 +845,7 @@ export function packageLocalSummaryMessage(
   mode?: LocalCompactionMode,
 ): string {
   let message: string;
-  if (mode?.includes("sliding_window")) {
+  if (mode && isLocalSlidingWindowMode(mode)) {
     if (
       stats?.messages_count_before !== undefined &&
       stats.messages_count_after !== undefined
