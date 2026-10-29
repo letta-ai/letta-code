@@ -6,7 +6,6 @@ import { join } from "node:path";
 import { getSubagents, subscribe } from "@/agent/subagent-state";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
-import { resolveCursorTestModel } from "@/test-utils/cursor-test-model";
 import { closeCursorSessions, sendCursorMessage } from "./cursor-session";
 import { runExternalCodingAgent } from "./external-coding-agent";
 import { backgroundTasks } from "./process_manager";
@@ -18,7 +17,7 @@ let root: string;
 let cwd: string;
 const oldHome = process.env.HOME;
 const parentAgentId = "agent-cursor-integration";
-let model: string;
+const model = process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5";
 
 beforeAll(async () => {
   if (!process.env.CURSOR_API_KEY)
@@ -30,8 +29,7 @@ beforeAll(async () => {
   await mkdir(cwd);
   process.env.HOME = root;
   await settingsManager.initialize();
-  model = await resolveCursorTestModel(cwd);
-}, 180_000);
+});
 
 afterAll(async () => {
   await closeCursorSessions();
