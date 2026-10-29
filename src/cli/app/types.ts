@@ -24,7 +24,6 @@ import type { ToolsetPreference } from "@/tools/toolset";
 
 export type AppLoadingState =
   | "assembling"
-  | "importing"
   | "initializing"
   | "checking"
   | "ready";
@@ -149,6 +148,8 @@ export type QueueApprovalResults = (
 ) => void;
 
 export type ProcessConversationOptions = {
+  clientPreferences?: import("@/types/client-preferences").ClientPreferences;
+  allowResponseStateReuse?: boolean;
   allowReentry?: boolean;
   submissionGeneration?: number;
   transcriptStartLineIndex?: number | null;

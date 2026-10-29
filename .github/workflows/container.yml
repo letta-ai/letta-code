@@ -5,12 +5,14 @@ on:
     paths:
       - docker/**
       - .github/workflows/container.yml
+      - .github/workflows/release.yml
   push:
     branches:
       - main
     paths:
       - docker/**
       - .github/workflows/container.yml
+      - .github/workflows/release.yml
   workflow_dispatch:
 
 permissions:
@@ -57,6 +59,36 @@ jobs:
             command -v nc
             command -v file
           '
+
+      - name: Reject retired Python server configuration
+        run: |
+          set -euo pipefail
+
+          if output=$(docker run --rm --env SECURE=true letta-code:smoke 2>&1); then
+            echo "Expected the legacy configuration to fail, but the container exited successfully."
+            exit 1
+          fi
+
+          grep -F "retired Python Letta server is end-of-life" <<< "$output"
+          grep -F "SECURE" <<< "$output"
+          grep -F "https://docs.letta.com/self-hosting/" <<< "$output"
+
+          if output=$(docker run --rm --env SECURE=true letta-code:smoke sh -lc true 2>&1); then
+            echo "Expected a shell command with legacy configuration to fail, but the container exited successfully."
+            exit 1
+          fi
+
+          grep -F "SECURE" <<< "$output"
+
+          legacy_data_dir="$(mktemp -d)"
+          if output=$(docker run --rm \
+            --volume "$legacy_data_dir:/var/lib/postgresql/data" \
+            letta-code:smoke 2>&1); then
+            echo "Expected the legacy PostgreSQL mount to fail, but the container exited successfully."
+            exit 1
+          fi
+
+          grep -F "old /var/lib/postgresql/data mount" <<< "$output"
 
       - name: Verify persistent Unix cron restore
         run: |

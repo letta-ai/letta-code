@@ -2,6 +2,8 @@ Runs a command in a PTY, returning output or a session ID for ongoing interactio
 
 For ordinary one-shot commands, omit `yield_time_ms` and let the default wait for completion; set `yield_time_ms` only when intentionally returning early from a long-running or interactive command.
 
+If a command is still running when this tool yields, you will receive a notification when it completes. Do not poll the session just to check whether it has finished. Use `write_stdin` only when you need to send input, interrupt the process, or obtain output before you can continue.
+
 Provide the required `description` field as a clear, concise user-facing status label for what the command does. It may be shown directly in chat with no prefix, so make it grammatical by itself and avoid tense-dependent wording. Use an imperative or purpose phrase like `Find debug log entries` or `Search recent logs for errors`. Describe the command's purpose, not its shell syntax. Keep it brief for simple commands; add only enough context to clarify commands that are hard to parse at a glance.
 
 # Committing changes with git
@@ -29,9 +31,7 @@ Git Safety Protocol:
 3. Run the following commands:
    - Add relevant untracked files to the staging area.
    - Create the commit with a message ending with:
-   👾 Generated with [Letta Code](https://letta.com)
-
-   Co-Authored-By: Letta Code <noreply@letta.com>
+   {{COMMIT_TRAILER}}
    - Run git status after the commit completes to verify success.
    Note: git status depends on the commit completing, so run it sequentially after the commit.
 4. If the commit fails due to pre-commit hook: fix the issue and create a NEW commit
@@ -46,9 +46,7 @@ Important notes:
 <example>
 git commit -m 'Commit message here.
 
-👾 Generated with [Letta Code](https://letta.com)
-
-Co-Authored-By: Letta Code <noreply@letta.com>'
+{{COMMIT_TRAILER}}'
 </example>
 
 Use single quotes (not double quotes) and do NOT wrap the message in `$(...)` or backticks — single-quoting preserves the message verbatim (including `$VAR`, backticks, and other special characters) without needing escapes.

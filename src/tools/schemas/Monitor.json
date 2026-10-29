@@ -3,7 +3,7 @@
   "properties": {
     "description": {
       "type": "string",
-      "description": "Short human-readable description of what you are monitoring (shown in notifications)."
+      "description": "Clear, concise user-facing description of the update you are waiting for. This may be shown directly in chat, so make it grammatical by itself. Describe the expected event, not the polling command or monitor implementation. Prefer `CI results and review comments for the auth fix`, `Deployment completion or failure`, or `New errors in the API logs` over internal labels like `PR checks and state transitions`."
     },
     "timeout_ms": {
       "type": "number",
@@ -14,7 +14,18 @@
     "persistent": {
       "type": "boolean",
       "default": false,
-      "description": "Run for the lifetime of the session (no timeout). Use for session-length watches like PR monitoring or log tails. Stop with TaskStop."
+      "description": "Run until TaskStop or session end. In managed Cloud sandboxes, a hard 1-hour limit still applies; elsewhere there is no timeout. For longer waits in Cloud, use Wake/cron rather than keeping a monitor running."
+    },
+    "backup_after_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "maximum": 604800,
+      "description": "Optional backup: if the monitor emits nothing for this many seconds (from start or its last event), a durable Wake fires in this conversation so a stalled watch can't go silent. Each event resets the clock; the backup is cancelled when the monitor ends or is stopped. Survives restarts of this process."
+    },
+    "backup_prompt": {
+      "type": "string",
+      "maxLength": 4000,
+      "description": "Instruction for the backup wake's turn. Defaults to checking the real state of what the monitor watches, then reporting, re-arming, or stopping it."
     },
     "command": {
       "type": "string",

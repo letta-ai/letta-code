@@ -6,6 +6,7 @@ import type {
   ListenerRuntime,
 } from "./types";
 
+const MAX_CLIENT_MESSAGE_IDS_PER_RUN = 32;
 const MAX_RECENT_RUN_CORRELATIONS = 32;
 const MAX_RECENT_CONVERSATIONS = 256;
 
@@ -20,6 +21,7 @@ function takeDequeuedClientMessageIds(
 }
 
 export interface TurnCorrelation {
+  readonly clientMessageIds: string[];
   appendDequeuedBatch: (batchId: string) => void;
   observeRun: (runId: string) => void;
 }
@@ -44,6 +46,9 @@ export function createTurnCorrelation(
 ): TurnCorrelation {
   const clientMessageIds = new Set([
     ...getInboundClientMessageIds(message),
+    ...(message.durableInputIdentities ?? []).flatMap((identity) =>
+      identity.domain === "input" ? [identity.id] : [],
+    ),
     ...takeDequeuedClientMessageIds(runtime, batchId),
   ]);
   let correlationsByConversation =
@@ -73,6 +78,9 @@ export function createTurnCorrelation(
     }
   }
   return {
+    get clientMessageIds() {
+      return [...clientMessageIds];
+    },
     appendDequeuedBatch(nextBatchId) {
       for (const clientMessageId of takeDequeuedClientMessageIds(
         runtime,
@@ -88,7 +96,10 @@ export function createTurnCorrelation(
         ...clientMessageIds,
       ]);
       correlations.delete(runId);
-      correlations.set(runId, [...merged]);
+      correlations.set(
+        runId,
+        [...merged].slice(-MAX_CLIENT_MESSAGE_IDS_PER_RUN),
+      );
       while (correlations.size > MAX_RECENT_RUN_CORRELATIONS) {
         const oldestRunId = correlations.keys().next().value;
         if (!oldestRunId) break;

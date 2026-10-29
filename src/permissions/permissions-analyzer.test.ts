@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { analyzeApprovalContext } from "@/permissions/analyzer";
+import {
+  analyzeApprovalContext,
+  parseAbsoluteCommandPaths,
+} from "@/permissions/analyzer";
 
 // ============================================================================
 // Bash Command Analysis Tests
@@ -401,6 +404,16 @@ test("Skill script in agent-scoped skill suggests agent-scoped message", () => {
   );
 });
 
+test("Windows skill script paths are normalized before approval analysis", () => {
+  expect(
+    parseAbsoluteCommandPaths(
+      String.raw`npx tsx C:\Users\alice\.dream\agents\agent-123\memory\skills\finding-agents\scripts\main.ts --help`,
+    ),
+  ).toContain(
+    "C:/Users/alice/.dream/agents/agent-123/memory/skills/finding-agents/scripts/main.ts",
+  );
+});
+
 test("Skill script in global skill suggests global message", () => {
   if (process.platform === "win32") return;
   const home = require("node:os").homedir();
@@ -739,20 +752,9 @@ test("Complex npx tsc commands strip cd and pipe suffixes when building approval
   expect(context.approveAlwaysText).not.toContain("...");
 });
 
-test("WriteFileGemini uses write-family wildcard rule", () => {
+test("ShellCommand is analyzed as Bash", () => {
   const context = analyzeApprovalContext(
-    "WriteFileGemini",
-    { file_path: "src/main.ts", content: "console.log('hi');" },
-    "/Users/test/project",
-  );
-
-  expect(context.recommendedRule).toBe("Write(**)");
-  expect(context.defaultScope).toBe("session");
-});
-
-test("run_shell_command is analyzed as Bash", () => {
-  const context = analyzeApprovalContext(
-    "run_shell_command",
+    "ShellCommand",
     { command: "curl -s http://localhost:4321/intro" },
     "/Users/test/project",
   );

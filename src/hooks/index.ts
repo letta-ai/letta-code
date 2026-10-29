@@ -2,7 +2,11 @@
 // Main hooks module - provides high-level API for running hooks
 
 import { sessionPermissions } from "@/permissions/session";
-import { executeHooks, executeHooksParallel } from "./executor";
+import {
+  executeHooks,
+  executeHooksParallel,
+  truncateHookFeedback,
+} from "./executor";
 import { getHooksForEvent, hasHooksForEvent, loadHooks } from "./loader";
 import type {
   HookEvent,
@@ -396,7 +400,9 @@ export async function runSessionStartHooks(
   const feedback: string[] = [];
   for (const hookResult of result.results) {
     if (hookResult.stdout?.trim()) {
-      feedback.push(hookResult.stdout.trim());
+      feedback.push(
+        truncateHookFeedback(hookResult.stdout.trim(), workingDirectory),
+      );
     }
   }
 

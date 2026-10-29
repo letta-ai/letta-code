@@ -1,11 +1,38 @@
+// Must match cloud-api’s 1008 reason in letta-cloud/libs/utils-server/src/lib/handleEnvironmentConnection/handleEnvironmentConnection.ts:114.
+export const CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON = "Environment not found";
+
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
+export const MAX_RETRY_ATTEMPTS = Math.ceil(
+  Math.log2(MAX_RETRY_DURATION_MS / INITIAL_RETRY_DELAY_MS),
+);
 // Split listener pairs are only usable once both control and stream sockets
 // complete their opening handshake. If the stream upgrade makes no progress,
 // tear down the incomplete pair and let the normal reconnect path build a
 // coherent replacement instead of awaiting the stream socket forever.
 export const LISTENER_STREAM_OPEN_TIMEOUT_MS = 30000; // 30 seconds
+
+// ws has no default opening-handshake timeout. If the TCP connect or HTTP
+// upgrade hangs (e.g. a NAT silently drops packets after a network blip), a
+// listener socket stays CONNECTING forever and never emits error/close, so no
+// retry is scheduled. Bound the handshake so the normal close path retries.
+export const LISTENER_HANDSHAKE_TIMEOUT_MS = 30000; // 30 seconds
+
+/** Options for every listener WebSocket, so a hung handshake errors and closes. */
+export function getListenerSocketOptions(apiKey: string): {
+  headers: Record<string, string>;
+  handshakeTimeout: number;
+} {
+  const configured = Number(process.env.LETTA_LISTENER_HANDSHAKE_TIMEOUT_MS);
+  return {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    handshakeTimeout:
+      Number.isFinite(configured) && configured > 0
+        ? configured
+        : LISTENER_HANDSHAKE_TIMEOUT_MS,
+  };
+}
 
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline
@@ -40,7 +67,23 @@ export function isListenerPongStale(
 export const SYSTEM_REMINDER_RE =
   /<system-reminder>[\s\S]*?<\/system-reminder>/g;
 
+// Mid-stream resume policy for listener turns. When the socket carrying a
+// run's stream dies (for example the cloud-api process that owned the run was
+// killed during a rolling restart), the listener re-attaches to the run stream
+// with `starting_after` the last seq_id. Without a policy the resume is one
+// immediate attempt, which cannot succeed while cloud-api is still down. The
+// policy must outlast a rolling restart (minutes), and once reconnected the
+// server itself waits 90 s of producer-heartbeat silence before replay reports
+// RUN_STREAM_PRODUCER_LOST, so the ceiling is sized in minutes: 0.5 + 1 + 2 +
+// 4 s, then 56 attempts at 5 s = 287.5 s, about 5 minutes of waiting.
+export const LISTENER_STREAM_RESUME_POLICY = {
+  initialDelayMs: 500,
+  maxAttempts: 60,
+  maxDelayMs: 5_000,
+};
+
 export const LLM_API_ERROR_MAX_RETRIES = 3;
+export const CLOUD_API_DEPLOYMENT_RECOVERY_MAX_ATTEMPTS = 3;
 export const EMPTY_RESPONSE_MAX_RETRIES = 2;
 export const MAX_PRE_STREAM_RECOVERY = 2;
 export const MAX_POST_STOP_APPROVAL_RECOVERY = 2;

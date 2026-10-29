@@ -5,11 +5,11 @@ import type {
   ApprovalDecision,
   ApprovalResult,
 } from "@/agent/approval-execution";
+import type { AttributedMessageCreate } from "@/agent/message-attribution";
 import type { SkillSource } from "@/agent/skill-sources";
 import type { ContextTracker } from "@/cli/helpers/context-tracker";
 import type { ApprovalRequest } from "@/cli/helpers/stream";
 import type { ModAdapter } from "@/mods/mod-adapter";
-import type { ApprovalContext } from "@/permissions/analyzer";
 import type {
   DequeuedBatch,
   QueueBlockedReason,
@@ -18,7 +18,10 @@ import type {
 } from "@/queue/queue-runtime";
 import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
+import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { AppServerProtocolCommand } from "@/types/app-server-protocol";
+import type { UsageStatistics } from "@/types/protocol";
 import type {
   ApprovalResponseBody,
   AvailableSkillSummary,
@@ -29,7 +32,6 @@ import type {
   RuntimeScope,
   StopReasonType,
   TeleportContinuation,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
   ServiceCommandRequest,
@@ -45,10 +47,20 @@ export interface StartListenerOptions {
   supportsPairedListenerGenerations?: boolean;
   deviceId: string;
   connectionName: string;
+  /** Set for `letta server --org`: reconnects reuse that organization's sign-in. */
+  organizationId?: string;
+  /** False when reconnecting necessarily allocates a new physical id. */
+  connectionIdCanResume?: boolean;
   skillsDirectory?: string;
   onConnected: (connectionId: string) => void | Promise<void>;
+  /** Called only after initial state and approvals are replayed and the exact connection is routable. */
+  onConnectionReady?: (
+    connection: ListenerConnectionState,
+  ) => void | Promise<void>;
   onDisconnected: () => void;
-  onNeedsReregister?: () => void;
+  onNeedsReregister?: (replacement?: ListenerClientReplacement) => void;
+  /** Explicit state lineage supplied only by onNeedsReregister. */
+  replacement?: ListenerClientReplacement;
   onError: (error: Error) => void;
   onStatusChange?: (
     status: "idle" | "receiving" | "processing",
@@ -68,6 +80,17 @@ export interface StartListenerOptions {
   ) => void;
 }
 
+/** Options a `sync` command carries into the listener's state replay. */
+export type SyncReplayOptions = {
+  /** `SyncCommand.recover_approvals`: consult the backend for stale approvals. */
+  recoverApprovals?: boolean;
+  /** `SyncCommand.resume_interrupted_turn`: owner-only immediate continuation. */
+  resumeInterruptedTurn?: boolean;
+  forceDeviceStatus?: boolean;
+  onStatusChange?: StartListenerOptions["onStatusChange"];
+  connectionId?: string;
+};
+
 export interface IncomingMessage {
   type: "message";
   /**
@@ -76,7 +99,7 @@ export interface IncomingMessage {
    * return to the correct client even when multiple clients share a runtime.
    */
   connectionId?: ListenerConnectionId;
-  agentId?: string;
+  agentId?: string | null;
   conversationId?: string;
   /** Queue this message as its own turn; never merge with other messages. */
   noCoalesce?: boolean;
@@ -94,11 +117,13 @@ export interface IncomingMessage {
   imageFailureMode?: "strict" | "drop";
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
+  clientPreferences?: import("@/types/client-preferences").ClientPreferences;
   externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
+  responseFormat?: Record<string, unknown>;
   messages: Array<
-    (MessageCreate & { client_message_id?: string }) | ApprovalCreate
+    (AttributedMessageCreate & { client_message_id?: string }) | ApprovalCreate
   >;
   /**
    * Cloud user id of the human who actually pressed "send", forwarded
@@ -109,6 +134,31 @@ export interface IncomingMessage {
    * self-hosted, single-user, or pre-channel-split flows.
    */
   actingUserId?: string;
+  /**
+   * Internal recovery sentinel: this input is explicitly unattributed, so the
+   * outbound request must not inherit an actor from runtime context or env.
+   */
+  suppressActingUserFallback?: boolean;
+  /** Exact durable-ledger identities owned by this admitted/dequeued turn. */
+  durableInputIdentities?: readonly InputIdentity[];
+  /** External applications which must acknowledge this turn's terminal. */
+  terminalConsumerIds?: readonly string[];
+  /**
+   * Cloud super run this input belongs to, when the relay delivered one. The
+   * MCP originator token for this run is never carried here (this message is
+   * persisted by the durable input ledger); it lives only in the in-memory
+   * token store keyed by this id. Undefined on mixed-originator batches.
+   */
+  mcpOriginatorSuperRunId?: string;
+  /**
+   * Whether this input's relay delivery carried a live MCP originator token.
+   * The queue merge votes on (super run id, token presence) together: a
+   * token-bearing and a tokenless delivery for the SAME run must not merge
+   * into an attributed turn, because the tokenless one is a stale pre-mint
+   * frame whose delivery cleared the run's authority — merging them would
+   * let the stale member borrow the fresh member's token.
+   */
+  mcpOriginatorTokenPresent?: boolean;
 }
 
 export type ProcessQueuedTurn = (
@@ -150,6 +200,8 @@ export type PendingTeleport = {
   readyAt?: number;
   error?: string;
   continuation?: TeleportContinuation;
+  /** Exact interrupted-turn predecessor admitted by a failed teleport payload. */
+  interruptedRevision?: string;
 };
 
 export interface ModeChangePayload {
@@ -166,7 +218,7 @@ export type InboundMessagePayload =
   | (MessageCreate & { client_message_id?: string })
   | ApprovalCreate;
 
-export type ServerMessage = WsProtocolCommand;
+export type ServerMessage = AppServerProtocolCommand;
 
 export type InvalidInputCommand = {
   type: "__invalid_input";
@@ -184,21 +236,207 @@ export type PendingApprovalResolver = {
   controlRequest?: ControlRequest;
 };
 
-export type RecoveredPendingApproval = {
-  approval: ApprovalRequest;
-  controlRequest: ControlRequest;
-  approvalContext: ApprovalContext | null;
-};
-
 export type RecoveredApprovalState = {
   agentId: string;
   conversationId: string;
-  approvalsByRequestId: Map<string, RecoveredPendingApproval>;
-  pendingRequestIds: Set<string>;
-  responsesByRequestId: Map<string, ApprovalResponseBody>;
+  /** Durable actor associated with the interrupted request, when attributed. */
+  actingUserId?: string;
   autoDecisions?: ApprovalDecision[];
   allApprovals?: ApprovalRequest[];
+  durableInputIdentities?: readonly InputIdentity[];
+  terminalConsumerIds?: readonly string[];
+  /** Interrupted-record revision this recovery authority originally observed. */
+  interruptedRevision?: string;
+  /** Existing durable lineage reused when restart observes an in-flight recovery. */
+  recoveryLineageId?: string;
+  /** Mutable sidecar generation fencing continuation checkpoints and terminal. */
+  recoveryRevisionToken?: string;
+  /** The lineage lives beside an independent successor's main revision. */
+  recoveryUsesIndependentSuccessor?: boolean;
 };
+
+export type AcceptedInputDisposition = "started" | "queued";
+
+/**
+ * Identity domains that share the accepted-input ledger.
+ *
+ * `input` holds client-chosen `client_message_id`s and `teleport` holds
+ * cloud-chosen teleport ids. They are separate key spaces: a client that sends
+ * `client_message_id: "teleport:<id>"` must never collide with, suppress, or
+ * be suppressed by a teleport continuation carrying that same id.
+ */
+export type InputIdentityDomain = "input" | "teleport";
+
+export type InputIdentity = {
+  readonly domain: InputIdentityDomain;
+  readonly id: string;
+};
+
+export type DurableQueuedInput = {
+  scope: {
+    agentId: string | null;
+    conversationId: string;
+  };
+  /** Exact ledger namespace/id; never inferred from message-shaped payload data. */
+  identity: InputIdentity;
+  /** Complete create-message execution context, including client preferences. */
+  incoming: IncomingMessage;
+  /** Sender attribution forwarded separately from the protocol payload. */
+  actingUserId?: string;
+};
+
+/** Terminal intent committed in the same durable transaction that retires input replay. */
+export type DurablePreparedInputTerminal = {
+  /** Wall-clock diagnostic; authority ordering uses preparationSequence. */
+  preparedAt?: number;
+  /** Durable monotonic order used to reconcile legacy retired authority. */
+  preparationSequence?: number;
+  /** Durable claim that orders this publication before later quarantine. */
+  publicationClaimed?: true;
+  /** Persist a crash proof even when no external terminal consumer exists. */
+  persistWithoutConsumers?: true;
+  scope: { agentId: string | null; conversationId: string };
+  message: {
+    type: "turn_finished";
+    turn_id: string;
+    stop_reason: StopReasonType;
+    terminal_consumer_ids?: string[];
+    run_id?: string;
+    error?: string;
+    usage?: UsageStatistics;
+  };
+  owner: {
+    connectionId: string | null;
+    canRotate: boolean;
+    lineageId: string | null;
+    /** Stable identity for this exact terminal operation across journal promotion. */
+    terminalIdentity?: string;
+    /** Exact interrupted-work revision this terminal supersedes. */
+    interruptedRevision?: string;
+    /** Independent recovery lineage whose mutable authority was observed. */
+    recoveryLineageId?: string;
+    /** Exact mutable main/sidecar generation validated by this terminal. */
+    interruptedAuthorityRevision?: string;
+    preparationSequence?: number;
+  };
+};
+
+export type InterruptedTerminalAuthority = {
+  interruptedRevision: string;
+  authorityRevision: string;
+  recoveryLineageId?: string;
+  terminalIdentity?: string;
+  preparationSequence?: number;
+  publicationClaimed?: true;
+};
+
+export type AcceptedInputDispositionEntry = {
+  disposition: AcceptedInputDisposition | null;
+  acceptedAt: number;
+  expiresAt: number;
+  runtimeKey: string;
+  generation: number;
+  /** Present while accepted work must be replayed after a process crash. */
+  queuedInput?: DurableQueuedInput;
+  /** Durable terminal/successor marker set atomically when replay data is retired. */
+  replayCompleted?: true;
+  /** Pending promotion into the terminal replay store after an atomic effect commit. */
+  preparedTerminal?: DurablePreparedInputTerminal;
+  /** Compact predecessor migration fence for an authority that cannot be replayed. */
+  legacyAuthorityQuarantine?: {
+    scope: { agentId: string | null; conversationId: string };
+    recoveryLineageId: string;
+    interruptedRevision: string;
+    expiresAt: number;
+  };
+  /** Interrupted-work revision already superseded by a durable terminal. */
+  completedTerminalRevision?: string;
+  /** Exact main/sidecar generation superseded by the durable terminal. */
+  completedTerminalAuthority?: InterruptedTerminalAuthority;
+};
+
+export type ActiveRecoveryClaim = {
+  readonly connectionId: string;
+  readonly connectionGeneration: string;
+  readonly owned: boolean;
+  release(): Promise<void>;
+  /** Synchronously fence local ownership, then release the Cloud token best-effort. */
+  revoke(): void;
+  abandon(): void;
+};
+
+export type AcceptedInputDispositionLedger = {
+  entries: Map<string, AcceptedInputDispositionEntry>;
+  scopeCounts: Map<string, number>;
+  /** Bounded predecessor migration fences excluded from admission capacity. */
+  quarantinedCount: number;
+  expiryQueue: Array<{ key: string; expiresAt: number; generation: number }>;
+  expiryQueueHead: number;
+  nextGeneration: number;
+  /** Reservations whose durable rollback failed and may be reclaimed exactly. */
+  abandonedReservations: Map<
+    string,
+    { generation: number; token: string | undefined }
+  >;
+  /** Durable cross-process store; null is used by isolated unit runtimes. */
+  persistentPath: string | null;
+};
+
+export type InputDispositionReservation = {
+  key: string;
+  generation: number;
+  runtimeKey: string;
+  /** Unforgeable owner for a filesystem reservation. */
+  token?: string;
+  ownerPid?: number;
+  ownerProcessStart?: string | null;
+};
+
+/**
+ * Explicit owner of one startup ingress buffer.
+ *
+ * Reserved before the transport that will carry it exists, so pre-ready
+ * requestless frames always have an exact lineage to be handed to even when a
+ * connection attempt dies before any `ListenerConnectionState` is opened.
+ */
+export type StartupIngressOwner = {
+  readonly lineageId: string;
+  readonly generation: number;
+  /** False for connections that cannot prove an exact replacement identity. */
+  readonly handoffEnabled: boolean;
+};
+
+export type StartupFrameCapacity = "frame_count" | "byte_count";
+
+/**
+ * Bounded startup payload, or a bounded poison marker when the lineage exceeded
+ * ingress capacity. The marker must survive every replacement hop so a later
+ * connection cannot mistake discarded requestless input for an empty handoff.
+ */
+export type StartupFrameHandoff =
+  | {
+      readonly kind: "frames";
+      readonly frames: WebSocket.RawData[];
+      readonly byteLength: number;
+    }
+  | {
+      readonly kind: "overflow";
+      readonly capacity: StartupFrameCapacity;
+    };
+
+/**
+ * Opaque, one-shot ownership transfer across Cloud re-registration.
+ *
+ * Only routing metadata is public. All mutable successor state is retained in
+ * private provenance keyed by this token, so possession never grants mutation
+ * authority over the handoff before or after adoption.
+ */
+export type ListenerClientReplacement = Readonly<{
+  deviceId: string;
+  connectionName: string;
+  lineageId: string;
+  generation: number;
+}>;
 
 export type ConversationRuntime = {
   listener: ListenerRuntime;
@@ -207,16 +445,24 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
+  executionSettings?: RuntimeExecutionSettings;
   /** Connection currently executing this conversation's turn, if client-owned. */
   activeConnectionId: ListenerConnectionId | null;
   turnLifecycle: TurnLifecycle;
   messageQueue: Promise<void>;
-  /** Recently accepted ingress IDs, retained for idempotent client retries. */
-  acceptedInputDispositions: Map<string, "started" | "queued">;
   pendingApprovalResolvers: Map<string, PendingApprovalResolver>;
   recoveredApprovalState: RecoveredApprovalState | null;
+  /**
+   * Teleport whose `teleport_continue` this scope is waiting for, set by the
+   * cloud's destination `runtime_start`. While it is set (and not expired),
+   * sync recovery leaves the source's pending approvals to the continuation.
+   */
+  expectedTeleportId: string | null;
+  expectedTeleportExpiresAt: number | null;
   readonly lastStopReason: StopReasonType | null;
   lastTerminalLoopErrorMessage: string | null;
   lastTerminalLoopErrorRunId: string | null;
@@ -230,8 +476,15 @@ export type ConversationRuntime = {
   queuedMessagesByItemId: Map<string, IncomingMessage>;
   /** Exact send identities carried by each batch removed from the queue. */
   dequeuedClientMessageIdsByBatchId: Map<string, string[]>;
+  /** Durable ledger identities carried by each batch removed from the queue. */
+  dequeuedInputIdentitiesByBatchId: Map<string, InputIdentity[]>;
   queuePumpActive: boolean;
   queuePumpScheduled: boolean;
+  /**
+   * Inbound messages chained on messageQueue that captured this runtime but
+   * have not settled. Blocks idle eviction so they never run detached.
+   */
+  pendingInboundDispatches: number;
   pendingTurns: number;
   readonly loopStatus: LoopStatus;
   currentToolset: ToolsetName | null;
@@ -249,12 +502,15 @@ export type ConversationRuntime = {
   approvalMessageIdByToolCallId: Map<string, string>;
   pendingInterruptedResults: Array<ApprovalResult> | null;
   pendingInterruptedContext: {
-    agentId: string;
+    agentId: string | null;
     conversationId: string;
     continuationEpoch: number;
+    requestOtid?: string;
   } | null;
   continuationEpoch: number;
   pendingInterruptedToolCallIds: string[] | null;
+  /** Terminal delivery waits that may transfer to a rotating replacement. */
+  pendingTerminalDeliveryCount: number;
   /** Per-conversation reminder state (session-context, agent-info, etc.). */
   reminderState: SharedReminderState;
   /** Per-conversation tracker for compaction/reflection cadence. */
@@ -292,10 +548,15 @@ export type ListenerMessageRouting =
 export type ListenerConnectionState = {
   id: ListenerConnectionId;
   ordinal: number;
+  /** Explicit replacement lineage; unrelated concurrent connections differ. */
+  startupOwner: StartupIngressOwner;
   writer: ListenerTransport;
   streamWriter: ListenerTransport | null;
   cancellation: AbortController;
   initialized: boolean;
+  ingressReady: boolean;
+  startupReady: Promise<void>;
+  resolveStartupReady: () => void;
   subscriptions: Set<string>;
   eventSeqCounter: number;
   options: StartListenerOptions;
@@ -309,9 +570,10 @@ export type ListenerRuntime = {
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   /**
-   * Epoch ms of the last `pong` observed from the cloud relay. Used by the
-   * heartbeat watchdog to detect a half-open socket (no `close` event) and
-   * force a reconnect. `null` until the first pong on a connection.
+   * Epoch ms of the last `pong` observed on the legacy single connection.
+   * Reported for diagnostics only: once several connections are live this is
+   * not attributable to a socket, so the heartbeat watchdog reads the pong time
+   * of the socket it pings instead. `null` until the first pong.
    */
   lastPongAt: number | null;
   intentionallyClosed: boolean;
@@ -339,14 +601,34 @@ export type ListenerRuntime = {
   processServicesStarted: boolean;
   /** Invalidates process-service attempts that outlive an outbound connection. */
   processServicesGeneration: number;
+  /** Invalidates detached external-tool notifications after an authoritative reset. */
+  externalToolNotificationEpochByConversation: Map<string, number>;
+  /** Holds detached completions while a conversation reset may still fail. */
+  externalToolNotificationBarrierByConversation: Map<string, Promise<void>>;
   /** Coalesces concurrent connection attempts while process services initialize. */
   processServicesReady: Promise<void> | null;
   /** Generation owned by processServicesReady, or null when no attempt is active. */
   processServicesReadyGeneration: number | null;
+  /** Reconcile durable interrupted work without importing the turn cycle. */
+  scheduleRecordedRecovery?: () => void;
+  /** Retry capacity-deferred input-terminal promotion after an ACK frees space. */
+  promotePreparedInputTerminals?: () => number;
+  /** Rehydrate a committed queued input after volatile enqueue failure. */
+  restoreDurableQueuedInputs?: () => number | Promise<number>;
+  /** Wake process-owned queue pumps after a delayed durable refill enqueues work. */
+  scheduleRestoredQueuePumps?: () => void;
+  /** Coalesces capacity-release callbacks into one durable queue refill scan. */
+  durableQueueRestoreScheduled?: boolean;
+  /** A wake that arrived while an async refill snapshot was in flight. */
+  durableQueueRestoreRerunRequested?: boolean;
+  /** The single bounded backoff timer for a failed durable queue refill. */
+  durableQueueRestoreTimer?: ReturnType<typeof setTimeout>;
+  /** Consecutive refill failures in the current bounded retry cycle. */
+  durableQueueRestoreFailures?: number;
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;
-  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
+  serviceCommandTypes: Set<AppServerProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -365,7 +647,10 @@ export type ListenerRuntime = {
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
   /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
-  skillSourcesByConversation: Map<string, SkillSource[]>;
+  skillSourcesByConversation: Map<
+    string,
+    { sources: SkillSource[]; bundledSkills?: string[] }
+  >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */
@@ -374,8 +659,22 @@ export type ListenerRuntime = {
   systemPromptRecompileByConversation: Map<string, Promise<void>>;
   queuedSystemPromptRecompileByConversation: Set<string>;
   connectionId: string | null;
+  /** Physical Cloud listener generation currently paired to connectionId. */
+  connectionGeneration?: string | null;
   connectionName: string | null;
   conversationRuntimes: Map<string, ConversationRuntime>;
+  /**
+   * Process-scoped TTL ledger for stable input identities. Its composite key
+   * includes the exact conversation runtime key; an explicit Cloud replacement
+   * lineage transfers this object across re-registration.
+   */
+  acceptedInputDispositionLedger: AcceptedInputDispositionLedger;
+  /** Live Cloud recovery capabilities, synchronously revoked on disconnect/stop. */
+  activeRecoveryClaims?: Set<ActiveRecoveryClaim>;
+  /** Bounded pre-ready requestless state keyed by explicit replacement lineage. */
+  pendingStartupFramesByLineage: Map<string, StartupFrameHandoff>;
+  /** Generation currently owned by each explicit replacement lineage. */
+  startupGenerationByLineage: Map<string, number>;
   /** Recent run-to-send snapshots survive idle conversation runtime eviction. */
   clientMessageIdsByRunIdByConversation?: Map<string, Map<string, string[]>>;
   /** Per-conversation worktree directory watchers for CWD auto-detection fallback. */
@@ -427,8 +726,10 @@ export interface InterruptPopulateInput {
   lastExecutionResults: ApprovalResult[] | null;
   lastExecutingToolCallIds: string[];
   lastNeedsUserInputToolCallIds: string[];
-  agentId: string;
+  agentId: string | null;
   conversationId: string;
+  requestOtid?: string;
+  denialReason?: string;
 }
 
 export interface InterruptToolReturn {
@@ -440,3 +741,25 @@ export interface InterruptToolReturn {
 }
 
 export type { DequeuedBatch, QueueBlockedReason, QueueItem };
+
+export type ConnectedListenerOptions = Pick<
+  StartListenerOptions,
+  | "connectionId"
+  | "onConnected"
+  | "onLog"
+  | "onConnectionReady"
+  | "onStatusChange"
+  | "onWsEvent"
+>;
+
+export interface ConnectedListenerRuntimeOptions {
+  /** Disable for startup tests using transports without WebSocket events. */
+  startStartupDeadline?: boolean;
+  startHeartbeat?: boolean;
+  startCronScheduler?: boolean;
+  startProcessServices?: boolean;
+  streamTransport?: ListenerTransport | null;
+  emitInitialState?: boolean;
+  updateReconnectState?: boolean;
+  activateIngress?: () => Promise<boolean>;
+}

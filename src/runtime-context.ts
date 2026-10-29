@@ -1,7 +1,9 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { homedir, tmpdir } from "node:os";
+import { resolveActingUserId } from "@/agent/acting-user";
 import type { SkillSource } from "./agent/skills";
 import { isUsableDirectory } from "./helpers/usable-directory";
+import type { RuntimeExecutionSettings } from "./runtime-execution-settings";
 
 export type RuntimePermissionMode =
   | "standard"
@@ -24,8 +26,20 @@ export interface RuntimeContextSnapshot {
   agentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
+  /** Authenticated Cloud user responsible for the current turn. */
+  actingUserId?: string;
+  /**
+   * Cloud super run the current turn belongs to, when the relay delivered
+   * one. Carries NO credential: the MCP originator token itself stays in the
+   * agent-layer token store and is looked up by this id at MCP tool-run time.
+   */
+  mcpOriginatorSuperRunId?: string | null;
+  /** Explicitly disable inherited process/runtime acting-user attribution. */
+  suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   workingDirectory?: string | null;
   /**
    * Set when the runtime-scoped working directory was found deleted and
@@ -34,14 +48,30 @@ export interface RuntimeContextSnapshot {
    */
   workingDirectoryRecoveredFrom?: string | null;
   toolContextId?: string | null;
+  /** Model-facing tool names from the current turn's filtered tool context. */
+  clientToolNames?: string[];
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
+  executionSettings?: RuntimeExecutionSettings;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();
 
 export function getRuntimeContext(): RuntimeContextSnapshot | undefined {
   return runtimeContextStorage.getStore();
+}
+
+/** Resolve the current turn's customer, including inherited headless env scope. */
+export function getRuntimeActingUserId(): string | undefined {
+  const context = getRuntimeContext();
+  if (context?.suppressActingUserFallback) return undefined;
+  return resolveActingUserId(undefined, context?.actingUserId);
+}
+
+/** Capture actor inheritance as a tri-state value for delayed work. */
+export function getRuntimeActingUserAttribution(): string | null | undefined {
+  if (getRuntimeContext()?.suppressActingUserFallback) return null;
+  return getRuntimeActingUserId();
 }
 
 export function runWithRuntimeContext<T>(

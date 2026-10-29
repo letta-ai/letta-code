@@ -2,9 +2,14 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import type { AvailableSkillSummary } from "@/types/protocol_v2";
+import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
-import { getSkillSources, getSkillsDirectory } from "./context";
+import {
+  getBundledSkillAllowlist,
+  getSkillSources,
+  getSkillsDirectory,
+} from "./context";
 import { resolveScopedMemoryDir } from "./memory-filesystem";
 import {
   discoverSharedMemorySkills,
@@ -14,8 +19,8 @@ import {
 import {
   compareSkills,
   discoverSkills,
-  GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
+  getGlobalSkillsDir,
   isModelInvocableSkill,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
@@ -45,6 +50,7 @@ const CLIENT_SKILLS_WATCHER_KEY = Symbol.for("@letta/clientSkillsWatcher");
 interface CacheEntry {
   key: string;
   result: BuildClientSkillsPayloadResult;
+  checkoutGeneration: number;
 }
 
 type ClientSkillsCache = Map<string, CacheEntry>;
@@ -111,6 +117,7 @@ function getWatcher(): ClientSkillsWatcher {
 function computeCacheKey(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
+  bundledSkills: string[] | undefined;
   cwd: string;
   configuredSkillsDirectory: string | null;
   legacySkillsDirectory: string;
@@ -122,6 +129,9 @@ function computeCacheKey(components: {
   return [
     components.agentId ?? "",
     [...components.skillSources].sort().join(","),
+    components.bundledSkills
+      ? [...components.bundledSkills].sort().join(",")
+      : "*",
     components.cwd,
     components.configuredSkillsDirectory ?? "",
     components.legacySkillsDirectory,
@@ -155,7 +165,7 @@ function getSkillRoots(components: {
     roots.add(components.primaryProjectSkillsDirectory);
   }
   if (sourceSet.has("global")) {
-    roots.add(GLOBAL_SKILLS_DIR);
+    roots.add(getGlobalSkillsDir());
   }
   if (components.agentId && sourceSet.has("agent")) {
     roots.add(getAgentSkillsDir(components.agentId));
@@ -220,6 +230,61 @@ export function invalidateClientSkillsPayloadCacheForAgent(
     }
   }
   invalidateAttachedRepositoriesCache(agentId);
+}
+
+/** Metadata-only reminder for changes since a conversation's last accepted send. */
+export function buildClientSkillsUpdateReminder(
+  previous: BuildClientSkillsPayloadResult["clientSkills"] | undefined,
+  current: BuildClientSkillsPayloadResult["clientSkills"],
+): string | null {
+  // The initial request already supplies the complete catalog in client_skills.
+  if (!previous) return null;
+  const previousByName = new Map(previous.map((skill) => [skill.name, skill]));
+  const currentNames = new Set(current.map((skill) => skill.name));
+  const changed = current.filter((skill) => {
+    const old = previousByName.get(skill.name);
+    return (
+      !old ||
+      old.description !== skill.description ||
+      old.location !== skill.location
+    );
+  });
+  const removed = previous
+    .filter((skill) => !currentNames.has(skill.name))
+    .map((skill) => skill.name);
+  if (changed.length === 0 && removed.length === 0) return null;
+
+  const escapeXml = (text: string): string =>
+    text
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#x27;");
+  // Keep this metadata-only. Skill bodies stay lazy-loaded through Skill.
+  return [
+    "<system-reminder>",
+    ...(changed.length > 0
+      ? [
+          "Additional skills are now available. These supplement the skills already listed in your context:",
+          "<available_skills>",
+          ...changed.flatMap((skill) => [
+            "  <skill>",
+            `    <name>${escapeXml(skill.name)}</name>`,
+            `    <description>${escapeXml(skill.description)}</description>`,
+            "  </skill>",
+          ]),
+          "</available_skills>",
+        ]
+      : []),
+    ...(removed.length > 0
+      ? [
+          "Skills no longer available:",
+          ...removed.map((name) => `- ${escapeXml(name)}`),
+        ]
+      : []),
+    "</system-reminder>",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------
@@ -301,6 +366,8 @@ export interface BuildClientSkillsPayloadOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs to expose when skillSources omits "bundled". */
+  bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
   logger?: (message: string) => void;
@@ -333,6 +400,7 @@ function resolveSkillDiscoveryContext(
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   skillSources: SkillSource[];
+  bundledSkills: string[] | undefined;
 } {
   const workingDirectory = options.workingDirectory ?? process.cwd();
   const configuredSkillsDirectory =
@@ -343,12 +411,17 @@ function resolveSkillDiscoveryContext(
     PROJECT_SKILLS_DIR,
   );
   const skillSources = options.skillSources ?? getSkillSources();
+  // The allowlist only adds bundled skills that the sources would otherwise drop.
+  const bundledSkills = skillSources.includes("bundled")
+    ? undefined
+    : (options.bundledSkills ?? getBundledSkillAllowlist());
   return {
     workingDirectory,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   };
 }
 
@@ -357,6 +430,8 @@ export interface DiscoverClientSideSkillsOptions {
   workingDirectory?: string;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs to expose when skillSources omits "bundled". */
+  bundledSkills?: string[];
   attachedRepositories?: readonly AttachedAgentRepository[];
   discoverSkillsFn?: typeof discoverSkills;
 }
@@ -376,6 +451,31 @@ async function collectClientSideSkills(
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
   const skillsById = new Map<string, Skill>();
   const errors: SkillDiscoveryError[] = [...options.sharedMemoryErrors];
+
+  if (options.bundledSkills?.length) {
+    const allowed = new Set(options.bundledSkills);
+    try {
+      const discovery = await discoverSkillsFn(
+        options.primaryProjectSkillsDirectory,
+        options.agentId,
+        { sources: ["bundled"] },
+      );
+      errors.push(...discovery.errors);
+      for (const skill of discovery.skills) {
+        if (
+          allowed.has(skill.id) &&
+          isSkillAvailableForAgent(skill, options.agentId)
+        ) {
+          skillsById.set(skill.id, skill);
+        }
+      }
+    } catch (error) {
+      errors.push({
+        path: "bundled",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   const nonProjectSources =
     options.skillSources?.filter(
@@ -504,6 +604,7 @@ export async function discoverClientSideSkills(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   } = resolveSkillDiscoveryContext(options);
   const sharedMemoryContext = await resolveSharedMemorySkillsContext({
     agentId: options.agentId,
@@ -515,6 +616,7 @@ export async function discoverClientSideSkills(
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
+    bundledSkills,
     primaryProjectSkillsDirectory,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
@@ -545,6 +647,7 @@ export async function buildClientSkillsPayload(
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
+    bundledSkills,
   } = resolveSkillDiscoveryContext(options);
   const discoverSkillsFn = options.discoverSkillsFn ?? discoverSkills;
 
@@ -573,6 +676,7 @@ export async function buildClientSkillsPayload(
   const cacheComponents = {
     agentId: options.agentId,
     skillSources,
+    bundledSkills,
     cwd: workingDirectory,
     configuredSkillsDirectory,
     legacySkillsDirectory,
@@ -586,17 +690,19 @@ export async function buildClientSkillsPayload(
   if (useCache) {
     const cache = getCache();
     const cached = cache.get(cacheKey);
-    if (cached) {
+    if (cached && cached.checkoutGeneration === getCheckoutGeneration()) {
       return cloneResult(cached.result);
     }
   }
 
   const generationBeforeDiscovery = getCacheGeneration();
+  const checkoutGenerationBeforeDiscovery = getCheckoutGeneration();
   const discovery = await collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
     legacySkillsDirectory,
     skillSources,
+    bundledSkills,
     primaryProjectSkillsDirectory,
     sharedMemorySkillsDirs: sharedMemoryContext.skillsDirs,
     sharedMemoryErrors: sharedMemoryContext.errors,
@@ -624,8 +730,9 @@ export async function buildClientSkillsPayload(
       path: skill.path,
       source: skill.source,
     })),
+    // Explicit preloads (subagent `skills:`) may name skills hidden from model invocation.
     skillPathById: Object.fromEntries(
-      sortedSkills
+      discovery.skills
         .filter(
           (skill) => typeof skill.path === "string" && skill.path.length > 0,
         )
@@ -634,8 +741,16 @@ export async function buildClientSkillsPayload(
     errors,
   };
 
-  if (useCache && generationBeforeDiscovery === getCacheGeneration()) {
-    getCache().set(cacheKey, { key: cacheKey, result: cloneResult(result) });
+  if (
+    useCache &&
+    generationBeforeDiscovery === getCacheGeneration() &&
+    checkoutGenerationBeforeDiscovery === getCheckoutGeneration()
+  ) {
+    getCache().set(cacheKey, {
+      key: cacheKey,
+      result: cloneResult(result),
+      checkoutGeneration: getCheckoutGeneration(),
+    });
   }
 
   return result;

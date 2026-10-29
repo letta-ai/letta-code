@@ -23,6 +23,7 @@ import {
 } from "node:fs";
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { isDebugEnabled } from "@/utils/debug";
 
 export interface RemoteSettingsLockHandle {
   lockPath: string;
@@ -210,7 +211,7 @@ function recoverStaleLockSync(
       if (isLockOwnerProcessAlive(claimOwner)) return false;
     }
     if (ownedClaimDepth === -1) {
-      if (process.env.LETTA_DEBUG) {
+      if (isDebugEnabled()) {
         console.warn("[Remote Settings] Lock recovery claim chain exhausted");
       }
       return false;
@@ -259,7 +260,7 @@ async function recoverStaleLock(
       if (isLockOwnerProcessAlive(claimOwner)) return false;
     }
     if (ownedClaimDepth === -1) {
-      if (process.env.LETTA_DEBUG) {
+      if (isDebugEnabled()) {
         console.warn("[Remote Settings] Lock recovery claim chain exhausted");
       }
       return false;

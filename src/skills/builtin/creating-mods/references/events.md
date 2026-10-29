@@ -226,6 +226,8 @@ letta.events.on("turn_start", (event) => {
 
 If multiple handlers cancel, the first valid cancel reason wins. A valid reason is a non-empty string after trimming. Cancellation does not synthesize an assistant response or tool result; it only tells the host not to submit this turn.
 
+Don't cancel every turn because the guard's own dependency failed (for example, a missing bootstrap file); that locks the user out until they edit or remove the mod and run `/reload`. Guard the risky tool with `tool_start` instead.
+
 Handlers run in registration order. Later handlers see the current input after earlier mutations/returns. If a handler throws, its partial `event.input` mutation is rolled back and the error is recorded as a mod diagnostic.
 
 `turn_start` is intentionally a trusted local mod point: it can rewrite user messages, approval results, and ordering. Keep transforms focused and unsurprising.

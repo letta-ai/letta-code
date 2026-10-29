@@ -27,6 +27,7 @@ import {
 } from "./enter-worktree-messages.js";
 import { switchRuntimeWorkingDirectory } from "./runtime-working-directory";
 import {
+  addWorktreeSafely,
   formatGitFailure,
   gitRefExists,
   gitStdout,
@@ -903,18 +904,7 @@ export async function enter_worktree(
     // `--no-track` keeps the new branch from adopting the base ref (e.g.
     // origin/main) as its upstream, which would otherwise produce misleading
     // ahead/behind status and risk an accidental push to the base branch.
-    await runGit(
-      [
-        "worktree",
-        "add",
-        "--no-track",
-        "-b",
-        branchName,
-        worktreePath,
-        baseRef,
-      ],
-      repoRoot,
-    );
+    await addWorktreeSafely({ repoRoot, branchName, worktreePath, baseRef });
 
     const normalizedWorktreePath = path.normalize(await realpath(worktreePath));
 

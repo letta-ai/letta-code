@@ -7,6 +7,8 @@
  * the other.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { getShellEnv } from "./shell-env.js";
 import { spawnWithLauncher } from "./shell-runner.js";
@@ -137,6 +139,163 @@ export async function gitRefExists(cwd: string, ref: string): Promise<boolean> {
     allowFailure: true,
   });
   return result.exitCode === 0;
+}
+
+// Each key shape is written once and shared by the `git config --get-regexp`
+// scan and the classification below, so the two cannot drift apart.
+const INCLUDE_IF_KEY = "includeif\\..*";
+const FILTER_DRIVER_KEY = "filter\\.(.*)\\.(clean|smudge|process|required)";
+const LFS_PROGRAM_KEY =
+  "lfs\\.customtransfer\\..*\\.path|lfs\\.standalonetransferagent";
+const WORKTREE_UNSAFE_CONFIG_PATTERN = `^(${INCLUDE_IF_KEY}|${FILTER_DRIVER_KEY}|${LFS_PROGRAM_KEY})$`;
+const INCLUDE_IF_KEY_PATTERN = new RegExp(`^(${INCLUDE_IF_KEY})$`, "i");
+const FILTER_DRIVER_KEY_PATTERN = new RegExp(`^${FILTER_DRIVER_KEY}$`, "i");
+const LFS_PROGRAM_KEY_PATTERN = new RegExp(`^(${LFS_PROGRAM_KEY})$`, "i");
+
+type GitConfigScope = "--local" | "--worktree";
+
+/** Runs a read-only `git config` query; null means nothing matched. */
+async function queryRepoConfig(
+  cwd: string,
+  args: string[],
+): Promise<string | null> {
+  const result = await runGit(["config", ...args], cwd, {
+    allowFailure: true,
+  });
+  if (result.exitCode === 1 && !result.stdout) {
+    return null;
+  }
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Could not read the repository git config to neutralize filter drivers: ${result.stderr.trim() || `git config exited ${result.exitCode}`}`,
+    );
+  }
+  return result.stdout;
+}
+
+async function listUnsafeConfigKeysInScope(
+  cwd: string,
+  scope: GitConfigScope,
+): Promise<string[]> {
+  const stdout = await queryRepoConfig(cwd, [
+    scope,
+    "--includes",
+    "--null",
+    "--name-only",
+    "--get-regexp",
+    WORKTREE_UNSAFE_CONFIG_PATTERN,
+  ]);
+  return stdout?.split("\0").filter(Boolean) ?? [];
+}
+
+/**
+ * Git honors `extensions.worktreeConfig` only from the repository config file
+ * itself, so this deliberately reads it without following includes.
+ */
+async function isWorktreeConfigEnabled(cwd: string): Promise<boolean> {
+  const stdout = await queryRepoConfig(cwd, [
+    "--local",
+    "--type=bool",
+    "--get",
+    "extensions.worktreeConfig",
+  ]);
+  return stdout?.trim() === "true";
+}
+
+async function listWorktreeUnsafeConfigKeys(cwd: string): Promise<string[]> {
+  const keys = await listUnsafeConfigKeysInScope(cwd, "--local");
+  // `git worktree add` copies this worktree's config.worktree into the new
+  // worktree before checkout, and `--local` never reads that file. Asking for
+  // `--worktree` without the extension dies in multi-worktree repositories.
+  if (await isWorktreeConfigEnabled(cwd)) {
+    keys.push(...(await listUnsafeConfigKeysInScope(cwd, "--worktree")));
+  }
+  return keys;
+}
+
+/**
+ * Creates a worktree without executing commands planted inside the repository's
+ * git directory: checkout filters from repository-local or worktree-scoped git
+ * config, the `core.fsmonitor` command, and hooks such as post-checkout. An
+ * agent can write those files, so letting them run during `git worktree add`
+ * would bypass the normal shell permission path. Config shapes that cannot be
+ * safely overridden fail closed.
+ */
+export async function addWorktreeSafely(params: {
+  repoRoot: string;
+  branchName: string;
+  worktreePath: string;
+  baseRef: string;
+}): Promise<void> {
+  const keys = await listWorktreeUnsafeConfigKeys(params.repoRoot);
+  if (keys.some((key) => INCLUDE_IF_KEY_PATTERN.test(key))) {
+    throw new Error(
+      "The repository git config has a conditional include (includeIf), so its checkout filters cannot be neutralized safely.",
+    );
+  }
+
+  const blockedLfsKey = keys.find((key) => LFS_PROGRAM_KEY_PATTERN.test(key));
+  if (blockedLfsKey) {
+    throw new Error(
+      `Git was not run: the repository's own git config sets ${blockedLfsKey}. Move trusted Git LFS transfer programs to global git config, or remove the setting and retry.`,
+    );
+  }
+
+  const driverNames = new Set<string>();
+  for (const key of keys) {
+    const driverName = FILTER_DRIVER_KEY_PATTERN.exec(key)?.[1];
+    if (!driverName) {
+      // The scan reported a key nothing above knows how to switch off.
+      throw new Error(
+        `The repository git config sets ${key}, which cannot be neutralized safely.`,
+      );
+    }
+    if (/[=\r\n]/.test(driverName)) {
+      throw new Error(
+        'The repository git config defines a filter driver whose name cannot be neutralized (contains "=" or a newline).',
+      );
+    }
+    driverNames.add(driverName);
+  }
+
+  const filterOverrides = [...driverNames]
+    .sort()
+    .flatMap((driverName) => [
+      "-c",
+      `filter.${driverName}.clean=`,
+      "-c",
+      `filter.${driverName}.smudge=`,
+      "-c",
+      `filter.${driverName}.process=`,
+      "-c",
+      `filter.${driverName}.required=false`,
+    ]);
+  // An empty directory is the portable way to say "no hooks": /dev/null is not
+  // a path Git for Windows resolves.
+  const emptyHooksDir = await mkdtemp(
+    path.join(tmpdir(), "letta-worktree-no-hooks-"),
+  );
+  try {
+    await runGit(
+      [
+        ...filterOverrides,
+        "-c",
+        `core.hooksPath=${emptyHooksDir}`,
+        "-c",
+        "core.fsmonitor=false",
+        "worktree",
+        "add",
+        "--no-track",
+        "-b",
+        params.branchName,
+        params.worktreePath,
+        params.baseRef,
+      ],
+      params.repoRoot,
+    );
+  } finally {
+    await rm(emptyHooksDir, { recursive: true, force: true });
+  }
 }
 
 export async function resolveRepoRoot(cwd: string): Promise<string> {

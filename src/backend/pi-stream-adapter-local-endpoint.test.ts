@@ -314,6 +314,7 @@ describe("PiStreamAdapter local endpoint payloads", () => {
           model: "deepseek-r1:latest",
           prompt: "",
           stream: false,
+          keep_alive: "5m",
         })),
       );
       expect(servingLifecycle[0]).toBe("generate");

@@ -33,7 +33,6 @@ import {
   formatSlackControlRequestBlocks,
   formatSlackLifecycleErrorMessage,
   resolveSlackConcreteActivity,
-  SLACK_ASSISTANT_STARTUP_STATUS,
   SLACK_ASSISTANT_WORKING_STATUS,
   shouldPostSlackTerminalError,
 } from "./presentation";
@@ -53,6 +52,7 @@ import {
 import { createSlackWebApiClient } from "./web-api-client";
 
 export interface SlackChannelAdapter extends ChannelAdapter {
+  listCustomEmojis(): Promise<string[]>;
   downloadAttachment(params: {
     attachmentId: string;
     chatId: string;
@@ -152,6 +152,14 @@ export function createSlackAdapter(
     }
   }
 
+  async function listCustomEmojis(): Promise<string[]> {
+    const client = await ensureWriteClient();
+    const response = await client.emoji.list();
+    return Object.keys(response.emoji ?? {}).sort((left, right) =>
+      left.localeCompare(right),
+    );
+  }
+
   async function downloadAttachment(params: {
     attachmentId: string;
     chatId: string;
@@ -198,28 +206,23 @@ export function createSlackAdapter(
   ): Promise<void> {
     if (!running) return;
     if (event.type === "queued") {
-      if (
-        isSlackFlatChannelThreadOpener(event.source) &&
-        isNonEmptyString(event.source.messageId) &&
-        !agentThreadTracker.has(event.source.chatId, event.source.messageId)
-      ) {
-        await status.activate(
-          event.source,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-          SLACK_ASSISTANT_STARTUP_STATUS,
-        );
-      }
+      const showStartupStatus =
+        event.source.showStartupStatus ||
+        (isSlackFlatChannelThreadOpener(event.source) &&
+          isNonEmptyString(event.source.messageId) &&
+          !agentThreadTracker.has(event.source.chatId, event.source.messageId));
+      await status.handleLifecycle({
+        ...event,
+        source: { ...event.source, showStartupStatus },
+      });
       return;
     }
 
     const sources = status.getUniqueSources(event.sources);
-    if (event.type === "processing") {
-      await Promise.all(sources.map(status.clearStale));
-      return;
-    }
+    await status.handleLifecycle(event);
+    if (event.type === "processing") return;
     if (event.stopReason === "requires_approval") return;
 
-    await Promise.all(sources.map(status.deactivate));
     if (!shouldPostSlackTerminalError(event.stopReason)) return;
     const errorText = event.error?.trim() ?? "";
     trackBoundaryError({
@@ -450,6 +453,7 @@ export function createSlackAdapter(
       );
     },
     sendMessage,
+    listCustomEmojis,
     downloadAttachment,
     sendDirectReply,
     handleControlRequestEvent,

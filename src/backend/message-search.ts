@@ -1,4 +1,5 @@
 import type { MessageSearchResponse } from "@letta-ai/letta-client/resources/messages";
+import { getRuntimeContext } from "@/runtime-context";
 import { searchMessages, warmSearchCache } from "./api/search";
 import { type Backend, getBackend } from "./backend";
 import { getLocalBackendStorageDir } from "./local/paths";
@@ -23,6 +24,12 @@ export async function searchMessagesForBackend<T = MessageSearchResponse>(
     return searchLocalTranscriptMessages(
       localStorageDirForBackend(backend),
       body,
+      {
+        currentConversationId:
+          getRuntimeContext()?.conversationId ??
+          process.env.LETTA_CONVERSATION_ID ??
+          process.env.CONVERSATION_ID,
+      },
     ) as T;
   }
 

@@ -3,11 +3,14 @@ import {
   isLettaCloud,
 } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
+import { syncPendingMemoryCommitsAfterTurn } from "@/agent/memory-git";
+import { withMemoryOperation } from "@/agent/memory-operation";
 import {
   buildReflectionIntegrationMemoryScope,
   buildReflectionMemoryScope,
   createReflectionMemoryWorktree,
   finalizeReflectionMemoryWorktree,
+  finalizeReflectionMemoryWorktreeUnlocked,
   inspectReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
@@ -35,11 +38,16 @@ import {
   buildReflectionIntegrationPrompt,
 } from "@/cli/helpers/reflection-integration";
 import {
+  isReflectionRetryDeferred,
+  recordReflectionIntegrationRetry,
+} from "@/cli/helpers/reflection-retry";
+import {
   buildAutoReflectionPayload,
   buildParentMemorySnapshot,
   buildReflectionSubagentPrompt,
   getReflectionTranscriptState,
 } from "@/cli/helpers/reflection-transcript";
+import { isAutoReflectionEnabled } from "@/reflection-settings";
 import { type ReflectionWorktreeCleanupOutcome, telemetry } from "@/telemetry";
 import { maybeSendReflectionThresholdFeedback } from "@/telemetry/reflection-threshold-feedback";
 import { debugLog, debugWarn } from "@/utils/debug";
@@ -70,16 +78,16 @@ const suppressedAutomaticReflections = new Map<
   string,
   { model?: string; message: string }
 >();
-
 export type ReflectionLaunchTriggerSource =
   | "manual"
   | Exclude<ReflectionTrigger, "off">;
-
 export type ReflectionLaunchSkippedReason =
   | "memfs_disabled"
+  | "windows_disabled"
   | "cutover"
   | "already_active"
   | "configuration_error"
+  | "retry_backoff"
   | "parent_dirty"
   | "no_payload"
   | "error";
@@ -99,8 +107,8 @@ export function getReflectionLaunchSkippedMessage(
       return "Automatic reflection is paused because its model configuration is invalid. Fix the reflection model or provider, run /reload, then use /reflect to retry.";
     case "memfs_disabled":
       return surface === "listener"
-        ? "Reflection needs the memory filesystem to be enabled for this agent. Use /remember for a lightweight memory update instead."
-        : "Memory filesystem is not enabled. Use /remember instead.";
+        ? "Reflection needs the memory filesystem to be enabled for this agent."
+        : "Memory filesystem is not enabled.";
     case "no_payload":
       return surface === "listener"
         ? "No new transcript content to reflect on for this conversation."
@@ -108,6 +116,8 @@ export function getReflectionLaunchSkippedMessage(
     case "parent_dirty":
       return "Parent memory has uncommitted changes; commit or discard them before reflecting.";
     case "error":
+    case "windows_disabled":
+    case "retry_backoff":
       return undefined;
   }
 }
@@ -233,6 +243,7 @@ export interface ReflectionLaunchOptions {
   memfsEnabled: boolean;
   triggerSource: ReflectionLaunchTriggerSource;
   reflectionSettings?: ReflectionSettings;
+  actingUserId?: string | null;
   description: string;
   /** Explicit model for this reflection subagent, if requested by the caller. */
   model?: string;
@@ -341,6 +352,9 @@ export async function shouldRunQueuedReflectionLaunch(
     getSettings?: typeof getReflectionSettings;
   } = {},
 ): Promise<boolean> {
+  if (isReflectionRetryDeferred(options.agentId, options.triggerSource)) {
+    return false;
+  }
   if (options.triggerSource !== "step-count") {
     return true;
   }
@@ -561,6 +575,8 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   mergePolicy?: "auto" | "explicit";
   mergeInstructions?: string;
   runExplicitIntegration?: RunExplicitReflectionIntegration;
+  /** Pushes the integration merge; the integration child cannot while the lease is held. */
+  syncIntegratedMemory?: typeof syncPendingMemoryCommitsAfterTurn;
   updateIntegrationConversation?: (
     conversationId: string,
     body: { summary: string; archived: boolean },
@@ -575,6 +591,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   integration: ReflectionMemoryWorktreeFinalizeResult;
   completionSuccess: boolean;
   completionMessage: string;
+  shouldNotify: boolean;
   integrationConversationId?: string;
 }> {
   const configurationFailure =
@@ -589,24 +606,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
   }
 
   let integrationRun: ReflectionIntegrationOutcome | undefined;
-  if (params.subagentSuccess && params.mergePolicy === "explicit") {
-    const state = params.knownNoChanges
-      ? { commitCount: 0, dirty: false }
-      : await inspectReflectionMemoryWorktree(params.worktree);
-    if (state.commitCount > 0 || state.dirty) {
-      integrationRun = await (
-        params.runExplicitIntegration ?? runExplicitReflectionIntegration
-      )({
-        agentId: params.agentId,
-        conversationId: params.conversationId,
-        worktree: params.worktree,
-        instructions: params.mergeInstructions,
-        reflectionSubagentId: params.subagentAgentId,
-      });
-    }
-  }
-
-  const integration = await finalizeReflectionMemoryWorktree(params.worktree, {
+  const finalizeOptions = () => ({
     shouldMerge: params.subagentSuccess,
     knownNoChanges: params.knownNoChanges,
     requireAlreadyMerged:
@@ -615,9 +615,65 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
       ? `Reflection integration did not complete (${integrationRun.error}); the worktree was cleaned up so the transcript can be retried.`
       : undefined,
   });
+  const explicitIntegration =
+    params.subagentSuccess &&
+    params.mergePolicy === "explicit" &&
+    (params.knownNoChanges
+      ? false
+      : await inspectReflectionMemoryWorktree(params.worktree).then(
+          (state) => state.commitCount > 0 || state.dirty,
+        ));
+  // Explicit integration, its verification and the push happen under one
+  // lease: releasing between them would let another process's post-turn sync
+  // pull --rebase and rewrite the merge before ancestry is checked.
+  const integration = explicitIntegration
+    ? await withMemoryOperation(params.worktree.parentMemoryDir, async () => {
+        integrationRun = await (
+          params.runExplicitIntegration ?? runExplicitReflectionIntegration
+        )({
+          agentId: params.agentId,
+          conversationId: params.conversationId,
+          worktree: params.worktree,
+          instructions: params.mergeInstructions,
+          reflectionSubagentId: params.subagentAgentId,
+        });
+        const result = await finalizeReflectionMemoryWorktreeUnlocked(
+          params.worktree,
+          finalizeOptions(),
+        );
+        // The integration child's own post-turn sync found the lease held and
+        // skipped, and no parent turn may follow; push its verified merge here.
+        if (result.status === "merged") {
+          try {
+            const sync = await (
+              params.syncIntegratedMemory ?? syncPendingMemoryCommitsAfterTurn
+            )(params.agentId, { memoryDir: params.worktree.parentMemoryDir });
+            if (sync.status !== "clean" && sync.status !== "pushed") {
+              debugWarn("reflection", `Integration sync: ${sync.summary}`);
+            }
+          } catch (error) {
+            debugWarn(
+              "reflection",
+              `Integration sync failed: ${String(error)}`,
+            );
+          }
+        }
+        return result;
+      })
+    : await finalizeReflectionMemoryWorktree(
+        params.worktree,
+        finalizeOptions(),
+      );
   const completionSuccess =
     params.subagentSuccess &&
     reflectionIntegrationConsumesTranscript(integration);
+
+  const shouldNotify = recordReflectionIntegrationRetry(
+    params.agentId,
+    integration,
+    completionSuccess,
+    params.telemetryContext?.triggerSource ?? "manual",
+  );
 
   const cleanup = getReflectionWorktreeCleanupOutcome(integration);
   if (cleanup) {
@@ -689,6 +745,7 @@ export async function finalizeReflectionMemoryWorktreeLaunch(params: {
     integration,
     completionSuccess,
     completionMessage,
+    shouldNotify,
     integrationConversationId: integrationRun?.conversationId,
   };
 }
@@ -730,6 +787,13 @@ export async function launchReflectionSubagent(
 
   if (!memfsEnabled) {
     return { launched: false, reason: "memfs_disabled" };
+  }
+  if (triggerSource !== "manual" && !isAutoReflectionEnabled()) {
+    return { launched: false, reason: "windows_disabled" };
+  }
+
+  if (isReflectionRetryDeferred(agentId, triggerSource)) {
+    return { launched: false, reason: "retry_backoff" };
   }
 
   if (await (dependencies.isCutover ?? isReflectionCutover)(agentId)) {
@@ -819,6 +883,7 @@ export async function launchReflectionSubagent(
       transcriptPath: autoPayload.payloadPath,
       memoryScope: buildReflectionMemoryScope(worktree),
       parentScope: { agentId, conversationId },
+      actingUserId: options.actingUserId,
       onComplete: async ({
         success,
         error,
@@ -847,6 +912,7 @@ export async function launchReflectionSubagent(
           const {
             completionSuccess,
             completionMessage,
+            shouldNotify,
             integrationConversationId,
           } = await finalizeReflectionMemoryWorktreeLaunch({
             worktree,
@@ -872,12 +938,14 @@ export async function launchReflectionSubagent(
             autoPayload.endMessageId,
             completionSuccess,
           );
-          await onCompletionMessage?.(completionMessage, {
-            success: completionSuccess,
-            error,
-            reflectionAgentId: reflectionAgentId ?? undefined,
-            integrationConversationId,
-          });
+          if (shouldNotify) {
+            await onCompletionMessage?.(completionMessage, {
+              success: completionSuccess,
+              error,
+              reflectionAgentId: reflectionAgentId ?? undefined,
+              integrationConversationId,
+            });
+          }
         } finally {
           releaseReflectionLaunch(agentId);
         }

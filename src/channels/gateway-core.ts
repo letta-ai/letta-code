@@ -1,5 +1,4 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
-import { getInteractiveApprovalKind } from "@/tools/interactive-policy";
 import type {
   ApprovalResponseBody,
   ControlRequest,
@@ -19,6 +18,12 @@ import type {
   WsProtocolMessage,
 } from "@/types/app-server-protocol";
 import {
+  sourceLifecycleKey,
+  sourceRouteKey,
+  uniqueLifecycleSources,
+  uniqueRoutedSources,
+} from "./gateway-sources";
+import {
   createMessageChannelIdempotencyScope,
   type MessageChannelIdempotencyScope,
 } from "./message-channel-idempotency";
@@ -35,7 +40,9 @@ const MAX_ACCEPTED_CLIENT_MESSAGE_IDS = 2048;
 
 export interface ChannelGatewayClient {
   close(): void;
-  onMessage(listener: (message: WsProtocolMessage) => void): () => void;
+  onMessage(
+    listener: (message: WsProtocolMessage) => Promise<void> | void,
+  ): () => void;
   onExternalToolCall(
     handler: (
       request: ExternalToolCallRequestMessage,
@@ -138,45 +145,6 @@ function hasAgentRuntime<
   return !!value.runtime?.agent_id;
 }
 
-function sourceRouteKey(source: ChannelTurnSource): string {
-  return [
-    source.channel,
-    source.accountId ?? "",
-    source.chatId,
-    source.threadId ?? "",
-  ].join(":");
-}
-
-function sourceLifecycleKey(source: ChannelTurnSource): string {
-  return [
-    sourceRouteKey(source),
-    source.messageId ?? "",
-    source.agentId,
-    source.conversationId,
-  ].join(":");
-}
-
-function uniqueSourcesBy(
-  sources: ChannelTurnSource[],
-  getKey: (source: ChannelTurnSource) => string,
-): ChannelTurnSource[] {
-  const byKey = new Map<string, ChannelTurnSource>();
-  for (const source of sources) byKey.set(getKey(source), source);
-  return [...byKey.values()];
-}
-
-function uniqueRoutedSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceRouteKey);
-}
-
-function uniqueLifecycleSources(
-  sources: ChannelTurnSource[],
-): ChannelTurnSource[] {
-  return uniqueSourcesBy(sources, sourceLifecycleKey);
-}
-
 function channelTagsForSources(sources: ChannelTurnSource[]): string[] {
   return [...new Set(sources.map((source) => `channel:${source.channel}`))];
 }
@@ -269,6 +237,8 @@ export class ChannelGateway {
       state.acceptedClientMessageIds.add(delivery.clientMessageId);
       return true;
     }
+    const workAtSubmit =
+      state.active || state.pendingSourcesByClientMessageId.size > 0;
     state.pendingSourcesByClientMessageId.set(delivery.clientMessageId, {
       sources: uniqueLifecycleSources(delivery.sources),
       disposition: "submitting",
@@ -293,10 +263,13 @@ export class ChannelGateway {
             },
           ],
           image_failure_mode: "drop",
+          client_preferences: {},
         },
       });
       if (!response.accepted) {
         state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+        if (workAtSubmit && !state.active)
+          this.finishRejectedDelivery(state, delivery);
         return false;
       }
       this.rememberAcceptedClientMessageId(state, delivery.clientMessageId);
@@ -320,8 +293,36 @@ export class ChannelGateway {
       return true;
     } catch (error) {
       state.pendingSourcesByClientMessageId.delete(delivery.clientMessageId);
+      if (workAtSubmit && !state.active)
+        this.finishRejectedDelivery(state, delivery);
       throw error;
     }
+  }
+
+  private remainingSources(state: GatewayRuntimeState): ChannelTurnSource[] {
+    return uniqueLifecycleSources([
+      ...(state.active?.lifecycleSources ?? []),
+      ...Array.from(state.pendingSourcesByClientMessageId.values()).flatMap(
+        (pending) => pending.sources,
+      ),
+    ]);
+  }
+
+  private finishRejectedDelivery(
+    state: GatewayRuntimeState,
+    delivery: ChannelGatewayDelivery,
+  ): void {
+    const remainingSources = this.remainingSources(state);
+    void this.enqueueHook(state, () =>
+      this.hooks.onLifecycle({
+        type: "finished",
+        batchId: `channel-${delivery.clientMessageId}`,
+        sources: delivery.sources,
+        stopReason: "cancelled",
+        outcome: "cancelled",
+        remainingSources,
+      }),
+    );
   }
 
   adoptQueuedDelivery(delivery: ChannelGatewayHandoffDelivery): void {
@@ -758,7 +759,7 @@ export class ChannelGateway {
     }
   }
 
-  private handleMessage(message: WsProtocolMessage): void {
+  private async handleMessage(message: WsProtocolMessage): Promise<void> {
     if (message.type === "update_queue") {
       if (hasAgentRuntime(message)) this.handleQueueUpdate(message);
       return;
@@ -769,7 +770,7 @@ export class ChannelGateway {
     }
     if (message.type === "turn_finished") {
       if (!hasAgentRuntime(message)) return;
-      this.handleTurnFinished(message.runtime, {
+      await this.handleTurnFinished(message.runtime, {
         stopReason: message.stop_reason,
         runId: message.run_id,
         error: message.error,
@@ -828,6 +829,7 @@ export class ChannelGateway {
       );
     }
     for (const entry of cancelled) {
+      const remainingSources = this.remainingSources(state);
       void this.enqueueHook(state, () =>
         this.hooks.onLifecycle({
           type: "finished",
@@ -835,6 +837,7 @@ export class ChannelGateway {
           sources: entry.sources,
           outcome: "cancelled",
           stopReason: "cancelled",
+          ...(remainingSources.length ? { remainingSources } : {}),
         }),
       );
     }
@@ -931,19 +934,24 @@ export class ChannelGateway {
       runId?: string;
       error?: string;
     },
-  ): void {
+  ): Promise<void> {
     const state = this.getState(runtime);
     const active = state.active;
-    if (!active) return;
+    if (!active) return Promise.resolve();
     state.active = null;
     active.richDraft?.dispose();
-    void this.enqueueHook(state, () =>
+    const remainingSources =
+      lifecycleOutcome(terminal.stopReason) === "completed"
+        ? this.remainingSources(state)
+        : [];
+    return this.enqueueHook(state, () =>
       this.hooks.onLifecycle({
         type: "finished",
         batchId: active.batchId,
         sources: active.lifecycleSources,
         outcome: lifecycleOutcome(terminal.stopReason),
         stopReason: terminal.stopReason,
+        ...(remainingSources.length ? { remainingSources } : {}),
         ...((terminal.runId ?? active.runId)
           ? { runId: terminal.runId ?? active.runId }
           : {}),
@@ -972,9 +980,7 @@ export class ChannelGateway {
     void this.enqueueHook(state, () =>
       this.hooks.onControlRequest({
         requestId: message.request_id,
-        kind:
-          getInteractiveApprovalKind(message.request.tool_name) ??
-          "generic_tool_approval",
+        kind: "generic_tool_approval",
         source,
         toolName: message.request.tool_name,
         input: message.request.input,

@@ -1,0 +1,50 @@
+# SendAgentMessage
+
+Send a message without waiting for its answer. Letta-to-Letta messages require
+the Cloud backend and fail on the local backend (`agent-local-` IDs). Use this
+to coordinate with an agent already working, including an Agent child, or to
+contact any conversation you are authorized to access.
+
+External coding workers return IDs backed by their native sessions. Use the
+receipt to distinguish steering from a new or queued follow-up. An idle follow-up
+starts one tracked local background turn. These messages do not use the Cloud
+messaging backend.
+Computer-qualified IDs returned by remote launches can be steered too.
+
+An agent has a persistent identity and shared memory. It can have multiple
+conversations, each with its own message history.
+
+- Supply `conversation_id` to message an existing thread, or `agent_id` alone to
+  start a new hidden thread with that agent. To use an agent's default conversation,
+  supply its `agent_id` and `conversation_id: "default"`. Pass the full
+  conversation ID; truncated IDs are rejected.
+- Your agent and conversation IDs are attached automatically as the return address.
+  To reply, the recipient must explicitly send to that address. Ordinary assistant
+  output is not forwarded back to you.
+- A successful send means Cloud accepted the message; the recipient may not have
+  read it yet. Continue working rather than waiting for the answer.
+- Omit `computer` unless a particular computer is needed. If the conversation is
+  active on A, selecting B is rejected rather than moving the conversation.
+- If delivery cannot be confirmed, check the recipient's messages before resending
+  to avoid duplicates. The tool result includes details for inspecting the send.
+- Keep sends sparse and useful: concise assignments, specific questions, or
+  material updates. Skip status pings and repeated acknowledgments; repeat a
+  point only when you have something new to add.
+- For work already underway, treat the agent doing it as its owner. Send what it
+  needs, then let it decide. Do not take over or redo its work. If you think
+  ownership should change, ask the human instead of declaring it in a message.
+
+If you are a subagent, omitting both `agent_id` and `conversation_id` sends to
+your parent (the agent and conversation that launched you). Message your parent
+rarely: each message stays in both contexts, and your final report already
+reaches it. Send one only when a parent decision would otherwise force you to
+redo work, stating the default you will take, then keep working. Steering your
+own children (Agent, Claude Code, or Codex) is normal; message them as often as
+the work needs.
+
+Use Agent to launch or resume a managed Letta child task and receive its
+completion notification. Letta-to-Letta sends create no local task ID. External
+coding-agent follow-ups may return one when they start a new native turn; an
+active external-agent steer remains part of the existing task. SendAgentMessage does not
+change the recipient's tools, model, or permissions. Load the messaging-agents
+skill for additional CLI options and troubleshooting.

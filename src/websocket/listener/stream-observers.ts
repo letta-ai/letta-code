@@ -1,3 +1,4 @@
+import { debugWarn } from "@/utils/debug";
 import type { ListenerRuntime, ObservedProtocolV2Message } from "./types";
 
 /**
@@ -20,7 +21,7 @@ export function notifyStreamObservers(
     try {
       observer(observed);
     } catch (error) {
-      console.error("[Listen V2] Stream observer failed", error);
+      debugWarn("Listen V2", "Stream observer failed", error);
     }
   }
 }
@@ -43,7 +44,7 @@ export function notifyStreamObserversRuntimeStopped(
     try {
       observer(observed);
     } catch (error) {
-      console.error("[Listen V2] Stream observer failed on stop", error);
+      debugWarn("Listen V2", "Stream observer failed on stop", error);
     }
   }
   listener.streamObservers.clear();

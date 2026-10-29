@@ -1,18 +1,17 @@
-import { useEffect } from "react";
-import { closeClientMcpServers, replaceClientMcpServers } from "@/mcp-runtime";
+import { useEffect, useRef } from "react";
+import { closeClientMcpServers } from "@/mcp-runtime";
 
 export { closeClientMcpServers as closeMcp } from "@/mcp-runtime";
 
-import { settingsManager } from "@/settings-manager";
 import { debugWarn } from "@/utils/debug";
 
-export function useAgentMcpServers(agentId: string | undefined): void {
+export function useMcpCleanup(agentId: string | undefined): void {
+  const previousAgentId = useRef(agentId);
   useEffect(() => {
-    const refresh = agentId
-      ? replaceClientMcpServers(agentId, settingsManager.getMcpServers(agentId))
-      : closeClientMcpServers();
-    void refresh.catch((error) =>
-      debugWarn("mcp", `Failed to switch agent MCP servers: ${String(error)}`),
+    if (previousAgentId.current === agentId) return;
+    previousAgentId.current = agentId;
+    void closeClientMcpServers().catch((error) =>
+      debugWarn("mcp", `Failed to close client MCP servers: ${String(error)}`),
     );
   }, [agentId]);
 }

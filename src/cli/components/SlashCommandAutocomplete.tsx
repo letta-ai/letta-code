@@ -19,11 +19,9 @@ const CMD_COL_WIDTH = 14;
 const BUILTIN_SKILL_ALIASES = new Set([
   "acquiring-skills",
   "context-doctor",
-  "converting-mcps-to-skills",
   "creating-skills",
   "customizing-statusline",
   "initializing-memory",
-  "migrating-memory",
   "syncing-memory-filesystem",
 ]);
 

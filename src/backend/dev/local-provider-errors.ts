@@ -41,6 +41,17 @@ const RETRYABLE_LOCAL_PROVIDER_DETAIL_PATTERNS = [
   "timed out",
   "terminated",
   "retry delay",
+  // ChatGPT's transient model-access check ("Unable to verify ... access.
+  // Please try again."). Cloud gets the same text with a
+  // service_unavailable code; the local Codex stream drops the code.
+  "unable to verify",
+  // Codex Responses closes a WebSocket after 60 minutes
+  // (websocket_connection_limit_reached). pi-ai drops that socket on error,
+  // so a retry reconnects on a fresh one.
+  "websocket connection limit reached",
+  // Transient upstream proxy failure; pi-ai's own retry classifier treats it
+  // as retryable too.
+  "exceeded request buffer limit",
 ];
 
 function stringValue(value: unknown): string | undefined {

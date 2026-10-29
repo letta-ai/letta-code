@@ -1,17 +1,31 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import WebSocket from "ws";
+import { once } from "node:events";
+import type { AddressInfo } from "node:net";
+import WebSocket, { WebSocketServer } from "ws";
 import {
   clearExternalTools,
   prepareToolExecutionContextForModel,
 } from "@/tools/manager";
 import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+  subscribeListenerConnection,
+  suspendListenerConnection,
+} from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { scheduleQueuePump } from "./queue";
 import { setActiveRuntime } from "./runtime";
-import type { IncomingMessage, StartListenerOptions } from "./types";
+import { safeSocketSend } from "./socket-send";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type {
+  IncomingMessage,
+  ListenerRuntime,
+  StartListenerOptions,
+} from "./types";
 
 class MockSocket {
   readyState = WebSocket.OPEN;
@@ -34,6 +48,23 @@ function makeListenerOptions(): StartListenerOptions {
   };
 }
 
+function initializeMockConnection(
+  listener: ListenerRuntime,
+  socket: MockSocket,
+): void {
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId: "conn-test",
+    writer: socket as unknown as WebSocket,
+    options: makeListenerOptions(),
+  });
+  markListenerConnectionInitialized(listener, "conn-test", connection);
+  subscribeListenerConnection(listener, "conn-test", {
+    agent_id: "agent-1",
+    conversation_id: "conv-1",
+  });
+}
+
 async function waitFor(predicate: () => boolean): Promise<void> {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) {
@@ -50,16 +81,130 @@ describe("listener message router ownership handoff", () => {
     setActiveRuntime(null);
   });
 
+  test("teleport_continue transport follows a replacement WebSocket", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const opts = makeListenerOptions();
+    const scope = { agent_id: "agent-1", conversation_id: "conv-1" };
+    const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+    await once(server, "listening");
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const sockets: WebSocket[] = [];
+    const tasks: Promise<void>[] = [];
+    const transports: ListenerTransport[] = [];
+    let finishTurn!: () => void;
+    const turnFinished = new Promise<void>((resolve) => {
+      finishTurn = resolve;
+    });
+    const connect = async () => {
+      const accepted = once(server, "connection");
+      const socket = new WebSocket(url);
+      sockets.push(socket);
+      await once(socket, "open");
+      const [peer] = (await accepted) as [WebSocket];
+      sockets.push(peer);
+      openListenerConnection({
+        runtime: listener,
+        connectionId: opts.connectionId,
+        writer: socket,
+        options: opts,
+      });
+      markListenerConnectionInitialized(listener, opts.connectionId);
+      subscribeListenerConnection(listener, opts.connectionId, scope);
+      return { socket, peer };
+    };
+    try {
+      setActiveRuntime(listener);
+      const original = await connect();
+      const handleMessage = createListenerMessageHandler({
+        runtime: listener,
+        socket: original.socket,
+        opts,
+        processQueuedTurn: async () => {},
+        fileCommandSession: { handle: () => false },
+        getParsedRuntimeScope: () => null,
+        replaySyncStateForRuntime: async () => {},
+        getOrCreateScopedRuntime,
+        handleApprovalResponseInput: async () => false,
+        handleChangeDeviceStateInput: async () => false,
+        handleAbortMessageInput: async () => false,
+        stampInboundUserMessageOtids: (incoming) => incoming,
+        safeSocketSend,
+        runDetachedListenerTask: (_label, task) => {
+          tasks.push(task());
+        },
+        trackListenerError: (error) => {
+          throw error;
+        },
+        processIncomingMessage: async (incoming, transport, conversation) => {
+          expect(incoming.messages).toEqual([
+            expect.objectContaining({ type: "approval" }),
+            expect.objectContaining({ role: "user" }),
+          ]);
+          expect(conversation).toBe(runtime);
+          transports.push(transport);
+          await turnFinished;
+        },
+      });
+      await handleMessage(
+        Buffer.from(
+          JSON.stringify({
+            type: "input",
+            request_id: "teleport-initial",
+            runtime: scope,
+            payload: {
+              kind: "teleport_continue",
+              teleport_id: "teleport-reconnect",
+              source: { device_id: "source", connection_name: "Source" },
+              continuation: {
+                approvals: [
+                  {
+                    type: "tool",
+                    tool_call_id: "call-on-source",
+                    status: "success",
+                    tool_return: "source finished",
+                  },
+                ],
+              },
+            },
+          }),
+        ),
+      );
+      await waitFor(() => transports.length === 1);
+      const transport = transports[0];
+      if (!transport) throw new Error("Teleport turn did not start");
+      expect(isListenerTransportOpen(transport)).toBe(true);
+      const closed = once(original.socket, "close");
+      original.socket.terminate();
+      await closed;
+      suspendListenerConnection(listener, opts.connectionId);
+      expect(isListenerTransportOpen(transport)).toBe(false);
+
+      await connect();
+      expect(original.socket.readyState).toBe(WebSocket.CLOSED);
+      // This is the predicate used by the approval reconnect gate. A captured
+      // raw socket stays closed; the turn's transport must follow the replacement.
+      expect(isListenerTransportOpen(transport)).toBe(true);
+    } finally {
+      finishTurn();
+      await Promise.all(tasks);
+      for (const socket of sockets) socket.terminate();
+      server.close();
+    }
+  });
+
   test("acknowledges batched external-tool registration without runtime startup", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
+    const onLog = mock(() => {});
     setActiveRuntime(listener);
     const handleMessage = createListenerMessageHandler({
       runtime: listener,
       socket: socket as unknown as WebSocket,
-      opts: makeListenerOptions(),
+      opts: { ...makeListenerOptions(), onLog },
       processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
@@ -110,6 +255,9 @@ describe("listener message router ownership handoff", () => {
         success: true,
       },
     ]);
+    expect(onLog).toHaveBeenCalledWith(
+      "[Listen V2] Received runtime_external_tools_update command (request_id=tools-1, updates=1, runtimes=1)",
+    );
     const prepared = await prepareToolExecutionContextForModel(
       "anthropic/claude-sonnet-4",
       {
@@ -129,6 +277,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const opts = makeListenerOptions();
     const processIncomingMessage = mock(async () => {});
     const processedTurns: IncomingMessage[] = [];
@@ -233,8 +382,9 @@ describe("listener message router ownership handoff", () => {
     expect(processedTurns[0]?.messages).toEqual([
       {
         role: "user",
-        content: [{ type: "text", text: "do not drop me" }],
+        content: "do not drop me",
         client_message_id: "cm-input-race",
+        otid: "cm-input-race",
       },
     ]);
     expect(runtime.queuedMessagesByItemId.size).toBe(0);
@@ -260,6 +410,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
     const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
@@ -358,10 +509,65 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
+  test("rejects an invalid response format through input_accepted", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const sent: unknown[] = [];
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    setActiveRuntime(listener);
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async () => {},
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "input",
+          request_id: "invalid-response-format",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+          payload: {
+            kind: "create_message",
+            messages: [{ role: "user", content: "hello" }],
+            response_format: { type: "text" },
+          },
+        }),
+      ),
+    );
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "input_accepted",
+        request_id: "invalid-response-format",
+        accepted: false,
+        error: "response_format.type must be json_schema",
+      }),
+    );
+  });
+
   test("remove_queue_item broadcasts the queue snapshot even when the item is not found", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     listener.socket = socket as unknown as WebSocket;
     const sent: unknown[] = [];
     setActiveRuntime(listener);
@@ -449,6 +655,7 @@ describe("listener message router ownership handoff", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     listener.socket = socket as unknown as WebSocket;
     const sent: unknown[] = [];
     setActiveRuntime(listener);
@@ -491,6 +698,10 @@ describe("listener message router ownership handoff", () => {
     ).toBe(true);
     const enqueued = runtime.queueRuntime.peek()[0];
     expect(enqueued).toBeDefined();
+    // Let the enqueue callback's initial snapshot flush before isolating the
+    // removal snapshots asserted below.
+    await Promise.resolve();
+    socket.sentPayloads.length = 0;
 
     await handleMessage(
       Buffer.from(
@@ -526,10 +737,96 @@ describe("listener message router ownership handoff", () => {
     expect(runtime.queueRuntime.length).toBe(0);
   });
 
+  test("resume_queue releases interrupt-parked items and broadcasts paused flags", async () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
+    listener.socket = socket as unknown as WebSocket;
+    const sent: unknown[] = [];
+    const processedTurns: IncomingMessage[] = [];
+    setActiveRuntime(listener);
+
+    const handleMessage = createListenerMessageHandler({
+      runtime: listener,
+      socket: socket as unknown as WebSocket,
+      opts: makeListenerOptions(),
+      processQueuedTurn: async (incoming) => {
+        processedTurns.push(incoming);
+      },
+      fileCommandSession: { handle: () => false },
+      getParsedRuntimeScope: () => null,
+      replaySyncStateForRuntime: async () => {},
+      getOrCreateScopedRuntime: () => runtime,
+      handleApprovalResponseInput: async () => false,
+      handleChangeDeviceStateInput: async () => false,
+      handleAbortMessageInput: async () => false,
+      stampInboundUserMessageOtids: (incoming) => incoming,
+      safeSocketSend: (_target, payload) => {
+        sent.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      trackListenerError: () => {},
+      processIncomingMessage: async () => {},
+    });
+
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: "agent-1",
+        conversationId: "conv-1",
+        messages: [
+          { role: "user", content: "parked", client_message_id: "cm-parked" },
+        ],
+      }),
+    ).toBe(true);
+    expect(runtime.queueRuntime.pause()).toBe(1);
+    await Promise.resolve();
+    const snapshots = () =>
+      socket.sentPayloads
+        .map(
+          (payload) =>
+            JSON.parse(payload) as {
+              type: string;
+              queue?: Array<{ paused?: boolean }>;
+            },
+        )
+        .filter((payload) => payload.type === "update_queue");
+    expect(snapshots().at(-1)?.queue).toEqual([
+      expect.objectContaining({ paused: true }),
+    ]);
+
+    await handleMessage(
+      Buffer.from(
+        JSON.stringify({
+          type: "resume_queue",
+          request_id: "resume-1",
+          runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+        }),
+      ),
+    );
+    await waitFor(() => processedTurns.length === 1);
+
+    expect(sent).toContainEqual(
+      expect.objectContaining({
+        type: "resume_queue_response",
+        request_id: "resume-1",
+        resumed: 1,
+        success: true,
+      }),
+    );
+    expect(runtime.queueRuntime.length).toBe(0);
+    expect(JSON.stringify(processedTurns[0]?.messages)).toContain("parked");
+    const lastQueue = snapshots().at(-1)?.queue ?? [];
+    expect(lastQueue.some((item) => item.paused)).toBe(false);
+  });
+
   test("delegates registered service commands and returns their protocol messages", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
+    initializeMockConnection(listener, socket);
     const opts = makeListenerOptions();
     const response = {
       type: "channel_routes_list_response" as const,

@@ -1,16 +1,13 @@
 import { execFile as execFileCb } from "node:child_process";
 import { randomInt, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   buildReflectionMemoryScope,
   finalizeReflectionMemoryWorktree,
   type ReflectionMemoryWorktree,
   type ReflectionMemoryWorktreeFinalizeResult,
-  reflectionMemoryParentHasChanges,
 } from "@/agent/memory-worktree";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import {
@@ -30,15 +27,12 @@ import {
   type ReflectionLaunchTriggerSource,
   recordReflectionConfigurationFailure,
   releaseReflectionLaunch,
-  shouldSuppressReflectionLaunch,
   tryReserveReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
-import {
-  type AutoReflectionPayload,
-  buildAutoReflectionPayload,
-} from "@/cli/helpers/reflection-transcript";
+import type { AutoReflectionPayload } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
-import { debugLog, debugWarn } from "@/utils/debug";
+import { debugWarn } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -157,23 +151,6 @@ export interface StartReflectionArenaRunOptions {
   triggerSource: ReflectionLaunchTriggerSource;
 }
 
-export interface LaunchReflectionArenaOptions {
-  agentId: string;
-  conversationId: string;
-  feedbackContext?: ReflectionFeedbackContext;
-  instruction?: string;
-  models: [string, string];
-  onReady: (message: string, run: ReflectionArenaRun) => void | Promise<void>;
-  triggerSource: ReflectionLaunchTriggerSource;
-}
-
-export type LaunchReflectionArenaResult =
-  | { launched: true; payloadPath: string; run: ReflectionArenaRun }
-  | {
-      launched: false;
-      reason: "configuration_error" | "no_payload" | "parent_dirty";
-    };
-
 export interface FinalizeReflectionArenaChoiceOptions {
   choice: ReflectionArenaChoice;
   notes?: string;
@@ -243,7 +220,7 @@ function candidateIsConfirmedNoOp(
 }
 
 function getReflectionArenaRoot(): string {
-  return join(homedir(), ".letta", "reflection-arena");
+  return join(resolveGlobalConfigDir(), "reflection-arena");
 }
 
 function getReflectionArenaRunsDir(): string {
@@ -667,37 +644,6 @@ async function markCandidateComplete(params: {
     }
     return next;
   });
-}
-
-export async function launchReflectionArena(
-  options: LaunchReflectionArenaOptions,
-): Promise<LaunchReflectionArenaResult> {
-  if (shouldSuppressReflectionLaunch(options.agentId, options.triggerSource)) {
-    return { launched: false, reason: "configuration_error" };
-  }
-
-  const memoryDir = getScopedMemoryFilesystemRoot(options.agentId);
-  if (await reflectionMemoryParentHasChanges(memoryDir)) {
-    debugLog(
-      "memory",
-      `Skipping reflection arena launch (${options.triggerSource}) because parent memory has uncommitted changes`,
-    );
-    return { launched: false, reason: "parent_dirty" };
-  }
-
-  const payload = await buildAutoReflectionPayload(
-    options.agentId,
-    options.conversationId,
-  );
-  if (!payload) {
-    return { launched: false, reason: "no_payload" };
-  }
-
-  const run = await startReflectionArenaRun({
-    ...options,
-    payload,
-  });
-  return { launched: true, payloadPath: payload.payloadPath, run };
 }
 
 export async function startReflectionArenaRun(

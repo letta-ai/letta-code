@@ -5,7 +5,14 @@ import { parseArgs } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { getMemoryGitStatus, isGitRepo, pullMemory } from "@/agent/memory-git";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
+import { settingsManager } from "@/settings-manager";
 import { runMemoryTokensAction } from "./memory-tokens";
+
+export interface MemorySubcommandDependencies {
+  initializeSettings?: () => Promise<void>;
+  isGitRepo?: typeof isGitRepo;
+  pullMemory?: typeof pullMemory;
+}
 
 function printUsage(): void {
   console.log(
@@ -121,7 +128,10 @@ function resolveBackupPath(agentId: string, from: string): string {
   return join(getAgentRoot(agentId), from);
 }
 
-export async function runMemorySubcommand(argv: string[]): Promise<number> {
+export async function runMemorySubcommand(
+  argv: string[],
+  deps: MemorySubcommandDependencies = {},
+): Promise<number> {
   let parsed: ReturnType<typeof parseMemoryArgs>;
   try {
     parsed = parseMemoryArgs(argv);
@@ -193,7 +203,7 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
     }
 
     if (action === "pull") {
-      if (!isGitRepo(agentId)) {
+      if (!(deps.isGitRepo ?? isGitRepo)(agentId)) {
         console.error("Not a git repo. Enable git-backed memory first.");
         return 1;
       }
@@ -211,7 +221,11 @@ export async function runMemorySubcommand(argv: string[]): Promise<number> {
         );
         return 0;
       }
-      const result = await pullMemory(agentId);
+      // Subcommands run before the main CLI bootstrap, so settings are not yet
+      // initialized. `pullMemory` resolves the backend auth token through
+      // `getSettings()`, which throws "Settings not initialized" otherwise.
+      await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+      const result = await (deps.pullMemory ?? pullMemory)(agentId);
       console.log(JSON.stringify(result, null, 2));
       return 0;
     }

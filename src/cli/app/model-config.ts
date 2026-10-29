@@ -1,11 +1,12 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LlmConfig } from "@letta-ai/letta-client/resources/models/models";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
-import { getModelInfo, type ModelReasoningEffort } from "@/agent/model";
+import { getModelInfo, type ModelReasoningEffort, models } from "@/agent/model";
 import {
   mapModelHandleToLlmConfigPatch,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
+import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { ERROR_FEEDBACK_HINT, PROVIDER_STATUS_PAGES } from "./constants";
 
 /**
@@ -117,6 +118,15 @@ export function inferReasoningEffortFromModelPreset(
   return null;
 }
 
+export function resolveModelSelectionReasoningHandle(
+  modelHandle: string,
+  registryHandle: string,
+): string {
+  return models.some((model) => model.handle === modelHandle)
+    ? modelHandle
+    : registryHandle;
+}
+
 export function buildModelHandleFromLlmConfig(
   llmConfig: LlmConfig | null | undefined,
 ): string | null {
@@ -148,6 +158,27 @@ export function providerTypeFromModelSettings(
   return typeof providerType === "string" && providerType.length > 0
     ? providerType
     : null;
+}
+
+/**
+ * Provider type for toolset auto-detection. Generic OpenAI-compatible proxy
+ * models report provider_type "openai" but are not necessarily GPT-family, so
+ * they get the non-matching "openai-compatible" label and keep handle-based
+ * detection (which resolves them to the default toolset).
+ */
+export function toolsetProviderTypeFromSettings(
+  modelSettings: unknown,
+): string | null {
+  if (
+    typeof modelSettings === "object" &&
+    modelSettings !== null &&
+    (modelSettings as Record<string, unknown>)[
+      OPENAI_COMPATIBLE_PROXY_UPDATE_ARG
+    ] === true
+  ) {
+    return "openai-compatible";
+  }
+  return providerTypeFromModelSettings(modelSettings);
 }
 
 export function providerTypeFromUpdateArgs(

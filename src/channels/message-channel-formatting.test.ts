@@ -66,6 +66,12 @@ test("converts markdown links for Slack mrkdwn", () => {
   );
 });
 
+test("restores inline code inside Slack link labels", () => {
+  expect(
+    markdownToSlackMrkdwn("[`delete_reply`](https://example.com/delete)"),
+  ).toBe("<https://example.com/delete|`delete_reply`>");
+});
+
 test("preserves markdown markers inside inline code for Slack", () => {
   expect(markdownToSlackMrkdwn("`**bold**`")).toBe("`**bold**`");
 });

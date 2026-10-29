@@ -145,6 +145,177 @@ describe("resolveOllamaServedContext", () => {
     controller.abort(new Error("turn cancelled"));
     await expect(pending).rejects.toThrow("turn cancelled");
   });
+
+  function scriptedFetch(ps: unknown): {
+    fetchImpl: typeof fetch;
+    generateBodies: unknown[];
+    urls: string[];
+  } {
+    const generateBodies: unknown[] = [];
+    const urls: string[] = [];
+    const fetchImpl = (async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.endsWith("/api/generate")) {
+        generateBodies.push(
+          init?.body ? JSON.parse(String(init.body)) : undefined,
+        );
+        return Response.json({ done: true });
+      }
+      if (url.endsWith("/api/ps")) return Response.json(ps);
+      throw new Error(`unexpected ${url}`);
+    }) as typeof fetch;
+    return { fetchImpl, generateBodies, urls };
+  }
+
+  test("pins keep_alive on the preflight load and reads context_length", async () => {
+    const scripted = scriptedFetch({
+      models: [{ name: "qwen3.6:27b", context_length: 8192 }],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).resolves.toBe(8192);
+    expect(scripted.generateBodies).toEqual([
+      {
+        model: "qwen3.6:27b",
+        prompt: "",
+        stream: false,
+        keep_alive: "5m",
+      },
+    ]);
+    expect(scripted.urls.some((url) => url.endsWith("/api/show"))).toBe(false);
+  });
+
+  test("reads context_length from the model field when name differs", async () => {
+    const scripted = scriptedFetch({
+      models: [
+        {
+          name: "qwen3.6:27b-other",
+          model: "qwen3.6:27b",
+          context_length: 4096,
+        },
+      ],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).resolves.toBe(4096);
+  });
+
+  test("treats an untagged /api/ps name as :latest", async () => {
+    const scripted = scriptedFetch({
+      models: [{ name: "qwen3.6", context_length: 16384 }],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).resolves.toBe(16384);
+  });
+
+  test("names an unloaded model instead of telling the user to check the model name", async () => {
+    const scripted = scriptedFetch({
+      models: [{ name: "gemma4:latest", context_length: 8192 }],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).rejects.toThrow(
+      /does not list it[\s\S]*OLLAMA_KEEP_ALIVE=0[\s\S]*Running models: gemma4:latest[\s\S]*LETTA_OLLAMA_CONTEXT_LENGTH/,
+    );
+  });
+
+  test("names a missing context_length instead of the model name", async () => {
+    const scripted = scriptedFetch({
+      models: [{ name: "qwen3.6:27b" }],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).rejects.toThrow(
+      /did not report context_length[\s\S]*0\.10\.0[\s\S]*LETTA_OLLAMA_CONTEXT_LENGTH/,
+    );
+    expect(scripted.urls.some((url) => url.endsWith("/api/show"))).toBe(false);
+  });
+
+  test("treats context_length 0 as unreported", async () => {
+    const scripted = scriptedFetch({
+      models: [{ name: "qwen3.6:27b", context_length: 0 }],
+    });
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl: scripted.fetchImpl,
+        env: {},
+      }),
+    ).rejects.toThrow(/did not report context_length/);
+  });
+
+  test("uses LETTA_OLLAMA_CONTEXT_LENGTH without calling Ollama", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      throw new Error("should not fetch");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl,
+        env: { LETTA_OLLAMA_CONTEXT_LENGTH: " 32768 " },
+      }),
+    ).resolves.toBe(32768);
+    expect(called).toBe(false);
+  });
+
+  test("rejects a non-integer LETTA_OLLAMA_CONTEXT_LENGTH before calling Ollama", async () => {
+    let called = false;
+    const fetchImpl = (async () => {
+      called = true;
+      throw new Error("should not fetch");
+    }) as unknown as typeof fetch;
+
+    await expect(
+      resolveOllamaServedContext({
+        baseURL: "http://localhost:11434",
+        modelId: "qwen3.6:27b",
+        fetchImpl,
+        env: { LETTA_OLLAMA_CONTEXT_LENGTH: "32k" },
+      }),
+    ).rejects.toThrow(/not a positive integer token count/);
+    expect(called).toBe(false);
+  });
 });
 
 describe("createOllamaPiProvider", () => {

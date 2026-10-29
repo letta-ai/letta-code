@@ -59,11 +59,9 @@ describe("QueueItemEnqueuedEvent wire shape", () => {
       message: true,
       task_notification: true,
       cron_prompt: true,
-      approval_result: true,
-      overlay_action: true,
       mod_continue: true,
     } satisfies Record<QueueItemKind, true>;
-    expect(Object.keys(kinds)).toHaveLength(6);
+    expect(Object.keys(kinds)).toHaveLength(4);
   });
 });
 
@@ -125,8 +123,9 @@ describe("QueueBlockedEvent wire shape", () => {
       command_running: true,
       interrupt_in_progress: true,
       runtime_busy: true,
+      paused_by_user: true,
     } satisfies Record<QueueBlockedReason, true>;
-    expect(Object.keys(reasons)).toHaveLength(6);
+    expect(Object.keys(reasons)).toHaveLength(7);
   });
 });
 

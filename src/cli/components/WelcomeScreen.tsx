@@ -62,7 +62,6 @@ async function getAuthMethod(): Promise<"local" | "url" | "api-key" | "oauth"> {
 type LoadingState =
   | "loading_profiles"
   | "assembling"
-  | "importing"
   | "initializing"
   | "checking"
   | "selecting_global"
@@ -177,8 +176,6 @@ function getLoadingMessage(
       return continueSession ? "Resuming agent..." : "Creating agent...";
     case "assembling":
       return "Assembling tools...";
-    case "importing":
-      return "Importing agent...";
     case "checking":
       return "Checking for pending approvals...";
     default:

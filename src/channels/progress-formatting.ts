@@ -17,13 +17,7 @@ function isTaskTool(name: string): boolean {
 
 function isShellTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return (
-    normalized === "bash" ||
-    normalized === "exec_command" ||
-    normalized === "shell_command" ||
-    normalized === "shell" ||
-    normalized === "runshellcommand"
-  );
+  return normalized === "bash" || normalized === "exec_command";
 }
 
 function isWebSearchTool(name: string): boolean {
@@ -32,53 +26,25 @@ function isWebSearchTool(name: string): boolean {
 }
 
 function isSearchTool(name: string): boolean {
-  const normalized = name.toLowerCase();
-  return (
-    normalized === "grep" ||
-    normalized === "grep_files" ||
-    normalized === "grepfiles" ||
-    normalized === "search_file_content" ||
-    normalized === "searchfilecontent"
-  );
+  return name.toLowerCase() === "grep";
 }
 
 function isGlobTool(name: string): boolean {
-  const normalized = name.toLowerCase();
-  return normalized === "glob" || normalized === "glob_gemini";
+  return name.toLowerCase() === "glob";
 }
 
 function isFileReadTool(name: string): boolean {
-  const normalized = name.toLowerCase();
-  return (
-    normalized === "read" ||
-    normalized === "read_file" ||
-    normalized === "readfile" ||
-    normalized === "read_file_gemini" ||
-    normalized === "readfilegemini"
-  );
+  return name.toLowerCase() === "read";
 }
 
 function isFileWriteTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return (
-    normalized === "write" ||
-    normalized === "write_file" ||
-    normalized === "writefile" ||
-    normalized === "write_file_gemini" ||
-    normalized === "writefilegemini"
-  );
+  return normalized === "write";
 }
 
 function isFileEditTool(name: string): boolean {
   const normalized = name.toLowerCase();
-  return (
-    normalized === "edit" ||
-    normalized === "multi_edit" ||
-    normalized === "multiedit" ||
-    normalized === "replace" ||
-    normalized === "apply_patch" ||
-    normalized === "applypatch"
-  );
+  return normalized === "edit" || normalized === "applypatch";
 }
 
 function getPathBaseName(filePath: string): string {
@@ -436,32 +402,6 @@ function getEditLineChangeSummary(
   };
 }
 
-function getMultiEditLineChangeSummary(
-  parsedArguments: Record<string, unknown>,
-): LineChangeSummary | null {
-  if (!Array.isArray(parsedArguments.edits)) {
-    return null;
-  }
-  let additions = 0;
-  let deletions = 0;
-  let counted = false;
-  for (const edit of parsedArguments.edits) {
-    const record = asRecord(edit);
-    if (!record) {
-      continue;
-    }
-    const oldString = firstNonEmptyString(record.old_string);
-    const newString = firstNonEmptyString(record.new_string);
-    if (oldString === undefined || newString === undefined) {
-      continue;
-    }
-    additions += countProgressLines(newString);
-    deletions += countProgressLines(oldString);
-    counted = true;
-  }
-  return counted ? { additions, deletions } : null;
-}
-
 function getWriteLineChangeSummary(
   parsedArguments: Record<string, unknown>,
 ): LineChangeSummary | null {
@@ -480,9 +420,6 @@ function getFileLineChangeSummary(
 ): LineChangeSummary | null {
   if (isFileWriteTool(name)) {
     return getWriteLineChangeSummary(parsedArguments);
-  }
-  if (name === "MultiEdit" || name === "multi_edit") {
-    return getMultiEditLineChangeSummary(parsedArguments);
   }
   if (isFileEditTool(name)) {
     return getEditLineChangeSummary(parsedArguments);

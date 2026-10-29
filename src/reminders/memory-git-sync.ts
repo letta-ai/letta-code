@@ -1,47 +1,82 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import {
   type RepositoriesPostTurnSyncResult,
   type RepositoryPostTurnSyncResult,
   syncPendingAttachedRepositoryCommitsAfterTurn,
 } from "@/agent/attached-repository-git-sync";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
   type MemoryPostTurnSyncResult,
   syncPendingMemoryCommitsAfterTurn,
 } from "@/agent/memory-git";
+import { claimMemoryOperation } from "@/agent/memory-operation";
+import { isMemoryWorkerSession } from "@/agent/subagents/memory-worker-session";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { ensureMemoryRepair } from "@/tools/impl/memory-task-lifecycle";
+import { spawnBackgroundSubagentTask } from "@/tools/impl/task";
 import { debugWarn } from "@/utils/debug";
 
 export interface RunPostTurnMemorySyncParams {
   agentId: string;
+  conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
   enqueueReminder?: (text: string) => void;
   emitWarning?: (text: string) => void | Promise<void>;
+  onMemoryPushed?: () => void;
   debugLabel?: string;
 }
 
 export interface RunPostTurnMemorySyncDependencies {
   syncMemory?: typeof syncPendingMemoryCommitsAfterTurn;
+  repairMemory?: (
+    params: Parameters<typeof ensureMemoryRepair>[0],
+  ) => Promise<boolean>;
+  claimOperation?: typeof claimMemoryOperation;
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-export function formatMemoryPostTurnSyncReminder(
+/** Tell the primary only how to avoid colliding with the background writer. */
+export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
-): string | null {
-  if (
-    result.status === "clean" ||
-    result.status === "pushed" ||
-    result.status === "skipped"
-  ) {
-    return null;
-  }
-
-  if (result.status === "conflict") {
-    return `${SYSTEM_REMINDER_OPEN}
-MEMORY GIT CONFLICT: The memory repository needs manual conflict resolution.
+): string {
+  return `${SYSTEM_REMINDER_OPEN}
+MEMORY REPAIR RUNNING: A background worker is repairing the memory repository.
 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Resolve the merge/rebase conflicts in the memory repository, stage the resolved files, and complete the merge/rebase or create the needed commit. The harness will retry remote push after a future turn when the repo is clean.
+Continue the current task. Do not inspect, edit, or run Git commands in the memory repository while the background repair is active.
+${SYSTEM_REMINDER_CLOSE}`;
+}
+
+/**
+ * Reminders for the primary's own post-turn MemFS sync. Repairable states are
+ * normally handed to a background worker. If that worker could not finish,
+ * report the failure without assigning repository work to the foreground.
+ */
+export function formatMemoryPostTurnSyncReminder(
+  result: MemoryPostTurnSyncResult,
+): string | null {
+  if (result.status === "conflict") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY GIT CONFLICT: The memory repository has an unfinished merge or rebase that automatic repair could not resolve.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Background repair could not resolve this state. Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
+${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  if (result.status === "invalid") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY REPAIR FAILED: A background worker could not produce memory history that passes validation.
+
+Memory directory: ${result.memoryDir}
+Status: ${result.summary}
+
+Do not interrupt the current task or edit memory in the foreground. Leave the repository unchanged and report the blocked memory update to the user.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
@@ -55,18 +90,22 @@ MEMORY COMMIT NEEDED: The memory repository has uncommitted changes.
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-${action} when appropriate. Do not run \`git push\` for MemFS sync; the harness pushes clean committed memory changes automatically for remote MemFS agents after turns.
+${action} when appropriate, staging only the files you changed. Do not run \`git push\` for MemFS sync; the harness pushes clean committed memory changes automatically for remote MemFS agents after turns.
 ${SYSTEM_REMINDER_CLOSE}`;
   }
 
-  return `${SYSTEM_REMINDER_OPEN}
-MEMORY SYNC FAILED: The harness could not push pending memory commits.
+  if (result.status === "push_failed") {
+    return `${SYSTEM_REMINDER_OPEN}
+MEMORY SYNC RETRY: The harness could not push pending memory commits and will retry after a later turn.
 
 Memory directory: ${result.memoryDir}
 Status: ${result.summary}
 
-Inspect the memory repository and resolve any local git issue. The harness will retry remote push after a future turn when the repo is clean.
+Continue the current task. Do not inspect or repair memory in the foreground.
 ${SYSTEM_REMINDER_CLOSE}`;
+  }
+
+  return null;
 }
 
 export function formatAttachedRepositoryPostTurnSyncReminder(
@@ -124,12 +163,16 @@ export async function runPostTurnMemorySync(
   params: RunPostTurnMemorySyncParams,
   dependencies: RunPostTurnMemorySyncDependencies = {},
 ): Promise<void> {
+  if (isMemoryWorkerSession()) return;
   const debugLabel = params.debugLabel ?? "Post-turn memory sync";
   const syncMemory =
     dependencies.syncMemory ?? syncPendingMemoryCommitsAfterTurn;
   const syncAttachedRepositories =
     dependencies.syncAttachedRepositories ??
     syncPendingAttachedRepositoryCommitsAfterTurn;
+  const repairMemory =
+    dependencies.repairMemory ??
+    ((repair) => ensureMemoryRepair(repair, spawnBackgroundSubagentTask));
   let memorySyncEnabled = true;
 
   try {
@@ -148,11 +191,27 @@ export async function runPostTurnMemorySync(
 
   if (memorySyncEnabled) {
     try {
-      const syncResult = await syncMemory(params.agentId);
-      const syncReminder = formatMemoryPostTurnSyncReminder(syncResult);
-      if (syncReminder) {
-        params.enqueueReminder?.(syncReminder);
-        await params.emitWarning?.(syncReminder);
+      const memoryDir = getScopedMemoryFilesystemRoot(params.agentId);
+      const release = existsSync(join(memoryDir, ".git"))
+        ? await (dependencies.claimOperation ?? claimMemoryOperation)(memoryDir)
+        : undefined;
+      if (release !== null) {
+        try {
+          const result = await syncMemory(params.agentId);
+          if (result.status === "pushed") params.onMemoryPushed?.();
+          const repairInProgress =
+            (result.status === "conflict" || result.status === "invalid") &&
+            (await repairMemory({ ...params, result }));
+          const reminder = repairInProgress
+            ? formatMemoryRepairInProgressReminder(result)
+            : formatMemoryPostTurnSyncReminder(result);
+          if (reminder) {
+            params.enqueueReminder?.(reminder);
+            await params.emitWarning?.(reminder);
+          }
+        } finally {
+          await release?.();
+        }
       }
     } catch (error) {
       debugWarn(

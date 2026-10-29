@@ -28,7 +28,6 @@ export type ClassifyApprovalsOptions<TContext = ApprovalContext | null> = {
     parsedArgs: Record<string, unknown>,
     workingDirectory?: string,
   ) => Promise<TContext>;
-  alwaysRequiresUserInput?: (toolName: string) => boolean;
   treatAskAsDeny?: boolean;
   denyReasonForAsk?: string;
   missingNameReason?: string;
@@ -48,8 +47,29 @@ export async function getMissingRequiredArgs(
   const schema = getToolSchema(toolName, toolContextId);
   const required =
     (schema?.input_schema?.required as string[] | undefined) || [];
-  return required.filter(
-    (key) => !(key in parsedArgs) || parsedArgs[key] == null,
+  const properties = schema?.input_schema?.properties as
+    | Record<string, unknown>
+    | undefined;
+  return required.filter((key) => {
+    if (!(key in parsedArgs) || parsedArgs[key] === undefined) return true;
+    if (parsedArgs[key] === null) return !schemaAllowsNull(properties?.[key]);
+    return false;
+  });
+}
+
+function typeAllowsNull(schema: unknown): boolean {
+  if (!schema || typeof schema !== "object") return false;
+  const type = (schema as { type?: unknown }).type;
+  return type === "null" || (Array.isArray(type) && type.includes("null"));
+}
+
+/** True if the property schema (or one of its anyOf/oneOf branches) admits null. */
+function schemaAllowsNull(schema: unknown): boolean {
+  if (typeAllowsNull(schema)) return true;
+  if (!schema || typeof schema !== "object") return false;
+  const { anyOf, oneOf } = schema as { anyOf?: unknown; oneOf?: unknown };
+  return [anyOf, oneOf].some(
+    (branches) => Array.isArray(branches) && branches.some(typeAllowsNull),
   );
 }
 
@@ -196,11 +216,7 @@ export async function classifyApprovals<TContext = ApprovalContext | null>(
     const context = opts.getContext
       ? await opts.getContext(toolName, parsedArgs, opts.workingDirectory)
       : null;
-    let decision = permission.decision;
-
-    if (opts.alwaysRequiresUserInput?.(toolName) && decision === "allow") {
-      decision = "ask";
-    }
+    const decision = permission.decision;
 
     const needsHumanApproval = decision === "ask" || decision === "alwaysAsk";
 

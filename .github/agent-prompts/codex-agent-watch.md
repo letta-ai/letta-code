@@ -62,6 +62,10 @@ Many upstream Codex tool changes are upstream-only: MCP/plugin internals, Respon
 
 When Codex and Letta Code implement the same tool contract, implementation behavior is part of the mirror. Compare parsing, path resolution, mutation ordering, and failure semantics even when schemas and descriptions are unchanged. If the upstream diff introduces behavior that the local mirror lacks, treat it as `local_change_required` unless you can show that the difference is intentionally inapplicable locally. Do not dismiss it as a minor implementation improvement.
 
+## Instruction-content changes
+
+The detector also flags changes to model instruction content in models.json (`base_instructions`, `model_messages`, `instructions_template`) and newly added models that ship instructions. Letta Code does not mirror Codex model prompts, so these usually close as `no_local_impact`. Still read the changed instruction text: check it for tool-contract implications, and summarize noteworthy behavioral guidance (steering, user-input handling, dissatisfaction handling) in the tracker note so owners can decide whether to adopt the pattern in the Letta Code system prompt.
+
 ## Tracker updates
 
 The prompt provides:
@@ -125,13 +129,14 @@ If you create a PR:
 
 Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
 
-Use the selected Slack owner ID from the run inputs and the created PR URL. Send exactly one line in this form:
+Use the selected Slack owner ID from the run inputs and the created PR URL. Send the mention and link, then one short sentence describing the verified change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
+Preserves original line endings when ApplyPatch updates files, avoiding unrelated diff churn.
 ```
 
-Replace the example values with the selected owner and created PR. Do not include a watcher prefix, tracker URL, workflow URL, or any other text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
+Replace the example values and sentence with the selected owner, created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. Do not include a watcher prefix, tracker URL, workflow URL, or extra text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
 
 ## Final response
 

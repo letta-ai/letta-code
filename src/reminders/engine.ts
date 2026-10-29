@@ -8,6 +8,7 @@ import {
 } from "@/cli/helpers/session-context";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import { permissionMode } from "@/permissions/mode";
 import { settingsManager } from "@/settings-manager";
 import { debugLog } from "@/utils/debug";
@@ -17,6 +18,7 @@ import {
   type SharedReminderId,
   type SharedReminderMode,
 } from "./catalog";
+import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
 
 export interface AgentReminderContext {
@@ -62,7 +64,15 @@ async function buildAgentInfoReminder(
     return null;
   }
 
+  let parentAgentId: string | undefined;
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(context.agent.id);
+    if (scopeAgentId !== context.agent.id) parentAgentId = scopeAgentId;
+  } catch {
+    // Parent lookup must not prevent the agent's own info reminder.
+  }
   const reminder = buildAgentInfo({
+    parentAgentId,
     agentInfo: {
       id: context.agent.id,
       name: context.agent.name,
@@ -76,12 +86,41 @@ async function buildAgentInfoReminder(
   return reminder || null;
 }
 
+/**
+ * Secret names a session can use: its own vault plus, for a subagent, the vault
+ * of the agent it inherits MCP from. Shell substitution already falls back to
+ * that vault (resolveSecretEnvFromCommand); listing the names keeps the agent
+ * from concluding a secret is missing.
+ */
+export async function listAvailableSecretNames(
+  agentId: string,
+  lookupParent?: ParentAgentLookup,
+): Promise<string[]> {
+  const { ensureSecretsLoaded, listSecretNames } = await import(
+    "@/utils/secrets-store"
+  );
+  const names = new Set(listSecretNames(agentId));
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(
+      agentId,
+      undefined,
+      lookupParent,
+    );
+    if (scopeAgentId !== agentId) {
+      await ensureSecretsLoaded(scopeAgentId);
+      for (const name of listSecretNames(scopeAgentId)) names.add(name);
+    }
+  } catch {
+    // Unresolvable parent linkage never widens access; list own names only.
+  }
+  return [...names].sort();
+}
+
 async function buildSecretsInfoReminder(
   context: SharedReminderContext,
 ): Promise<string | null> {
   try {
-    const { listSecretNames } = await import("@/utils/secrets-store");
-    const names = listSecretNames(context.agent.id);
+    const names = await listAvailableSecretNames(context.agent.id);
     const namesKey = names.join("\0");
     const isRefresh = context.state.pendingSecretsInfoRefresh;
     const namesChanged =
@@ -120,6 +159,165 @@ async function buildSecretsInfoReminder(
     );
     return null;
   }
+}
+
+/** Cache tool counts, never the list of attached servers. */
+const MCP_TOOL_COUNTS_REFRESH_MS = 5 * 60 * 1000;
+
+export interface McpServerReminderEntry {
+  name: string;
+  /** Tool count when cheaply known (cloud-synced tools); null otherwise. */
+  toolCount: number | null;
+}
+
+export interface McpServersReminderDependencies {
+  lookupParentAgent?: ParentAgentLookup;
+  getLocalServerNames?: (agentId: string) => string[];
+  /** Returns cloud-connected servers, or null when unavailable. */
+  listServerSideServers?: (
+    agentId: string,
+  ) => Promise<McpServerReminderEntry[] | null>;
+}
+
+async function defaultListServerSideServers(
+  agentId: string,
+  state: SharedReminderContext["state"],
+): Promise<McpServerReminderEntry[] | null> {
+  // An unavailable backend means no server-side MCP; local names are still
+  // valid. A failed server fetch on an available backend throws instead, so a
+  // transient API error never reports an incomplete server list.
+  let serverSideAvailable = false;
+  try {
+    const { getBackend } = await import("@/backend");
+    serverSideAvailable = getBackend().capabilities.serverSideToolManagement;
+  } catch {
+    return null;
+  }
+  if (!serverSideAvailable) {
+    return null;
+  }
+  const { getClient } = await import("@/backend/api/client");
+  const { getServerUrl } = await import("@/backend/api/server-url");
+  const { LETTA_CLOUD_API_URL } = await import("@/auth/oauth");
+  const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
+    "@/backend/api/unified-mcp"
+  );
+  const client = (await getClient()) as Parameters<
+    typeof listUnifiedMcpServers
+  >[0];
+  const allServers = await listUnifiedMcpServers(client, agentId, 3_000);
+  // Hosted Letta Cloud cannot execute stdio-type cloud servers; do not
+  // advertise tools the agent cannot call.
+  const servers =
+    getServerUrl() === LETTA_CLOUD_API_URL
+      ? allServers.filter((server) => server.serverType !== "stdio")
+      : allServers;
+  const serverIds = new Set(servers.map((server) => server.id));
+  for (const id of state.mcpToolCounts.keys()) {
+    if (!serverIds.has(id)) state.mcpToolCounts.delete(id);
+  }
+  const now = Date.now();
+  return Promise.all(
+    servers.map(async (server) => {
+      const cached = state.mcpToolCounts.get(server.id);
+      if (cached && now - cached.fetchedAtMs < MCP_TOOL_COUNTS_REFRESH_MS) {
+        return { name: server.serverName, toolCount: cached.toolCount };
+      }
+      // New attachments get counts immediately. Existing servers reuse counts
+      // so fresh discovery costs one list request, not one per server as well.
+      const toolCount = await listUnifiedMcpTools(
+        client,
+        agentId,
+        server.id,
+        3_000,
+      )
+        .then((tools) => tools.length)
+        .catch(() => null);
+      state.mcpToolCounts.set(server.id, { toolCount, fetchedAtMs: now });
+      return { name: server.serverName, toolCount };
+    }),
+  );
+}
+
+function formatMcpServerEntry(entry: McpServerReminderEntry): string {
+  if (entry.toolCount === null) {
+    return entry.name;
+  }
+  return `${entry.name} (${entry.toolCount} ${entry.toolCount === 1 ? "tool" : "tools"})`;
+}
+
+export function buildMcpServersReminderText(
+  entries: McpServerReminderEntry[],
+): string {
+  if (entries.length === 0) {
+    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\nDo not automatically store results of principal-restricted operations in shared memory.\n${SYSTEM_REMINDER_CLOSE}`;
+  }
+  const rendered = entries.map(formatMcpServerEntry).join(", ");
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+}
+
+export async function listMcpServersForAgent(
+  agentId: string,
+  state: SharedReminderContext["state"],
+  deps: McpServersReminderDependencies = {},
+): Promise<McpServerReminderEntry[]> {
+  const localNames = (
+    deps.getLocalServerNames ??
+    ((id: string) =>
+      settingsManager.getMcpServers(id).map((server) => server.name))
+  )(agentId);
+  const entries: McpServerReminderEntry[] = localNames.map((name) => ({
+    name,
+    toolCount: null,
+  }));
+  const serverSideEntries = await (
+    deps.listServerSideServers ??
+    ((id: string) => defaultListServerSideServers(id, state))
+  )(agentId);
+  if (serverSideEntries) entries.push(...serverSideEntries);
+  return [...new Map(entries.map((entry) => [entry.name, entry])).values()];
+}
+
+export async function buildMcpServersInfoReminderText(
+  context: Pick<SharedReminderContext, "agent" | "state">,
+  deps: McpServersReminderDependencies = {},
+): Promise<string | null> {
+  try {
+    const uniqueEntries = await listMcpServersForAgent(
+      await getMcpScopeAgentId(
+        context.agent.id,
+        undefined,
+        deps.lookupParentAgent,
+      ),
+      context.state,
+      deps,
+    );
+    const namesKey = uniqueEntries
+      .map((entry) => `${entry.name}\u0001${entry.toolCount ?? ""}`)
+      .join("\0");
+    if (
+      context.state.hasSentMcpServersInfo &&
+      context.state.lastSentMcpServerNamesKey === namesKey
+    ) {
+      return null;
+    }
+    context.state.hasSentMcpServersInfo = true;
+    context.state.lastSentMcpServerNamesKey = namesKey;
+
+    return buildMcpServersReminderText(uniqueEntries);
+  } catch (error) {
+    debugLog(
+      "mcp",
+      `Failed to build MCP servers reminder: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return null;
+  }
+}
+
+async function buildMcpServersInfoReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  return buildMcpServersInfoReminderText(context);
 }
 
 async function buildSessionContextReminder(
@@ -338,6 +536,17 @@ ${changeBlocks.join("\n\n")}
 ${SYSTEM_REMINDER_CLOSE}`;
 }
 
+async function buildDiskSpaceReminder(
+  context: SharedReminderContext,
+): Promise<string | null> {
+  const result = evaluateDiskSpaceReminder({
+    workingDirectory: context.workingDirectory ?? process.cwd(),
+    notified: context.state.hasNotifiedLowDiskSpace,
+  });
+  context.state.hasNotifiedLowDiskSpace = result.notified;
+  return result.text;
+}
+
 export const sharedReminderProviders: Record<
   SharedReminderId,
   SharedReminderProvider
@@ -345,11 +554,13 @@ export const sharedReminderProviders: Record<
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
+  "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,
   "memory-git-sync": buildMemoryGitSyncReminder,
   "command-io": buildCommandIoReminder,
   "toolset-change": buildToolsetChangeReminder,
+  "disk-space": buildDiskSpaceReminder,
 };
 
 export function assertSharedReminderCoverage(): void {

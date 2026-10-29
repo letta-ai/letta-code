@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "Plain JavaScript async function body that calls tools and returns a result."
+    },
+    "args": {
+      "description": "Optional input data exposed as the args global."
+    },
+    "run_in_background": {
+      "type": "boolean",
+      "description": "Set to true only when the script should return a task ID immediately. Ordinary scripts already yield automatically if they are still running after a brief wait, and completion is delivered without polling."
+    }
+  },
+  "required": ["code"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

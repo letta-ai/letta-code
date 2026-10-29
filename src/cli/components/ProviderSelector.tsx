@@ -12,6 +12,10 @@ import {
   getPiProviderRegistryRevision,
   subscribePiProviderRegistry,
 } from "@/backend/dev/pi-provider-mod-registry";
+import {
+  useChatGPTRateLimitState,
+  usePostResetCursor,
+} from "@/cli/hooks/use-chatgpt-rate-limit-state";
 import { useTerminalWidth } from "@/cli/hooks/use-terminal-width";
 import {
   type AuthMethod,
@@ -25,18 +29,39 @@ import {
   type ProviderField,
   type ProviderResponse,
   type ProviderStorageTarget,
-  removeProviderByName,
+  removeProviderById,
 } from "@/providers/byok-providers";
-import {
-  formatChatGPTUsageQuotaRows,
-  readChatGPTUsage,
-} from "@/providers/chatgpt-usage-service";
+import type { ChatGPTRateLimitResetCredit } from "@/providers/chatgpt-reset-credit-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
 import { connectedRecordsForProvider } from "@/providers/provider-connections";
-import { type Settings, settingsManager } from "@/settings-manager";
+import { settingsManager } from "@/settings-manager";
 import { type AwsProfile, parseAwsCredentials } from "@/utils/aws-credentials";
 import { debugLog } from "@/utils/debug";
+import {
+  ChatGPTResetCreditPicker,
+  type ResetPickerPhase,
+} from "./ChatGPTResetCreditPicker";
+import type { ResetNotice } from "./chatgpt-reset-credit-helpers";
 import { colors } from "./colors";
+import { ProviderManageView } from "./ProviderManageView";
+import {
+  type ConnectedProvidersByTarget,
+  connectedProviderSummary,
+  connectProviderTabOrder,
+  fieldValuesFromProviderPlaceholders,
+  filterProviderConfigs,
+  formatConnectProviderTab,
+  hasCloudProviderStoreCredentials,
+  isChatGPTUsageProvider,
+  isProviderTargetLoading,
+  nextProviderConnectionName,
+  providerApiKeyFromInput,
+  providerManageActionLabel,
+  providerManageActions,
+  providerSelectionFlow,
+  shouldForceLocalProviderTab,
+  shouldShowProviderStoreTabs,
+} from "./provider-selector-helpers";
 import { Text } from "./Text";
 
 const SOLID_LINE = "─";
@@ -49,25 +74,16 @@ type ViewState =
   | { type: "methodSelect"; provider: ByokProvider }
   | { type: "profileSelect"; provider: ByokProvider }
   | { type: "options"; provider: ByokProvider }
-  | { type: "oauthNameInput"; provider: ByokProvider };
+  | { type: "oauthNameInput"; provider: ByokProvider }
+  | {
+      type: "resetCredits";
+      provider: ByokProvider;
+      providerName: string;
+      phase: ResetPickerPhase;
+      chosen?: ChatGPTRateLimitResetCredit;
+    };
 
 type ValidationState = "idle" | "validating" | "valid" | "invalid" | "saving";
-
-type ProviderSelectionFlow =
-  | "options"
-  | "oauth"
-  | "methodSelect"
-  | "multiInput"
-  | "input";
-
-type ConnectedProvidersByTarget = Partial<
-  Record<ProviderStorageTarget, Map<string, ProviderResponse>>
->;
-
-type ChatGPTUsageStatus =
-  | { status: "loading" }
-  | { status: "ready"; rows: string[] }
-  | { status: "error"; message: string };
 
 interface ProviderSelectorProps {
   onCancel: () => void;
@@ -79,147 +95,20 @@ interface ProviderSelectorProps {
   ) => void;
 }
 
-export function providerApiKeyFromInput(
-  provider: ByokProvider,
-  input: string,
-): string | undefined {
-  return input.trim() || defaultProviderApiKey(provider);
-}
-
-export function hasCloudProviderStoreCredentials(
-  settings: Pick<Settings, "env" | "refreshToken">,
-  env: { LETTA_API_KEY?: string } = {
-    LETTA_API_KEY: process.env.LETTA_API_KEY,
-  },
-): boolean {
-  return Boolean(
-    env.LETTA_API_KEY || settings.env?.LETTA_API_KEY || settings.refreshToken,
-  );
-}
-
-export function shouldShowProviderStoreTabs(
-  hasCloudCredentials: boolean | null,
-): boolean {
-  return hasCloudCredentials === true;
-}
-
-export function filterProviderConfigs(
-  providers: readonly ByokProvider[],
-  query: string,
-): ByokProvider[] {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return [...providers];
-
-  return providers.filter((provider) => {
-    const searchable = [
-      provider.id,
-      provider.displayName,
-      provider.description,
-      provider.providerType,
-      provider.providerName,
-      provider.oauthProviderId,
-      ...(provider.providerNames ?? []),
-    ]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return searchable.includes(normalized);
-  });
-}
-
-export function providerSelectionFlow(
-  provider: ByokProvider,
-  connectedProviderId?: string,
-): ProviderSelectionFlow {
-  if (connectedProviderId) return "options";
-  if (provider.isOAuth) return "oauth";
-  if ("authMethods" in provider && provider.authMethods) return "methodSelect";
-  if ("fields" in provider && provider.fields) return "multiInput";
-  return "input";
-}
-
-export function connectedProviderSummary(
-  provider: ByokProvider,
-  records: readonly ProviderResponse[],
-): string {
-  if (records.length === 0) return provider.description;
-  if (records.length > 1) return `${records.length} connected`;
-
-  const record = records[0];
-  if (!record || record.name === provider.providerName) return "Connected";
-  return `Connected (${record.name})`;
-}
-
-export function canConnectAnotherProvider(
-  provider: ByokProvider,
-  target: ProviderStorageTarget,
-): boolean {
-  return (
-    target === "api" &&
-    provider.isOAuth === true &&
-    provider.providerType === "chatgpt_oauth"
-  );
-}
-
-export function nextProviderConnectionName(
-  provider: ByokProvider,
-  records: readonly ProviderResponse[],
-): string {
-  const existingNames = new Set(records.map((record) => record.name));
-  if (!existingNames.has(provider.providerName)) return provider.providerName;
-
-  for (let index = 2; ; index += 1) {
-    const candidate = `${provider.providerName}-${index}`;
-    if (!existingNames.has(candidate)) return candidate;
-  }
-}
-
-export function connectAnotherProviderOption(provider: ByokProvider): string {
-  return `Connect another ${provider.displayName}`;
-}
-
-export function fieldValuesFromProviderPlaceholders(
-  fields: readonly ProviderField[] | undefined,
-): Record<string, string> {
-  if (!fields) return {};
-
-  // Optional fields stay empty so an untouched value is not persisted:
-  // e.g. leaving the Ollama base URL blank keeps env/default resolution.
-  return Object.fromEntries(
-    fields
-      .filter(
-        (field) =>
-          !field.secret && field.placeholder && field.required !== false,
-      )
-      .map((field) => [field.key, field.placeholder as string]),
-  );
-}
-
-export function isProviderTargetLoading(input: {
-  selectedTarget: ProviderStorageTarget;
-  connectedProvidersByTarget: ConnectedProvidersByTarget;
-  showProviderStoreTabs: boolean;
-}): boolean {
-  return (
-    input.connectedProvidersByTarget[input.selectedTarget] === undefined &&
-    (input.selectedTarget === "local" || input.showProviderStoreTabs)
-  );
-}
-
-export function isChatGPTUsageProvider(provider: ByokProvider): boolean {
-  return (
-    provider.providerType === "chatgpt_oauth" ||
-    provider.oauthProviderId === "openai-codex" ||
-    provider.providerName === "chatgpt-plus-pro" ||
-    (provider.providerNames ?? []).includes("openai-codex")
-  );
-}
-
-function usageStatusRows(status: ChatGPTUsageStatus | undefined): string[] {
-  if (!status || status.status === "loading") return ["Loading..."];
-  if (status.status === "error") return [`Unavailable: ${status.message}`];
-  return status.rows;
-}
+export {
+  canConnectAnotherProvider,
+  connectAnotherProviderOption,
+  connectedProviderSummary,
+  fieldValuesFromProviderPlaceholders,
+  filterProviderConfigs,
+  hasCloudProviderStoreCredentials,
+  isChatGPTUsageProvider,
+  isProviderTargetLoading,
+  nextProviderConnectionName,
+  providerApiKeyFromInput,
+  providerSelectionFlow,
+  shouldShowProviderStoreTabs,
+} from "./provider-selector-helpers";
 
 export function ProviderSelector({
   onCancel,
@@ -252,9 +141,9 @@ export function ProviderSelector({
     useState<ValidationState>("idle");
   const [validationError, setValidationError] = useState<string | null>(null);
   const [optionIndex, setOptionIndex] = useState(0);
-  const [chatGPTUsageByProvider, setChatGPTUsageByProvider] = useState<
-    Record<string, ChatGPTUsageStatus>
-  >({});
+  const chatGPTRateLimits = useChatGPTRateLimitState(selectedTarget);
+  const [resetCreditIndex, setResetCreditIndex] = useState(0);
+  const [resetNotice, setResetNotice] = useState<ResetNotice | null>(null);
   // Multi-field input state (for providers like Bedrock)
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [focusedFieldIndex, setFocusedFieldIndex] = useState(0);
@@ -400,13 +289,13 @@ export function ProviderSelector({
   ]);
 
   useEffect(() => {
-    if (!showProviderStoreTabs && selectedTarget !== "local") {
+    if (shouldForceLocalProviderTab(hasCloudCredentials, selectedTarget)) {
       setSelectedTarget("local");
       setSelectedIndex(0);
       setSearchQuery("");
       setViewState({ type: "list" });
     }
-  }, [selectedTarget, showProviderStoreTabs]);
+  }, [hasCloudCredentials, selectedTarget]);
 
   useEffect(() => {
     setSelectedIndex(0);
@@ -438,58 +327,57 @@ export function ProviderSelector({
     [connectedProviders, selectedTarget],
   );
 
-  const getConnectedProviderName = useCallback(
-    (provider: ByokProvider): string | undefined => {
-      return getConnectedProviderRecords(provider)[0]?.name;
-    },
-    [getConnectedProviderRecords],
-  );
-
+  const { load: loadChatGPTRateLimits } = chatGPTRateLimits;
   const loadChatGPTUsageForProvider = useCallback(
     (provider: ByokProvider, forceRefresh = false) => {
       if (!isChatGPTUsageProvider(provider)) return;
-
-      const records = getConnectedProviderRecords(provider);
-      for (const record of records) {
-        const providerName = record.name;
-        setChatGPTUsageByProvider((previous) => ({
-          ...previous,
-          [providerName]: { status: "loading" },
-        }));
-
-        void readChatGPTUsage({
-          target: selectedTarget,
-          providerName,
-          forceRefresh,
-        })
-          .then((result) => {
-            if (!mountedRef.current) return;
-            setChatGPTUsageByProvider((previous) => ({
-              ...previous,
-              [providerName]: result.success
-                ? {
-                    status: "ready",
-                    rows: formatChatGPTUsageQuotaRows(result.usage),
-                  }
-                : { status: "error", message: result.error.message },
-            }));
-          })
-          .catch((error) => {
-            if (!mountedRef.current) return;
-            setChatGPTUsageByProvider((previous) => ({
-              ...previous,
-              [providerName]: {
-                status: "error",
-                message:
-                  error instanceof Error
-                    ? error.message
-                    : "Failed to read ChatGPT usage.",
-              },
-            }));
-          });
-      }
+      loadChatGPTRateLimits(
+        getConnectedProviderRecords(provider).map((record) => record.name),
+        forceRefresh,
+      );
     },
-    [getConnectedProviderRecords, selectedTarget],
+    [getConnectedProviderRecords, loadChatGPTRateLimits],
+  );
+
+  const { spendableCreditsFor } = chatGPTRateLimits;
+
+  const resettableProviderNames = (provider: ByokProvider): string[] =>
+    chatGPTRateLimits.resettable(getConnectedProviderRecords(provider));
+
+  // Keeps a repeated confirm Enter off Disconnect (see usePostResetCursor).
+  const markResetApplied = usePostResetCursor(
+    viewState.type === "options"
+      ? providerManageActions(
+          viewState.provider,
+          selectedTarget,
+          getConnectedProviderRecords(viewState.provider),
+          resettableProviderNames(viewState.provider),
+        )
+      : null,
+    setOptionIndex,
+  );
+  const { consume: consumeChatGPTReset } = chatGPTRateLimits;
+  const consumeResetCredit = useCallback(
+    async (
+      provider: ByokProvider,
+      providerName: string,
+      credit: ChatGPTRateLimitResetCredit,
+    ) => {
+      setViewState({
+        type: "resetCredits",
+        provider,
+        providerName,
+        phase: "consuming",
+        chosen: credit,
+      });
+      const result = await consumeChatGPTReset(providerName, credit.id);
+      // null: a duplicate confirmation while the first spend is in flight.
+      if (!result || !mountedRef.current) return;
+      setResetNotice(result.notice);
+      markResetApplied();
+      setViewState({ type: "options", provider });
+    },
+    [consumeChatGPTReset, markResetApplied],
   );
 
   useEffect(() => {
@@ -783,15 +671,14 @@ export function ProviderSelector({
       if (viewState.type !== "options") return;
 
       const { provider } = viewState;
+      const connectedRecords = getConnectedProviderRecords(provider);
+      const connected = providerName
+        ? connectedRecords.find((record) => record.name === providerName)
+        : connectedRecords[0];
       try {
-        await removeProviderByName(
-          providerName ??
-            getConnectedProviderName(provider) ??
-            provider.providerName,
-          {
-            target: selectedTarget,
-          },
-        );
+        if (connected) {
+          await removeProviderById(connected.id, { target: selectedTarget });
+        }
         clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
@@ -808,7 +695,7 @@ export function ProviderSelector({
     [
       viewState,
       selectedTarget,
-      getConnectedProviderName,
+      getConnectedProviderRecords,
       setConnectedProvidersForTarget,
     ],
   );
@@ -1030,28 +917,24 @@ export function ProviderSelector({
       }
     } else if (viewState.type === "options") {
       const connectedRecords = getConnectedProviderRecords(viewState.provider);
-      const canConnectAnother = canConnectAnotherProvider(
+      const actions = providerManageActions(
         viewState.provider,
         selectedTarget,
+        connectedRecords,
+        resettableProviderNames(viewState.provider),
       );
-      const showUsageRefresh =
-        isChatGPTUsageProvider(viewState.provider) &&
-        connectedRecords.length > 0;
-      const connectAnotherIndex = connectedRecords.length;
-      const usageRefreshIndex =
-        connectAnotherIndex + (canConnectAnother ? 1 : 0);
-      const backIndex = usageRefreshIndex + (showUsageRefresh ? 1 : 0);
-      const optionsLength = backIndex + 1;
       if (key.escape) {
+        setResetNotice(null);
         setViewState({ type: "list" });
       } else if (key.upArrow) {
         setOptionIndex((prev) => Math.max(0, prev - 1));
       } else if (key.downArrow) {
-        setOptionIndex((prev) => Math.min(optionsLength - 1, prev + 1));
+        setOptionIndex((prev) => Math.min(actions.length - 1, prev + 1));
       } else if (key.return) {
-        if (optionIndex < connectedRecords.length) {
-          handleDisconnect(connectedRecords[optionIndex]?.name);
-        } else if (canConnectAnother && optionIndex === connectAnotherIndex) {
+        const action = actions[optionIndex];
+        if (action?.type === "disconnect") {
+          handleDisconnect(action.name);
+        } else if (action?.type === "connect-another") {
           setProviderNameInput(
             nextProviderConnectionName(viewState.provider, connectedRecords),
           );
@@ -1060,11 +943,48 @@ export function ProviderSelector({
             type: "oauthNameInput",
             provider: viewState.provider,
           });
-        } else if (showUsageRefresh && optionIndex === usageRefreshIndex) {
+        } else if (action?.type === "reconnect") {
+          onStartOAuth?.(viewState.provider, selectedTarget);
+        } else if (action?.type === "refresh-usage") {
+          setResetNotice(null);
           loadChatGPTUsageForProvider(viewState.provider, true);
+        } else if (action?.type === "use-reset") {
+          setResetNotice(null);
+          setResetCreditIndex(0);
+          setViewState({
+            type: "resetCredits",
+            provider: viewState.provider,
+            providerName: action.name,
+            phase: "select",
+          });
         } else {
           setViewState({ type: "list" });
         }
+      }
+    } else if (viewState.type === "resetCredits") {
+      const credits = spendableCreditsFor(viewState.providerName);
+      if (viewState.phase === "consuming") return;
+      if (viewState.phase === "confirm") {
+        if (key.escape) {
+          setViewState({ ...viewState, phase: "select", chosen: undefined });
+        } else if (key.return && viewState.chosen) {
+          void consumeResetCredit(
+            viewState.provider,
+            viewState.providerName,
+            viewState.chosen,
+          );
+        }
+      } else if (key.escape) {
+        setViewState({ type: "options", provider: viewState.provider });
+      } else if (key.upArrow) {
+        setResetCreditIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setResetCreditIndex((prev) =>
+          Math.min(Math.max(0, credits.length - 1), prev + 1),
+        );
+      } else if (key.return) {
+        const chosen = credits[resetCreditIndex];
+        if (chosen) setViewState({ ...viewState, phase: "confirm", chosen });
       }
     } else if (viewState.type === "oauthNameInput") {
       if (key.escape) {
@@ -1098,28 +1018,23 @@ export function ProviderSelector({
         <Text dimColor>Change models with /model after connecting</Text>
         {showProviderStoreTabs && (
           <Box marginTop={1} flexDirection="row">
-            <Text>{"  "}</Text>
-            <Text
-              bold={selectedTarget === "local"}
-              color={
-                selectedTarget === "local"
-                  ? colors.selector.title
-                  : colors.command.running
-              }
-            >
-              {selectedTarget === "local" ? "[ Local ]" : "  Local  "}
-            </Text>
-            <Text>{"  "}</Text>
-            <Text
-              bold={selectedTarget === "api"}
-              color={
-                selectedTarget === "api"
-                  ? colors.selector.title
-                  : colors.command.running
-              }
-            >
-              {selectedTarget === "api" ? "[ Cloud ]" : "  Cloud  "}
-            </Text>
+            {connectProviderTabOrder(defaultProviderStorageTarget()).map(
+              (target) => (
+                <Box key={target} flexDirection="row">
+                  <Text>{"  "}</Text>
+                  <Text
+                    bold={selectedTarget === target}
+                    color={
+                      selectedTarget === target
+                        ? colors.selector.title
+                        : colors.command.running
+                    }
+                  >
+                    {formatConnectProviderTab(target, selectedTarget)}
+                  </Text>
+                </Box>
+              ),
+            )}
           </Box>
         )}
         {!showProviderStoreTabs && <Box height={1} />}
@@ -1549,94 +1464,22 @@ export function ProviderSelector({
     if (viewState.type !== "options") return null;
     const { provider } = viewState;
     const connectedRecords = getConnectedProviderRecords(provider);
-    const canConnectAnother = canConnectAnotherProvider(
-      provider,
-      selectedTarget,
-    );
-    const showUsage = isChatGPTUsageProvider(provider);
-    const options = [
-      ...connectedRecords.map((record) => `Disconnect ${record.name}`),
-      ...(canConnectAnother ? [connectAnotherProviderOption(provider)] : []),
-      ...(showUsage && connectedRecords.length > 0 ? ["Refresh usage"] : []),
-      "Back",
-    ];
-
     return (
-      <>
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color={colors.selector.title}>
-            Manage {provider.displayName}
-          </Text>
-          <Box height={1} />
-          {connectedRecords.length > 0 ? (
-            connectedRecords.map((record) => {
-              const usageStatus = chatGPTUsageByProvider[record.name];
-              return (
-                <Box key={record.id} flexDirection="column">
-                  <Box flexDirection="row">
-                    <Text>{"  "}</Text>
-                    <Text color="green">[✓]</Text>
-                    <Text> </Text>
-                    <Text bold>{record.name}</Text>
-                    <Text dimColor> · </Text>
-                    <Text color="green">Connected</Text>
-                  </Box>
-                  {showUsage && (
-                    <Box flexDirection="column">
-                      {usageStatusRows(usageStatus).map((row) => (
-                        <Box key={row} flexDirection="row">
-                          <Text>{"      "}</Text>
-                          <Text
-                            color={
-                              usageStatus?.status === "error"
-                                ? "yellow"
-                                : undefined
-                            }
-                            dimColor={usageStatus?.status !== "error"}
-                          >
-                            {row}
-                          </Text>
-                        </Box>
-                      ))}
-                    </Box>
-                  )}
-                </Box>
-              );
-            })
-          ) : (
-            <Text dimColor>{"  "}No connected providers.</Text>
-          )}
-        </Box>
-
-        <Box flexDirection="column">
-          {options.map((option, index) => {
-            const isSelected = index === optionIndex;
-            return (
-              <Box key={option} flexDirection="row">
-                <Text
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {isSelected ? "> " : "  "}
-                </Text>
-                <Text
-                  bold={isSelected}
-                  color={
-                    isSelected ? colors.selector.itemHighlighted : undefined
-                  }
-                >
-                  {option}
-                </Text>
-              </Box>
-            );
-          })}
-        </Box>
-
-        <Box marginTop={1}>
-          <Text dimColor>{"  "}Enter confirm · ↑↓ navigate · Esc back</Text>
-        </Box>
-      </>
+      <ProviderManageView
+        displayName={provider.displayName}
+        connectedRecords={connectedRecords}
+        showChatGPTUsage={isChatGPTUsageProvider(provider)}
+        usageByProvider={chatGPTRateLimits.usageByProvider}
+        creditsByProvider={chatGPTRateLimits.creditsByProvider}
+        resetNotice={resetNotice}
+        optionLabels={providerManageActions(
+          provider,
+          selectedTarget,
+          connectedRecords,
+          resettableProviderNames(provider),
+        ).map((action) => providerManageActionLabel(action, provider))}
+        optionIndex={optionIndex}
+      />
     );
   };
 
@@ -1687,6 +1530,15 @@ export function ProviderSelector({
       {viewState.type === "multiInput" && renderMultiInputView()}
       {viewState.type === "options" && renderOptionsView()}
       {viewState.type === "oauthNameInput" && renderOAuthNameInputView()}
+      {viewState.type === "resetCredits" && (
+        <ChatGPTResetCreditPicker
+          providerName={viewState.providerName}
+          credits={spendableCreditsFor(viewState.providerName)}
+          selectedIndex={resetCreditIndex}
+          phase={viewState.phase}
+          chosen={viewState.chosen}
+        />
+      )}
     </Box>
   );
 }

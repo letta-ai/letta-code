@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyApprovals } from "@/cli/helpers/approval-classification";
+import {
+  classifyApprovals,
+  getMissingRequiredArgs,
+} from "@/cli/helpers/approval-classification";
 import {
   clearModPermissions,
   registerModPermission,
@@ -82,6 +85,38 @@ describe("classifyApprovals", () => {
     }
   });
 
+  test.each([false, true])(
+    "auto-allows doctor evidence with treatAskAsDeny=%s",
+    async (treatAskAsDeny) => {
+      await loadTools();
+      permissionMode.setMode("standard");
+      const projectDir = await mkdtemp(
+        join(tmpdir(), "letta-doctor-approval-"),
+      );
+      tempDirs.push(projectDir);
+      const approvals = ["local", "api", "cloud"].map((backend) => ({
+        toolCallId: `call_evidence_${backend}`,
+        toolName: "Bash",
+        toolArgs: JSON.stringify({
+          command: `letta --backend ${backend} messages list --agent agent-target --conversation conv-target --limit 30 --include-errors`,
+          description: "Retrieve conversation evidence",
+        }),
+      }));
+
+      const result = await classifyApprovals(approvals, {
+        requireArgsForAutoApprove: true,
+        treatAskAsDeny,
+        workingDirectory: projectDir,
+      });
+
+      expect(result.autoAllowed.map((entry) => entry.approval)).toEqual(
+        approvals,
+      );
+      expect(result.needsUserInput).toEqual([]);
+      expect(result.autoDenied).toEqual([]);
+    },
+  );
+
   test("reports missing Bash command as validation error before auto-allow", async () => {
     await loadTools();
     permissionMode.setMode("unrestricted");
@@ -113,6 +148,31 @@ describe("classifyApprovals", () => {
       "Bash tool missing required parameter: command. Received parameters: description",
     );
     expect(denied?.permission.reason).toBe(denied?.denyReason);
+  });
+
+  test("lets Agent resume an existing conversation without subagent_type", async () => {
+    await loadTools();
+    permissionMode.setMode("unrestricted");
+
+    const result = await classifyApprovals(
+      [
+        {
+          toolCallId: "call_agent_resume",
+          toolName: "Agent",
+          toolArgs: JSON.stringify({
+            agent_id: "agent-abc123",
+            conversation_id: "conv-xyz789",
+            description: "Continue implementation",
+            prompt: "Now implement the fix we discussed",
+          }),
+        },
+      ],
+      { requireArgsForAutoApprove: true },
+    );
+
+    expect(result.autoDenied).toHaveLength(0);
+    const [classified] = [...result.autoAllowed, ...result.needsUserInput];
+    expect(classified?.missingRequiredArgs ?? []).toEqual([]);
   });
 
   test("flags empty arguments as dropped in transit, not omitted by the model", async () => {
@@ -492,5 +552,44 @@ describe("classifyApprovals", () => {
       matchedRule: "mod permission:deny-exit-plan-mode",
       reason: "still planning",
     });
+  });
+
+  test("treats null as present only when the property schema admits null", async () => {
+    registerModTool({
+      name: "nullable_args_tool",
+      description: "nullable args test tool",
+      parameters: {
+        type: "object",
+        properties: {
+          nullable: { type: ["string", "null"] },
+          strict: { type: "string" },
+          union: { anyOf: [{ type: "string" }, { type: "null" }] },
+        },
+        required: ["nullable", "strict", "union"],
+      },
+      owner: {
+        id: "global:/tmp/nullable_args_tool.ts",
+        path: "/tmp/nullable_args_tool.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/nullable_args_tool.ts",
+      requiresApproval: true,
+      approvalPolicy: "ask",
+      parallelSafe: false,
+      activationSignal: new AbortController().signal,
+      run: () => "ok",
+    });
+
+    expect(
+      await getMissingRequiredArgs("nullable_args_tool", {
+        nullable: null,
+        strict: null,
+        union: null,
+      }),
+    ).toEqual(["strict"]);
+    expect(
+      await getMissingRequiredArgs("nullable_args_tool", { strict: "x" }),
+    ).toEqual(["nullable", "union"]);
   });
 });

@@ -21,7 +21,6 @@ import personaLinusPrompt from "./prompts/persona_linus.mdx";
 import personaMemoPrompt from "./prompts/persona_memo.mdx";
 import personaTutorialPrompt from "./prompts/persona_tutorial.mdx";
 import projectPrompt from "./prompts/project.mdx";
-import rememberPrompt from "./prompts/remember.md";
 import skillCreatorModePrompt from "./prompts/skill_creator_mode.md";
 import sourceClaudePrompt from "./prompts/source_claude.md";
 import sourceCodexPrompt from "./prompts/source_codex.md";
@@ -32,7 +31,6 @@ import stylePrompt from "./prompts/style.mdx";
 export const SYSTEM_PROMPT = lettaNoMemfsPrompt;
 
 export const SKILL_CREATOR_PROMPT = skillCreatorModePrompt;
-export const REMEMBER_PROMPT = rememberPrompt;
 export const APPROVAL_RECOVERY_PROMPT = approvalRecoveryAlert;
 export const INTERRUPT_RECOVERY_ALERT = interruptRecoveryAlert;
 

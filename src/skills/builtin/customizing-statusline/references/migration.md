@@ -1,13 +1,13 @@
 # Statusline Migration
 
-Use this reference when migrating legacy command statuslines, standalone `.sh` statusline scripts, or shell PS1 prompts into `~/.letta/mods/statusline.tsx`.
+Use this reference when migrating legacy command statuslines, standalone `.sh` statusline scripts, or shell PS1 prompts into `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/statusline.tsx`.
 
 ## Legacy Letta command statusline
 
 Inspect these files for old config:
 
 ```text
-~/.letta/settings.json
+${LETTA_CONFIG_DIR:-$HOME/.letta}/settings.json
 <project>/.letta/settings.json
 <project>/.letta/settings.local.json
 ```

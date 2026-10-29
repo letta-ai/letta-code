@@ -48,7 +48,7 @@ Immediately after the block succeeds, use `SetWorkingDirectory` to select `/tmp/
 2. Inspect the current official docs directly when a preview is truncated or the evidence points at an unwatched page.
 3. Review every relevant signal against the corresponding local Letta Code mirror. Account for each signal in the tracker note.
 4. Compare implementation behavior, parsing, mutation ordering, output formatting, failure semantics, defaults, and model-facing guidance when the two harnesses mirror the same contract. A matching tool name or schema is not enough.
-5. If a concrete local mirror should change, make only that change with focused tests and open one separate draft PR.
+5. If a concrete local mirror should change, make only that change with focused tests and open one separate PR as ready for review.
 6. If the change is upstream-only, record `no_local_impact` with a specific reason. Claude-only UI, IDE, Desktop, hosted-cloud, subscription, MCP/plugin, and model-routing changes often do not belong locally.
 7. If public evidence is incomplete or a probe is inconclusive, do not guess. Record `needs_human_review` with the exact uncertainty.
 8. Search open and closed PRs for the exact `Claude-watch: <candidate-id>` marker before creating a PR. A retry must never duplicate a PR.
@@ -65,12 +65,12 @@ For a bootstrap candidate, there is intentionally no historical Claude snapshot.
 Narrow based on evidence, but begin with:
 
 - prompt/provenance: `src/agent/prompts/source_claude.md`, `src/agent/prompts/README.md`, `src/agent/prompt-assets.ts`, and tests
-- model-facing tool names/default membership: `src/tools/manager.ts` (`TOOL_NAME_MAPPINGS`, `ANTHROPIC_DEFAULT_TOOLS`), `src/tools/tool-definitions.ts`, `src/tools/toolset.ts`, `src/tools/filter.ts`, `src/tools/toolset-labels.ts`
+- model-facing tool names/default membership: `src/tools/manager.ts` (`TOOL_NAME_MAPPINGS`), `src/tools/toolset-catalog.ts` (`TOOLSET_CATALOG.default.tools`), `src/tools/tool-definitions.ts`, `src/tools/toolset.ts`, `src/tools/filter.ts`, `src/tools/toolset-labels.ts`
 - mirrored contracts and behavior: `src/tools/schemas/`, `src/tools/descriptions/`, `src/tools/impl/`, and adjacent tests
 - Claude-derived output behavior: `src/tools/impl/truncation.ts`, `src/tools/impl/read.ts`, `src/tools/impl/bash.ts`
 - permissions: `src/permissions/matcher.ts`, `src/permissions/types.ts`, and tests
 - stream/headless protocol: `src/stream-json-writer.ts`, `src/types/protocol.ts`, `src/integration-tests/headless-stream-json-format.test.ts`
-- tasks/subagents/worktrees: built-in subagent Markdown, Task/TaskCreate/TaskGet/TaskList/TaskUpdate/TaskOutput/TaskStop and EnterWorktree/ExitWorktree schemas, descriptions, implementations, and tests
+- tasks/subagents/worktrees: built-in subagent Markdown, Task/TaskCreate/TaskGet/TaskList/TaskUpdate/TaskStop and EnterWorktree/ExitWorktree schemas, descriptions, implementations, and tests
 
 When the official tool inventory changes, compare both the top-level Letta defaults and every built-in subagent's tool frontmatter/body. Local-only stale names are drift even when the parent toolset is already current.
 
@@ -125,8 +125,8 @@ If a local change is required:
 - use `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN"` for every GitHub CLI operation
 - make the minimum mirror change and focused tests only; do not include watcher implementation changes
 - use a Conventional Commit title
-- open the PR as a draft
-- immediately verify `draft: true` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
+- open the PR as ready for review
+- immediately verify `draft: false` and that the PR author matches the Expected GitHub login from the run inputs; if either is wrong, fix or close it instead of reporting success
 - before the tracker update, GET `repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers` with the same explicit Amelia credential, then request each configured reviewer that is not already present with `test -n "$AMELIA_GITHUB_TOKEN" && GITHUB_TOKEN= GH_TOKEN="$AMELIA_GITHUB_TOKEN" gh api --method POST "repos/letta-ai/letta-code/pulls/${PR_URL##*/}/requested_reviewers" -f "reviewers[]=<login>"`
 - include `Claude-watch: <candidate-id>`, package version, release URL, docs/runtime evidence, and validation in the body
 - never commit generated snapshots or analysis files to the parity branch
@@ -135,13 +135,14 @@ If a local change is required:
 
 Only for a `pr_created` outcome, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"` to send exactly one message. Do not use `curl` or another Slack API client.
 
-Use the selected Slack owner ID from the run inputs and the created PR URL. Send exactly one line in this form:
+Use the selected Slack owner ID from the run inputs and the created PR URL. Send the mention and link, then one short sentence describing the verified change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
+Aligns Read's line-number spacing with Claude Code so suggested patches match file contents.
 ```
 
-Replace the example values with the selected owner and created PR. Do not include a watcher prefix, tracker URL, workflow URL, or any other text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
+Replace the example values and sentence with the selected owner, created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. Do not include a watcher prefix, tracker URL, workflow URL, or extra text. The notification creates the Slack thread route back to this watcher conversation. Do not send a Slack notification for `no_local_impact` or `needs_human_review`.
 
 ## Final response
 

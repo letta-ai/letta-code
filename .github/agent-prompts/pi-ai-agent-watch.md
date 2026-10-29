@@ -35,8 +35,10 @@ The analysis uses each npm artifact's `gitHead` as the published source revision
 3. Run `npm diff` for the two exact package versions when generated declarations, exports, catalogs, or shipped JavaScript matter. The npm artifacts, not only the monorepo source, define the dependency Letta Code consumes.
 4. Compare the release against every implicated Letta Code integration surface. Check types, runtime behavior, cancellation, auth, provider catalogs, model defaults, message/stream semantics, error handling, standalone bundling, and tests as applicable.
 5. If the installed version is older than the Previous release in the run inputs, also inspect the cumulative installed-to-current changelog and source/package diff before opening a PR. A skipped release must not create a migration gap later.
-6. Default to `no_upgrade`. A newer published version, routine catalog churn, or general dependency freshness is not a reason to upgrade by itself.
+6. Default to `no_upgrade`. A newer published version, metadata-only catalog churn that does not change usable capabilities, or general dependency freshness is not a reason to upgrade by itself.
    - Upgrade only when you can name a concrete Letta Code benefit or avoided risk and connect it to both the upstream diff and a local callsite. Examples include fixing a bug or security/reliability problem in a path Letta Code uses, adapting a consumed contract that otherwise breaks local behavior, or integrating a feature with a current product need.
+   - A model newly supported by a stable pi-ai release on a provider Letta Code exposes is a concrete product benefit, not routine catalog churn. Open the dependency upgrade promptly even when pi-ai owns the complete implementation and the resulting Letta Code PR only changes the dependency and lockfile.
+   - Letta Code consumes pi-ai's provider inventory dynamically. The runtime catalog projection is the local callsite for model additions; do not require a hardcoded model-specific reference in Letta Code. Before recording `no_upgrade` for an inventory change, enumerate every added model and provider and verify that each belongs to a provider Letta Code does not expose or is intentionally excluded.
    - Do not upgrade for unsupported-provider changes, speculative future usefulness, generic maintenance, or upstream fixes that do not affect Letta Code.
    - Record `no_upgrade` when no concrete local reason clears that bar. Staying on the installed version is the expected outcome, not a failure to keep current.
    - Record `needs_human_review` when impact or product policy is unclear. Do not guess.
@@ -69,7 +71,7 @@ For an upgrade:
 3. Follow repository instructions for every generated dependency artifact affected by the lockfile.
 4. Fix required application integration and add focused tests.
 5. Run `bun run check`, the relevant pi-ai/provider/runtime tests, and build validation appropriate to the diff. If a documented platform-specific validation cannot run, say so in the PR body and tracker note.
-6. Open one draft PR with a Conventional Commit title.
+6. Open one PR as ready for review with a Conventional Commit title.
 7. Include all of these in the PR body:
    - `Pi-ai-watch: <previous>...<current>`
    - installed and target package versions
@@ -77,7 +79,7 @@ For an upgrade:
    - changelog items that matter locally
    - application changes or explicit reasons none were needed
    - validation performed
-8. Immediately verify `draft: true` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
+8. Immediately verify `draft: false` and that the PR author matches the Expected GitHub login. If either is wrong, fix or close the PR instead of reporting success.
 9. Request the single GitHub reviewer from the run inputs unless already requested.
 
 ## Tracker updates
@@ -120,13 +122,14 @@ A `pr_created` outcome remains pending and blocks later upgrade PRs until that P
 
 ## Slack notification
 
-Only for `pr_created`, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send exactly one line using the selected Slack owner ID and PR URL:
+Only for `pr_created`, after the tracker update succeeds, call the native `MessageChannel` tool with `action="send"`, `channel="slack"`, and `target="C0871ER46KT"`. Send the selected Slack owner mention and PR URL, then one short sentence describing the verified change and why it matters:
 
 ```text
 <@U079W8F9Z7G> https://github.com/letta-ai/letta-code/pull/1234
+Adds Ollama image-input support so local models can receive screenshots without losing attachments.
 ```
 
-Replace the example values. Do not include a watcher prefix, tracker URL, workflow URL, or other text. Do not notify Slack for `no_upgrade` or `needs_human_review`.
+Replace the example values and sentence with the selected owner, created PR, and its actual change. Make the sentence useful without a link preview, not just a restatement of the PR title. Do not include a watcher prefix, tracker URL, workflow URL, or extra text. Do not notify Slack for `no_upgrade` or `needs_human_review`.
 
 ## Final response
 

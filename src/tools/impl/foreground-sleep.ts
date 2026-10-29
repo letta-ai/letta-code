@@ -5,7 +5,7 @@ import {
 } from "@/permissions/shell-analysis";
 
 export const FOREGROUND_SLEEP_BLOCKED_MESSAGE =
-  'Foreground `sleep` is blocked — it stalls the session while nothing happens. Run the wait in the background and keep working: use Bash with `run_in_background` and a command that exits when the condition is true, e.g. `until grep -q "Ready in" dev.log; do sleep 0.5; done`. You get a single completion notification when it exits. For one notification per occurrence ("tell me every time an ERROR line appears"), use the Monitor tool instead. `sleep` inside `run_in_background` commands and Monitor scripts is fine.';
+  "Foreground `sleep` is blocked. If you are waiting on a task you already started, its completion notification will arrive on its own; keep working or end your turn. To wait for a condition, run the command with `run_in_background` (or use the Monitor tool for repeated events). `sleep` inside `run_in_background` commands and Monitor scripts is fine.";
 
 // Reserved words that can precede the command word in a segment produced by
 // splitShellSegments (which splits on `;`, `|`, `&&`, `||`, and newlines but

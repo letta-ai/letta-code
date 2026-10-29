@@ -26,7 +26,11 @@ export function buildQueuedContentParts(
 ): MessageCreate["content"] {
   const queueInput = queued.map((item) =>
     item.kind === "task_notification"
-      ? ({ kind: "task_notification", text: item.text } as const)
+      ? ({
+          kind: "task_notification",
+          text: item.text,
+          content: item.content,
+        } as const)
       : ({ kind: "user", content: item.text } as const),
   );
 
@@ -60,7 +64,12 @@ export function toQueuedMsg(
   item: MessageQueueItem | TaskNotificationQueueItem,
 ): QueuedMessage {
   if (item.kind === "task_notification") {
-    return { kind: "task_notification", text: item.text };
+    return {
+      kind: "task_notification",
+      text: item.text,
+      content: item.content,
+      queueItemId: item.id,
+    };
   }
   const text =
     typeof item.content === "string"
@@ -80,7 +89,7 @@ export function toQueuedMsg(
  * that the input is QueueItem[] (from QueueRuntime) instead of QueuedMessage[].
  *
  * Only message and task_notification items contribute to the content batch;
- * barrier items (approval_result, overlay_action) are skipped.
+ * other kinds are skipped.
  */
 export function buildContentFromQueueBatch(
   batch: DequeuedBatch,
@@ -92,7 +101,11 @@ export function buildContentFromQueueBatch(
     )
     .map((item) =>
       item.kind === "task_notification"
-        ? ({ kind: "task_notification", text: item.text } as const)
+        ? ({
+            kind: "task_notification",
+            text: item.text,
+            content: item.content,
+          } as const)
         : ({
             kind: "user",
             content: item.content,

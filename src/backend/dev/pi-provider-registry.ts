@@ -118,7 +118,7 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     openai: "gpt-5.5",
     "azure-openai-responses": "gpt-5.4",
     "openai-codex": "gpt-5.5",
-    radius: "auto",
+    radius: "balanced",
     nvidia: "nvidia/nemotron-3-super-120b-a12b",
     deepseek: "deepseek-v4-pro",
     google: "gemini-3.1-pro-preview",
@@ -126,7 +126,7 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     "github-copilot": "gpt-5.4",
     openrouter: "moonshotai/kimi-k2.6",
     "vercel-ai-gateway": "zai/glm-5.1",
-    xai: "grok-4.6",
+    xai: "grok-4.7",
     groq: "openai/gpt-oss-120b",
     cerebras: "gpt-oss-120b",
     zai: "glm-5.3",
@@ -138,11 +138,12 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
     moonshotai: "kimi-k2.6",
     "moonshotai-cn": "kimi-k2.6",
     huggingface: "moonshotai/Kimi-K2.6",
-    fireworks: "accounts/fireworks/models/kimi-k2p6",
-    together: "moonshotai/Kimi-K2.6",
+    fireworks: "accounts/fireworks/models/kimi-k3",
+    together: "moonshotai/Kimi-K3",
     opencode: "kimi-k2.6",
-    "opencode-go": "kimi-k2.6",
+    "opencode-go": "kimi-k3",
     "kimi-coding": "kimi-for-coding",
+    meta: "muse-spark-1.3",
     "cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
     "cloudflare-ai-gateway": "workers-ai/@cf/moonshotai/kimi-k2.6",
     "qwen-token-plan": "qwen3.7-max",
@@ -157,7 +158,9 @@ export const PI_TUI_DEFAULT_MODEL_IDS: Partial<Record<KnownProvider, string>> =
 // These pi-ai providers are intentionally absent from Pi TUI's
 // `defaultModelPerProvider`. Keep the omission explicit so newly added pi-ai
 // providers cannot silently inherit catalog-order defaults without review.
-export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([]);
+export const PI_TUI_DEFAULTLESS_PROVIDER_IDS: ReadonlySet<string> = new Set([
+  "typesafe",
+]);
 
 const PI_PROVIDER_OVERRIDES: Partial<
   Record<KnownProvider, PiProviderOverride>

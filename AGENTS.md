@@ -16,9 +16,21 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 ## Runtime Validation
 
+### Automated notifications use user-role reminders
+
+Never inject `role: "system"` messages into conversation history for harness
+notifications, recovery, teleport, onboarding, or mod instructions. Use
+`role: "user"` with `<system-reminder>...</system-reminder>` content instead.
+The tags identify automated context without requiring API-level system priority;
+the existing transcript echo strips reminder-only content from user bubbles.
+Anthropic can reject a system-role notification after an ordinary assistant
+message, including when a later user message follows it. Keep tool results before
+the reminder and preserve message IDs. This rule does not change the compiled
+system prompt or explicit user-supplied provider/API message roles.
+
 Development and distribution use different runtimes. `bun run dev` runs the
 TypeScript source with Bun, while the published package exposes a Node-targeted
-`letta.js` bundle and requires Node 22.19 or newer. When behavior depends on the
+`letta.js` bundle and requires Node ^22.23.4, ^24.22.1, or ^26.12.1. When behavior depends on the
 runtime, test both the Bun source path and the built Node artifact.
 
 The interactive TUI, headless mode, and websocket listener also have separate
@@ -251,7 +263,10 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_DEBUG=0` | Suppress debug output even in dev mode |
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
-| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `~/.letta/lc-local-backend`) |
+| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `<product-config>/lc-local-backend`) |
+| `LETTA_CONFIG_DIR` | Absolute global config directory (defaults to `~/.letta`); product hosts use this to isolate settings, credentials, device identity, schedules, channel accounts/sessions, remote-session state, durable listener control state, global skills, and listener locks without replacing `HOME` |
+| `LETTA_SECRETS_SERVICE_NAME` | OS-keychain service namespace for hosts that isolate credentials (defaults to `letta-code`) |
+| `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by forks and memory-profile subagents. Unset = no change |
 
 When manually smoke-testing the local backend (`letta --backend local` or
 `bun run dev --backend local`), set `LETTA_LOCAL_BACKEND_DIR` to a temporary
@@ -264,7 +279,7 @@ directory first. Otherwise the run reads and mutates your real
 - **`new URL("./path.ts", import.meta.url)` in tests** is not a static import and is not caught by the `@/` import codemod. Scan for `new URL(` manually when moving source files.
 - **grep exits 1 on no matches** — pre-commit hooks use `|| true` on grep pipes to prevent false failures on clean commits.
 - **macOS case-insensitive FS** — `existsSync("bash.ts")` returns `true` when `Bash.ts` exists. Rename scripts that use `existsSync` to check kebab-case targets will silently skip single-word PascalCase files. Use `git mv` for renames.
-- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (>= 22.19), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
+- **Native modules can behave differently under Bun and Node.** The published package runs the bundled `letta.js` under Node (^22.23.4, ^24.22.1, or ^26.12.1), while `bun run dev` runs the source under Bun. Example: `node-pty` is loaded directly under Node but through a Node bridge process under Bun, because its native handles do not integrate reliably with Bun's event loop (`src/tools/impl/shell-runner.ts`). Test runtime-sensitive code on both paths.
 - **`setTimeout(fn, 0)` fires on the next tick, not never.** For "no timeout" behavior, check the timeout value before scheduling the timer instead of passing 0.
 - **Extend `@letta-ai/letta-client` types instead of redeclaring them.** Use the SDK's `ToolCall`, `StopReasonType`, and similar wire types directly; do not duplicate wire shapes or cast with `as any`.
 - **Package subpath entrypoints use relative imports and dedicated entry files.** Library entries (`src/agent-presets.ts`, `src/channels-*.ts`, `src/app-server-client.ts`) are bundled separately and their emitted `.d.ts` files go through an alias rewrite in `build.js`; anything reachable from a browser-targeted entry must stay free of node builtins and backend/provider imports. Consumers on `moduleResolution: "node"` resolve subpath types through `typesVersions` in `package.json`, so new subpaths need entries there too.
@@ -368,11 +383,11 @@ resent. Interrupt handler marking tools cancelled even when execution completed.
 
 ### Shell Tool Parity Gap
 
-Policy/UI layer treats all shell variants (`Bash`, `shell_command`,
-`ShellCommand`, `run_shell_command`) identically, but the implementation
-layer differs. Features added to one tool may be missing from others.
+Policy/UI layer treats both shell tools (`Bash`, `exec_command`) identically,
+but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
+Features added to one may be missing from the other.
 
-- **Review signal:** any shell tool change, check ALL variants have parity.
+- **Review signal:** any shell tool change, check both tools have parity.
 
 ### Interrupt Lock / State Cleanup
 
@@ -661,7 +676,7 @@ or writing each other's memory.
 1. **Shell commands:** wrapped per invocation with cross-agent policy (deny
    active agent-memory tree, carve current agent's own memory back out, leave
    repo/home/tmp writable, network open).
-2. **Memory-mode subagents** (reflection, memory, init, history-analyzer):
+2. **Memory-mode subagents** (reflection, memory, init):
    entire process wrapped. Reads broadly, writes restricted.
 3. **In-process file tools** (Read/Edit/Write): cannot fork, so kernel sandbox
    can't see them. Old static cross-agent guard remains: resolves both lexical
@@ -695,12 +710,22 @@ Sandbox policy must deny BOTH memory trees:
 
 The model catalog is a dynamic runtime service, not a static `models.json` file.
 
-**API mode (cloud):** loads from `GET /v1/models/catalog` at startup. If cloud
-fails and no cache -> startup exits with error. If cache exists -> degraded mode.
+**API mode (Cloud):** hosted selector rows, labels, presets, and capabilities
+come only from `GET /v1/models/catalog`. `GET /v1/models` contributes only
+organization-specific BYOK rows in Cloud mode; never use its base/hosted rows to
+filter, supplement, delay, or provide a fallback for the hosted catalog. If the
+catalog fails and no cache exists, startup exits with an error. If a cache
+exists, startup uses degraded mode.
 
-**Local mode:** projects pi-ai model inventory into `CatalogModel` shape via
-`toLocalCatalogModels()`. If pi-ai unavailable -> empty catalog, continues
-normally.
+**Local and custom App Server mode:** projects the active pi-ai or server
+runtime inventory into `CatalogModel` shape via `toRuntimeCatalogModels()`. If
+pi-ai is unavailable, the local catalog is empty and startup continues.
+
+Cloud BYOK handles may use an organization-specific provider name. Match them
+to catalog metadata through the provider metadata already returned with the
+BYOK row, while retaining the organization-specific handle for selection. Do
+not add provider-name rewrites to make hosted rows from `GET /v1/models` act
+like catalog rows.
 
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
@@ -925,8 +950,7 @@ as success if hashes match.
 
 Cloud API teleport uses a 409 `TELEPORT_SOURCE_NOT_ACTIVE` error when the source
 environment is not active. Rulesets (not branch protection) govern the cloud
-side. CODEOWNERS: the author of a PR can't self-satisfy their own review
-requirement.
+side.
 
 ### Desktop Device Selection
 
@@ -945,3 +969,5 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+- Never reference non-public code, data, or internal systems in commits, pull requests, or code comments in this repository; keep that context in internal tickets and cite only the ticket ID.

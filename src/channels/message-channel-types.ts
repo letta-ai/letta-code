@@ -9,7 +9,9 @@ export interface MessageChannelInput {
   accountId?: string;
   message?: string;
   replyTo?: string;
-  threadId?: string;
+  threadId?: string | null;
+  conversationId?: string;
+  expectedConversationId?: string;
   messageId?: string;
   attachmentId?: string;
   emoji?: string;

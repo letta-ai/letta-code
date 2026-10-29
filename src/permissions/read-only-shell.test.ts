@@ -512,14 +512,14 @@ describe("isReadOnlyShellCommand", () => {
 
     test("handles env safely", () => {
       expect(isReadOnlyShellCommand("env")).toBe(true);
-      expect(isReadOnlyShellCommand("env --help")).toBe(true);
-      expect(isReadOnlyShellCommand("env ls -la")).toBe(true);
-      expect(isReadOnlyShellCommand("env bash -lc 'touch /tmp/pwn'")).toBe(
-        false,
-      );
-      expect(
-        isReadOnlyShellCommand("env FOO=1 bash -lc 'touch /tmp/pwn'"),
-      ).toBe(false);
+      expect(isReadOnlyShellCommand("less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env -u VAR less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env ls")).toBe(true);
+      expect(isReadOnlyShellCommand("env VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env -i VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x git log")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x ls")).toBe(false);
     });
   });
 
@@ -785,56 +785,6 @@ describe("isReadOnlyShellCommand", () => {
     test("blocks pipes with unsafe commands", () => {
       expect(isReadOnlyShellCommand("cat file | rm")).toBe(false);
       expect(isReadOnlyShellCommand("echo test | bash")).toBe(false);
-    });
-  });
-
-  describe("letta CLI commands", () => {
-    test("allows letta memory tokens", () => {
-      expect(isReadOnlyShellCommand("letta memory tokens")).toBe(true);
-    });
-
-    test("allows letta memory tokens with flags", () => {
-      expect(
-        isReadOnlyShellCommand("letta memory tokens --quiet --format json"),
-      ).toBe(true);
-      expect(
-        isReadOnlyShellCommand(
-          "letta memory tokens --memory-dir /tmp/mem --top 10",
-        ),
-      ).toBe(true);
-    });
-
-    test("allows letta memory help", () => {
-      expect(isReadOnlyShellCommand("letta memory help")).toBe(true);
-    });
-
-    test("blocks unknown letta memory action", () => {
-      // restore/backup/pull/diff mutate state — not in read-only allowlist
-      expect(isReadOnlyShellCommand("letta memory restore")).toBe(false);
-      expect(isReadOnlyShellCommand("letta memory pull")).toBe(false);
-      expect(isReadOnlyShellCommand("letta memory delete")).toBe(false);
-    });
-
-    test("blocks letta memory with no action", () => {
-      expect(isReadOnlyShellCommand("letta memory")).toBe(false);
-    });
-
-    test("blocks unknown letta group", () => {
-      expect(isReadOnlyShellCommand("letta install plugin")).toBe(false);
-      expect(isReadOnlyShellCommand("letta doctor")).toBe(false);
-      expect(
-        isReadOnlyShellCommand("letta blocks list --agent agent-123"),
-      ).toBe(false);
-    });
-
-    test("allows legacy letta memfs alias", () => {
-      expect(isReadOnlyShellCommand("letta memfs tokens")).toBe(true);
-    });
-
-    test("allows letta memory tokens piped to a safe command", () => {
-      expect(
-        isReadOnlyShellCommand("letta memory tokens --format json | head -5"),
-      ).toBe(true);
     });
   });
 

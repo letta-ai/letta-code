@@ -93,6 +93,9 @@ export class FakeSlackApp {
       add: mock(async () => ({ ok: true })),
       remove: mock(async () => ({ ok: true })),
     },
+    emoji: {
+      list: mock(async () => ({ emoji: {} })),
+    },
     files: {
       getUploadURLExternal: mock(async () => ({
         ok: true,
@@ -243,6 +246,9 @@ export class FakeSlackWriteClient {
   readonly reactions = {
     add: mock(async () => ({ ok: true })),
     remove: mock(async () => ({ ok: true })),
+  };
+  readonly emoji = {
+    list: mock(async () => ({ emoji: {} })),
   };
   readonly files = {
     getUploadURLExternal: mock(async () => ({
@@ -399,6 +405,7 @@ export function installSlackAdapterTestHooks(): void {
       instance.client.conversations.replies.mockClear();
       instance.client.reactions.add.mockClear();
       instance.client.reactions.remove.mockClear();
+      instance.client.emoji.list.mockClear();
       instance.client.files.getUploadURLExternal.mockClear();
       instance.client.files.completeUploadExternal.mockClear();
       instance.init.mockClear();
@@ -415,6 +422,7 @@ export function installSlackAdapterTestHooks(): void {
       instance.assistant.threads.setStatus.mockClear();
       instance.reactions.add.mockClear();
       instance.reactions.remove.mockClear();
+      instance.emoji.list.mockClear();
       instance.files.getUploadURLExternal.mockClear();
       instance.files.completeUploadExternal.mockClear();
     }

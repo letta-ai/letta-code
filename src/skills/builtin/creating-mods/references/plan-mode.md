@@ -19,10 +19,10 @@ This is a pattern reference, not a full product implementation. Keep local mods 
 
 ```text
 /plan or enter_plan_mode
--> create ~/.letta/plans/<random>.md
+-> create <product-config>/plans/<random>.md
 -> remember active plan state for this conversation
 -> remind the agent that only read-only tools and plan-file writes are allowed
--> permission overlay denies mutations outside ~/.letta/plans/*.md
+-> permission overlay denies mutations outside <product-config>/plans/*.md
 -> agent writes the plan with normal Write/Edit/ApplyPatch tools
 -> agent reads the plan and calls AskUserQuestion with the full current plan text and Approve / Revise
 -> if approved, agent calls exit_plan_mode
@@ -46,15 +46,16 @@ Do not use panels for persistent mode state. Panels are transient UI and can be 
 
 ## State
 
-Use small local state under `~/.letta/mods/`, keyed by conversation ID:
+Use small local state under the active product config root's `mods/` directory, keyed by conversation ID:
 
 ```ts
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
 
-const PLANS_DIR = join(homedir(), ".letta", "plans");
-const STATE_PATH = join(homedir(), ".letta", "mods", "plan-mode.state.json");
+const CONFIG_ROOT = process.env.LETTA_CONFIG_DIR || join(homedir(), ".letta");
+const PLANS_DIR = join(CONFIG_ROOT, "plans");
+const STATE_PATH = join(CONFIG_ROOT, "mods", "plan-mode.state.json");
 const GLOBAL_CONVERSATION_ID = "__global__";
 
 type PlanSession = {
@@ -81,12 +82,12 @@ function readState(): PlanState {
 }
 
 function writeState(state: PlanState): void {
-  mkdirSync(join(homedir(), ".letta", "mods"), { recursive: true });
+  mkdirSync(join(CONFIG_ROOT, "mods"), { recursive: true });
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 ```
 
-Generate plan paths under `~/.letta/plans/`. The old built-in used random adjective/adjective/noun names like `zesty-dazzling-coral.md`; any collision-resistant readable name is fine.
+Generate plan paths under `${LETTA_CONFIG_DIR:-$HOME/.letta}/plans/`. The old built-in used random adjective/adjective/noun names like `zesty-dazzling-coral.md`; any collision-resistant readable name is fine.
 
 ## Entry command and tool
 
@@ -109,7 +110,7 @@ In plan mode, you should:
 Remember: DO NOT write or edit any files except the plan file. This is a read-only exploration and planning phase.
 
 Plan file path: ${session.planFilePath}
-If using apply_patch, use this exact relative patch path: ${relativePatchPath}`;
+If using ApplyPatch, use this exact relative patch path: ${relativePatchPath}`;
 }
 
 export default function activate(letta) {
@@ -161,7 +162,7 @@ function buildActiveReminder(session, cwd) {
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received. Instead, you should:
 1. Answer the user's query comprehensively, using the AskUserQuestion tool if you need to ask the user clarifying questions.
 2. Write your implementation plan to the plan file. Plan file path: ${session.planFilePath}
-3. If using apply_patch, use this exact relative path in patch headers: ${relativePatchPath}
+3. If using ApplyPatch, use this exact relative path in patch headers: ${relativePatchPath}
 4. Use direct read-only tools for exploration. Do not launch coding, general-purpose, or fork subagents in plan mode; they may mutate files and should be denied. Only recall-style subagents are allowed if available.
 5. When the plan is complete, read the plan file and present the full current plan text to the user with AskUserQuestion. The question body must include the entire plan, not a summary. The question should offer at least "Approve" and "Revise" options.
 6. If the user approves, call exit_plan_mode immediately. If the user asks to revise, stay in plan mode, update the plan file, then read and present the full revised plan again.
@@ -180,29 +181,19 @@ if (letta.capabilities.events.turns) {
 
 ## Permission overlay
 
-Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, `read_file`, `ReadFile`, `SearchFileContent`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
+Use a permission overlay, not `tool_start`, for policy. Normalize tool names by family; UI display names and provider-specific tool names drift (`Read`, `read`, etc.). Keep pure read-only tools separate from planning coordination tools like `AskUserQuestion` and todo/plan updates so the policy stays honest.
 
 ```ts
 const readOnlyToolNames = new Set([
   "glob",
-  "globgemini",
   "grep",
-  "grepfiles",
   "list",
-  "listdir",
-  "listdirectory",
-  "ls",
   "notebookread",
   "read",
-  "readfile",
-  "readfilegemini",
   "readlsp",
-  "readmanyfiles",
   "search",
-  "searchfilecontent",
   "searchfiles",
   "skill",
-  "taskoutput",
   "viewimage",
 ]);
 
@@ -210,9 +201,11 @@ const planningToolNames = new Set([
   "askuserquestion",
   "enterplanmode",
   "exitplanmode",
-  "todowrite",
+  "taskcreate",
+  "taskget",
+  "tasklist",
+  "taskupdate",
   "updateplan",
-  "writetodos",
 ]);
 
 const readOnlySubagentTypes = new Set(["recall"]);
@@ -237,13 +230,13 @@ function isAllowedReadOnlySubagent(args) {
 function isPlanFileWrite(toolName, args, cwd) {
   // For Write/Edit-style tools, check file_path/path/notebook_path.
   // For ApplyPatch-style tools, parse *** Add/Update/Delete File and *** Move to directives.
-  // Allow only if every target resolves to a .md file under ~/.letta/plans/.
+  // Allow only if every target resolves to a .md file under CONFIG_ROOT/plans/.
 }
 
 if (letta.capabilities.permissions) {
   disposers.push(letta.permissions.register({
     id: "plan-mode",
-    description: "Allow read-only tools and writes only to ~/.letta/plans/*.md while plan mode is active.",
+    description: "Allow read-only tools and writes only to the active product plans directory while plan mode is active.",
     check(event) {
       const session = getSession(event.conversationId);
       if (!session) return;
@@ -265,7 +258,7 @@ if (letta.capabilities.permissions) {
       return {
         decision: "deny",
         reason:
-          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, List, Search, Skill, TaskOutput, safe read-only Bash), planning tools (AskUserQuestion, TodoWrite/UpdatePlan), or recall-style subagents only. ` +
+          `Plan mode is active. Use direct read-only tools (Read, Grep, Glob, ViewImage, Skill, safe read-only Bash), planning tools (AskUserQuestion, TaskCreate/TaskUpdate, UpdatePlan), or recall-style subagents only. ` +
           `Do not use coding, general-purpose, or fork subagents in plan mode. ` +
           `Write your plan to: ${session.planFilePath}. ` +
           `When ready, read the plan file and include the full current plan text in AskUserQuestion for approval, then call exit_plan_mode after approval.`,
@@ -275,7 +268,7 @@ if (letta.capabilities.permissions) {
 }
 ```
 
-Shell allowlists are easy to get wrong. Start conservative: allow clearly read-only shell commands if needed, plus a narrow plan-file heredoc or `mv old.md new.md` only when every target is inside `~/.letta/plans/*.md`. Deny mutating shell patterns such as `sed -i`, `find -delete`, `rm`, `cp`, `touch`, package installs, and arbitrary interpreters.
+Shell allowlists are easy to get wrong. Start conservative: allow clearly read-only shell commands if needed, plus a narrow plan-file heredoc or `mv old.md new.md` only when every target is inside `${LETTA_CONFIG_DIR:-$HOME/.letta}/plans/*.md`. Deny mutating shell patterns such as `sed -i`, `find -delete`, `rm`, `cp`, `touch`, package installs, and arbitrary interpreters.
 
 ## Exit tool
 
@@ -323,4 +316,4 @@ if (letta.capabilities.tools) {
 - Keep `exit_plan_mode` as the final state transition and execution handoff. The approved-plan text in its tool return is useful model context.
 - Plan approval must include the full current plan text in `AskUserQuestion.question`, not just a summary or "does this look right?". After revisions, re-read the file and present the full revised plan again.
 - Keep arbitrary coding subagents denied in plan mode unless the runtime has a true read-only child mode. With the current subagent set, allow only recall-style subagents.
-- If the user renames the plan file, exit logic can use the newest non-empty `~/.letta/plans/*.md` modified after plan mode started, or accept an optional plan path. Keep the user-facing flow normal: write plan file, ask approval, then exit.
+- If the user renames the plan file, exit logic can use the newest non-empty file under the active product's `plans/` directory modified after plan mode started, or accept an optional plan path. Keep the user-facing flow normal: write plan file, ask approval, then exit.

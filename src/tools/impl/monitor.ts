@@ -1,8 +1,16 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
-import { getCurrentWorkingDirectory } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import {
+  getCurrentWorkingDirectory,
+  getRuntimeActingUserAttribution,
+} from "@/runtime-context";
+import {
+  captureSecretRedactions,
+  createSecretStreamScrubber,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import { addToMessageQueue } from "@/utils/message-queue-bridge.js";
 import {
   formatMonitorEventNotification,
@@ -12,11 +20,17 @@ import {
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getBackgroundLauncher } from "./bash.js";
 import {
+  armMonitorBackup,
+  cancelMonitorBackup,
+  detachMonitorBackupsForProcessExit,
+  noteMonitorBackupActivity,
+  validateBackupAfterSeconds,
+} from "./monitor-backup.js";
+import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
 import {
-  appendBackgroundProcessOutput,
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
   backgroundProcesses,
@@ -31,13 +45,20 @@ import { getShellEnv } from "./shell-env.js";
 import { withStrictShellPrelude } from "./shell-launchers.js";
 import { startShellProcess } from "./shell-runner.js";
 import { applyShellSandbox } from "./shell-sandbox.js";
+import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const MIN_TIMEOUT_MS = 1000;
-const MAX_TIMEOUT_MS = 3_600_000;
+export const MONITOR_MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
 const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
 const WEBSOCKET_PROTOCOL_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+export function getMonitorTimeoutEvent(timeoutMs: number): string {
+  return isManagedCloudRuntime() && timeoutMs === MONITOR_MAX_TIMEOUT_MS
+    ? "Monitor stopped at the 1-hour Cloud sandbox limit. Cloud monitors have a hard 1-hour limit to avoid keeping sandbox resources unnecessarily running. For later checks, schedule a Wake or cron, which does not keep the sandbox running between turns, and combine it with shorter monitors when needed."
+    : "[Monitor timed out — re-arm if needed.]";
+}
 
 interface MonitorWebSocketSource {
   url: string;
@@ -50,8 +71,11 @@ interface MonitorArgs {
   persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
+  backup_after_seconds?: number;
+  backup_prompt?: string;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
+  signal?: AbortSignal;
 }
 
 type NormalizedMonitorArgs = MonitorArgs & {
@@ -70,6 +94,7 @@ function buildMonitorResult(
   taskId: string,
   timeoutMs: number,
   persistent: boolean,
+  outputFile: string,
 ): MonitorResult {
   const lifetime = persistent
     ? "persistent — runs until TaskStop or session end"
@@ -78,7 +103,7 @@ function buildMonitorResult(
     content: [
       {
         type: "text",
-        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.`,
+        text: `Monitor started (task ${taskId}, ${lifetime}). You will be notified on each event. Keep working — do not poll or sleep. Events may arrive while you are waiting for the user — an event is not their reply.\nOutput file: ${outputFile}`,
       },
     ],
     taskId,
@@ -99,7 +124,7 @@ function validUtf8Prefix(buffer: Buffer, maxBytes: number): Buffer {
   return buffer.subarray(0, end);
 }
 
-class MonitorOutputWriter {
+export class MonitorOutputWriter {
   private bytesWritten = 0;
   private truncated = false;
   private writeFailed = false;
@@ -211,14 +236,21 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     typeof normalized.timeout_ms !== "number" ||
     !Number.isFinite(normalized.timeout_ms) ||
     normalized.timeout_ms < MIN_TIMEOUT_MS ||
-    (!normalized.persistent && normalized.timeout_ms > MAX_TIMEOUT_MS)
+    (!normalized.persistent && normalized.timeout_ms > MONITOR_MAX_TIMEOUT_MS)
   ) {
     throw new Error(
-      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
+      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MONITOR_MAX_TIMEOUT_MS}`,
     );
   }
   if (typeof normalized.persistent !== "boolean") {
     throw new Error("Monitor persistent must be a boolean");
+  }
+  validateBackupAfterSeconds(normalized.backup_after_seconds);
+  if (
+    normalized.backup_prompt !== undefined &&
+    typeof normalized.backup_prompt !== "string"
+  ) {
+    throw new Error("Monitor backup_prompt must be a string");
   }
   if (
     normalized.command !== undefined &&
@@ -261,6 +293,10 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     }
     validateWebSocketSource(normalized.ws);
   }
+  if (isManagedCloudRuntime() && normalized.persistent) {
+    normalized.persistent = false;
+    normalized.timeout_ms = MONITOR_MAX_TIMEOUT_MS;
+  }
   return normalized;
 }
 
@@ -298,24 +334,24 @@ function sanitizeMonitorText(
   return stripAnsi(scrubSecretsFromString(text, secrets));
 }
 
-function queueMonitorEvent(params: {
+export function queueMonitorEvent(params: {
   taskId: string;
-  description: string;
   event: string;
   scope: ReturnType<typeof resolveNotificationScope>;
+  actingUserId?: string | null;
   secrets: Readonly<Record<string, string>>;
 }): void {
-  const { taskId, description, event, scope, secrets } = params;
+  const { taskId, event, scope, actingUserId, secrets } = params;
   const sanitizedEvent = sanitizeMonitorText(event, secrets);
+  noteMonitorBackupActivity(taskId);
   addToMessageQueue({
     kind: "task_notification",
     text: formatMonitorEventNotification({
       taskId,
-      description,
       event: sanitizedEvent,
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
+    ...(actingUserId !== undefined ? { actingUserId } : {}),
   });
 }
 
@@ -326,13 +362,20 @@ function queueCommandCompletion(params: {
   processState: BackgroundProcess;
   scope: ReturnType<typeof resolveNotificationScope>;
   exitCode: number | null;
+  producedOutput: boolean;
 }): void {
-  const { taskId, description, outputFile, processState, scope, exitCode } =
-    params;
+  const {
+    taskId,
+    description,
+    outputFile,
+    processState,
+    scope,
+    exitCode,
+    producedOutput,
+  } = params;
   if (processState.completionNotificationSuppressed) return;
 
   const status = processState.status === "completed" ? "completed" : "failed";
-  const producedOutput = (processState.totalStdoutLines ?? 0) > 0;
   const exitSuffix = exitCode === null ? "" : ` (exit ${exitCode})`;
   const summary =
     status === "failed"
@@ -357,12 +400,14 @@ function queueCommandCompletion(params: {
       outputFile,
       usage: durationMs === undefined ? undefined : { durationMs },
     }),
-    agentId: scope?.agentId,
-    conversationId: scope?.conversationId,
+    ...scope,
+    ...(processState.actingUserId !== undefined
+      ? { actingUserId: processState.actingUserId }
+      : {}),
   });
 }
 
-function markMonitorFinished(
+export function markMonitorFinished(
   taskId: string,
   processState: BackgroundProcess,
   status: "completed" | "failed",
@@ -370,6 +415,7 @@ function markMonitorFinished(
 ): void {
   processState.status = status;
   processState.exitCode = exitCode;
+  void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
   notifyBackgroundProcessStateChanged(processState.runtimeScope);
   scheduleBackgroundProcessCleanup(taskId);
@@ -382,6 +428,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const env = args.secretEnv
     ? { ...getShellEnv(), ...args.secretEnv }
     : getShellEnv();
+  assertSafeWindowsCommand(command, { cwd, env });
   const commandToRun = withStrictShellPrelude(command, env);
   const launcher = getBackgroundLauncher(commandToRun, env, args.secretEnv);
   if (!launcher[0]) {
@@ -393,16 +440,28 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
-  const secrets = args.secretEnv ?? {};
+  const actingUserId = getRuntimeActingUserAttribution();
+  const secrets = captureSecretRedactions(
+    args.parentScope?.agentId,
+    args.secretEnv ?? {},
+  );
+  // Per-stream scrubbers hold back potential partial secret matches so a
+  // credential split across output chunks never reaches the retained output,
+  // the output file, or emitted monitor events unredacted.
+  const streamScrubbers = {
+    stdout: createSecretStreamScrubber(secrets),
+    stderr: createSecretStreamScrubber(secrets),
+  };
   let processState: BackgroundProcess;
+  let producedOutput = false;
 
   const events = createMonitorEventStream({
     emit(event) {
       queueMonitorEvent({
         taskId,
-        description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
     },
@@ -415,6 +474,25 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     },
   });
 
+  const flushStreamScrubbers = (): void => {
+    if (!processState) return;
+    for (const stream of ["stdout", "stderr"] as const) {
+      const rest = streamScrubbers[stream].flush();
+      if (!rest) continue;
+      if (stream === "stdout") {
+        // The held-back tail is still monitor output: route it through the
+        // event stream (before events.finish() flushes a final partial line)
+        // as well as the output file, or a command whose final unterminated
+        // output ends with a secret prefix would silently lose those bytes.
+        if (/[^\n]/.test(rest)) {
+          producedOutput = true;
+        }
+        events.onData(rest);
+      }
+      output.append(stream === "stderr" ? `[stderr] ${rest}` : rest);
+    }
+  };
+
   const runningProcess = startShellProcess(sandboxed.launcher, {
     cwd,
     env: sandboxed.env,
@@ -423,17 +501,15 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     captureOutput: false,
     onOutput(text, stream) {
       if (!processState) return;
-      const sanitizedText = sanitizeMonitorText(text, secrets);
-      appendBackgroundProcessOutput(processState, stream, sanitizedText);
+      const sanitizedText = streamScrubbers[stream].push(stripAnsi(text));
+      if (!sanitizedText) return;
+      if (stream === "stdout" && /[^\n]/.test(sanitizedText)) {
+        producedOutput = true;
+      }
       const wrote = output.append(
         stream === "stderr" ? `[stderr] ${sanitizedText}` : sanitizedText,
       );
       if (!wrote && processState.status === "running") {
-        appendBackgroundProcessOutput(
-          processState,
-          "stderr",
-          "[output file write failed; output may be incomplete]",
-        );
         processState.completionNotificationSuppressed = true;
         markMonitorFinished(taskId, processState, "failed", null);
         try {
@@ -461,16 +537,12 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
       },
     },
     command,
-    stdout: [],
-    stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: scope,
+    actingUserId,
     kind: "monitor",
     description: args.description,
     monitorSource: "command",
@@ -483,6 +555,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   void runningProcess.completion.then(
     ({ exitCode }) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
+      flushStreamScrubbers();
       events.finish();
       output.append(`\n[exit code: ${exitCode}]\n`);
       if (processState.status !== "running") return;
@@ -499,10 +572,12 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
         processState,
         scope,
         exitCode,
+        producedOutput,
       });
     },
     (error: unknown) => {
       if (backgroundProcesses.get(taskId) !== processState) return;
+      flushStreamScrubbers();
       events.finish();
       if (processState.status !== "running") return;
       const shellError = error as Error & { killed?: boolean };
@@ -510,9 +585,9 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
         output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
         queueMonitorEvent({
           taskId,
-          description: args.description,
-          event: "[Monitor timed out — re-arm if needed.]",
+          event: getMonitorTimeoutEvent(args.timeout_ms),
           scope,
+          actingUserId,
           secrets,
         });
         processState.completionNotificationSuppressed = true;
@@ -521,7 +596,6 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
           shellError.message || String(error),
           secrets,
         );
-        appendBackgroundProcessOutput(processState, "stderr", message);
         output.append(`\n[error] ${message}\n`);
       }
       markMonitorFinished(taskId, processState, "failed", null);
@@ -533,6 +607,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
           processState,
           scope,
           exitCode: null,
+          producedOutput,
         });
       }
     },
@@ -542,6 +617,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
     taskId,
     args.persistent ? 0 : args.timeout_ms,
     args.persistent,
+    outputFile,
   );
 }
 
@@ -552,6 +628,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   const outputFile = createBackgroundOutputFile(taskId);
   const output = new MonitorOutputWriter(outputFile);
   const scope = resolveNotificationScope(args.parentScope);
+  const actingUserId = getRuntimeActingUserAttribution();
   const secrets: Readonly<Record<string, string>> = {};
   const socket = new WebSocket(source.url, source.protocols, {
     maxPayload: WEBSOCKET_MAX_PAYLOAD_BYTES,
@@ -576,9 +653,9 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     emit(event) {
       queueMonitorEvent({
         taskId,
-        description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
     },
@@ -599,16 +676,12 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       },
     },
     command: webSocketDisplayUrl(source.url),
-    stdout: [],
-    stderr: [],
     status: "running",
     exitCode: null,
-    lastReadIndex: { stdout: 0, stderr: 0 },
     startTime: new Date(),
     outputFile,
-    totalStdoutLines: 0,
-    totalStderrLines: 0,
     runtimeScope: scope,
+    actingUserId,
     kind: "monitor",
     description: args.description,
     monitorSource: "websocket",
@@ -633,9 +706,9 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       output.append(`${event}\n`);
       queueMonitorEvent({
         taskId,
-        description: args.description,
         event,
         scope,
+        actingUserId,
         secrets,
       });
       processState.completionNotificationSuppressed = true;
@@ -648,14 +721,8 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       isBinary ? `[binary frame, ${byteLength} bytes]` : rawDataToString(data),
       secrets,
     );
-    appendBackgroundProcessOutput(processState, "stdout", text);
     const wrote = output.append(`${text}\n`);
     if (!wrote) {
-      appendBackgroundProcessOutput(
-        processState,
-        "stderr",
-        "[output file write failed; output may be incomplete]",
-      );
       processState.completionNotificationSuppressed = true;
       markMonitorFinished(taskId, processState, "failed", null);
       closeSocket();
@@ -674,13 +741,12 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     sawSocketError = true;
     const message = sanitizeMonitorText(error.message, secrets);
     const event = `[WebSocket error: ${message}]`;
-    appendBackgroundProcessOutput(processState, "stderr", message);
     output.append(`[stderr] ${message}\n`);
     queueMonitorEvent({
       taskId,
-      description: args.description,
       event,
       scope,
+      actingUserId,
       secrets,
     });
     closeSocket();
@@ -705,9 +771,9 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     output.append(`${event}\n`);
     queueMonitorEvent({
       taskId,
-      description: args.description,
       event,
       scope,
+      actingUserId,
       secrets,
     });
     markMonitorFinished(
@@ -725,9 +791,9 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       if (processState.status !== "running") return;
       queueMonitorEvent({
         taskId,
-        description: args.description,
-        event: "[Monitor timed out — re-arm if needed.]",
+        event: getMonitorTimeoutEvent(args.timeout_ms),
         scope,
+        actingUserId,
         secrets,
       });
       output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
@@ -742,18 +808,44 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
     taskId,
     args.persistent ? 0 : args.timeout_ms,
     args.persistent,
+    outputFile,
   );
 }
 
+function backupScopeFor(taskId: string) {
+  const processState = backgroundProcesses.get(taskId);
+  const runtimeScope = processState?.runtimeScope;
+  if (!runtimeScope) return undefined;
+  return { ...runtimeScope, actingUserId: processState.actingUserId };
+}
+
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
+  // Hooks may have yielded since approval execution checked cancellation.
+  args.signal?.throwIfAborted();
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
-  return normalized.command !== undefined
-    ? startCommandMonitor(normalized)
-    : startWebSocketMonitor(normalized);
+  const result =
+    normalized.command !== undefined
+      ? startCommandMonitor(normalized)
+      : startWebSocketMonitor(normalized);
+  if (normalized.backup_after_seconds === undefined) return result;
+  const note = await armMonitorBackup({
+    taskId: result.taskId,
+    description: normalized.description,
+    afterSeconds: normalized.backup_after_seconds,
+    prompt: normalized.backup_prompt,
+    scope: backupScopeFor(result.taskId),
+    isRunning: () =>
+      backgroundProcesses.get(result.taskId)?.status === "running",
+  });
+  const first = result.content[0];
+  if (first) first.text = `${first.text}\n${note}`;
+  return result;
 }
 
 export function stopMonitorsForProcessExit(): void {
+  // Leave backup wakes armed: they exist for exactly this case.
+  detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
     if (processState.kind !== "monitor" || processState.status !== "running") {
       continue;
@@ -770,7 +862,7 @@ export function stopMonitorsForProcessExit(): void {
 
 let monitorProcessExitCleanupInstalled = false;
 
-function installMonitorProcessExitCleanup(): void {
+export function installMonitorProcessExitCleanup(): void {
   if (monitorProcessExitCleanupInstalled) return;
   monitorProcessExitCleanupInstalled = true;
   process.once("exit", stopMonitorsForProcessExit);

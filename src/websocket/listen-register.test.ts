@@ -62,6 +62,9 @@ describe("registerWithCloud", () => {
         lettaCodeVersion: expect.any(String),
         os: expect.any(String),
         nodeVersion: expect.any(String),
+        machine: {
+          architecture: process.arch,
+        },
         supportsPairedListenerGenerations: true,
       },
     });

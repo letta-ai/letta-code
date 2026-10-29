@@ -61,6 +61,9 @@ export function createDisabledModAdapter() {
     registry,
   };
   const events: ModEvents = {
+    hasHandlers() {
+      return false;
+    },
     emit(name) {
       return Promise.resolve(emptyEventEmissionResult(name));
     },

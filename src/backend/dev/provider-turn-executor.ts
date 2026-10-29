@@ -20,6 +20,7 @@ import type {
 } from "@/backend/local/local-store";
 import {
   attachLocalMessage,
+  attachLocalSegmentIdentity,
   markLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
@@ -302,7 +303,7 @@ export function estimateProviderRequestBytes(
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
   contextTokensEstimate?: number,
-): LettaStreamingResponse | undefined {
+): LettaStreamingResponse {
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -311,19 +312,11 @@ function createUsageStatisticsChunk(
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
   const reasoningTokens = usage?.reasoning;
-  if (
-    promptTokens === undefined &&
-    completionTokens === undefined &&
-    totalTokens === undefined &&
-    cachedInputTokens === undefined &&
-    cacheWriteTokens === undefined &&
-    reasoningTokens === undefined &&
-    contextTokens === undefined
-  ) {
-    return undefined;
-  }
   return {
     message_type: "usage_statistics",
+    // One chunk per completed provider step (see the `done` handler), so each
+    // reports exactly one step, matching Cloud's per-step usage_statistics.
+    step_count: 1,
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
@@ -373,26 +366,54 @@ function contiguousContentStartIndex(
   ) {
     startIndex -= 1;
   }
+  if (messageType === "reasoning_message") {
+    for (let index = startIndex; index <= contentIndex; index++) {
+      const content = partial.content[index];
+      if (content?.type === "thinking" && content.thinking.length > 0) {
+        return index;
+      }
+    }
+  }
   return startIndex;
 }
 
-function otidForContentSegment(
-  otids: Map<number, string>,
+function projectsLocalOutput(
+  content: LocalAssistantMessage["content"][number],
+): boolean {
+  if (content.type === "text") return true;
+  if (content.type === "thinking") return content.thinking.length > 0;
+  return content.type === "toolCall" && typeof content.id === "string";
+}
+
+interface ProviderSegmentIdentity {
+  otid: string;
+  contentStartIndex: number;
+  useSourceMessageId: boolean;
+}
+
+function identityForContentSegment(
+  identities: Map<number, ProviderSegmentIdentity>,
   prefix: string,
   contentIndex: number,
   partial: AssistantMessage,
   messageType: StreamedMessageType,
-): string {
-  const segmentStartIndex = contiguousContentStartIndex(
+): ProviderSegmentIdentity {
+  const contentStartIndex = contiguousContentStartIndex(
     partial,
     contentIndex,
     messageType,
   );
-  const existing = otids.get(segmentStartIndex);
+  const existing = identities.get(contentStartIndex);
   if (existing) return existing;
-  const otid = `${prefix}-${segmentStartIndex}-${randomUUID()}`;
-  otids.set(segmentStartIndex, otid);
-  return otid;
+  const identity = {
+    otid: `${prefix}-${contentStartIndex}-${randomUUID()}`,
+    contentStartIndex,
+    useSourceMessageId:
+      messageType === "assistant_message" &&
+      !partial.content.slice(0, contentStartIndex).some(projectsLocalOutput),
+  };
+  identities.set(contentStartIndex, identity);
+  return identity;
 }
 
 function createProviderLettaStream(
@@ -406,8 +427,8 @@ function createProviderLettaStream(
       let sawToolCall = false;
       let pendingStopReason: LettaStreamingResponse | undefined;
       let sawUsageStatistics = false;
-      const assistantOtids = new Map<number, string>();
-      const reasoningOtids = new Map<number, string>();
+      const assistantIdentities = new Map<number, ProviderSegmentIdentity>();
+      const reasoningIdentities = new Map<number, ProviderSegmentIdentity>();
       try {
         for await (const event of events) {
           if (event.type === "error") {
@@ -427,32 +448,40 @@ function createProviderLettaStream(
 
           const { part } = event;
           if (part.type === "text_delta") {
-            yield {
-              message_type: "assistant_message",
-              otid: otidForContentSegment(
-                assistantOtids,
-                "provider-assistant",
-                part.contentIndex,
-                part.partial,
-                "assistant_message",
-              ),
-              content: [{ type: "text", text: part.delta }],
-            } as LettaStreamingResponse;
+            const identity = identityForContentSegment(
+              assistantIdentities,
+              "provider-assistant",
+              part.contentIndex,
+              part.partial,
+              "assistant_message",
+            );
+            yield attachLocalSegmentIdentity(
+              {
+                message_type: "assistant_message",
+                otid: identity.otid,
+                content: [{ type: "text", text: part.delta }],
+              } as LettaStreamingResponse,
+              identity,
+            );
             continue;
           }
 
           if (part.type === "thinking_delta") {
-            yield {
-              message_type: "reasoning_message",
-              otid: otidForContentSegment(
-                reasoningOtids,
-                "provider-reasoning",
-                part.contentIndex,
-                part.partial,
-                "reasoning_message",
-              ),
-              reasoning: part.delta,
-            } as LettaStreamingResponse;
+            const identity = identityForContentSegment(
+              reasoningIdentities,
+              "provider-reasoning",
+              part.contentIndex,
+              part.partial,
+              "reasoning_message",
+            );
+            yield attachLocalSegmentIdentity(
+              {
+                message_type: "reasoning_message",
+                otid: identity.otid,
+                reasoning: part.delta,
+              } as LettaStreamingResponse,
+              identity,
+            );
             continue;
           }
 
@@ -471,14 +500,11 @@ function createProviderLettaStream(
 
           if (part.type === "done") {
             if (!sawUsageStatistics) {
-              const usageChunk = createUsageStatisticsChunk(
+              sawUsageStatistics = true;
+              yield createUsageStatisticsChunk(
                 part.message.usage,
                 contextTokensEstimate,
               );
-              if (usageChunk) {
-                sawUsageStatistics = true;
-                yield usageChunk;
-              }
             }
             pendingStopReason = {
               message_type: "stop_reason",

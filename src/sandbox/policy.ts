@@ -32,9 +32,10 @@ import { posix, win32 } from "node:path";
  * to do its work, minus the other-agent directories in `deniedRoots`.
  *
  * Specificity is expressed through ordering, not nesting depth. The emitted
- * order is: global write-deny → `baseWritableRoots` → `deniedRoots` →
- * `writableRoots` → `readonlyRoots`. So a broad base carve is overridden by a
- * nested deny, which is in turn overridden by a still-more-specific self carve.
+ * order is: global write-deny → `baseWritableRoots` → the remaining denied and
+ * self-carve rules from broadest path to narrowest path. This permits the
+ * required deny → outer self → nested deny → inner self alternation while
+ * keeping the most specific path authoritative.
  */
 export interface FsSandboxPolicy {
   baseWritableRoots: string[];
@@ -85,6 +86,53 @@ export function buildFsSandboxPolicy(
     writableRoots: normalizeRoots(options.writableRoots ?? []),
     restrictWrites: options.restrictWrites ?? false,
   };
+}
+
+export type SandboxPathRuleKind = "deny" | "readonly" | "writable";
+
+export interface SandboxPathRule {
+  kind: SandboxPathRuleKind;
+  root: string;
+  /** Index in the corresponding policy array, used for stable backend names. */
+  index: number;
+}
+
+/**
+ * Compile deny/self-carve rules in broad-to-narrow path order.
+ *
+ * Both sandbox backends use last-rule/mount-wins semantics. Sorting by depth
+ * supports alternating overlap shapes such as primary deny → outer self carve
+ * → nested backend deny → inner backend self carve. For an exact same path,
+ * deny sorts last and therefore fails closed.
+ */
+export function getOrderedSandboxPathRules(
+  policy: FsSandboxPolicy,
+): SandboxPathRule[] {
+  const rules: SandboxPathRule[] = [];
+  const append = (kind: SandboxPathRuleKind, roots: string[]) => {
+    roots.forEach((root, index) => {
+      rules.push({ kind, root, index });
+    });
+  };
+
+  append("deny", policy.deniedRoots);
+  append("readonly", policy.readonlyRoots);
+  append("writable", policy.writableRoots);
+
+  const samePathPriority: Record<SandboxPathRuleKind, number> = {
+    readonly: 0,
+    writable: 1,
+    deny: 2,
+  };
+  const depth = (root: string) => root.split("/").filter(Boolean).length;
+
+  return rules.sort((a, b) => {
+    const depthDifference = depth(a.root) - depth(b.root);
+    if (depthDifference !== 0) return depthDifference;
+    const pathDifference = a.root.localeCompare(b.root);
+    if (pathDifference !== 0) return pathDifference;
+    return samePathPriority[a.kind] - samePathPriority[b.kind];
+  });
 }
 
 /**

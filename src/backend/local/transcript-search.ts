@@ -8,10 +8,11 @@ import {
   withProjectedMessageDates,
 } from "./local-message-projection";
 import {
+  forEachJsonlRow,
   LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT,
   LOCAL_TRANSCRIPT_MESSAGE_FORMAT,
   type LocalTranscriptManifest,
-} from "./local-store";
+} from "./local-transcript";
 import type { StoredMessage } from "./local-types";
 
 export type LocalTranscriptSearchBody = {
@@ -41,10 +42,21 @@ type TranscriptMessageRow = {
   sourceIndex: number;
 };
 
-type SearchableStoredMessage = {
-  message: StoredMessage;
-  text: string;
+type SearchRecord = {
+  /** Kept only for query matches; other rows keep just ranking statistics. */
+  message?: StoredMessage;
+  date: string;
+  conversationId?: string;
+  messageType?: string;
+  tokenCount: number;
+  /** Frequency of each parsed query term, in query order. */
+  termFrequencies: number[];
   score: number;
+  isSearchEcho: boolean;
+};
+
+type LocalTranscriptSearchOptions = {
+  currentConversationId?: string;
 };
 
 function readJsonFile<T>(path: string): T | undefined {
@@ -53,18 +65,6 @@ function readJsonFile<T>(path: string): T | undefined {
     return JSON.parse(readFileSync(path, "utf8")) as T;
   } catch {
     return undefined;
-  }
-}
-
-function readJsonlFile(path: string): unknown[] {
-  if (!existsSync(path)) return [];
-  try {
-    return readFileSync(path, "utf8")
-      .split("\n")
-      .filter((line) => line.trim().length > 0)
-      .map((line) => JSON.parse(line) as unknown);
-  } catch {
-    return [];
   }
 }
 
@@ -92,9 +92,8 @@ function isLocalMessage(value: unknown): value is LocalMessage {
   );
 }
 
-function transcriptFormat(
+function transcriptFormatFromManifest(
   manifest: LocalTranscriptManifest | undefined,
-  rows: readonly unknown[],
 ): LocalTranscriptMessageFormat | undefined {
   if (
     manifest?.message_format === LOCAL_TRANSCRIPT_MESSAGE_FORMAT ||
@@ -102,52 +101,27 @@ function transcriptFormat(
   ) {
     return manifest.message_format;
   }
-
-  // Best-effort fallback for tests or partially migrated stores. Normal local
-  // backend startup enforces manifests for non-empty legacy transcripts, but
-  // search should be defensive and simply skip malformed rows.
-  const firstDataRow = rows.find((row) =>
-    Boolean(isRecord(row) && row.type !== "session"),
-  );
-  if (isRecord(firstDataRow) && "message" in firstDataRow) {
-    return LOCAL_TRANSCRIPT_MESSAGE_FORMAT;
-  }
-  if (rows.some(isLocalMessage)) {
-    return LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
-  }
   return undefined;
 }
 
-function transcriptMessageRows(
-  rows: readonly unknown[],
+function transcriptMessageRow(
+  row: unknown,
+  sourceIndex: number,
   format: LocalTranscriptMessageFormat,
-): TranscriptMessageRow[] {
+): TranscriptMessageRow | undefined {
   if (format === LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT) {
-    return rows
-      .map((row, sourceIndex) => ({ row, sourceIndex }))
-      .filter((item): item is { row: LocalMessage; sourceIndex: number } =>
-        isLocalMessage(item.row),
-      )
-      .map(({ row, sourceIndex }) => ({
-        timestamp: row.metadata?.created_at,
-        message: row,
-        sourceIndex,
-      }));
+    if (!isLocalMessage(row)) return undefined;
+    return { timestamp: row.metadata?.created_at, message: row, sourceIndex };
   }
-
-  const messageRows: TranscriptMessageRow[] = [];
-  rows.forEach((row, sourceIndex) => {
-    if (!isRecord(row)) return;
-    if (row.type !== "message" && row.type !== "compaction") return;
-    const message = row.message;
-    if (!isLocalMessage(message)) return;
-    messageRows.push({
-      timestamp: typeof row.timestamp === "string" ? row.timestamp : undefined,
-      message,
-      sourceIndex,
-    });
-  });
-  return messageRows;
+  if (!isRecord(row)) return undefined;
+  if (row.type !== "message" && row.type !== "compaction") return undefined;
+  const message = row.message;
+  if (!isLocalMessage(message)) return undefined;
+  return {
+    timestamp: typeof row.timestamp === "string" ? row.timestamp : undefined,
+    message,
+    sourceIndex,
+  };
 }
 
 function textFromContent(content: unknown): string {
@@ -215,8 +189,57 @@ type ParsedQuery = {
   phrases: string[];
 };
 
+const CJK_RUN =
+  /^[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]+$/u;
+const CJK_CHARACTER =
+  /[\p{Script_Extensions=Han}\p{Script_Extensions=Hiragana}\p{Script_Extensions=Katakana}]/u;
+
+function tokenize(value: string): string[] {
+  const words =
+    value
+      .normalize("NFKC")
+      .toLowerCase()
+      .match(/[\p{L}\p{N}]+/gu) ?? [];
+  return words.flatMap((word) => {
+    if (CJK_RUN.test(word) || !CJK_CHARACTER.test(word)) return [word];
+    const runs: string[] = [];
+    let run = "";
+    let previousCjk = false;
+    for (const character of word) {
+      const cjk = CJK_RUN.test(character);
+      if (run && cjk !== previousCjk) {
+        runs.push(run);
+        run = "";
+      }
+      run += character;
+      previousCjk = cjk;
+    }
+    if (run) runs.push(run);
+    return runs;
+  });
+}
+
 function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, " ").trim();
+  return tokenize(value).join(" ");
+}
+
+function termFrequency(tokens: readonly string[], term: string): number {
+  if (CJK_RUN.test(term)) {
+    // These scripts commonly omit word separators. Preserve substring recall
+    // within a run without restoring Latin token-suffix matches.
+    return tokens.reduce(
+      (count, token) => count + token.split(term).length - 1,
+      0,
+    );
+  }
+  return tokens.reduce((count, token) => count + Number(token === term), 0);
+}
+
+function matchesPhrase(text: string, phrase: string): boolean {
+  const characters = Array.from(phrase);
+  const left = CJK_RUN.test(characters[0] ?? "") ? "" : " ";
+  const right = CJK_RUN.test(characters.at(-1) ?? "") ? "" : " ";
+  return ` ${text} `.includes(`${left}${phrase}${right}`);
 }
 
 function parseQuery(query: string): ParsedQuery {
@@ -230,8 +253,8 @@ function parseQuery(query: string): ParsedQuery {
     const value = buffer.trim();
     buffer = "";
     if (!value) return;
-    if (inQuote) phrases.push(value);
-    else terms.push(value);
+    if (inQuote) phrases.push(normalizeText(value));
+    else terms.push(...tokenize(value));
   };
 
   for (const char of query.trim()) {
@@ -245,50 +268,61 @@ function parseQuery(query: string): ParsedQuery {
       }
       continue;
     }
-    if (!inQuote && /\s/.test(char)) {
-      flush();
-      continue;
-    }
     buffer += char;
   }
   if (inQuote) sawUnclosedQuote = true;
   flush();
 
   if (sawUnclosedQuote) {
-    return {
-      terms: query
-        .trim()
-        .split(/\s+/)
-        .map((term) => term.trim())
-        .filter(Boolean),
-      phrases: [],
-    };
+    return { terms: [...new Set(tokenize(query))], phrases: [] };
   }
-  return { terms, phrases };
+  return {
+    terms: [...new Set(terms)],
+    phrases: [...new Set(phrases.filter(Boolean))],
+  };
 }
 
-function matchScore(text: string, query: ParsedQuery): number | null {
-  const haystack = normalizeText(text);
-  if (!haystack) return null;
+function rankMatches(
+  records: SearchRecord[],
+  query: ParsedQuery,
+): SearchRecord[] {
+  const candidates = records.filter((record) => record.message !== undefined);
+  if (candidates.length === 0) return [];
 
-  let score = 0;
-  for (const rawPhrase of query.phrases) {
-    const phrase = normalizeText(rawPhrase);
-    if (!phrase) continue;
-    const index = haystack.indexOf(phrase);
-    if (index < 0) return null;
-    score += index * 0.1;
-  }
+  const historicalRecords = records.filter((record) => !record.isSearchEcho);
+  const corpus = historicalRecords.length > 0 ? historicalRecords : records;
+  const documentFrequency = query.terms.map(
+    (_term, termIndex) =>
+      corpus.filter((record) => (record.termFrequencies[termIndex] ?? 0) > 0)
+        .length,
+  );
+  const averageLength =
+    corpus.reduce((sum, record) => sum + record.tokenCount, 0) / corpus.length;
+  const k1 = 1.2;
+  const b = 0.75;
 
-  for (const rawTerm of query.terms) {
-    const term = normalizeText(rawTerm);
-    if (!term) continue;
-    const index = haystack.indexOf(term);
-    if (index < 0) return null;
-    score += index + Math.max(0, 50 - term.length);
-  }
-
-  return score;
+  return candidates.map((record) => {
+    let score = 0;
+    query.terms.forEach((_term, termIndex) => {
+      const frequency = record.termFrequencies[termIndex] ?? 0;
+      if (frequency === 0) return;
+      const frequencyInDocuments = documentFrequency[termIndex] ?? 0;
+      const inverseDocumentFrequency = Math.log(
+        1 +
+          (corpus.length - frequencyInDocuments + 0.5) /
+            (frequencyInDocuments + 0.5),
+      );
+      const lengthNormalization =
+        1 - b + b * (record.tokenCount / Math.max(averageLength, 1));
+      score +=
+        inverseDocumentFrequency *
+        ((frequency * (k1 + 1)) / (frequency + k1 * lengthNormalization));
+    });
+    // Quotes remain strict filters and receive a boost so exact phrasing wins
+    // when mixed with optional unquoted terms.
+    score += query.phrases.length * 2;
+    return { ...record, score: score * (record.isSearchEcho ? 0.1 : 1) };
+  });
 }
 
 function dateInRange(
@@ -347,6 +381,45 @@ function projectedTranscriptMessages(input: {
   return withProjectedMessageDates(projected, input.row.sourceIndex);
 }
 
+function searchToolCallId(message: StoredMessage): string | undefined {
+  const candidate = message as StoredMessage & {
+    message_type?: string;
+    tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
+  };
+  if (
+    candidate.message_type === "approval_request_message" &&
+    (candidate.tool_call?.name === "Bash" ||
+      candidate.tool_call?.name === "exec_command") &&
+    typeof candidate.tool_call.arguments === "string" &&
+    /\bmessages\s+search\b/i.test(candidate.tool_call.arguments) &&
+    typeof candidate.tool_call.tool_call_id === "string"
+  ) {
+    return candidate.tool_call.tool_call_id;
+  }
+  return undefined;
+}
+
+function echoToolCallId(message: StoredMessage): string | undefined {
+  const candidate = message as StoredMessage & {
+    message_type?: string;
+    tool_call?: { tool_call_id?: string };
+    tool_call_id?: string;
+  };
+  if (candidate.message_type === "approval_request_message") {
+    return candidate.tool_call?.tool_call_id ?? "";
+  }
+  if (candidate.message_type === "tool_return_message") {
+    return candidate.tool_call_id ?? "";
+  }
+  return undefined;
+}
+
+/**
+ * Streams one conversation's messages.jsonl row by row. Each projected
+ * message is matched against the query as it is read; only matches keep
+ * their message, everything else keeps the few numbers BM25 needs. The
+ * transcript is never held in memory as a whole.
+ */
 function collectConversationMessages(input: {
   conversationDir: string;
   conversation: LocalConversationSearchRecord;
@@ -355,43 +428,119 @@ function collectConversationMessages(input: {
   conversationId?: string;
   startDate?: string;
   endDate?: string;
-}): SearchableStoredMessage[] {
-  const { conversation, conversationDir } = input;
+}): SearchRecord[] {
+  const { conversation, conversationDir, query } = input;
   if (input.agentId && conversation.agent_id !== input.agentId) return [];
   if (input.conversationId && conversation.id !== input.conversationId)
     return [];
 
-  const messagesPath = join(conversationDir, "messages.jsonl");
-  const rows = readJsonlFile(messagesPath);
-  if (rows.length === 0) return [];
   const manifest = readJsonFile<LocalTranscriptManifest>(
     join(conversationDir, "manifest.json"),
   );
-  const format = transcriptFormat(manifest, rows);
-  if (!format) return [];
+  let format = transcriptFormatFromManifest(manifest);
+  const records: SearchRecord[] = [];
+  const echoToolCallIds: (string | undefined)[] = [];
+  const searchToolCallIds = new Set<string>();
+  // Rows seen before an unversioned transcript's format is known (headers).
+  const undecidedRows: { row: unknown; rowIndex: number }[] = [];
+  let sourceIndex = 0;
 
-  return transcriptMessageRows(rows, format)
-    .flatMap((row) =>
-      projectedTranscriptMessages({
-        row,
-        agentId: conversation.agent_id,
-        conversationId: conversation.id,
-      }),
-    )
-    .map((message) => ({
-      message,
-      text: searchableText(message),
-      score: Number.POSITIVE_INFINITY,
-    }))
-    .map((record) => {
-      const score = matchScore(record.text, input.query);
-      return score === null ? null : { ...record, score };
-    })
-    .filter((record): record is SearchableStoredMessage => record !== null)
-    .filter((record) => {
-      const message = record.message as StoredMessage & { date?: string };
-      return dateInRange(message.date, input.startDate, input.endDate);
+  const addRow = (row: unknown, rowIndex: number) => {
+    if (!format) return;
+    const messageRow = transcriptMessageRow(row, rowIndex, format);
+    if (!messageRow) return;
+    const projected = projectedTranscriptMessages({
+      row: messageRow,
+      agentId: conversation.agent_id,
+      conversationId: conversation.id,
     });
+    for (const message of projected) {
+      const searchId = searchToolCallId(message);
+      if (searchId !== undefined) searchToolCallIds.add(searchId);
+      if (!dateInRange(message.date, input.startDate, input.endDate)) continue;
+      const tokens = tokenize(searchableText(message));
+      if (tokens.length === 0) continue;
+      const termFrequencies = query.terms.map((term) =>
+        termFrequency(tokens, term),
+      );
+      const normalizedText = tokens.join(" ");
+      const matches =
+        query.phrases.every((phrase) =>
+          matchesPhrase(normalizedText, phrase),
+        ) &&
+        (query.phrases.length > 0 ||
+          termFrequencies.some((frequency) => frequency > 0));
+      const localMessage = message as StoredMessage & {
+        conversation_id?: string;
+        message_type?: string;
+      };
+      records.push({
+        ...(matches ? { message } : {}),
+        date: message.date,
+        conversationId: localMessage.conversation_id,
+        messageType: localMessage.message_type,
+        tokenCount: tokens.length,
+        termFrequencies,
+        score: 0,
+        isSearchEcho: false,
+      });
+      echoToolCallIds.push(echoToolCallId(message));
+    }
+  };
+
+  // Unversioned transcripts: infer the format from the first data row, as
+  // the full-file reader did (session rows wrap a message; legacy rows are
+  // bare messages).
+  const handleRow = (row: unknown) => {
+    const rowIndex = sourceIndex;
+    sourceIndex += 1;
+    if (!format) {
+      if (!isRecord(row) || row.type === "session") {
+        undecidedRows.push({ row, rowIndex });
+        return;
+      }
+      format =
+        "message" in row
+          ? LOCAL_TRANSCRIPT_MESSAGE_FORMAT
+          : LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
+      for (const undecided of undecidedRows) {
+        addRow(undecided.row, undecided.rowIndex);
+      }
+      undecidedRows.length = 0;
+    }
+    addRow(row, rowIndex);
+  };
+
+  const messagesPath = join(conversationDir, "messages.jsonl");
+  let rowError: unknown;
+  try {
+    forEachJsonlRow<unknown>(messagesPath, (row) => {
+      try {
+        handleRow(row);
+      } catch (error) {
+        rowError = error;
+        throw error;
+      }
+    });
+  } catch (error) {
+    // Unreadable or malformed transcripts are skipped; projection errors
+    // still propagate.
+    if (rowError !== undefined && error === rowError) throw error;
+    return [];
+  }
+  if (!format && undecidedRows.some(({ row }) => isLocalMessage(row))) {
+    format = LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT;
+    for (const undecided of undecidedRows) {
+      addRow(undecided.row, undecided.rowIndex);
+    }
+  }
+
+  records.forEach((record, index) => {
+    const toolCallId = echoToolCallIds[index];
+    record.isSearchEcho =
+      toolCallId !== undefined && searchToolCallIds.has(toolCallId);
+  });
+  return records;
 }
 
 function conversationDirectories(storageDir: string): string[] {
@@ -409,11 +558,15 @@ function conversationDirectories(storageDir: string): string[] {
 export function searchLocalTranscriptMessages(
   storageDir: string,
   body: LocalTranscriptSearchBody,
+  options: LocalTranscriptSearchOptions = {},
 ): MessageSearchResponse {
+  if (body.search_mode === "vector" || body.search_mode === "hybrid") {
+    throw new Error(
+      `Local backend does not support "${body.search_mode}" message search. Use "fts".`,
+    );
+  }
   const queryText = typeof body.query === "string" ? body.query.trim() : "";
   if (!queryText) return [];
-  // Local mode intentionally treats vector/hybrid as FTS-lite until a local
-  // vector index exists, so `search_mode` does not branch here.
 
   const parsedQuery = parseQuery(queryText);
   if (parsedQuery.terms.length === 0 && parsedQuery.phrases.length === 0) {
@@ -450,13 +603,28 @@ export function searchLocalTranscriptMessages(
     },
   );
 
-  return records
+  // Unscoped recall runs from inside the active conversation, whose newest user
+  // message is commonly the question being recalled. Demote that one message,
+  // plus messages-search command/result pairs, instead of deleting tool results
+  // globally. Explicit conversation targets do not demote their newest user message.
+  if (!conversationId && options.currentConversationId) {
+    const latestCurrentUser = records
+      .filter(
+        (record) =>
+          record.conversationId === options.currentConversationId &&
+          record.messageType === "user_message",
+      )
+      .sort((a, b) => b.date.localeCompare(a.date))[0];
+    if (latestCurrentUser) latestCurrentUser.isSearchEcho = true;
+  }
+
+  return rankMatches(records, parsedQuery)
     .sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score;
-      const aDate = (a.message as StoredMessage & { date?: string }).date ?? "";
-      const bDate = (b.message as StoredMessage & { date?: string }).date ?? "";
-      return bDate.localeCompare(aDate);
+      if (a.score !== b.score) return b.score - a.score;
+      return b.date.localeCompare(a.date);
     })
     .slice(0, limit)
-    .map((record) => toSearchResult(record.message));
+    .flatMap((record) =>
+      record.message ? [toSearchResult(record.message)] : [],
+    );
 }

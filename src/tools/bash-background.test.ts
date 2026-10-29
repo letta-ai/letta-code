@@ -3,13 +3,13 @@ import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
-import { bash_output } from "@/tools/impl/bash-output";
-import { kill_bash } from "@/tools/impl/kill-bash";
+import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
@@ -25,6 +25,8 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       .map((proc) => proc.outputFile)
       .filter((filePath): filePath is string => Boolean(filePath));
     for (const proc of backgroundProcesses.values()) {
+      // A killed fixture can settle after the next test installs its listener.
+      proc.completionNotificationSuppressed = true;
       try {
         proc.process.kill("SIGTERM");
       } catch {
@@ -32,6 +34,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       }
     }
     backgroundProcesses.clear();
+    clearPendingMessages();
     for (const outputFile of outputFiles) {
       if (fs.existsSync(outputFile)) {
         fs.rmSync(outputFile, { recursive: true, force: true });
@@ -75,35 +78,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     expect(backgroundProcesses.get(bashId ?? "")?.status).toBe("failed");
   });
 
-  test("BashOutput retrieves output from background shell", async () => {
-    // Start background process
-    const startResult = await bash({
-      command: "echo 'background output'",
-      description: "Test background",
-      run_in_background: true,
-    });
-
-    // Extract shell_id from the response text
-    const match = startResult.content[0]?.text.match(/bash_(\d+)/);
-    expect(match).toBeDefined();
-    const bashId = `bash_${match?.[1]}`;
-
-    // Wait for command to complete
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Retrieve output
-    const outputResult = await bash_output({ shell_id: bashId });
-
-    expect(outputResult.message).toContain("background output");
-  });
-
-  test("BashOutput handles non-existent shell_id gracefully", async () => {
-    const result = await bash_output({ shell_id: "nonexistent" });
-
-    expect(result.message).toContain("No background process found");
-  });
-
-  test("KillBash terminates background process", async () => {
+  test("killBackgroundProcess terminates background process", async () => {
     // Start long-running process
     const startResult = await bash({
       command: "sleep 10",
@@ -114,19 +89,14 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     const match = startResult.content[0]?.text.match(/bash_(\d+)/);
     const bashId = `bash_${match?.[1]}`;
 
-    // Kill it (KillBash uses shell_id parameter)
-    const killResult = await kill_bash({ shell_id: bashId });
-
-    expect(killResult.killed).toBe(true);
+    expect(killBackgroundProcess(bashId)).toBe(true);
   });
 
-  test("KillBash handles non-existent shell_id", async () => {
-    const result = await kill_bash({ shell_id: "nonexistent" });
-
-    expect(result.killed).toBe(false);
+  test("killBackgroundProcess handles non-existent id", () => {
+    expect(killBackgroundProcess("nonexistent")).toBe(false);
   });
 
-  test("KillBash preserves completed-process cleanup behavior", async () => {
+  test("killBackgroundProcess preserves completed-process cleanup behavior", () => {
     let killed = false;
     backgroundProcesses.set("bash_completed", {
       process: {
@@ -139,12 +109,9 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       stderr: [],
       status: "completed",
       exitCode: 0,
-      lastReadIndex: { stdout: 0, stderr: 0 },
     });
 
-    expect(await kill_bash({ shell_id: "bash_completed" })).toEqual({
-      killed: true,
-    });
+    expect(killBackgroundProcess("bash_completed")).toBe(true);
     expect(killed).toBe(true);
     expect(backgroundProcesses.has("bash_completed")).toBe(false);
   });
@@ -301,11 +268,11 @@ describe.skipIf(isWindows)("Bash background tools", () => {
 
       const processEntry = backgroundProcesses.get(bashId);
       expect(processEntry?.status).toBe("failed");
-      expect(processEntry?.stderr.join("\n")).toContain(
+      expect(processEntry?.stderr?.join("\n")).toContain(
         "Command timed out after 200ms",
       );
       const descendantPid = Number(
-        processEntry?.stdout.join("\n").match(/descendant:(\d+)/)?.[1],
+        processEntry?.stdout?.join("\n").match(/descendant:(\d+)/)?.[1],
       );
       expect(descendantPid).toBeGreaterThan(0);
       expect(() => process.kill(descendantPid, 0)).toThrow();

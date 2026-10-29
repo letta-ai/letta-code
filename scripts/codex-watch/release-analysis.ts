@@ -21,6 +21,8 @@ export const WATCHED_PATHS = [
 ];
 
 const MAX_COMMITS_PER_PATH = 8;
+const GITHUB_RELEASES_FETCH_ATTEMPTS = 3;
+const GITHUB_RELEASES_RETRY_DELAY_MS = 1_000;
 
 export interface Release {
   tag_name: string;
@@ -61,7 +63,12 @@ export interface CodexWatchAnalysis {
 export async function analyzeCodexRelease(
   options: AnalyzeCodexReleaseOptions,
 ): Promise<CodexWatchAnalysis> {
-  const stables = options.stableReleases ?? (await listStableReleases());
+  const stables =
+    options.stableReleases ??
+    (await listStableReleases({
+      currentTag: options.currentTag,
+      sinceTag: options.sinceTag,
+    }));
   if (stables.length === 0) throw new Error("No stable Codex releases found");
 
   const current = options.currentTag
@@ -167,7 +174,15 @@ export async function analyzeCodexRelease(
   }
 }
 
-export async function listStableReleases(): Promise<Release[]> {
+export async function listStableReleases(
+  options: {
+    fetchImpl?: typeof fetch;
+    sleep?: (delayMs: number) => Promise<void>;
+    currentTag?: string | null;
+    sinceTag?: string | null;
+    fullHistory?: boolean;
+  } = {},
+): Promise<Release[]> {
   const releases: Release[] = [];
   const headers: Record<string, string> = {
     Accept: "application/vnd.github+json",
@@ -175,22 +190,114 @@ export async function listStableReleases(): Promise<Release[]> {
   };
   const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
   if (token) headers.Authorization = `Bearer ${token}`;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const sleep =
+    options.sleep ??
+    ((delayMs: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, delayMs)));
+
+  if (!options.fullHistory) {
+    const latest = await fetchGitHubReleasePayload<Release>(
+      `https://api.github.com/repos/${CODEX_REPO}/releases/latest`,
+      headers,
+      fetchImpl,
+      sleep,
+    );
+    releases.push(latest);
+    if (options.currentTag) {
+      releases.push(
+        await fetchGitHubReleasePayload<Release>(
+          `https://api.github.com/repos/${CODEX_REPO}/releases/tags/${encodeURIComponent(options.currentTag)}`,
+          headers,
+          fetchImpl,
+          sleep,
+        ),
+      );
+    }
+
+    const currentTag = options.currentTag ?? latest.tag_name;
+    if (options.sinceTag && options.sinceTag === currentTag) {
+      return stableReleases(releases);
+    }
+  }
 
   for (let page = 1; page <= 10; page++) {
     const url = `https://api.github.com/repos/${CODEX_REPO}/releases?per_page=100&page=${page}`;
-    const res = await fetch(url, { headers });
-    if (!res.ok) {
-      throw new Error(
-        `GitHub releases API failed (${res.status}): ${await res.text()}`,
-      );
-    }
-    const batch = (await res.json()) as Release[];
+    const batch = await fetchGitHubReleasePayload<Release[]>(
+      url,
+      headers,
+      fetchImpl,
+      sleep,
+    );
     releases.push(...batch);
+    if (!options.fullHistory) {
+      const stables = stableReleases(releases);
+      const currentTag = options.currentTag ?? stables.at(-1)?.tag_name;
+      const currentIndex = stables.findIndex(
+        (release) => release.tag_name === currentTag,
+      );
+      const foundBoundary = options.sinceTag
+        ? stables.some((release) => release.tag_name === options.sinceTag)
+        : currentIndex > 0;
+      if (foundBoundary) break;
+    }
     if (batch.length < 100) break;
   }
-  return releases
+  return stableReleases(releases);
+}
+
+function stableReleases(releases: Release[]): Release[] {
+  const byTag = new Map<string, Release>();
+  for (const release of releases) {
+    if (!byTag.has(release.tag_name)) byTag.set(release.tag_name, release);
+  }
+  return [...byTag.values()]
     .filter(isStableRelease)
     .sort((a, b) => (a.published_at ?? "").localeCompare(b.published_at ?? ""));
+}
+
+async function fetchGitHubReleasePayload<T>(
+  url: string,
+  headers: Record<string, string>,
+  fetchImpl: typeof fetch,
+  sleep: (delayMs: number) => Promise<void>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { headers });
+      // A successful fetch can still lose its connection while reading the body.
+      if (response.ok) return (await response.json()) as T;
+    } catch (error) {
+      if (error instanceof SyntaxError) throw error;
+      if (attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
+        throw new Error(
+          `GitHub releases API request failed after ${attempt} attempts: ${String(error)}`,
+          { cause: error },
+        );
+      }
+      await retryGitHubReleasesFetch(attempt, String(error), sleep);
+      continue;
+    }
+
+    const message = `GitHub releases API failed (${response.status}): ${await response.text()}`;
+    if (response.status < 500 || attempt === GITHUB_RELEASES_FETCH_ATTEMPTS) {
+      throw new Error(message);
+    }
+    await retryGitHubReleasesFetch(attempt, message, sleep);
+  }
+}
+
+async function retryGitHubReleasesFetch(
+  attempt: number,
+  error: string,
+  sleep: (delayMs: number) => Promise<void>,
+): Promise<void> {
+  const delayMs = GITHUB_RELEASES_RETRY_DELAY_MS * 2 ** (attempt - 1);
+  console.warn(
+    `${error}; retrying GitHub releases request in ${delayMs}ms (${attempt}/${GITHUB_RELEASES_FETCH_ATTEMPTS})`,
+  );
+  await sleep(delayMs);
 }
 
 function isStableRelease(release: Release): boolean {

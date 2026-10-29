@@ -1,10 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  clearRegisteredPiProviders,
+  registerPiProvider,
+} from "@/backend/dev/pi-provider-mod-registry";
+import {
   createOrUpdateLocalProvider,
+  getLocalOAuthApiKey,
+  getLocalProviderById,
   getLocalProviderRecordByName,
+  LOCAL_PROVIDER_NO_API_KEY,
   setLocalOAuthProvider,
 } from "./local-provider-auth-store";
 
@@ -17,6 +25,63 @@ describe("local OAuth provider storage", () => {
         .splice(0)
         .map((storageDir) => rm(storageDir, { recursive: true, force: true })),
     );
+  });
+
+  test.each(["\r", "\n", "\t", " ", "\0", "\u007f", "\u0085"])(
+    "rejects an API key containing %j without writing auth.json",
+    async (separator) => {
+      const storageDir = await mkdtemp(join(tmpdir(), "local-invalid-key-"));
+      storageDirs.push(storageDir);
+      await expect(
+        createOrUpdateLocalProvider({
+          storageDir,
+          providerType: "openai",
+          providerName: "lc-openai",
+          apiKey: `  secret${separator}key  `,
+        }),
+      ).rejects.toThrow(
+        "API key for lc-openai contains whitespace or line breaks. Paste only the key.",
+      );
+      expect(existsSync(join(storageDir, "providers", "auth.json"))).toBe(
+        false,
+      );
+    },
+  );
+
+  test.each(["secret-key", LOCAL_PROVIDER_NO_API_KEY])(
+    "saves a single-token key %j after trimming",
+    async (key) => {
+      const storageDir = await mkdtemp(join(tmpdir(), "local-valid-key-"));
+      storageDirs.push(storageDir);
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "ollama",
+        providerName: "ollama",
+        apiKey: ` \t${key}\r\n`,
+      });
+      expect(getLocalProviderRecordByName("ollama", storageDir)?.auth).toEqual({
+        type: "api",
+        key,
+      });
+    },
+  );
+
+  test("resolves a derived provider ID directly", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-provider-id-"));
+    storageDirs.push(storageDir);
+    const created = await createOrUpdateLocalProvider({
+      storageDir,
+      providerType: "openai",
+      providerName: "lc-openai",
+      apiKey: "secret-key",
+    });
+
+    expect(
+      await getLocalProviderById("local-provider-lc-openai", storageDir),
+    ).toEqual(created);
+    expect(
+      await getLocalProviderById("local-provider-missing", storageDir),
+    ).toBeNull();
   });
 
   test("persists keyed and keyless OpenAI-compatible connections with their base URL", async () => {
@@ -101,5 +166,68 @@ describe("local OAuth provider storage", () => {
         access: "refreshed-access-token",
       },
     });
+  });
+
+  test("getLocalOAuthApiKey refreshes a rotating token once across callers", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-oauth-refresh-"));
+    storageDirs.push(storageDir);
+    // A rotating-refresh-token provider: each refresh token works once.
+    const usedRefreshTokens = new Set<string>();
+    let refreshCalls = 0;
+    registerPiProvider("rotating-oauth", {
+      api: "openai-completions",
+      baseUrl: "https://rotating.example.test",
+      models: [],
+      oauth: {
+        login: async () => {
+          throw new Error("not used");
+        },
+        refreshToken: async (credentials) => {
+          refreshCalls += 1;
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          if (usedRefreshTokens.has(credentials.refresh)) {
+            throw new Error("invalid_grant");
+          }
+          usedRefreshTokens.add(credentials.refresh);
+          return {
+            access: "fresh-access",
+            refresh: "refresh-2",
+            expires: Date.now() + 3_600_000,
+          };
+        },
+        getApiKey: (credentials) => credentials.access,
+      },
+    });
+    try {
+      setLocalOAuthProvider({
+        storageDir,
+        providerName: "rotating-oauth",
+        providerType: "rotating-oauth",
+        auth: {
+          type: "oauth",
+          access: "expired-access",
+          refresh: "refresh-1",
+          expires: Date.now() - 1,
+        },
+      });
+      const getKey = () =>
+        getLocalOAuthApiKey({
+          providerId: "rotating-oauth",
+          providerNames: ["rotating-oauth"],
+          storageDir,
+        });
+
+      const results = await Promise.all([getKey(), getKey()]);
+
+      expect(refreshCalls).toBe(1);
+      for (const result of results) {
+        expect(result?.apiKey).toBe("fresh-access");
+      }
+      expect(
+        getLocalProviderRecordByName("rotating-oauth", storageDir)?.auth,
+      ).toMatchObject({ access: "fresh-access", refresh: "refresh-2" });
+    } finally {
+      clearRegisteredPiProviders();
+    }
   });
 });

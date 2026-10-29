@@ -1,12 +1,12 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 /** Env override for the reflection transcript root. */
 export const TRANSCRIPT_ROOT_ENV = "LETTA_TRANSCRIPT_ROOT";
 
 /**
  * Root directory for reflection transcripts: `$LETTA_TRANSCRIPT_ROOT` when set,
- * else `~/.letta/transcripts`.
+ * else `<product-config>/transcripts`.
  *
  * Shared (rather than private to `reflection-transcript.ts`) so the filesystem
  * sandbox can carve it writable as a harness-metadata path: a memory-subagent
@@ -18,5 +18,5 @@ export function getTranscriptRoot(): string {
   if (envRoot) {
     return envRoot;
   }
-  return join(homedir(), ".letta", "transcripts");
+  return join(resolveGlobalConfigDir(), "transcripts");
 }

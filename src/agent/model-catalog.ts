@@ -13,6 +13,7 @@ export interface CatalogModel {
   handle: string;
   label: string;
   description: string;
+  supportsStructuredOutputs?: boolean;
   shortLabel?: string;
   isDefault?: boolean;
   isFeatured?: boolean;

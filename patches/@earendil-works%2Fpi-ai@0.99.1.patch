@@ -1,0 +1,33 @@
+diff --git a/dist/api/openai-completions.js b/dist/api/openai-completions.js
+index eecd83c753e3b758b8e44628f560b862f8252839..dffc41c763914b918dfcf9ffded8122500452122 100644
+--- a/dist/api/openai-completions.js
++++ b/dist/api/openai-completions.js
+@@ -863,6 +863,17 @@ function addCacheControlToTextContent(message, cacheControl) {
+     }
+     return false;
+ }
++function isOpenAIHost(baseUrl) {
++    if (!baseUrl)
++        return true;
++    try {
++        const host = new URL(baseUrl).hostname.toLowerCase();
++        return host === "api.openai.com" || host.endsWith(".azure.com");
++    }
++    catch {
++        return true;
++    }
++}
+ export function convertMessages(model, context, compat, options) {
+     const normalizedContext = resolveTranscript(context, compat.supportsMidConvoSystemMessages);
+     const params = [];
+@@ -887,7 +898,9 @@ export function convertMessages(model, context, compat, options) {
+             const prefix = callId.slice(0, Math.max(1, 40 - hash.length - 1));
+             return `${prefix}_${hash}`;
+         }
+-        if (model.provider === "openai")
++        // letta-code patch: only real OpenAI/Azure hosts cap ids at 40. Proxies
++        // registered as "openai" (e.g. LiteLLM) embed Gemini thought signatures.
++        if (model.provider === "openai" && isOpenAIHost(model.baseUrl))
+             return id.length > 40 ? id.slice(0, 40) : id;
+         return id;
+     };

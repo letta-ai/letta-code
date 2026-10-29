@@ -3,13 +3,20 @@
 
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   type AgentBackendMode,
   isAgentIdCompatibleWithBackend,
   isCloudAgentId,
 } from "./agent/agent-id";
+import {
+  type AgentSettings,
+  clientPreferencesUpdate,
+  readClientPreferences,
+  readToolsetPreference,
+  stripEmptyAgentSettings,
+  toolsetPreferenceUpdate,
+} from "./agent-settings";
 import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
@@ -27,6 +34,7 @@ import type {
 import { getRuntimeContext } from "./runtime-context";
 import { trackBoundaryError } from "./telemetry/error-reporting";
 import type { ToolsetPreference } from "./tools/toolset-types";
+import type { ClientPreferences } from "./types/client-preferences";
 import { debugWarn } from "./utils/debug.js";
 import { exists, mkdir, readFile, writeFile } from "./utils/fs.js";
 import {
@@ -36,6 +44,11 @@ import {
   type SecureTokens,
   setSecureTokens,
 } from "./utils/secrets.js";
+import {
+  isProjectSettingsPathGlobal,
+  resolveGlobalSettingsPath,
+  shouldIsolateHomeProjectConfig,
+} from "./utils/settings-path.js";
 
 /**
  * Reference to a session (agent + conversation pair).
@@ -50,19 +63,7 @@ export interface WindowTitleConfig {
   items: string[]; // Ordered list of enabled field keys (e.g. ["agent-name", "model-name"])
 }
 
-/** Per-agent settings; baseUrl is omitted for the Letta API. */
-export interface AgentSettings {
-  agentId: string;
-  baseUrl?: string; // undefined = Letta API (api.letta.com)
-  pinned?: boolean; // true if agent is pinned
-  memfs?: boolean; // true if memory filesystem is enabled
-  toolset?: ToolsetPreference; // Virtual default-conversation preference
-  toolsetsByConversation?: Record<string, Exclude<ToolsetPreference, "auto">>;
-  systemPromptPreset?: string; // known preset ID, "custom", or undefined (legacy/subagent)
-  systemPromptHash?: string; // hash of the managed prompt content last written by Letta Code
-  systemPromptVersion?: string; // Letta Code version that wrote systemPromptHash
-  mcpServers?: McpServerConfig[]; // MCP servers available only to this agent
-}
+export type { AgentSettings } from "./agent-settings";
 
 export interface Settings {
   lastAgent: string | null; // DEPRECATED: kept for migration to lastSession
@@ -77,7 +78,7 @@ export interface Settings {
   includeWorktreeTool: boolean; // Include EnterWorktree in toolsets when true
   preferredBackendMode?: "api" | "local"; // Startup backend preference when no explicit --backend is provided
   channelCredentialsStore?: "file" | "keyring" | "auto"; // Where channel/connection tokens are persisted
-  recentModels: string[]; // Recently used model IDs (most recent first, max 5)
+  recentModels: string[]; // Recently used model IDs (most recent first, max 10)
   memoryReminderInterval: number | null | "compaction" | "auto-compaction"; // DEPRECATED: use reflection* fields
   reflectionTrigger: ReflectionTrigger;
   reflectionStepCount: number;
@@ -265,22 +266,6 @@ function shouldSkipLegacyLocalBackendSessionFallback(): boolean {
   );
 }
 
-function stripEmptyAgentSettings(settings: AgentSettings): AgentSettings {
-  if (!settings.pinned) delete settings.pinned;
-  if (settings.memfs === undefined) delete settings.memfs;
-  if (!settings.toolset || settings.toolset === "auto") delete settings.toolset;
-  if (Object.keys(settings.toolsetsByConversation ?? {}).length === 0) {
-    delete settings.toolsetsByConversation;
-  }
-  if (!settings.systemPromptPreset) delete settings.systemPromptPreset;
-  if (!settings.systemPromptHash) delete settings.systemPromptHash;
-  if (!settings.systemPromptVersion) delete settings.systemPromptVersion;
-  if (!settings.mcpServers || settings.mcpServers.length === 0) {
-    delete settings.mcpServers;
-  }
-  if (!settings.baseUrl) delete settings.baseUrl;
-  return settings;
-}
 /**
  * Get the current server key for indexing settings.
  * Uses the local backend storage path when local backend mode is active,
@@ -641,7 +626,7 @@ class SettingsManager {
 
   addRecentModel(modelId: string): void {
     const current = this.getRecentModels().filter((id) => id !== modelId);
-    const updated = [modelId, ...current].slice(0, 5);
+    const updated = [modelId, ...current].slice(0, 10);
     this.updateSettings({ recentModels: updated });
   }
 
@@ -898,12 +883,11 @@ class SettingsManager {
     if (!this.settings) return;
 
     const settingsPath = this.getSettingsPath();
-    const home = process.env.HOME || homedir();
-    const dirPath = join(home, ".letta");
+    const dirPath = dirname(settingsPath);
 
     try {
       if (!exists(dirPath)) {
-        await mkdir(dirPath, { recursive: true });
+        await mkdir(dirPath, { recursive: true, mode: 0o700 });
       }
 
       // Read existing file to preserve fields we don't manage (e.g., hooks added externally)
@@ -942,7 +926,10 @@ class SettingsManager {
         }
       }
 
-      await writeFile(settingsPath, JSON.stringify(merged, null, 2));
+      await writeFile(settingsPath, JSON.stringify(merged, null, 2), {
+        directoryMode: 0o700,
+        mode: 0o600,
+      });
     } catch (error) {
       console.error("Error saving settings:", error);
       throw error;
@@ -993,9 +980,7 @@ class SettingsManager {
   }
 
   private getSettingsPath(): string {
-    // Use ~/.letta/ like other AI tools (.claude, .cursor, etc.)
-    const home = process.env.HOME || homedir();
-    return join(home, ".letta", "settings.json");
+    return resolveGlobalSettingsPath();
   }
 
   private getProjectSettingsPath(workingDirectory: string): string {
@@ -1005,19 +990,14 @@ class SettingsManager {
   private isProjectSettingsPathCollidingWithGlobal(
     workingDirectory: string,
   ): boolean {
-    return (
-      resolve(this.getProjectSettingsPath(workingDirectory)) ===
-      resolve(this.getSettingsPath())
-    );
+    return isProjectSettingsPathGlobal(workingDirectory);
   }
 
   private getLocalProjectSettingsPath(workingDirectory: string): string {
     return join(workingDirectory, ".letta", "settings.local.json");
   }
 
-  /**
-   * Load local project settings (.letta/settings.local.json)
-   */
+  /** Load local project settings (.letta/settings.local.json). */
   async loadLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): Promise<LocalProjectSettings> {
@@ -1027,6 +1007,11 @@ class SettingsManager {
       return { ...cached };
     }
 
+    if (shouldIsolateHomeProjectConfig(workingDirectory)) {
+      const defaults = { ...DEFAULT_LOCAL_PROJECT_SETTINGS };
+      this.localProjectSettings.set(workingDirectory, defaults);
+      return defaults;
+    }
     const settingsPath = this.getLocalProjectSettingsPath(workingDirectory);
 
     try {
@@ -1068,9 +1053,7 @@ class SettingsManager {
     }
   }
 
-  /**
-   * Get local project settings (synchronous, from memory)
-   */
+  /** Get local project settings (synchronous, from memory). */
   getLocalProjectSettings(
     workingDirectory: string = process.cwd(),
   ): LocalProjectSettings {
@@ -1083,13 +1066,15 @@ class SettingsManager {
     return { ...cached };
   }
 
-  /**
-   * Update local project settings (synchronous in-memory, async persist)
-   */
+  /** Update local project settings (synchronous in-memory, async persist). */
   updateLocalProjectSettings(
     updates: Partial<LocalProjectSettings>,
     workingDirectory: string = process.cwd(),
   ): void {
+    if (shouldIsolateHomeProjectConfig(workingDirectory))
+      throw new Error(
+        "Cannot save project-local settings under HOME while LETTA_CONFIG_DIR is set",
+      );
     const current = this.localProjectSettings.get(workingDirectory);
     if (!current) {
       throw new Error(
@@ -1099,8 +1084,6 @@ class SettingsManager {
 
     const updated = { ...current, ...updates };
     this.localProjectSettings.set(workingDirectory, updated);
-
-    // Persist asynchronously (track promise for testing)
     const writePromise = this.persistLocalProjectSettings(workingDirectory)
       .catch((error) => {
         console.error("Failed to persist local project settings:", error);
@@ -1111,9 +1094,7 @@ class SettingsManager {
     this.pendingWrites.add(writePromise);
   }
 
-  /**
-   * Persist local project settings to disk (private helper)
-   */
+  /** Persist local project settings to disk. */
   private async persistLocalProjectSettings(
     workingDirectory: string,
   ): Promise<void> {
@@ -1469,10 +1450,10 @@ class SettingsManager {
     workingDirectory: string = process.cwd(),
   ): void {
     const session: SessionRef = { agentId, conversationId };
-    this.setLocalLastSession(session, workingDirectory);
+    if (!shouldIsolateHomeProjectConfig(workingDirectory))
+      this.setLocalLastSession(session, workingDirectory);
     this.setGlobalLastSession(session);
   }
-
   // =====================================================================
   // Agent Pin Helpers (global-only, per-backend namespace)
   // =====================================================================
@@ -1740,15 +1721,11 @@ class SettingsManager {
     this.upsertAgentSettings(agentId, { mcpServers: servers });
   }
   /** Resolve the manual override for one conversation; unset means auto. */
-  getToolsetPreference(
-    agentId: string,
-    conversationId: string = "default",
-  ): ToolsetPreference {
-    const agentSettings = this.getAgentSettings(agentId);
-    if (!conversationId || conversationId === "default") {
-      return agentSettings?.toolset ?? "auto";
-    }
-    return agentSettings?.toolsetsByConversation?.[conversationId] ?? "auto";
+  getToolsetPreference(agentId: string, conversationId = "default") {
+    return readToolsetPreference(
+      this.getAgentSettings(agentId),
+      conversationId,
+    );
   }
 
   /** Persist a manual override for one conversation; auto clears it. */
@@ -1757,22 +1734,35 @@ class SettingsManager {
     preference: ToolsetPreference,
     conversationId: string = "default",
   ): void {
-    const agentSettings = this.getAgentSettings(agentId);
-    if (!conversationId || conversationId === "default") {
-      if (preference === "auto" && agentSettings?.toolset === undefined) return;
-      this.upsertAgentSettings(agentId, { toolset: preference });
-      return;
-    }
-    const toolsetsByConversation = {
-      ...agentSettings?.toolsetsByConversation,
-    };
-    if (preference === "auto") {
-      if (!(conversationId in toolsetsByConversation)) return;
-      delete toolsetsByConversation[conversationId];
-    } else {
-      toolsetsByConversation[conversationId] = preference;
-    }
-    this.upsertAgentSettings(agentId, { toolsetsByConversation });
+    const update = toolsetPreferenceUpdate(
+      this.getAgentSettings(agentId),
+      preference,
+      conversationId,
+    );
+    if (update) this.upsertAgentSettings(agentId, update);
+  }
+
+  getClientPreferences(
+    agentId: string,
+    conversationId = "default",
+  ): ClientPreferences {
+    return readClientPreferences(
+      this.getAgentSettings(agentId),
+      conversationId,
+    );
+  }
+
+  setClientPreferences(
+    agentId: string,
+    conversationId: string,
+    preferences: ClientPreferences,
+  ): void {
+    const update = clientPreferencesUpdate(
+      this.getAgentSettings(agentId),
+      preferences,
+      conversationId,
+    );
+    if (update) this.upsertAgentSettings(agentId, update);
   }
 
   /**

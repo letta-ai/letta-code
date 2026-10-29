@@ -10,10 +10,12 @@ export type SharedReminderId =
   | "conversation-bootstrap"
   | "agent-info"
   | "secrets-info"
+  | "mcp-servers-info"
   | "permission-mode"
   | "memory-git-sync"
   | "command-io"
-  | "toolset-change";
+  | "toolset-change"
+  | "disk-space";
 
 export interface SharedReminderDefinition {
   id: SharedReminderId;
@@ -59,6 +61,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       ],
     },
     {
+      id: "mcp-servers-info",
+      description: "MCP servers with tools available through letta mcp",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
+    },
+    {
       id: "permission-mode",
       description: "Permission mode reminder",
       modes: [
@@ -87,6 +99,16 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
       id: "toolset-change",
       description: "Client-side toolset change context",
       modes: ["interactive"],
+    },
+    {
+      id: "disk-space",
+      description: "Low disk space warning in managed Cloud sandboxes",
+      modes: [
+        "interactive",
+        "headless-one-shot",
+        "headless-bidirectional",
+        "listen",
+      ],
     },
   ];
 

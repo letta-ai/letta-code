@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
+import { startCheckout } from "@/utils/checkout-readiness";
 import {
   buildClientSkillsPayload,
   invalidateClientSkillsPayloadCache,
@@ -110,6 +111,37 @@ test("discovers a skill from an attached shared-memory repository", async () => 
     path: skillPath,
     source: "agent",
   });
+});
+
+test("discovers newly ready shared skills without blocking or manual cache invalidation", async () => {
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const clone = startCheckout(
+    AGENT_ID,
+    getRepositoryMountDir(AGENT_ID, "late"),
+    async () => {
+      await barrier;
+      await createSkill(sharedSkillsRoot("late"), "late-review", "Late review");
+    },
+  );
+  try {
+    const options = buildOptions([{ id: "repo-late", name: "late" }]);
+    expect((await buildClientSkillsPayload(options)).clientSkills).toHaveLength(
+      0,
+    );
+    release();
+    await clone;
+    expect(
+      (await buildClientSkillsPayload(options)).clientSkills.map(
+        (skill) => skill.name,
+      ),
+    ).toContain("late-review");
+  } finally {
+    release();
+    await clone;
+  }
 });
 
 test("ignores a detached repository whose checkout remains on disk", async () => {

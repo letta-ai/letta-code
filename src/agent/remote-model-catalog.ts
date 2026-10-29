@@ -11,7 +11,6 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type AvailableModel,
@@ -23,6 +22,7 @@ import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { apiFetch, getApiRequestConfig } from "@/backend/api/request";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const CATALOG_PATH = "/v1/models/catalog";
 const REFRESH_TTL_MS = 5 * 60 * 1000; // matches available-models cache TTL
@@ -47,6 +47,7 @@ interface RemoteCatalogEntry {
   label: string;
   brand: string;
   maxContextWindow: number;
+  supportsStructuredOutputs?: boolean;
   description?: string;
   shortLabel?: string;
   isFeatured?: boolean;
@@ -60,7 +61,7 @@ interface RemoteCatalogEntry {
 function catalogCachePath(): string {
   const dir =
     process.env.LETTA_MODEL_CATALOG_CACHE_DIR ||
-    join(homedir(), ".letta", "cache");
+    join(resolveGlobalConfigDir(), "cache");
   return join(dir, "model-catalog.json");
 }
 
@@ -122,6 +123,7 @@ function isValidEntry(entry: unknown): entry is RemoteCatalogEntry {
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBoolean(candidate.supportsStructuredOutputs) &&
     isOptionalPositiveFiniteNumber(candidate.contextWindow) &&
     isOptionalPositiveFiniteNumber(candidate.maxOutputTokens) &&
     (candidate.config === undefined || isRecord(candidate.config))
@@ -138,6 +140,7 @@ function isValidCachedModel(entry: unknown): entry is CatalogModel {
     isOptionalBoolean(candidate.isDefault) &&
     isOptionalBoolean(candidate.isFeatured) &&
     isOptionalBoolean(candidate.free) &&
+    isOptionalBoolean(candidate.supportsStructuredOutputs) &&
     (candidate.updateArgs === undefined || isRecord(candidate.updateArgs))
   );
 }
@@ -163,6 +166,9 @@ export function toCatalogModel(entry: RemoteCatalogEntry): CatalogModel {
     handle: entry.handle,
     label: entry.label,
     description: entry.description ?? "",
+    ...(typeof entry.supportsStructuredOutputs === "boolean"
+      ? { supportsStructuredOutputs: entry.supportsStructuredOutputs }
+      : {}),
     ...(entry.shortLabel ? { shortLabel: entry.shortLabel } : {}),
     ...(entry.isDefault ? { isDefault: true } : {}),
     ...(entry.isFeatured ? { isFeatured: true } : {}),
@@ -329,6 +335,9 @@ export function toRuntimeCatalogModels(
         handle: entry.handle,
         label: entry.label,
         description: "",
+        ...(typeof entry.supportsStructuredOutputs === "boolean"
+          ? { supportsStructuredOutputs: entry.supportsStructuredOutputs }
+          : {}),
         ...(Object.keys(updateArgs).length > 0 ? { updateArgs } : {}),
       });
     }

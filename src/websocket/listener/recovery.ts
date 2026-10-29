@@ -4,33 +4,22 @@ import {
   type ApprovalDecision,
   executeApprovalBatch,
 } from "@/agent/approval-execution";
-import { getResumeDataFromBackend } from "@/agent/check-approval";
-import {
-  isApprovalPendingError,
-  isInvalidToolCallIdsError,
-  normalizeStreamErrorTypeToStopReason,
-  shouldAttemptApprovalRecovery,
-  shouldRetryPostStreamRunError,
-} from "@/agent/turn-recovery-policy";
-import { getBackend } from "@/backend";
+import { normalizeStreamErrorTypeToStopReason } from "@/agent/turn-recovery-policy";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { drainStreamWithResume } from "@/cli/helpers/stream";
-import { formatPermissionDenial } from "@/permissions/format-denial";
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
-import type {
-  ApprovalResponseBody,
-  StopReasonType,
-  StreamDelta,
-} from "@/types/protocol_v2";
-import {
-  applySuggestedPermissionsForApproval,
-  classifyApprovalsWithSuggestions,
-} from "./approval-suggestions";
+import type { StreamDelta } from "@/types/protocol_v2";
+import { debugWarn } from "@/utils/debug";
 import { normalizeCloudRetryWireMessage } from "./cloud-retry-message";
-import { MAX_POST_STOP_APPROVAL_RECOVERY } from "./constants";
-import { appendQueuedTurnToInput } from "./continuation-input";
+import {
+  findListenerConnectionByTransport,
+  getSubscribedListenerConnections,
+  resolveTurnExecutionConnectionId,
+} from "./connection";
+import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
+import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
   emitInterruptToolReturnMessage,
@@ -38,141 +27,84 @@ import {
   emitToolExecutionFinishedEvents,
   emitToolExecutionStartedEvents,
   normalizeToolReturnWireMessage,
+  populateInterruptQueue,
 } from "./interrupts";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
   ensureListenerModAdaptersForAgent,
 } from "./mod-adapter";
+import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
+import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import {
   emitCanonicalMessageDelta,
-  emitDequeuedUserMessage,
   emitLoopStatusUpdate,
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
-import { consumeQueuedTurn } from "./queue";
 import {
   emitLoopErrorNotice,
   getTranscriptLoopErrorMessage,
 } from "./recoverable-notices";
 import {
+  createRecoveredApprovalEffectBoundary,
+  recoveredApprovalFailureResults,
+} from "./recovered-approval-checkpoint";
+
+export {
+  getApprovalToolCallDesyncErrorText,
+  isApprovalToolCallDesyncError,
+  isRetriablePostStopError,
+  shouldAttemptPostStopApprovalRecovery,
+} from "./recovery-error-policy";
+
+import { scheduleQueuePump } from "./queue";
+import {
+  fenceLostRecoveryClaim,
+  scheduleRecoveredApprovalRetry,
+} from "./recovered-approval-retry";
+import {
+  createRecoveredTurnFinalizer,
+  finalizeHandledRecoveryTurn,
+} from "./recovered-turn-finalizer";
+import {
+  markRecoveryClaimCompletionPending,
+  retireAcknowledgedRecoveryClaim,
+} from "./recovery-claim-completion";
+import {
+  createRecoveryEvidenceCheckpoint,
+  type RecoveredContinuationProcessTurn,
+  type RecoveryAuthorityStore,
+  type RecoveryEvidenceWriter,
+  type SettledRecoveryResultWriter,
+} from "./recovery-evidence";
+import {
+  acquireRecoveryClaim,
+  type canRecoverConversation,
+  type RecoveryClaim,
+  resolveRecoveryEligibility,
+} from "./recovery-ownership";
+import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
 import { ensureSecretsHydratedForAgent } from "./secrets-sync";
-import type { ListenerTransport } from "./transport";
 import {
-  createTurnCorrelation,
-  type TurnCorrelation,
-} from "./turn-correlation";
+  getListenerTransportKind,
+  isListenerTransportOpen,
+  type ListenerTransport,
+} from "./transport";
+import type { TurnCorrelation } from "./turn-correlation";
+import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
+import { replayPendingTurnFinishedToConnection } from "./turn-finished-replay";
 import { createTurnInputState } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
-import { finishListenerTurn } from "./turn-terminal";
-import type {
-  ConversationRuntime,
-  IncomingMessage,
-  RecoveredPendingApproval,
-} from "./types";
 
-export function isApprovalToolCallDesyncError(detail: unknown): boolean {
-  return isInvalidToolCallIdsError(detail) || isApprovalPendingError(detail);
-}
+export { debugLogApprovalResumeState } from "./recovery-debug";
+export { finalizeHandledRecoveryTurn };
 
-export function getApprovalToolCallDesyncErrorText(errorInfo: {
-  detail?: unknown;
-  message?: unknown;
-}): string | null {
-  const detail = errorInfo.detail;
-  if (typeof detail === "string" && isApprovalToolCallDesyncError(detail)) {
-    return detail;
-  }
-  const message = errorInfo.message;
-  if (typeof message === "string" && isApprovalToolCallDesyncError(message)) {
-    return message;
-  }
-  return null;
-}
-
-export function shouldAttemptPostStopApprovalRecovery(params: {
-  stopReason: string | null | undefined;
-  runIdsSeen: number;
-  retries: number;
-  runErrorDetail: string | null;
-  latestErrorText: string | null;
-  fallbackError?: string | null;
-}): boolean {
-  const approvalDesyncDetected =
-    isApprovalToolCallDesyncError(params.runErrorDetail) ||
-    isApprovalToolCallDesyncError(params.latestErrorText) ||
-    isApprovalToolCallDesyncError(params.fallbackError);
-
-  return shouldAttemptApprovalRecovery({
-    approvalPendingDetected: approvalDesyncDetected,
-    retries: params.retries,
-    maxRetries: MAX_POST_STOP_APPROVAL_RECOVERY,
-  });
-}
-
-export async function isRetriablePostStopError(
-  stopReason: StopReasonType,
-  lastRunId: string | null | undefined,
-  fallbackDetail?: string | null,
-): Promise<boolean> {
-  const nonRetriableReasons: StopReasonType[] = [
-    "cancelled",
-    "requires_approval",
-    "max_steps",
-    "max_tokens_exceeded",
-    "context_window_overflow_in_system_prompt",
-    "end_turn",
-    "tool_rule",
-    "no_tool_call",
-  ];
-  if (nonRetriableReasons.includes(stopReason)) {
-    return false;
-  }
-
-  if (!lastRunId) {
-    return shouldRetryPostStreamRunError({
-      stopReason,
-      detail: fallbackDetail,
-    });
-  }
-
-  try {
-    const run = await getBackend().retrieveRun(lastRunId);
-    const metaError = run.metadata?.error as
-      | {
-          error_type?: string;
-          detail?: string;
-          retryable?: boolean;
-          error?: {
-            error_type?: string;
-            detail?: string;
-            retryable?: boolean;
-          };
-        }
-      | undefined;
-
-    const errorType = metaError?.error_type ?? metaError?.error?.error_type;
-    const detail = metaError?.detail ?? metaError?.error?.detail;
-    const retryable = metaError?.retryable ?? metaError?.error?.retryable;
-    return shouldRetryPostStreamRunError({
-      stopReason,
-      errorType,
-      detail,
-      retryable,
-    });
-  } catch {
-    return shouldRetryPostStreamRunError({
-      stopReason,
-      detail: fallbackDetail,
-    });
-  }
-}
-
+import type { ConversationRuntime, StartListenerOptions } from "./types";
 export async function drainRecoveryStreamWithEmission(
   recoveryStream: Stream<LettaStreamingResponse>,
   socket: ListenerTransport,
@@ -182,6 +114,7 @@ export async function drainRecoveryStreamWithEmission(
     conversationId: string;
     turnLease: TurnLease;
     turnCorrelation?: TurnCorrelation;
+    authorityGuard?: () => boolean;
   },
 ): Promise<Awaited<ReturnType<typeof drainStreamWithResume>>> {
   let recoveryRunIdSent = false;
@@ -193,7 +126,10 @@ export async function drainRecoveryStreamWithEmission(
     params.turnLease.signal,
     undefined,
     ({ chunk, shouldOutput, errorInfo }) => {
-      if (!runtime.turnLifecycle.isCurrent(params.turnLease)) {
+      if (
+        !runtime.turnLifecycle.isCurrent(params.turnLease) ||
+        params.authorityGuard?.() === false
+      ) {
         return undefined;
       }
       const maybeRunId = (chunk as { run_id?: unknown }).run_id;
@@ -248,377 +184,340 @@ export async function drainRecoveryStreamWithEmission(
 
       return undefined;
     },
+    undefined,
+    undefined,
+    LISTENER_STREAM_RESUME_POLICY,
   );
 }
 
-export function finalizeHandledRecoveryTurn(
+export type RecoveredContinuationDependencies = {
+  ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
+  ensureModAdapters?: typeof ensureListenerModAdaptersForAgent;
+  prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
+  executeApprovalBatch?: typeof executeApprovalBatch;
+  executeTool?: NonNullable<
+    Parameters<typeof executeApprovalBatch>[2]
+  >["executeTool"];
+  recordListenerWork?: RecoveryEvidenceWriter;
+  mergeSettledRecoveryResult?: SettledRecoveryResultWriter;
+  recoveryAuthorityStore?: RecoveryAuthorityStore;
+  acquireRecoveryClaim?: typeof acquireRecoveryClaim;
+  canRecover?: typeof canRecoverConversation;
+};
+type RecoveryDeliveryOrigin = {
+  connectionId: string;
+  connectionIdCanResume: boolean;
+};
+type RecoveredContinuationOptions = {
+  onStatusChange?: (
+    status: "idle" | "receiving" | "processing",
+    connectionId: string,
+  ) => void;
+  connectionId?: string;
+  dependencies?: RecoveredContinuationDependencies;
+  onLeaseAcquired?: () => Promise<void>;
+};
+/** Resume recovered approvals immediately instead of parking them for input. */
+export async function startRecoveredApprovalContinuation(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
-  turnLease: TurnLease,
-  params: {
-    drainResult: Awaited<ReturnType<typeof drainStreamWithResume>>;
-    agentId?: string | null;
-    conversationId: string;
-    turnId: string;
-  },
-): ReturnType<typeof finishListenerTurn> {
-  if (params.drainResult.stopReason === "end_turn") {
-    return finishListenerTurn(runtime, turnLease, {
-      stopReason: "end_turn",
-      socket,
-      agentId: params.agentId,
-      conversationId: params.conversationId,
-      turnId: params.turnId,
-    });
-  }
-
-  if (params.drainResult.stopReason === "cancelled") {
-    return finishListenerTurn(runtime, turnLease, {
-      stopReason: "cancelled",
-      socket,
-      runId: runtime.activeRunId,
-      agentId: params.agentId ?? undefined,
-      conversationId: params.conversationId,
-      turnId: params.turnId,
-    });
-  }
-
-  const terminalStopReason =
-    (params.drainResult.stopReason as StopReasonType) || "error";
-  const runId = runtime.activeRunId;
-  const noticeParams = {
-    message: `Recovery continuation ended unexpectedly: ${terminalStopReason}`,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-  };
-  const transition = finishListenerTurn(runtime, turnLease, {
-    stopReason: terminalStopReason,
-    socket,
-    agentId: params.agentId,
-    conversationId: params.conversationId,
-    turnId: params.turnId,
-    error: getTranscriptLoopErrorMessage(noticeParams),
-  });
-  if (!transition.finished) {
-    return transition;
-  }
-  emitLoopErrorNotice(socket, runtime, {
-    ...noticeParams,
-    stopReason: terminalStopReason,
-    isTerminal: true,
-    runId: runId || undefined,
-  });
-  return transition;
-}
-
-export async function debugLogApprovalResumeState(
-  runtime: ConversationRuntime,
-  params: {
-    agentId: string;
-    conversationId: string;
-    expectedToolCallIds: string[];
-    sentToolCallIds: string[];
-  },
-): Promise<void> {
-  if (!process.env.DEBUG) {
-    return;
-  }
-
-  try {
-    const backend = getBackend();
-    const agent = await backend.retrieveAgent(params.agentId);
-    const isExplicitConversation =
-      params.conversationId.length > 0 && params.conversationId !== "default";
-    const lastInContextId = isExplicitConversation
-      ? ((
-          await backend.retrieveConversation(params.conversationId)
-        ).in_context_message_ids?.at(-1) ?? null)
-      : (agent.message_ids?.at(-1) ?? null);
-    const lastInContextMessages = lastInContextId
-      ? await backend.retrieveMessage(lastInContextId)
-      : [];
-    const resumeData = await getResumeDataFromBackend(
-      agent,
-      params.conversationId,
-      {
-        includeMessageHistory: false,
-      },
-    );
-
-    console.log(
-      "[Listen][DEBUG] Post-approval continuation resume snapshot",
-      JSON.stringify(
-        {
-          conversationId: params.conversationId,
-          activeRunId: runtime.activeRunId,
-          expectedToolCallIds: params.expectedToolCallIds,
-          sentToolCallIds: params.sentToolCallIds,
-          pendingApprovalToolCallIds: (resumeData.pendingApprovals ?? []).map(
-            (approval) => approval.toolCallId,
-          ),
-          lastInContextMessageId: lastInContextId,
-          lastInContextMessageTypes: lastInContextMessages.map(
-            (message) => message.message_type,
-          ),
-        },
-        null,
-        2,
-      ),
-    );
-  } catch (error) {
-    console.warn(
-      "[Listen][DEBUG] Failed to capture post-approval resume snapshot:",
-      error instanceof Error ? error.message : String(error),
-    );
-  }
-}
-
-function buildRecoveredAutoDecisions(
-  autoAllowed: Awaited<
-    ReturnType<typeof classifyApprovalsWithSuggestions>
-  >["autoAllowed"],
-  autoDenied: Awaited<
-    ReturnType<typeof classifyApprovalsWithSuggestions>
-  >["autoDenied"],
-): ApprovalDecision[] {
-  return [
-    ...autoAllowed.map((ac) => ({
-      type: "approve" as const,
-      approval: ac.approval,
-    })),
-    ...autoDenied.map((ac) => ({
-      type: "deny" as const,
-      approval: ac.approval,
-      reason: formatPermissionDenial(ac.permission, ac.denyReason),
-    })),
-  ];
-}
-
-export async function resolveRecoveredApprovalResponse(
-  runtime: ConversationRuntime,
-  socket: ListenerTransport,
-  response: ApprovalResponseBody,
-  processTurn: (
-    msg: IncomingMessage,
-    socket: ListenerTransport,
-    runtime: ConversationRuntime,
-    onStatusChange?: (
-      status: "idle" | "receiving" | "processing",
-      connectionId: string,
-    ) => void,
-    connectionId?: string,
-    dequeuedBatchId?: string,
-    existingTurnLease?: TurnLease,
-    existingTurnCorrelation?: TurnCorrelation,
-  ) => Promise<void>,
-  opts?: {
-    onStatusChange?: (
-      status: "idle" | "receiving" | "processing",
-      connectionId: string,
-    ) => void;
-    connectionId?: string;
-    dependencies?: {
-      applySuggestedPermissions?: typeof applySuggestedPermissionsForApproval;
-      classifyApprovals?: typeof classifyApprovalsWithSuggestions;
-      ensureSecretsHydrated?: typeof ensureSecretsHydratedForAgent;
-      prepareToolExecutionContext?: typeof prepareToolExecutionContextForScope;
-      executeApprovalBatch?: typeof executeApprovalBatch;
-    };
-  },
+  processTurn: RecoveredContinuationProcessTurn,
+  opts?: RecoveredContinuationOptions,
 ): Promise<boolean> {
-  const requestId = response.request_id;
-  if (typeof requestId !== "string" || requestId.length === 0) {
-    return false;
-  }
-
   const recovered = runtime.recoveredApprovalState;
-  if (!recovered?.approvalsByRequestId.has(requestId)) {
+  if (!recovered?.autoDecisions || recovered.autoDecisions.length === 0) {
     return false;
   }
-  const dependencies = opts?.dependencies;
-  const applySuggestedPermissions =
-    dependencies?.applySuggestedPermissions ??
-    applySuggestedPermissionsForApproval;
-  const classifyApprovals =
-    dependencies?.classifyApprovals ?? classifyApprovalsWithSuggestions;
-  const ensureSecretsHydrated =
-    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
-  const prepareToolExecutionContext =
-    dependencies?.prepareToolExecutionContext ??
-    prepareToolExecutionContextForScope;
-  const executeApprovals =
-    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
-
-  const workingDirectory = getConversationWorkingDirectory(
-    runtime.listener,
-    recovered.agentId,
-    recovered.conversationId,
-  );
+  if (runtime.turnLifecycle.kind !== "idle") {
+    return false;
+  }
+  const originConnection = opts?.connectionId
+    ? (runtime.listener.connections.get(opts.connectionId) ?? null)
+    : findListenerConnectionByTransport(runtime.listener, socket);
+  if (
+    opts?.connectionId &&
+    !originConnection &&
+    getListenerTransportKind(socket) === "runtime"
+  ) {
+    if (runtime.activeConnectionId === opts.connectionId) {
+      runtime.activeConnectionId = null;
+    }
+    return false;
+  }
+  const deliveryOrigin: RecoveryDeliveryOrigin | null = originConnection
+    ? {
+        connectionId: originConnection.id,
+        connectionIdCanResume:
+          originConnection.options.connectionIdCanResume !== false,
+      }
+    : null;
+  const canRecover = opts?.dependencies?.canRecover;
+  const eligibility = await resolveRecoveryEligibility(runtime, canRecover);
+  if (eligibility !== "owned") {
+    if (eligibility === "unavailable") return false;
+    if (runtime.recoveredApprovalState === recovered) {
+      clearRecoveredApprovalState(runtime);
+    }
+    return false;
+  }
+  if (
+    runtime.turnLifecycle.kind !== "idle" ||
+    runtime.recoveredApprovalState !== recovered
+  )
+    return false;
   const scope = {
     agent_id: recovered.agentId,
     conversation_id: recovered.conversationId,
   } as const;
-  const respondedEntry = recovered.approvalsByRequestId.get(requestId);
-  let autoDecisionsToAppend: ApprovalDecision[] = [];
-  const reclassifiedRequestIds = new Set<string>();
-  if (
-    respondedEntry &&
-    "decision" in response &&
-    response.decision.behavior === "allow"
-  ) {
-    const savedSuggestions = await applySuggestedPermissions({
-      decision: response.decision,
-      context: respondedEntry.approvalContext,
-      workingDirectory,
-    });
-
-    if (
-      runtime.recoveredApprovalState !== recovered ||
-      !recovered.pendingRequestIds.has(requestId)
-    ) {
-      return true;
-    }
-
-    if (savedSuggestions && recovered.pendingRequestIds.size > 1) {
-      const remainingRecoveredEntries = [...recovered.pendingRequestIds]
-        .filter((id) => id !== requestId)
-        .map((id) => recovered.approvalsByRequestId.get(id))
-        .filter((entry): entry is RecoveredPendingApproval => !!entry);
-      const reclassified = await classifyApprovals(
-        remainingRecoveredEntries.map((entry) => entry.approval),
-        {
-          alwaysRequiresUserInput: isInteractiveApprovalTool,
-          requireArgsForAutoApprove: true,
-          missingNameReason: "Tool call incomplete - missing name",
-          workingDirectory,
-          permissionModeState: getOrCreateConversationPermissionModeStateRef(
-            runtime.listener,
-            recovered.agentId,
-            recovered.conversationId,
-          ),
-          agentId: recovered.agentId,
-        },
-      );
-
-      if (
-        reclassified.autoAllowed.length > 0 ||
-        reclassified.autoDenied.length > 0
-      ) {
-        autoDecisionsToAppend = buildRecoveredAutoDecisions(
-          reclassified.autoAllowed,
-          reclassified.autoDenied,
-        );
-        const reclassifiedToolCallIds = new Set(
-          [...reclassified.autoAllowed, ...reclassified.autoDenied].map(
-            (entry) => entry.approval.toolCallId,
-          ),
-        );
-        for (const pendingId of recovered.pendingRequestIds) {
-          if (pendingId === requestId) {
-            continue;
-          }
-          const pendingEntry = recovered.approvalsByRequestId.get(pendingId);
-          if (
-            pendingEntry &&
-            reclassifiedToolCallIds.has(pendingEntry.approval.toolCallId)
-          ) {
-            reclassifiedRequestIds.add(pendingId);
-          }
-        }
-      }
-    }
-  }
-
-  if (
-    runtime.recoveredApprovalState !== recovered ||
-    !recovered.pendingRequestIds.has(requestId)
-  ) {
-    return true;
-  }
   if (hasInterruptedCacheForScope(runtime.listener, scope)) {
     clearRecoveredApprovalState(runtime);
     emitRuntimeStateUpdates(runtime, scope);
     return true;
   }
 
-  const pendingRequestIdsAfterResponse = [
-    ...recovered.pendingRequestIds,
-  ].filter(
-    (pendingId) =>
-      pendingId !== requestId && !reclassifiedRequestIds.has(pendingId),
+  const workingDirectory = getConversationWorkingDirectory(
+    runtime.listener,
+    recovered.agentId,
+    recovered.conversationId,
   );
-  const recoveryLease =
-    pendingRequestIdsAfterResponse.length === 0
-      ? runtime.turnLifecycle.begin({
-          origin: "approval_recovery",
-          workingDirectory,
-          initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
-        })
-      : null;
-  let continuationFinalized = false;
-
-  try {
-    recovered.responsesByRequestId.set(requestId, response);
-    recovered.pendingRequestIds.delete(requestId);
-    if (autoDecisionsToAppend.length > 0) {
-      recovered.autoDecisions = [
-        ...(recovered.autoDecisions ?? []),
-        ...autoDecisionsToAppend,
-      ];
-    }
-    for (const reclassifiedRequestId of reclassifiedRequestIds) {
-      recovered.pendingRequestIds.delete(reclassifiedRequestId);
-      recovered.approvalsByRequestId.delete(reclassifiedRequestId);
-      recovered.responsesByRequestId.delete(reclassifiedRequestId);
-    }
-
-    if (recovered.pendingRequestIds.size > 0) {
-      emitRuntimeStateUpdates(runtime, {
-        agent_id: recovered.agentId,
-        conversation_id: recovered.conversationId,
-      });
-      return true;
-    }
-
-    const decisions: ApprovalDecision[] = [...(recovered.autoDecisions ?? [])];
-    for (const [id, entry] of recovered.approvalsByRequestId) {
-      const approvalResponse = recovered.responsesByRequestId.get(id);
-      if (!approvalResponse) {
-        continue;
-      }
-
-      if ("decision" in approvalResponse) {
-        const decision = approvalResponse.decision;
-        if (decision.behavior === "allow") {
-          decisions.push({
-            type: "approve",
-            approval: decision.updated_input
-              ? {
-                  ...entry.approval,
-                  toolArgs: JSON.stringify(decision.updated_input),
-                }
-              : entry.approval,
-            reason: decision.message,
-          });
-        } else {
-          decisions.push({
-            type: "deny",
-            approval: entry.approval,
-            reason: decision.message || "Denied via WebSocket",
-          });
+  let recoveryLease: TurnLease | undefined;
+  let retryAfterClaimLoss = false;
+  let sideEffectMayHaveRun = false;
+  const acquireClaim =
+    opts?.dependencies?.acquireRecoveryClaim ?? acquireRecoveryClaim;
+  const recoveryClaim = await acquireClaim(runtime, () => {
+    retryAfterClaimLoss = true;
+    fenceLostRecoveryClaim(runtime, recoveryLease, sideEffectMayHaveRun);
+  });
+  if (runtime.listener.connectionId?.startsWith("conn-") && !recoveryClaim) {
+    return false;
+  }
+  if (
+    runtime.turnLifecycle.kind !== "idle" ||
+    runtime.recoveredApprovalState !== recovered
+  ) {
+    await recoveryClaim?.release();
+    return false;
+  }
+  recoveryLease = runtime.turnLifecycle.begin({
+    origin: "approval_recovery",
+    workingDirectory,
+    initialStatus: "EXECUTING_CLIENT_SIDE_TOOL",
+  });
+  await opts?.onLeaseAcquired?.();
+  await executeRecoveredApprovalContinuation({
+    recoveryClaim,
+    runtime,
+    socket,
+    recovered,
+    decisions: [...recovered.autoDecisions],
+    recoveryLease,
+    workingDirectory,
+    turnId: `batch-recovered-startup-${crypto.randomUUID()}`,
+    processTurn,
+    opts,
+    deliveryOrigin,
+    onSideEffectStarted: () => {
+      sideEffectMayHaveRun = true;
+    },
+  });
+  if (retryAfterClaimLoss && !runtime.listener.intentionallyClosed) {
+    if (sideEffectMayHaveRun) {
+      try {
+        promotePreparedInputTerminals(runtime.listener);
+        const connectionId = runtime.activeConnectionId ?? opts?.connectionId;
+        if (connectionId) {
+          replayPendingTurnFinishedToConnection(socket, runtime, connectionId);
         }
-      } else {
-        decisions.push({
-          type: "deny",
-          approval: entry.approval,
-          reason: approvalResponse.error,
-        });
+      } catch (error) {
+        debugWarn("recovery", "Failed to replay claim-loss terminal", error);
+      }
+      if (runtime.recoveredApprovalState === recovered) {
+        clearRecoveredApprovalState(runtime);
       }
     }
-
-    if (!recoveryLease) {
-      throw new Error("Recovered approval continuation has no lifecycle lease");
+    if (runtime.listener.scheduleRecordedRecovery) {
+      runtime.listener.scheduleRecordedRecovery();
+    } else {
+      scheduleRecoveredApprovalRetry(runtime, () =>
+        startRecoveredApprovalContinuation(runtime, socket, processTurn, opts),
+      );
     }
+  }
+  return true;
+}
+
+async function executeRecoveredApprovalContinuation(params: {
+  recoveryClaim: RecoveryClaim | null;
+  runtime: ConversationRuntime;
+  socket: ListenerTransport;
+  recovered: NonNullable<ConversationRuntime["recoveredApprovalState"]>;
+  decisions: ApprovalDecision[];
+  recoveryLease: TurnLease;
+  workingDirectory: string;
+  turnId: string;
+  processTurn: RecoveredContinuationProcessTurn;
+  opts?: RecoveredContinuationOptions;
+  deliveryOrigin: RecoveryDeliveryOrigin | null;
+  onSideEffectStarted: () => void;
+}): Promise<void> {
+  const {
+    recoveryClaim,
+    runtime,
+    socket,
+    recovered,
+    decisions,
+    recoveryLease,
+    workingDirectory,
+    turnId,
+    processTurn,
+    opts,
+    deliveryOrigin,
+    onSideEffectStarted,
+  } = params;
+  const dependencies = opts?.dependencies;
+  const ensureSecretsHydrated =
+    dependencies?.ensureSecretsHydrated ?? ensureSecretsHydratedForAgent;
+  const ensureModAdapters =
+    dependencies?.ensureModAdapters ?? ensureListenerModAdaptersForAgent;
+  const prepareToolExecutionContext =
+    dependencies?.prepareToolExecutionContext ??
+    prepareToolExecutionContextForScope;
+  const executeApprovals =
+    dependencies?.executeApprovalBatch ?? executeApprovalBatch;
+  const recordWork = dependencies?.recordListenerWork;
+  const recoveryAuthorityStore =
+    dependencies?.recoveryAuthorityStore ?? createInterruptedTurnStore();
+  if (dependencies?.recoveryAuthorityStore && !recordWork) {
+    throw new Error(
+      "Custom recovery authority store requires matching evidence writer",
+    );
+  }
+  if (
+    recordWork &&
+    !dependencies?.mergeSettledRecoveryResult &&
+    !dependencies?.executeApprovalBatch &&
+    decisions.some(
+      (decision) => decision.type === "approve" && !decision.precomputedResult,
+    )
+  ) {
+    throw new Error(
+      "Custom recovery evidence writer requires exact-result merge capability",
+    );
+  }
+  const scope = {
+    agent_id: recovered.agentId,
+    conversation_id: recovered.conversationId,
+  } as const;
+  const originConnectionId = deliveryOrigin?.connectionId;
+  const originConnectionCanResume =
+    deliveryOrigin?.connectionIdCanResume ?? true;
+  let selectedDeliveryOwnerId = originConnectionId;
+  const hasRecoveryOwnership = () =>
+    runtime.turnLifecycle.isCurrent(recoveryLease) &&
+    (!recoveryClaim || recoveryClaim.owned);
+  const recoveryLineageId = recovered.recoveryLineageId ?? crypto.randomUUID();
+  const evidence = createRecoveryEvidenceCheckpoint(
+    runtime,
+    recordWork,
+    recovered.recoveryRevisionToken ?? recovered.interruptedRevision,
+    recoveryLineageId,
+    dependencies?.mergeSettledRecoveryResult,
+    dependencies?.recoveryAuthorityStore !== undefined,
+  );
+  const interruptedTerminalRevision = () =>
+    recovered.recoveryUsesIndependentSuccessor
+      ? recovered.interruptedRevision
+      : evidence.revision;
+  const finishRecoveredTurn = createRecoveredTurnFinalizer({
+    runtime,
+    recoveryLease,
+    recovered,
+    getInterruptedRevision: interruptedTerminalRevision,
+    getAuthorityRevision: () => evidence.revision,
+    authorityStore: recoveryAuthorityStore,
+    canCommit: hasRecoveryOwnership,
+  });
+  const shouldInterruptDelivery = () =>
+    recoveryLease.signal.aborted || !hasRecoveryOwnership();
+  const getDeliveryOwnerId = (): string | null => {
+    if (
+      originConnectionId &&
+      (!runtime.activeConnectionId ||
+        runtime.activeConnectionId === originConnectionId)
+    ) {
+      const directOrigin = runtime.listener.connections.get(originConnectionId);
+      const directOriginTransport =
+        directOrigin?.streamWriter ?? directOrigin?.writer;
+      if (
+        directOrigin?.initialized &&
+        directOriginTransport &&
+        isListenerTransportOpen(directOriginTransport) &&
+        !getOutboundQueueStats(directOriginTransport).killed
+      ) {
+        selectedDeliveryOwnerId = originConnectionId;
+        return originConnectionId;
+      }
+    }
+    const subscribers = getSubscribedListenerConnections(
+      runtime.listener,
+      scope,
+    ).filter(
+      (connection) =>
+        !getOutboundQueueStats(connection.streamWriter ?? connection.writer)
+          .killed,
+    );
+    const preferred = runtime.activeConnectionId ?? originConnectionId;
+    if (preferred && subscribers.some(({ id }) => id === preferred)) {
+      selectedDeliveryOwnerId = preferred;
+      return preferred;
+    }
+    if (originConnectionCanResume && originConnectionId) return null;
+    const replacementId = subscribers[0]?.id ?? null;
+    if (replacementId && originConnectionCanResume === false) {
+      runtime.activeConnectionId = replacementId;
+    }
+    if (replacementId) selectedDeliveryOwnerId = replacementId;
+    return replacementId;
+  };
+  const awaitRecoveryDeliveries = (
+    deliveries: ReturnType<typeof emitToolExecutionFinishedEvents>,
+  ): Promise<"sent" | "interrupted"> => {
+    if (!deliveryOrigin) {
+      return (async () => {
+        for (const delivery of deliveries) {
+          const settlements = await Promise.all(
+            delivery.receipts.map((receipt) => receipt.settlement),
+          );
+          if (settlements.some((settlement) => settlement === "dropped")) {
+            return "interrupted" as const;
+          }
+        }
+        return "sent" as const;
+      })();
+    }
+    runtime.pendingTerminalDeliveryCount += 1;
+    return awaitOrderedOutboundDeliveries({
+      deliveries,
+      getOwnerId: getDeliveryOwnerId,
+      shouldInterrupt: shouldInterruptDelivery,
+      ...(originConnectionCanResume === false
+        ? { ownerWaitTimeoutMs: OUTBOUND_QUEUE_LIMITS.MAX_BACKPRESSURE_MS }
+        : {}),
+    }).finally(() => {
+      runtime.pendingTerminalDeliveryCount = Math.max(
+        0,
+        runtime.pendingTerminalDeliveryCount - 1,
+      );
+    });
+  };
+  let continuationFinalized = false;
+  let sideEffectStarted = false;
+  let recoveredContinuationOtid: string | null = null;
+  let claimSettled = false;
+  try {
+    // Claim authority can disappear at this async extension boundary.
+    if (!hasRecoveryOwnership()) return;
     const approvedDecisions = decisions.filter(
       (decision): decision is Extract<ApprovalDecision, { type: "approve" }> =>
         decision.type === "approve",
@@ -631,7 +530,6 @@ export async function resolveRecoveredApprovalResponse(
       recoveryLease,
       approvedToolCallIds,
     );
-    recovered.pendingRequestIds.clear();
     emitRuntimeStateUpdates(runtime, scope);
     const executionRunId = runtime.activeRunId ?? undefined;
     emitToolExecutionStartedEvents(socket, runtime, {
@@ -651,28 +549,32 @@ export async function resolveRecoveredApprovalResponse(
         runId: executionRunId,
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        shouldEmit: () => runtime.turnLifecycle.isCurrent(recoveryLease),
+        shouldEmit: hasRecoveryOwnership,
       },
     );
     let approvalResults: Awaited<ReturnType<typeof executeApprovalBatch>>;
     try {
-      // Hydration and tool-context preparation sit inside the try: they run
-      // after the client_tool_start events above, so a throw here would
-      // otherwise leave those lifecycle events orphaned.
       await ensureSecretsHydrated(runtime.listener, recovered.agentId);
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+      if (!hasRecoveryOwnership()) {
+        return;
       }
-      const modAdapters = await ensureListenerModAdaptersForAgent(
+      const modAdapters = await ensureModAdapters(
         runtime.listener,
         recovered.agentId,
       );
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+      if (!hasRecoveryOwnership()) {
+        return;
       }
       const preparedToolContext = await prepareToolExecutionContext({
+        connectionId: resolveTurnExecutionConnectionId(
+          runtime.listener,
+          scope,
+          opts?.connectionId,
+        ),
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
+        actingUserId: recovered.actingUserId,
+        suppressActingUserFallback: recovered.actingUserId === undefined,
         workingDirectory,
         permissionModeState: getOrCreateConversationPermissionModeStateRef(
           runtime.listener,
@@ -683,164 +585,334 @@ export async function resolveRecoveredApprovalResponse(
         modAdapters,
         modEvents: createListenerModEvents(modAdapters),
       });
-      if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        return true;
+      if (!hasRecoveryOwnership()) {
+        return;
       }
       runtime.currentToolset = preparedToolContext.toolset;
       runtime.currentToolsetPreference = preparedToolContext.toolsetPreference;
       runtime.currentLoadedTools =
         preparedToolContext.preparedToolContext.loadedToolNames;
-      approvalResults = await executeApprovals(decisions, undefined, {
-        abortSignal: recoveryLease.signal,
-        onStreamingOutput: emitToolExecutionOutput,
-        toolContextId: preparedToolContext.preparedToolContext.contextId,
-        workingDirectory,
-        parentScope:
-          recovered.agentId && recovered.conversationId
-            ? {
-                agentId: recovered.agentId,
-                conversationId: recovered.conversationId,
-              }
-            : undefined,
+      if (!hasRecoveryOwnership()) return;
+      const continuationOtid = crypto.randomUUID();
+      const effectBoundary = createRecoveredApprovalEffectBoundary({
+        decisions,
+        ownsClaim: hasRecoveryOwnership,
+        checkpoint: (results, unstartedToolCallIds, phase) =>
+          evidence.write(
+            { results, unstartedToolCallIds },
+            phase === "before"
+              ? "before_tool_execution"
+              : "after_tool_execution",
+            phase === "before"
+              ? { shouldContinue: hasRecoveryOwnership }
+              : undefined,
+          ),
+        onCrossed: () => {
+          sideEffectStarted = true;
+          onSideEffectStarted();
+        },
+        checkpointExactResult: (result) =>
+          evidence.checkpointSettledResult(result),
       });
-    } catch (error) {
-      // Execution threw before results exist, so the finished-events
-      // emission below never runs. Close the client_tool_start lifecycle
-      // events explicitly or observer UIs shimmer these tool calls forever.
-      // Flush buffered tool output first so no progress frame lands after
-      // the terminal end events. Gate only on lease ownership: unlike the
-      // normal turn path, recovered approvals do not unwind through the
-      // turn.ts interrupt emission, so an aborted recovery that throws has
-      // no other owner for these terminal events (the outer catch below
-      // finalizes the lease without emitting ends). isCurrent stays true
-      // while the lease is cancelling, so abort+throw still emits exactly
-      // once; only a replacement owner suppresses emission.
-      emitToolExecutionOutput.flush();
-      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
-        emitToolExecutionAbortedEvents(socket, runtime, {
-          toolCallIds: approvedToolCallIds,
-          runId: executionRunId,
-          agentId: recovered.agentId,
-          conversationId: recovered.conversationId,
+      await evidence.write(
+        {
+          toolCallIds: decisions.map(({ approval }) => approval.toolCallId),
+          results: effectBoundary.initialResults,
+          unstartedToolCallIds: effectBoundary.initialUnstartedToolCallIds,
+          requestOtid: continuationOtid,
+          recoveryClaimCompletion: {
+            lineageId: recoveryLineageId,
+            state: "running",
+            effectToolCallIds: decisions.map(
+              ({ approval }) => approval.toolCallId,
+            ),
+            effectRunId: runtime.activeRunId,
+            effectRequestOtid: continuationOtid,
+            effectWorkingDirectory: workingDirectory,
+            effectActingUserId: recovered.actingUserId ?? null,
+            effectResults: effectBoundary.initialResults,
+            effectUnstartedToolCallIds:
+              effectBoundary.initialUnstartedToolCallIds,
+            effectInputIdentities: [
+              ...(recovered.durableInputIdentities ?? []),
+            ],
+            effectTerminalConsumerIds: [
+              ...(recovered.terminalConsumerIds ?? []),
+            ],
+            effectTeleport: undefined,
+          },
+        },
+        "before_tool_execution",
+        { shouldContinue: hasRecoveryOwnership },
+      );
+      if (!hasRecoveryOwnership()) return;
+      try {
+        approvalResults = await executeApprovals(decisions, undefined, {
+          abortSignal: recoveryLease.signal,
+          onStreamingOutput: emitToolExecutionOutput,
+          toolContextId: preparedToolContext.preparedToolContext.contextId,
+          workingDirectory,
+          parentScope:
+            recovered.agentId && recovered.conversationId
+              ? {
+                  agentId: recovered.agentId,
+                  conversationId: recovered.conversationId,
+                }
+              : undefined,
+          beforeToolExecution: effectBoundary.beforeToolExecution,
+          afterToolExecution: effectBoundary.afterToolExecution,
+          executeTool: dependencies?.executeTool,
         });
+      } catch (error) {
+        if (effectBoundary.claimLost) return;
+        await evidence.write(
+          {
+            unstartedToolCallIds: effectBoundary.unstartedToolCallIds,
+            results: [
+              ...effectBoundary.results,
+              ...recoveredApprovalFailureResults(decisions, error).filter(
+                (result) =>
+                  !effectBoundary.results.some(
+                    (saved) => saved.tool_call_id === result.tool_call_id,
+                  ),
+              ),
+            ],
+          },
+          "after_tool_execution",
+        );
+        throw error;
+      }
+      await evidence.write(
+        {
+          results: effectBoundary.results,
+          unstartedToolCallIds: effectBoundary.unstartedToolCallIds,
+        },
+        "after_tool_execution",
+      );
+      recoveredContinuationOtid = continuationOtid;
+    } catch (error) {
+      emitToolExecutionOutput.flush();
+      if (hasRecoveryOwnership()) {
+        const abortedDeliveries = emitToolExecutionAbortedEvents(
+          socket,
+          runtime,
+          {
+            toolCallIds: approvedToolCallIds,
+            runId: executionRunId,
+            agentId: recovered.agentId,
+            conversationId: recovered.conversationId,
+          },
+        );
+        await awaitRecoveryDeliveries(abortedDeliveries);
       }
       throw error;
     } finally {
       emitToolExecutionOutput.flush();
     }
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
+    if (!hasRecoveryOwnership()) {
+      return;
     }
 
-    emitToolExecutionFinishedEvents(socket, runtime, {
-      approvals: approvalResults,
-      runId: executionRunId,
-      agentId: recovered.agentId,
-      conversationId: recovered.conversationId,
-    });
-    emitInterruptToolReturnMessage(
+    const continuationOtid = recoveredContinuationOtid ?? crypto.randomUUID();
+
+    const terminalDeliveries = emitToolExecutionFinishedEvents(
       socket,
       runtime,
-      approvalResults,
-      executionRunId,
-      "tool-return",
+      {
+        approvals: approvalResults,
+        runId: executionRunId,
+        agentId: recovered.agentId,
+        conversationId: recovered.conversationId,
+      },
     );
+    terminalDeliveries.push(
+      ...emitInterruptToolReturnMessage(
+        socket,
+        runtime,
+        approvalResults,
+        executionRunId,
+        "tool-return",
+      ),
+    );
+    if ((await awaitRecoveryDeliveries(terminalDeliveries)) === "interrupted") {
+      if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
+        runtime.turnLifecycle.markTransportInterruption(recoveryLease);
+        populateInterruptQueue(runtime, {
+          lastExecutionResults: approvalResults,
+          lastExecutingToolCallIds: [],
+          lastNeedsUserInputToolCallIds: [],
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+          requestOtid: continuationOtid,
+        });
+        runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
+        if (runtime.recoveredApprovalState === recovered) {
+          clearRecoveredApprovalState(runtime);
+        }
+        finishRecoveredTurn({
+          stopReason: recoveryLease.signal.aborted ? "cancelled" : "error",
+          socket,
+          agentId: recovered.agentId,
+          conversationId: recovered.conversationId,
+          turnId,
+        });
+        // Delivery interruption is not a process restart. Retained evidence needs
+        // an explicit same-daemon wake once a replacement transport can consume it.
+        runtime.listener.scheduleRecordedRecovery?.();
+      }
+      return;
+    }
 
     runtime.turnLifecycle.setExecutingToolCallIds(recoveryLease, []);
     setTurnLoopStatus(runtime, recoveryLease, "SENDING_API_REQUEST", scope);
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
+    if (!hasRecoveryOwnership()) {
+      return;
     }
     emitRuntimeStateUpdates(runtime, scope);
 
-    let continuationInput = createTurnInputState([
+    const continuationInput = createTurnInputState([
       {
         type: "approval",
         approvals: approvalResults,
-        otid: crypto.randomUUID(),
+        otid: continuationOtid,
       },
     ]);
-    let continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
-    let continuationActingUserId: string | undefined;
-    let continuationCorrelation: TurnCorrelation | undefined;
-    const consumedQueuedTurn = consumeQueuedTurn(runtime);
-    if (consumedQueuedTurn) {
-      const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
-      continuationBatchId = dequeuedBatch.batchId;
-      continuationActingUserId = queuedTurn.actingUserId;
-      continuationInput = appendQueuedTurnToInput(
-        continuationInput,
-        queuedTurn,
-      );
-      continuationCorrelation = createTurnCorrelation(
-        runtime,
-        {
-          type: "message",
-          agentId: recovered.agentId,
-          conversationId: recovered.conversationId,
-          messages: continuationInput.messages,
-        },
-        continuationBatchId,
-      );
-      emitDequeuedUserMessage(socket, runtime, queuedTurn, dequeuedBatch);
-    }
+    const continuationBatchId = `batch-recovered-${crypto.randomUUID()}`;
+    const continuationCorrelation: TurnCorrelation | undefined = undefined;
+    const continuationOwnership = createTurnDurabilityOwnership();
+    continuationOwnership.recordInput(recovered);
 
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
+    if (!hasRecoveryOwnership()) {
       runtime.dequeuedClientMessageIdsByBatchId.delete(continuationBatchId);
-      return true;
+      runtime.dequeuedInputIdentitiesByBatchId.delete(continuationBatchId);
+      return;
     }
 
+    const continuationConnectionId =
+      selectedDeliveryOwnerId ?? opts?.connectionId;
+    const continuationActingUserId = recovered.actingUserId;
     await processTurn(
       {
         type: "message",
         agentId: recovered.agentId,
         conversationId: recovered.conversationId,
-        ...(continuationActingUserId
-          ? { actingUserId: continuationActingUserId }
-          : {}),
+        actingUserId: continuationActingUserId,
+        suppressActingUserFallback: continuationActingUserId === undefined,
+        connectionId: continuationConnectionId,
+        durableInputIdentities: continuationOwnership.durableInputIdentities,
+        terminalConsumerIds: continuationOwnership.terminalConsumerIds,
         messages: continuationInput.messages,
       },
       socket,
       runtime,
       opts?.onStatusChange,
-      opts?.connectionId,
+      continuationConnectionId,
       continuationBatchId,
       recoveryLease,
       continuationCorrelation,
+      hasRecoveryOwnership,
+      true,
+      interruptedTerminalRevision(),
+      recoveryClaim !== null,
+      recoveryLineageId,
+      undefined,
+      recoveryAuthorityStore,
+      recordWork,
     );
 
     if (runtime.turnLifecycle.isCurrent(recoveryLease)) {
       throw new Error("Recovered continuation returned without finalizing");
     }
     if (runtime.turnLifecycle.kind !== "idle") {
-      return true;
+      return;
     }
     continuationFinalized = true;
+    if (recoveryClaim) {
+      const completed = recoveryAuthorityStore.readRecoverySnapshot(
+        runtime.agentId ?? "",
+        runtime.conversationId,
+        recoveryLineageId,
+      )?.record;
+      if (!completed) {
+        // Observer-only recovery has no local execution evidence to retire.
+        claimSettled = await recoveryClaim.complete();
+        if (!claimSettled) return;
+      } else {
+        if (
+          !completed.revision ||
+          completed.recoveryClaimCompletion?.lineageId !== recoveryLineageId
+        ) {
+          await recoveryClaim.release();
+          claimSettled = true;
+          runtime.listener.scheduleRecordedRecovery?.();
+          return;
+        }
+        const pendingCompletionRevision = markRecoveryClaimCompletionPending(
+          recoveryAuthorityStore,
+          completed,
+          evidence.revision ?? undefined,
+        )?.revision;
+        if (!pendingCompletionRevision) {
+          await recoveryClaim.release();
+          claimSettled = true;
+          runtime.listener.scheduleRecordedRecovery?.();
+          return;
+        }
+        claimSettled = await recoveryClaim.complete();
+        if (!claimSettled) return;
+        // Completion is the remote exactly-once boundary. An independent writer
+        // may have advanced the record while complete() was awaiting its ACK; in
+        // that case clear only this lineage's marker and preserve successor work.
+        const retirement = pendingCompletionRevision
+          ? retireAcknowledgedRecoveryClaim(recoveryAuthorityStore, {
+              agentId: completed.agentId,
+              conversationId: completed.conversationId,
+              lineageId: recoveryLineageId,
+              pendingRevision: pendingCompletionRevision,
+            })
+          : "failed";
+        if (retirement === "failed" || retirement === "preserved") {
+          runtime.listener.scheduleRecordedRecovery?.();
+        }
+      }
+    } else {
+      claimSettled = true;
+    }
 
     if (runtime.recoveredApprovalState === recovered) {
       clearRecoveredApprovalState(runtime);
     }
-    return true;
+    // Recovery cannot prove the original MCP scope. Queued work starts fresh
+    // only after the recovery lease and its approval gate have been released.
+    scheduleQueuePump(
+      runtime,
+      socket,
+      (opts ?? {}) as StartListenerOptions,
+      (queued, batch) =>
+        processTurn(
+          queued,
+          socket,
+          runtime,
+          opts?.onStatusChange,
+          queued.connectionId ?? opts?.connectionId,
+          batch.batchId,
+        ),
+    );
+    return;
   } catch (error) {
-    if (!recoveryLease || continuationFinalized) {
+    if (continuationFinalized) {
       throw error;
     }
-    if (!runtime.turnLifecycle.isCurrent(recoveryLease)) {
-      return true;
-    }
-    if (runtime.recoveredApprovalState === recovered) {
-      recovered.pendingRequestIds = new Set(
-        recovered.approvalsByRequestId.keys(),
-      );
-      recovered.responsesByRequestId.clear();
+    if (!hasRecoveryOwnership()) {
+      return;
     }
     const stopReason = recoveryLease.signal.aborted ? "cancelled" : "error";
-    finishListenerTurn(runtime, recoveryLease, {
+    finishRecoveredTurn({
       stopReason,
       socket,
       agentId: recovered.agentId,
       conversationId: recovered.conversationId,
-      turnId: `batch-recovered-${requestId}`,
+      turnId,
       error:
         stopReason === "error"
           ? getTranscriptLoopErrorMessage({
@@ -850,5 +922,17 @@ export async function resolveRecoveredApprovalResponse(
           : undefined,
     });
     throw error;
+  } finally {
+    if (recoveryClaim && !claimSettled) {
+      if (sideEffectStarted) recoveryClaim.abandon();
+      else await recoveryClaim.release();
+    }
+    if (
+      recoveryClaim &&
+      !recoveryClaim.owned &&
+      runtime.turnLifecycle.isCurrent(recoveryLease)
+    ) {
+      runtime.turnLifecycle.finish(recoveryLease, "cancelled");
+    }
   }
 }

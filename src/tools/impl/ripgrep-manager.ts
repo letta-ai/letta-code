@@ -9,11 +9,12 @@ import {
   rmSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { arch, homedir, platform } from "node:os";
+import { arch, platform } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const TOOLS_DIR_ENV = "LETTA_CODE_TOOLS_DIR";
 const OFFLINE_ENV = "LETTA_CODE_OFFLINE";
@@ -71,7 +72,7 @@ function isOfflineModeEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 export function getManagedToolsDir(
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return env[TOOLS_DIR_ENV] || join(homedir(), ".letta", "bin");
+  return env[TOOLS_DIR_ENV] || join(resolveGlobalConfigDir(env), "bin");
 }
 
 function binaryName(config: ToolConfig): string {

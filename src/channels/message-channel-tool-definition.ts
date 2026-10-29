@@ -237,7 +237,7 @@ export function buildMessageChannelDescriptionFromDiscovery(
     : "";
   const slackAttachmentDownload =
     discovery.activeChannels.includes("slack") && hasAction("download-file")
-      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window return a task_id instead; wait for the local_path with TaskOutput (block: true, timeout: 600000) or cancel with TaskStop.'
+      ? '\n\nSlack attachments that exceed the automatic download limit include an exact recovery instruction. Use action="download-file" with channel, chat_id, attachmentId, and messageId from that instruction. The action saves the file in the normal Slack inbound attachment directory and returns its local_path. Downloads that outlast the synchronous window continue in the background and return a task_id; a task notification delivers the local_path when the download finishes. Cancel with TaskStop.'
       : "";
   const slackThreadGuidance =
     scoped && discovery.activeChannels.includes("slack")
@@ -250,9 +250,18 @@ export function buildMessageChannelDescriptionFromDiscovery(
   const slackCapabilities = discovery.activeChannels.includes("slack")
     ? [
         hasAction("react") ? 'action="react" with emoji + messageId' : "",
+        hasAction("list-custom-emojis")
+          ? 'action="list-custom-emojis" to discover the workspace custom emoji names available for reactions'
+          : "",
         hasAction("upload-file") ? 'action="upload-file" with media' : "",
         hasAction("download-file")
           ? 'action="download-file" with attachmentId + messageId'
+          : "",
+        hasAction("get-binding")
+          ? 'action="get-binding" with chat_id and an explicit threadId (null for an unthreaded DM) to inspect the persisted incoming-message destination without sending'
+          : "",
+        hasAction("update-binding")
+          ? 'action="update-binding" with the same exact thread, conversationId, and expectedConversationId to reassign an existing binding within this agent. It does not send a message, copy history, move queued inputs, change computers, or alter pause/detach settings. Outbound sends never take over an existing binding'
           : "",
       ].filter(Boolean)
     : [];
@@ -314,5 +323,6 @@ export function buildMessageChannelExternalToolDefinition(
     label: "Message Channel",
     description: resolved.description,
     parameters: resolved.schema,
+    auto_background: false,
   };
 }

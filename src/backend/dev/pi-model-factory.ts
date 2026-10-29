@@ -1,3 +1,4 @@
+import { validateHeaderValue } from "node:http";
 import {
   type Api,
   clampThinkingLevel,
@@ -117,7 +118,9 @@ export function reasoningForSettings(
     ? modelSettings.thinking
     : undefined;
   const modelId = modelIdFromHandle(modelHandle);
-  const preserveMax = modelId?.startsWith("gpt-5.6") === true;
+  const preserveMax =
+    modelId?.startsWith("gpt-5.6") === true ||
+    modelId?.startsWith("gpt-6") === true;
   const nestedReasoning = isRecord(modelSettings.reasoning)
     ? modelSettings.reasoning
     : undefined;
@@ -603,6 +606,16 @@ export async function resolvePiModelForAgent(
       timeout: zai.timeout,
     };
     baseURL = zai.baseURL;
+  }
+
+  if (connection.apiKey) {
+    try {
+      validateHeaderValue("Authorization", `Bearer ${connection.apiKey}`);
+    } catch {
+      throw new Error(
+        `API key for ${provider} is not a valid header value. Reconnect this provider with /connect.`,
+      );
+    }
   }
 
   if (provider === "amazon-bedrock") {

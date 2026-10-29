@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  __resetOrganizationIdForTests,
+  setExplicitOrganizationId,
+} from "@/agent/organization-id";
 import { configureBackendMode } from "@/backend";
 import {
   disableLocalBackendMemfsForProcess,
@@ -71,6 +75,32 @@ function withTemporaryEnv<T>(
     }
   }
 }
+
+describe("shellEnv LETTA_ORGANIZATION_ID", () => {
+  test("includes the resolved organization id when known", () => {
+    __resetOrganizationIdForTests();
+    setExplicitOrganizationId("org-shell-123");
+    try {
+      withTemporaryEnv({ LETTA_ORGANIZATION_ID: undefined }, () => {
+        expect(getShellEnv().LETTA_ORGANIZATION_ID).toBe("org-shell-123");
+      });
+    } finally {
+      __resetOrganizationIdForTests();
+    }
+  });
+
+  test("does not override an inherited LETTA_ORGANIZATION_ID", () => {
+    __resetOrganizationIdForTests();
+    setExplicitOrganizationId("org-shell-123");
+    try {
+      withTemporaryEnv({ LETTA_ORGANIZATION_ID: "org-inherited" }, () => {
+        expect(getShellEnv().LETTA_ORGANIZATION_ID).toBe("org-inherited");
+      });
+    } finally {
+      __resetOrganizationIdForTests();
+    }
+  });
+});
 
 describe("shellEnv letta shim", () => {
   test("resolveLettaInvocation prefers explicit launcher env", () => {
@@ -225,6 +255,52 @@ describe("shellEnv letta shim", () => {
     expect(versionResult.stdout.trim()).toBe("shimmed-letta --version");
   });
 
+  test("Electron shim exports Node mode from a fresh shell without changing other launchers", () => {
+    if (process.platform === "win32") return;
+
+    const directory = mkdtempSync(path.join(tmpdir(), "letta-electron-shim-"));
+    const stub = path.join(directory, "fake Electron executable");
+    const otherStub = path.join(directory, "ordinary runtime");
+    const probe =
+      '#!/bin/sh\nprintf "env=%s\\n" "$ELECTRON_RUN_AS_NODE"\nprintf "arg=%s\\n" "$@"\n';
+    try {
+      writeFileSync(stub, probe, { mode: 0o755 });
+      writeFileSync(otherStub, probe, { mode: 0o755 });
+      const env = { ...process.env };
+      delete env.ELECTRON_RUN_AS_NODE;
+
+      const electronShim = ensureLettaShimDir(
+        { command: stub, args: ["fixed argument", "it's quoted"] },
+        stub,
+      );
+      const electronResult = spawnSync(
+        path.join(electronShim as string, "letta"),
+        ["--version", "user argument"],
+        { env, encoding: "utf8" },
+      );
+      expect(electronResult.status).toBe(0);
+      expect(electronResult.stdout).toBe(
+        "env=1\narg=fixed argument\narg=it's quoted\narg=--version\narg=user argument\n",
+      );
+
+      const ordinaryShim = ensureLettaShimDir({
+        command: otherStub,
+        args: ["fixed argument"],
+      });
+      const ordinaryResult = spawnSync(
+        path.join(ordinaryShim as string, "letta"),
+        ["--version"],
+        { env, encoding: "utf8" },
+      );
+      expect(ordinaryResult.status).toBe(0);
+      expect(ordinaryResult.stdout).toBe(
+        "env=\narg=fixed argument\narg=--version\n",
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test("sandboxed processes place the letta shim under harness state", () => {
     withTemporaryEnv({ LETTA_SANDBOX: "seatbelt" }, () => {
       const shimDir = getLettaShimDir();
@@ -283,6 +359,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
         agentId: "agent-runtime-scope",
         agentName: "Runtime Scope Agent",
         conversationId: "conv-runtime-scope",
+        actingUserId: "user-runtime-scope",
         environmentDeviceId: "device-runtime-scope",
         workingDirectory: runtimeCwd,
       },
@@ -294,6 +371,7 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
     expect(env.AGENT_NAME).toBe("Runtime Scope Agent");
     expect(env.CONVERSATION_ID).toBe("conv-runtime-scope");
     expect(env.LETTA_CONVERSATION_ID).toBe("conv-runtime-scope");
+    expect(env.LETTA_ACTING_USER_ID).toBe("user-runtime-scope");
     expect(env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID).toBe(
       "device-runtime-scope",
     );
@@ -301,6 +379,16 @@ test("getShellEnv prefers runtime-scoped agent, conversation, and cwd", () => {
   } finally {
     rmSync(runtimeCwd, { recursive: true, force: true });
   }
+});
+
+test("getShellEnv deletes an ambient actor when fallback is suppressed", () => {
+  withTemporaryEnv({ LETTA_ACTING_USER_ID: "ambient-user" }, () => {
+    const env = runWithRuntimeContext(
+      { suppressActingUserFallback: true },
+      () => getShellEnv(),
+    );
+    expect(env.LETTA_ACTING_USER_ID).toBeUndefined();
+  });
 });
 
 test("getShellEnv prefers the active listener device over inherited process state", () => {
@@ -332,6 +420,7 @@ test("getShellEnv isolates overlapping runtime scopes", async () => {
       {
         agentId: "agent-a",
         conversationId: "conv-a",
+        actingUserId: "user-a",
         workingDirectory: cwdA,
       },
       async () => {
@@ -344,6 +433,7 @@ test("getShellEnv isolates overlapping runtime scopes", async () => {
       {
         agentId: "agent-b",
         conversationId: "conv-b",
+        actingUserId: "user-b",
         workingDirectory: cwdB,
       },
       async () => {
@@ -356,9 +446,11 @@ test("getShellEnv isolates overlapping runtime scopes", async () => {
 
     expect(envA.AGENT_ID).toBe("agent-a");
     expect(envA.CONVERSATION_ID).toBe("conv-a");
+    expect(envA.LETTA_ACTING_USER_ID).toBe("user-a");
     expect(envA.USER_CWD).toBe(cwdA);
     expect(envB.AGENT_ID).toBe("agent-b");
     expect(envB.CONVERSATION_ID).toBe("conv-b");
+    expect(envB.LETTA_ACTING_USER_ID).toBe("user-b");
     expect(envB.USER_CWD).toBe(cwdB);
   } finally {
     rmSync(cwdA, { recursive: true, force: true });

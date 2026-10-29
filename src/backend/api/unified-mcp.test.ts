@@ -4,12 +4,14 @@ import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
+  searchUnifiedMcpTools,
 } from "./unified-mcp";
 
 function clientFixture(options: {
   get?: Record<string, unknown>;
   post?: Record<string, unknown>;
   posts?: Array<{ path: string; body: unknown }>;
+  registered?: Array<Record<string, unknown>>;
 }): UnifiedMcpClient {
   return {
     get: async (path) => options.get?.[path] ?? [],
@@ -17,10 +19,63 @@ function clientFixture(options: {
       options.posts?.push({ path, body: request?.body });
       return options.post?.[path] ?? {};
     },
+    ...(options.registered
+      ? { mcpServers: { list: async () => options.registered ?? [] } }
+      : {}),
   };
 }
 
 describe("unified MCP API adapter", () => {
+  test("enriches minimal agent associations from the registered server catalog", async () => {
+    const serverPath = "/v1/agents/agent-1/mcp-servers";
+    const client = clientFixture({
+      get: {
+        [serverPath]: [{ id: "mcp-1", server_name: "Exa" }],
+      },
+      registered: [
+        {
+          id: "mcp-1",
+          server_name: "Exa",
+          mcp_server_type: "streamable_http",
+          server_url: "https://mcp.example.com/mcp?token=secret",
+        },
+      ],
+    });
+
+    await expect(listUnifiedMcpServers(client, "agent-1")).resolves.toEqual([
+      {
+        id: "mcp-1",
+        serverName: "Exa",
+        serverType: "streamable_http",
+        target: "https://mcp.example.com/mcp?token=secret",
+        serverUrl: "https://mcp.example.com/mcp?token=secret",
+      },
+    ]);
+  });
+
+  test("keeps minimal associations when registered server enrichment fails", async () => {
+    const serverPath = "/v1/agents/agent-1/mcp-servers";
+    const client: UnifiedMcpClient = {
+      get: async (path) =>
+        path === serverPath ? [{ id: "mcp-1", server_name: "Exa" }] : [],
+      post: async () => ({}),
+      mcpServers: {
+        list: async () => {
+          throw new Error("catalog unavailable");
+        },
+      },
+    };
+
+    await expect(listUnifiedMcpServers(client, "agent-1")).resolves.toEqual([
+      {
+        id: "mcp-1",
+        serverName: "Exa",
+        serverType: "unknown",
+        target: "",
+      },
+    ]);
+  });
+
   test("parses rich server and tool records without changing legacy helpers", async () => {
     const serverPath = "/v1/agents/agent-1/mcp-servers";
     const toolsPath = `${serverPath}/mcp-1/tools`;
@@ -78,6 +133,81 @@ describe("unified MCP API adapter", () => {
     ]);
   });
 
+  test("searches agent MCP tools and keeps only schemas and scores", async () => {
+    const posts: Array<{ path: string; body: unknown }> = [];
+    const searchPath = "/v1/agents/agent-1/mcp-servers/tools/search";
+    const client = clientFixture({
+      posts,
+      post: {
+        [searchPath]: [
+          {
+            tool: {
+              id: "tool-1",
+              json_schema: {
+                name: "mcp__betterstack__render_chart",
+                parameters: { type: "object", properties: {} },
+              },
+              source_code: "not returned",
+            },
+            embedded_text: "not returned",
+            fts_rank: 2,
+            vector_rank: 1,
+            combined_score: 0.25,
+          },
+          {
+            tool: { id: "tool-2", json_schema: null },
+            combined_score: 0.125,
+          },
+        ],
+      },
+    });
+
+    await expect(
+      searchUnifiedMcpTools({
+        client,
+        agentId: "agent-1",
+        query: "charts",
+        searchMode: "hybrid",
+        limit: 5,
+      }),
+    ).resolves.toEqual([
+      {
+        toolId: "tool-1",
+        jsonSchema: {
+          name: "mcp__betterstack__render_chart",
+          parameters: { type: "object", properties: {} },
+        },
+        score: 0.25,
+      },
+      { toolId: "tool-2", jsonSchema: null, score: 0.125 },
+    ]);
+    expect(posts).toEqual([
+      {
+        path: searchPath,
+        body: { query: "charts", search_mode: "hybrid", limit: 5 },
+      },
+    ]);
+  });
+
+  test("rejects malformed MCP tool search results", async () => {
+    const searchPath = "/v1/agents/agent-1/mcp-servers/tools/search";
+    const client = clientFixture({
+      post: {
+        [searchPath]: [{ tool: {}, combined_score: 0.25 }],
+      },
+    });
+
+    await expect(
+      searchUnifiedMcpTools({
+        client,
+        agentId: "agent-1",
+        query: "charts",
+        searchMode: "hybrid",
+        limit: 5,
+      }),
+    ).rejects.toThrow("Invalid MCP tool search result");
+  });
+
   test("uses SDK request options for tool execution", async () => {
     const posts: Array<{ path: string; body: unknown }> = [];
     const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
@@ -104,6 +234,73 @@ describe("unified MCP API adapter", () => {
     });
     expect(posts).toEqual([
       { path: runPath, body: { args: { title: "Bug" } } },
+    ]);
+  });
+
+  test("sends isolation compatibility only alongside the current originator token", async () => {
+    const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
+    const requests: Array<{
+      path: string;
+      body: unknown;
+      headers?: Record<string, string>;
+    }> = [];
+    const client: UnifiedMcpClient = {
+      get: async () => [],
+      post: async (path, options) => {
+        requests.push({ path, body: options?.body, headers: options?.headers });
+        return { status: "success", func_return: "ok" };
+      },
+    };
+
+    // Unattributed call: no token, and the header must be absent entirely.
+    await runUnifiedMcpTool({
+      client,
+      agentId: "agent-1",
+      mcpServerId: "mcp-1",
+      toolId: "tool-1",
+      args: { title: "Bug" },
+    });
+    expect(requests).toEqual([
+      { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
+    ]);
+
+    // Attributed call: the held token rides the originator header verbatim.
+    await runUnifiedMcpTool({
+      client,
+      agentId: "agent-1",
+      mcpServerId: "mcp-1",
+      toolId: "tool-1",
+      args: { title: "Bug" },
+      originatorToken: "mst_one.secret-a",
+    });
+    expect(requests[1]).toEqual({
+      path: runPath,
+      body: { args: { title: "Bug" } },
+      headers: {
+        "x-letta-mcp-originator-token": "mst_one.secret-a",
+        "x-letta-mcp-originator-isolation": "1",
+      },
+    });
+
+    // Tool arguments cannot advertise compatibility, borrow the preceding
+    // call's bearer, or turn an empty token into an attributed request.
+    const args = {
+      "x-letta-mcp-originator-token": "untrusted-argument",
+      "x-letta-mcp-originator-isolation": "1",
+    };
+    for (const originatorToken of [undefined, ""]) {
+      await runUnifiedMcpTool({
+        client,
+        agentId: "agent-1",
+        mcpServerId: "mcp-1",
+        toolId: "tool-1",
+        args,
+        originatorToken,
+      });
+    }
+    expect(requests.slice(2)).toEqual([
+      { path: runPath, body: { args }, headers: undefined },
+      { path: runPath, body: { args }, headers: undefined },
     ]);
   });
 });

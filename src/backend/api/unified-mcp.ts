@@ -1,13 +1,26 @@
 import { isRecord } from "@/utils/type-guards";
 
-// Keep this adapter separate from mcp-servers.ts. That module backs the legacy
-// `letta cloud-mcp` contract, whose request and output shapes stay frozen while
-// the unified `letta mcp` command replaces it.
 /** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
   get(path: string): Promise<unknown>;
-  post(path: string, options?: { body?: unknown }): Promise<unknown>;
+  post(
+    path: string,
+    options?: { body?: unknown; headers?: Record<string, string> },
+  ): Promise<unknown>;
+  mcpServers?: {
+    list(): Promise<unknown[]>;
+  };
 }
+
+/**
+ * Header that carries a super run's MCP originator token on tool-run calls
+ * (USER_SCOPED_MCP_CONNECTIONS). Sent only when a token is held for the run.
+ */
+const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
+// Compatibility negotiation, not principal authority. Emitted by the same
+// process that holds the bearer and withholds it from any turn that mixes
+// inputs from different super runs (queued inputs still steer that turn).
+const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 
 export interface UnifiedMcpServer {
   id: string;
@@ -39,6 +52,14 @@ export interface UnifiedMcpRunResult {
   stderr?: unknown;
 }
 
+export type UnifiedMcpSearchMode = "vector" | "fts" | "hybrid";
+
+export interface UnifiedMcpSearchResult {
+  toolId: string;
+  jsonSchema: Record<string, unknown> | null;
+  score: number;
+}
+
 function stringField(
   value: Record<string, unknown>,
   key: string,
@@ -57,17 +78,32 @@ function recordField(
   return undefined;
 }
 
-function parseServer(value: unknown): UnifiedMcpServer | null {
+function parseServer(
+  value: unknown,
+  registered: Record<string, unknown> | undefined,
+): UnifiedMcpServer | null {
   if (!isRecord(value)) return null;
   const id = stringField(value, "id");
-  const serverName = stringField(value, "server_name");
-  const serverType = stringField(value, "mcp_server_type");
-  if (!id || !serverName || !serverType) return null;
+  const serverName =
+    stringField(value, "server_name") ??
+    (registered ? stringField(registered, "server_name") : null);
+  const serverType =
+    stringField(value, "mcp_server_type") ??
+    (registered ? stringField(registered, "mcp_server_type") : null) ??
+    "unknown";
+  if (!id || !serverName) return null;
 
-  const serverUrl = stringField(value, "server_url") ?? undefined;
-  const command = stringField(value, "command") ?? undefined;
-  const args = Array.isArray(value.args)
-    ? value.args.filter((item): item is string => typeof item === "string")
+  const serverUrl =
+    stringField(value, "server_url") ??
+    (registered ? stringField(registered, "server_url") : null) ??
+    undefined;
+  const command =
+    stringField(value, "command") ??
+    (registered ? stringField(registered, "command") : null) ??
+    undefined;
+  const argsValue = value.args ?? registered?.args;
+  const args = Array.isArray(argsValue)
+    ? argsValue.filter((item): item is string => typeof item === "string")
     : [];
   const target = serverUrl ?? [command, ...args].filter(Boolean).join(" ");
   return {
@@ -130,6 +166,21 @@ function parseRunResult(value: unknown): UnifiedMcpRunResult {
   };
 }
 
+function parseSearchResult(value: unknown): UnifiedMcpSearchResult | null {
+  if (!isRecord(value) || !isRecord(value.tool)) return null;
+  const toolId = stringField(value.tool, "id");
+  const jsonSchema = value.tool.json_schema;
+  const score = value.combined_score;
+  if (
+    !toolId ||
+    (jsonSchema !== null && !isRecord(jsonSchema)) ||
+    typeof score !== "number"
+  ) {
+    return null;
+  }
+  return { toolId, jsonSchema, score };
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -163,7 +214,35 @@ export async function listUnifiedMcpServers(
     "Listing agent MCP servers",
   );
   if (!Array.isArray(value)) return [];
-  return value.map(parseServer).filter((server) => server !== null);
+  const needsEnrichment = value.some(
+    (item) => isRecord(item) && !stringField(item, "mcp_server_type"),
+  );
+  const registeredById = new Map<string, Record<string, unknown>>();
+  if (needsEnrichment && client.mcpServers) {
+    try {
+      const registered = await withTimeout(
+        client.mcpServers.list(),
+        timeoutMs,
+        "Listing registered MCP servers",
+      );
+      for (const item of registered) {
+        if (!isRecord(item)) continue;
+        const id = stringField(item, "id");
+        if (id) registeredById.set(id, item);
+      }
+    } catch {
+      // The association id/name still owns tool listing and execution. Keep it
+      // with unknown transport when optional connection metadata is unavailable.
+    }
+  }
+  return value
+    .map((item) => {
+      const registered = isRecord(item)
+        ? registeredById.get(stringField(item, "id") ?? "")
+        : undefined;
+      return parseServer(item, registered);
+    })
+    .filter((server) => server !== null);
 }
 
 export async function listUnifiedMcpTools(
@@ -183,6 +262,40 @@ export async function listUnifiedMcpTools(
   return value.map(parseTool).filter((tool) => tool !== null);
 }
 
+export async function searchUnifiedMcpTools(params: {
+  client: Pick<UnifiedMcpClient, "post">;
+  agentId: string;
+  query: string;
+  searchMode: UnifiedMcpSearchMode;
+  limit: number;
+  timeoutMs?: number;
+}): Promise<UnifiedMcpSearchResult[]> {
+  const value = await withTimeout(
+    params.client.post(
+      `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/tools/search`,
+      {
+        body: {
+          query: params.query,
+          search_mode: params.searchMode,
+          limit: params.limit,
+        },
+      },
+    ),
+    params.timeoutMs ?? 60_000,
+    "Searching agent MCP tools",
+  );
+  if (!Array.isArray(value)) {
+    throw new Error("Invalid MCP tool search response");
+  }
+  const results: UnifiedMcpSearchResult[] = [];
+  for (const item of value) {
+    const result = parseSearchResult(item);
+    if (!result) throw new Error("Invalid MCP tool search result");
+    results.push(result);
+  }
+  return results;
+}
+
 export async function runUnifiedMcpTool(params: {
   client: UnifiedMcpClient;
   agentId: string;
@@ -190,11 +303,27 @@ export async function runUnifiedMcpTool(params: {
   toolId: string;
   args: Record<string, unknown>;
   timeoutMs?: number;
+  /**
+   * Originator token held for the active super run. Sent verbatim as the
+   * `x-letta-mcp-originator-token` header; when absent the call proceeds
+   * unattributed and the header is omitted entirely. Never logged here.
+   */
+  originatorToken?: string;
 }): Promise<UnifiedMcpRunResult> {
   const value = await withTimeout(
     params.client.post(
       `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/${encodeURIComponent(params.mcpServerId)}/tools/${encodeURIComponent(params.toolId)}/run`,
-      { body: { args: params.args } },
+      {
+        body: { args: params.args },
+        ...(params.originatorToken
+          ? {
+              headers: {
+                [MCP_ORIGINATOR_TOKEN_HEADER]: params.originatorToken,
+                [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
+              },
+            }
+          : {}),
+      },
     ),
     params.timeoutMs ?? 60_000,
     "Running agent MCP tool",

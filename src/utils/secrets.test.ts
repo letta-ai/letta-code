@@ -23,6 +23,7 @@ const keychainAvailablePrecompute = await isKeychainAvailable();
 
 describe("Secrets utilities", () => {
   const originalConsoleWarn = console.warn;
+  const originalSecretsServiceName = process.env.LETTA_SECRETS_SERVICE_NAME;
 
   beforeEach(async () => {
     __resetSecretWarningStateForTests();
@@ -40,6 +41,12 @@ describe("Secrets utilities", () => {
     if (keychainAvailablePrecompute) {
       await deleteSecureTokens();
     }
+    if (originalSecretsServiceName === undefined) {
+      delete process.env.LETTA_SECRETS_SERVICE_NAME;
+    } else {
+      process.env.LETTA_SECRETS_SERVICE_NAME = originalSecretsServiceName;
+    }
+    setServiceName("letta-code");
   });
 
   test("isKeychainAvailable works", async () => {
@@ -60,6 +67,22 @@ describe("Secrets utilities", () => {
     await getApiKey();
 
     expect(service).toBe(`${prefix}:letta-code`);
+  });
+
+  test("uses the host-provided keyring service when no override is set", async () => {
+    const prefix = process.env.LETTA_TEST_SECRETS_SERVICE_PREFIX;
+    if (!prefix) throw new Error("Test keyring namespace was not configured");
+    let service: string | undefined;
+    __setSecretGetOverrideForTests(async (options) => {
+      service = options.service;
+      return null;
+    });
+    process.env.LETTA_SECRETS_SERVICE_NAME = "dream-code";
+    setServiceName();
+
+    await getApiKey();
+
+    expect(service).toBe(`${prefix}:dream-code`);
   });
 
   test.skipIf(!keychainAvailablePrecompute)(

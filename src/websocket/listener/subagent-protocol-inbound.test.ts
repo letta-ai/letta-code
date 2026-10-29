@@ -1,0 +1,135 @@
+import { describe, expect, test } from "bun:test";
+import { isAppServerInfoResponseMessage } from "@/types/app-server-info";
+import { buildAppServerInfoResponse } from "./commands/app-server-info";
+import { parseServerMessage } from "./protocol-inbound";
+import {
+  isLaunchSubagentCommand,
+  isSubagentMessageCommand,
+  isSubagentStopCommand,
+} from "./subagent-protocol-inbound";
+
+const command = {
+  type: "launch_subagent" as const,
+  request_id: "launch-1",
+  runtime: {
+    agent_id: "agent-parent",
+    conversation_id: "conv-parent",
+    acting_user_id: "user-owner",
+  },
+  args: {
+    subagent_type: "custom",
+    conversation_id: "conv-child",
+    description: "Child task",
+    prompt: "Do the work",
+    computer: "cloud",
+  },
+};
+
+describe("launch_subagent protocol", () => {
+  test("parses the command with explicit parent and independent child", () => {
+    expect(parseServerMessage(Buffer.from(JSON.stringify(command)))).toEqual(
+      command,
+    );
+  });
+  test.each([undefined, "assignment:initial-input"])(
+    "accepts optional initial client_message_id %s independently of request_id",
+    (client_message_id) => {
+      const input = {
+        ...command,
+        args: { ...command.args, client_message_id },
+      };
+      expect(isLaunchSubagentCommand(input)).toBe(true);
+      expect(parseServerMessage(Buffer.from(JSON.stringify(input)))).toEqual(
+        input,
+      );
+    },
+  );
+  test.each([
+    { request_id: "" },
+    { args: { ...command.args, client_message_id: "" } },
+    { args: { ...command.args, client_message_id: "  " } },
+    { args: { ...command.args, client_message_id: 42 } },
+    { args: { ...command.args, client_message_id: null } },
+    { runtime: null },
+    { runtime: { agent_id: null, conversation_id: "conv-parent" } },
+    { runtime: { ...command.runtime, acting_user_id: 42 } },
+    { args: null },
+    { args: [] },
+    { args: { ...command.args, prompt: "" } },
+    { args: { ...command.args, computer: 3 } },
+    { args: { ...command.args, max_turns: 1.5 } },
+    { args: { ...command.args, max_turns: -1 } },
+    { args: { ...command.args, parentScope: { agentId: "someone-else" } } },
+    { args: { ...command.args, command: "refresh" } },
+    { tool_call_id: 1 },
+    { notify: "self" },
+    { args: { ...command.args, mcp: [] } },
+    { args: { ...command.args, notifyCaller: true } },
+  ])("rejects malformed or injected launch fields %j", (fields) => {
+    expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
+  });
+  test("accepts caller notification and an MCP selection", () => {
+    const input = {
+      ...command,
+      tool_call_id: "call-1",
+      notify: "caller",
+      args: { ...command.args, mcp: { inherit: false } },
+    };
+    expect(isLaunchSubagentCommand(input)).toBe(true);
+  });
+  test("clients can distinguish older servers without rejecting their info response", () => {
+    const info = buildAppServerInfoResponse(
+      { type: "app_server_info", request_id: "info" },
+      { backend: "local", version: "test" },
+    );
+    expect(isAppServerInfoResponseMessage(info)).toBe(true);
+    delete info.capabilities.launch_subagent;
+    expect(isAppServerInfoResponseMessage(info)).toBe(true);
+    expect(info.capabilities.launch_subagent === true).toBe(false);
+    expect(
+      isAppServerInfoResponseMessage({
+        ...info,
+        capabilities: { ...info.capabilities, launch_subagent: "yes" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("subagent control protocol", () => {
+  const base = {
+    request_id: "request-1",
+    runtime: { agent_id: "agent-parent", conversation_id: "conv-parent" },
+    agent_id: "claude_11111111-1111-4111-8111-111111111111",
+  };
+
+  test("accepts valid message and stop commands", () => {
+    expect(
+      isSubagentMessageCommand({
+        ...base,
+        type: "subagent_message",
+        message: "Continue",
+        tool_call_id: "call-2",
+      }),
+    ).toBe(true);
+    expect(isSubagentStopCommand({ ...base, type: "subagent_stop" })).toBe(
+      true,
+    );
+  });
+
+  test.each([
+    { request_id: "" },
+    { agent_id: "" },
+    { runtime: { agent_id: "", conversation_id: "conv-parent" } },
+    { message: "" },
+    { tool_call_id: 42 },
+  ])("rejects invalid message commands %#", (override) => {
+    expect(
+      isSubagentMessageCommand({
+        ...base,
+        type: "subagent_message",
+        message: "Continue",
+        ...override,
+      }),
+    ).toBe(false);
+  });
+});

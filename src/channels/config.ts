@@ -1,14 +1,14 @@
 /**
  * Channel config read/write helpers.
  *
- * Channel configs live at ~/.letta/channels/<channel_name>/config.yaml.
+ * Channel configs live below the active product config root.
  * This module handles reading, writing, and validating channel configs.
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { migratePermissionMode } from "@/permissions/mode";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   isValidDiscordAllowBotsConfigValue,
   normalizeDiscordAllowBotsMode,
@@ -32,7 +32,6 @@ import type { WhatsAppWaitingBehavior } from "./whatsapp/waiting-behavior-config
 
 // ── Paths ─────────────────────────────────────────────────────────
 
-const CHANNELS_ROOT = join(homedir(), ".letta", "channels");
 let channelsRootOverride: string | null = null;
 
 function parseWhatsAppWaitingBehavior(value: unknown): WhatsAppWaitingBehavior {
@@ -40,7 +39,7 @@ function parseWhatsAppWaitingBehavior(value: unknown): WhatsAppWaitingBehavior {
 }
 
 export function getChannelsRoot(): string {
-  return channelsRootOverride ?? CHANNELS_ROOT;
+  return channelsRootOverride ?? join(resolveGlobalConfigDir(), "channels");
 }
 
 export function getChannelDir(channelId: string): string {
@@ -56,6 +55,15 @@ export function getChannelAccountsPath(channelId: string): string {
 }
 
 export function getChannelRoutingPath(channelId: string): string {
+  return join(getChannelDir(channelId), "routing.json");
+}
+
+/**
+ * Legacy routing path from the original channels MVP, when the file was named
+ * `routing.yaml` despite holding JSON content. Used only for one-time migration
+ * to the correctly-named `routing.json`. See issue #3076.
+ */
+export function getLegacyChannelRoutingPath(channelId: string): string {
   return join(getChannelDir(channelId), "routing.yaml");
 }
 

@@ -12,6 +12,7 @@ import {
   checkProviderApiKey,
   createOrUpdateProvider,
   getProviderByName,
+  isXaiOAuthProvider,
   type ProviderStorageTarget,
   providerStorageTargetLabel,
 } from "@/providers/byok-providers";
@@ -42,6 +43,7 @@ import {
   isChatGPTOAuthConnected,
   runChatGPTOAuthConnectFlow,
 } from "./connect-oauth-core";
+import { runCloudXaiOAuthConnectFlow } from "./connect-xai-oauth";
 
 // tiny helper for unique ids
 function uid(prefix: string) {
@@ -130,6 +132,7 @@ function formatConnectUsage(): string {
     "Examples:",
     "  /connect chatgpt",
     "  /connect chatgpt --name chatgpt-work",
+    "  /connect grok",
     "  /connect codex",
     "  /connect anthropic <api_key>",
     "  /connect openai <api_key>",
@@ -571,7 +574,8 @@ async function handleConnectCloudOAuthProvider(
     provider.byokProvider.providerName,
     { target: "api" },
   );
-  if (existingProvider) {
+  // Grok/xAI OAuth upserts `lc-xai` in place so reconnect is not a dead-end.
+  if (existingProvider && !isXaiOAuthProvider(provider.byokProvider)) {
     addCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,
@@ -595,19 +599,23 @@ async function handleConnectCloudOAuthProvider(
   );
 
   try {
-    const result = await runCloudOAuthConnectFlow(provider.byokProvider, {
+    const onStatus = (status: string) =>
+      updateCommandResult(
+        ctx.buffersRef,
+        ctx.refreshDerived,
+        cmdId,
+        msg,
+        status,
+        true,
+        "running",
+      );
+    const oauthCallbacks = {
       signal: abortController.signal,
-      onStatus: (status) =>
-        updateCommandResult(
-          ctx.buffersRef,
-          ctx.refreshDerived,
-          cmdId,
-          msg,
-          status,
-          true,
-          "running",
-        ),
-    });
+      onStatus,
+    };
+    const result = isXaiOAuthProvider(provider.byokProvider)
+      ? await runCloudXaiOAuthConnectFlow(provider.byokProvider, oauthCallbacks)
+      : await runCloudOAuthConnectFlow(provider.byokProvider, oauthCallbacks);
     updateCommandResult(
       ctx.buffersRef,
       ctx.refreshDerived,

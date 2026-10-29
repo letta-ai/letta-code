@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
   POWERSHELL_UTF8_OUTPUT_PREFIX,
   selectAvailableShellLauncher,
 } from "@/tools/impl/shell-launchers";
+import { detectShellContext } from "@/utils/shell-context";
 
 function quotePowerShellLiteral(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
@@ -87,6 +89,38 @@ describe("Shell Launchers", () => {
     expect(hookCommand.endsWith(POWERSHELL_EXIT_CODE_SUFFIX)).toBe(true);
   });
 
+  test("Unix launchers start with the shell named in session context", () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const originalShell = process.env.SHELL;
+
+    try {
+      for (const [currentPlatform, shell, expected] of [
+        ["darwin", "/bin/bash", "/bin/zsh"],
+        ["linux", "/usr/bin/zsh", "/usr/bin/zsh"],
+        ["linux", undefined, "/bin/bash"],
+      ] as const) {
+        Object.defineProperty(process, "platform", { value: currentPlatform });
+        if (shell === undefined) delete process.env.SHELL;
+        else process.env.SHELL = shell;
+
+        const launchers = buildShellLaunchers("echo test");
+        expect(launchers[0]?.[0]).toBe(expected);
+        expect(
+          detectShellContext(process.env, currentPlatform).displayName,
+        ).toBe(expected);
+      }
+    } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+      if (originalShell === undefined) delete process.env.SHELL;
+      else process.env.SHELL = originalShell;
+    }
+  });
+
   test("Windows launchers match Codex PowerShell order", () => {
     const originalPlatform = Object.getOwnPropertyDescriptor(
       process,
@@ -123,6 +157,41 @@ describe("Shell Launchers", () => {
     }
   });
 
+  test("selects pwsh from an MSIX app execution alias", () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const windowsApps =
+      "C:\\Users\\test\\AppData\\Local\\Microsoft\\WindowsApps";
+    const alias = join(windowsApps, "pwsh.exe");
+    const exists = spyOn(fs, "existsSync").mockReturnValue(false);
+    const lstat = spyOn(fs, "lstatSync").mockImplementation(((
+      candidate: fs.PathLike,
+    ) => {
+      if (candidate === alias) return {};
+      throw new Error("ENOENT");
+    }) as typeof fs.lstatSync);
+
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      expect(fs.existsSync(alias)).toBe(false);
+      expect(
+        selectAvailableShellLauncher(buildShellLaunchers("echo test"), {
+          PATH: windowsApps,
+          PATHEXT: ".exe",
+        })?.[0],
+      ).toBe(alias);
+      expect(lstat).toHaveBeenCalledWith(alias);
+    } finally {
+      exists.mockRestore();
+      lstat.mockRestore();
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+  });
+
   if (process.platform === "win32") {
     describe("Windows-specific", () => {
       function runPowerShellHook(
@@ -142,9 +211,12 @@ describe("Shell Launchers", () => {
           : selectAvailableShellLauncher(shellLaunchers);
         expect(launcher?.[0]?.toLowerCase()).toMatch(/pwsh|powershell/);
         if (!launcher?.[0]) return null;
-        return spawnSync(launcher[0], launcher.slice(1), {
+        const result = spawnSync(launcher[0], launcher.slice(1), {
           encoding: "utf8",
-        }).status;
+          timeout: 25_000,
+        });
+        expect(result.error, result.stderr).toBeUndefined();
+        return result.status;
       }
 
       test("PowerShell is tried before cmd.exe", () => {
@@ -266,17 +338,24 @@ describe("Shell Launchers", () => {
         }
       });
 
-      test("preserves the contract on Windows PowerShell 5.1", () => {
+      // The first Windows PowerShell 5.1 launch took 17s on fresh CI runners.
+      // Its cold start must fit inside both the subprocess and test deadlines.
+      test("preserves native exit codes on Windows PowerShell 5.1", () => {
         const executable =
           "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
         expect(runPowerShellHook(nativeExitCommand(2), executable)).toBe(2);
+      }, 30_000);
+
+      test("preserves language failures on Windows PowerShell 5.1", () => {
+        const executable =
+          "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
         expect(
           runPowerShellHook(
             `${nativeExitCommand(2)}; $null.NoSuchMethod()`,
             executable,
           ),
         ).toBe(1);
-      });
+      }, 30_000);
 
       test("preserves native blocks invoked through a PowerShell alias", () => {
         expect(

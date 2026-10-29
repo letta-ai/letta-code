@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "url": {
+      "type": "string",
+      "description": "Open github.com pull request URL ending at the PR number, for example https://github.com/owner/repo/pull/123. Remove sub-page suffixes such as /files or /commits."
+    }
+  },
+  "required": ["url"],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

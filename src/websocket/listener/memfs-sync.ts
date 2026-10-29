@@ -51,8 +51,9 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
       );
       return;
     }
-    console.warn(
-      `[memfs-sync] Agent ${agentId} is missing the memfs tag on Letta Cloud — repairing (auto-enabling memfs).`,
+    debugWarn(
+      "memfs-sync",
+      `Agent ${agentId} is missing the memfs tag on Letta Cloud — repairing (auto-enabling memfs).`,
     );
     await applyMemfsFlags(agentId, true, {
       pullOnExistingRepo: true,

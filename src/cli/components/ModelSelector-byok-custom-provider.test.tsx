@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { getReasoningTierOptionsForHandle } from "@/agent/model";
+import { getReasoningTierOptionsForHandle, models } from "@/agent/model";
 import {
   buildByokProviderAliases,
   isByokHandleForSelector,
@@ -136,6 +136,49 @@ describe("ModelSelector custom BYOK provider detection", () => {
       "medium",
       "high",
       "xhigh",
+    ]);
+  });
+
+  test("keeps the MiniMax BYOK handle while reading its Cloud catalog tiers", () => {
+    models.push(
+      {
+        id: "minimax-m3-none",
+        handle: "minimax/MiniMax-M3",
+        label: "MiniMax M3",
+        description: "",
+        updateArgs: { reasoning_effort: "none", enable_reasoner: false },
+      },
+      {
+        id: "minimax-m3-high",
+        handle: "minimax/MiniMax-M3",
+        label: "MiniMax M3",
+        description: "",
+        updateArgs: { reasoning_effort: "high", enable_reasoner: true },
+      },
+    );
+    const aliases = buildByokProviderAliases([]);
+    const selection = toByokSelectorModel(
+      {
+        id: "minimax-m3",
+        handle: "minimax/MiniMax-M3",
+        label: "MiniMax M3",
+        description: "",
+        updateArgs: { reasoning_effort: "high" },
+      },
+      "lc-minimax/MiniMax-M3",
+      aliases,
+      { reasoning_effort: "high", provider_type: "minimax" },
+    );
+
+    expect(selection).toMatchObject({
+      handle: "lc-minimax/MiniMax-M3",
+      registryHandle: "minimax/MiniMax-M3",
+    });
+    expect(
+      getReasoningTierOptionsForHandle(selection.registryHandle ?? ""),
+    ).toEqual([
+      { effort: "none", modelId: "minimax-m3-none" },
+      { effort: "high", modelId: "minimax-m3-high" },
     ]);
   });
 

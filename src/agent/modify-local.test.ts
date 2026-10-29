@@ -48,6 +48,17 @@ describe("local model updates", () => {
     });
   });
 
+  test("preserves the selected Grok reasoning effort for xAI handles", () => {
+    expect(
+      __modifyTestUtils.buildModelSettings("xai/grok-4.7", {
+        reasoning_effort: "xhigh",
+      }),
+    ).toMatchObject({
+      provider_type: "xai",
+      reasoning: { reasoning_effort: "xhigh" },
+    });
+  });
+
   test("builds direct Moonshot K3 settings without client reasoning controls", () => {
     expect(
       __modifyTestUtils.buildModelSettings("moonshot/kimi-k3", {

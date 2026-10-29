@@ -60,7 +60,6 @@ Injected when the user invokes a specific slash command.
 
 | File | Used | Description |
 |------|------|-------------|
-| `remember.md` | `/remember` command | Instructs the agent to commit conversation context to memory |
 | `skill_creator_mode.md` | `/skill` command | Guides the agent through designing a new skill |
 
 ## System reminders (`.txt`)

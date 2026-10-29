@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, parse } from "node:path";
+import { dirname, join, parse } from "node:path";
 
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
@@ -49,6 +49,7 @@ const ENV_KEYS_TO_RESET = [
   "LETTA_CODE_AGENT_ROLE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
+  "LETTA_CONFIG_DIR",
   "LETTA_LOCAL_BACKEND_DIR",
   SANDBOX_ENV_VAR,
 ] as const;
@@ -231,16 +232,6 @@ describe("extractTargetAgentPaths", () => {
 
     expect(result.agentIds).toEqual(new Set([SELF, OTHER, THIRD]));
     expect(result.anyAgentScoped).toBe(true);
-  });
-
-  test("memory_apply_patch behaves like ApplyPatch", () => {
-    const patch = `*** Begin Patch\n*** Update File: ${otherMemory("system/x.md")}\n*** End Patch`;
-    const result = extractTargetAgentPaths(
-      "memory_apply_patch",
-      { input: patch },
-      "/tmp",
-    );
-    expect(result.agentIds).toEqual(new Set([OTHER]));
   });
 
   test("shell tools are not path-analyzed (the kernel sandbox confines spawned shells)", () => {
@@ -615,9 +606,9 @@ describe("Grep/Glob ancestor-path regression tests", () => {
     expect(result).toBeNull();
   });
 
-  test("ListDir on the agents tree is denied (ListDir is recursive-like for our purposes)", () => {
+  test("LS cannot enumerate the agents tree", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
+      "LS",
       { path: agentsTreeRoot },
       "/tmp",
     );
@@ -640,6 +631,31 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
   function agentMemory(home: string, id: string, rel = ""): string {
     return join(home, ".letta", "agents", id, "memory", rel);
   }
+
+  test("a product override keeps both product and legacy agents trees guarded", () => {
+    const home = makeTempHome();
+    const productRoot = join(home, ".dream");
+    const env = {
+      HOME: home,
+      LETTA_CONFIG_DIR: productRoot,
+      AGENT_ID: SELF,
+    } as NodeJS.ProcessEnv;
+
+    for (const configRoot of [productRoot, join(home, ".letta")]) {
+      const target = join(configRoot, "agents", OTHER, "memory", "secret.md");
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, "TOPSECRET");
+
+      const result = evaluateCrossAgentGuard(
+        "Read",
+        { file_path: target },
+        home,
+        { env, currentAgentId: SELF, disableMemoryGuard: false },
+      );
+
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    }
+  });
 
   afterEach(() => {
     while (tempHomes.length) {
@@ -828,8 +844,11 @@ describe("local-backend memfs tree", () => {
 
   test("enumerating the local memfs tree root is denied", () => {
     const result = evaluateCrossAgentGuard(
-      "ListDir",
-      { path: join(HOME, ".letta", "lc-local-backend", "memfs") },
+      "Glob",
+      {
+        pattern: "**/*",
+        path: join(HOME, ".letta", "lc-local-backend", "memfs"),
+      },
       "/tmp",
     );
     expect(result).not.toBeNull();
@@ -856,12 +875,12 @@ describe("local-backend memfs tree", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Toolset alignment: the guard covers Codex/Gemini file tools (not just Claude)
+// Toolset alignment: the guard covers Codex file tools (not just Claude)
 // on BOTH the API and local trees. Tool names are canonicalized; path args
-// converge on file_path / path / notebook_path / dir_path / patch input.
+// converge on file_path / path / notebook_path / patch input.
 // ---------------------------------------------------------------------------
 
-describe("toolset alignment (Codex / Gemini file tools)", () => {
+describe("toolset alignment (Codex file tools)", () => {
   const localMemfs = (id: string, rel = ""): string =>
     join(HOME, ".letta", "lc-local-backend", "memfs", id, "memory", rel);
 
@@ -871,15 +890,9 @@ describe("toolset alignment (Codex / Gemini file tools)", () => {
 
   // [toolName, args] pairs that each target OTHER's memory, for both trees.
   const cases: Array<[string, (target: string) => Record<string, unknown>]> = [
-    ["read_file_gemini", (t) => ({ file_path: t })],
-    ["write_file_gemini", (t) => ({ file_path: t })],
-    ["replace", (t) => ({ file_path: t })], // Gemini edit
-    ["read_file", (t) => ({ file_path: t })], // Codex read
-    ["list_directory", (t) => ({ dir_path: t })], // Gemini list (dir_path!)
-    ["glob_gemini", (t) => ({ pattern: "**/*.md", dir_path: t })],
-    ["search_file_content", (t) => ({ pattern: "secret", dir_path: t })],
+    ["read_file", (t) => ({ file_path: t })],
     [
-      "apply_patch",
+      "ApplyPatch",
       (t) => ({
         input: `*** Begin Patch\n*** Update File: ${t}\n*** End Patch`,
       }),

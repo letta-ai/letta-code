@@ -737,7 +737,7 @@ export function ModelSelector({
     searchQuery,
   ]);
 
-  // Recent models: models the user has recently selected (max 5)
+  // Recent models: models the user has recently selected (max 10)
   // Only includes models that are currently available
   const recentModels = useMemo(() => {
     if (availableHandles === undefined) return [];

@@ -180,6 +180,13 @@ describe("listener auth lifecycle", () => {
       onDisconnected?: () => void;
       onNeedsReregister?: () => void;
       onError?: (error: Error) => void;
+      onRetrying?: (
+        attempt: number,
+        maxAttempts: number,
+        nextRetryIn: number,
+        connectionId?: string,
+      ) => void;
+      onConnectionReady?: () => Promise<void>;
       supportsSplitStatusChannels?: boolean;
     } = {},
   ) {
@@ -193,6 +200,8 @@ describe("listener auth lifecycle", () => {
       onDisconnected: overrides.onDisconnected ?? mock(() => {}),
       onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
       onError: overrides.onError ?? mock(() => {}),
+      onRetrying: overrides.onRetrying,
+      onConnectionReady: overrides.onConnectionReady,
     });
   }
 
@@ -213,6 +222,16 @@ describe("listener auth lifecycle", () => {
 
   function countConnectionsForChannel(channel: string): number {
     return connectionChannels.filter((value) => value === channel).length;
+  }
+
+  function isClientInitialized(): boolean {
+    const runtime = getActiveRuntime();
+    return (
+      runtime?.connections.get("connection-id")?.initialized === true &&
+      runtime.socket?.readyState === WebSocket.OPEN &&
+      (!runtime.streamSocket ||
+        runtime.streamSocket.readyState === WebSocket.OPEN)
+    );
   }
 
   function lastConnectionIndexForChannel(channel: string): number {
@@ -275,7 +294,7 @@ describe("listener auth lifecycle", () => {
   test("refreshes missing credentials on a real socket reconnect", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
     expect(authorizations[0]).toBe("Bearer initial-access-token");
@@ -295,7 +314,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "reconnect");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect with refreshed credentials",
     );
 
@@ -303,12 +322,84 @@ describe("listener auth lifecycle", () => {
     expect(settings.refreshToken).toBe("rotated-refresh-token");
   });
 
+  test("reports the attempt-zero reconnect as soon as a connected socket closes", async () => {
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({ onRetrying });
+    await waitFor(
+      () => connections.length === 1 && isClientInitialized(),
+      "initial socket did not open",
+    );
+
+    connections[0]?.close(1000, "reconnect");
+    await waitFor(
+      () => onRetrying.mock.calls.length > 0,
+      "listener did not report reconnecting",
+    );
+
+    expect(onRetrying).toHaveBeenCalledWith(
+      0,
+      expect.any(Number),
+      0,
+      "connection-id",
+    );
+  });
+
+  test("grows reconnect backoff while connected startup never completes", async () => {
+    const releaseStalledStartups: Array<() => void> = [];
+    const onRetrying = mock(
+      (
+        _attempt: number,
+        _maxAttempts: number,
+        _nextRetryIn: number,
+        _connectionId?: string,
+      ) => {},
+    );
+    await startClient({
+      onRetrying,
+      // Startup reaches an initialized connection, then stalls before the
+      // pong heartbeat starts (as a hung recovery or ready hook would).
+      onConnectionReady: () =>
+        new Promise<void>((resolve) => releaseStalledStartups.push(resolve)),
+    });
+
+    try {
+      for (let socketIndex = 0; socketIndex < 3; socketIndex += 1) {
+        await waitFor(
+          () =>
+            connections.length === socketIndex + 1 &&
+            releaseStalledStartups.length === socketIndex + 1 &&
+            isClientInitialized(),
+          `socket ${socketIndex + 1} did not reach stalled startup`,
+        );
+        expect(getActiveRuntime()?.hasSuccessfulConnection).toBe(false);
+        connections[socketIndex]?.close(1001, "idle timeout");
+        await waitFor(
+          () => onRetrying.mock.calls.length === socketIndex + 1,
+          `socket ${socketIndex + 1} close did not schedule a retry`,
+        );
+      }
+
+      expect(onRetrying.mock.calls.map(([attempt]) => attempt)).toEqual([
+        1, 2, 3,
+      ]);
+    } finally {
+      for (const release of releaseStalledStartups) release();
+    }
+  }, 20_000);
+
   test("transient relay closes preserve turn state queues and approval resolvers", async () => {
     const onDisconnected = mock(() => {});
     const onNeedsReregister = mock(() => {});
     await startClient({ onDisconnected, onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -356,7 +447,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "relay recycle");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect after transient close",
     );
 
@@ -409,7 +500,7 @@ describe("listener auth lifecycle", () => {
   test("queued input survives a transient relay close behind an active turn", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -443,7 +534,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "relay recycle");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not reconnect after transient close",
     );
 
@@ -470,7 +561,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        isClientInitialized(),
       "initial split sockets did not open",
     );
 
@@ -481,7 +573,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 2 &&
-        countConnectionsForChannel("stream") === 2,
+        countConnectionsForChannel("stream") === 2 &&
+        isClientInitialized(),
       "split stream close did not reconnect paired sockets",
     );
 
@@ -501,7 +594,8 @@ describe("listener auth lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        isClientInitialized(),
       "initial split sockets did not open",
     );
 
@@ -565,7 +659,7 @@ describe("listener auth lifecycle", () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onDisconnected, onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -622,11 +716,11 @@ describe("listener auth lifecycle", () => {
     expect(connections).toHaveLength(1);
   });
 
-  test("1008 re-registration closes tear down same-process runtime state", async () => {
+  test("1008 re-registration preserves pending approvals and queued work", async () => {
     const onNeedsReregister = mock(() => {});
     await startClient({ onNeedsReregister });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -665,24 +759,25 @@ describe("listener auth lifecycle", () => {
       "approval resolver was not registered",
     );
 
-    connections[0]?.close(1008, "environment not found");
+    connections[0]?.close(1008, "Environment not found");
     await waitFor(
       () => onNeedsReregister.mock.calls.length === 1,
       "1008 close did not request re-registration",
     );
 
-    const rejection = await approvalRejection;
-    expect(rejection).toBeInstanceOf(Error);
-    expect((rejection as Error).message).toBe("Listener runtime stopped");
-    expect(getActiveRuntime()).toBeNull();
-    expect(listener.conversationRuntimes.size).toBe(0);
-    expect(connections).toHaveLength(1);
+    expect(getActiveRuntime()).toBe(listener);
+    expect(listener.conversationRuntimes.size).toBe(1);
+    expect(conversationRuntime.turnLifecycle.isCurrent(turnLease)).toBe(true);
+    expect(conversationRuntime.pendingApprovalResolvers.size).toBe(1);
+    expect(conversationRuntime.queueRuntime.length).toBe(1);
+    stopListenerClient();
+    expect((await approvalRejection).message).toBe("Listener runtime stopped");
   });
 
   test("intentional stop closes tear down same-process runtime state", async () => {
     await startClient();
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -852,7 +947,7 @@ describe("listener auth lifecycle", () => {
     const onError = mock(() => {});
     await startClient({ onError });
     await waitFor(
-      () => connections.length === 1,
+      () => connections.length === 1 && isClientInitialized(),
       "initial socket did not open",
     );
 
@@ -877,7 +972,7 @@ describe("listener auth lifecycle", () => {
 
     connections[0]?.close(1000, "reconnect");
     await waitFor(
-      () => connections.length === 2,
+      () => connections.length === 2 && isClientInitialized(),
       "listener did not retry the transient refresh failure",
     );
 

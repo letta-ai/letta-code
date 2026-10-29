@@ -5,6 +5,13 @@ import { useEffect, useState } from "react";
 interface ListenerStatusUIProps {
   connectionId: string;
   envName: string;
+  /**
+   * First registration on this computer. The welcome banner above already
+   * named it, and a first `letta server` is always in service of a flow in
+   * Letta (onboarding, the computer picker) that detects the listener on its
+   * own, so the footer points back at Letta. Later runs show no footer.
+   */
+  isFirstRun?: boolean;
   onReady: (callbacks: {
     updateStatus: (status: "idle" | "receiving" | "processing") => void;
     updateRetryStatus: (attempt: number, nextRetryIn: number) => void;
@@ -13,7 +20,7 @@ interface ListenerStatusUIProps {
 }
 
 export function ListenerStatusUI(props: ListenerStatusUIProps) {
-  const { envName, onReady } = props;
+  const { envName, isFirstRun = false, onReady } = props;
   const [status, setStatus] = useState<"idle" | "receiving" | "processing">(
     "idle",
   );
@@ -46,11 +53,13 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
 
   return (
     <Box flexDirection="column" paddingX={1} paddingY={1}>
-      <Box marginBottom={1}>
-        <Text bold color="green">
-          The name of your environment is: {envName}
-        </Text>
-      </Box>
+      {!isFirstRun && (
+        <Box marginBottom={1}>
+          <Text bold color="green">
+            The name of your computer is: {envName}
+          </Text>
+        </Box>
+      )}
 
       <Box marginBottom={1}>
         {showSpinner && (
@@ -64,13 +73,14 @@ export function ListenerStatusUI(props: ListenerStatusUIProps) {
         {!showSpinner && <Text dimColor>{statusText}</Text>}
       </Box>
 
-      <Box>
-        <Text dimColor>
-          Connect to this environment by visiting any agent and clicking the
-          "cloud" button at the bottom left of the messenger input and swapping
-          your environment to {envName}
-        </Text>
-      </Box>
+      {isFirstRun && (
+        <Box>
+          <Text dimColor>
+            Connected. Head back to Letta in your browser — it will detect this
+            computer automatically. Keep this window open.
+          </Text>
+        </Box>
+      )}
     </Box>
   );
 }

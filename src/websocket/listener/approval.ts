@@ -1,5 +1,6 @@
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { ApprovalResponseBody, ControlRequest } from "@/types/protocol_v2";
+import { isDebugEnabled } from "@/utils/debug";
 import {
   createConnectionRequestKey,
   findListenerConnectionByTransport,
@@ -230,7 +231,7 @@ export function validateApprovalResultIds(
   }>,
   approvals: ApprovalResult[],
 ): void {
-  if (!process.env.DEBUG) {
+  if (!isDebugEnabled()) {
     return;
   }
 
@@ -347,35 +348,21 @@ export function rejectPendingApprovalResolversForConnection(
 export function replayPendingApprovalRequestsToConnection(
   runtime: ConversationRuntime,
   connectionId: ListenerConnectionId,
+  expectedConnection?: import("./types").ListenerConnectionState,
 ): void {
   const connection = runtime.listener.connections.get(connectionId);
-  if (!connection?.initialized || !isListenerTransportOpen(connection.writer)) {
+  if (
+    !connection ||
+    (expectedConnection
+      ? connection !== expectedConnection
+      : !connection.initialized) ||
+    !isListenerTransportOpen(connection.writer)
+  ) {
     return;
   }
   for (const pending of pendingApprovalEntries(runtime)) {
     addPendingApprovalConnection(runtime, pending, connectionId);
     if (!pending.controlRequest) continue;
-    emitProtocolV2Message(
-      connection.writer,
-      runtime,
-      pending.controlRequest,
-      {
-        agent_id: runtime.agentId,
-        conversation_id: runtime.conversationId,
-      },
-      toListenerConnection(connectionId),
-    );
-  }
-  const recovered = runtime.recoveredApprovalState;
-  if (
-    recovered?.agentId !== runtime.agentId ||
-    recovered.conversationId !== runtime.conversationId
-  ) {
-    return;
-  }
-  for (const requestId of recovered.pendingRequestIds) {
-    const pending = recovered.approvalsByRequestId.get(requestId);
-    if (!pending) continue;
     emitProtocolV2Message(
       connection.writer,
       runtime,
@@ -430,6 +417,16 @@ export function requestApprovalOverWS(
 
   if (isInterrupted()) {
     return Promise.reject(new Error("Cancelled by user"));
+  }
+
+  if (runtime.executionSettings !== undefined) {
+    return Promise.resolve({
+      request_id: requestId,
+      decision: {
+        behavior: "deny",
+        message: "Tool requires approval (headless mode)",
+      },
+    });
   }
 
   return new Promise<ApprovalResponseBody>((resolve, reject) => {

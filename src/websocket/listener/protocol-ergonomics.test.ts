@@ -3,7 +3,16 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type WebSocket from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
+import { TOOLSET_OPTIONS } from "@/tools/toolset-catalog";
 import { __listenClientTestUtils } from "@/websocket/listen-client";
+import {
+  markListenerConnectionInitialized,
+  openListenerConnection,
+} from "@/websocket/listener/connection";
 import { createListenerMessageHandler } from "@/websocket/listener/message-router";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { resetRemoteSettingsCache } from "@/websocket/listener/remote-settings";
@@ -30,10 +39,21 @@ function makeHandler(
   sent: unknown[],
   overrides: Partial<Parameters<typeof createListenerMessageHandler>[0]> = {},
 ) {
+  const opts = overrides.opts ?? makeListenerOptions();
+  const socket =
+    overrides.socket ??
+    ({ readyState: 1, bufferedAmount: 0, send() {} } as unknown as WebSocket);
+  const connection = openListenerConnection({
+    runtime,
+    connectionId: opts.connectionId,
+    writer: socket,
+    options: opts,
+  });
+  markListenerConnectionInitialized(runtime, opts.connectionId, connection);
   return createListenerMessageHandler({
     runtime,
-    socket: {} as WebSocket,
-    opts: makeListenerOptions(),
+    socket,
+    opts,
     processQueuedTurn: async () => {},
     fileCommandSession: { handle: () => false },
     getParsedRuntimeScope: () => null,
@@ -121,7 +141,13 @@ describe("listener protocol ergonomics", () => {
       runtime,
       expect.anything(),
       { agent_id: "agent-1", conversation_id: "default" },
-      { recoverApprovals: false, forceDeviceStatus: true },
+      {
+        recoverApprovals: false,
+        resumeInterruptedTurn: false,
+        forceDeviceStatus: true,
+        onStatusChange: undefined,
+        connectionId: "conn-test",
+      },
     );
     expect(sent).toContainEqual({
       type: "sync_response",
@@ -131,32 +157,44 @@ describe("listener protocol ergonomics", () => {
     });
   });
 
-  test("teleport probe advertises listener support", async () => {
-    const runtime = __listenClientTestUtils.createListenerRuntime();
-    const sent: unknown[] = [];
+  test.each([
+    { backend: "api", supported: true },
+    { backend: "local", supported: false },
+  ] as const)(
+    "teleport probe on $backend backend",
+    async ({ backend, supported }) => {
+      const previousBackend = resolveBackendMode();
+      setConfiguredBackendMode(backend);
+      try {
+        const runtime = __listenClientTestUtils.createListenerRuntime();
+        const sent: unknown[] = [];
 
-    await makeHandler(
-      runtime,
-      sent,
-    )(
-      Buffer.from(
-        JSON.stringify({
-          type: "teleport_probe",
+        await makeHandler(
+          runtime,
+          sent,
+        )(
+          Buffer.from(
+            JSON.stringify({
+              type: "teleport_probe",
+              request_id: "probe-1",
+              runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
+            }),
+          ),
+        );
+
+        expect(sent).toContainEqual({
+          type: "teleport_probe_response",
           request_id: "probe-1",
           runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-        }),
-      ),
-    );
-
-    expect(sent).toContainEqual({
-      type: "teleport_probe_response",
-      request_id: "probe-1",
-      runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      supported: true,
-      drains_accepted_inputs: true,
-      idempotent_continuation: true,
-    });
-  });
+          supported,
+          drains_accepted_inputs: true,
+          idempotent_continuation: true,
+        });
+      } finally {
+        setConfiguredBackendMode(previousBackend);
+      }
+    },
+  );
 
   test("teleport continuation resumes with tool results and hidden destination context", async () => {
     const runtime = __listenClientTestUtils.createListenerRuntime();
@@ -235,14 +273,14 @@ describe("listener protocol ergonomics", () => {
       ],
     });
     expect(incoming?.messages[1]).toEqual({
-      role: "system",
+      role: "user",
       content:
         "<system-reminder>Teleportation to this environment is complete. Continue the existing task from this environment now.</system-reminder>",
       otid: "teleport-1:continue",
     });
     expect(
       incoming?.messages.some(
-        (message) => "role" in message && message.role === "user",
+        (message) => "role" in message && message.role === "system",
       ),
     ).toBe(false);
   });
@@ -483,6 +521,21 @@ describe("listener protocol ergonomics", () => {
     expect(status.boot_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(status.current_working_directory).toBe(runtime.bootWorkingDirectory);
     expect(runtime.workingDirectoryRevision).toBe(1);
+  });
+
+  test("advertises the toolsets supported by this listener", () => {
+    const runtime = __listenClientTestUtils.createListenerRuntime();
+
+    const status = __listenClientTestUtils.buildDeviceStatus(runtime);
+
+    expect(status.available_toolsets).toEqual([...TOOLSET_OPTIONS]);
+    expect(status.available_toolsets).toContainEqual({
+      id: "letta",
+      display_name: "Letta",
+      label: "Letta toolset",
+      description: "Experimental unified toolset for every model",
+      is_featured: true,
+    });
   });
 
   test("reports the skills prepared for the active conversation", () => {

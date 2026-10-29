@@ -1,11 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRepositoryMountDir } from "@/agent/memory-git";
@@ -15,13 +9,11 @@ import { clearTools, executeTool, loadSpecificTools } from "@/tools/manager";
 import SkillSchema from "@/tools/schemas/Skill.json";
 
 const TEST_AGENT_ID = "agent-skill-memfs-test";
-const SYSTEM_DIRECTORY_PATH = /(^|[^A-Za-z0-9_-])(?:\$MEMORY_DIR\/)?system\//m;
 let currentSkillsDirectory: string | null = null;
 
 const {
   readSkillContent,
   renderSkillContent,
-  resolveBundledSkillContentPath,
   skill,
   wrapSkillContent,
   wrapSkillPrompt,
@@ -114,65 +106,35 @@ describe("Skill tool memory filesystem lookup", () => {
     ).rejects.toThrow('Skill "image-generation" not found');
   });
 
-  test("selects root variants only for API repositories with root MEMORY.md", () => {
-    const memoryDir = join(tempRoot, "root-memory");
-    const bundledPath = join(tempRoot, "initializing-memory", "SKILL.md");
-    mkdirSync(memoryDir, { recursive: true });
+  test("init loads the bundled v2 memory guidance", async () => {
+    process.env.HOME = tempRoot;
+    const scopedMemoryDir = join(
+      tempRoot,
+      ".letta",
+      "agents",
+      TEST_AGENT_ID,
+      "memory",
+    );
+    mkdirSync(scopedMemoryDir, { recursive: true });
+    writeFileSync(join(scopedMemoryDir, "MEMORY.md"), "# Memory\n");
 
-    expect(
-      resolveBundledSkillContentPath({
-        skillId: "initializing-memory",
-        bundledSkillPath: bundledPath,
-        memoryDir,
-        localMemfs: false,
-      }),
-    ).toBe(bundledPath);
+    const skillId = "initializing-memory";
+    const loaded = await readSkillContent(
+      skillId,
+      currentSkillsDirectory ?? join(tempRoot, ".skills"),
+      TEST_AGENT_ID,
+    );
+    expect(loaded.path).toEndWith(join(skillId, "SKILL.md"));
 
-    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
-    expect(
-      resolveBundledSkillContentPath({
-        skillId: "initializing-memory",
-        bundledSkillPath: bundledPath,
-        memoryDir,
-        localMemfs: false,
-      }),
-    ).toEndWith(join("initializing-memory", "ROOT_MEMORY.md"));
-    expect(
-      resolveBundledSkillContentPath({
-        skillId: "initializing-memory",
-        bundledSkillPath: bundledPath,
-        memoryDir,
-        localMemfs: true,
-      }),
-    ).toBe(bundledPath);
-  });
-
-  test("selected root skill variants contain no system directory paths", () => {
-    const memoryDir = join(tempRoot, "root-skill-memory");
-    mkdirSync(memoryDir, { recursive: true });
-    writeFileSync(join(memoryDir, "MEMORY.md"), "# Memory\n");
-
-    for (const skillId of ["initializing-memory", "context-doctor"]) {
-      const bundledSkillPath = join(
-        import.meta.dir,
-        "..",
-        "skills",
-        "builtin",
-        skillId,
-        "SKILL.md",
-      );
-      const selectedPath = resolveBundledSkillContentPath({
-        skillId,
-        bundledSkillPath,
-        memoryDir,
-        localMemfs: false,
-      });
-
-      expect(selectedPath).toEndWith(join(skillId, "ROOT_MEMORY.md"));
-      expect(
-        SYSTEM_DIRECTORY_PATH.test(readFileSync(selectedPath, "utf8")),
-      ).toBe(false);
-    }
+    const rendered = renderSkillContent(skillId, loaded.content, loaded.path);
+    expect(rendered).toContain("root `MEMORY.md`");
+    expect(rendered).toContain("## Harness Constraints");
+    expect(rendered).toContain("including quota");
+    expect(rendered).toContain("agent(historyPrompt, {label:");
+    expect(rendered).toContain("agent(codePrompt, {label:");
+    expect(rendered).toContain("schema: historySchema(cohort)");
+    expect(rendered).toContain("schema: codeSchema");
+    expect(rendered).toContain("If the Workflow tool is unavailable");
   });
 
   test("loads skills from MEMORY_DIR/skills", async () => {

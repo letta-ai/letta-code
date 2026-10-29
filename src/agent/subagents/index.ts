@@ -11,21 +11,20 @@ import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { LocalMemoryFormat } from "@/agent/memory-format";
 import { getBackend } from "@/backend";
+import { findRemovedToolNames } from "@/tools/removed-tools";
 import { getErrorMessage } from "@/utils/error";
 import {
   getStringField,
   parseCommaSeparatedList,
   parseFrontmatter,
 } from "@/utils/frontmatter";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 // Built-in subagent definitions (embedded at build time)
 import forkAgentMd from "./builtin/fork.md";
 import generalPurposeAgentMd from "./builtin/general-purpose.md";
-import historyAnalyzerAgentMd from "./builtin/history-analyzer.md";
-import historyAnalyzerV2AgentMd from "./builtin/history-analyzer-v2.md";
 import initAgentMd from "./builtin/init.md";
 import initV2AgentMd from "./builtin/init-v2.md";
 import memoryAgentMd from "./builtin/memory.md";
-import memoryV2AgentMd from "./builtin/memory-v2.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
@@ -33,7 +32,6 @@ import reflectionV2AgentMd from "./builtin/reflection-v2.md";
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
@@ -43,19 +41,13 @@ const STANDARD_BUILTIN_SOURCES = [
 const LOCAL_MEMFS_BUILTIN_SOURCES = [
   forkAgentMd,
   generalPurposeAgentMd,
-  historyAnalyzerAgentMd,
   initAgentMd,
   memoryAgentMd,
   recallAgentMd,
   reflectionAgentMd,
 ];
 
-const MEMFS_V2_BUILTIN_SOURCES = [
-  historyAnalyzerV2AgentMd,
-  initV2AgentMd,
-  memoryV2AgentMd,
-  reflectionV2AgentMd,
-];
+const MEMFS_V2_BUILTIN_SOURCES = [initV2AgentMd, reflectionV2AgentMd];
 
 // ============================================================================
 // Types
@@ -80,6 +72,8 @@ export interface SubagentMemoryScope {
 export interface SubagentResult {
   agentId: string;
   conversationId?: string;
+  /** Native session/thread identifier for a non-Letta execution runtime. */
+  runtimeSessionId?: string;
   model?: string;
   report: string;
   success: boolean;
@@ -122,6 +116,26 @@ export interface SubagentDiscoveryResult {
 // Constants
 // ============================================================================
 
+export const EXTERNAL_CODING_AGENT_DESCRIPTORS = [
+  {
+    name: "claude-code",
+    description:
+      "Run the locally installed Claude Code CLI as a one-shot coding worker",
+    recommendedModel: "configured Claude Code default",
+  },
+  {
+    name: "codex",
+    description:
+      "Start a locally installed Codex coding session with mid-turn steering",
+    recommendedModel: "configured Codex default",
+  },
+  {
+    name: "cursor",
+    description: "Run Cursor's coding agent in the selected checkout",
+    recommendedModel: "explicit Cursor model ID required for a new session",
+  },
+] as const;
+
 /**
  * Directory for subagent files (relative to project root)
  */
@@ -130,14 +144,18 @@ export const AGENTS_DIR = ".letta/agents";
 /**
  * Global directory for subagent files (in user's home directory)
  */
-function getGlobalAgentsDir(): string {
-  return join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".letta/agents",
-  );
+export function getGlobalAgentsDir(): string {
+  return join(resolveGlobalConfigDir(), "agents");
 }
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
+// Runtime support is separate from advertising an adapter in the prompt.
+const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
+  "claude-code",
+  "codex",
+  "opencode",
+  "cursor",
+]);
 
 // ============================================================================
 // Cache
@@ -411,8 +429,8 @@ export function resolveSubagentConfigForMemoryFormat(
   memoryFormat: LocalMemoryFormat,
   localMemfs: boolean,
 ): SubagentConfig {
-  if (localMemfs || memoryFormat !== "memfs-v2") return config;
-  const v1Builtin = getBuiltinSubagents(false)[config.name];
+  if (memoryFormat !== "memfs-v2") return config;
+  const v1Builtin = getBuiltinSubagents(localMemfs)[config.name];
   const v2Builtin = getLocalMemfsV2Builtins()[config.name];
   if (
     !v1Builtin ||
@@ -421,7 +439,15 @@ export function resolveSubagentConfigForMemoryFormat(
   ) {
     return config;
   }
-  return { ...config, systemPrompt: v2Builtin.systemPrompt };
+  return {
+    ...config,
+    systemPrompt: v2Builtin.systemPrompt,
+    // Keep an override's explicit skill list; upgrade only the built-in default.
+    skills:
+      config.skills.join(",") === v1Builtin.skills.join(",")
+        ? [...v2Builtin.skills]
+        : config.skills,
+  };
 }
 
 /**
@@ -456,7 +482,11 @@ async function discoverSubagentsFromDir(
 
       try {
         const config = await parseSubagentFile(filePath, configsByName);
-        if (config) {
+        if (
+          config &&
+          !RESERVED_EXTERNAL_SUBAGENT_NAMES.has(config.name) &&
+          config.name !== "memory"
+        ) {
           // Check for duplicate names (later directories override earlier ones)
           const existingIndex = subagents.findIndex(
             (s) => s.name === config.name,
@@ -552,6 +582,16 @@ export async function getAllSubagentConfigs(
     console.warn(`[subagent] Warning: ${error.path}: ${error.message}`);
   }
 
+  for (const subagent of subagents) {
+    if (subagent.allowedTools === "all") continue;
+    const removedTools = findRemovedToolNames(subagent.allowedTools);
+    if (removedTools.length > 0) {
+      console.warn(
+        `[subagent] Warning: ${subagent.name}: these tools no longer exist and will be ignored: ${removedTools.join(", ")}`,
+      );
+    }
+  }
+
   // User-defined subagents override built-ins with the same name
   for (const subagent of subagents) {
     configs[subagent.name] = subagent;
@@ -563,6 +603,24 @@ export async function getAllSubagentConfigs(
   cache.localMemfs = localMemfs;
 
   return configs;
+}
+
+export async function getModelFacingSubagentDescriptors(
+  workingDirectory: string,
+): Promise<
+  Array<{ name: string; description: string; recommendedModel: string }>
+> {
+  const configs = await getAllSubagentConfigs(workingDirectory);
+  return [
+    ...Object.entries(configs)
+      .filter(([name]) => name !== "memory")
+      .map(([name, config]) => ({
+        name,
+        description: config.description,
+        recommendedModel: config.recommendedModel,
+      })),
+    ...EXTERNAL_CODING_AGENT_DESCRIPTORS,
+  ];
 }
 
 /**

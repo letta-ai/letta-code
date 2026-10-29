@@ -11,6 +11,10 @@ import {
   getLocalBackendCrossAgentTreeRoot,
   getLocalBackendStorageDir,
 } from "@/utils/local-backend-paths";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 
 /**
  * Builders that translate agent/memory context into a concrete
@@ -24,9 +28,16 @@ import {
  * nothing — i.e. a sandbox that allows everything. See `canonicalizeRoot`.
  */
 
-/** The per-agent tree to wall off, e.g. `/Users/me/.letta/agents`. */
-export function getDefaultAgentsTreeRoot(homeDir: string = homedir()): string {
-  return canonicalizeRoot(join(homeDir, ".letta", "agents"));
+/** The per-agent tree to wall off below the active product config root. */
+export function getDefaultAgentsTreeRoot(
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, ".letta");
+  return canonicalizeRoot(join(configDir, "agents"));
 }
 
 export interface CrossBackendAgentsTreeRootsOptions {
@@ -37,23 +48,42 @@ export interface CrossBackendAgentsTreeRootsOptions {
 }
 
 /**
- * Every cross-agent memory tree the kernel sandbox must wall off. API/cloud
- * agents live under `~/.letta/agents`; local-backend agents live under
- * `<storage>/memfs`. A process running in either backend must deny both trees,
- * then carve back only the current/parent agent roots it is allowed to touch.
+ * Every cross-agent memory tree the kernel sandbox must wall off. This includes
+ * the active product config root and the legacy HOME-local Letta root when they
+ * differ, because Dream and ordinary Letta Code can coexist on one machine.
+ * Each config root can contain API/cloud agents under `agents/` and local
+ * backend agents under `lc-local-backend/memfs/`; an explicit local-backend
+ * storage override is guarded too.
  */
 export function getCrossBackendAgentsTreeRoots(
   options: CrossBackendAgentsTreeRootsOptions = {},
 ): string[] {
-  const homeDir = options.homeDir ?? homedir();
+  const homeDir = options.homeDir;
+  const env = options.env ?? process.env;
+  const resolvedHome = homeDir ?? env.HOME ?? homedir();
+  const configRoots = new Set([
+    resolveGlobalConfigDir(env, resolvedHome),
+    join(resolvedHome, ".letta"),
+  ]);
   const localBackendStorageDir =
-    options.localBackendStorageDir ??
-    getLocalBackendStorageDir(homeDir, options.env ?? process.env);
+    options.localBackendStorageDir ?? getLocalBackendStorageDir(homeDir, env);
+  const roots = new Set<string>();
 
-  return [
-    getDefaultAgentsTreeRoot(homeDir),
+  for (const configRoot of configRoots) {
+    roots.add(canonicalizeRoot(join(configRoot, "agents")));
+  }
+  roots.add(
     canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(localBackendStorageDir)),
-  ];
+  );
+  for (const configRoot of configRoots) {
+    roots.add(
+      canonicalizeRoot(
+        getLocalBackendCrossAgentTreeRoot(join(configRoot, "lc-local-backend")),
+      ),
+    );
+  }
+
+  return [...roots];
 }
 
 /**
@@ -62,8 +92,15 @@ export function getCrossBackendAgentsTreeRoots(
  * under it (settings, logs, conversations, transcripts, memory) but not the
  * repo/home/temp — while the cross-agent tree nested inside it stays denied.
  */
-export function getLettaHomeRoot(homeDir: string = homedir()): string {
-  return canonicalizeRoot(join(homeDir, ".letta"));
+export function getLettaHomeRoot(
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, ".letta");
+  return canonicalizeRoot(configDir);
 }
 
 /**
@@ -181,9 +218,20 @@ function deriveWritableMemoryRootsForTrees(
   const out = new Set<string>();
   for (const root of memoryRoots) {
     const canon = canonicalizeRoot(root);
-    // Never re-carve a whole denied tree, or an ancestor that would re-expose
-    // that tree under bwrap's last-mount-wins semantics.
-    if (!isTreeOrAncestorOfTree(canon, canonicalTrees)) {
+    const isExactDeniedTree = canonicalTrees.includes(canon);
+    const isInsideDeniedTree = canonicalTrees.some(
+      (tree) => canon !== tree && isWithinRoot(canon, tree),
+    );
+
+    // A legitimate self-memory root can be both inside the primary agents tree
+    // and an ancestor of a second nested denied tree. The sandbox backends now
+    // remask nested denies after restores, so keep that self root writable.
+    // Continue rejecting a whole denied tree and broad outside ancestors such
+    // as HOME or `/`, which are never valid memory-scoped write carves.
+    if (
+      !isExactDeniedTree &&
+      (isInsideDeniedTree || !isTreeOrAncestorOfTree(canon, canonicalTrees))
+    ) {
       out.add(canon);
     }
   }

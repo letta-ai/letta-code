@@ -1,5 +1,6 @@
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { delimiter, isAbsolute, join } from "node:path";
+import { getPreferredUnixShell } from "@/utils/shell-context";
 
 const SEP = "\u0000";
 type ShellLaunchOptions = {
@@ -206,12 +207,23 @@ function hasFileExtension(executable: string): boolean {
   return /\.[^.]+$/.test(basename);
 }
 
+function shellCandidateExists(candidate: string): boolean {
+  try {
+    // MSIX app execution aliases are reparse points: stat/exists can fail
+    // even though Windows can launch them. Inspect the entry itself.
+    lstatSync(candidate);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function resolveExecutablePath(
   executable: string,
   env: NodeJS.ProcessEnv,
 ): string | null {
   if (isAbsolute(executable) || hasPathSeparator(executable)) {
-    return existsSync(executable) ? executable : null;
+    return shellCandidateExists(executable) ? executable : null;
   }
 
   const pathDelimiter = process.platform === "win32" ? ";" : delimiter;
@@ -226,7 +238,7 @@ function resolveExecutablePath(
   for (const entry of pathEntries) {
     for (const name of executableNames) {
       const candidate = join(entry, name);
-      if (existsSync(candidate)) {
+      if (shellCandidateExists(candidate)) {
         return candidate;
       }
     }
@@ -262,15 +274,15 @@ function unixLaunchers(command: string, login: boolean): string[][] {
   const launchers: string[][] = [];
   const seen = new Set<string>();
 
-  // On macOS, ALWAYS prefer zsh first due to bash 3.2's HEREDOC parsing bug
-  // with odd numbers of apostrophes. This takes precedence over $SHELL.
-  if (process.platform === "darwin") {
-    pushUnique(launchers, seen, [
-      "/bin/zsh",
-      shellCommandFlag("/bin/zsh", login),
-      trimmed,
-    ]);
-  }
+  // The preferred shell comes first: /bin/zsh on macOS (bash 3.2's HEREDOC
+  // parsing bug with odd numbers of apostrophes), otherwise $SHELL or
+  // /bin/bash. Session context names this same shell to the model.
+  const preferredShell = getPreferredUnixShell(process.env, process.platform);
+  pushUnique(launchers, seen, [
+    preferredShell,
+    shellCommandFlag(preferredShell, login),
+    trimmed,
+  ]);
 
   // Try user's preferred shell from $SHELL environment variable
   // Use login semantics only when explicitly requested.

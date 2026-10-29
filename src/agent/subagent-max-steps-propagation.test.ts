@@ -13,8 +13,7 @@ describe("subagent max_steps error propagation", () => {
       "const propagatedError = state.finalError?.trim();",
     );
     expect(source).toContain(
-      `const fallbackError = stderr || \`Subagent exited with code \${exitCode}\`;`,
+      "propagatedError || describeSubagentExit(exitCode, exitSignal, stderr)",
     );
-    expect(source).toContain("error: propagatedError || fallbackError");
   });
 });

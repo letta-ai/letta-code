@@ -64,6 +64,29 @@ caller must guess whether another layer already finalized the turn.
 `requires_approval` is a continuation boundary, not a terminal turn. A pending
 approval remains inside the same active lease.
 
+## Steering and the queue
+
+**The queue is one of the most sensitive paths in Letta Code.** When it breaks,
+nothing errors. Agents just stop taking in new messages mid-turn for every
+user, and it goes unnoticed for days. Agents changing this code to fit some
+other feature have broken it before.
+
+**How it works:** Letta Code steers, it doesn't queue. Whenever the next
+request is about to go to the model (a tool return, a user message, anything),
+the listener drains every coalescable item at the head of the queue (user and
+agent messages, background task notifications, cron prompts, mod
+continuations) and sends them with that request. There is deliberately no mode
+that holds input until the turn ends. A batch only splits at real boundaries: a
+different conversation, connection, model selection, or image policy, or a
+`noCoalesce` input (the OpenAI-compatible App Server path, where each HTTP
+request needs its own turn). Who sent an input is never a boundary.
+
+**Don't make the queue decide what gets through.** If a feature needs to
+restrict something (MCP access, identity, permissions), enforce it where that
+thing is used, not by holding inputs back. Any change to when or what the drain
+sends needs Charles's design review first, and `steering-drain.test.ts` must
+keep passing.
+
 ## Queue And Status
 
 Queue gating consumes `turnLifecycle.snapshot()`. It must not reconstruct
@@ -116,6 +139,7 @@ When logs show contradictory state:
 - `send-lease.test.ts`: pre-stream recovery await/queue boundaries.
 - `message-router.test.ts`: direct-message ownership handoff and queue drain.
 - `listener-queue-adapter.test.ts`: queue decisions from valid snapshots.
+- `steering-drain.test.ts`: queued inputs join the next model request.
 - `channel-turn-session.test.ts`: channel progress lifecycle fan-out.
 
 Keep new tests next to their owner and below 1,000 lines. Do not grow the legacy

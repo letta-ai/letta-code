@@ -1,26 +1,124 @@
 import { readFile } from "node:fs/promises";
 import { isRecord } from "@/utils/type-guards";
 
-export function printMcpUsage(stdout: (message: string) => void): void {
-  stdout(
+export type McpOutput = (message: string) => unknown;
+
+function writeMcpOutput(
+  stream: NodeJS.WriteStream,
+  message: string,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+    const onError = (error: unknown) => fail(error);
+    stream.once("error", onError);
+
+    try {
+      stream.write(`${message}\n`, (error) => {
+        if (error) {
+          // Keep onError installed because Node can emit the same write failure
+          // after invoking this callback.
+          fail(error);
+          return;
+        }
+        if (settled) return;
+        settled = true;
+        stream.off("error", onError);
+        resolve();
+      });
+    } catch (error) {
+      stream.off("error", onError);
+      fail(error);
+    }
+  });
+}
+
+export function writeMcpStdout(message: string): Promise<void> {
+  return writeMcpOutput(process.stdout, message);
+}
+
+export function writeMcpStderr(message: string): Promise<void> {
+  return writeMcpOutput(process.stderr, message);
+}
+
+export class McpCliError extends Error {
+  readonly code: string;
+  readonly hint?: string;
+
+  constructor(code: string, message: string, hint?: string) {
+    super(message);
+    this.name = "McpCliError";
+    this.code = code;
+    this.hint = hint;
+  }
+}
+
+export async function printMcpError(
+  stderr: McpOutput,
+  error: unknown,
+): Promise<void> {
+  const normalized =
+    error instanceof McpCliError
+      ? error
+      : new McpCliError(
+          "mcp_error",
+          error instanceof Error ? error.message : String(error),
+        );
+  await stderr(
+    JSON.stringify(
+      {
+        error: {
+          code: normalized.code,
+          message: normalized.message,
+          ...(normalized.hint ? { hint: normalized.hint } : {}),
+        },
+      },
+      null,
+      2,
+    ),
+  );
+}
+
+export async function printMcpUsage(stdout: McpOutput): Promise<void> {
+  await stdout(
     `
 Usage:
   letta mcp list [--agent <id>]
   letta mcp get <server> [--agent <id>]
-  letta mcp tools [server] [--agent <id>]
+  letta mcp tools [server] [--full] [--agent <id>]
+  letta mcp schema <tool-name> [--agent <id>]
+  letta mcp search <query> [--mode <hybrid|vector|fts>] [--limit <n>] [--agent <id>]
   letta mcp call <tool-name> [--args '<json>' | --args-file <path|->] [--agent <id>]
+  letta mcp connect <service> [--server-url <url>] [--client-name <name>] [--agent <id>]
 
 Commands:
   list      List MCP servers available to the agent
   get       Print one server's redacted connection configuration
-  tools     Print complete MCP tool schemas; names are accepted by call
+  tools     List tool names and descriptions; names are accepted by call
+  schema    Print one tool's complete schema
+  search    Search tools available to the agent
   call      Call one exact tool name and print an MCP CallToolResult
+  connect   Authorize comfy or datadog in this computer's browser and save
+            the connection to the Cloud agent
 
 Options:
   --agent <id>       Agent ID. Defaults to LETTA_AGENT_ID or AGENT_ID
   --agent-id <id>    Alias for --agent
+  --full             Include complete schemas in tools output
+  --mode <mode>      Search mode: hybrid (default), vector, or fts
+  --limit <n>        Search result limit from 1 to 100 (default: 5)
   --args <json>      JSON object passed to a tool
   --args-file <path> Read tool arguments from a file; use - for stdin
+  --server-url <url> MCP server for connect, e.g. a Datadog site's URL
+                     (default: the service's first supported URL; non-US1
+                     Datadog orgs can pass https://mcp.<site>/v1/mcp)
+  --client-name <name>
+                     Application name shown on the provider's consent screen
+                     during connect, 1 to 64 characters (default: Letta Code)
   -h, --help         Show this help
 
 Output is JSON. Server placement and agent/server/tool IDs are internal.

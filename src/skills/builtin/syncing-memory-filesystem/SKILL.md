@@ -5,9 +5,7 @@ description: Diagnose and repair MemFS repository setup, remote sync, authentica
 
 # MemFS Repository Repair
 
-Use this skill only when the Git repository behind an agent's memory is not
-setting up or syncing correctly. For ordinary memory reads and edits, use the
-memory files or the memory tools without loading this skill.
+Use this skill when the Git repository behind an agent's memory is not setting up or syncing correctly. Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then make the edit directly with ordinary file tools so the agent with the context applies the memory guidance. Stage only changed files by explicit path and commit in the same shell call. Verify the repair before reporting success. While the harness reports a repair in progress, leave memory files and Git state to that repair worker, which edits `$MEMORY_DIR` in place.
 
 ## Current Model
 
@@ -31,7 +29,7 @@ $MEMORY_DIR/                        $MEMORY_DIR/
 Cloud-backed agents have a hosted MemFS remote. Local-backend agents keep a
 local-only Git repository and do not need a remote or cloud credentials.
 
-The memory tools commit their changes. After each turn, the harness pushes
+The agent doing the memory work commits its changes. After each turn, the harness pushes
 clean committed changes for cloud-backed agents. Local-backend commits remain
 on the current machine. Do not run `git push` for normal MemFS sync; let the
 harness push after the turn.
@@ -64,9 +62,8 @@ hosted remote.
 
 Do not reproduce `/memfs enable` by PATCHing agent tags or constructing a Git
 remote by hand. The enable flow also updates the system prompt mode, recompiles
-the agent, persists local settings, detaches legacy memory tools, preserves and
-adds tags, initializes the checkout, installs hooks, configures identity, and
-seeds default memory files.
+the agent, persists local settings, preserves and adds tags, initializes the
+checkout, installs hooks, configures identity, and seeds default memory files.
 
 ## Inspect a Broken Checkout
 
@@ -116,8 +113,10 @@ cloud-backed agent's pending commits after the turn.
 
 The harness first tries a fast-forward pull. When a remote push is rejected
 because the remote moved, post-turn sync tries `git pull --rebase` and retries
-the push. If that rebase conflicts, the harness leaves the repository for
-manual resolution and reports the affected files.
+the push. If that rebase conflicts, the harness launches a fresh background
+internal `memory` subagent to repair it. The primary conversation is not interrupted.
+The harness retries normal sync after the worker finishes. The instructions
+below are for explicit troubleshooting; routine repairs run in the background.
 
 Start by reading the current Git operation and every conflicted file:
 

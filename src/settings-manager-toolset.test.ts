@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { settingsManager } from "@/settings-manager";
@@ -61,7 +61,7 @@ describe("Settings Manager - Toolset Preferences", () => {
   });
 
   test("persists default and named conversation overrides independently", async () => {
-    settingsManager.setToolsetPreference("agent-toolset-persist", "gemini");
+    settingsManager.setToolsetPreference("agent-toolset-persist", "default");
     settingsManager.setToolsetPreference(
       "agent-toolset-persist",
       "codex",
@@ -72,10 +72,32 @@ describe("Settings Manager - Toolset Preferences", () => {
     await settingsManager.initialize();
 
     expect(settingsManager.getToolsetPreference("agent-toolset-persist")).toBe(
-      "gemini",
+      "default",
     );
     expect(
       settingsManager.getToolsetPreference("agent-toolset-persist", "conv-a"),
     ).toBe("codex");
+  });
+  test("unknown stored toolsets fall back to auto in both conversation scopes", async () => {
+    await settingsManager.reset();
+    await writeFile(
+      join(testHomeDir, ".letta", "settings.json"),
+      JSON.stringify({
+        agents: [
+          {
+            agentId: "agent-unknown-preset",
+            toolset: "obsolete-preset",
+            toolsetsByConversation: { "conv-old": "obsolete-preset" },
+          },
+        ],
+      }),
+    );
+    await settingsManager.initialize();
+    expect(settingsManager.getToolsetPreference("agent-unknown-preset")).toBe(
+      "auto",
+    );
+    expect(
+      settingsManager.getToolsetPreference("agent-unknown-preset", "conv-old"),
+    ).toBe("auto");
   });
 });

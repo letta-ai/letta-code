@@ -4,10 +4,11 @@ Launch a new agent to handle complex, multi-step tasks autonomously.
 
 The Agent tool launches specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools available to it.
 
-When using the Agent tool, you must specify a subagent_type parameter to select which agent type to use.
+When launching a new subagent, you must specify a subagent_type parameter to select which agent type to use. When deploying an existing agent with agent_id or conversation_id, it is optional and defaults to general-purpose.
 
 ## When NOT to use the Agent tool:
 
+- To send input to an agent that is already working, use SendAgentMessage when available (Cloud backend). It sends to the existing conversation without waiting for an answer or creating another local task. On the local backend, or for other ways to message an agent, load the messaging-agents skill.
 - If you want to read a specific file path, use the Read or Glob tool instead of the Agent tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Agent tool, to find the match more quickly
@@ -17,16 +18,39 @@ When using the Agent tool, you must specify a subagent_type parameter to select 
 
 - Always include a short description (3-5 words) summarizing what the agent will do
 - Launch multiple agents concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses
-- When the agent is done, it will return a single message back to you. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
-- Agents always run in the background. The tool result will include a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes — no need to poll. If you need interim progress before then, use the TaskOutput tool with the task ID. You can continue working while agents run.
+- When the agent is done, it will return a single message back to you along with its conversation ID. The result returned by the agent is not visible to the user. To show the user the result, you should send a text message back to the user with a concise summary of the result.
+- Agents always run in the background. The tool result includes a task ID and an output_file path, and you will be notified automatically via a <task-notification> message when it completes, so there is no need to poll. The output file receives the report when the agent finishes; it has no interim progress. You can continue working while agents run.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
-- When the agent is done, it will return a single message back to you along with its conversation ID. You can use this ID to resume the agent later if needed for follow-up work.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
 - Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
 - The agent's outputs should generally be trusted
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
 - If the user specifies that they want you to run agents "in parallel", you MUST send a single message with multiple Agent tool use content blocks. For example, if you need to launch multiple agents in parallel, send a single message with multiple Agent tool calls.
+
+## External Coding Agents
+
+Use `subagent_type: "claude-code"`, `"codex"`, or `"cursor"` to start an external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+
+Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
+
+Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
+
+External coding workers automatically receive the parent's MCP discovery metadata and use the same `letta mcp` CLI through their shell. To advertise a subset:
+
+```typescript
+Agent({
+  subagent_type: "claude-code",
+  description: "Inspect Linear issue",
+  prompt: "Read the issue and trace the relevant implementation.",
+  mcp: {
+    inherit: true,
+    servers: ["linear"],
+  },
+})
+```
+
+Omitting `mcp` advertises every MCP server currently available to the parent. `mcp: { inherit: false }` omits the discovery reminder. Adding `servers` advertises exactly that named subset and fails before launch if a requested server is unavailable. These options control discovery, not authorization or a security allowlist.
 
 ## Deploying an Existing Agent
 
@@ -130,9 +154,44 @@ Agent({ subagent_type: "fork", description: "Implement component B", prompt: "..
 
 Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
 
+## Running on Another Computer
+
+Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
+
+`computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
+
+External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
+
+Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
+
+Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. `fork` and `recall` ignore the default and always start here, because their inherited context describes this machine's files.
+
+```typescript
+// Fork this conversation and run the work on a connected computer
+Agent({
+  subagent_type: "fork",
+  computer: "office-mac",
+  description: "Run integration tests",
+  prompt: "Run the integration suite in the checkout on this machine and report failures."
+})
+
+// Deploy an existing agent into a fresh Cloud sandbox
+Agent({
+  agent_id: "agent-abc123",
+  computer: "cloud",
+  description: "Build release artifacts",
+  prompt: "Build and upload the release artifacts."
+})
+```
+
+Behavior notes:
+- The remote turn runs with the remote machine's working directory, tools, and skills. Subagent-type tool restrictions (e.g. recall's read-only toolset) travel with the turn on current servers; older servers ignore them.
+- The remote turn's final assistant message is returned as the task result. Token and step statistics are not available for remote runs.
+- Computer-routed tasks are submitted asynchronously and tracked through Cloud's existing Super Run status feed. Temporary status-read failures retry in the background; there is no one-hour tracking ceiling. Completion still notifies you if the reply could not be collected; use `letta messages list` to read the conversation rather than launching the task again. Stopping a task cancels its queued input or its executing listener run.
+
 ## Concurrency and Safety:
 
-- **Safe**: Multiple read-only agents (e.g. recall, history-analyzer) running in parallel
+- **Safe**: Multiple read-only agents (e.g. recall) running in parallel
 - **Safe**: Multiple agents editing different files in parallel
 - **Risky**: Multiple agents editing the same file (conflict detection will handle it, but may lose changes)
 - **Best practice**: Partition work by file or directory boundaries for parallel execution

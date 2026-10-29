@@ -15,7 +15,9 @@ import {
   MEMORY_CONSTRAINTS_UPDATE_ENV,
   MEMORY_CONSTRAINTS_VALIDATOR_NAME,
 } from "./memory-constraints";
+import { commitMemoryWrite, initializeLocalMemoryRepo } from "./memory-git";
 import {
+  buildPreCommitHookScript,
   installPreCommitHook,
   installSharedMemoryPreCommitHook,
 } from "./memory-git-hooks";
@@ -62,7 +64,47 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
-  test("validates the projected tree while ignoring skills and silent directories", () => {
+  test.each(["modify", "delete", "rename", "mode", "create"])(
+    "protects config-selected files against %s, including non-Markdown",
+    (operation) => {
+      repo = initRepo("memfs-readonly-");
+      seedConstraints(repo, { readOnlyFiles: ["locked.*"] });
+      writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+      writeFileSync(join(repo, "locked.txt"), "accepted\n");
+      execFileSync("git", ["add", "."], { cwd: repo });
+      execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
+      installPreCommitHook(repo, true);
+      if (operation === "modify")
+        writeFileSync(join(repo, "locked.txt"), "changed\n");
+      if (operation === "delete")
+        execFileSync("git", ["rm", "locked.txt"], { cwd: repo });
+      if (operation === "rename")
+        execFileSync("git", ["mv", "locked.txt", "other.txt"], { cwd: repo });
+      if (operation === "mode")
+        execFileSync("git", ["update-index", "--chmod=+x", "locked.txt"], {
+          cwd: repo,
+        });
+      if (operation === "create")
+        writeFileSync(join(repo, "locked.new"), "new\n");
+      if (operation !== "mode")
+        execFileSync("git", ["add", "-A"], { cwd: repo });
+      const head = execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: repo,
+        encoding: "utf8",
+      });
+      const result = tryCommit(repo, "reject protected change");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain("read-only");
+      expect(
+        execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: repo,
+          encoding: "utf8",
+        }),
+      ).toBe(head);
+    },
+  );
+
+  test("requires indexes for Markdown directories while ignoring skills", () => {
     repo = initRepo("memfs-v2-hook-");
     installPreCommitHook(repo, true);
 
@@ -82,7 +124,11 @@ describe("MemFS v2 pre-commit hook", () => {
         cwd: repo,
       },
     );
-    execFileSync("git", ["commit", "-qm", "valid v2 memory"], { cwd: repo });
+    const missingIndex = tryCommit(repo, "reject unindexed memory");
+    expect(missingIndex.status).not.toBe(0);
+    expect(missingIndex.stdout + missingIndex.stderr).toContain(
+      "silent/notes.md: missing required index silent/MEMORY.md",
+    );
 
     writeFileSync(
       join(repo, "silent", "MEMORY.md"),
@@ -99,7 +145,11 @@ describe("MemFS v2 pre-commit hook", () => {
       "silent/notes.md: missing frontmatter",
     );
 
-    execFileSync("git", ["reset", "--hard", "HEAD"], { cwd: repo });
+    writeFileSync(join(repo, "silent", "notes.md"), v2Memory("Indexed.\n"));
+    execFileSync("git", ["add", "silent/notes.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed valid v2 memory"], {
+      cwd: repo,
+    });
     writeFileSync(
       join(repo, "persona.md"),
       '---\nname: "Persona"\ndescription: "Identity"\nextra: "no"\n---\nPersistent.\n',
@@ -113,6 +163,87 @@ describe("MemFS v2 pre-commit hook", () => {
     expect(extraKey.stdout + extraKey.stderr).toContain(
       "unknown frontmatter key 'extra' (allowed: name description)",
     );
+  });
+
+  test("applies canonical v2 defaults when the tracked config is absent", () => {
+    repo = initRepo("memfs-v2-default-constraints-");
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "persona.md"), v2Memory("p".repeat(20_000)));
+    execFileSync("git", ["add", "MEMORY.md", "persona.md"], { cwd: repo });
+
+    const result = tryCommit(repo, "reject default file overflow");
+    expect(result.status).not.toBe(0);
+    const output = result.stdout + result.stderr;
+    expect(output).toContain("exceeds 20000 from maxFileCharacters");
+    expect(output).toContain("Memory validation blocked this commit.");
+    expect(output).toContain(
+      "No files were committed. Your staged changes are still present.",
+    );
+    expect(output).toContain(
+      "Validation checks the complete repository, so these problems may predate your staged changes.",
+    );
+    expect(output).toContain(
+      "Move non-core detail out of root Markdown and behind MEMORY.md indexes.",
+    );
+    expect(output).toContain(
+      "Do not raise or disable these limits unless the user explicitly approves it.",
+    );
+  });
+
+  test("fills fields missing from an older v2 config with canonical defaults", () => {
+    repo = initRepo("memfs-v2-upgraded-defaults-");
+    seedConstraints(repo, {
+      maxDepth: 2,
+      maxFileCharacters: 20_000,
+    });
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    for (let index = 0; index < 5; index += 1) {
+      writeFileSync(
+        join(repo, `core-${index}.md`),
+        v2Memory("c".repeat(16_000), `Core ${index}`),
+      );
+    }
+    execFileSync("git", ["add", "."], { cwd: repo });
+
+    const result = tryCommit(repo, "reject upgraded core overflow");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain("core memory:");
+    expect(result.stdout + result.stderr).toContain(
+      "characters exceeds 65536 from maxCoreMemoryCharacters",
+    );
+  });
+
+  test("limits the combined root memory while excluding deferred child files", () => {
+    repo = initRepo("memfs-v2-core-limit-");
+    seedConstraints(repo, {
+      maxDepth: 2,
+      maxFileCharacters: 1_000,
+      maxCoreMemoryCharacters: 220,
+    });
+    installPreCommitHook(repo, true);
+
+    mkdirSync(join(repo, "reference"));
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "reference", "MEMORY.md"), "# Reference\n");
+    writeFileSync(
+      join(repo, "reference", "large.md"),
+      v2Memory("d".repeat(700)),
+    );
+    writeFileSync(join(repo, "persona.md"), v2Memory("p".repeat(70)));
+    writeFileSync(join(repo, "soul.md"), v2Memory("s".repeat(70)));
+    execFileSync("git", ["add", "."], { cwd: repo });
+
+    const result = tryCommit(repo, "reject oversized core memory");
+    const output = result.stdout + result.stderr;
+    expect(result.status).not.toBe(0);
+    expect(output).toContain(
+      "characters exceeds 220 from maxCoreMemoryCharacters",
+    );
+    expect(output).not.toContain("reference/large.md: core memory");
   });
 
   test("applies the default file limit unless the first glob override matches", () => {
@@ -221,7 +352,11 @@ describe("MemFS v2 pre-commit hook", () => {
 
     const result = tryCommit(repo, "delete marker and grow memory");
     expect(result.status).not.toBe(0);
-    expect(result.stdout + result.stderr).toContain(
+    const output = result.stdout + result.stderr;
+    expect(output).toContain(
+      "MEMORY.md: root memory index is required for MemFS v2",
+    );
+    expect(output).toContain(
       "persona.md: 145 characters exceeds 80 from maxFileCharacters",
     );
   });
@@ -251,7 +386,10 @@ describe("MemFS v2 pre-commit hook", () => {
 
   test("streams staged files larger than the default child-process buffer", () => {
     repo = initRepo("memfs-v2-large-file-");
-    seedConstraints(repo, { maxFileCharacters: 2_000_000 });
+    seedConstraints(repo, {
+      maxFileCharacters: 2_000_000,
+      maxCoreMemoryCharacters: 2_000_000,
+    });
     installPreCommitHook(repo, true);
 
     writeFileSync(join(repo, "MEMORY.md"), "m".repeat(1_100_000));
@@ -341,6 +479,106 @@ describe("MemFS v2 pre-commit hook", () => {
   });
 });
 
+describe("local memory commit hook policy", () => {
+  let repo = "";
+  const author = {
+    agentId: "agent-local-hook-policy",
+    authorName: "Local Hook Test",
+    authorEmail: "local-hook-test@letta.com",
+  };
+
+  afterEach(() => {
+    if (repo) rmSync(repo, { recursive: true, force: true });
+  });
+
+  test("keeps root-marker validation after a local memory write", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-root-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        { relativePath: "MEMORY.md", content: "# Memory\n" },
+        {
+          relativePath: "persona.md",
+          content: v2Memory("Initial.\n", "Persona"),
+        },
+      ],
+    });
+
+    writeFileSync(join(repo, "persona.md"), v2Memory("Updated.\n", "Persona"));
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["persona.md"],
+      reason: "test: update root memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+
+    writeFileSync(join(repo, "notes.md"), "Missing frontmatter.\n");
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["notes.md"],
+        reason: "test: reject invalid root memory",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("Memory validation failed");
+
+    rmSync(join(repo, "MEMORY.md"));
+    await expect(
+      commitMemoryWrite({
+        memoryDir: repo,
+        pathspecs: ["MEMORY.md"],
+        reason: "test: reject root marker deletion",
+        author,
+        syncMode: "local",
+      }),
+    ).rejects.toThrow("root memory index is required for MemFS v2");
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("root-marker\n");
+  });
+
+  test("keeps markerless local repositories on legacy validation", async () => {
+    repo = mkdtempSync(join(tmpdir(), "local-legacy-hook-policy-"));
+    await initializeLocalMemoryRepo({
+      memoryDir: repo,
+      agentId: author.agentId,
+      authorName: author.authorName,
+      files: [
+        {
+          relativePath: "system/persona.md",
+          content: "---\ndescription: Persona\n---\nInitial.\n",
+        },
+      ],
+    });
+
+    writeFileSync(
+      join(repo, "system", "persona.md"),
+      "---\ndescription: Persona\n---\nUpdated.\n",
+    );
+    const committed = await commitMemoryWrite({
+      memoryDir: repo,
+      pathspecs: ["system/persona.md"],
+      reason: "test: update legacy memory",
+      author,
+      syncMode: "local",
+    });
+
+    expect(committed.committed).toBe(true);
+    expect(
+      readFileSync(join(repo, ".git", "letta-memory-layout-policy"), "utf8"),
+    ).toBe("legacy-only\n");
+  });
+});
+
 describe("legacy MemFS pre-commit hook", () => {
   let repo = "";
 
@@ -356,7 +594,7 @@ describe("legacy MemFS pre-commit hook", () => {
     mkdirSync(join(repo, "system"));
     writeFileSync(
       join(repo, "system", "notes.md"),
-      "---\ndescription: Test memory\n---\n" + "n".repeat(100),
+      `---\ndescription: Test memory\n---\n${"n".repeat(100)}`,
     );
     execFileSync("git", ["add", "system/notes.md"], { cwd: repo });
 
@@ -422,4 +660,77 @@ describe("shared-memory pre-commit hook", () => {
       "exceeds 70 from maxFileCharacters",
     );
   });
+
+  test("rejects an unrelated commit when tracked memory is already invalid", () => {
+    repo = initRepo("shared-memory-existing-invalid-");
+    writeFileSync(join(repo, "invalid.md"), "missing frontmatter\n");
+    execFileSync("git", ["add", "invalid.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed invalid memory"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const result = tryCommit(repo, "reject existing invalid memory");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "invalid.md: missing frontmatter",
+    );
+  });
+
+  test("validates a large tracked tree without passing every path to the runtime", () => {
+    repo = initRepo("shared-memory-many-paths-");
+    for (let index = 0; index < 240; index += 1) {
+      writeFileSync(
+        join(
+          repo,
+          `notes-${String(index).padStart(4, "0")}-${"x".repeat(145)}.md`,
+        ),
+        v2Memory("valid\n"),
+      );
+    }
+    execFileSync("git", ["add", "."], { cwd: repo });
+    // Seed the tracked tree before installing the hook. The tested commit only
+    // stages a non-Markdown file, but v2 validation must still scan the tree.
+    execFileSync("git", ["commit", "-qm", "seed many memory files"], {
+      cwd: repo,
+    });
+    installSharedMemoryPreCommitHook(repo);
+
+    const shim = join(repo, "git-bash-runtime");
+    writeFileSync(
+      shim,
+      `#!/bin/sh
+length=0
+for arg do length=$((length + \${#arg} + 1)); done
+if [ "$length" -gt 32767 ]; then
+  echo "simulated Windows command line limit" >&2
+  exit 90
+fi
+exec node "$@"
+`,
+      { mode: 0o755 },
+    );
+    writeFileSync(
+      join(repo, ".git", "hooks", "pre-commit"),
+      buildPreCommitHookScript({ execPath: shim, electron: false }),
+      { mode: 0o755 },
+    );
+
+    writeFileSync(join(repo, "unrelated.txt"), "not memory\n");
+    execFileSync("git", ["add", "unrelated.txt"], { cwd: repo });
+    const valid = tryCommit(repo, "commit despite many memory paths");
+    expect(valid.stdout + valid.stderr).not.toContain(
+      "simulated Windows command line limit",
+    );
+    expect(valid.status).toBe(0);
+
+    const firstMemoryPath = `notes-0000-${"x".repeat(145)}.md`;
+    writeFileSync(join(repo, firstMemoryPath), "invalid\n");
+    execFileSync("git", ["add", firstMemoryPath], { cwd: repo });
+    const invalid = tryCommit(repo, "reject bad memory in large tree");
+    expect(invalid.status).not.toBe(0);
+    expect(invalid.stdout + invalid.stderr).toContain("missing frontmatter");
+  }, 30_000);
 });

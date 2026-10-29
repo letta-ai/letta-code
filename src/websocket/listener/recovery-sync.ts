@@ -11,16 +11,20 @@ import {
 import {
   buildFreshDenialApprovals,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
 import { getBackend } from "@/backend";
-import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
-import { isInteractiveApprovalTool } from "@/tools/interactive-policy";
-import type { ControlRequest } from "@/types/protocol_v2";
+import { readInterruptedTurn } from "./interrupted-turn-read";
+import {
+  allRecordedResults,
+  createInterruptedTurnStore,
+} from "./interrupted-turn-record";
+import { getRecoveryEligibility } from "./recovery-ownership";
 import {
   clearRecoveredApprovalState,
   hasInterruptedCacheForScope,
 } from "./runtime";
-import type { ConversationRuntime, RecoveredPendingApproval } from "./types";
+import type { ConversationRuntime } from "./types";
 
 function isBackendNotFoundError(error: unknown): boolean {
   return (
@@ -36,18 +40,37 @@ export async function recoverApprovalStateForSync(
   deps: Partial<{
     getBackend: typeof getBackend;
     getResumeDataFromBackend: typeof getResumeDataFromBackend;
+    readInterruptedTurn: typeof readInterruptedTurn;
   }> = {},
-): Promise<void> {
+  opts: {
+    /**
+     * The sync came from this conversation's execution owner (see
+     * `SyncCommand.resume_interrupted_turn`): stale denials may start a turn
+     * now instead of waiting for this listener's next user message.
+     */
+    resumeInterruptedTurn?: boolean;
+  } = {},
+): Promise<"deferred" | undefined> {
   const resolvedDeps = {
     getBackend,
     getResumeDataFromBackend,
+    readInterruptedTurn,
     ...deps,
   };
   if (!scope.agent_id) {
     clearRecoveredApprovalState(runtime);
     return;
   }
-  if (hasInterruptedCacheForScope(runtime.listener, scope)) {
+  const clearObserverCache = () => {
+    if (!opts.resumeInterruptedTurn) return;
+    runtime.pendingInterruptedResults = null;
+    runtime.pendingInterruptedContext = null;
+    runtime.pendingInterruptedToolCallIds = null;
+  };
+  if (
+    hasInterruptedCacheForScope(runtime.listener, scope) &&
+    !opts.resumeInterruptedTurn
+  ) {
     clearRecoveredApprovalState(runtime);
     return;
   }
@@ -66,19 +89,10 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  // Keep in-flight recovered approvals: periodic syncs arrive every few
-  // seconds, and rebuilding the state object while the user is mid-response
-  // makes resolveRecoveredApprovalResponse drop the answer (it treats a
-  // replaced state reference as ownership loss). It also avoids re-fetching
-  // resume data on every sync while a recovered approval is displayed.
-  const existingRecovered = runtime.recoveredApprovalState;
-  if (
-    existingRecovered &&
-    existingRecovered.agentId === scope.agent_id &&
-    existingRecovered.conversationId === scope.conversation_id &&
-    existingRecovered.pendingRequestIds.size > 0
-  ) {
-    return;
+  const initialEligibility = await getRecoveryEligibility(runtime);
+  if (initialEligibility !== "owned") {
+    if (initialEligibility === "conflict") clearRecoveredApprovalState(runtime);
+    return "deferred";
   }
 
   const backend = resolvedDeps.getBackend();
@@ -87,6 +101,7 @@ export async function recoverApprovalStateForSync(
     agent = await backend.retrieveAgent(scope.agent_id);
   } catch (error) {
     if (isBackendNotFoundError(error)) {
+      clearObserverCache();
       clearRecoveredApprovalState(runtime);
       return;
     }
@@ -100,26 +115,31 @@ export async function recoverApprovalStateForSync(
       scope.conversation_id,
       {
         includeMessageHistory: false,
+        throwOnReadError: true,
       },
     );
   } catch (error) {
     if (isBackendNotFoundError(error)) {
+      clearObserverCache();
       clearRecoveredApprovalState(runtime);
       return;
     }
     throw error;
   }
 
-  const pendingApprovals = resumeData.pendingApprovals ?? [];
+  let pendingApprovals = resumeData.pendingApprovals ?? [];
   if (pendingApprovals.length === 0) {
+    clearObserverCache();
     clearRecoveredApprovalState(runtime);
     return;
   }
 
   // Re-check liveness after the backend awaits: a turn or live approval that
   // started meanwhile owns this conversation's approval state.
+  if ((await getRecoveryEligibility(runtime)) !== "owned") return "deferred";
   if (
-    hasInterruptedCacheForScope(runtime.listener, scope) ||
+    (hasInterruptedCacheForScope(runtime.listener, scope) &&
+      !opts.resumeInterruptedTurn) ||
     (sameActiveScope &&
       (runtime.turnLifecycle.kind !== "idle" ||
         runtime.pendingApprovalResolvers.size > 0))
@@ -127,18 +147,89 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  // Replay-unsafe tools (Bash, MessageChannel, ...) may already have run
-  // before the process restarted, so they are never re-run or re-asked; they
-  // become stale denials (#1876). Interactive tools (AskUserQuestion) carry
-  // no client execution state — nothing ran and the question is fully
-  // described by its arguments — so they are re-presented as live pending
-  // control requests. Device status then broadcasts them again and observer
-  // UIs can render the dialog after a restart.
-  const interactivePending = pendingApprovals.filter((approval) =>
-    isInteractiveApprovalTool(approval.toolName),
+  const rawRecorded = resolvedDeps.readInterruptedTurn(runtime);
+  const recoverySnapshot =
+    rawRecorded?.recoveryClaimCompletion?.independentSuccessor &&
+    deps.readInterruptedTurn === undefined
+      ? createInterruptedTurnStore().readRecoverySnapshot(
+          rawRecorded.agentId,
+          rawRecorded.conversationId,
+          rawRecorded.recoveryClaimCompletion.lineageId,
+        )
+      : null;
+  const recorded = recoverySnapshot?.record ?? rawRecorded;
+  const recordedResults = new Map(
+    (recorded ? allRecordedResults(recorded) : []).map((result) => [
+      result.tool_call_id,
+      result,
+    ]),
+  );
+  if (
+    recorded?.recoveryClaimCompletion?.independentSuccessor &&
+    pendingApprovals.some(
+      (approval) => !recorded.toolCallIds.includes(approval.toolCallId),
+    )
+  ) {
+    // Advance only the predecessor lineage. Its sidecar remains authoritative
+    // until retirement exposes the independent successor for the next sync.
+    pendingApprovals = pendingApprovals.filter((approval) =>
+      recorded.toolCallIds.includes(approval.toolCallId),
+    );
+    if (pendingApprovals.length === 0) return "deferred";
+  }
+  // Local evidence distinguishes exact completed results, provably unstarted
+  // approvals, and unrelated stale calls. Only the unstarted set executes again.
+  const staleDenialDecisions: ApprovalDecision[] = pendingApprovals.map(
+    (approval) => {
+      const saved = recordedResults.get(approval.toolCallId);
+      if (recorded?.toolCallIds.includes(approval.toolCallId)) {
+        if (
+          !saved &&
+          recorded.unstartedToolCallIds?.includes(approval.toolCallId)
+        ) {
+          return { type: "approve" as const, approval };
+        }
+        if (!saved) {
+          return {
+            type: "deny" as const,
+            approval,
+            reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+          };
+        }
+        if (!("tool_return" in saved)) {
+          return {
+            type: "deny" as const,
+            approval,
+            reason: saved.reason ?? STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+          };
+        }
+        return {
+          type: "approve" as const,
+          approval,
+          precomputedResult: {
+            toolReturn: saved.tool_return,
+            status: saved.status,
+            stdout: saved.stdout ?? undefined,
+            stderr: saved.stderr ?? undefined,
+          },
+        };
+      }
+      return {
+        type: "deny" as const,
+        approval,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      };
+    },
   );
 
-  if (interactivePending.length === 0) {
+  if (!opts.resumeInterruptedTurn) {
+    // An observer must not turn replayable or exactly completed work into stale
+    // denials. Leave the durable record untouched so the execution owner can
+    // perform the recovered continuation on its subsequent owner sync.
+    if (staleDenialDecisions.some((decision) => decision.type === "approve")) {
+      clearRecoveredApprovalState(runtime);
+      return "deferred";
+    }
     runtime.pendingInterruptedResults = buildFreshDenialApprovals(
       pendingApprovals,
       STALE_APPROVAL_RECOVERY_DENIAL_REASON,
@@ -153,48 +244,22 @@ export async function recoverApprovalStateForSync(
     return;
   }
 
-  const staleDenialDecisions: ApprovalDecision[] = pendingApprovals
-    .filter((approval) => !isInteractiveApprovalTool(approval.toolName))
-    .map((approval) => ({
-      type: "deny" as const,
-      approval,
-      reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
-    }));
-
-  const approvalsByRequestId = new Map<string, RecoveredPendingApproval>();
-  for (const approval of interactivePending) {
-    const requestId = `perm-${approval.toolCallId}`;
-    const controlRequest: ControlRequest = {
-      type: "control_request",
-      request_id: requestId,
-      request: {
-        subtype: "can_use_tool",
-        tool_name: approval.toolName,
-        input: safeJsonParseOr<Record<string, unknown>>(approval.toolArgs, {}),
-        tool_call_id: approval.toolCallId,
-        permission_suggestions: [],
-        blocked_path: null,
-      },
-      agent_id: scope.agent_id,
-      conversation_id: scope.conversation_id,
-    };
-    approvalsByRequestId.set(requestId, {
-      approval,
-      approvalContext: null,
-      controlRequest,
-    });
-  }
-
-  runtime.pendingInterruptedResults = null;
-  runtime.pendingInterruptedContext = null;
-  runtime.pendingInterruptedToolCallIds = null;
   runtime.recoveredApprovalState = {
     agentId: scope.agent_id,
     conversationId: scope.conversation_id,
-    approvalsByRequestId,
-    pendingRequestIds: new Set(approvalsByRequestId.keys()),
-    responsesByRequestId: new Map(),
+    actingUserId: recorded?.actingUserId,
     autoDecisions: staleDenialDecisions,
     allApprovals: pendingApprovals,
+    durableInputIdentities: recorded?.durableInputIdentities,
+    terminalConsumerIds: recorded?.terminalConsumerIds,
+    interruptedRevision: recorded?.revision,
+    recoveryLineageId: recorded?.recoveryClaimCompletion?.lineageId,
+    recoveryRevisionToken: recoverySnapshot?.revisionToken,
+    recoveryUsesIndependentSuccessor:
+      recorded?.recoveryClaimCompletion?.independentSuccessor === true,
   };
+  // The owner now has a complete replacement. Only this definitive handoff
+  // may erase an observer's parked denial cache.
+  clearObserverCache();
+  return undefined;
 }

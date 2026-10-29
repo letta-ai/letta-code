@@ -1,4 +1,7 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 export interface GitContextSnapshot {
   isGitRepo: boolean;
@@ -28,6 +31,35 @@ function runGit(args: string[], cwd: string): string | null {
       windowsHide: true,
     }).trim();
   } catch {
+    return null;
+  }
+}
+
+// A git child that never exits (lock contention, a stalled network filesystem,
+// a credential prompt) would otherwise hang every caller sharing its promise,
+// including listener startup.
+const GIT_ASYNC_TIMEOUT_MS = 10_000;
+
+async function runGitAsync(
+  args: string[],
+  cwd: string,
+  timeoutMs: number,
+): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("git", args, {
+      cwd,
+      encoding: "utf-8",
+      windowsHide: true,
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+    return stdout.trim();
+  } catch (error) {
+    // Node sets `killed` when it killed the child for exceeding the timeout.
+    // An ordinary non-zero git exit still means "no value".
+    if ((error as { killed?: boolean } | null)?.killed) {
+      throw new Error(`git ${args[0] ?? ""} timed out after ${timeoutMs}ms`);
+    }
     return null;
   }
 }
@@ -129,17 +161,26 @@ export interface LightGitContext {
 /**
  * Get a lightweight git context suitable for the DeviceStatus payload.
  * Fast: only runs `git branch --show-current` and `git branch --sort=-committerdate`.
- * Returns null if the cwd is not inside a git repo.
+ * Returns null if the cwd is not inside a git repo. Rejects (after killing the
+ * child) if any git command runs longer than `timeoutMs`.
  */
-export function getGitContext(cwd: string): LightGitContext | null {
-  if (!runGit(["rev-parse", "--git-dir"], cwd)) {
+export async function getGitContextAsync(
+  cwd: string,
+  options: { timeoutMs?: number } = {},
+): Promise<LightGitContext | null> {
+  const timeoutMs = options.timeoutMs ?? GIT_ASYNC_TIMEOUT_MS;
+  if (!(await runGitAsync(["rev-parse", "--git-dir"], cwd, timeoutMs))) {
     return null;
   }
 
-  const branch = runGit(["branch", "--show-current"], cwd);
+  const branch = await runGitAsync(
+    ["branch", "--show-current"],
+    cwd,
+    timeoutMs,
+  );
 
   // Get up to 11 local branches sorted by most recent commit (10 + current)
-  const branchList = runGit(
+  const branchList = await runGitAsync(
     [
       "branch",
       "--sort=-committerdate",
@@ -147,6 +188,7 @@ export function getGitContext(cwd: string): LightGitContext | null {
       "--no-color",
     ],
     cwd,
+    timeoutMs,
   );
 
   const recentBranches = branchList

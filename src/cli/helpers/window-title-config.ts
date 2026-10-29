@@ -159,7 +159,7 @@ export const WINDOW_TITLE_FIELD_INFO: Record<
   "task-progress": {
     label: "Task Progress",
     description:
-      "Latest task progress from update_plan (omitted until available)",
+      "Latest task progress from UpdatePlan (omitted until available)",
   },
   "agent-name": {
     label: "Agent Name",

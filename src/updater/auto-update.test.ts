@@ -3,16 +3,46 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import {
+  acquireUpdateLock,
   buildInstallCommand,
   buildLatestVersionUrl,
   buildUpdateExecOptions,
+  checkAndAutoUpdate,
   checkForUpdate,
   detectPackageManager,
   getSelfUpdateStatus,
+  manualUpdate,
   resolveUpdateInstallRegistryUrl,
   resolveUpdatePackageName,
   resolveUpdateRegistryBaseUrl,
 } from "@/updater/auto-update";
+
+test("Python wheels never query npm or self-install updates", async () => {
+  const previous = process.env.LETTA_CODE_DISTRIBUTION;
+  process.env.LETTA_CODE_DISTRIBUTION = "pypi";
+  try {
+    const fetchImpl = mock(() => {
+      throw new Error("Python distribution must not contact npm");
+    });
+    expect(
+      (await checkForUpdate(fetchImpl as unknown as typeof fetch))
+        .updateAvailable,
+    ).toBe(false);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await checkAndAutoUpdate()).toBeUndefined();
+    expect(getSelfUpdateStatus().supported).toBe(false);
+    expect(getSelfUpdateStatus().manual_command).toContain(
+      "uv tool upgrade letta",
+    );
+    expect(await manualUpdate()).toEqual({
+      success: false,
+      message: getSelfUpdateStatus().manual_command,
+    });
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_CODE_DISTRIBUTION;
+    else process.env.LETTA_CODE_DISTRIBUTION = previous;
+  }
+});
 
 describe("auto-update ENOTEMPTY handling", () => {
   let testDir: string;
@@ -272,6 +302,11 @@ describe("getSelfUpdateStatus", () => {
 });
 
 describe("update config resolution", () => {
+  test("install commands default to no timeout, while prefix queries stay bounded", () => {
+    expect(buildUpdateExecOptions().timeout).toBe(0);
+    expect(buildUpdateExecOptions(5000).timeout).toBe(5000);
+  });
+
   test("buildUpdateExecOptions enables shell on Windows for npm.cmd shims", () => {
     expect(buildUpdateExecOptions(5000, "win32")).toEqual({
       timeout: 5000,
@@ -458,5 +493,185 @@ describe("checkForUpdate with fetch", () => {
     expect(capturedUrls[0]).toBe(
       "http://localhost:4873/@letta-ai/letta-code/latest",
     );
+  });
+});
+
+describe("checkAndAutoUpdate install guards", () => {
+  const savedEnv: Record<string, string | undefined> = {};
+  const envKeys = [
+    "LETTA_CODE_AGENT_ROLE",
+    "LETTA_PACKAGE_MANAGER",
+    "DISABLE_AUTOUPDATER",
+    "LETTA_CODE_DISTRIBUTION",
+    "LETTA_UPDATE_REGISTRY_BASE_URL",
+  ];
+  let originalArgv1: string;
+  let testDir: string;
+  let lockPath: string;
+  // Far above any real pid limit, so it is never alive.
+  const deadPid = 2 ** 30;
+
+  const fetchImpl = mock(() =>
+    Promise.resolve(
+      new Response(JSON.stringify({ version: "99.0.0" }), { status: 200 }),
+    ),
+  ) as unknown as typeof fetch;
+
+  beforeEach(() => {
+    for (const key of envKeys) {
+      savedEnv[key] = process.env[key];
+      delete process.env[key];
+    }
+    // bun skips the npm-only prefix lookup, so every command is the install.
+    process.env.LETTA_PACKAGE_MANAGER = "bun";
+    originalArgv1 = process.argv[1] || "";
+    process.argv[1] =
+      "/usr/local/lib/node_modules/@letta-ai/letta-code/dist/index.js";
+    testDir = fs.mkdtempSync(path.join(os.tmpdir(), "letta-update-lock-"));
+    lockPath = path.join(testDir, "auto-update.lock");
+  });
+
+  afterEach(() => {
+    for (const key of envKeys) {
+      if (savedEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = savedEnv[key];
+    }
+    process.argv[1] = originalArgv1;
+    fs.rmSync(testDir, { recursive: true, force: true });
+  });
+
+  function installMock() {
+    return mock(() => Promise.resolve({ stdout: "", stderr: "" }));
+  }
+
+  test("subagent processes never check for or install updates", async () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    const runCommand = installMock();
+    const fetchSpy = mock(fetchImpl);
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+      runCommand,
+      lockPath,
+    });
+
+    expect(result).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("installs and releases the lock when no other update is running", async () => {
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("skips the install while a live process holds the lock", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: process.pid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+    const runCommand = installMock();
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl,
+      runCommand,
+      lockPath,
+    });
+
+    expect(result).toBeUndefined();
+    expect(runCommand).not.toHaveBeenCalled();
+    // The holder's lock is left alone.
+    expect(JSON.parse(fs.readFileSync(lockPath, "utf8")).pid).toBe(process.pid);
+  });
+
+  test("skips the install while a recent lock exists, even from a dead pid", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() }),
+    );
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).not.toHaveBeenCalled();
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
+
+  test("takes over a stale lock from a dead pid", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+    const runCommand = installMock();
+
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("two takeovers of the same stale lock yield exactly one owner", async () => {
+    fs.writeFileSync(
+      lockPath,
+      JSON.stringify({ pid: deadPid, createdAt: Date.now() - 60 * 60e3 }),
+    );
+
+    const results = await Promise.all([
+      acquireUpdateLock(lockPath),
+      acquireUpdateLock(lockPath),
+    ]);
+    const winners = results.filter((release) => release !== null);
+
+    expect(winners).toHaveLength(1);
+    const owner = JSON.parse(fs.readFileSync(lockPath, "utf8"));
+    expect(owner.pid).toBe(process.pid);
+    expect(owner.createdAt).toBeGreaterThan(Date.now() - 60e3);
+    // The stale lock moved aside during takeover is cleaned up.
+    expect(fs.readdirSync(testDir)).toEqual(["auto-update.lock"]);
+
+    winners[0]?.();
+    expect(fs.existsSync(lockPath)).toBe(false);
+  });
+
+  test("an error while acquiring the lock skips the install", async () => {
+    // The lock's parent is a regular file, so the lock can never be created.
+    const blocker = path.join(testDir, "not-a-dir");
+    fs.writeFileSync(blocker, "");
+    const runCommand = installMock();
+
+    const result = await checkAndAutoUpdate({
+      fetchImpl,
+      runCommand,
+      lockPath: path.join(blocker, "auto-update.lock"),
+    });
+
+    expect(result).toBeUndefined();
+    expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("concurrent update checks run a single install", async () => {
+    let finishInstall: () => void = () => {};
+    const installDone = new Promise<void>((resolve) => {
+      finishInstall = resolve;
+    });
+    const runCommand = mock(async () => {
+      await installDone;
+      return { stdout: "", stderr: "" };
+    });
+
+    const first = checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+    while (runCommand.mock.calls.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    await checkAndAutoUpdate({ fetchImpl, runCommand, lockPath });
+    finishInstall();
+    await first;
+
+    expect(runCommand).toHaveBeenCalledTimes(1);
+    expect(fs.existsSync(lockPath)).toBe(false);
   });
 });

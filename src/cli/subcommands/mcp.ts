@@ -1,10 +1,14 @@
 import { parseArgs } from "node:util";
+import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
+import { getServerUrl } from "@/backend/api/server-url";
 import {
   listUnifiedMcpServers,
   listUnifiedMcpTools,
   runUnifiedMcpTool,
+  searchUnifiedMcpTools,
   type UnifiedMcpClient,
   type UnifiedMcpRunResult,
   type UnifiedMcpServer,
@@ -19,16 +23,33 @@ import {
 } from "@/mcp-client";
 import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
+import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
-import { loadMcpToolArgs, printMcpUsage, resolveMcpAgentId } from "./mcp-io";
+import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
+import {
+  loadMcpToolArgs,
+  McpCliError,
+  type McpOutput,
+  printMcpError,
+  printMcpUsage,
+  resolveMcpAgentId,
+  writeMcpStderr,
+  writeMcpStdout,
+} from "./mcp-io";
+import {
+  mergeMcpSearchResults,
+  runMcpSearch,
+  searchLocalMcpTools,
+} from "./mcp-search";
 import {
   assignMcpServerAliases,
   formatServerMcpToolName,
   uniqueMcpName,
 } from "./mcp-tool-names";
 
-type McpTransport = "stdio" | "streamable_http" | "sse";
+type McpTransport = "stdio" | "streamable_http" | "sse" | "unknown";
 
 interface McpServerSummary {
   name: string;
@@ -47,7 +68,8 @@ type McpServerDetails =
       transport: "streamable_http" | "sse";
       url: string;
       headers: Record<string, string>;
-    });
+    })
+  | (McpServerSummary & { transport: "unknown" });
 
 type ServerTarget =
   | { kind: "client"; config: McpServerConfig }
@@ -72,39 +94,43 @@ interface CatalogTool {
 
 interface ToolCatalog {
   tools: CatalogTool[];
+  /** True when hosted Letta Cloud excluded stdio-type cloud servers. */
+  excludedHostedStdioServers: boolean;
   close(): Promise<void>;
 }
 
-export interface McpSubcommandDependencies {
+/**
+ * Hosted Letta Cloud cannot execute stdio-type cloud-connected servers, so
+ * their synced tools must not surface through tools/schema/search/call.
+ */
+function defaultIsHostedLettaCloud(): boolean {
+  try {
+    return getServerUrl() === LETTA_CLOUD_API_URL;
+  } catch {
+    return !process.env.LETTA_BASE_URL;
+  }
+}
+
+export interface McpSubcommandDependencies extends McpConnectDependencies {
   initializeSettings?: () => Promise<void>;
+  lookupParentAgent?: ParentAgentLookup;
   getLocalServers?: (agentId: string) => McpServerConfig[];
   connectLocalServer?: typeof connectMcpServer;
   createOAuthSession?: typeof createMcpOAuthSession;
   getClient?: () => Promise<UnifiedMcpClient>;
   isServerMcpAvailable?: () => boolean;
+  isHostedLettaCloud?: () => boolean;
   readFile?: (path: string) => Promise<string>;
   readStdin?: () => Promise<string>;
   env?: NodeJS.ProcessEnv;
-  stdout?: (message: string) => void;
-  stderr?: (message: string) => void;
+  stdout?: McpOutput;
+  stderr?: McpOutput;
 }
 
 interface ParsedMcpArgs {
   action?: string;
   target?: string;
   values: ReturnType<typeof parseMcpArgs>["values"];
-}
-
-class McpCliError extends Error {
-  readonly code: string;
-  readonly hint?: string;
-
-  constructor(code: string, message: string, hint?: string) {
-    super(message);
-    this.name = "McpCliError";
-    this.code = code;
-    this.hint = hint;
-  }
 }
 
 function parseMcpArgs(argv: string[]) {
@@ -114,8 +140,13 @@ function parseMcpArgs(argv: string[]) {
       help: { type: "boolean", short: "h" },
       agent: { type: "string" },
       "agent-id": { type: "string" },
+      mode: { type: "string" },
+      limit: { type: "string" },
+      full: { type: "boolean" },
       args: { type: "string" },
       "args-file": { type: "string" },
+      "server-url": { type: "string" },
+      "client-name": { type: "string" },
     },
     strict: true,
     allowPositionals: true,
@@ -169,7 +200,8 @@ function localTransport(config: McpServerConfig): McpTransport {
 function serverTransport(server: UnifiedMcpServer): McpTransport {
   if (server.serverType === "streamable_http") return "streamable_http";
   if (server.serverType === "sse") return "sse";
-  return "stdio";
+  if (server.serverType === "stdio") return "stdio";
+  return "unknown";
 }
 
 function serverSummary(target: ServerTarget): McpServerSummary {
@@ -181,19 +213,48 @@ function serverSummary(target: ServerTarget): McpServerSummary {
       };
 }
 
+const SENSITIVE_NAME = /token|key|secret|password|signature|credential|auth/i;
+
 function redactUrl(value: string): string {
   try {
     const url = new URL(value);
     url.username = "";
     url.password = "";
-    const sensitive = /token|key|secret|password|signature|credential/i;
     for (const key of url.searchParams.keys()) {
-      if (sensitive.test(key)) url.searchParams.set(key, "[REDACTED]");
+      if (SENSITIVE_NAME.test(key)) url.searchParams.set(key, "[REDACTED]");
     }
     return url.toString();
   } catch {
     return value;
   }
+}
+
+/** Redact values that follow (or are inline with) sensitive-named flags. */
+function redactArgs(args: string[]): string[] {
+  const redacted: string[] = [];
+  let redactNext = false;
+  for (const arg of args) {
+    if (redactNext) {
+      redacted.push("[REDACTED]");
+      redactNext = false;
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      const equalsIndex = arg.indexOf("=");
+      const flagName = equalsIndex === -1 ? arg : arg.slice(0, equalsIndex);
+      if (SENSITIVE_NAME.test(flagName)) {
+        if (equalsIndex === -1) {
+          redactNext = true;
+          redacted.push(arg);
+        } else {
+          redacted.push(`${flagName}=[REDACTED]`);
+        }
+        continue;
+      }
+    }
+    redacted.push(arg);
+  }
+  return redacted;
 }
 
 function serverDetails(target: ServerTarget): McpServerDetails {
@@ -211,19 +272,22 @@ function serverDetails(target: ServerTarget): McpServerDetails {
       name: config.name,
       transport: "stdio",
       command: config.command,
-      args: config.args ?? [],
+      args: redactArgs(config.args ?? []),
       ...(config.cwd ? { cwd: config.cwd } : {}),
       env: redactValues(config.env),
     };
   }
 
   const server = target.server;
+  if (server.serverType === "unknown") {
+    return { name: server.serverName, transport: "unknown" };
+  }
   if (server.serverType === "stdio") {
     return {
       name: server.serverName,
       transport: "stdio",
       command: server.command ?? server.target.split(" ")[0] ?? "",
-      args: server.args ?? [],
+      args: redactArgs(server.args ?? []),
       env: {},
     };
   }
@@ -339,12 +403,22 @@ function serverName(target: ServerTarget): string {
     : target.server.serverName;
 }
 
+function serverAliasGroup(alias: string): string {
+  return (alias.split("__")[0] ?? "").replace(/_+$/, "");
+}
+
 async function buildToolCatalog(
   deps: McpSubcommandDependencies,
   agentId: string,
-  options: { serverSelector?: string; toolName?: string } = {},
+  options: {
+    serverSelector?: string;
+    toolName?: string;
+    targetKind?: ServerTarget["kind"];
+    servers?: ServerTarget[];
+    serverAliasGroup?: string;
+  } = {},
 ): Promise<ToolCatalog> {
-  const servers = await listUnifiedServers(deps, agentId);
+  const servers = options.servers ?? (await listUnifiedServers(deps, agentId));
   const aliases = assignMcpServerAliases(
     servers.map((target) => ({
       key: serverKey(target),
@@ -352,8 +426,18 @@ async function buildToolCatalog(
       kind: target.kind,
     })),
   );
-  let activeServers = servers;
-  if (options.serverSelector) {
+  let activeServers = options.targetKind
+    ? servers.filter((target) => target.kind === options.targetKind)
+    : servers;
+  if (options.serverAliasGroup !== undefined) {
+    // Trailing underscores and minted suffixes (foo_ -> foo__2) can overlap
+    // the delimiter. Group both server aliases and call names identically.
+    activeServers = servers.filter(
+      (target) =>
+        serverAliasGroup(aliases.get(serverKey(target)) ?? "") ===
+        options.serverAliasGroup,
+    );
+  } else if (options.serverSelector) {
     const selectedKey = serverKey(
       resolveServer(servers, options.serverSelector),
     );
@@ -374,10 +458,18 @@ async function buildToolCatalog(
   const usedNames = new Set<string>();
 
   try {
-    const serverTargets = activeServers.filter(
+    const hostedLettaCloud = (
+      deps.isHostedLettaCloud ?? defaultIsHostedLettaCloud
+    )();
+    const allServerTargets = activeServers.filter(
       (target): target is Extract<ServerTarget, { kind: "server" }> =>
         target.kind === "server",
     );
+    const serverTargets = hostedLettaCloud
+      ? allServerTargets.filter(({ server }) => server.serverType !== "stdio")
+      : allServerTargets;
+    const excludedHostedStdioServers =
+      serverTargets.length !== allServerTargets.length;
     if (serverTargets.length > 0) {
       const client = await getServerClient(deps);
       const toolLists = await Promise.all(
@@ -389,7 +481,9 @@ async function buildToolCatalog(
       for (const { server, tools } of toolLists) {
         const alias = aliases.get(`server:${server.id}`);
         if (!alias) throw new Error("MCP server alias was not assigned");
-        for (const tool of tools) {
+        for (const tool of [...tools].sort((left, right) =>
+          left.id.localeCompare(right.id),
+        )) {
           const name = uniqueMcpName(
             formatServerMcpToolName(server.serverName, alias, tool.name),
             usedNames,
@@ -454,6 +548,7 @@ async function buildToolCatalog(
 
     return {
       tools: catalog,
+      excludedHostedStdioServers,
       close: async () => {
         await Promise.allSettled(
           connections.map((connection) => connection.close()),
@@ -504,40 +599,17 @@ function mcpToolResultFromServer(result: UnifiedMcpRunResult): McpToolResult {
   };
 }
 
-function printJson(stdout: (message: string) => void, value: unknown): void {
-  stdout(JSON.stringify(value, null, 2));
-}
-
-function printError(stderr: (message: string) => void, error: unknown): void {
-  const normalized =
-    error instanceof McpCliError
-      ? error
-      : new McpCliError(
-          "mcp_error",
-          error instanceof Error ? error.message : String(error),
-        );
-  stderr(
-    JSON.stringify(
-      {
-        error: {
-          code: normalized.code,
-          message: normalized.message,
-          ...(normalized.hint ? { hint: normalized.hint } : {}),
-        },
-      },
-      null,
-      2,
-    ),
-  );
+async function printJson(stdout: McpOutput, value: unknown): Promise<void> {
+  await stdout(JSON.stringify(value, null, 2));
 }
 
 async function runList(
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const servers = await listUnifiedServers(deps, agentId);
-  printJson(stdout, servers.map(serverSummary));
+  await printJson(stdout, servers.map(serverSummary));
   return 0;
 }
 
@@ -545,7 +617,7 @@ async function runGet(
   deps: McpSubcommandDependencies,
   agentId: string,
   selector: string | undefined,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   if (!selector) {
     throw new McpCliError("invalid_arguments", "Usage: letta mcp get <server>");
@@ -554,7 +626,7 @@ async function runGet(
     await listUnifiedServers(deps, agentId),
     selector,
   );
-  printJson(stdout, serverDetails(server));
+  await printJson(stdout, serverDetails(server));
   return 0;
 }
 
@@ -562,13 +634,24 @@ async function runTools(
   deps: McpSubcommandDependencies,
   agentId: string,
   serverSelector: string | undefined,
-  stdout: (message: string) => void,
+  full: boolean,
+  stdout: McpOutput,
 ): Promise<number> {
   const catalog = await buildToolCatalog(deps, agentId, { serverSelector });
   try {
-    printJson(
+    await printJson(
       stdout,
-      catalog.tools.map((tool) => tool.schema),
+      catalog.tools.map((tool) =>
+        full
+          ? tool.schema
+          : {
+              name: tool.schema.name,
+              ...(tool.schema.title ? { title: tool.schema.title } : {}),
+              ...(tool.schema.description
+                ? { description: tool.schema.description }
+                : {}),
+            },
+      ),
     );
   } finally {
     await catalog.close();
@@ -576,11 +659,135 @@ async function runTools(
   return 0;
 }
 
+async function runSchema(
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string | undefined,
+  stdout: McpOutput,
+): Promise<number> {
+  if (!toolName) {
+    throw new McpCliError(
+      "invalid_arguments",
+      "Usage: letta mcp schema <tool-name>",
+    );
+  }
+  const catalog = await buildToolCatalog(deps, agentId, { toolName });
+  try {
+    const tool = catalog.tools.find(
+      (candidate) => candidate.schema.name === toolName,
+    );
+    if (!tool) {
+      throw new McpCliError(
+        "tool_not_found",
+        `MCP tool '${toolName}' is not available`,
+      );
+    }
+    await printJson(stdout, tool.schema);
+    return 0;
+  } finally {
+    await catalog.close();
+  }
+}
+
+async function runSearch(
+  parsed: ParsedMcpArgs,
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  stdout: McpOutput,
+): Promise<number> {
+  const serverSearchAvailable = serverMcpAvailable(deps);
+  const hasClientLocalServers = getLocalServers(deps, agentId).length > 0;
+  return runMcpSearch({
+    query: parsed.target,
+    mode: stringValue(parsed.values.mode),
+    limit: stringValue(parsed.values.limit),
+    stdout,
+    searchTools: async (request) => {
+      if (!serverSearchAvailable) {
+        if (request.searchMode === "vector") {
+          return searchLocalMcpTools({ tools: [], ...request });
+        }
+        const catalog = await buildToolCatalog(deps, agentId);
+        try {
+          return searchLocalMcpTools({
+            tools: catalog.tools.map((tool) => tool.schema),
+            ...request,
+          });
+        } finally {
+          await catalog.close();
+        }
+      }
+
+      const includeLocal =
+        hasClientLocalServers && request.searchMode !== "vector";
+      const searchPromise = searchUnifiedMcpTools({
+        client: await getServerClient(deps),
+        agentId,
+        ...request,
+      });
+      const catalogPromise = buildToolCatalog(deps, agentId, {
+        ...(includeLocal ? {} : { targetKind: "server" }),
+      });
+      let catalog: ToolCatalog | undefined;
+      try {
+        const [searchResults, resolvedCatalog] = await Promise.all([
+          searchPromise,
+          catalogPromise,
+        ]);
+        catalog = resolvedCatalog;
+        const serverResults = searchResults.flatMap((result) => {
+          const callable = resolvedCatalog.tools.find(
+            (tool) =>
+              tool.target.kind === "server" &&
+              tool.target.toolId === result.toolId,
+          );
+          if (!callable) {
+            // The server-side index still contains tools from servers the
+            // catalog excluded (stdio-type cloud servers on hosted Letta
+            // Cloud); drop those instead of surfacing uncallable results.
+            if (resolvedCatalog.excludedHostedStdioServers) {
+              return [];
+            }
+            throw new Error(
+              `MCP search returned unavailable tool '${result.toolId}'`,
+            );
+          }
+          return [
+            {
+              tool:
+                result.jsonSchema === null
+                  ? null
+                  : { ...result.jsonSchema, name: callable.schema.name },
+              score: result.score,
+            },
+          ];
+        });
+        if (!includeLocal) return serverResults;
+        const localResults = searchLocalMcpTools({
+          tools: resolvedCatalog.tools
+            .filter((tool) => tool.target.kind === "client")
+            .map((tool) => tool.schema),
+          ...request,
+        });
+        return mergeMcpSearchResults(
+          serverResults,
+          localResults,
+          request.limit,
+        );
+      } finally {
+        const catalogToClose =
+          catalog ?? (await catalogPromise.catch(() => undefined));
+        await catalogToClose?.close();
+      }
+    },
+  });
+}
+
 async function runCall(
   parsed: ParsedMcpArgs,
   deps: McpSubcommandDependencies,
   agentId: string,
-  stdout: (message: string) => void,
+  stdout: McpOutput,
 ): Promise<number> {
   const toolName = parsed.target;
   if (!toolName) {
@@ -594,62 +801,185 @@ async function runCall(
     stringValue(parsed.values["args-file"]),
     deps,
   );
+  const result = await callAgentMcpTool(agentId, toolName, args, deps);
+  await printJson(stdout, result);
+  return result.isError === true ? 2 : 0;
+}
+
+async function callCatalogTool(
+  catalog: ToolCatalog,
+  deps: McpSubcommandDependencies,
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  options?: { signal?: AbortSignal },
+): Promise<McpToolResult> {
+  const tool = catalog.tools.find(
+    (candidate) => candidate.schema.name === toolName,
+  );
+  if (!tool) {
+    throw new McpCliError(
+      "tool_not_found",
+      `MCP tool '${toolName}' is not available`,
+    );
+  }
+  // When this call runs inside a listener turn attributed to a cloud super
+  // run, forward that run's originator token (in-memory store lookup only;
+  // the value is never logged here). Unattributed callers omit the header.
+  const originatorSuperRunId = getRuntimeContext()?.mcpOriginatorSuperRunId;
+  const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
+  if (originatorSuperRunId && !originatorToken) {
+    // The turn is attributed to a super run but holds no token — expected
+    // after a listener restart, when the durable ledger replays an
+    // acknowledged input but the memory-only token store was cleared. The
+    // call proceeds without the header; the server fails closed on any
+    // restricted connection. Surface the loss so it is never silent.
+    console.warn(
+      `[mcp-originator] no originator token held for super run ${originatorSuperRunId}; running tool call unattributed (expected after listener restart)`,
+    );
+  }
+  return tool.target.kind === "client"
+    ? await tool.target.connection.callTool(tool.target.rawName, args, options)
+    : mcpToolResultFromServer(
+        await runUnifiedMcpTool({
+          client: await getServerClient(deps),
+          agentId,
+          mcpServerId: tool.target.serverId,
+          toolId: tool.target.toolId,
+          args,
+          ...(originatorToken ? { originatorToken } : {}),
+        }),
+      );
+}
+
+/**
+ * Call one agent-scoped MCP tool by its `mcp__server__tool` name, resolving it
+ * through the same catalog as `letta mcp call`.
+ */
+export async function callAgentMcpTool(
+  agentId: string,
+  toolName: string,
+  args: Record<string, unknown>,
+  deps: McpSubcommandDependencies = {},
+): Promise<McpToolResult> {
   const catalog = await buildToolCatalog(deps, agentId, { toolName });
   try {
-    const tool = catalog.tools.find(
-      (candidate) => candidate.schema.name === toolName,
-    );
-    if (!tool) {
-      throw new McpCliError(
-        "tool_not_found",
-        `MCP tool '${toolName}' is not available`,
-      );
-    }
-    const result =
-      tool.target.kind === "client"
-        ? await tool.target.connection.callTool(tool.target.rawName, args)
-        : mcpToolResultFromServer(
-            await runUnifiedMcpTool({
-              client: await getServerClient(deps),
-              agentId,
-              mcpServerId: tool.target.serverId,
-              toolId: tool.target.toolId,
-              args,
-            }),
-          );
-    printJson(stdout, result);
-    return result.isError === true ? 2 : 0;
+    return await callCatalogTool(catalog, deps, agentId, toolName, args);
   } finally {
     await catalog.close();
   }
+}
+
+export interface AgentMcpSession {
+  callTool(
+    toolName: string,
+    args: Record<string, unknown>,
+    options?: { signal?: AbortSignal },
+  ): Promise<McpToolResult>;
+  listTools(): Promise<McpToolDefinition[]>;
+  close(): Promise<void>;
+}
+
+/**
+ * Resolve server identities once, then load only servers a script uses.
+ * Concurrent calls share each server's catalog and connection until close().
+ */
+export function createAgentMcpSession(
+  agentId: string,
+  deps: McpSubcommandDependencies = {},
+): AgentMcpSession {
+  let servers: Promise<ServerTarget[]> | undefined;
+  const catalogs = new Map<string, Promise<ToolCatalog>>();
+  let closed = false;
+  const getServers = () => {
+    if (closed) throw new Error("MCP session is closed");
+    servers ??= listUnifiedServers(deps, agentId).catch((error: unknown) => {
+      servers = undefined;
+      throw error;
+    });
+    return servers;
+  };
+  const load = (alias: string) => {
+    if (closed) throw new Error("MCP session is closed");
+    let catalog = catalogs.get(alias);
+    if (!catalog) {
+      catalog = getServers()
+        .then((servers) => {
+          if (closed) throw new Error("MCP session is closed");
+          return buildToolCatalog(deps, agentId, {
+            servers,
+            serverAliasGroup: alias,
+          });
+        })
+        .catch((error: unknown) => {
+          catalogs.delete(alias);
+          throw error;
+        });
+      catalogs.set(alias, catalog);
+    }
+    return catalog;
+  };
+  return {
+    callTool: async (toolName, args, options) =>
+      callCatalogTool(
+        await load(serverAliasGroup(toolName.slice("mcp__".length))),
+        deps,
+        agentId,
+        toolName,
+        args,
+        options,
+      ),
+    listTools: async () => {
+      const aliases = assignMcpServerAliases(
+        (await getServers()).map((target) => ({
+          key: serverKey(target),
+          name: serverName(target),
+          kind: target.kind,
+        })),
+      );
+      const groups = new Set([...aliases.values()].map(serverAliasGroup));
+      const loaded = await Promise.all([...groups].map(load));
+      return loaded.flatMap((catalog) =>
+        catalog.tools.map((tool) => tool.schema),
+      );
+    },
+    close: async () => {
+      closed = true;
+      const pending = [...catalogs.values()];
+      catalogs.clear();
+      await Promise.allSettled(
+        pending.map(async (catalog) => (await catalog).close()),
+      );
+    },
+  };
 }
 
 export async function runMcpSubcommand(
   argv: string[],
   deps: McpSubcommandDependencies = {},
 ): Promise<number> {
-  const stdout = deps.stdout ?? console.log;
-  const stderr = deps.stderr ?? console.error;
+  const stdout = deps.stdout ?? writeMcpStdout;
+  const stderr = deps.stderr ?? writeMcpStderr;
   let parsed: ParsedMcpArgs;
   try {
     parsed = parseCommandLine(argv);
   } catch (error) {
-    printError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 
   if (parsed.values.help || !parsed.action || parsed.action === "help") {
-    printMcpUsage(stdout);
+    await printMcpUsage(stdout);
     return 0;
   }
 
-  const agentId = resolveMcpAgentId(
+  let agentId = resolveMcpAgentId(
     stringValue(parsed.values.agent),
     stringValue(parsed.values["agent-id"]),
     deps.env ?? process.env,
   );
   if (!agentId) {
-    printError(
+    await printMcpError(
       stderr,
       new McpCliError(
         "agent_id_required",
@@ -662,6 +992,13 @@ export async function runMcpSubcommand(
 
   try {
     await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
+    if (!parsed.values.agent && !parsed.values["agent-id"]) {
+      agentId = await getMcpScopeAgentId(
+        agentId,
+        deps.env ?? process.env,
+        deps.lookupParentAgent,
+      );
+    }
     switch (parsed.action) {
       case "list":
         return await runList(deps, agentId, stdout);
@@ -670,12 +1007,31 @@ export async function runMcpSubcommand(
       case "tools":
       case "list-tools":
       case "list_tools":
-        return await runTools(deps, agentId, parsed.target, stdout);
+        return await runTools(
+          deps,
+          agentId,
+          parsed.target,
+          parsed.values.full === true,
+          stdout,
+        );
+      case "schema":
+        return await runSchema(deps, agentId, parsed.target, stdout);
+      case "search":
+        return await runSearch(parsed, deps, agentId, stdout);
       case "call":
       case "run":
       case "run-tool":
       case "run_tool":
         return await runCall(parsed, deps, agentId, stdout);
+      case "connect":
+        return await runMcpConnect(
+          { ...deps, stderr },
+          agentId,
+          parsed.target,
+          stringValue(parsed.values["server-url"]),
+          stringValue(parsed.values["client-name"]),
+          stdout,
+        );
       default:
         throw new McpCliError(
           "unknown_command",
@@ -683,7 +1039,7 @@ export async function runMcpSubcommand(
         );
     }
   } catch (error) {
-    printError(stderr, error);
+    await printMcpError(stderr, error);
     return 1;
   }
 }

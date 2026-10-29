@@ -310,8 +310,10 @@ export interface CancelAckMessage extends MessageEnvelope {
 /**
  * Result subtypes.
  * For errors, use stop_reason field with StopReasonType from letta-client.
+ * "queued": `--no-wait` on a computer-routed launch; Cloud accepted the send
+ * and the envelope carries the enqueue receipt instead of a reply.
  */
-export type ResultSubtype = "success" | "interrupted" | "error";
+export type ResultSubtype = "success" | "interrupted" | "error" | "queued";
 
 /**
  * Usage statistics from letta-client.
@@ -364,16 +366,13 @@ export type QueueItemSource =
  * Kind of content carried by the queue item.
  * - message: User or system text to send to the agent
  * - task_notification: Background task completed notification
- * - approval_result: Tool approval/denial result
- * - overlay_action: AskUserQuestion or other overlay action
+ * - cron_prompt: Scheduled (cron) task prompt
  * - mod_continue: Follow-up turn injected by a mod's turn_end { continue }
  */
 export type QueueItemKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
-  | "approval_result"
-  | "overlay_action"
   | "mod_continue";
 
 /**
@@ -391,6 +390,8 @@ export interface QueueRuntimeItemWire {
   content: MessageCreate["content"] | string;
   /** ISO8601 UTC enqueue timestamp. */
   enqueued_at: string;
+  /** User input held by interrupt until resume or the next user message. */
+  paused?: boolean;
 }
 
 /**
@@ -447,6 +448,8 @@ export interface QueueBatchDequeuedEvent extends MessageEnvelope {
  * - command_running: Slash command is executing
  * - interrupt_in_progress: User interrupt (Esc) is being processed
  * - runtime_busy: Generic busy state (e.g., listen-client turn in flight)
+ * - paused_by_user: Only user messages parked by an interrupt remain; they
+ *   wait for an explicit resume or the user's next message
  */
 export type QueueBlockedReason =
   | "streaming"
@@ -454,7 +457,8 @@ export type QueueBlockedReason =
   | "overlay_open"
   | "command_running"
   | "interrupt_in_progress"
-  | "runtime_busy";
+  | "runtime_busy"
+  | "paused_by_user";
 
 /**
  * Emitted only on blocked-reason state transitions (not on every dequeue

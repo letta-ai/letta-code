@@ -25,7 +25,7 @@ describe("getListenerBlockedReason", () => {
       origin: "message",
       workingDirectory: "/tmp/worktree",
     });
-    lifecycle.requestCancellation();
+    lifecycle.requestCancellation({ cause: "explicit_user" });
 
     expect(getListenerBlockedReason(lifecycle.snapshot(), 2)).toBe(
       "interrupt_in_progress",

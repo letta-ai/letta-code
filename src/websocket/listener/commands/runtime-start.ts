@@ -7,6 +7,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildCreatedAgentTags, MEMFS_DISABLED_TAG } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
@@ -19,7 +20,10 @@ import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
-import { subscribeListenerConnection } from "@/websocket/listener/connection";
+import {
+  getOrCreateProcessTransport,
+  subscribeListenerConnection,
+} from "@/websocket/listener/connection";
 import { getBootWorkingDirectory } from "@/websocket/listener/cwd";
 import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-change";
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
@@ -27,12 +31,16 @@ import {
   getOrCreateConversationPermissionModeStateRef,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
-import { isRuntimeStartCommand } from "@/websocket/listener/protocol-inbound";
+import { scheduleQueuePump } from "@/websocket/listener/queue";
+import { isRuntimeStartCommand } from "@/websocket/listener/runtime-start-validation";
 import { assertRuntimeWorkspaceSandboxChangeAllowed } from "@/websocket/listener/runtime-workspace-sandbox";
+import { expectInboundTeleport } from "@/websocket/listener/teleport";
 import type {
   ConversationRuntime,
   ListenerConnectionId,
   ListenerRuntime,
+  ProcessQueuedTurn,
+  StartListenerOptions,
 } from "@/websocket/listener/types";
 import type {
   GetOrCreateScopedRuntime,
@@ -46,7 +54,11 @@ type ReplaySyncStateForRuntime = (
   listenerRuntime: ListenerRuntime,
   socket: WebSocket,
   scope: RuntimeStartScope,
-  opts?: { recoverApprovals?: boolean; forceDeviceStatus?: boolean },
+  opts?: {
+    recoverApprovals?: boolean;
+    forceDeviceStatus?: boolean;
+    connectionId?: string;
+  },
 ) => Promise<void>;
 
 type RuntimeStartCommandContext = {
@@ -57,6 +69,8 @@ type RuntimeStartCommandContext = {
   runDetachedListenerTask: RunDetachedListenerTask;
   getOrCreateScopedRuntime: GetOrCreateScopedRuntime;
   replaySyncStateForRuntime: ReplaySyncStateForRuntime;
+  queuePumpOptions?: StartListenerOptions;
+  processQueuedTurn?: ProcessQueuedTurn;
   createEphemeralConversation?: typeof createEphemeralConversation;
   retrieveConversation?: (conversationId: string) => Promise<Conversation>;
 };
@@ -117,6 +131,9 @@ function sendRuntimeStartResponse(
       type: "runtime_start_response",
       request_id: parsed.request_id,
       ...response,
+      ...(response.success && parsed.execution_settings !== undefined
+        ? { execution_settings: parsed.execution_settings }
+        : {}),
     },
     "listener_runtime_start_send_failed",
     "listener_runtime_start",
@@ -192,11 +209,23 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const createBody = withMemfs
+      ? requestedBody
+      : {
+          ...requestedBody,
+          tags: buildCreatedAgentTags({
+            enableMemfs: false,
+            tags: [
+              ...(Array.isArray(requestedBody.tags) ? requestedBody.tags : []),
+              MEMFS_DISABLED_TAG,
+            ],
+          }),
+        };
     const appliedHarnessToolDefaults =
       requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
-      : requestedBody;
+      ? await prepareRawCreateAgentBodyForMemfs(createBody)
+      : createBody;
     const agent = appliedHarnessToolDefaults
       ? await createAgentWithBaseToolsRecovery(
           (tools) => backend.createAgent({ ...body, tools }),
@@ -227,7 +256,11 @@ async function resolveRuntimeStartConversation(
   parsed: RuntimeStartCommand,
   agent: AgentState | null,
   created: CreatedResources,
-  createEphemeral: typeof createEphemeralConversation,
+  createEphemeral: (
+    body: EphemeralConversationCreateBody,
+  ) => Promise<
+    Conversation | Awaited<ReturnType<typeof createEphemeralConversation>>
+  >,
   retrieveConversation: (conversationId: string) => Promise<Conversation>,
 ): Promise<Conversation> {
   const backend = getBackend();
@@ -328,6 +361,21 @@ async function applyRuntimeStartState(
   scope: RuntimeStartScope,
   scopedRuntime: ConversationRuntime,
 ): Promise<void> {
+  if (parsed.execution_settings !== undefined) {
+    if (
+      (scopedRuntime.turnLifecycle.kind !== "idle" ||
+        scopedRuntime.queueRuntime.length > 0) &&
+      JSON.stringify(scopedRuntime.executionSettings) !==
+        JSON.stringify(parsed.execution_settings)
+    ) {
+      throw new Error(
+        "Cannot change execution settings while the conversation has active or queued work",
+      );
+    }
+    scopedRuntime.executionSettings = structuredClone(
+      parsed.execution_settings,
+    );
+  }
   const workspaceSandbox = parsed.workspace_sandbox
     ? resolveWorkspaceSandbox({
         root: parsed.workspace_sandbox.root,
@@ -360,14 +408,19 @@ async function applyRuntimeStartState(
     parsed.preserve_skill_sources !== true
   ) {
     scopedRuntime.skillSources = undefined;
+    scopedRuntime.bundledSkills = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
   } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
+    const bundledSkills = parsed.bundled_skills
+      ? [...new Set(parsed.bundled_skills)]
+      : undefined;
     scopedRuntime.skillSources = skillSources;
-    context.runtime.skillSourcesByConversation.set(
-      scopedRuntime.key,
-      skillSources,
-    );
+    scopedRuntime.bundledSkills = bundledSkills;
+    context.runtime.skillSourcesByConversation.set(scopedRuntime.key, {
+      sources: skillSources,
+      ...(bundledSkills ? { bundledSkills } : {}),
+    });
   }
 
   if (parsed.mode) {
@@ -405,18 +458,25 @@ export async function handleRuntimeStartCommand(
   let agent: AgentState | null = null;
   let conversation: Conversation | null = null;
   let runtimeScope: RuntimeStartScope | null = null;
+  let scopedRuntime: ConversationRuntime | null = null;
   let shouldReplayState = false;
+  let startResponseSent = false;
 
   try {
     validateRuntimeStartShape(parsed);
     agent = await resolveRuntimeStartAgent(parsed, created);
+    const backend = getBackend();
+    const createEphemeral =
+      context.createEphemeralConversation ??
+      backend.createEphemeralConversation?.bind(backend) ??
+      createEphemeralConversation;
     conversation = await resolveRuntimeStartConversation(
       parsed,
       agent,
       created,
-      context.createEphemeralConversation ?? createEphemeralConversation,
+      createEphemeral,
       context.retrieveConversation ??
-        ((id) => getBackend().retrieveConversation(id)),
+        ((id) => backend.retrieveConversation(id)),
     );
     conversation = await applyRuntimeStartConversationSourceTags(
       parsed,
@@ -435,12 +495,15 @@ export async function handleRuntimeStartCommand(
       }
     };
     assertConnectionOpen();
-    const scopedRuntime = context.getOrCreateScopedRuntime(
+    scopedRuntime = context.getOrCreateScopedRuntime(
       context.runtime,
       runtimeScope.agent_id,
       runtimeScope.conversation_id,
     );
     await applyRuntimeStartState(parsed, context, runtimeScope, scopedRuntime);
+    if (parsed.teleport_id) {
+      expectInboundTeleport(scopedRuntime, parsed.teleport_id);
+    }
     assertConnectionOpen();
     subscribeListenerConnection(context.runtime, connectionId, runtimeScope);
     registerRuntimeExternalTools(
@@ -458,17 +521,18 @@ export async function handleRuntimeStartCommand(
         {
           recoverApprovals: parsed.recover_approvals !== false,
           forceDeviceStatus: parsed.force_device_status !== false,
+          connectionId,
         },
       );
     }
-    const sent = sendRuntimeStartResponse(context, parsed, {
+    startResponseSent = sendRuntimeStartResponse(context, parsed, {
       success: true,
       runtime: runtimeScope,
       agent,
       conversation,
       created,
     });
-    shouldReplayState = sent && !parsed.wait_for_replay;
+    shouldReplayState = startResponseSent && !parsed.wait_for_replay;
   } catch (error) {
     sendRuntimeStartResponse(context, parsed, {
       success: false,
@@ -488,7 +552,25 @@ export async function handleRuntimeStartCommand(
       {
         recoverApprovals: parsed.recover_approvals !== false,
         forceDeviceStatus: parsed.force_device_status !== false,
+        connectionId: context.connectionId,
       },
+    );
+  }
+
+  // Startup can attempt the queue before a new connection has subscribed.
+  // Retry after this scope's initial replay so accepted work cannot interleave
+  // with approval recovery or execute after a failed runtime_start.
+  if (
+    startResponseSent &&
+    scopedRuntime?.queueRuntime?.isEmpty === false &&
+    context.queuePumpOptions &&
+    context.processQueuedTurn
+  ) {
+    scheduleQueuePump(
+      scopedRuntime,
+      getOrCreateProcessTransport(context.runtime),
+      context.queuePumpOptions,
+      context.processQueuedTurn,
     );
   }
 

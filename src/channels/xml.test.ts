@@ -110,7 +110,6 @@ describe("formatChannelNotification", () => {
     expect(reminder.text).toContain("current toolset");
     expect(reminder.text).toContain("Read");
     expect(reminder.text).toContain("ViewImage");
-    expect(reminder.text).not.toContain("ReadFileGemini");
     expect(reminder.text).not.toContain("External slack turn");
     expect(reminder.text).not.toContain("Current local time");
     expect(notification.text).toContain('local_path="/tmp/photo.heic"');
@@ -158,7 +157,7 @@ describe("formatChannelNotification", () => {
     expect(xml).toContain(
       "same Slack inbound attachment directory and returns its local_path",
     );
-    expect(xml).toContain("TaskOutput (block: true, timeout: 600000)");
+    expect(xml).toContain("a task notification delivers the local_path");
     expect(xml).toContain("Do not ask the sender to reattach it.");
     expect(xml).toContain(
       "<download-instruction>This file is 41.7 MiB, above the 20 MiB automatic download limit. Call MessageChannel",

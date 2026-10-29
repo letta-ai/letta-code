@@ -5,7 +5,7 @@
  * When an unknown user messages the channel, they get a pairing code.
  * The user runs `/channels <channel> pair <code>` to approve the connection.
  *
- * Persisted in ~/.letta/channels/<channel>/pairing.yaml.
+ * Persisted below the active product's channels directory.
  *
  * Reference: earlier pairing-store implementation
  */

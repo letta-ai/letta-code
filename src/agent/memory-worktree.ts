@@ -4,7 +4,11 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
+import { getAuthToken } from "@/agent/memory-auth";
+import { runGit as runMemoryGit } from "@/agent/memory-git";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "@/agent/memory-git-signing";
+import { withMemoryOperation } from "@/agent/memory-operation";
+import { getMemfsServerUrl } from "@/backend/api/memfs-git-proxy";
 import { debugLog } from "@/utils/debug";
 
 const execFile = promisify(execFileCb);
@@ -114,6 +118,8 @@ export interface ReflectionMemoryWorktree {
 export interface CreateReflectionMemoryWorktreeOptions {
   parentMemoryDir: string;
   now?: Date;
+  /** Directory and branch prefix; memory workers use "memory-worker". */
+  label?: string;
 }
 
 export async function createReflectionMemoryWorktree(
@@ -122,8 +128,9 @@ export async function createReflectionMemoryWorktree(
   const parentMemoryDir = resolve(options.parentMemoryDir);
   const id = buildReflectionWorktreeId(options.now);
   const worktreeBaseDir = join(dirname(parentMemoryDir), "memory-worktrees");
-  const worktreeDir = join(worktreeBaseDir, `reflection-${id}`);
-  const branchName = `letta/reflection/${id}`;
+  const label = options.label ?? "reflection";
+  const worktreeDir = join(worktreeBaseDir, `${label}-${id}`);
+  const branchName = `letta/${label}/${id}`;
 
   await mkdir(worktreeBaseDir, { recursive: true });
 
@@ -267,15 +274,23 @@ async function getHead(cwd: string): Promise<string | undefined> {
 
 async function refreshParentFromOrigin(parentMemoryDir: string): Promise<void> {
   const origin = await tryRunGit(parentMemoryDir, [
-    "remote",
-    "get-url",
-    "origin",
+    "config",
+    "--get",
+    "remote.origin.url",
   ]);
   if (!origin) {
     return;
   }
 
-  await runGit(parentMemoryDir, ["fetch", "origin", "main"]);
+  // Use the same authentication and transient Desktop proxy as memory sync.
+  // Other origins (including local repositories) keep their own credentials.
+  const memfsPrefix = `${getMemfsServerUrl().trim().replace(/\/+$/, "")}/v1/git/`;
+  const token = origin.stdout.trim().startsWith(memfsPrefix)
+    ? await getAuthToken()
+    : undefined;
+  await runMemoryGit(parentMemoryDir, ["fetch", "origin", "main"], token, {
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
 
   const remoteIsAncestor = await tryRunGit(parentMemoryDir, [
     "merge-base",
@@ -344,7 +359,8 @@ async function cleanupWorktreeAndBranch(
   ]);
 }
 
-async function finalizeReflectionMemoryWorktreeImpl(
+/** Finalize without taking the checkout lease; the caller must already hold it. */
+export async function finalizeReflectionMemoryWorktreeUnlocked(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
@@ -644,7 +660,9 @@ export async function finalizeReflectionMemoryWorktree(
   worktree: ReflectionMemoryWorktree,
   options: ReflectionMemoryWorktreeFinalizeOptions,
 ): Promise<ReflectionMemoryWorktreeFinalizeResult> {
-  return await finalizeReflectionMemoryWorktreeImpl(worktree, options);
+  return withMemoryOperation(worktree.parentMemoryDir, () =>
+    finalizeReflectionMemoryWorktreeUnlocked(worktree, options),
+  );
 }
 
 export interface ReflectionMemoryWorktreeFinalizeOptions {
