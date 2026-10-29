@@ -67,10 +67,15 @@ export interface ScriptMonitorHooks {
   timeoutEvent(timeoutMs: number): string;
 }
 
-function rateLimitToolCalls(call: WorkflowToolCaller): WorkflowToolCaller {
+function rateLimitToolCalls(
+  call: WorkflowToolCaller,
+  signal: AbortSignal,
+): WorkflowToolCaller {
   let tokens = TOOL_CALL_BURST;
   let refilledAt = Date.now();
   return (toolName, toolArgs) => {
+    // After stop, park instead of rejecting so a catch-all loop can't spin.
+    if (signal.aborted) return new Promise<never>(() => {});
     const now = Date.now();
     const refill = Math.floor((now - refilledAt) / TOOL_CALL_REFILL_MS);
     if (refill > 0) {
@@ -87,17 +92,16 @@ function rateLimitToolCalls(call: WorkflowToolCaller): WorkflowToolCaller {
   };
 }
 
+// Once stopped, sleep never settles. A rejection would let a script that
+// catches every error spin on microtasks and starve the event loop.
 function abortableSleep(ms: unknown, signal: AbortSignal): Promise<void> {
   const delay = Number(ms);
   if (!Number.isFinite(delay) || delay < 0) {
     return Promise.reject(new Error("sleep(ms) needs a non-negative number."));
   }
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(new Error("Monitor stopped."));
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new Error("Monitor stopped."));
-    };
+  return new Promise((resolve) => {
+    if (signal.aborted) return;
+    const onAbort = () => clearTimeout(timer);
     const timer = setTimeout(() => {
       signal.removeEventListener("abort", onAbort);
       resolve();
@@ -248,13 +252,23 @@ export async function startScriptMonitor(
     });
   };
 
-  void executeToolScript({
+  // The engine rejects every call once its signal aborts, which a catch-all
+  // loop would spin on. Give it a signal that never aborts and settle the
+  // monitor on our own abort; stopped calls and sleeps park instead.
+  const stopped = new Promise<never>((_resolve, reject) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => reject(controller.signal.reason),
+      { once: true },
+    );
+  });
+  const run = executeToolScript({
     ...toolScope,
-    callTool: rateLimitToolCalls(toolScope.callTool),
+    callTool: rateLimitToolCalls(toolScope.callTool, controller.signal),
     maxTotalToolCalls: Number.POSITIVE_INFINITY,
     script: args.script,
     args: args.args,
-    signal: controller.signal,
+    signal: new AbortController().signal,
     globals: {
       emit,
       sleep: (ms: unknown) => abortableSleep(ms, controller.signal),
@@ -262,7 +276,9 @@ export async function startScriptMonitor(
     onProgress: (event) => {
       if (event.kind === "log") output.append(`${scrub(event.message)}\n`);
     },
-  })
+  });
+  void run.catch(() => {});
+  void Promise.race([run, stopped])
     .then(
       (value) => finish("completed", scrub(formatReturnValue(value))),
       (error: unknown) =>

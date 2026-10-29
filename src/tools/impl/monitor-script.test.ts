@@ -193,6 +193,27 @@ while (true) {
   expect(backgroundProcesses.get(taskId)?.status).toBe("failed");
 }, 20000);
 
+test("TaskStop ends a loop that catches every error", async () => {
+  const file = join(home, "loop.txt");
+  writeFileSync(file, "x");
+  const { taskId, contextId } = await launch({
+    persistent: true,
+    args: { file },
+    script: `
+let polls = 0;
+while (true) {
+  try { await tools.Read({ file_path: args.file }); if (++polls === 1) emit('polling'); } catch {}
+  try { await sleep(20); } catch {}
+}`,
+  });
+  await waitFor(() => queued.length > 0);
+  releaseToolExecutionContext(contextId);
+  expect((await task_stop({ task_id: taskId })).killed).toBe(true);
+  // A spinning loop would starve these timers and the run's cleanup.
+  await waitFor(() => getExecutionContextById(contextId) === undefined);
+  expect(backgroundProcesses.get(taskId)?.status).toBe("failed");
+});
+
 test("a throw fails the monitor with a scrubbed error, and approval-needing calls throw", async () => {
   const { taskId } = await launch(
     { script: "await tools.Write({ file_path: 'x', content: 'y' });" },

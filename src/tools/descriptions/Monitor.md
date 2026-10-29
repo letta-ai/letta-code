@@ -47,13 +47,4 @@ Each text frame becomes one notification (multiline frames stay as one event). B
 
 Prefer this over `command: 'websocat wss://…'` — it avoids the extra process and line-buffering pitfalls. Use bash when you need to transform or filter frames with shell tools before they become events.
 
-**script source** — poll tools (built-in or MCP) from a JavaScript loop that keeps state between polls, without a shell. The body has CodeMode's `tools`, `listTools()`, `describeTool()`, and `args` globals, plus `emit(text)` (one event per call, same batching and rate limits) and `sleep(ms)` (stops with the monitor). `console.log` goes to the output file only.
-    description: 'New errors in the checkout service',
-    script: `const seen = new Set();
-    while (true) {
-      const rows = await tools.mcp__betterstack__query({ query: 'level:error service:checkout' });
-      for (const row of JSON.parse(rows)) if (!seen.has(row.id)) { seen.add(row.id); emit(row.message); }
-      await sleep(60_000);
-    }`,
-
-Returning ends the watch as completed (the value is reported); throwing ends it as failed. Nested calls follow permission rules: a call that would need approval throws, so allow it first or use a command monitor. Catch transient tool errors inside the loop so one failed poll doesn't end the watch. Tool calls are limited to bursts of 120, then 2 per second.
+**script source** — a JavaScript watch loop with the same globals as CodeMode, plus `emit(text)` (one event) and `sleep(ms)`. Returning or throwing ends the watch.

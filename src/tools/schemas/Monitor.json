@@ -51,10 +51,10 @@
     },
     "script": {
       "type": "string",
-      "description": "JavaScript async function body run as the watch loop, with CodeMode's tools, listTools, describeTool, and args globals plus emit(text) and sleep(ms). Each emit is an event; returning or throwing ends the watch. Cannot be combined with command or ws."
+      "description": "JavaScript watch loop with CodeMode's globals plus emit(text) and sleep(ms). Cannot be combined with command or ws."
     },
     "args": {
-      "description": "Optional input data exposed to script as the args global."
+      "description": "Optional input exposed to script as args."
     }
   },
   "required": ["description"],
