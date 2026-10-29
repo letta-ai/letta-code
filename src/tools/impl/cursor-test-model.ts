@@ -1,6 +1,7 @@
 import { listCursorModels } from "./cursor-session";
 
 const FAST_MODEL_TIERS = [
+  "composer-2.5",
   "nano",
   "flash-lite",
   "mini",
