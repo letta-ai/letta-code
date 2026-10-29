@@ -60,6 +60,7 @@ import type {
   ExternalToolDefinition,
   ExternalToolExecutor,
 } from "@/tools/external-tool-types";
+import * as contextRetention from "@/tools/tool-context-retention";
 
 export type {
   ClientTool,
@@ -406,13 +407,10 @@ function saveExecutionContext(snapshot: ToolExecutionContextSnapshot): string {
   const contextId = `ctx-${Date.now()}-${toolExecutionContextCounter++}`;
   contexts.set(contextId, snapshot);
 
-  // Keep memory bounded; stale turns won't need old snapshots.
-  const MAX_CONTEXTS = 4096;
-  if (contexts.size > MAX_CONTEXTS) {
-    const oldestContextId = contexts.keys().next().value;
-    if (oldestContextId) {
-      contexts.delete(oldestContextId);
-    }
+  // Keep memory bounded; stale turns won't need old snapshots unless retained.
+  for (const id of contexts.keys()) {
+    if (contexts.size <= 4096) break;
+    if (!contextRetention.isToolContextRetained(id)) contexts.delete(id);
   }
 
   return contextId;
@@ -492,7 +490,8 @@ export function clearCapturedToolExecutionContexts(): void {
 }
 
 export function releaseToolExecutionContext(contextId: string): void {
-  getExecutionContexts().delete(contextId);
+  if (!contextRetention.deferToolContextRelease(contextId))
+    getExecutionContexts().delete(contextId);
 }
 
 /**

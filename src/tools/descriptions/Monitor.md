@@ -46,3 +46,14 @@ When someone is waiting on the result, set `backup_after_seconds` (e.g. 900). If
 Each text frame becomes one notification (multiline frames stay as one event). Binary frames are reported as `[binary frame, N bytes]` rather than passed through. Socket close ends the watch with the close code surfaced; errors are surfaced before close. Same rate limiting as bash — a firehose will be suppressed and eventually stopped, so subscribe to a filtered feed where one exists.
 
 Prefer this over `command: 'websocat wss://…'` — it avoids the extra process and line-buffering pitfalls. Use bash when you need to transform or filter frames with shell tools before they become events.
+
+**script source** — poll tools (built-in or MCP) from a JavaScript loop that keeps state between polls, without a shell. The body has CodeMode's `tools`, `listTools()`, `describeTool()`, and `args` globals, plus `emit(text)` (one event per call, same batching and rate limits) and `sleep(ms)` (stops with the monitor). `console.log` goes to the output file only.
+    description: 'New errors in the checkout service',
+    script: `const seen = new Set();
+    while (true) {
+      const rows = await tools.mcp__betterstack__query({ query: 'level:error service:checkout' });
+      for (const row of JSON.parse(rows)) if (!seen.has(row.id)) { seen.add(row.id); emit(row.message); }
+      await sleep(60_000);
+    }`,
+
+Returning ends the watch as completed (the value is reported); throwing ends it as failed. Nested calls follow permission rules: a call that would need approval throws, so allow it first or use a command monitor. Catch transient tool errors inside the loop so one failed poll doesn't end the watch. Tool calls are limited to bursts of 120, then 2 per second.

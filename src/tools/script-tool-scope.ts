@@ -27,6 +27,8 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   "AskUserQuestion",
   "Workflow",
   "CodeMode",
+  // A script cannot hold a background watch's lifetime or approval.
+  "Monitor",
 ]);
 
 function isOwningAgentId(value: string | null | undefined): value is string {

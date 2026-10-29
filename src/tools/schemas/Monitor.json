@@ -47,7 +47,14 @@
       },
       "required": ["url"],
       "additionalProperties": false,
-      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command."
+      "description": "WebSocket to open. Each text frame is an event; binary frames are reported as a placeholder line. Socket close ends the watch. Cannot be combined with command or script."
+    },
+    "script": {
+      "type": "string",
+      "description": "JavaScript async function body run as the watch loop, with CodeMode's tools, listTools, describeTool, and args globals plus emit(text) and sleep(ms). Each emit is an event; returning or throwing ends the watch. Cannot be combined with command or ws."
+    },
+    "args": {
+      "description": "Optional input data exposed to script as the args global."
     }
   },
   "required": ["description"],
