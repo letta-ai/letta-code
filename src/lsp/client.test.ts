@@ -1,6 +1,9 @@
 import { expect, test } from "bun:test";
 import { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { LSPClient } from "@/lsp/client";
+import type { LSPServerProcess } from "@/lsp/types";
 
 /**
  * Spawn a minimal "LSP server" process: it reads JSON-RPC messages from stdin
@@ -13,6 +16,86 @@ function spawnScript(script: string) {
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
+
+function mockServer() {
+  const process = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    kill: () => true,
+  });
+  const client = new LSPClient({
+    serverID: "test",
+    server: { process } as unknown as LSPServerProcess,
+    rootUri: "/tmp",
+  });
+  const request = (
+    client as unknown as {
+      sendRequest<T>(method: string): Promise<T>;
+    }
+  ).sendRequest.bind(client);
+  return { process, client, request };
+}
+
+test("stdout errors reject pending and future requests before notifying listeners", async () => {
+  const { process, client, request } = mockServer();
+  const first = request("first");
+  const second = request("second");
+  client.on("error", () => {
+    throw new Error("listener failed");
+  });
+  expect(() =>
+    process.stdout.emit("error", new Error("broken stdout")),
+  ).toThrow("listener failed");
+  const bounded = <T>(promise: Promise<T>) =>
+    Promise.race([
+      promise,
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("request timed out")), 200),
+      ),
+    ]);
+  await expect(bounded(first)).rejects.toThrow("broken stdout");
+  await expect(bounded(second)).rejects.toThrow("broken stdout");
+  await expect(bounded(request("later"))).rejects.toThrow("broken stdout");
+});
+
+test("stdout error clears pending requests without an error listener", async () => {
+  const { process, request } = mockServer();
+  const pending = request("first");
+  expect(() =>
+    process.stdout.emit("error", new Error("broken stdout")),
+  ).toThrow();
+  await expect(pending).rejects.toThrow("broken stdout");
+  await expect(request("later")).rejects.toThrow("broken stdout");
+});
+
+test("shutdown kills the server when its request fails", async () => {
+  const { process, client } = mockServer();
+  let killed = false;
+  process.kill = () => {
+    killed = true;
+    return true;
+  };
+  (client as unknown as { initialized: boolean }).initialized = true;
+  const shutdown = client.shutdown();
+  process.emit("exit", 1);
+  process.emit("close", 1);
+  await expect(shutdown).rejects.toThrow("LSP server exited");
+  expect(killed).toBe(true);
+});
+
+test("exit blocks new requests but allows the final buffered response before close", async () => {
+  const { process, request } = mockServer();
+  const pending = request<{ ok: boolean }>("first");
+  process.emit("exit", 0);
+  await expect(request("later")).rejects.toThrow("exited");
+  const body = JSON.stringify({ jsonrpc: "2.0", id: 1, result: { ok: true } });
+  process.stdout.emit(
+    "data",
+    Buffer.from(`Content-Length: ${body.length}\r\n\r\n${body}`),
+  );
+  process.emit("close", 0);
+  expect(await pending).toEqual({ ok: true });
+});
 
 test("pending request is rejected when the server process exits without responding", async () => {
   // Server: read and discard stdin, then exit immediately on the first message.
@@ -73,7 +156,7 @@ test("request sent after the server exited rejects immediately", async () => {
 
   // New requests against a dead server must fail fast rather than enqueue a
   // promise that can never be settled.
-  await expect(pending).rejects.toThrow(/LSP server has exited/);
+  await expect(pending).rejects.toThrow(/LSP server exited/);
 });
 
 test("responded request resolves; only a later, unrelated exit rejects others", async () => {
