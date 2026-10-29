@@ -36,7 +36,16 @@ curl -sS "${LETTA_BASE_URL%/}/v1/videos/models" \
 
 Fields on each model worth knowing: `supported_resolutions`, `supported_aspect_ratios`, `supported_sizes`, `supported_durations` (often discrete like `[4,6,8]`, not a range), `supported_frame_images` (which `frame_type` values are accepted), `generate_audio` and `seed` (capability bools), `pricing_skus`, and `allowed_passthrough_parameters`. An out-of-set value returns a 400, so validate client-side.
 
-Models include `google/veo-3.1`, `bytedance/seedance-2.5`, `kwaivgi/kling-v3.0-pro`, `minimax/hailuo-3`, `minimax/hailuo-3-max`, and `heygen/avatar-iv` (a talking head from one photo); the models endpoint has the full list.
+## Choosing a model
+
+Recommendation as of 2026-10-29. Video models move fast, so check the [Artificial Analysis text-to-video leaderboard](https://artificialanalysis.ai/video/leaderboard/text-to-video) before relying on this, and only pick models that `/v1/videos/models` lists.
+
+- **Default, when quality matters and there's time:** `bytedance/seedance-2.5`. Top tier on the leaderboard, native audio, clips up to 30s. Renders take about 4–6 minutes and it is the most expensive per second.
+- **Fast:** `minimax/hailuo-3-max` (MiniMax H3). Also top tier; renders in well under a minute at a fraction of Seedance's cost. Use it for quick replies in a live thread or for iterating on a prompt, then rerun the final cut on Seedance.
+- Other top-tier models on the endpoint include `alibaba/wan-3.0`, `black-forest-labs/flux-3-video` and `heygen/heygen-video-1`. Some providers filter prompts more strictly than others; if one rejects a prompt, try another model rather than rewording around the filter.
+- `heygen/avatar-iv` makes a talking head from one photo.
+
+For multi-beat clips, write the prompt as a timestamped shot list that ends on the payoff (`[0-3s] … [3-6s] … [11-15s] <final beat>`). Without timing, models tend to drop later beats.
 
 ## Full workflow (drop-in)
 
@@ -45,7 +54,7 @@ Models include `google/veo-3.1`, `bytedance/seedance-2.5`, `kwaivgi/kling-v3.0-p
 set -euo pipefail
 
 PROMPT="a golden retriever playing fetch on a sunny beach"
-MODEL="google/veo-3.1"
+MODEL="bytedance/seedance-2.5"
 OUTPUT="video-$(date +%Y%m%d-%H%M%S).mp4"
 base_url="${LETTA_BASE_URL%/}"
 
