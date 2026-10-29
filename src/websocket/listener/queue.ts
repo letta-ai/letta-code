@@ -475,6 +475,17 @@ function resolveQueuePumpTransport(
   runtime: ConversationRuntime,
   socket: ListenerTransport,
 ): ListenerTransport | null {
+  const first = runtime.queueRuntime.peekReady()[0];
+  if (
+    first?.kind === "message" &&
+    first.noCoalesce === true &&
+    runtime.queuedMessagesByItemId.get(first.id)?.processOwnedTurn === true
+  ) {
+    // An HTTP request owns this single-item turn's output through in-process
+    // observers. It needs neither an open socket nor a subscribed recipient.
+    // noCoalesce ensures this cannot also admit a WebSocket-owned message.
+    return getOrCreateProcessTransport(runtime.listener);
+  }
   // A scheduled pump may outlive the socket that accepted its input. Route
   // through the process transport once connections are tracked so a reconnect
   // can replace the writer without replacing the queue's single pump.
