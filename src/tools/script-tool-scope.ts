@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getBackend } from "@/backend";
+import { getClient } from "@/backend/api/client";
 import {
   getCurrentWorkingDirectory,
   getRuntimeContext,
@@ -9,6 +10,7 @@ import { serializeClientTools } from "@/tools/client-tool-serialization";
 import type {
   WorkflowToolCaller,
   WorkflowToolInfo,
+  WorkflowToolResult,
 } from "@/tools/workflow/types";
 
 interface ScriptScopeArgs {
@@ -30,6 +32,86 @@ const SCRIPT_EXCLUDED_TOOLS = new Set([
   // A script cannot hold a background watch's lifetime or approval.
   "Monitor",
 ]);
+
+interface ServerTool extends WorkflowToolInfo {
+  requiresApproval: boolean;
+}
+
+/**
+ * Tools attached to the agent that Letta Cloud executes (e.g. web_search).
+ * MCP tools are served by the MCP session instead, and local built-ins win
+ * on a name collision, matching what the model sees in a turn.
+ */
+async function loadServerTools(
+  agentId: string | null,
+  builtins: ReadonlySet<string>,
+): Promise<Map<string, ServerTool>> {
+  const tools = new Map<string, ServerTool>();
+  if (!agentId || !getBackend().capabilities.serverSideToolManagement) {
+    return tools;
+  }
+  try {
+    const agent = await (await getClient()).agents.retrieve(agentId, {
+      include: ["agent.tools"],
+    });
+    // The server asks the client for approval on these instead of running them.
+    const approvalRules = new Set(
+      (agent.tool_rules ?? [])
+        .filter((rule) => rule.type === "requires_approval")
+        .map((rule) => rule.tool_name),
+    );
+    for (const tool of agent.tools ?? []) {
+      const name = tool.name;
+      if (!name || tool.tool_type === "external_mcp") continue;
+      if (builtins.has(name) || SCRIPT_EXCLUDED_TOOLS.has(name)) continue;
+      tools.set(name, {
+        name,
+        description: tool.description ?? "",
+        inputSchema: (tool.json_schema?.parameters ?? {}) as Record<
+          string,
+          unknown
+        >,
+        requiresApproval:
+          tool.default_requires_approval === true || approvalRules.has(name),
+      });
+    }
+  } catch {
+    // Server tools are optional; built-ins and MCP still work without them.
+  }
+  return tools;
+}
+
+async function callServerTool(
+  agentId: string | null,
+  tool: ServerTool,
+  args: Record<string, unknown>,
+  signal?: AbortSignal,
+): Promise<WorkflowToolResult> {
+  if (!agentId) throw new Error(`${tool.name} requires an invoking agent.`);
+  if (tool.requiresApproval) {
+    throw new Error(
+      `${tool.name} needs approval, which a script cannot request; call it directly.`,
+    );
+  }
+  const result = await (await getClient()).agents.tools.run(
+    tool.name,
+    { agent_id: agentId, args },
+    signal ? { signal } : {},
+  );
+  const value =
+    result.status === "success"
+      ? result.func_return
+      : (result.stderr?.join("\n") ?? result.func_return);
+  return {
+    content: [
+      {
+        type: "text",
+        text: typeof value === "string" ? value : JSON.stringify(value ?? null),
+      },
+    ],
+    isError: result.status !== "success",
+  };
+}
 
 function isOwningAgentId(value: string | null | undefined): value is string {
   return (
@@ -90,8 +172,9 @@ export async function createScriptToolScope(
         )
       : []
   ).filter((schema) => !SCRIPT_EXCLUDED_TOOLS.has(schema.name));
-  const builtinToolNames = builtinSchemas.map((schema) => schema.name);
-  const builtins = new Set(builtinToolNames);
+  const builtins = new Set(builtinSchemas.map((schema) => schema.name));
+  const serverTools = await loadServerTools(parentAgentId, builtins);
+  const builtinToolNames = [...builtins, ...serverTools.keys()];
   let mcpSession:
     | Promise<
         ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
@@ -117,6 +200,7 @@ export async function createScriptToolScope(
           description: schema.description,
           inputSchema: schema.parameters as Record<string, unknown>,
         })),
+        ...serverTools.values(),
         ...mcpTools.map((tool) => ({
           name: tool.name,
           description: tool.description ?? "",
@@ -126,6 +210,10 @@ export async function createScriptToolScope(
     },
     callTool: async (toolName, toolArgs) => {
       signal?.throwIfAborted();
+      const serverTool = serverTools.get(toolName);
+      if (serverTool) {
+        return callServerTool(parentAgentId, serverTool, toolArgs, signal);
+      }
       const toolCallId = `script-${randomUUID()}`;
       const { decision } = await manager.checkToolPermission(
         toolName,
