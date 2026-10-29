@@ -24,7 +24,7 @@ const WAIT_SLICE_MS = 5;
 const PROCESS_START_PROBE_TIMEOUT_MS = 250;
 const MAX_CANDIDATE_SWEEP = 128;
 const INSTALLING_OWNER_NAME = ".installing";
-let cachedCurrentProcessStart: string | null | undefined;
+const PROCESS_START_RETRY_DELAY_MS = 5_000;
 
 export type DurableLockOwner = {
   token: string;
@@ -183,31 +183,36 @@ export function getProcessStart(
   }
 }
 
+/** A failed synchronous probe is retried only after a short cooldown. */
+export function createCurrentDurableLockOwner(
+  readStart: (timeoutMs: number) => string | null = (timeoutMs) =>
+    getProcessStart(process.pid, process.platform, undefined, timeoutMs),
+  now: () => number = () => performance.now(),
+): (processStartTimeoutMs?: number) => DurableLockOwner {
+  let cachedProcessStart: string | undefined;
+  let retryAt = -Infinity;
+  return (processStartTimeoutMs = PROCESS_START_PROBE_TIMEOUT_MS) => {
+    if (cachedProcessStart === undefined && now() >= retryAt) {
+      const processStart = readStart(processStartTimeoutMs);
+      // Measure from completion: a slow failed probe must still get the full
+      // cooldown. Null remains conservative for PID reuse and is never permanent.
+      if (processStart === null) retryAt = now() + PROCESS_START_RETRY_DELAY_MS;
+      else cachedProcessStart = processStart;
+    }
+    return {
+      token: randomUUID(),
+      pid: process.pid,
+      processStart: cachedProcessStart ?? null,
+    };
+  };
+}
+
+const readCurrentDurableLockOwner = createCurrentDurableLockOwner();
+
 export function currentDurableLockOwner(
   processStartTimeoutMs: number = PROCESS_START_PROBE_TIMEOUT_MS,
 ): DurableLockOwner {
-  let processStart = cachedCurrentProcessStart;
-  if (processStart === undefined) {
-    const probeStartedAt = performance.now();
-    processStart = getProcessStart(
-      process.pid,
-      process.platform,
-      undefined,
-      processStartTimeoutMs,
-    );
-    console.info(
-      `own process identity probe: ${performance.now() - probeStartedAt}ms, budget=${processStartTimeoutMs}, found=${processStart !== null}`,
-    );
-    // A short lock-acquisition deadline may not leave enough time for the first
-    // platform process probe. Cache only a proven identity so a transient null
-    // cannot poison every later owner token in this long-lived daemon.
-    if (processStart !== null) cachedCurrentProcessStart = processStart;
-  }
-  return {
-    token: randomUUID(),
-    pid: process.pid,
-    processStart: processStart ?? null,
-  };
+  return readCurrentDurableLockOwner(processStartTimeoutMs);
 }
 
 export function durableLockOwnerIsAlive(
@@ -544,7 +549,7 @@ export function acquireDurableFileLock(
 ): () => void {
   const waitMs = options.waitMs ?? 2_000;
   const now = options.now ?? Date.now;
-  // Learning this process's own creation identity is a one-time, process-wide
+  // Learning this process's own creation identity is a cached, process-wide
   // cost, and the answer is optional: recording a null start only weakens the
   // PID-reuse check a later contender runs against this owner. The first
   // Windows probe spawns a cold PowerShell that can outlast the whole wait, so

@@ -147,12 +147,6 @@ test.each(["throw", "pending-cap"] as const)(
       "conversation-restart",
     );
     const pending = pendingTeleport("teleport-restart", "conversation-restart");
-    const startedAt = performance.now();
-    const trace = (phase: string) => {
-      console.info(
-        `cleanup ${failureMode} ${phase}: ${performance.now() - startedAt}ms`,
-      );
-    };
     let detachedTask: Promise<void> | undefined;
     try {
       const predecessor = store.write({
@@ -203,7 +197,6 @@ test.each(["throw", "pending-cap"] as const)(
         expect(getFailedTeleportCleanupPendingCount(listener)).toBe(1);
       }
 
-      trace("before failure");
       handleTeleportFailure({
         listener,
         command: {
@@ -257,9 +250,7 @@ test.each(["throw", "pending-cap"] as const)(
                 pendingLimit: 1,
               },
       });
-      trace("before detached await");
       await detachedTask;
-      trace("after detached await");
 
       const successor = store.read(pending.agentId, pending.conversationId);
       expect(successor).toMatchObject({
@@ -293,14 +284,12 @@ test.each(["throw", "pending-cap"] as const)(
           persistentPath: dispositionPath,
         });
       const teleportStatus = mock(async () => ({ status: "failed" as const }));
-      trace("before recovery");
       await recoverRecordedTurns(restarted, {
         store,
         canRecover: async () => false,
         teleportStatus: teleportStatus as never,
         retryDelayMs: 60_000,
       });
-      trace("after recovery");
       expect(teleportStatus).not.toHaveBeenCalled();
       expect(store.read(pending.agentId, pending.conversationId)).toEqual(
         successor,
@@ -318,7 +307,6 @@ test.each(["throw", "pending-cap"] as const)(
           pending.conversationId,
         ).queueRuntime.length,
       ).toBe(0);
-      trace("after restore");
       restarted.intentionallyClosed = true;
     } finally {
       cancelFailedTeleportCleanup(listener);
