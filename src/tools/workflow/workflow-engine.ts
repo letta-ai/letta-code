@@ -111,6 +111,7 @@ export async function executeToolScript(
     | "builtinToolNames"
     | "listTools"
     | "onProgress"
+    | "env"
     | "maxTotalToolCalls"
   > & {
     /** Extra script globals, e.g. Monitor's `emit` and `sleep`. */
@@ -519,6 +520,8 @@ async function executeScript(
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
+    // Only `env`: the host process's exit, kill, and bindings stay out.
+    process: Object.freeze({ env: Object.freeze({ ...options.env }) }),
     ...extraGlobals,
   });
   const wrapped = `(async () => { "use strict";\n${spawner ? stripMetaExport(options.script) : options.script}\n})()`;
