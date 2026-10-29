@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { resolveCursorTestModel } from "@/test-utils/cursor-test-model";
 import { runCursorTurn, sendCursorMessage } from "./cursor-session";
 
 test(
@@ -18,7 +19,7 @@ test(
     try {
       const first = await runCursorTurn({
         ...options,
-        model: process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5",
+        model: await resolveCursorTestModel(root),
         prompt: "Remember NODE_PROOF_681. Reply with that phrase.",
       });
       assert.equal(first.success, true, first.error);
