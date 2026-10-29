@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { createInterface } from "node:readline";
 import Letta from "@letta-ai/letta-client";
 import WebSocket from "ws";
 import { AppServerClient } from "@/app-server-client";
@@ -143,6 +144,8 @@ testWithAPI.each([
         const env = createAuthenticatedCliTestEnv({
           HOME: home,
           LETTA_BASE_URL: baseURL,
+          LETTA_DEBUG: undefined,
+          DEBUG: undefined,
         });
         for (const key of Object.keys(env)) {
           if (
@@ -167,12 +170,27 @@ testWithAPI.each([
                 ]),
             artifact ? resolve(artifact) : sourceEntry,
             "remote",
+            "--lifecycle-output=jsonl",
             "--computer-name",
             name,
           ],
           { cwd, env, stdio: ["ignore", "pipe", "pipe"] },
         );
         children.push(child);
+        let listenerReady = false;
+        // Registration and the status relay can be online before startup ingress
+        // is active. This is the same readiness signal process supervisors use.
+        createInterface({ input: child.stdout }).on("line", (line) => {
+          try {
+            const event = JSON.parse(line);
+            if (event.lettaLifecycleProtocol !== 1) return;
+            if (event.state === "connected") listenerReady = true;
+            if (event.state === "reconnecting" || event.state === "error")
+              listenerReady = false;
+          } catch {
+            // Ignore non-lifecycle startup output.
+          }
+        });
         child.stderr?.on("data", (chunk: Buffer) => {
           stderrByRole.set(
             role,
@@ -193,23 +211,29 @@ testWithAPI.each([
             }
           });
         }
-        const connectionId = await poll(`${role} registration`, async () => {
-          if (
-            spawnFailed ||
-            child.exitCode !== null ||
-            child.signalCode !== null
-          ) {
-            throw new Error(`${role} listener exited before registration`);
-          }
-          const result = await request<ListEnvironmentsResponse>(
-            "/v1/environments?limit=100&onlineOnly=true",
-          );
-          const environment = result.connections.find(
-            (item) => item.connectionName === name,
-          );
-          if (environment) environmentIds.add(environment.id);
-          return environment?.connectionId ?? undefined;
-        });
+        stage = `${role} registration and listener readiness`;
+        const connectionId = await poll(
+          `${stage} (expected connected lifecycle event)`,
+          async () => {
+            if (
+              spawnFailed ||
+              child.exitCode !== null ||
+              child.signalCode !== null
+            ) {
+              throw new Error(`${role} listener exited before registration`);
+            }
+            const result = await request<ListEnvironmentsResponse>(
+              "/v1/environments?limit=100&onlineOnly=true",
+            );
+            const environment = result.connections.find(
+              (item) => item.connectionName === name,
+            );
+            if (environment) environmentIds.add(environment.id);
+            return listenerReady
+              ? (environment?.connectionId ?? undefined)
+              : undefined;
+          },
+        );
         const client = new AppServerClient({
           url: new URL(
             `/v1/environments/${encodeURIComponent(connectionId)}/status/ws`,
@@ -221,6 +245,12 @@ testWithAPI.each([
         });
         clients.push(client);
         await bounded(`${role} status WebSocket`, client.connect());
+        stage = `${role} API backend readiness`;
+        const info = await client.info();
+        // Teleport probes report supported only on the API backend. In
+        // particular, the destination must override its saved local preference.
+        expect(info.success).toBe(true);
+        expect(info.backend).toBe("api");
         return { client, connectionId };
       }
 
