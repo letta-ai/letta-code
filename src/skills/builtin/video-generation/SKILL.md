@@ -40,8 +40,8 @@ Fields on each model worth knowing: `supported_resolutions`, `supported_aspect_r
 
 Recommendation as of 2026-10-29. Video models move fast, so this will go stale; public leaderboards such as [Artificial Analysis](https://artificialanalysis.ai/video/leaderboard/text-to-video) are one rough signal of what's newer, not a verdict. Only pick models that `/v1/videos/models` lists.
 
-- **Default, when quality matters and there's time:** `bytedance/seedance-2.5`. Top tier on the leaderboard, native audio, clips up to 30s. Renders take about 4–6 minutes and it is the most expensive per second.
-- **Fast:** `minimax/hailuo-3-max` (MiniMax H3). Also top tier; renders in well under a minute at a fraction of Seedance's cost. Use it for quick replies in a live thread or for iterating on a prompt, then rerun the final cut on Seedance.
+- **Default, when quality matters and there's time:** `bytedance/seedance-2.5`. Top tier on the leaderboard, native audio, clips up to 30s. Renders take about 4–6 minutes.
+- **Fast:** `minimax/hailuo-3-max` (MiniMax H3). Also top tier; renders in well under a minute. Use it for quick replies in a live thread or for iterating on a prompt, then rerun the final cut on Seedance.
 - Other top-tier models on the endpoint include `alibaba/wan-3.0`, `black-forest-labs/flux-3-video` and `heygen/heygen-video-1`. Some providers filter prompts more strictly than others; if one rejects a prompt, try another model rather than rewording around the filter.
 - `heygen/avatar-iv` makes a talking head from one photo.
 
