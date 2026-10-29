@@ -465,12 +465,7 @@ describe("Startup Flow - Integration", () => {
         ).toMatchObject({
           agent_id: null,
           parent_agent_id: parentId ?? null,
-          system: workerSystem,
-          in_context_message_ids: expect.arrayContaining(
-            originalHistory.items
-              .filter((message) => message.message_type === "user_message")
-              .map((message) => message.id),
-          ),
+          is_subagent: true,
         });
         // Assert durable history, not whether a model follows competing wording
         // instructions. The second CLI process must append to the same history.
@@ -480,6 +475,15 @@ describe("Startup Flow - Integration", () => {
           expect.arrayContaining(
             originalHistory.items.map((message) => message.id),
           ),
+        );
+        // The conversation response has no system field. Its persisted prompt
+        // is exposed as a system message by the conversation messages endpoint.
+        expect(
+          history.items.flatMap((message) =>
+            message.message_type === "system_message" ? [message.content] : [],
+          ),
+        ).toEqual(
+          expect.arrayContaining([expect.stringContaining(workerSystem)]),
         );
         const userTexts = history.items.flatMap((message) => {
           if (message.message_type !== "user_message") return [];
