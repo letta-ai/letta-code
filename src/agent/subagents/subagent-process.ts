@@ -1,4 +1,5 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 
 const DEFAULT_FORCE_KILL_GRACE_MS = 2_000;
@@ -120,11 +121,12 @@ export function spawnSubagentProcess(
   args: string[],
   options: SpawnSubagentProcessOptions,
 ): RunningSubagentProcess {
-  const childProcess = spawn(command, args, {
+  // Default stdio is "pipe", so all three streams exist.
+  const childProcess = getCommandProcessFactory()(command, args, {
     cwd: options.cwd,
     env: options.env,
     detached: process.platform !== "win32",
-  });
+  }) as ChildProcessWithoutNullStreams;
   let aborted = false;
   let termination: Promise<void> = Promise.resolve();
 

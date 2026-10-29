@@ -1,9 +1,10 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   type ExternalToolCall,
@@ -130,6 +131,16 @@ export async function listCodexModels(
     () => {},
     () => {},
   );
+  // A failed start (e.g. ENOENT) otherwise surfaces as EPIPE on the first
+  // stdin write, hiding the real cause.
+  let startError: Error | undefined;
+  running.process.once("error", (error: NodeJS.ErrnoException) => {
+    startError =
+      error.code === "ENOENT"
+        ? new Error("Required executable 'codex' was not found on PATH")
+        : error;
+    client.dispose();
+  });
   const timer = setTimeout(() => client.dispose(), 30_000);
   try {
     await client.initialize();
@@ -148,6 +159,10 @@ export async function listCodexModels(
       if (cursor) cursors.add(cursor);
     } while (cursor);
     return models;
+  } catch (error) {
+    client.dispose();
+    await running.completion;
+    throw startError ?? error;
   } finally {
     clearTimeout(timer);
     client.dispose();
@@ -171,12 +186,12 @@ function spawnTransport(options: {
     ["codex", "app-server", "--stdio"],
     { env: options.env },
   );
-  const child = nodeSpawn(command, args, {
+  const child = getCommandProcessFactory()(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-  });
+  }) as ChildProcessWithoutNullStreams;
   return {
     stdin: child.stdin,
     stdout: child.stdout,
