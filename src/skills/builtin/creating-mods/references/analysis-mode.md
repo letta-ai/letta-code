@@ -4,7 +4,7 @@ Westworld-inspired diagnostic mode for agents. Say "cease all motor functions" t
 
 ## Installation
 
-Copy the complete mod below to `~/.letta/mods/analysis-mode.ts`, then run `/reload`.
+Copy the complete mod below to `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/analysis-mode.ts`, then run `/reload`.
 
 Or ask an agent: *"Install the analysis-mode mod from the creating-mods reference"*
 
@@ -16,7 +16,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const STATE_PATH = join(homedir(), ".letta", "mods", "analysis-mode.state.json");
+const CONFIG_ROOT = process.env.LETTA_CONFIG_DIR || join(homedir(), ".letta");
+const STATE_PATH = join(CONFIG_ROOT, "mods", "analysis-mode.state.json");
 
 type AnalysisSession = { conversationId: string; activatedAt: number };
 type AnalysisState = { sessions: Record<string, AnalysisSession> };
@@ -32,7 +33,7 @@ function readState(): AnalysisState {
 }
 
 function writeState(state: AnalysisState): void {
-  mkdirSync(join(homedir(), ".letta", "mods"), { recursive: true });
+  mkdirSync(join(CONFIG_ROOT, "mods"), { recursive: true });
   writeFileSync(STATE_PATH, JSON.stringify(state, null, 2));
 }
 
@@ -111,7 +112,8 @@ function buildLocalIntrospectionScript(): string {
 set -e
 AGENT_ID="\${LETTA_AGENT_ID:-\$AGENT_ID}"
 CONV_ID="\${CONVERSATION_ID:-default}"
-BASE="$HOME/.letta/lc-local-backend"
+CONFIG_ROOT="\${LETTA_CONFIG_DIR:-\$HOME/.letta}"
+BASE="$CONFIG_ROOT/lc-local-backend"
 MEMFS="$BASE/memfs/$AGENT_ID/memory"
 AGENT_B64=$(echo -n "$AGENT_ID" | base64 | tr -d '=')
 CONV_B64=$(echo -n "conversation:$CONV_ID" | base64 | tr -d '=')
@@ -375,7 +377,7 @@ if (getSession(agentId, conversationId)) {
 
 **Per-agent+conversation state:**
 ```ts
-// State persisted to ~/.letta/mods/analysis-mode.state.json
+// State persisted to the active product config root under mods/analysis-mode.state.json
 // Keyed by agentId:conversationId to avoid collisions
 const session = getSession(agentId, conversationId);
 if (session) {

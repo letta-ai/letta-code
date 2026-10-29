@@ -1,3 +1,4 @@
+import { readMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
 import { isDebugEnabled } from "@/utils/debug";
@@ -12,12 +13,9 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
+import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
-import {
-  scheduleQueuePump,
-  shouldProcessInboundMessageDirectly,
-  shouldQueueInboundMessage,
-} from "./queue";
+import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -39,8 +37,26 @@ export function createIncomingMessage(
   scope: ConversationRuntimeScope,
   payload: InputCreateMessagePayload,
   connectionId?: ListenerConnectionId,
-  terminalConsumerId?: string,
+  // The delivery fields' declared types live on InputCommand
+  // (protocol_v2.ts); they are unknown here because the raw wire frame is
+  // validated by readMcpOriginatorDelivery before either is trusted.
+  frame?: {
+    terminal_consumer_id?: string | null;
+    super_run_id?: unknown;
+    mcp_originator_token?: unknown;
+    mcp_originator_generation?: unknown;
+  },
 ): IncomingMessage {
+  // MCP originator delivery (USER_SCOPED_MCP_CONNECTIONS): the IncomingMessage
+  // carries just the super run id — it is persisted by the durable input
+  // ledger, and the token must never touch disk. The delivery rides the
+  // TOP-LEVEL relay frame (never inside the user-message payload, which is
+  // persisted), so it is read from the frame, not the payload. The token
+  // itself reaches the in-memory store only when the input is ACCEPTED (see
+  // recordMcpOriginatorDelivery in message-router's acknowledge path), so
+  // rejected/dropped inputs never strand credentials.
+  const mcpOriginator = readMcpOriginatorDelivery(frame);
+  const terminalConsumerId = frame?.terminal_consumer_id ?? undefined;
   return {
     type: "message",
     connectionId,
@@ -55,6 +71,12 @@ export function createIncomingMessage(
     imageFailureMode: payload.image_failure_mode,
     ...(terminalConsumerId
       ? { terminalConsumerIds: [terminalConsumerId] }
+      : {}),
+    ...(mcpOriginator.superRunId
+      ? { mcpOriginatorSuperRunId: mcpOriginator.superRunId }
+      : {}),
+    ...(mcpOriginator.superRunId
+      ? { mcpOriginatorTokenPresent: Boolean(mcpOriginator.token) }
       : {}),
     messages: payload.messages,
   };
@@ -77,6 +99,10 @@ export function dispatchInboundMessageWhenReady(params: {
   onInputAccepted?: (result: {
     accepted: boolean;
     disposition?: "started" | "queued";
+    /** True when the accept re-acks an already-admitted input (no new owner). */
+    duplicate?: boolean;
+    /** Proof the durable ledger still shows a live owner for the input. */
+    mayRecreateOwner?: () => boolean;
   }) => void;
   forgetQueuedInput?: typeof forgetQueuedInputDisposition;
   enqueueInput?: typeof enqueueInboundUserMessage;
@@ -100,6 +126,8 @@ export function dispatchInboundMessageWhenReady(params: {
   const acknowledgeInput = (result: {
     accepted: boolean;
     disposition?: "started" | "queued";
+    duplicate?: boolean;
+    mayRecreateOwner?: () => boolean;
   }): void => {
     if (inputAcknowledged) return;
     inputAcknowledged = true;
@@ -132,9 +160,14 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
+        // Refresh-only re-ack: the originator token store may recreate a
+        // lost entry only while the durable ledger shows a live owner for
+        // this input; terminal tombstones fail the proof and stay rejected.
         acknowledgeInput({
           accepted: true,
           disposition: admission.disposition,
+          duplicate: true,
+          mayRecreateOwner: liveAcceptedInputOwnerProof(runtime, identity),
         });
         return;
       }
@@ -167,10 +200,7 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
-        if (
-          shouldQueueInboundMessage(incoming) &&
-          !shouldProcessInboundMessageDirectly(runtime, incoming)
-        ) {
+        if (shouldQueueInboundMessage(incoming)) {
           // The replayable payload and queued disposition commit before the
           // volatile enqueue and before acknowledgement. A crash at either
           // boundary is recovered from the durable payload on process startup.
@@ -220,9 +250,6 @@ export function dispatchInboundMessageWhenReady(params: {
           options.onStatusChange,
           options.connectionId,
         );
-        // Queued turns store the actor on the queue item. Direct turns skip
-        // that item, so carry the actor and durable identity on the replayable
-        // message committed before acknowledgement.
         if (
           !commitInputDisposition(runtime, reservation, "started", {
             incoming: attributedIncoming,
@@ -233,25 +260,14 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
-        const directBatchId = `batch-direct-${crypto.randomUUID()}`;
-        if (identity) {
-          runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [
-            identity,
-          ]);
-        }
         acknowledgeInput({ accepted: true, disposition: "started" });
-        try {
-          await processIncomingMessage(
-            attributedIncoming,
-            getOrCreateProcessTransport(listener),
-            runtime,
-            options.onStatusChange,
-            options.connectionId,
-            directBatchId,
-          );
-        } finally {
-          runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
-        }
+        await processIncomingMessage(
+          attributedIncoming,
+          getOrCreateProcessTransport(listener),
+          runtime,
+          options.onStatusChange,
+          options.connectionId,
+        );
         emitListenerStatus(
           listener,
           options.onStatusChange,

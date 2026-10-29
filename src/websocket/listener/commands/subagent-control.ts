@@ -6,9 +6,11 @@ import {
 } from "@/runtime-context";
 import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import { sendCodexMessage } from "@/tools/impl/codex-app-server";
+import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
   isExternalCodingAgentType,
   parseExternalCodingAgentId,
+  resolveExternalCodingAgentSecretEnv,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
@@ -85,6 +87,7 @@ function runtimeContext(
       parent.conversationId,
     ),
     skillSources: parent.skillSources,
+    bundledSkills: parent.bundledSkills,
     workspaceSandbox: parent.workspaceSandbox,
     executionSettings: parent.executionSettings,
   };
@@ -134,39 +137,54 @@ export async function handleSubagentMessageCommand(
 
       let captureReservation: NativeSessionCaptureReservation | undefined;
       const source = target.type === "claude-code" ? "claude_code" : "codex";
+      const secrets =
+        target.type === "cursor"
+          ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
+          : {};
       const receipt = await runOutsideRuntimeContext(() =>
         runWithRuntimeContext(runtimeContext(parent, command), () =>
-          target.type === "claude-code"
-            ? (deps.sendClaude ?? sendClaudeMessage)({
-                sessionId: target.sessionId,
-                prompt: command.message,
-                parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
+          target.type === "cursor"
+            ? sendCursorMessage(
+                {
+                  sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
                 },
-              })
-            : (deps.sendCodex ?? sendCodexMessage)({
-                threadId: target.sessionId,
-                prompt: command.message,
-                parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
-                },
-              }),
+                { ...process.env, ...secrets },
+                secrets,
+              )
+            : target.type === "claude-code"
+              ? (deps.sendClaude ?? sendClaudeMessage)({
+                  sessionId: target.sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
+                  beforeStart: async () => {
+                    captureReservation = await (
+                      deps.reserveCapture ?? reserveNativeSessionCapture
+                    )(source, sessionId, {
+                      agentId: command.runtime.agent_id,
+                      conversationId: command.runtime.conversation_id,
+                      actingUserId: command.runtime.acting_user_id,
+                    });
+                  },
+                })
+              : (deps.sendCodex ?? sendCodexMessage)({
+                  threadId: target.sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
+                  beforeStart: async () => {
+                    captureReservation = await (
+                      deps.reserveCapture ?? reserveNativeSessionCapture
+                    )(source, sessionId, {
+                      agentId: command.runtime.agent_id,
+                      conversationId: command.runtime.conversation_id,
+                      actingUserId: command.runtime.acting_user_id,
+                    });
+                  },
+                }),
         ),
       );
       if (receipt.mode === "steered")
@@ -187,7 +205,16 @@ export async function handleSubagentMessageCommand(
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
+          // This handler always runs on the worker, for a parent runtime that
+          // only exists here as a sideband control scope. Mirror the
+          // `notify: "caller"` launch contract: publish the result back to the
+          // caller and let its own listener raise the notice. Emitting it here
+          // would start a turn on the caller's conversation from the worker's
+          // machine, and claiming the runtime would make Cloud route the
+          // caller's deliveries to this sandbox.
           publishResult: true,
+          emitCompletionNotification: false,
+          claimsParentRuntime: false,
         });
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);

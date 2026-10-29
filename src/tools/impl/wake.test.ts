@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ApiRequestError } from "@/backend/api/request";
 import type { CloudSchedule } from "@/backend/api/schedules";
 import { type CronTask, listTasks } from "@/cron";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -215,31 +216,202 @@ describe("Wake", () => {
     });
   });
 
-  test("cancels only a wake visible in the current conversation", async () => {
+  test("lists and cancels a NULL-backed wake from the default conversation", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
-    const deleted: string[] = [];
+    const defaultScope = { ...SCOPE, conversationId: "default" };
+    const nullBacked = cloudSchedule({ conversation_id: null });
+    let deleted = false;
     const deps = {
       listLocal: () => [],
       listCloud: async () => ({
-        scheduled_messages: [cloudSchedule()],
+        scheduled_messages: [
+          nullBacked,
+          cloudSchedule({ id: "other", conversation_id: "conv-other" }),
+        ],
         has_next_page: false,
       }),
-      deleteCloud: async (_agentId: string, id: string) => {
-        deleted.push(id);
+      getLocal: () => null,
+      getCloud: async () => nullBacked,
+      deleteCloud: async () => {
+        deleted = true;
       },
     };
 
-    const missing = await inScope(() =>
-      wake({ action: "cancel", id: "other" }, deps),
+    const listed = await runWithRuntimeContext(defaultScope, () =>
+      wake({ action: "list" }, deps),
     );
-    expect(missing.status).toBe("error");
-    expect(deleted).toEqual([]);
+    expect(payload(listed)).toMatchObject({
+      conversation_id: "default",
+      wakes: [{ id: "schedule-cloud", runner: "cloud" }],
+    });
 
-    const cancelled = await inScope(() =>
+    const cancelled = await runWithRuntimeContext(defaultScope, () =>
       wake({ action: "cancel", id: "schedule-cloud" }, deps),
     );
     expect(cancelled.status).toBe("success");
-    expect(deleted).toEqual(["schedule-cloud"]);
+    expect(deleted).toBe(true);
+  });
+
+  test("reads and cancels an exact Cloud wake without listing schedules", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const reads: unknown[][] = [];
+    const deletes: unknown[][] = [];
+    let listCalls = 0;
+
+    const cancelled = await inScope(() =>
+      wake(
+        { action: "cancel", id: "schedule-cloud" },
+        {
+          getLocal: () => null,
+          listLocal: () => {
+            listCalls += 1;
+            return [];
+          },
+          listCloud: async () => {
+            listCalls += 1;
+            return { scheduled_messages: [], has_next_page: false };
+          },
+          getCloud: async (...args) => {
+            reads.push(args);
+            return cloudSchedule();
+          },
+          deleteCloud: async (...args) => {
+            deletes.push(args);
+          },
+        },
+      ),
+    );
+
+    expect(cancelled.status).toBe("success");
+    expect(listCalls).toBe(0);
+    expect(reads).toEqual([
+      [SCOPE.agentId, "schedule-cloud", SCOPE.actingUserId],
+    ]);
+    expect(deletes).toEqual([
+      [SCOPE.agentId, "schedule-cloud", SCOPE.actingUserId],
+    ]);
+  });
+
+  test("does not cancel an exact Cloud wake owned by another conversation", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    let deleted = false;
+    let listCalls = 0;
+
+    const result = await inScope(() =>
+      wake(
+        { action: "cancel", id: "schedule-cloud" },
+        {
+          getLocal: () => null,
+          listLocal: () => {
+            listCalls += 1;
+            return [];
+          },
+          listCloud: async () => {
+            listCalls += 1;
+            return { scheduled_messages: [], has_next_page: false };
+          },
+          getCloud: async () =>
+            cloudSchedule({ conversation_id: "conv-other" }),
+          deleteCloud: async () => {
+            deleted = true;
+          },
+        },
+      ),
+    );
+
+    expect(result.status).toBe("error");
+    expect(payload(result).error).toBe(
+      "Wake schedule-cloud was not found in the current conversation.",
+    );
+    expect(listCalls).toBe(0);
+    expect(deleted).toBe(false);
+  });
+
+  test("preserves not-found behavior for an exact Cloud wake", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    let listCalls = 0;
+
+    const result = await inScope(() =>
+      wake(
+        { action: "cancel", id: "missing" },
+        {
+          getLocal: () => null,
+          listLocal: () => {
+            listCalls += 1;
+            return [];
+          },
+          listCloud: async () => {
+            listCalls += 1;
+            return { scheduled_messages: [], has_next_page: false };
+          },
+          getCloud: async () => {
+            throw new ApiRequestError("not found", 404, "");
+          },
+          deleteCloud: async () => {
+            throw new Error("delete should not be called");
+          },
+        },
+      ),
+    );
+
+    expect(result.status).toBe("error");
+    expect(payload(result).error).toBe(
+      "Wake missing was not found in the current conversation.",
+    );
+    expect(listCalls).toBe(0);
+  });
+
+  test("preserves non-not-found errors from an exact Cloud read", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+
+    const result = await inScope(() =>
+      wake(
+        { action: "cancel", id: "schedule-cloud" },
+        {
+          getLocal: () => null,
+          getCloud: async () => {
+            throw new ApiRequestError("schedule service unavailable", 503, "");
+          },
+        },
+      ),
+    );
+
+    expect(result.status).toBe("error");
+    expect(payload(result).error).toBe("schedule service unavailable");
+  });
+
+  test("cancels an exact local wake without listing schedules", async () => {
+    let listCalls = 0;
+    let deletedId: string | undefined;
+
+    const result = await inScope(() =>
+      wake(
+        { action: "cancel", id: "schedule-local" },
+        {
+          getLocal: () => localTask(),
+          listLocal: () => {
+            listCalls += 1;
+            return [];
+          },
+          listCloud: async () => {
+            listCalls += 1;
+            return { scheduled_messages: [], has_next_page: false };
+          },
+          getCloud: async () => {
+            throw new Error("Cloud read should not be called");
+          },
+          deleteLocal: (id) => {
+            deletedId = id;
+            return true;
+          },
+        },
+      ),
+    );
+
+    expect(result.status).toBe("success");
+    expect(payload(result)).toMatchObject({ runner: "local" });
+    expect(listCalls).toBe(0);
+    expect(deletedId).toBe("schedule-local");
   });
 
   test("rejects ambiguous timing and high-frequency recurring wakes", async () => {

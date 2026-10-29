@@ -14,6 +14,7 @@ import {
   deleteTask,
   garbageCollect,
   getActiveTasks,
+  getCronFilePath,
   getTask,
   hasLiveSchedulerOwner,
   isProcessAlive,
@@ -29,6 +30,7 @@ import {
   verifySchedulerLease,
   withLock,
 } from "@/cron/cron-file";
+import { __testOverridePidReuseProbe } from "@/cron/process-identity";
 
 // ── Test setup ──────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ const _LOCK_PATH = path.join(TEST_DIR, "crons.lock");
 // We need to use the module's own path resolution, so we'll set
 // LETTA_HOME to point to our test directory.
 const origHome = process.env.LETTA_HOME;
+const origConfigDir = process.env.LETTA_CONFIG_DIR;
 const origXdg = process.env.XDG_CONFIG_HOME;
 
 beforeEach(() => {
@@ -53,19 +56,30 @@ beforeEach(() => {
   // We'll test addTask/listTasks/deleteTask through the public API
   // by setting LETTA_HOME.
   process.env.LETTA_HOME = TEST_DIR;
+  delete process.env.LETTA_CONFIG_DIR;
 });
 
 afterEach(() => {
   __testFailNextRefreshSchedulerLease(false);
   __testThrowNextRefreshSchedulerLease(false);
   __testOverrideReadProcessIdentity(null);
+  __testOverridePidReuseProbe(null);
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true });
   }
   if (origHome) process.env.LETTA_HOME = origHome;
   else delete process.env.LETTA_HOME;
+  if (origConfigDir) process.env.LETTA_CONFIG_DIR = origConfigDir;
+  else delete process.env.LETTA_CONFIG_DIR;
   if (origXdg) process.env.XDG_CONFIG_HOME = origXdg;
   else delete process.env.XDG_CONFIG_HOME;
+});
+
+test("product config root takes precedence over legacy LETTA_HOME", () => {
+  const productConfigDir = path.join(TEST_DIR, ".dream");
+  process.env.LETTA_CONFIG_DIR = productConfigDir;
+
+  expect(getCronFilePath()).toBe(path.join(productConfigDir, "crons.json"));
 });
 
 // ── Helper ──────────────────────────────────────────────────────────
@@ -748,6 +762,39 @@ describe("scheduler lease", () => {
         process_start_ticks: "200",
         boot_id: "boot-a",
       }),
+    );
+  });
+
+  test("without /proc identity, reclaims a pre-boot lease only when its live pid is not letta", () => {
+    __testOverrideReadProcessIdentity(() => null);
+    const writePreBootOwner = () =>
+      writeFileSync(
+        _CRON_PATH,
+        JSON.stringify({
+          version: 1,
+          scheduler_owner: {
+            pid: process.ppid,
+            token: "pre-boot-token",
+            started_at: new Date(Date.now() - 86_400_000).toISOString(),
+          },
+          tasks: [],
+        }),
+      );
+    const probe = (command: string | null) =>
+      __testOverridePidReuseProbe({
+        platform: "darwin",
+        bootTimeMs: () => Date.now() - 3_600_000,
+        getProcessCommand: () => command,
+      });
+
+    writePreBootOwner();
+    probe("node /usr/local/bin/letta server");
+    expect(() => claimSchedulerLease()).toThrow(/Cannot claim/);
+
+    probe("/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird");
+    const token = claimSchedulerLease();
+    expect(readCronFile().scheduler_owner).toEqual(
+      expect.objectContaining({ pid: process.pid, token }),
     );
   });
 });

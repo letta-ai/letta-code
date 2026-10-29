@@ -1,5 +1,6 @@
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "@/channels/accounts";
+import { getChannelAccountsPath } from "@/channels/config";
 import type {
   DmPolicy,
   SignalChannelAccount,
@@ -731,7 +732,7 @@ export async function runSignalSetup(): Promise<boolean> {
 
     upsertChannelAccount("signal", accountRecord);
     console.log("\n✓ Signal account configured!");
-    console.log("Config written to: ~/.letta/channels/signal/accounts.json\n");
+    console.log(`Config written to: ${getChannelAccountsPath("signal")}\n`);
     console.log("Next steps:");
     console.log("  1. Start/restart: letta server --channels signal");
     console.log("  2. Send the Signal account a DM to receive a pairing code");

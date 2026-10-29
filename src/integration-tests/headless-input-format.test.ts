@@ -733,7 +733,10 @@ describe("input-format stream-json", () => {
         ).toBe(false);
 
         expect(results[0]?.result?.trim()).toBe("LAUNCHED");
-        expect(result?.result?.trim()).toBe(fixture.expectedReport);
+        // The report token is unique per run and only reachable through the
+        // child, so finding it proves the handoff without depending on how the
+        // model frames its final sentence.
+        expect(result?.result).toContain(fixture.expectedReport);
       } finally {
         await rm(fixture.rootDir, { recursive: true, force: true });
       }

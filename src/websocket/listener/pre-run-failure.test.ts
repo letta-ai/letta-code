@@ -18,6 +18,7 @@ import {
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
+import { createConnectionTurnProcessor } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createRuntime } from "./lifecycle";
@@ -133,6 +134,7 @@ test.each([
         conversation_id: conversation.id,
       });
       let accepted = false;
+      const processQueuedTurn = createConnectionTurnProcessor(listener);
       dispatchInboundMessageWhenReady({
         listener,
         runtime,
@@ -151,9 +153,7 @@ test.each([
           ],
         },
         processIncomingMessage: handleIncomingMessage,
-        processQueuedTurn: async () => {
-          throw new Error("should start directly");
-        },
+        processQueuedTurn,
         trackListenerError: (_type, error) => {
           throw error;
         },
@@ -172,6 +172,7 @@ test.each([
               });
             }, 500)
           : null;
+      await runtime.messageQueue;
       await runtime.messageQueue;
       if (terminalBackpressureRelease) {
         clearTimeout(terminalBackpressureRelease);

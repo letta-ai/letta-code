@@ -15,7 +15,7 @@ Default to a single mod file unless the user asks for something larger.
 
 | Location | Use when |
 | --- | --- |
-| `~/.letta/mods/foo.ts` | The behavior should apply to local sessions on this machine. Use this by default. |
+| `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/foo.ts` | The behavior should apply to local sessions for the active product on this machine. Use this by default. |
 | `$MEMORY_DIR/mods/foo.ts` | The behavior should travel with one agent's MemFS/memory. |
 
 Do not create project mods.
@@ -41,7 +41,7 @@ Default to a **tool** when the model should decide when to use the capability. D
 
 ## Workflow
 
-1. Pick the target scope: harness mod file (`~/.letta/mods/`) by default, or agent mod file (`$MEMORY_DIR/mods/`) only when the behavior should travel with this agent.
+1. Pick the target scope: active-product mod file (`${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/`) by default, or agent mod file (`$MEMORY_DIR/mods/`) only when the behavior should travel with this agent.
 2. Inspect the relevant mods directory for related files.
 3. Preserve unrelated mod code. Prefer a focused new file if merging would be messy.
 4. Choose the mod shape and load only the needed recipe:
@@ -112,7 +112,7 @@ Use `letta.diagnostics.report({ message, severity })` sparingly as a debug utili
 Agents can inspect local mod diagnostics at:
 
 ```text
-~/.letta/mods/diagnostics/latest.json
+${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/diagnostics/latest.json
 ```
 
 ## Rules

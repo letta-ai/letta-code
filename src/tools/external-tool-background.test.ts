@@ -286,3 +286,129 @@ describe("external tool auto-backgrounding", () => {
     expect(notifications).toEqual([]);
   });
 });
+
+describe("external tool cancel racing (turn abort signal)", () => {
+  test("non-backgroundable tool settles immediately when the turn aborts", async () => {
+    // Regression: a cancelled turn used to block on the remote tool result
+    // until the bridge timeout (up to 5 minutes) because nothing raced the
+    // wait against the turn's abort signal.
+    const controller = new AbortController();
+    let settleOperation!: () => void;
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      (resolve) => {
+        settleOperation = () =>
+          resolve({ status: "success", toolReturn: "late real result" });
+      },
+    );
+    const resultPromise = autoBackgroundExternalTool(
+      "slow_remote",
+      undefined,
+      operation,
+      { signal: controller.signal },
+    );
+    await Bun.sleep(10);
+    controller.abort();
+    const result = await resultPromise;
+    expect(result.status).toBe("error");
+    expect(String(result.toolReturn)).toContain("interrupted by user");
+    expect(String(result.toolReturn)).toContain("outcome is unknown");
+    // The underlying operation keeps running; settling it later must not
+    // produce an unhandled rejection through the raced wrapper.
+    settleOperation();
+    await Bun.sleep(0);
+  });
+
+  test("pre-aborted signal settles without waiting for the operation", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      () => {},
+    );
+    const result = await autoBackgroundExternalTool(
+      "slow_remote",
+      undefined,
+      operation,
+      { signal: controller.signal },
+    );
+    expect(result.status).toBe("error");
+    expect(String(result.toolReturn)).toContain("interrupted by user");
+  });
+
+  test("backgroundable tool aborted inside the foreground window unwinds the wait", async () => {
+    const controller = new AbortController();
+    const notifications: unknown[] = [];
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      () => {},
+    );
+    const resultPromise = autoBackgroundExternalTool(
+      "slow_remote",
+      listenerTool,
+      operation,
+      {
+        yieldMs: 10_000,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+        signal: controller.signal,
+      },
+    );
+    await Bun.sleep(10);
+    controller.abort();
+    const result = await resultPromise;
+    expect(result.status).toBe("error");
+    expect(String(result.toolReturn)).toContain("interrupted by user");
+    expect(notifications).toEqual([]);
+  });
+
+  test("backgroundable tool that already yielded ignores a later abort", async () => {
+    // Post-yield the turn is no longer blocked on the tool, so the abort must
+    // NOT race the detached operation: the real result still arrives as a
+    // task notification.
+    const controller = new AbortController();
+    let settleOperation!: () => void;
+    const notifications: Array<{ text: string }> = [];
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      (resolve) => {
+        settleOperation = () =>
+          resolve({ status: "success", toolReturn: "real result" });
+      },
+    );
+    const receipt = await autoBackgroundExternalTool(
+      "slow_remote",
+      listenerTool,
+      operation,
+      {
+        yieldMs: 10,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+        signal: controller.signal,
+      },
+    );
+    expect(receipt.status).toBe("success");
+    expect(String(receipt.toolReturn)).toContain("external_");
+
+    controller.abort();
+    settleOperation();
+    await Bun.sleep(0);
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.text).toContain("real result");
+  });
+
+  test("no signal keeps the blocking wait for backward compatibility", async () => {
+    let settleOperation!: () => void;
+    const operation = new Promise<{ status: "success"; toolReturn: string }>(
+      (resolve) => {
+        settleOperation = () =>
+          resolve({ status: "success", toolReturn: "real result" });
+      },
+    );
+    const resultPromise = autoBackgroundExternalTool(
+      "slow_remote",
+      undefined,
+      operation,
+    );
+    await Bun.sleep(10);
+    settleOperation();
+    const result = await resultPromise;
+    expect(result).toEqual({ status: "success", toolReturn: "real result" });
+  });
+});

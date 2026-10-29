@@ -28,6 +28,7 @@ import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import { getInboundImageFailureModes } from "./image-policy";
 import { consumeInterruptQueue } from "./interrupts";
+import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
 import {
   createListenerAgentModContext,
   createListenerModEvents,
@@ -331,6 +332,7 @@ export async function prepareListenerTurn(params: {
     conversationId,
     actingUserId: msg.actingUserId,
     suppressActingUserFallback: msg.suppressActingUserFallback,
+    mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.
@@ -342,6 +344,7 @@ export async function prepareListenerTurn(params: {
     permissionModeState,
     skillsDirectory: listenerOptions?.skillsDirectory,
     skillSources: runtime.skillSources,
+    bundledSkills: runtime.bundledSkills,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
     cachedAgent,
@@ -359,6 +362,7 @@ export async function prepareListenerTurn(params: {
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
+      bundledSkills: runtime.bundledSkills,
     })
   ).availableSkills;
   if (isInterrupted()) {
@@ -377,6 +381,7 @@ export async function prepareListenerTurn(params: {
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
       skillSources: runtime.skillSources,
+      bundledSkills: runtime.bundledSkills,
     },
   );
   if (isInterrupted()) return { kind: "interrupted" };

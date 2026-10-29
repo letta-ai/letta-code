@@ -42,7 +42,7 @@ export interface BackgroundProcess {
   actingUserId?: string | null;
   kind?: "monitor" | "workflow";
   description?: string;
-  monitorSource?: "command" | "websocket" | "github_pull_request";
+  monitorSource?: "command" | "websocket" | "script" | "github_pull_request";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**

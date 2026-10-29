@@ -34,7 +34,7 @@ export type ExternalToolExecutor = (
   toolCallId: string,
   toolName: string,
   input: Record<string, unknown>,
-  context?: { tool: ExternalToolDefinition },
+  context?: { tool: ExternalToolDefinition; signal?: AbortSignal },
 ) => Promise<{
   content: Array<{
     type: string;

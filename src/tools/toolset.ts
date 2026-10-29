@@ -294,6 +294,8 @@ export async function prepareToolExecutionContextForScope(params: {
   conversationId?: string | null;
   actingUserId?: string;
   suppressActingUserFallback?: boolean;
+  /** Cloud super run owning this turn, when the relay delivered one. */
+  mcpOriginatorSuperRunId?: string;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -305,6 +307,7 @@ export async function prepareToolExecutionContextForScope(params: {
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
   skillSources?: SkillSource[];
+  bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
   cachedAgent?: AgentState | null;
@@ -319,6 +322,7 @@ export async function prepareToolExecutionContextForScope(params: {
     conversationId,
     actingUserId,
     suppressActingUserFallback,
+    mcpOriginatorSuperRunId,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -330,6 +334,7 @@ export async function prepareToolExecutionContextForScope(params: {
     permissionModeState,
     skillsDirectory,
     skillSources,
+    bundledSkills,
     workspaceSandbox,
     executionSettings,
     cachedAgent,
@@ -433,9 +438,12 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(suppressActingUserFallback
         ? { suppressActingUserFallback: true }
         : {}),
+      // A newly scoped execution context must never inherit ambient authority.
+      mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
+      ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
     },

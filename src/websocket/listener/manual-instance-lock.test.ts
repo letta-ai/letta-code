@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   acquireManualListenerLock,
+  getManualListenerLockRoot,
   getManualListenerScopeHash,
   ManualListenerAlreadyRunningError,
   type ManualListenerLockScope,
@@ -29,6 +30,17 @@ describe("manual listener instance lock", () => {
 
   afterEach(async () => {
     await rm(lockRoot, { recursive: true, force: true });
+  });
+
+  test("uses the product config root for default lock ownership", () => {
+    const originalConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = path.join(lockRoot, ".dream");
+    try {
+      expect(getManualListenerLockRoot()).toBe(path.join(lockRoot, ".dream"));
+    } finally {
+      if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = originalConfigDir;
+    }
   });
 
   function acquire(
@@ -130,6 +142,44 @@ describe("manual listener instance lock", () => {
     await expect(acquire(SCOPE, 303, "owner-third")).rejects.toEqual(
       expect.objectContaining({ holderPid: 202 }),
     );
+    await replacement.release();
+  });
+
+  test("reclaims a pre-boot lock only when its live pid is not letta", async () => {
+    await acquire(SCOPE, 101, "owner-pre-reboot");
+    const acquireWith = (
+      processId: number,
+      bootTimeMs: number,
+      command: string | null,
+    ) =>
+      acquireManualListenerLock(SCOPE, {
+        lockRoot,
+        processId,
+        ownerToken: `owner-${processId}`,
+        isProcessAlive: () => true,
+        bootTimeMs,
+        getProcessCommand: () => command,
+      });
+    const beforeLock = Date.now() - 3_600_000;
+    const afterLock = Date.now() + 3_600_000;
+
+    // Same boot: the live incumbent still blocks.
+    await expect(
+      acquireWith(202, beforeLock, "/usr/libexec/unrelated"),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+    // Looks pre-boot (e.g. clock jump) but the pid is still a letta server.
+    await expect(
+      acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
+    ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
+
+    // After a reboot, pid 101 belongs to an unrelated process.
+    const replacement = await acquireWith(
+      303,
+      afterLock,
+      "/System/Library/PrivateFrameworks/CloudDocsDaemon.framework/bird",
+    );
+    const record = JSON.parse(await readFile(replacement.lockPath, "utf-8"));
+    expect(record.pid).toBe(303);
     await replacement.release();
   });
 

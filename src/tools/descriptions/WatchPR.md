@@ -1,5 +1,7 @@
 Watch one open github.com pull request until it merges, closes, is stopped with TaskStop, or the session ends.
 
+In managed Cloud sandboxes, WatchPR also stops after the per-sandbox cap configured by LETTA_MONITOR_MAX_TIMEOUT_MS (default 1 hour, clamped to 1 hour through 7 days) and sends a timeout notification. Call WatchPR again to re-arm it if you still need to watch. For much longer waits, use Wake or cron (which does not keep the sandbox running between turns) and combine it with shorter watches. Local watches have no duration limit.
+
 Use WatchPR instead of writing a Monitor or shell polling loop when you need ongoing notifications about a PR. Start at most one watch per PR. It reports:
 
 - current-head check failures, recoveries, retries, and completion;

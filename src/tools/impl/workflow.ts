@@ -111,6 +111,7 @@ export interface WorkflowSpawnerHandle {
    * directory for later spawns, keeping the spawner's continuation state.
    */
   refresh?: () => Promise<void>;
+  env?: Readonly<Record<string, string>>;
   /** TaskStop controller for background runs; absent for foreground runs. */
   backgroundStopController?: AbortController;
   cleanup(): Promise<void>;
@@ -267,6 +268,7 @@ function toolOptions(handle: WorkflowSpawnerHandle) {
       ? { builtinToolNames: handle.builtinToolNames }
       : {}),
     ...(handle.listTools ? { listTools: handle.listTools } : {}),
+    ...(handle.env ? { env: handle.env } : {}),
   };
 }
 

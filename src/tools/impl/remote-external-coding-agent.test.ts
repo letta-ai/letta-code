@@ -572,7 +572,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     [
       "claude-code",
       "not_installed",
-      "Claude Code isn't installed on brad-box. Install it there, or run a Letta subagent on that computer instead.",
+      "The Letta process on brad-box couldn't find or start Claude Code. Check its PATH and the CLI installation on that computer.",
     ],
     [
       "claude-code",
@@ -582,7 +582,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     [
       "codex",
       "not_installed",
-      "Codex isn't installed on brad-box. Install it there, or run a Letta subagent on that computer instead.",
+      "The Letta process on brad-box couldn't find or start Codex. Check its PATH and the CLI installation on that computer.",
     ],
     [
       "codex",

@@ -149,6 +149,8 @@ export interface SpawnBackgroundSubagentTaskArgs {
    * a normal task notification event.
    */
   emitCompletionNotification?: boolean;
+  /** Whether this entry claims the parent runtime; false for remote caller presentation. */
+  claimsParentRuntime?: boolean;
   /** Publish the truncated final report on the subagent state snapshot. */
   publishResult?: boolean;
   /**
@@ -234,6 +236,9 @@ export function spawnBackgroundSubagentTask(
       "Memory workers must run on the current machine; omit computer.",
     );
   }
+  if (args.subagentType === "memory" && !args.memoryRepairToken) {
+    throw new Error("Memory repair requires an attempt token");
+  }
   assertBackgroundTaskCapacity();
 
   const {
@@ -253,6 +258,7 @@ export function spawnBackgroundSubagentTask(
     silentCompletion: requestedSilentCompletion,
     emitCompletionNotification,
     publishResult,
+    claimsParentRuntime,
     completionSummary,
     onComplete,
     transcriptPath,
@@ -297,6 +303,7 @@ export function spawnBackgroundSubagentTask(
     silentCompletion,
     resolvedParentScope,
     prompt,
+    claimsParentRuntime,
   );
 
   const taskId = getNextTaskId();
@@ -369,7 +376,7 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
-          repairToken: args.memoryRepairToken,
+          repairToken: args.memoryRepairToken as string,
           signal: abortController.signal,
           subagentId,
           outputFile,
@@ -610,6 +617,12 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
+  if (args.subagent_type === "memory") {
+    return {
+      success: false,
+      error: "Memory edits belong in the parent agent; memory is harness-only.",
+    };
+  }
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -735,7 +748,11 @@ export async function launchSubagent(
   let effectiveConversationId = args.conversation_id;
 
   const callerNotification = args.notifyCaller
-    ? { emitCompletionNotification: false, publishResult: true }
+    ? {
+        emitCompletionNotification: false,
+        publishResult: true,
+        claimsParentRuntime: false,
+      }
     : {};
   if (isExternalCodingAgent) {
     const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
@@ -864,7 +881,7 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
-  if (config.fork && subagent_type !== "memory") {
+  if (config.fork) {
     if (args.agent_id || args.conversation_id) {
       return {
         success: false,
@@ -910,21 +927,11 @@ export async function launchSubagent(
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
     clientMessageId: args.client_message_id,
-    forkedContext: subagent_type !== "memory" && config.fork,
+    forkedContext: config.fork,
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
   });
-
-  if (subagent_type === "memory") {
-    return {
-      success: true,
-      task_id: taskId,
-      output_file: outputFile,
-      agent_id: null,
-      conversation_id: null,
-    };
-  }
 
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
@@ -971,9 +978,6 @@ export async function task(args: TaskArgs): Promise<string> {
   }
   const result = await launchSubagent(args);
   if (!result.success) return `Error: ${result.error}`;
-  if (args.subagent_type === "memory") {
-    return `Memory task running in background (${result.task_id}). No completion notification will be sent. Output file: ${result.output_file}`;
-  }
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`

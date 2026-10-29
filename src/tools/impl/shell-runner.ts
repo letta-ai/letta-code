@@ -214,6 +214,40 @@ function interruptChildProcessTree(childProcess: ChildProcess): void {
   killChildProcessTree(childProcess, "SIGINT");
 }
 
+/** Stop inherited pipe handles from extending a forced termination indefinitely. */
+function createPipeProcessKiller(
+  childProcess: ChildProcess,
+): ShellProcessHandle["kill"] {
+  let exited = false;
+  let forced = false;
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  childProcess.once("close", () => clearTimeout(drainTimer));
+  const closePipes = () => {
+    if (!exited || !forced || drainTimer) return;
+    // `exit` only waits for the launcher; `close` also waits for every process
+    // inheriting these handles. MSYS descendants can outlive taskkill's snapshot.
+    // Allow buffered output and the tree kill to finish normally first, but
+    // bound the wait for handles retained by orphaned descendants.
+    drainTimer = setTimeout(() => {
+      childProcess.stdin?.destroy();
+      childProcess.stdout?.destroy();
+      childProcess.stderr?.destroy();
+    }, 100);
+  };
+  childProcess.once("exit", () => {
+    exited = true;
+    closePipes();
+  });
+  return (signal?: string | number) => {
+    forced ||=
+      process.platform === "win32" || signal === "SIGKILL" || signal === 9;
+    // Issue the tree kill before releasing pipes. On POSIX, keep waiting through
+    // SIGTERM so the grace timer still escalates for stubborn descendants.
+    killChildProcessTree(childProcess, signal);
+    closePipes();
+  };
+}
+
 function spawnPipeProcess(
   launcher: string[],
   options: ShellSpawnOptions,
@@ -242,9 +276,7 @@ function spawnPipeProcess(
   childProcess.on("close", events.close);
 
   return {
-    kill(signal?: string | number) {
-      killChildProcessTree(childProcess, signal);
-    },
+    kill: createPipeProcessKiller(childProcess),
     interrupt() {
       interruptChildProcessTree(childProcess);
     },
@@ -290,9 +322,7 @@ function spawnPtyBridgeProcess(
   childProcess.on("close", events.close);
 
   return {
-    kill(signal?: string | number) {
-      killChildProcessTree(childProcess, signal);
-    },
+    kill: createPipeProcessKiller(childProcess),
     interrupt() {
       interruptChildProcessTree(childProcess);
     },

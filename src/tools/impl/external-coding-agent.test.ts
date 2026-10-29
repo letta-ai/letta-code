@@ -1,4 +1,12 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -162,6 +170,70 @@ describe("external coding agent MCP metadata", () => {
 });
 
 describe("external coding agent output and preflight", () => {
+  test.skipIf(process.platform === "win32").each([
+    ["claude-code", false],
+    ["codex", false],
+    ["claude-code", true],
+    ["codex", true],
+  ] as const)(
+    "finds %s native installs (existing wrapper: %s)",
+    async (type, wrapper) => {
+      const home = mkdtempSync(join(tmpdir(), "external-cli-path-"));
+      const bin = join(home, ".local", "bin");
+      const executable = type === "claude-code" ? "claude" : "codex";
+      mkdirSync(bin, { recursive: true });
+      // Exercise real OS executable lookup, not a mocked preflight.
+      const script = (source: string) =>
+        `#!/bin/sh\nprintf '%s\\n' '{"loggedIn":true,"session_id":"${SESSION_ID}","result":"${source}"}'\n`;
+      writeFileSync(join(bin, executable), script("native"), { mode: 0o755 });
+      const wrapperBin = join(home, "wrappers");
+      if (wrapper) {
+        mkdirSync(wrapperBin);
+        writeFileSync(join(wrapperBin, executable), script("wrapper"), {
+          mode: 0o755,
+        });
+      }
+      const originalPath = wrapper
+        ? `${wrapperBin}:/usr/bin:/bin`
+        : "/usr/bin:/bin";
+      const inheritedEnv = { HOME: home, PATH: originalPath };
+      const runWorker = (env: NodeJS.ProcessEnv) => {
+        expect(env.PATH).toBe(`${originalPath}:${bin}`);
+        const child = spawnSync(executable, [], { env, encoding: "utf8" });
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        expect(JSON.parse(child.stdout).result).toBe(
+          wrapper ? "wrapper" : "native",
+        );
+        return child.stdout;
+      };
+      try {
+        const result = await runExternalCodingAgent(
+          { type, prompt: "test", parentAgentId: "parent", cwd: home },
+          {
+            env: inheritedEnv,
+            resolveSecretEnv: async () => ({}),
+            runProcess: async (_command, { env }) => ({
+              exitCode: 0,
+              stdout: runWorker(env),
+              stderr: "",
+            }),
+            runCodexTurn: async (_options, deps) => ({
+              agentId: "parent",
+              success: true,
+              report: runWorker(deps?.env ?? {}),
+            }),
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.success).toBe(true);
+        expect(inheritedEnv.PATH).toBe(originalPath);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   test.each(["claude-code", "codex"] as const)(
     "does not start %s preflight after cancellation",
     async (type) => {
@@ -515,4 +587,72 @@ describe("external coding agent vault secrets", () => {
     expect(result.report).not.toContain(token);
     expect(result.report).toContain("the token is");
   });
+});
+
+describe("parent memory launch instructions", () => {
+  test.each(["claude-code", "codex"] as const)(
+    "composes instructions before the %s launch",
+    async (type) => {
+      const parentAgentId = `agent-worker-parent-${randomUUID()}`;
+      const directory = getScopedMemoryFilesystemRoot(parentAgentId);
+      for (const [hasMemory, mcpReminder] of [
+        [true, "MCP discovery"],
+        [true, undefined],
+        [false, undefined],
+        [false, "MCP discovery"],
+      ] as const) {
+        if (hasMemory) mkdirSync(directory, { recursive: true });
+        let received: string | undefined;
+        try {
+          const resolvedMcpReminder =
+            mcpReminder ??
+            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
+              inherit: false,
+            }));
+          await runExternalCodingAgent(
+            {
+              type,
+              parentAgentId,
+              prompt: "task",
+              mcpReminder: resolvedMcpReminder,
+            },
+            {
+              resolveSecretEnv: async () => ({}),
+              runPreflight: async () => ({
+                exitCode: 0,
+                stdout: '{"loggedIn":true}',
+                stderr: "",
+              }),
+              runProcess: async (command) => {
+                const index = command.args.indexOf("--append-system-prompt");
+                received = index >= 0 ? command.args[index + 1] : undefined;
+                return {
+                  exitCode: 0,
+                  stdout: '{"result":"done","session_id":"c1"}',
+                  stderr: "",
+                };
+              },
+              runCodexTurn: async (options) => {
+                received = options.mcpReminder;
+                throw new Error("captured launch instructions");
+              },
+            },
+          );
+          const note = buildParentMemoryNote(parentAgentId);
+          expect(received).toBe(
+            [
+              note
+                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
+                : undefined,
+              mcpReminder,
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined,
+          );
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
 });

@@ -10,10 +10,10 @@ Use this as the command-specific entrypoint for local mod slash commands. For br
 Mod files live in:
 
 ```text
-~/.letta/mods/
+${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/
 ```
 
-Use a focused file name, e.g. `~/.letta/mods/review.ts` or `~/.letta/mods/commands.ts`.
+Use a focused file name, e.g. `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/review.ts` or `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/commands.ts`.
 
 ## First decide whether a command is right
 
@@ -29,7 +29,7 @@ If the command is a reusable workflow like `/goal`, put the workflow instruction
 
 ## Workflow
 
-1. Inspect `~/.letta/mods/` for related command files.
+1. Inspect `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/` for related command files.
 2. Preserve unrelated mod code; create a focused new file if merging is messy.
 3. Register with `letta.commands.register()` and guard with `letta.capabilities.commands`.
 4. Return the unregister function, or a disposer that calls it plus any timer/panel cleanup.

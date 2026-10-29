@@ -7,15 +7,15 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
 import type { TurnFinishedMessage } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
+import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { toListenerConnection } from "./connection";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -160,7 +160,7 @@ const DELIVERY_CLAIM_MS = 30_000;
  */
 export const TURN_FINISHED_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 
-function defaultDirectory(): string {
+export function defaultTurnFinishedDirectory(): string {
   let serverUrl: string;
   try {
     serverUrl = getServerUrl();
@@ -171,8 +171,7 @@ function defaultDirectory(): string {
     serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
   }
   return join(
-    homedir(),
-    ".letta",
+    resolveGlobalConfigDir(),
     "listener-terminal-state",
     Buffer.from(serverUrl).toString("base64url"),
   );
@@ -223,7 +222,7 @@ function fsyncDirectory(directory: string): void {
 }
 
 export function createTurnFinishedStore(
-  directory = defaultDirectory(),
+  directory = defaultTurnFinishedDirectory(),
   options: { lockAttempts?: number } = {},
 ) {
   const claimantToken = randomUUID();
@@ -290,7 +289,7 @@ export function createTurnFinishedStore(
         mode: 0o600,
         flush: true,
       });
-      renameSync(temporary, destination);
+      renameSyncWithRetry(temporary, destination);
       fsyncDirectory(directory);
     } finally {
       rmSync(temporary, { force: true });

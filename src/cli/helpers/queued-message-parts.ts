@@ -89,7 +89,7 @@ export function toQueuedMsg(
  * that the input is QueueItem[] (from QueueRuntime) instead of QueuedMessage[].
  *
  * Only message and task_notification items contribute to the content batch;
- * barrier items (approval_result, overlay_action) are skipped.
+ * other kinds are skipped.
  */
 export function buildContentFromQueueBatch(
   batch: DequeuedBatch,

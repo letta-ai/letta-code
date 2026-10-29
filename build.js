@@ -138,6 +138,16 @@ await Bun.build({
   external: ["sharp", "@janhapke/sharp-electron"],
 });
 
+await Bun.build({
+  entrypoints: ["./src/tools/impl/cursor-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  naming: { entry: "cursor-worker.js" },
+  // The SDK lazy-loads chunks and platform binaries from its installed package.
+  external: ["@cursor/sdk"],
+});
+
 // Add shebang to output file
 const outputPath = join(__dirname, "letta.js");
 let content = readFileSync(outputPath, "utf-8");

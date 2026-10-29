@@ -28,10 +28,18 @@ export interface RuntimeContextSnapshot {
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;
+  /**
+   * Cloud super run the current turn belongs to, when the relay delivered
+   * one. Carries NO credential: the MCP originator token itself stays in the
+   * agent-layer token store and is looked up by this id at MCP tool-run time.
+   */
+  mcpOriginatorSuperRunId?: string | null;
   /** Explicitly disable inherited process/runtime acting-user attribution. */
   suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
   skillSources?: SkillSource[];
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   workingDirectory?: string | null;
   /**
    * Set when the runtime-scoped working directory was found deleted and

@@ -64,7 +64,15 @@ async function buildAgentInfoReminder(
     return null;
   }
 
+  let parentAgentId: string | undefined;
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(context.agent.id);
+    if (scopeAgentId !== context.agent.id) parentAgentId = scopeAgentId;
+  } catch {
+    // Parent lookup must not prevent the agent's own info reminder.
+  }
   const reminder = buildAgentInfo({
+    parentAgentId,
     agentInfo: {
       id: context.agent.id,
       name: context.agent.name,
@@ -242,10 +250,10 @@ export function buildMcpServersReminderText(
   entries: McpServerReminderEntry[],
 ): string {
   if (entries.length === 0) {
-    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: None\nDo not automatically store results of principal-restricted operations in shared memory.\n${SYSTEM_REMINDER_CLOSE}`;
   }
   const rendered = entries.map(formatMcpServerEntry).join(", ");
-  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
+  return `${SYSTEM_REMINDER_OPEN}\nMCP servers with available tools: ${rendered}\nDo not automatically store results of principal-restricted operations in shared memory.\nFind tools (with schemas) with \`letta mcp search "<what you want to do>"\`, list one server's tools with \`letta mcp tools <server>\` (\`--full\` includes schemas, \`letta mcp schema <tool-name>\` fetches one), and invoke one with \`letta mcp call <tool-name> --args '{"key":"value"}'\`.\n${SYSTEM_REMINDER_CLOSE}`;
 }
 
 export async function listMcpServersForAgent(

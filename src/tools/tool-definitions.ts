@@ -1,3 +1,4 @@
+import { applyCommitTrailer } from "./commit-trailer";
 import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
@@ -115,14 +116,14 @@ ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
 export function buildBashDescriptionForPlatform(
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const baseDescription = BashDescription.trim();
+  const baseDescription = applyCommitTrailer(BashDescription.trim());
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
 }
 
 function execCommandDescription(): string {
-  const baseDescription = ExecCommandDescription.trim();
+  const baseDescription = applyCommitTrailer(ExecCommandDescription.trim());
   return process.platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
     : baseDescription;

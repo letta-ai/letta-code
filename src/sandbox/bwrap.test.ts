@@ -24,6 +24,23 @@ const LETTA_SCOPED = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+const NESTED_DENY = buildFsSandboxPolicy({
+  deniedRoots: [
+    "/home/u/.letta/agents",
+    "/home/u/.letta/agents/self/memory/local-store/memfs",
+  ],
+  writableRoots: [
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self/memory/local-store/memfs/self/memory",
+  ],
+  restrictWrites: false,
+});
+
+const NESTED_READONLY = buildFsSandboxPolicy({
+  readonlyRoots: ["/scope/locked"],
+  writableRoots: ["/scope", "/scope/locked/open"],
+});
+
 /** Find the index of a flag+operands triple in the bwrap arg list. */
 function tripleIndex(args: string[], flag: string, a: string, b: string) {
   for (let i = 0; i < args.length - 2; i++) {
@@ -89,6 +106,49 @@ test("base writable is bound BEFORE the tmpfs mask, self memory after", () => {
   expect(mask).toBeGreaterThan(base);
   // ...and self memory is re-bound AFTER the mask so it reappears.
   expect(self).toBeGreaterThan(mask);
+});
+
+test("nested deny ordering preserves a legitimate inner self carve", () => {
+  const args = buildBwrapArgs(NESTED_DENY);
+  const nested = "/home/u/.letta/agents/self/memory/local-store/memfs";
+  const nestedMask = args.findIndex(
+    (arg, index) => arg === "--tmpfs" && args[index + 1] === nested,
+  );
+  const outerSelf = tripleIndex(
+    args,
+    "--bind-try",
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self",
+  );
+  const innerSelf = tripleIndex(
+    args,
+    "--bind-try",
+    `${nested}/self/memory`,
+    `${nested}/self/memory`,
+  );
+
+  expect(nestedMask).toBeGreaterThan(outerSelf);
+  expect(innerSelf).toBeGreaterThan(nestedMask);
+});
+
+test("readonly child overrides writable parent before inner writable restore", () => {
+  const args = buildBwrapArgs(NESTED_READONLY);
+  const outerWritable = tripleIndex(args, "--bind-try", "/scope", "/scope");
+  const readonlyChild = tripleIndex(
+    args,
+    "--ro-bind-try",
+    "/scope/locked",
+    "/scope/locked",
+  );
+  const innerWritable = tripleIndex(
+    args,
+    "--bind-try",
+    "/scope/locked/open",
+    "/scope/locked/open",
+  );
+
+  expect(readonlyChild).toBeGreaterThan(outerWritable);
+  expect(innerWritable).toBeGreaterThan(readonlyChild);
 });
 
 test("network is not unshared and parent death tears down the sandbox", () => {

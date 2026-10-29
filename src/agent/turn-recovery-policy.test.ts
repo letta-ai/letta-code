@@ -16,6 +16,7 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
   shouldRetryPostStreamRunError,
   shouldRetryPreStreamTransientError,
@@ -670,6 +671,38 @@ describe("rebuildInputWithFreshDenials", () => {
     expect(result[1]?.type).toBe("message");
   });
 
+  test("preserves local success results and denies only missing pending results", () => {
+    const success = {
+      type: "tool" as const,
+      tool_call_id: "A",
+      tool_return: "Done",
+      status: "success" as const,
+    };
+    const result = rebuildInputWithFreshDenials(
+      [{ type: "approval", approvals: [success] }, userMsg],
+      [
+        { toolCallId: "A", toolName: "Read", toolArgs: "{}" },
+        { toolCallId: "B", toolName: "Read", toolArgs: "{}" },
+      ],
+      "denied",
+    );
+
+    expect(result).toHaveLength(2);
+    expect(result[0]).toMatchObject({
+      type: "approval",
+      approvals: [
+        success,
+        {
+          type: "approval",
+          tool_call_id: "B",
+          approve: false,
+          reason: "denied",
+        },
+      ],
+    });
+    expect(result[1]).toMatchObject(userMsg);
+  });
+
   test("no server approvals → strips only", () => {
     const input = [
       { type: "approval" as const, approvals: [] as never[] },
@@ -847,5 +880,14 @@ describe("isEmptyResponseRetryable", () => {
     expect(
       isEmptyResponseRetryable("llm_error", "Connection error occurred", 0, 2),
     ).toBe(false);
+  });
+});
+
+describe("STALE_APPROVAL_RECOVERY_DENIAL_REASON", () => {
+  test("does not tell the model to blindly re-issue a call that may have run", () => {
+    expect(STALE_APPROVAL_RECOVERY_DENIAL_REASON).not.toMatch(/re-issue/i);
+    expect(STALE_APPROVAL_RECOVERY_DENIAL_REASON).toContain(
+      "check whether its effect already happened",
+    );
   });
 });

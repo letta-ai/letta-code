@@ -1,6 +1,5 @@
 /**
  * Persistent cron task storage backed by ~/.letta/crons.json.
- *
  * Provides CRUD operations with:
  * - Atomic writes (temp file + rename)
  * - mkdir-based advisory locking for read-modify-write cycles
@@ -20,6 +19,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
+import { resolveGlobalStateDir } from "@/utils/settings-path";
 import { estimatePeriodMs, isValidCron } from "./parse-interval";
 import { captureProcessIdentity, isProcessAlive } from "./process-identity";
 
@@ -28,8 +28,6 @@ export {
   isProcessAlive,
 } from "./process-identity";
 
-// ── Types ───────────────────────────────────────────────────────────
-
 export type CronTaskStatus =
   | "active"
   | "paused"
@@ -37,10 +35,16 @@ export type CronTaskStatus =
   | "missed"
   | "cancelled";
 export type CancelReason = "conversation_not_found" | "expired";
-export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
+export type CronRunOutcome =
+  | "queued"
+  | "delivered"
+  | "missed"
+  | "failed"
+  | "skipped";
 export type CronRunReason =
   | "scheduled_time_matched"
   | "one_off_due"
+  | "dequeued"
   | "scheduler_inactive"
   | "started_too_late"
   | "queue_full"
@@ -134,8 +138,7 @@ const GC_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 // ── Paths ───────────────────────────────────────────────────────────
 
 function getLettaDir(): string {
-  if (process.env.LETTA_HOME) return process.env.LETTA_HOME;
-  return join(process.env.HOME ?? process.env.USERPROFILE ?? "~", ".letta");
+  return resolveGlobalStateDir();
 }
 
 export function getCronFilePath(): string {

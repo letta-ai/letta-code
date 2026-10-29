@@ -4,7 +4,7 @@ import type {
   ChatGPTUsageReadCommand,
   ChatGPTUsageReadResponseMessage,
 } from "@/types/protocol_v2";
-import { isChatGPTUsageReadCommand } from "@/websocket/listener/protocol-inbound";
+import { isChatGPTUsageReadCommand } from "@/websocket/listener/chatgpt-usage-protocol-inbound";
 import type { RunDetachedListenerTask, SafeSocketSend } from "./types";
 
 type ChatGPTUsageCommandContext = {

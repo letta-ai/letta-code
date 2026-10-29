@@ -68,19 +68,7 @@ export interface WorkerRun {
 async function latestWorkerRun(
   conversationId: string,
 ): Promise<WorkerRun | null> {
-  const backend = getBackend();
-  const messages = await backend.listConversationMessages(conversationId, {
-    limit: 100,
-    order: "desc",
-  });
-  const runId = messages
-    .getPaginatedItems()
-    .map((message) => message.run_id)
-    .find(
-      (id): id is string => typeof id === "string" && id.startsWith("run-"),
-    );
-  if (!runId) return null;
-  return backend.retrieveRun(runId);
+  return getBackend().latestConversationRun(conversationId);
 }
 
 async function retrieveWorkerConversation(
@@ -493,9 +481,9 @@ export function createSdkSpawner(
       );
     }
     if (persisted && resumeId && config.verifyPersistedRuns !== false) {
-      // SDK App Server turns have Runs, not Super Runs. If the latest
-      // persisted message has no run ID or the run is not terminal, do not
-      // risk sending a second prompt into an active conversation.
+      // SDK App Server turns have Runs, not Super Runs. If there is no
+      // persisted run or the latest run is not terminal, do not risk sending a
+      // second prompt into an active conversation.
       const latest = await (config.latestRun ?? latestWorkerRun)(resumeId);
       if (
         !latest ||
