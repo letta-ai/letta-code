@@ -584,9 +584,14 @@ async function drainQueuedMessages(
           dequeuedBatch,
         ),
       );
-      // Turn start boundary: unconditional snapshot even when nothing changed.
+      // Dequeue does not acquire the turn lease. Publishing the idle loop
+      // here, after the user echo, would falsely signal a completed turn.
+      // The turn owner publishes its loop snapshot after acquiring the lease.
       emitQueuePumpBoundary(() =>
-        emitTurnBoundaryStatus(runtime, turnTransport),
+        emitQueueUpdate(turnTransport, runtime, {
+          agent_id: runtime.agentId,
+          conversation_id: runtime.conversationId,
+        }),
       );
 
       const preTurnStatus =

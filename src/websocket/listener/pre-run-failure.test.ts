@@ -134,7 +134,6 @@ test.each([
         conversation_id: conversation.id,
       });
       let accepted = false;
-      let turnFrameStart = 0;
       const processQueuedTurn = createConnectionTurnProcessor(listener);
       dispatchInboundMessageWhenReady({
         listener,
@@ -154,10 +153,7 @@ test.each([
           ],
         },
         processIncomingMessage: handleIncomingMessage,
-        processQueuedTurn: async (incoming, batch) => {
-          turnFrameStart = frames.length;
-          await processQueuedTurn(incoming, batch);
-        },
+        processQueuedTurn,
         trackListenerError: (_type, error) => {
           throw error;
         },
@@ -218,10 +214,8 @@ test.each([
           }),
         );
       }
-      // Ignore the pump's pre-turn idle snapshot.
       const idleIndex = frames.findIndex(
-        (frame, index) =>
-          index >= turnFrameStart &&
+        (frame) =>
           frame.type === "update_loop_status" &&
           frame.loop_status.status === "WAITING_ON_INPUT",
       );
