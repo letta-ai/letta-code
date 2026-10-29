@@ -17,6 +17,10 @@ import {
   CloudReadinessError,
   isRetryableCloudReadinessError,
 } from "@/test-utils/cloud-readiness-retry";
+import {
+  deleteCloudFixture,
+  initiateFixtureTeleport,
+} from "@/test-utils/teleport-fixture-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 // Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
@@ -89,6 +93,8 @@ async function request<T>(
       error.message,
     );
   }
+  // DELETE may return 204 (or an empty 200), with no JSON document.
+  if (method === "DELETE") return undefined as T;
   return response.json() as Promise<T>;
 }
 
@@ -397,12 +403,14 @@ testWithAPI.each([
         await poll(stage, () => ownerIs(source.connectionId));
         stage = "teleport";
         const runtimePath = `/v1/environments/runtimes/${agent.id}/${conversation.id}`;
-        const teleport = await request<TeleportResponse>(
-          `${runtimePath}/teleport`,
-          {
+        // A rejected capability preflight has not started a teleport. Keep the
+        // source held and reuse the key; never retry an ambiguous HTTP outcome.
+        const idempotencyKey = randomUUID();
+        const teleport = await initiateFixtureTeleport(() =>
+          request<TeleportResponse>(`${runtimePath}/teleport`, {
             targetConnectionId: destination.connectionId,
-            idempotencyKey: randomUUID(),
-          },
+            idempotencyKey,
+          }),
         );
         expect(teleport.sourceConnectionId).toBe(source.connectionId);
         expect(teleport.targetConnectionId).toBe(destination.connectionId);
@@ -510,26 +518,39 @@ testWithAPI.each([
           failures.push("destination saved local preference was not preserved");
         }
       }
-      if (conversationId)
-        await sdk.conversations.delete(conversationId).catch((error) => {
-          failures.push(
-            `conversation deletion ${conversationId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
+      const cleanup = async (label: string, remove: () => Promise<unknown>) => {
+        try {
+          await deleteCloudFixture(remove);
+        } catch (error) {
+          // Keep fixture failures visible without replacing the scenario result.
+          const status =
+            error instanceof Letta.APIError ||
+            error instanceof CloudReadinessError
+              ? error.status
+              : "unknown";
+          console.warn(
+            `Teleport fixture cleanup failed: ${label}; HTTP=${status}`,
           );
-        });
-      if (agentId)
-        await sdk.agents.delete(agentId).catch((error) => {
-          failures.push(
-            `agent deletion ${agentId}: ${error instanceof Letta.APIError ? error.status : "unknown"}`,
-          );
-        });
+        }
+      };
+      if (conversationId) {
+        const id = conversationId;
+        await cleanup(`conversation deletion: ${id}`, () =>
+          sdk.conversations.delete(id),
+        );
+      }
+      if (agentId) {
+        const id = agentId;
+        await cleanup(`agent deletion: ${id}`, () => sdk.agents.delete(id));
+      }
       for (const id of environmentIds) {
-        await request(
-          `/v1/environments/${encodeURIComponent(id)}`,
-          undefined,
-          "DELETE",
-        ).catch(() => {
-          failures.push(`environment deletion: ${id}`);
-        });
+        await cleanup(`environment deletion: ${id}`, () =>
+          request(
+            `/v1/environments/${encodeURIComponent(id)}`,
+            undefined,
+            "DELETE",
+          ),
+        );
       }
       await rm(root, { recursive: true, force: true }).catch(() => {
         failures.push("temporary directory removal");
