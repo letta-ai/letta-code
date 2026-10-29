@@ -190,6 +190,20 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
           conversation_id: toolRuntime.conversationId,
         }
       : undefined;
+    const conversation = requestRuntime
+      ? runtime.conversationRuntimes?.get(
+          getConversationRuntimeKey(
+            requestRuntime.agent_id,
+            requestRuntime.conversation_id,
+          ),
+        )
+      : null;
+    const lease = conversation?.turnLifecycle.currentLease;
+    const isOwningTurnCurrent =
+      conversation && lease
+        ? () =>
+            conversation.turnLifecycle.isCurrent(lease) && !lease.signal.aborted
+        : undefined;
     const request: ExternalToolCallRequestMessage = {
       type: "external_tool_call_request",
       request_id: requestId,
@@ -224,6 +238,7 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 
       getPendingExternalToolCalls(runtime).set(requestKey, {
         connectionId: connection.id,
+        isOwningTurnCurrent,
         requestFrame,
         sentOn: writer,
         resolve: (response) => {
@@ -362,6 +377,11 @@ export function resendPendingExternalToolCallsForConnection(
       continue;
     }
     try {
+      if (pending.isOwningTurnCurrent && !pending.isOwningTurnCurrent()) {
+        throw new Error(
+          "External tool call was not resent because its owning turn is no longer active.",
+        );
+      }
       connection.writer.send(pending.requestFrame);
       pending.sentOn = connection.writer;
     } catch (error) {

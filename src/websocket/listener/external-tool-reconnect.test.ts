@@ -18,7 +18,11 @@ import {
   startConnectedListenerRuntime,
   stopRuntime,
 } from "@/websocket/listener/lifecycle";
-import { setActiveRuntime } from "@/websocket/listener/runtime";
+import {
+  clearConversationRuntimeState,
+  getOrCreateConversationRuntime,
+  setActiveRuntime,
+} from "@/websocket/listener/runtime";
 import type { LocalTransport } from "@/websocket/listener/transport";
 import type {
   ListenerRuntime,
@@ -53,6 +57,7 @@ function createSocket(runtime: ListenerRuntime, respond: boolean): FakeSocket {
     isOpen: () => socket.open,
     send(data: string) {
       const request = JSON.parse(data) as ExternalToolCallRequestMessage;
+      if (request.type !== "external_tool_call_request") return;
       socket.sent.push(request);
       if (!respond) return;
       queueMicrotask(() => {
@@ -136,6 +141,14 @@ describe("external tool calls across a websocket reconnect", () => {
     runtime = createRuntime();
     runtime.processServicesStarted = true;
     setActiveRuntime(runtime);
+    getOrCreateConversationRuntime(
+      runtime,
+      RUNTIME_SCOPE.agent_id,
+      RUNTIME_SCOPE.conversation_id,
+    ).turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: process.cwd(),
+    });
   });
 
   afterEach(() => {
@@ -164,6 +177,45 @@ describe("external tool calls across a websocket reconnect", () => {
     expect(second.sent[0]).toEqual(first.sent[0] as never);
     expect(runtime.pendingExternalToolCalls.size).toBe(0);
   });
+
+  test.each(["clear", "cancel"] as const)(
+    "rejects a pending call after its owning turn is %s during disconnect",
+    async (action) => {
+      const first = createSocket(runtime, false);
+      await connect(runtime, first);
+      const call = callReply("call-stale");
+      await waitFor(() => first.sent.length === 1);
+      dropSocket(runtime, first);
+
+      const conversation = getOrCreateConversationRuntime(
+        runtime,
+        RUNTIME_SCOPE.agent_id,
+        RUNTIME_SCOPE.conversation_id,
+      );
+      if (action === "clear") {
+        clearConversationRuntimeState(conversation);
+        conversation.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: process.cwd(),
+        });
+      } else {
+        conversation.turnLifecycle.requestCancellation({
+          cause: "explicit_user",
+        });
+      }
+
+      const second = createSocket(runtime, true);
+      await connect(runtime, second);
+      const result = await call;
+
+      expect(second.sent).toHaveLength(0);
+      expect(result.status).toBe("error");
+      expect(String(result.toolReturn)).toContain(
+        "owning turn is no longer active",
+      );
+      expect(runtime.pendingExternalToolCalls.size).toBe(0);
+    },
+  );
 
   test("fails a call made while the socket is down immediately", async () => {
     const first = createSocket(runtime, true);
