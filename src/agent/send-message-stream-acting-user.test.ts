@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  clearMcpOriginatorTokens,
+  setMcpOriginatorToken,
+} from "@/agent/mcp-originator-tokens";
 import type { Backend } from "@/backend";
 import { prepareToolExecutionContextForSpecificTools } from "@/tools/manager";
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "./acting-user";
@@ -26,11 +30,15 @@ function makeRecordingBackend(recordedHeaders: Array<Record<string, string>>) {
 async function sendWithPreparedContext(
   backend: Backend,
   actingUserId?: string,
+  mcpOriginatorSuperRunId?: string,
 ): Promise<void> {
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     [],
     {
-      runtimeContext: actingUserId ? { actingUserId } : undefined,
+      runtimeContext:
+        actingUserId || mcpOriginatorSuperRunId
+          ? { actingUserId, mcpOriginatorSuperRunId }
+          : undefined,
     },
   );
   await sendMessageStreamWithBackend(
@@ -47,17 +55,23 @@ async function sendWithPreparedContext(
 }
 
 describe("sendMessageStream acting-user propagation", () => {
-  test("uses the acting user captured in the turn tool context", async () => {
+  afterEach(() => clearMcpOriginatorTokens());
+
+  test("uses the acting user and originator captured in the turn tool context", async () => {
     const recordedHeaders: Array<Record<string, string>> = [];
+    setMcpOriginatorToken("super-run-a", "originator-token-a");
 
     await sendWithPreparedContext(
       makeRecordingBackend(recordedHeaders),
       "cloud-user-a",
+      "super-run-a",
     );
 
     expect(recordedHeaders).toEqual([
       expect.objectContaining({
         [ACTING_USER_ID_HEADER]: "cloud-user-a",
+        "x-letta-mcp-originator-token": "originator-token-a",
+        "x-letta-mcp-originator-isolation": "1",
       }),
     ]);
   });

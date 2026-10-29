@@ -12,6 +12,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { MessageCreateParams as ConversationMessageCreateParams } from "@letta-ai/letta-client/resources/conversations/messages";
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
+import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
 import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
@@ -51,6 +52,8 @@ const streamRequestStartTimes = new WeakMap<object, number>();
 const streamToolContextIds = new WeakMap<object, string>();
 const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
 const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
+const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
+const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
@@ -560,6 +563,20 @@ export async function sendMessageStreamWithBackend(
   // SendMessageStreamOptions.actingUserId for full context.
   if (actingUserId) {
     extraHeaders[ACTING_USER_ID_HEADER] = actingUserId;
+  }
+  // Client-side tools continue the same chat turn through a new Messages API
+  // request. Forward the server-minted originator proof held for that turn so
+  // private MCP authorization survives the continuation without treating the
+  // listener's API key as the human who started it. The bearer remains
+  // process-local: it is never copied into message bodies, tool arguments, or
+  // transcripts, and headerless turns keep their existing behavior.
+  const originatorSuperRunId =
+    executionRuntimeContext?.mcpOriginatorSuperRunId ??
+    getRuntimeContext()?.mcpOriginatorSuperRunId;
+  const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
+  if (originatorToken) {
+    extraHeaders[MCP_ORIGINATOR_TOKEN_HEADER] = originatorToken;
+    extraHeaders[MCP_ORIGINATOR_ISOLATION_HEADER] = "1";
   }
 
   const messageSummary = normalizedMessages
