@@ -430,6 +430,107 @@ test("a replacement that never becomes ready consumes the next retry", async () 
   await supervisor.close();
 });
 
+test("a first start that exits before ready is retried with backoff", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 1) {
+        process.exit(1);
+        return;
+      }
+      process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const lifecycleEvents: ChannelGatewayLifecycleEvent[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram", "slack"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      stableAfterMs: 1000,
+    },
+    onLifecycleEvent: (event) => lifecycleEvents.push(event),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(lifecycleEvents.map((event) => event.kind)).toEqual([
+    "exit",
+    "restart_scheduled",
+    "restart_ready",
+  ]);
+  expect(lifecycleEvents[0]).toMatchObject({ reachedReady: false });
+  await supervisor.close();
+});
+
+test("a first start that never becomes ready is retried", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 1) return;
+      process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const logs: string[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      maxAttempts: 1,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      readyTimeoutMs: 5,
+      stableAfterMs: 1000,
+    },
+    onLog: (message) => logs.push(message),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(logs).toContain(
+    "[ChannelGateway] Timed out waiting for ChannelGateway",
+  );
+  await supervisor.close();
+});
+
+test("first-start failures reject after the restart budget is exhausted", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    queueMicrotask(() => process.exit(1));
+    return process.child;
+  }) as typeof spawn;
+  let exhaustedError: Error | undefined;
+
+  await expect(
+    startChannelGatewaySupervisor({
+      appServerUrl: "ws://127.0.0.1:1/ws",
+      channelNames: ["telegram"],
+      launcher: { command: "fixture" },
+      spawnProcess,
+      restartPolicy: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1 },
+      onRestartExhausted: (error) => {
+        exhaustedError = error;
+      },
+    }),
+  ).rejects.toThrow("restart attempts exhausted (2)");
+  expect(spawnCount).toBe(3);
+  expect(exhaustedError?.message).toContain("exited before ready (1)");
+});
+
 test("closing during restart backoff cancels the replacement", async () => {
   let spawnCount = 0;
   let reportUnexpectedExit: (() => void) | undefined;

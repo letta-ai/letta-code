@@ -119,13 +119,20 @@ export function getChannelInstallCommand(
   return `letta channels install ${channelId}`;
 }
 
+export class MissingChannelRuntimeError extends Error {
+  constructor(public readonly channelId: SupportedChannelId) {
+    const spec = getChannelPluginMetadata(channelId);
+    super(
+      `${spec.displayName} support is not installed. Run: ${getChannelInstallCommand(channelId)} or start the listener with --install-channel-runtimes.`,
+    );
+    this.name = "MissingChannelRuntimeError";
+  }
+}
+
 export function buildMissingChannelRuntimeError(
   channelId: SupportedChannelId,
 ): Error {
-  const spec = getChannelPluginMetadata(channelId);
-  return new Error(
-    `${spec.displayName} support is not installed. Run: ${getChannelInstallCommand(channelId)} or start the listener with --install-channel-runtimes.`,
-  );
+  return new MissingChannelRuntimeError(channelId);
 }
 
 export function isChannelRuntimeInstalled(

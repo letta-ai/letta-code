@@ -60,6 +60,7 @@ import {
   removeRouteInMemory,
   setRouteInMemory,
 } from "./routing";
+import { MissingChannelRuntimeError } from "./runtime-deps";
 import {
   buildSignalBaseUrlConflictError,
   findSignalBaseUrlConflict,
@@ -106,6 +107,7 @@ export interface ChannelStartupFailure {
   channelId: string;
   accountId?: string;
   error: string;
+  missingRuntime?: boolean;
 }
 
 export class ChannelInitializationError extends Error {
@@ -131,9 +133,14 @@ function formatChannelStartupError(error: unknown): string {
 
 export function formatChannelStartupFailures(
   failures: ChannelStartupFailure[],
+  options?: { partial?: boolean },
 ): string {
-  const failedChannels = Array.from(
-    new Set(failures.map((failure) => failure.channelId)),
+  const missingRuntimeChannels = Array.from(
+    new Set(
+      failures
+        .filter((failure) => failure.missingRuntime)
+        .map((failure) => failure.channelId),
+    ),
   );
   const lines = failures.map((failure) => {
     const label = failure.accountId
@@ -143,15 +150,23 @@ export function formatChannelStartupFailures(
   });
 
   return [
-    "Failed to start requested channel listeners.",
+    options?.partial
+      ? "Some requested channel listeners failed to start; the others are running."
+      : "Failed to start requested channel listeners.",
     ...lines,
     "",
-    "The listener is not running for these channels.",
-    `Install missing runtimes with: letta server --channels ${failedChannels.join(",")} --install-channel-runtimes`,
-    "Or install them once with:",
-    ...failedChannels.map(
-      (channelId) => `  letta channels install ${channelId}`,
-    ),
+    options?.partial
+      ? "The listener is not running for these accounts."
+      : "The listener is not running for these channels.",
+    ...(missingRuntimeChannels.length > 0
+      ? [
+          `Install missing runtimes with: letta server --channels ${missingRuntimeChannels.join(",")} --install-channel-runtimes`,
+          "Or install them once with:",
+          ...missingRuntimeChannels.map(
+            (channelId) => `  letta channels install ${channelId}`,
+          ),
+        ]
+      : []),
   ].join("\n");
 }
 
@@ -844,6 +859,7 @@ export async function initializeChannels(
           channelId,
           accountId: account.accountId,
           error: message,
+          missingRuntime: error instanceof MissingChannelRuntimeError,
         });
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
@@ -857,9 +873,24 @@ export async function initializeChannels(
     }
   }
 
-  if (failures.length > 0 && options?.failOnStartupError) {
+  if (failures.length === 0) return registry;
+
+  // A failed account must not take down healthy ones. Startup is only fatal
+  // when a requested channel is misconfigured or no account came up at all.
+  const hasChannelLevelFailure = failures.some((failure) => !failure.accountId);
+  const anyAdapterRunning = registry.getActiveChannelIds().length > 0;
+  if (
+    options?.failOnStartupError &&
+    (hasChannelLevelFailure || !anyAdapterRunning)
+  ) {
     await registry.stopAll();
     throw new ChannelInitializationError(failures);
+  }
+
+  if (anyAdapterRunning) {
+    const report = formatChannelStartupFailures(failures, { partial: true });
+    console.error(report);
+    logChannelStartup(options?.logger, report);
   }
 
   return registry;
