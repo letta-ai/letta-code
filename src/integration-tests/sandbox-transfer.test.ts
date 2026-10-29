@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Letta from "@letta-ai/letta-client";
+import { resolveAgentSandboxConnectionId } from "@/backend/api/environments";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 type Sandbox = { sandboxId: string; conversationId?: string | null };
@@ -64,6 +65,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
             HOME: home,
             LETTA_BASE_URL: baseURL,
             LETTA_DISABLE_MODS: "1",
+            LETTA_SKIP_KEYCHAIN_CHECK: "1",
             LETTA_AGENT_ID: `agent-local-${randomUUID()}`,
             LETTA_CONVERSATION_ID: `conv-${randomUUID()}`,
             AGENT_ID: `agent-${randomUUID()}`,
@@ -74,39 +76,26 @@ test.skipIf(!process.env.LETTA_API_KEY)(
           stderr: "pipe",
         },
       );
-      const timer = setTimeout(() => child.kill("SIGKILL"), 90000);
+      let timedOut = false;
+      const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill("SIGKILL");
+      }, 90000);
       try {
         const [stdout, stderr, code] = await Promise.all([
           new Response(child.stdout).text(),
           new Response(child.stderr).text(),
           child.exited,
         ]);
+        if (timedOut) {
+          throw new Error(
+            `Sandbox CLI timed out after 90000ms: ${args.join(" ")}\nstdout: ${stdout}\nstderr: ${stderr}`,
+          );
+        }
         return { stdout, stderr, code };
       } finally {
         clearTimeout(timer);
       }
-    }
-    function isTransientUploadFailure(
-      result: Awaited<ReturnType<typeof cli>>,
-    ): boolean {
-      if (result.code === 0) return false;
-      const output = `${result.stdout}\n${result.stderr}`;
-      return (
-        result.code === 137 ||
-        /API error \((?:408|429|5\d\d)\)/i.test(output) ||
-        /Request timed out|fetch failed/i.test(output)
-      );
-    }
-    async function uploadWithRetry(
-      args: string[],
-      ambient: NodeJS.ProcessEnv = {},
-    ) {
-      let result = await cli(["upload", ...args], ambient);
-      if (isTransientUploadFailure(result)) {
-        await Bun.sleep(1000);
-        result = await cli(["upload", ...args], ambient);
-      }
-      return result;
     }
     try {
       const agent = await sdk.agents.create({
@@ -134,10 +123,18 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         payload: Buffer.from([0, 255, 128, 13, 10, i, 0, 254]),
         remotePath: "",
       }));
+      // Provisioning is not a file-transfer readiness signal: wait for the
+      // sandbox listener to register a live connection before invoking the CLI.
+      for (const target of [conversationId, "default"]) {
+        await resolveAgentSandboxConnectionId(agentId, {
+          conversationId: target,
+          timeoutMs: 90000,
+        });
+      }
       for (const scenario of scenarios) {
         const { target, payload, localPath: uploadPath, flags } = scenario;
         await writeFile(uploadPath, payload);
-        const upload = await uploadWithRetry([uploadPath, ...flags]);
+        const upload = await cli(["upload", uploadPath, ...flags]);
         expect(upload.code, upload.stderr).toBe(0);
         const output = JSON.parse(upload.stdout);
         expect(output).toMatchObject({ agentId, conversationId: target });
@@ -178,7 +175,7 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         AGENT_ID: agentId,
         CONVERSATION_ID: conversationId,
       };
-      const legacy = await uploadWithRetry([localPath], ambient);
+      const legacy = await cli(["upload", localPath], ambient);
       expect(legacy.code, legacy.stderr).toBe(0);
       const ambientPath = JSON.parse(legacy.stdout).files[0].path;
       for (const action of ["upload", "download"]) {
