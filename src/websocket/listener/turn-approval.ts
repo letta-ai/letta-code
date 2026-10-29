@@ -173,6 +173,8 @@ export async function handleApprovalStop(params: {
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
+  /** Receives this batch's unsent results when the continuation send throws. */
+  onContinuationSendError?: (progress: ApprovalBranchProgress) => void;
   dependencies?: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
     executeApprovalBatch?: typeof executeApprovalBatch;
@@ -419,7 +421,7 @@ export async function handleApprovalStop(params: {
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,
     interruptedBatchId: string = dequeuedBatchId,
-  ): ApprovalBranchResult => {
+  ): ApprovalBranchProgress & { kind: "interrupted" } => {
     return {
       kind: "interrupted",
       turnInput: interruptedTurnInput,
@@ -928,6 +930,7 @@ export async function handleApprovalStop(params: {
     if (shouldInterrupt()) {
       return interruptTermination(nextTurnInput, continuationBatchId);
     }
+    params.onContinuationSendError?.(interruptTermination());
     throw error;
   }
   if (sendResult.kind === "terminal") {

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
+import type { InterruptedTurnRecord } from "./interrupted-turn-types";
 import { createRuntime } from "./lifecycle";
 import { clearConversationRuntimeState } from "./runtime";
 import { resolveStaleApprovals, sendMessageStreamWithRetry } from "./send";
@@ -248,6 +250,7 @@ describe("stale approval recovery races another client", () => {
     opts: {
       drains?: unknown[];
       batches?: Record<string, string>;
+      record?: InterruptedTurnRecord;
     } = {},
   ) {
     const runtime = getOrCreateScopedRuntime(
@@ -291,9 +294,10 @@ describe("stale approval recovery races another client", () => {
             stopReason: "end_turn",
             apiDurationMs: 0,
           }) as never,
+        readInterruptedTurn: () => opts.record ?? null,
       },
     );
-    return { result, sent, batchesAtSend };
+    return { result, sent, batchesAtSend, runtime };
   }
   const stream = async () => ({ kind: "stream" as const, stream: {} as never });
 
@@ -380,5 +384,69 @@ describe("stale approval recovery races another client", () => {
       "Ambiguous pending approval batch mapping during recovery",
     );
     expect(sent).toEqual([]);
+  });
+
+  describe("with a checkpointed tool result", () => {
+    const recordedReturn = {
+      type: "tool" as const,
+      tool_call_id: "call-1",
+      tool_return: "updated",
+      status: "success" as const,
+    };
+    const record: InterruptedTurnRecord = {
+      agentId: "agent-1",
+      conversationId: "conv-1",
+      runId: "run-1",
+      toolCallIds: ["call-1", "call-2"],
+      results: [recordedReturn],
+      requestOtid: "otid-1",
+      workingDirectory: process.cwd(),
+    };
+    const approvalsSent = (sent: string[]) =>
+      (JSON.parse(sent[0] ?? "[]") as Array<{ approvals: unknown[] }>)[0]
+        ?.approvals;
+    const staleDenial = (id: string) => ({
+      type: "approval",
+      tool_call_id: id,
+      approve: false,
+      reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+    });
+
+    test("resolves the call with its recorded result instead of denying it", async () => {
+      const { result, sent, runtime } = await recover(
+        [[call("call-1")]],
+        stream,
+        { record },
+      );
+      runtime.pendingInterruptedResults = [staleDenial("call-1") as never];
+
+      await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+      expect(approvalsSent(sent)).toEqual([recordedReturn]);
+      expect(runtime.pendingInterruptedResults).toBeNull();
+    });
+
+    test("control: a call with no recorded result is still denied as stale", async () => {
+      const { result, sent } = await recover([[call("call-2")]], stream, {
+        record,
+      });
+
+      await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+      expect(approvalsSent(sent)).toEqual([staleDenial("call-2")]);
+    });
+
+    test("sends recorded results and stale denials together for a mixed batch", async () => {
+      const { result, sent } = await recover(
+        [[call("call-1"), call("call-2")]],
+        stream,
+        { record },
+      );
+
+      await expect(result).resolves.toMatchObject({ stopReason: "end_turn" });
+      expect(sent).toHaveLength(1);
+      expect(approvalsSent(sent)).toEqual([
+        recordedReturn,
+        staleDenial("call-2"),
+      ]);
+    });
   });
 });
