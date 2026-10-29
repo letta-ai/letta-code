@@ -13,6 +13,7 @@ import type { AgentCreateBody } from "@/backend/backend";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { readStdin } from "@/utils/stdin";
 
 function printUsage(): void {
   console.log(
@@ -131,21 +132,9 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
   return 1;
 }
 
-async function readProcessStdin(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", reject);
-  });
-}
-
 async function readCreateBody(source: string): Promise<AgentCreateBody> {
   const text =
-    source === "-" ? await readProcessStdin() : await readFile(source, "utf8");
+    source === "-" ? await readStdin() : await readFile(source, "utf8");
   const body: unknown = JSON.parse(text);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     throw new Error("--body must contain a JSON object");
