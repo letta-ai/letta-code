@@ -182,14 +182,14 @@ Use when the model supports only one shot at a time.
 
 ## Character narrative
 
-1. Use `character-design` to create or confirm the anchor.
+1. Write the character anchor (see "Continuity anchors" above) and generate an approved still of the character to reuse.
 2. Build shot variables around action, expression, and location.
 3. Use image-to-video from approved stills when identity drift matters.
 4. Compare each result to the anchor before advancing to the next shot.
 
 ## Product narrative
 
-1. Use `commercial` to define product invariants.
+1. Write the product anchor (see "Continuity anchors" above): shape, color, packaging, logo placement, material.
 2. Plan the sequence around hook, feature, context, proof, final frame.
 3. Use the same product reference for every shot if the model allows it.
 4. Keep motion modest when packaging fidelity matters.
