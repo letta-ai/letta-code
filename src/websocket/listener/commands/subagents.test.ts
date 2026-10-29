@@ -178,10 +178,55 @@ describe("subagent command context", () => {
     expect(response).toEqual({
       type: "launch_subagent_response",
       request_id: "failed-launch",
+      runtime: { agent_id: "agent-a", conversation_id: "conv-a" },
       success: false,
       error: "Child unavailable",
     });
     expect(parent.turnLifecycle.currentLease).toBe(lease);
     parent.turnLifecycle.finish(lease, "end_turn");
+  });
+
+  test("notify caller launches skip self-notification and return a scoped reply", async () => {
+    const parent = createConversationRuntime(
+      createRuntime(),
+      "agent-a",
+      "conv-a",
+    );
+    let notifyCaller: boolean | undefined;
+    const response = await handleLaunchSubagentCommand(
+      {
+        type: "launch_subagent",
+        request_id: "routed-launch",
+        runtime: {
+          agent_id: "agent-a",
+          conversation_id: "conv-a",
+          acting_user_id: "user-a",
+        },
+        args: { subagent_type: "codex", prompt: "Work", description: "Work" },
+        tool_call_id: "call-1",
+        notify: "caller",
+      },
+      parent,
+      undefined,
+      async (input) => {
+        notifyCaller = input.notifyCaller;
+        expect(input.toolCallId).toBe("call-1");
+        return {
+          success: false,
+          error: "Required executable 'codex' was not found on PATH",
+          error_code: "not_installed",
+        };
+      },
+    );
+    expect(notifyCaller).toBe(true);
+    // Relays scope the reply by runtime; the acting user stays private.
+    expect(response).toEqual({
+      type: "launch_subagent_response",
+      request_id: "routed-launch",
+      runtime: { agent_id: "agent-a", conversation_id: "conv-a" },
+      success: false,
+      error: "Required executable 'codex' was not found on PATH",
+      error_code: "not_installed",
+    });
   });
 });

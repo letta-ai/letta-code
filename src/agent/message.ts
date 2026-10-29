@@ -3,6 +3,7 @@
  **/
 
 import { Buffer } from "node:buffer";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -439,6 +440,7 @@ export async function sendMessageStreamWithBackend(
         undefined,
       skillsDirectory: executionRuntimeContext?.skillsDirectory,
       skillSources: opts.skillSources ?? getSkillSources(),
+      bundledSkills: executionRuntimeContext?.bundledSkills,
     });
 
   const resolvedConversationId = conversationId;
@@ -637,7 +639,11 @@ export async function sendMessageStreamWithBackend(
           );
         } catch (abortError) {
           abortRelay?.cleanup();
-          throw abortError;
+          // Classify the interrupt as a user abort so callers unwind silently
+          // instead of reporting a stream error and clearing queued work.
+          throw abortError instanceof APIUserAbortError
+            ? abortError
+            : new APIUserAbortError();
         }
         continue;
       }

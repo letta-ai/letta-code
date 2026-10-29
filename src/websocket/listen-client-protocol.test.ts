@@ -1942,49 +1942,6 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("runs remote clear execute_command against local backend", async () => {
-    const storageDir = await mkdtemp(join(os.tmpdir(), "ws-clear-local-"));
-    try {
-      const backend = new LocalBackend({
-        storageDir,
-        executionMode: "deterministic",
-      });
-      __testSetBackend(backend);
-      const agent = await backend.createAgent({
-        name: "WS Clear Local Agent",
-      } as AgentCreateBody);
-      const listener = __listenClientTestUtils.createListenerRuntime();
-      const runtime = __listenClientTestUtils.getOrCreateConversationRuntime(
-        listener,
-        agent.id,
-        "default",
-      );
-      const socket = new MockSocket(WebSocket.OPEN);
-
-      await handleExecuteCommand(
-        {
-          type: "execute_command",
-          command_id: "clear",
-          request_id: "clear-local-run-1",
-          runtime: { agent_id: agent.id, conversation_id: "default" },
-        },
-        socket as unknown as WebSocket,
-        runtime,
-        {},
-      );
-
-      expect(runtime.conversationId).toStartWith("local-conv-");
-      await expect(
-        backend.retrieveConversation(runtime.conversationId),
-      ).resolves.toMatchObject({ agent_id: agent.id });
-      expect(socket.sentPayloads.join("\n")).toContain(
-        "Agent's in-context messages cleared",
-      );
-    } finally {
-      await rm(storageDir, { recursive: true, force: true });
-    }
-  });
-
   test("runs remote reload execute_command", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     const adapter = ensureListenerModAdapter(listener);

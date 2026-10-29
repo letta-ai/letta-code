@@ -166,10 +166,13 @@ test("wraps a LOCAL subagent with the memory-subagent profile (deny-list against
   expect(result).not.toBeNull();
   expect(result?.command).toBe(SANDBOX_EXEC_PATH);
   expect(result?.sandboxEnv[SANDBOX_ENV_VAR]).toBe("seatbelt");
-  expect(defineValues(result?.args ?? [], "-DDENIED_")).toEqual([
-    `0=${getDefaultAgentsTreeRoot()}`,
-    `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(storageDir))}`,
-  ]);
+  expect(new Set(defineValues(result?.args ?? [], "-DDENIED_"))).toEqual(
+    new Set([
+      `0=${getDefaultAgentsTreeRoot()}`,
+      `1=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot(storageDir))}`,
+      `2=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
+    ]),
+  );
 });
 
 test("returns null when no sandbox backend is available", () => {

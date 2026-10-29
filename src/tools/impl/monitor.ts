@@ -1,6 +1,7 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import stripAnsi from "strip-ansi";
 import { type RawData, WebSocket } from "ws";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
@@ -18,6 +19,13 @@ import {
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import { getBackgroundLauncher } from "./bash.js";
+import {
+  armMonitorBackup,
+  cancelMonitorBackup,
+  detachMonitorBackupsForProcessExit,
+  noteMonitorBackupActivity,
+  validateBackupAfterSeconds,
+} from "./monitor-backup.js";
 import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
@@ -40,11 +48,17 @@ import { applyShellSandbox } from "./shell-sandbox.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const MIN_TIMEOUT_MS = 1000;
-const MAX_TIMEOUT_MS = 3_600_000;
+export const MONITOR_MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
 const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
 const WEBSOCKET_PROTOCOL_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+export function getMonitorTimeoutEvent(timeoutMs: number): string {
+  return isManagedCloudRuntime() && timeoutMs === MONITOR_MAX_TIMEOUT_MS
+    ? "Monitor stopped at the 1-hour Cloud sandbox limit. Cloud monitors have a hard 1-hour limit to avoid keeping sandbox resources unnecessarily running. For later checks, schedule a Wake or cron, which does not keep the sandbox running between turns, and combine it with shorter monitors when needed."
+    : "[Monitor timed out — re-arm if needed.]";
+}
 
 interface MonitorWebSocketSource {
   url: string;
@@ -57,6 +71,8 @@ interface MonitorArgs {
   persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
+  backup_after_seconds?: number;
+  backup_prompt?: string;
   secretEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
@@ -220,14 +236,21 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     typeof normalized.timeout_ms !== "number" ||
     !Number.isFinite(normalized.timeout_ms) ||
     normalized.timeout_ms < MIN_TIMEOUT_MS ||
-    (!normalized.persistent && normalized.timeout_ms > MAX_TIMEOUT_MS)
+    (!normalized.persistent && normalized.timeout_ms > MONITOR_MAX_TIMEOUT_MS)
   ) {
     throw new Error(
-      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS}`,
+      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MONITOR_MAX_TIMEOUT_MS}`,
     );
   }
   if (typeof normalized.persistent !== "boolean") {
     throw new Error("Monitor persistent must be a boolean");
+  }
+  validateBackupAfterSeconds(normalized.backup_after_seconds);
+  if (
+    normalized.backup_prompt !== undefined &&
+    typeof normalized.backup_prompt !== "string"
+  ) {
+    throw new Error("Monitor backup_prompt must be a string");
   }
   if (
     normalized.command !== undefined &&
@@ -269,6 +292,10 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
       throw new Error("Monitor ws must be an object");
     }
     validateWebSocketSource(normalized.ws);
+  }
+  if (isManagedCloudRuntime() && normalized.persistent) {
+    normalized.persistent = false;
+    normalized.timeout_ms = MONITOR_MAX_TIMEOUT_MS;
   }
   return normalized;
 }
@@ -316,6 +343,7 @@ export function queueMonitorEvent(params: {
 }): void {
   const { taskId, event, scope, actingUserId, secrets } = params;
   const sanitizedEvent = sanitizeMonitorText(event, secrets);
+  noteMonitorBackupActivity(taskId);
   addToMessageQueue({
     kind: "task_notification",
     text: formatMonitorEventNotification({
@@ -387,6 +415,7 @@ export function markMonitorFinished(
 ): void {
   processState.status = status;
   processState.exitCode = exitCode;
+  void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
   notifyBackgroundProcessStateChanged(processState.runtimeScope);
   scheduleBackgroundProcessCleanup(taskId);
@@ -556,7 +585,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
         output.append(`\n[timeout after ${args.timeout_ms}ms]\n`);
         queueMonitorEvent({
           taskId,
-          event: "[Monitor timed out — re-arm if needed.]",
+          event: getMonitorTimeoutEvent(args.timeout_ms),
           scope,
           actingUserId,
           secrets,
@@ -762,7 +791,7 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
       if (processState.status !== "running") return;
       queueMonitorEvent({
         taskId,
-        event: "[Monitor timed out — re-arm if needed.]",
+        event: getMonitorTimeoutEvent(args.timeout_ms),
         scope,
         actingUserId,
         secrets,
@@ -783,17 +812,40 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   );
 }
 
+function backupScopeFor(taskId: string) {
+  const processState = backgroundProcesses.get(taskId);
+  const runtimeScope = processState?.runtimeScope;
+  if (!runtimeScope) return undefined;
+  return { ...runtimeScope, actingUserId: processState.actingUserId };
+}
+
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
-  return normalized.command !== undefined
-    ? startCommandMonitor(normalized)
-    : startWebSocketMonitor(normalized);
+  const result =
+    normalized.command !== undefined
+      ? startCommandMonitor(normalized)
+      : startWebSocketMonitor(normalized);
+  if (normalized.backup_after_seconds === undefined) return result;
+  const note = await armMonitorBackup({
+    taskId: result.taskId,
+    description: normalized.description,
+    afterSeconds: normalized.backup_after_seconds,
+    prompt: normalized.backup_prompt,
+    scope: backupScopeFor(result.taskId),
+    isRunning: () =>
+      backgroundProcesses.get(result.taskId)?.status === "running",
+  });
+  const first = result.content[0];
+  if (first) first.text = `${first.text}\n${note}`;
+  return result;
 }
 
 export function stopMonitorsForProcessExit(): void {
+  // Leave backup wakes armed: they exist for exactly this case.
+  detachMonitorBackupsForProcessExit();
   for (const processState of backgroundProcesses.values()) {
     if (processState.kind !== "monitor" || processState.status !== "running") {
       continue;

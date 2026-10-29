@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { PassThrough } from "node:stream";
 import {
   __resetClaudeSessionsForTests,
+  buildClaudeStreamArgs,
   type ClaudeSessionTransport,
   runClaudeTurn,
   sendClaudeMessage,
@@ -63,6 +64,33 @@ const base = { parentAgentId: "parent", cwd: "/repo" };
 afterEach(() => __resetClaudeSessionsForTests());
 
 describe("Claude stream sessions", () => {
+  test("launches unattended subagents with bypassed permissions", async () => {
+    const args = buildClaudeStreamArgs({ sessionId: SESSION_ID });
+    expect(args).toContain("--permission-mode");
+    expect(args[args.indexOf("--permission-mode") + 1]).toBe(
+      "bypassPermissions",
+    );
+    expect(args).not.toContain("--allowed-tools");
+
+    const fixture = transportFixture();
+    let spawnedEnv: NodeJS.ProcessEnv | undefined;
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      {
+        env: {},
+        createTransport: (options) => {
+          spawnedEnv = options.env;
+          return fixture.transport;
+        },
+      },
+    );
+    await Bun.sleep(0);
+    expect(spawnedEnv?.IS_SANDBOX).toBe("1");
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({ type: "result", is_error: false, result: "ok" });
+    await running;
+  });
+
   test("keeps the original task alive through the exact interrupt event sequence", async () => {
     const fixture = transportFixture();
     let completed = false;
@@ -178,7 +206,11 @@ describe("Claude stream sessions", () => {
     const fixture = transportFixture();
     let creates = 0;
     const deps = {
-      createTransport: () => {
+      env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
+      createTransport: ({ env }: { env: NodeJS.ProcessEnv }) => {
+        if (process.platform !== "win32") {
+          expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
+        }
         creates++;
         return fixture.transport;
       },
@@ -213,6 +245,40 @@ describe("Claude stream sessions", () => {
     });
     fixture.emit({ type: "result", is_error: false, result: "two" });
   });
+
+  test.each([
+    {
+      exitCode: 143,
+      exitSignal: null,
+      expected: "143; possibly out of memory",
+    },
+    {
+      exitCode: null,
+      exitSignal: "SIGTERM" as const,
+      expected: "SIGTERM; possibly out of memory",
+    },
+    {
+      exitCode: null,
+      exitSignal: "SIGKILL" as const,
+      expected: "SIGKILL; possibly out of memory",
+    },
+    { exitCode: 1, exitSignal: null, expected: "1" },
+  ])(
+    "reports unexpected process exit: $expected",
+    async ({ exitCode, exitSignal, expected }) => {
+      const fixture = transportFixture();
+      const running = runClaudeTurn(
+        { ...base, prompt: "one", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.finish({ exitCode, exitSignal });
+      expect(await running).toMatchObject({
+        success: false,
+        error: `Claude Code exited before a final result with ${expected}`,
+      });
+    },
+  );
 
   test("process close rejects an unacknowledged interrupt and permits one resume", async () => {
     const failed = transportFixture();
@@ -427,6 +493,59 @@ describe("Claude stream sessions", () => {
     expect(steering).rejects.toThrow();
     expect(await running).toMatchObject({ success: false });
     expect(aborted).toBe(true);
+  });
+
+  test("emits one tool call per assistant tool_use block", async () => {
+    const fixture = transportFixture();
+    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onToolCall: (call) => calls.push(call),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    const toolUse = {
+      type: "assistant",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Let me look." },
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "Bash",
+            input: { command: "ls" },
+          },
+          {
+            type: "tool_use",
+            id: "toolu_2",
+            name: "Write",
+            input: { file_path: "a.txt", content: "x".repeat(2_000) },
+          },
+        ],
+      },
+    };
+    fixture.emit(toolUse);
+    // Claude Code can repeat an assistant message; each block counts once.
+    fixture.emit(toolUse);
+    fixture.emit({
+      type: "result",
+      is_error: false,
+      subtype: "success",
+      result: "done",
+    });
+    expect(await running).toMatchObject({ success: true });
+    expect(calls.map(({ id, name }) => ({ id, name }))).toEqual([
+      { id: "toolu_1", name: "Bash" },
+      { id: "toolu_2", name: "Write" },
+    ]);
+    expect(calls[0]?.args).toBe('{"command":"ls"}');
+    expect(calls[1]?.args.length).toBeLessThanOrEqual(1_001);
+    expect(calls[1]?.args.endsWith("…")).toBe(true);
   });
 
   test("cancellation settles failed and evicts the session", async () => {

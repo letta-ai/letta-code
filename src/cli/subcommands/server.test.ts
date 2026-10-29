@@ -60,6 +60,9 @@ describe("server subcommand routing", () => {
       resolveServerCommand(["--listen", "--org", "org-123"]),
     ).toThrow("--org cannot be used with --listen");
     expect(() =>
+      resolveServerCommand(["--listen", "--token", "dc_abc"]),
+    ).toThrow("--token cannot be used with --listen");
+    expect(() =>
       resolveServerCommand(["--channels=slack", "--listen"]),
     ).toThrow("--channels cannot be used with --listen");
     expect(() =>

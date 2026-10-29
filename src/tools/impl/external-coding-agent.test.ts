@@ -1,4 +1,12 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -85,6 +93,17 @@ describe("external coding agent commands", () => {
       ),
     ).toEqual({ type: "claude-code", sessionId: SESSION_ID });
     expect(parseExternalCodingAgentId("agent-real")).toBeNull();
+    expect(
+      parseExternalCodingAgentId(
+        formatExternalCodingAgentId("claude-code", SESSION_ID, "device-1"),
+      ),
+    ).toEqual({
+      type: "claude-code",
+      sessionId: SESSION_ID,
+      computer: "device-1",
+    });
+    expect(parseExternalCodingAgentId(`claude_not-a-uuid@device-1`)).toBeNull();
+    expect(parseExternalCodingAgentId(`claude_${SESSION_ID}@`)).toBeNull();
   });
 });
 
@@ -151,6 +170,70 @@ describe("external coding agent MCP metadata", () => {
 });
 
 describe("external coding agent output and preflight", () => {
+  test.skipIf(process.platform === "win32").each([
+    ["claude-code", false],
+    ["codex", false],
+    ["claude-code", true],
+    ["codex", true],
+  ] as const)(
+    "finds %s native installs (existing wrapper: %s)",
+    async (type, wrapper) => {
+      const home = mkdtempSync(join(tmpdir(), "external-cli-path-"));
+      const bin = join(home, ".local", "bin");
+      const executable = type === "claude-code" ? "claude" : "codex";
+      mkdirSync(bin, { recursive: true });
+      // Exercise real OS executable lookup, not a mocked preflight.
+      const script = (source: string) =>
+        `#!/bin/sh\nprintf '%s\\n' '{"loggedIn":true,"session_id":"${SESSION_ID}","result":"${source}"}'\n`;
+      writeFileSync(join(bin, executable), script("native"), { mode: 0o755 });
+      const wrapperBin = join(home, "wrappers");
+      if (wrapper) {
+        mkdirSync(wrapperBin);
+        writeFileSync(join(wrapperBin, executable), script("wrapper"), {
+          mode: 0o755,
+        });
+      }
+      const originalPath = wrapper
+        ? `${wrapperBin}:/usr/bin:/bin`
+        : "/usr/bin:/bin";
+      const inheritedEnv = { HOME: home, PATH: originalPath };
+      const runWorker = (env: NodeJS.ProcessEnv) => {
+        expect(env.PATH).toBe(`${originalPath}:${bin}`);
+        const child = spawnSync(executable, [], { env, encoding: "utf8" });
+        expect(child.error).toBeUndefined();
+        expect(child.status).toBe(0);
+        expect(JSON.parse(child.stdout).result).toBe(
+          wrapper ? "wrapper" : "native",
+        );
+        return child.stdout;
+      };
+      try {
+        const result = await runExternalCodingAgent(
+          { type, prompt: "test", parentAgentId: "parent", cwd: home },
+          {
+            env: inheritedEnv,
+            resolveSecretEnv: async () => ({}),
+            runProcess: async (_command, { env }) => ({
+              exitCode: 0,
+              stdout: runWorker(env),
+              stderr: "",
+            }),
+            runCodexTurn: async (_options, deps) => ({
+              agentId: "parent",
+              success: true,
+              report: runWorker(deps?.env ?? {}),
+            }),
+          },
+        );
+        expect(result.error).toBeUndefined();
+        expect(result.success).toBe(true);
+        expect(inheritedEnv.PATH).toBe(originalPath);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
+
   test.each(["claude-code", "codex"] as const)(
     "does not start %s preflight after cancellation",
     async (type) => {
@@ -406,4 +489,170 @@ describe("external coding agent output and preflight", () => {
     );
     expect(receivedEnv?.LETTA_ACTING_USER_ID).toBeUndefined();
   });
+});
+
+describe("external coding agent vault secrets", () => {
+  test("exports the MCP-scope vault with the parent's own secrets winning", async () => {
+    const { __testSeedSecretsCache, clearSecretsCache } = await import(
+      "@/utils/secrets-store"
+    );
+    const { resolveExternalCodingAgentSecretEnv } = await import(
+      "./external-coding-agent"
+    );
+    __testSeedSecretsCache("agent-ext-child", { SHARED: "child-value" });
+    __testSeedSecretsCache("agent-ext-root", {
+      SHARED: "root-value",
+      GITHUB_TOKEN: "root-token",
+    });
+    const parents: Record<string, string> = {
+      "agent-ext-child": "agent-ext-root",
+    };
+    try {
+      const inherited = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+            parent_agent_id: "agent-ext-root",
+            agent_role: "subagent",
+          },
+        },
+        () =>
+          resolveExternalCodingAgentSecretEnv(
+            "agent-ext-child",
+            async (id) => parents[id],
+          ),
+      );
+      expect(inherited).toEqual({
+        SHARED: "child-value",
+        GITHUB_TOKEN: "root-token",
+      });
+      const ownOnly = await runWithRuntimeContext(
+        {
+          executionSettings: {
+            allowed_tools: [],
+            disallowed_tools: [],
+            disable_memory_guard: false,
+          },
+        },
+        () =>
+          resolveExternalCodingAgentSecretEnv(
+            "agent-ext-child",
+            async (id) => parents[id],
+          ),
+      );
+      expect(ownOnly).toEqual({ SHARED: "child-value" });
+    } finally {
+      clearSecretsCache("agent-ext-child");
+      clearSecretsCache("agent-ext-root");
+    }
+  });
+
+  test("launches the worker with the resolved vault in its environment", async () => {
+    let seenEnv: NodeJS.ProcessEnv | undefined;
+    await runExternalCodingAgent(
+      { type: "claude-code", prompt: "test", parentAgentId: "parent" },
+      {
+        env: {},
+        resolveSecretEnv: async () => ({ GITHUB_TOKEN: "vault-token" }),
+        runPreflight: async (_executable, _args, env) => {
+          seenEnv = env;
+          return { exitCode: 1, stdout: "", stderr: "stop" };
+        },
+      },
+    );
+    expect(seenEnv?.GITHUB_TOKEN).toBe("vault-token");
+    expect(seenEnv?.LETTA_AGENT_ID).toBe("parent");
+  });
+
+  test("scrubs exported vault values from the worker's report", async () => {
+    const token = "ghp_exported_vault_value_123";
+    const result = await runExternalCodingAgent(
+      { type: "codex", prompt: "test", parentAgentId: "parent" },
+      {
+        env: {},
+        resolveSecretEnv: async () => ({ GITHUB_TOKEN: token }),
+        runPreflight: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+        runCodexTurn: async () => ({
+          agentId: "codex_thread",
+          runtimeSessionId: "thread",
+          report: `the token is ${token}`,
+          success: true,
+          durationMs: 1,
+        }),
+      },
+    );
+    expect(result.success).toBe(true);
+    expect(result.report).not.toContain(token);
+    expect(result.report).toContain("the token is");
+  });
+});
+
+describe("parent memory launch instructions", () => {
+  test.each(["claude-code", "codex"] as const)(
+    "composes instructions before the %s launch",
+    async (type) => {
+      const parentAgentId = `agent-worker-parent-${randomUUID()}`;
+      const directory = getScopedMemoryFilesystemRoot(parentAgentId);
+      for (const [hasMemory, mcpReminder] of [
+        [true, "MCP discovery"],
+        [true, undefined],
+        [false, undefined],
+        [false, "MCP discovery"],
+      ] as const) {
+        if (hasMemory) mkdirSync(directory, { recursive: true });
+        let received: string | undefined;
+        try {
+          const resolvedMcpReminder =
+            mcpReminder ??
+            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
+              inherit: false,
+            }));
+          await runExternalCodingAgent(
+            {
+              type,
+              parentAgentId,
+              prompt: "task",
+              mcpReminder: resolvedMcpReminder,
+            },
+            {
+              resolveSecretEnv: async () => ({}),
+              runPreflight: async () => ({
+                exitCode: 0,
+                stdout: '{"loggedIn":true}',
+                stderr: "",
+              }),
+              runProcess: async (command) => {
+                const index = command.args.indexOf("--append-system-prompt");
+                received = index >= 0 ? command.args[index + 1] : undefined;
+                return {
+                  exitCode: 0,
+                  stdout: '{"result":"done","session_id":"c1"}',
+                  stderr: "",
+                };
+              },
+              runCodexTurn: async (options) => {
+                received = options.mcpReminder;
+                throw new Error("captured launch instructions");
+              },
+            },
+          );
+          const note = buildParentMemoryNote(parentAgentId);
+          expect(received).toBe(
+            [
+              note
+                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
+                : undefined,
+              mcpReminder,
+            ]
+              .filter(Boolean)
+              .join("\n\n") || undefined,
+          );
+        } finally {
+          rmSync(directory, { recursive: true, force: true });
+        }
+      }
+    },
+  );
 });

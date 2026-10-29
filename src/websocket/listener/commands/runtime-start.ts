@@ -7,6 +7,7 @@ import type {
   ConversationCreateParams,
 } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type WebSocket from "ws";
+import { buildCreatedAgentTags, MEMFS_DISABLED_TAG } from "@/agent/agent-tags";
 import { createAgentWithBaseToolsRecovery } from "@/agent/create";
 import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { type ConversationUpdateBody, getBackend } from "@/backend";
@@ -208,11 +209,23 @@ async function resolveRuntimeStartAgent(
     const requestedBody = applyCreatedAgentServerToolDefaults(
       parsed.create_agent.body,
     );
+    const createBody = withMemfs
+      ? requestedBody
+      : {
+          ...requestedBody,
+          tags: buildCreatedAgentTags({
+            enableMemfs: false,
+            tags: [
+              ...(Array.isArray(requestedBody.tags) ? requestedBody.tags : []),
+              MEMFS_DISABLED_TAG,
+            ],
+          }),
+        };
     const appliedHarnessToolDefaults =
       requestedBody !== parsed.create_agent.body;
     const body = withMemfs
-      ? await prepareRawCreateAgentBodyForMemfs(requestedBody)
-      : requestedBody;
+      ? await prepareRawCreateAgentBodyForMemfs(createBody)
+      : createBody;
     const agent = appliedHarnessToolDefaults
       ? await createAgentWithBaseToolsRecovery(
           (tools) => backend.createAgent({ ...body, tools }),
@@ -395,14 +408,19 @@ async function applyRuntimeStartState(
     parsed.preserve_skill_sources !== true
   ) {
     scopedRuntime.skillSources = undefined;
+    scopedRuntime.bundledSkills = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
   } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
+    const bundledSkills = parsed.bundled_skills
+      ? [...new Set(parsed.bundled_skills)]
+      : undefined;
     scopedRuntime.skillSources = skillSources;
-    context.runtime.skillSourcesByConversation.set(
-      scopedRuntime.key,
-      skillSources,
-    );
+    scopedRuntime.bundledSkills = bundledSkills;
+    context.runtime.skillSourcesByConversation.set(scopedRuntime.key, {
+      sources: skillSources,
+      ...(bundledSkills ? { bundledSkills } : {}),
+    });
   }
 
   if (parsed.mode) {

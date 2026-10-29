@@ -4,16 +4,10 @@ import {
   getRuntimeAuthorityEpoch,
 } from "./runtime";
 import { resolveStartupLineageId } from "./startup-ingress";
-import {
-  cloneTurnCorrelationIndex,
-  mergeTurnCorrelationIndexes,
-} from "./turn-correlation";
 import type {
-  AcceptedInputDispositionLedger,
   ListenerClientReplacement,
   ListenerRuntime,
   StartListenerOptions,
-  StartupFrameHandoff,
 } from "./types";
 
 /**
@@ -23,7 +17,6 @@ import type {
 type ListenerReplacementRejection =
   | "unknown_provenance"
   | "identity_mismatch"
-  | "superseded_issuer"
   | "stale_generation"
   | "unauthoritative_issuer";
 
@@ -34,9 +27,6 @@ type ListenerReplacementProvenance = {
   lineageId: string;
   generation: number;
   authorityEpoch: number | null;
-  ledger: AcceptedInputDispositionLedger;
-  startupFrameHandoff: StartupFrameHandoff;
-  clientMessageIdsByRunIdByConversation: Map<string, Map<string, string[]>>;
 };
 
 /**
@@ -50,48 +40,8 @@ const replacementProvenance = new WeakMap<
   ListenerReplacementProvenance
 >();
 
-/** Predecessors that already handed their ownership to a successor runtime. */
-const succeededListenerRuntimes = new WeakSet<ListenerRuntime>();
-
 function rejectReplacement(reason: ListenerReplacementRejection): never {
   throw new Error(`Invalid listener replacement lineage: ${reason}`);
-}
-
-function cloneRawData(frame: import("ws").RawData): import("ws").RawData {
-  if (Array.isArray(frame)) return frame.map((chunk) => Buffer.from(chunk));
-  if (Buffer.isBuffer(frame)) return Buffer.from(frame);
-  if (frame instanceof ArrayBuffer) return frame.slice(0);
-  return Buffer.from(new Uint8Array(frame));
-}
-
-function cloneStartupFrameHandoff(
-  handoff: StartupFrameHandoff,
-): StartupFrameHandoff {
-  return handoff.kind === "overflow"
-    ? { ...handoff }
-    : { ...handoff, frames: handoff.frames.map(cloneRawData) };
-}
-
-function cloneDispositionLedger(
-  ledger: AcceptedInputDispositionLedger,
-): AcceptedInputDispositionLedger {
-  return {
-    entries: new Map(
-      [...ledger.entries].map(([key, entry]) => [key, structuredClone(entry)]),
-    ),
-    scopeCounts: new Map(ledger.scopeCounts),
-    quarantinedCount: ledger.quarantinedCount,
-    abandonedReservations: new Map(
-      [...ledger.abandonedReservations].map(([key, reservation]) => [
-        key,
-        { ...reservation },
-      ]),
-    ),
-    expiryQueue: ledger.expiryQueue.map((entry) => ({ ...entry })),
-    expiryQueueHead: ledger.expiryQueueHead,
-    nextGeneration: ledger.nextGeneration,
-    persistentPath: ledger.persistentPath,
-  };
 }
 
 export function createListenerClientReplacement(
@@ -100,16 +50,6 @@ export function createListenerClientReplacement(
 ): ListenerClientReplacement {
   const lineageId = resolveStartupLineageId(runtime, opts);
   const generation = runtime.startupGenerationByLineage.get(lineageId) ?? 0;
-  const startupFrameHandoff = cloneStartupFrameHandoff(
-    runtime.pendingStartupFramesByLineage.get(lineageId) ?? {
-      kind: "frames",
-      frames: [],
-      byteLength: 0,
-    },
-  );
-  const clientMessageIdsByRunIdByConversation = cloneTurnCorrelationIndex(
-    runtime.clientMessageIdsByRunIdByConversation,
-  );
   const replacement = Object.freeze({
     deviceId: opts.deviceId,
     connectionName: opts.connectionName,
@@ -123,11 +63,6 @@ export function createListenerClientReplacement(
     lineageId,
     generation,
     authorityEpoch: getRuntimeAuthorityEpoch(runtime),
-    ledger: cloneDispositionLedger(runtime.acceptedInputDispositionLedger),
-    startupFrameHandoff: cloneStartupFrameHandoff(startupFrameHandoff),
-    clientMessageIdsByRunIdByConversation: cloneTurnCorrelationIndex(
-      clientMessageIdsByRunIdByConversation,
-    ),
   });
   return replacement;
 }
@@ -153,9 +88,6 @@ function resolveAdoptableReplacement(
     rejectReplacement("identity_mismatch");
   }
   const issuer = provenance.issuer;
-  if (succeededListenerRuntimes.has(issuer)) {
-    rejectReplacement("superseded_issuer");
-  }
   // The issuer must still own the generation it issued against. A late socket
   // that reconnected after the token was minted advances it, which makes the
   // token a stale view of a runtime that is once again serving.
@@ -174,75 +106,18 @@ function resolveAdoptableReplacement(
   ) {
     rejectReplacement("unauthoritative_issuer");
   }
-  // 1008 tears the predecessor down before re-registering, so an intentionally
-  // stopped runtime is the authoritative predecessor. A still-running issuer
-  // only qualifies while it is the active runtime being replaced.
-  const activeRuntime = getActiveRuntime();
-  if (issuer.intentionallyClosed) {
-    if (activeRuntime !== null && activeRuntime !== issuer) {
-      rejectReplacement("unauthoritative_issuer");
-    }
-  } else if (issuer !== activeRuntime) {
+  if (issuer.intentionallyClosed || issuer !== getActiveRuntime()) {
     rejectReplacement("unauthoritative_issuer");
   }
   return provenance;
 }
 
-/**
- * Validate an inbound replacement token before any teardown happens.
- *
- * Callers must run this before stopping the runtime they are replacing: the
- * adoption below is what carries accepted-input ownership forward, and a
- * runtime stopped ahead of a failed validation can never get it back.
- */
-export function assertAdoptableListenerClientReplacement(
-  opts: StartListenerOptions,
-): void {
-  resolveAdoptableReplacement(opts);
-}
-
+/** Consume the registration handoff without replacing its live runtime. */
 export function adoptListenerClientReplacement(
-  runtime: ListenerRuntime,
   opts: StartListenerOptions,
-): void {
+): ListenerRuntime | null {
   const provenance = resolveAdoptableReplacement(opts);
-  const replacement = opts.replacement;
-  if (!provenance || !replacement) return;
-  replacementProvenance.delete(replacement);
-  succeededListenerRuntimes.add(provenance.issuer);
-  runtime.acceptedInputDispositionLedger = cloneDispositionLedger(
-    provenance.ledger,
-  );
-  // Rollback failures can be recorded after the replacement token is minted
-  // while the issuer is still serving. Its live abandonment set is the newest
-  // exact-authority view (including removals), so carry that state across the
-  // synchronous handoff rather than restoring only the older token snapshot.
-  runtime.acceptedInputDispositionLedger.abandonedReservations = new Map(
-    [
-      ...provenance.issuer.acceptedInputDispositionLedger.abandonedReservations,
-    ].map(([key, reservation]) => [key, { ...reservation }]),
-  );
-  // The retry-exhausted path can leave the issuer serving while async
-  // registration is in flight. Merge its exact-authority live correlations at
-  // the synchronous handoff boundary so observations made after token issuance
-  // are not replaced by the older private snapshot. Successor-local mappings
-  // are newest because they may have been recorded before explicit adoption.
-  runtime.clientMessageIdsByRunIdByConversation = mergeTurnCorrelationIndexes(
-    provenance.clientMessageIdsByRunIdByConversation,
-    provenance.issuer.clientMessageIdsByRunIdByConversation,
-    runtime.clientMessageIdsByRunIdByConversation,
-  );
-  runtime.startupGenerationByLineage.set(
-    provenance.lineageId,
-    provenance.generation,
-  );
-  if (
-    provenance.startupFrameHandoff.kind === "overflow" ||
-    provenance.startupFrameHandoff.frames.length > 0
-  ) {
-    runtime.pendingStartupFramesByLineage.set(
-      provenance.lineageId,
-      cloneStartupFrameHandoff(provenance.startupFrameHandoff),
-    );
-  }
+  if (!provenance || !opts.replacement) return null;
+  replacementProvenance.delete(opts.replacement);
+  return provenance.issuer;
 }

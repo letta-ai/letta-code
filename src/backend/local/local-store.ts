@@ -37,7 +37,9 @@ import {
   shouldPersistSubagentHiddenBackfill,
   shouldUseDefaultLocalModel,
 } from "./local-agent-record";
+import { readAgentRecordFiles } from "./local-agent-record-file";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
+import { localConversationKey } from "./local-conversation-key";
 import { listLocalConversations } from "./local-conversation-list";
 import {
   agentFreeExecutionRecord,
@@ -99,13 +101,13 @@ import {
   localMessagesHaveSameSnapshot,
   localTranscriptRowsResult,
   localTranscriptSessionEntries,
+  localTranscriptTailByteBudget,
   localTranscriptTailMessages,
   messagesMissingFrom,
   normalizeLocalMessageForPi,
   overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
   readJsonFile,
-  readJsonlFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
   repairSyntheticConversationTimestamps,
@@ -121,6 +123,7 @@ import {
   validateUnreadTranscriptHead,
   writeLocalTranscriptManifest,
 } from "./local-transcript";
+import { readLocalTranscriptRowsForHistory } from "./local-transcript-history";
 import type {
   LocalAgentRecord,
   StoredConversation,
@@ -2133,12 +2136,12 @@ export class LocalStore {
     const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) return undefined;
 
-    const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
     const conversation = this.conversations.get(key);
+    const inContextIds = conversation?.in_context_message_ids ?? [];
     const transcript = localTranscriptRowsResult(
-      rawRows,
+      readLocalTranscriptRowsForHistory(metadata.messagesPath, inContextIds),
       metadata.messageFormat,
-      conversation?.in_context_message_ids ?? [],
+      inContextIds,
     );
     assertNoLegacyUiMessageRows(
       transcript.messages,
@@ -2211,10 +2214,7 @@ export class LocalStore {
     this.markConversationFullyResident(key);
   }
 
-  /**
-   * Full load: the entire parsed transcript becomes resident (legacy format,
-   * synthetic timestamp repair, in-memory stores).
-   */
+  /** Load the full transcript for legacy formats and timestamp repair. */
   private loadConversationMessages(
     key: string,
     conversationId: string,
@@ -2239,11 +2239,6 @@ export class LocalStore {
     this.projectLocalMessages(read.messages, agentId, conversationId);
   }
 
-  /**
-   * Tail load: the transcript suffix holding every in-context message becomes
-   * the resident window; append dedup, parent chaining, and rollback
-   * detection only consult it.
-   */
   private loadConversationMessageTail(
     key: string,
     conversationId: string,
@@ -2259,6 +2254,7 @@ export class LocalStore {
       return;
     }
     const conversation = this.conversations.get(key);
+    const activeMessageIds = conversation?.in_context_message_ids ?? [];
     const {
       transcript,
       messages: tailMessages,
@@ -2267,23 +2263,26 @@ export class LocalStore {
     } = readLocalTranscriptTailWindow(
       metadata.messagesPath,
       metadata.messageFormat,
-      conversation?.in_context_message_ids ?? [],
+      activeMessageIds,
       this.residentMessageTailLimit,
       this.storageDir ?? "",
       metadata.conversationDir,
+      localTranscriptTailByteBudget(
+        conversation,
+        this.agents.get(agentId)?.model_settings,
+      ),
     );
-    // The resident window must match a full load's repaired view, since it
-    // wins over the disk read for its ids.
+    // Must match a full load's repaired view: it wins over disk reads for its ids.
     const toolResultClip = clipOversizedLocalToolResults(tailMessages);
     const messages = toolResultClip.messages;
     if (toolResultClip.clippedToolResultIds.length > 0) {
       this.loadRepairedConversationKeys.add(key);
     }
     this.localMessagesByConversationKey.set(key, messages);
-    // Ids with no row (killed mid-stream) or dropped as orphans leave context.
     if (conversation) conversation.in_context_message_ids = liveInContextIds;
-    // Track the unparsed head for one-time pre-append validation (F13).
-    if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, headBytes);
+    // Unparsed head for pre-append validation (F13); negative = empty-list mode.
+    const head = activeMessageIds.length === 0 ? -headBytes : headBytes;
+    if (headBytes > 0) this.unreadTranscriptHeadBytesByKey.set(key, head);
     else this.unreadTranscriptHeadBytesByKey.delete(key);
     this.loadedConversationKeys.delete(key);
     this.tailResidentConversationKeys.add(key);
@@ -2307,10 +2306,7 @@ export class LocalStore {
     });
   }
 
-  /**
-   * Replace the resident window after a wholesale in-memory rewrite
-   * (compaction); the caller's persist appends the rewrite entry to disk.
-   */
+  /** Replace the resident window after a compaction rewrite; caller persists. */
   private setResidentConversationMessages(
     key: string,
     messages: LocalMessage[],
@@ -2403,8 +2399,9 @@ export class LocalStore {
 
   // Validate the unparsed head pre-append; a throw retains it for retries.
   private validateUnreadTranscriptHeadOnce(key: string): void {
-    const headBytes = this.unreadTranscriptHeadBytesByKey.get(key);
-    if (headBytes === undefined) return;
+    const storedHeadBytes = this.unreadTranscriptHeadBytesByKey.get(key);
+    if (storedHeadBytes === undefined) return;
+    const headBytes = Math.abs(storedHeadBytes);
     const metadata = this.transcriptMetadataByConversationKey.get(key);
     if (metadata) {
       validateUnreadTranscriptHead(
@@ -2412,7 +2409,9 @@ export class LocalStore {
         headBytes,
         this.storageDir ?? "",
         metadata.conversationDir,
-        this.conversations.get(key)?.in_context_message_ids ?? [],
+        storedHeadBytes < 0
+          ? []
+          : (this.conversations.get(key)?.in_context_message_ids ?? []),
       );
     }
     this.unreadTranscriptHeadBytesByKey.delete(key);
@@ -2732,11 +2731,7 @@ export class LocalStore {
 
     const agentsDir = join(this.storageDir, "agents");
     if (existsSync(agentsDir)) {
-      for (const file of readdirSync(agentsDir)) {
-        if (!file.endsWith(".json") || file.startsWith("._")) continue;
-        const filePath = join(agentsDir, file);
-        const mtimeMs = statSync(filePath).mtimeMs;
-        const raw = readJsonFile<unknown>(filePath);
+      for (const { mtimeMs, raw } of readAgentRecordFiles(agentsDir)) {
         const agent = normalizeAgentRecord(raw, this.defaultAgentModel);
         if (agent?.id) {
           this.agents.set(agent.id, agent);
@@ -3260,8 +3255,6 @@ export class LocalStore {
   }
 
   private conversationKey(conversationId: string, agentId: string): string {
-    return conversationId === "default"
-      ? `default:${agentId}`
-      : `conversation:${conversationId}`;
+    return localConversationKey(conversationId, agentId);
   }
 }

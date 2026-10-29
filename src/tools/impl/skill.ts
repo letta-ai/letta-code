@@ -14,10 +14,10 @@ import {
 } from "@/agent/shared-memory-skills";
 import {
   discoverSkills,
-  GLOBAL_SKILLS_DIR,
   getAgentSkillsDir,
   getBundledSkills,
   getFrontmatterBoolean,
+  getGlobalSkillsDir,
   isSkillAvailableForAgent,
   PROJECT_SKILLS_DIR,
   SKILLS_DIR,
@@ -209,7 +209,7 @@ export async function readSkillContent(
   }
 
   // 5. Try global skills directory
-  const globalResult = await readSkillFromRoot(GLOBAL_SKILLS_DIR, skillId);
+  const globalResult = await readSkillFromRoot(getGlobalSkillsDir(), skillId);
   if (globalResult) {
     return globalResult;
   }

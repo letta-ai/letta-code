@@ -1,4 +1,7 @@
-import { GIT_MEMORY_ENABLED_TAG } from "@/agent/agent-tags";
+import {
+  GIT_MEMORY_ENABLED_TAG,
+  isMemfsOptOutCreateTags,
+} from "@/agent/agent-tags";
 import { stampRootMemoryOnCreateBody } from "@/agent/memory-filesystem";
 import {
   type InitializeLocalMemoryRepoFile,
@@ -29,8 +32,10 @@ import type {
   LlmStartInfo,
   ProviderTurnInput,
 } from "@/backend/dev/provider-turn-executor";
+import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import {
+  assertLocalCompactionProgress,
   estimateLocalMessageTokens,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
@@ -41,6 +46,7 @@ import {
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
+  runLocalPressureCompaction,
   summarizeLocalMessagesAll,
   summarizeLocalMessagesSlidingWindow,
 } from "./compaction";
@@ -321,8 +327,11 @@ export class LocalBackend extends HeadlessBackend {
     ...args: Parameters<HeadlessBackend["createAgent"]>
   ) {
     let [body, ...restArgs] = args;
+    const memfsExplicitlyDisabled = isMemfsOptOutCreateTags(
+      (body as Record<string, unknown>).tags,
+    );
     // Stamp local memfs agents so downstream tag checks enable memory sync.
-    if (this.isLocalMemfsEnabled()) {
+    if (this.isLocalMemfsEnabled() && !memfsExplicitlyDisabled) {
       body = stampRootMemoryOnCreateBody(body);
       const bodyRecord = body as Record<string, unknown>;
       const existingTags = Array.isArray(bodyRecord.tags)
@@ -348,13 +357,16 @@ export class LocalBackend extends HeadlessBackend {
       requestedCompactionSettings,
     );
     let agent = await super.createAgent(body, ...restArgs);
+    if (memfsExplicitlyDisabled) {
+      settingsManager.setMemfsEnabled(agent.id, false);
+    }
     if (compactionSettingsForStorage !== undefined) {
       agent = this.store.setAgentCompactionSettings(
         agent.id,
         compactionSettingsForStorage,
       );
     }
-    if (this.isLocalMemfsEnabled()) {
+    if (this.isMemfsEnabledForAgent(agent.id)) {
       await this.ensureLocalMemoryRepo(
         agent.id,
         initialMemoryFilesFromCreateBody(body),
@@ -512,6 +524,11 @@ export class LocalBackend extends HeadlessBackend {
     );
   }
 
+  private isMemfsEnabledForAgent(agentId: string): boolean {
+    const { tags } = this.store.retrieveAgentRecord(agentId);
+    return this.isLocalMemfsEnabled() && !isMemfsOptOutCreateTags(tags);
+  }
+
   private async ensureLocalMemoryRepo(
     agentId: string,
     files: InitializeLocalMemoryRepoFile[] = [],
@@ -556,11 +573,14 @@ export class LocalBackend extends HeadlessBackend {
     summary: string;
     stats?: LocalCompactionStats;
   } | null> {
-    const result = await this.compactLocalConversation(
-      input.conversationId,
-      input.agentId,
-      "context_window_limit",
+    const result = await runLocalPressureCompaction(() =>
+      this.compactLocalConversation(
+        input.conversationId,
+        input.agentId,
+        "context_window_limit",
+      ),
     );
+    if (!result) return null;
     return {
       uiMessages: this.store.listLocalMessages(
         input.conversationId,
@@ -822,6 +842,7 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    assertLocalCompactionProgress(stats, "all");
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -877,6 +898,7 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
+    assertLocalCompactionProgress(stats, "sliding_window");
     const storeResult = this.store.compactConversationAll({
       conversationId,
       agentId,
@@ -904,7 +926,7 @@ export class LocalBackend extends HeadlessBackend {
       agentId,
     );
     const rawSystemHash = hashRawSystemPrompt(agent.system);
-    const memfsRevision = this.isLocalMemfsEnabled()
+    const memfsRevision = this.isMemfsEnabledForAgent(agentId)
       ? getCommittedMemfsRevision(this.memoryDirForAgent(agentId))
       : undefined;
     if (
@@ -952,7 +974,7 @@ export class LocalBackend extends HeadlessBackend {
     options: { dryRun: boolean; previousMessageCount?: number },
   ): Promise<LocalCompiledSystemPrompt> {
     const agent = this.store.retrieveAgentRecord(agentId);
-    const memfsEnabled = this.isLocalMemfsEnabled();
+    const memfsEnabled = this.isMemfsEnabledForAgent(agentId);
     if (memfsEnabled) {
       await this.ensureLocalMemoryRepo(agentId, [], agent.name);
     }

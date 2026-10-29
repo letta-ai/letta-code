@@ -21,6 +21,10 @@ export async function handleLaunchSubagentCommand(
   const response = {
     type: "launch_subagent_response" as const,
     request_id: command.request_id,
+    runtime: {
+      agent_id: command.runtime.agent_id,
+      conversation_id: command.runtime.conversation_id,
+    },
   };
   const controller = new AbortController();
   const connectionSignal = connectionId
@@ -64,6 +68,7 @@ export async function handleLaunchSubagentCommand(
               parent.conversationId,
             ),
             skillSources: parent.skillSources,
+            bundledSkills: parent.bundledSkills,
             workspaceSandbox: parent.workspaceSandbox,
             executionSettings: parent.executionSettings,
           },
@@ -72,6 +77,7 @@ export async function handleLaunchSubagentCommand(
               ...command.args,
               signal,
               toolCallId: command.tool_call_id,
+              notifyCaller: command.notify === "caller",
               parentScope: {
                 agentId: command.runtime.agent_id,
                 conversationId: command.runtime.conversation_id,

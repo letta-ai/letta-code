@@ -7,7 +7,7 @@ description: Comprehensive guide for initializing or reorganizing agent memory. 
 
 Your memory is projected to a filesystem at `$MEMORY_DIR`, so you can restructure it with ordinary file tools and git. This skill applies the [Context Constitution](https://github.com/letta-ai/context-constitution/blob/main/constitution/CONSTITUTION.md)'s Progressive Disclosure and Efficiency principles to the [MemFS v2 root-first design](https://github.com/letta-ai/letta-code/blob/main/src/agent/prompts/letta_root_memfs.md).
 
-**You own this task through completion**: research, ask, synthesize, write, commit, verify. Delegate research, but integrate the results yourself — launching a background task is not completion. If a memory worker you launched is still editing this checkout, wait for it, then re-read before editing.
+**You own this task through completion**: research, ask, synthesize, write, commit, verify. Delegate research, but integrate the results yourself — launching a background task is not completion.
 
 ## Principles
 
@@ -159,7 +159,7 @@ You — not the subagents — decide what becomes memory, and you write it. Synt
 
 ```bash
 node <SKILL_DIR>/scripts/history-coverage.mjs --prepared /tmp/letta-init-history \
-  --journal ~/.letta/workflows/executions/<id>/journal.jsonl \
+  --journal "${LETTA_CONFIG_DIR:-$HOME/.letta}/workflows/executions/<id>/journal.jsonl" \
   --retry-out /tmp/letta-init-history/retry.json
 ```
 

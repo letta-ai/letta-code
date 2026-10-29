@@ -39,6 +39,14 @@ import type {
   UmiLifecycleMessageBase,
 } from "./approval-classification-protocol";
 import type { BackgroundProcessSummary } from "./background-process-protocol";
+import type {
+  ChatGPTRateLimitResetCreditConsumeCommand,
+  ChatGPTRateLimitResetCreditConsumeResponseMessage,
+  ChatGPTRateLimitResetCreditsListCommand,
+  ChatGPTRateLimitResetCreditsListResponseMessage,
+  ChatGPTUsageReadCommand,
+  ChatGPTUsageReadResponseMessage,
+} from "./chatgpt-usage-protocol";
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
@@ -47,6 +55,11 @@ import type {
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
 } from "./external-tool-protocol";
+import type {
+  WriteFileCommand,
+  WriteFileResponseMessage,
+} from "./file-write-protocol";
+import type { InputCommand } from "./input-command";
 import type {
   LoopErrorMessage,
   LoopState,
@@ -80,8 +93,10 @@ import type {
 
 export type * from "./approval-classification-protocol";
 export type * from "./background-process-protocol";
+export type * from "./chatgpt-usage-protocol";
 export type * from "./cwd-protocol";
 export type * from "./external-tool-protocol";
+export type * from "./file-write-protocol";
 export type * from "./loop-status-protocol";
 export type * from "./runtime-scope";
 export type * from "./runtime-start-protocol";
@@ -120,13 +135,6 @@ export interface RuntimeEnvelope {
   event_seq: number;
   emitted_at: string;
   idempotency_key: string;
-}
-
-export interface ClientToolsetConfig {
-  /** Request-scoped base toolset. Omitted preserves the runtime preference. */
-  base?: ToolsetPreference;
-  /** Additional bundled client tools to load before applying the allowlist. */
-  include?: string[];
 }
 
 export interface AvailableSkillSummary {
@@ -420,8 +428,6 @@ export type QueueMessageKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
-  | "approval_result"
-  | "overlay_action"
   | "mod_continue";
 
 export type QueueMessageSource =
@@ -459,9 +465,7 @@ export interface QueueUpdateMessage extends RuntimeEnvelope {
   removed: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
-/**
- * Standard Letta message delta forwarded through the stream channel.
- */
+/** Standard Letta message delta forwarded through the stream channel. */
 export type MessageDelta = { type: "message" } & LettaStreamingResponse;
 
 export interface ClientToolStartMessage extends UmiLifecycleMessageBase {
@@ -550,6 +554,7 @@ export interface SubagentSnapshot {
   prompt?: string;
   status: "pending" | "running" | "completed" | "error";
   agent_url: string | null;
+  agent_id?: string | null;
   conversation_id?: string | null; // Own conversation; local URLs do not carry it.
   super_run_id?: string; // Exact accepted Super Run for a remote child send.
   model?: string;
@@ -564,6 +569,8 @@ export interface SubagentSnapshot {
   total_tokens: number;
   duration_ms: number;
   error?: string;
+  /** Truncated final report, set for `notify: "caller"` launches. */
+  result?: string;
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
@@ -571,81 +578,25 @@ export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
   subagents: SubagentSnapshot[];
 }
 
-export interface ApprovalResponseAllowDecision {
-  behavior: "allow";
-  message?: string;
-  updated_input?: Record<string, unknown> | null;
-  selected_permission_suggestion_ids?: string[];
-}
-
-export interface ApprovalResponseDenyDecision {
-  behavior: "deny";
-  message: string;
-}
-
-export type ApprovalResponseDecision =
-  | ApprovalResponseAllowDecision
-  | ApprovalResponseDenyDecision;
-
-export type ApprovalResponseBody =
-  | {
-      request_id: string;
-      decision: ApprovalResponseDecision;
-    }
-  | {
-      request_id: string;
-      error: string;
-    };
-
 /**
  * Controller -> execution-environment commands.
  * In v2, the WS server accepts runtime-scoped chat/device commands plus
  * device capability commands (filesystem, memory, cron, terminals).
  */
 export type { ClientPreferences } from "./client-preferences";
-
-export interface InputCreateMessagePayload {
-  kind: "create_message";
-  /** Omitted inherits; supplied replaces the conversation snapshot; {} clears. */
-  client_preferences?: import("./client-preferences").ClientPreferences;
-  messages: Array<MessageCreate & { client_message_id?: string }>;
-  /** Handling policy for unsupported or failed image inputs. */
-  image_failure_mode?: "strict" | "drop";
-  /**
-   * Optional request-scoped allowlist for locally executed client tools.
-   * Undefined preserves the listener's normal toolset; an empty array means no
-   * client tools for this turn.
-   */
-  client_tool_allowlist?: string[];
-  /**
-   * Optional request-scoped built-in toolset selection. The base chooses the
-   * harness preset without changing persisted settings; include adds bundled
-   * client tools before the allowlist is applied.
-   */
-  client_toolset?: ClientToolsetConfig;
-  /** Scoped runtime-start tools to expose for this turn; unscoped tools remain available. */
-  external_tool_scope_ids?: string[];
-  /** Exclude interactive tools even when included by preferences or this input. */
-  exclude_interactive_tools?: boolean;
-  response_format?: Record<string, unknown>;
-}
-
-export type InputApprovalResponsePayload = {
-  kind: "approval_response";
-} & ApprovalResponseBody;
-export type InputPayload =
-  | InputCreateMessagePayload
-  | InputApprovalResponsePayload
-  | TeleportProtocol.InputTeleportContinuePayload;
-
-export interface InputCommand {
-  type: "input";
-  /** Correlates acknowledgement without waiting for the turn to finish. */
-  request_id?: string;
-  terminal_consumer_id?: string;
-  runtime: ConversationRuntimeScope;
-  payload: InputPayload;
-}
+export type {
+  ApprovalResponseAllowDecision,
+  ApprovalResponseBody,
+  ApprovalResponseDecision,
+  ApprovalResponseDenyDecision,
+  InputApprovalResponsePayload,
+  InputCommand,
+  InputPayload,
+} from "./input-command";
+export type {
+  ClientToolsetConfig,
+  InputCreateMessagePayload,
+} from "./input-create-message";
 
 export interface InputAcceptedResponseMessage {
   type: "input_accepted";
@@ -911,24 +862,6 @@ export interface ReadFileResponseMessage {
   content: string | null;
   /** Encoding of `content`. Mirrors the request; "utf8" when omitted. */
   encoding?: "utf8" | "base64";
-  success: boolean;
-  error?: string;
-}
-
-export interface WriteFileCommand {
-  type: "write_file";
-  /** Absolute path to the file to write. */
-  path: string;
-  /** The full file content to write. */
-  content: string;
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-}
-
-export interface WriteFileResponseMessage {
-  type: "write_file_response";
-  request_id: string;
-  path: string;
   success: boolean;
   error?: string;
 }
@@ -1226,7 +1159,6 @@ export interface ListModelsCommand {
 }
 
 export type ConnectProviderStorageTarget = "local";
-export type ChatGPTUsageReadTarget = "local" | "api";
 
 export interface ListConnectProvidersCommand {
   type: "list_connect_providers";
@@ -1259,18 +1191,6 @@ export interface DisconnectProviderCommand {
   provider_id: string;
   /** Optional connected provider name to remove when a row has multiple aliases. */
   provider_name?: string;
-}
-
-export interface ChatGPTUsageReadCommand {
-  type: "chatgpt_usage_read";
-  /** Echoed back in the response for request correlation. */
-  request_id: string;
-  /** Provider store to inspect. */
-  target: ChatGPTUsageReadTarget;
-  /** Optional connected ChatGPT provider alias. Defaults to the built-in alias. */
-  provider_name?: string;
-  /** Skip the short listener-side cache. */
-  force_refresh?: boolean;
 }
 
 export interface ConnectProviderField {
@@ -1344,65 +1264,6 @@ export interface DisconnectProviderResponseMessage {
   providers: ConnectProviderEntry[];
   models_may_have_changed: boolean;
   error?: string;
-}
-
-export interface ChatGPTUsageWindowPayload {
-  label: string;
-  usedPercent: number | null;
-  windowDurationMins: number | null;
-  resetsAt: number | null;
-}
-
-export interface ChatGPTUsageCreditsPayload {
-  balance?: string | null;
-  availableCount?: number | null;
-  hasCredits?: boolean | null;
-  unlimited?: boolean | null;
-}
-
-export interface ChatGPTUsageIndividualLimitPayload {
-  limit: string;
-  used: string;
-  remainingPercent: number;
-  resetsAt: number;
-}
-
-export interface ChatGPTUsageSnapshotPayload {
-  providerName: string;
-  fetchedAt: string;
-  summary: string;
-  planType?: string | null;
-  limitReached?: boolean | null;
-  rateLimitReachedType?: string | null;
-  primary: ChatGPTUsageWindowPayload | null;
-  secondary: ChatGPTUsageWindowPayload | null;
-  additional: ChatGPTUsageWindowPayload[];
-  credits?: ChatGPTUsageCreditsPayload | null;
-  individualLimit?: ChatGPTUsageIndividualLimitPayload | null;
-}
-
-export interface ChatGPTUsageReadErrorPayload {
-  code:
-    | "bad_request"
-    | "not_connected"
-    | "unsupported_target"
-    | "refresh_failed"
-    | "unauthorized"
-    | "forbidden"
-    | "rate_limited"
-    | "network_error"
-    | "bad_response";
-  message: string;
-  retryAfterMs?: number;
-}
-
-export interface ChatGPTUsageReadResponseMessage {
-  type: "chatgpt_usage_read_response";
-  request_id: string;
-  success: boolean;
-  target: ChatGPTUsageReadTarget;
-  usage?: ChatGPTUsageSnapshotPayload;
-  error?: ChatGPTUsageReadErrorPayload;
 }
 
 export interface UpdateModelPayload {
@@ -2375,6 +2236,8 @@ export type WsProtocolCommand =
   | ConnectProviderCommand
   | DisconnectProviderCommand
   | ChatGPTUsageReadCommand
+  | ChatGPTRateLimitResetCreditsListCommand
+  | ChatGPTRateLimitResetCreditConsumeCommand
   | UpdateModelCommand
   | UpdateToolsetCommand
   | CronProtocolCommand
@@ -2477,6 +2340,8 @@ export type WsProtocolMessage =
   | ConnectProviderResponseMessage
   | DisconnectProviderResponseMessage
   | ChatGPTUsageReadResponseMessage
+  | ChatGPTRateLimitResetCreditsListResponseMessage
+  | ChatGPTRateLimitResetCreditConsumeResponseMessage
   | UpdateModelResponseMessage
   | UpdateToolsetResponseMessage
   | CronProtocolResponseMessage

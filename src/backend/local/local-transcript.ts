@@ -26,6 +26,9 @@ export const LOCAL_TRANSCRIPT_SCHEMA_VERSION = 2;
 export const LOCAL_TRANSCRIPT_LEGACY_MESSAGE_FORMAT = "pi-ai-message-jsonl";
 export const LOCAL_TRANSCRIPT_MESSAGE_FORMAT = "pi-session-entry-jsonl";
 export const LOCAL_TRANSCRIPT_PROVIDER_STACK = "pi-ai";
+export const LOCAL_TRANSCRIPT_TAIL_MAX_BYTES = 16 * 1024 * 1024;
+const LOCAL_TRANSCRIPT_BYTES_PER_CONTEXT_TOKEN = 8;
+const LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT = 128000;
 
 type LocalTranscriptSchemaVersion =
   | typeof LOCAL_TRANSCRIPT_SCHEMA_VERSION
@@ -355,21 +358,71 @@ export function readJsonFile<T>(path: string): T | undefined {
 }
 
 export function readJsonlFile<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as T);
+  const items: T[] = [];
+  forEachJsonlRow<T>(path, (item) => {
+    items.push(item);
+  });
+  return items;
+}
+
+/**
+ * Stream a JSONL file row by row in 64 KB chunks. Only the current row is
+ * held in memory, so callers that do not retain rows stay bounded no matter
+ * how large the file grows.
+ */
+export function forEachJsonlRow<T>(
+  path: string,
+  onRow: (item: T) => void,
+): void {
+  if (!existsSync(path)) return;
+
+  const buffer = Buffer.alloc(64 * 1024);
+  const pending: Buffer[] = [];
+  const fd = openSync(path, "r");
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+      let lineStart = 0;
+      for (let index = 0; index < bytesRead; index += 1) {
+        if (buffer[index] !== 0x0a) continue;
+        const suffix = buffer.subarray(lineStart, index);
+        const line = pending.length
+          ? Buffer.concat([...pending, suffix])
+          : suffix;
+        pending.length = 0;
+        const text = line.toString("utf8");
+        if (text.trim().length > 0) onRow(JSON.parse(text) as T);
+        lineStart = index + 1;
+      }
+      if (lineStart < bytesRead) {
+        pending.push(Buffer.from(buffer.subarray(lineStart, bytesRead)));
+      }
+    } while (bytesRead > 0);
+  } finally {
+    closeSync(fd);
+  }
+
+  if (pending.length > 0) {
+    const text = Buffer.concat(pending).toString("utf8");
+    if (text.trim().length > 0) onRow(JSON.parse(text) as T);
+  }
 }
 
 export function readJsonlFileSuffix<T>(
   path: string,
   maxBytes: number,
-): { items: T[]; reachedStart: boolean; startOffset: number } {
+): {
+  items: T[];
+  reachedStart: boolean;
+  startOffset: number;
+  bytesRead: number;
+} {
   if (!existsSync(path))
-    return { items: [], reachedStart: true, startOffset: 0 };
+    return { items: [], reachedStart: true, startOffset: 0, bytesRead: 0 };
   const size = statSync(path).size;
-  if (size === 0) return { items: [], reachedStart: true, startOffset: 0 };
+  if (size === 0)
+    return { items: [], reachedStart: true, startOffset: 0, bytesRead: 0 };
 
   const bytesToRead = Math.min(size, Math.max(1, maxBytes));
   const start = size - bytesToRead;
@@ -396,6 +449,7 @@ export function readJsonlFileSuffix<T>(
       .filter((line) => line.trim().length > 0)
       .map((line) => JSON.parse(line) as T),
     reachedStart,
+    bytesRead: bytesToRead,
     startOffset: reachedStart
       ? 0
       : firstNewlineByte >= 0
@@ -617,6 +671,29 @@ export interface LocalTranscriptTailReadResult {
   messages: LocalMessage[];
 }
 
+export function localTranscriptTailByteBudget(
+  conversation: unknown,
+  agentSettings: unknown,
+): number {
+  const conversationRecord = isRecord(conversation) ? conversation : {};
+  const conversationSettings = isRecord(conversationRecord.model_settings)
+    ? conversationRecord.model_settings
+    : {};
+  const agentSettingsRecord = isRecord(agentSettings) ? agentSettings : {};
+  const contextWindow = [
+    conversationRecord.context_window_limit,
+    conversationSettings.context_window_limit,
+    agentSettingsRecord.context_window_limit,
+  ].find(
+    (value): value is number =>
+      typeof value === "number" && Number.isFinite(value) && value > 0,
+  );
+  return (
+    (contextWindow ?? LEGACY_LOCAL_CONTEXT_WINDOW_LIMIT) *
+    LOCAL_TRANSCRIPT_BYTES_PER_CONTEXT_TOKEN
+  );
+}
+
 /**
  * Shared parse pipeline for bounded transcript tail reads: rows already read
  * from a messages.jsonl suffix are converted to the normalized active-message
@@ -644,10 +721,10 @@ export function localTranscriptTailMessages(
 }
 
 /**
- * Read the smallest messages.jsonl suffix that holds every in-context id (or
- * `minMessages` messages when there is no in-context list), starting at a
- * 64 KB window. Compacted-away rows older than the oldest in-context row stay
- * unread, so a compacted conversation never re-reads its whole history.
+ * Read the smallest messages.jsonl suffix that holds the newest resident
+ * message budget, starting at a 64 KB window and capped by `maxTailBytes`. Older
+ * in-context ids are evicted: the persisted list can be stale or much larger
+ * than any model context, and must never turn a resume into a full-file read.
  *
  * `liveInContextIds` is the in-context list minus ids the returned messages
  * lack: ids with no row once the whole file was scanned (an in-flight
@@ -661,17 +738,20 @@ export function readLocalTranscriptTailWindow(
   minMessages: number,
   storageDir: string,
   conversationDir: string,
+  maxTailBytes = LOCAL_TRANSCRIPT_TAIL_MAX_BYTES,
 ): LocalTranscriptTailReadResult & {
   reachedStart: boolean;
   headBytes: number;
+  bytesRead: number;
   liveInContextIds: string[];
 } {
   const targetCount =
     activeMessageIds.length > 0 ? activeMessageIds.length : minMessages;
+  const byteBudget = Math.max(64 * 1024, Math.floor(maxTailBytes));
   let maxBytes = 64 * 1024;
   for (;;) {
     const tail = readJsonlFileSuffix<unknown>(messagesPath, maxBytes);
-    const result = localTranscriptTailMessages(
+    let result = localTranscriptTailMessages(
       tail.items,
       messageFormat,
       activeMessageIds,
@@ -679,21 +759,45 @@ export function readLocalTranscriptTailWindow(
       conversationDir,
     );
     const found = result.transcript.messages.length;
-    if (found >= targetCount || tail.reachedStart) {
+    if (found >= targetCount || tail.reachedStart || maxBytes >= byteBudget) {
+      // An empty list historically meant "all rows". Give it explicit,
+      // bounded semantics after the suffix has been selected.
+      if (
+        activeMessageIds.length === 0 &&
+        result.messages.length > minMessages
+      ) {
+        const inferredIds = result.messages
+          .slice(-minMessages)
+          .map((message) => message.id);
+        result = localTranscriptTailMessages(
+          tail.items,
+          messageFormat,
+          inferredIds,
+          storageDir,
+          conversationDir,
+        );
+      }
       const returnedIds = new Set(result.messages.map((message) => message.id));
       return {
         ...result,
         reachedStart: tail.reachedStart,
+        bytesRead: tail.bytesRead,
         // Everything before the first parsed row, including the partial line
         // the suffix skipped.
         headBytes: tail.startOffset,
-        liveInContextIds: activeMessageIds.filter((id) => returnedIds.has(id)),
+        liveInContextIds:
+          activeMessageIds.length > 0
+            ? activeMessageIds.filter((id) => returnedIds.has(id))
+            : result.messages.map((message) => message.id),
       };
     }
     // Grow toward the window the rows found so far imply (at least double).
-    maxBytes = Math.max(
-      maxBytes * 2,
-      found > 0 ? Math.ceil((maxBytes / found) * targetCount * 1.25) : 0,
+    maxBytes = Math.min(
+      byteBudget,
+      Math.max(
+        maxBytes * 2,
+        found > 0 ? Math.ceil((maxBytes / found) * targetCount * 1.25) : 0,
+      ),
     );
   }
 }

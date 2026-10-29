@@ -132,4 +132,40 @@ describe("listener turn input state", () => {
       [refreshedOtid as string]: "drop",
     });
   });
+  test.each([true, false])(
+    "pending-approval rejection preserves content OTIDs (server approvals=%s)",
+    (hasApprovals) => {
+      const state = rebuildTurnInputWithFreshDenials(
+        createTurnInputState(
+          [
+            { type: "approval", approvals: [], otid: "stale-approval" },
+            { role: "user", content: "hello", otid: "user-otid" },
+            { role: "system", content: "context", otid: "context-otid" },
+          ],
+          { "user-otid": "drop" },
+        ),
+        hasApprovals
+          ? [{ toolCallId: "pending-tool", toolName: "Bash", toolArgs: "{}" }]
+          : [],
+        "stale approval",
+        true,
+      );
+      expect(state.messages.filter((item) => item.type !== "approval")).toEqual(
+        [
+          { role: "user", content: "hello", otid: "user-otid" },
+          { role: "system", content: "context", otid: "context-otid" },
+        ],
+      );
+      expect(state.imageFailureModesByMessageOtid).toEqual({
+        "user-otid": "drop",
+      });
+      if (hasApprovals) {
+        expect(state.messages[0]).toMatchObject({ type: "approval" });
+        expect(state.messages[0]?.otid).toBeString();
+        expect(state.messages[0]?.otid).not.toBe("stale-approval");
+      } else {
+        expect(state.messages).toHaveLength(2);
+      }
+    },
+  );
 });

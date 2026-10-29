@@ -277,12 +277,12 @@ export const CLI_FLAG_CATALOG = {
   "no-skills": {
     parser: { type: "boolean" },
     mode: "both",
-    help: { description: "Disable all skill sources" },
+    help: { description: "Disable automatic skill discovery" },
   },
   "no-bundled-skills": {
     parser: { type: "boolean" },
     mode: "both",
-    help: { description: "Disable bundled skills only" },
+    help: { description: "Disable automatic discovery of bundled skills" },
   },
   "no-system-info-reminder": {
     parser: { type: "boolean" },

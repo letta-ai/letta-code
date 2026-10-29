@@ -172,10 +172,13 @@ test("api backend: also walls off the local memfs tree", () => {
   );
 
   expect(result.backend).toBe("seatbelt");
-  expect(defineValues(result.launcher, "-DDENIED_")).toEqual([
-    `0=${getDefaultAgentsTreeRoot()}`,
-    `1=${canonicalizeRoot(memfsTree)}`,
-  ]);
+  expect(new Set(defineValues(result.launcher, "-DDENIED_"))).toEqual(
+    new Set([
+      `0=${getDefaultAgentsTreeRoot()}`,
+      `1=${canonicalizeRoot(memfsTree)}`,
+      `2=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
+    ]),
+  );
 });
 
 test("local backend: walls off both local memfs and ~/.letta/agents", () => {
@@ -197,10 +200,13 @@ test("local backend: walls off both local memfs and ~/.letta/agents", () => {
   );
 
   expect(result.backend).toBe("seatbelt");
-  expect(defineValues(result.launcher, "-DDENIED_")).toEqual([
-    `0=${getDefaultAgentsTreeRoot()}`,
-    `1=${canonicalizeRoot(memfsTree)}`,
-  ]);
+  expect(new Set(defineValues(result.launcher, "-DDENIED_"))).toEqual(
+    new Set([
+      `0=${getDefaultAgentsTreeRoot()}`,
+      `1=${canonicalizeRoot(memfsTree)}`,
+      `2=${canonicalizeRoot(getLocalBackendCrossAgentTreeRoot())}`,
+    ]),
+  );
   // Self agent dir carved writable (both /memory and /memory-worktrees collapse
   // to the single agent dir).
   const writables = result.launcher.filter((a) => a.startsWith("-DWRITABLE_"));

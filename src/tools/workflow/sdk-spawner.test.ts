@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { clearModTools, registerModTool } from "@/mods/tool-registry";
 import {
   createSdkSpawner,
   DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
@@ -203,23 +204,27 @@ describe("createSdkSpawner", () => {
     const spawner = createSdkSpawner(client, {
       ...CONFIG,
       permissionMode: "acceptEdits",
-      allowedTools: ["Read", "Write", "exec_command", "Agent", "custom_tool"],
+      parentToolNames: ["Read", "Write", "Grep", "agent_x", "channel_x"],
+      agentScopedToolNames: ["agent_x"],
     });
     for (const options of [
       {},
-      { allowedTools: ["Read"] },
+      { allowedTools: ["Read", "Grep"] },
       { allowedTools: [] },
     ]) {
       await spawner(request(options), new AbortController().signal);
     }
     expect(client.calls.map((call) => call.options.allowedTools)).toEqual([
-      ["Read", "Write", "exec_command", "Agent", "custom_tool"],
-      ["Read"],
+      ["Read", "Write", "Grep"],
+      ["Read", "Grep"],
       [],
     ]);
     expect(client.calls.map((call) => call.options.toolset)).toEqual([
-      { base: "none", include: ["Read", "Write", "exec_command", "Task"] },
-      { base: "none", include: ["Read"] },
+      {
+        base: "none",
+        include: ["Read", "Write", "Grep"],
+      },
+      { base: "none", include: ["Read", "Grep"] },
       { base: "none", include: [] },
     ]);
     expect(
@@ -229,6 +234,80 @@ describe("createSdkSpawner", () => {
     ).toBe(true);
   });
 
+  test("passes a mod-tool-only allowlist to the worker client-tool filter", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "done" },
+    ]);
+    const activation = new AbortController();
+    registerModTool({
+      activationSignal: activation.signal,
+      approvalPolicy: "auto",
+      description: "Issue 4960 reproduction tool",
+      name: "council_web_search",
+      parallelSafe: true,
+      parameters: { type: "object", properties: {} },
+      path: "/tmp/council-web-search.ts",
+      requiresApproval: false,
+      run: () => "result",
+    });
+    try {
+      const spawner = createSdkSpawner(client, {
+        ...CONFIG,
+        parentToolNames: ["Read", "Grep", "council_web_search"],
+      });
+      await spawner(
+        request({ allowedTools: ["council_web_search"] }),
+        new AbortController().signal,
+      );
+      expect(client.calls[0]?.options.allowedTools).toEqual([
+        "council_web_search",
+      ]);
+      expect(client.calls[0]?.options.toolset).toEqual({
+        base: "none",
+        include: [],
+      });
+    } finally {
+      activation.abort();
+      clearModTools();
+    }
+  });
+
+  test("rejects an agent-scoped parent tool unavailable to workers", async () => {
+    const client = fakeClient([]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      parentToolNames: ["Read", "agent_lookup"],
+      agentScopedToolNames: ["agent_lookup"],
+    });
+    await expect(
+      spawner(
+        request({ allowedTools: ["agent_lookup"] }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      'Workflow worker tool "agent_lookup" is agent-scoped and is not available to workflow workers.',
+    );
+    expect(client.calls).toHaveLength(0);
+  });
+
+  test("rejects an allowlisted tool absent from bundled and global mods", async () => {
+    const client = fakeClient([
+      { type: "result", success: true, result: "wrong" },
+    ]);
+    const spawner = createSdkSpawner(client, {
+      ...CONFIG,
+      parentToolNames: ["Read", "council_web_search"],
+    });
+    await expect(
+      spawner(
+        request({ allowedTools: ["missing_tool"] }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow(
+      'Unknown workflow worker tool "missing_tool": it is neither a bundled tool nor a global mod tool available to workflow workers.',
+    );
+    expect(client.calls).toHaveLength(0);
+  });
   test("resolves per-call model aliases and fails unknown ones before querying", async () => {
     const client = fakeClient([{ type: "result", success: true, result: "" }]);
     const spawner = createSdkSpawner(client, CONFIG);

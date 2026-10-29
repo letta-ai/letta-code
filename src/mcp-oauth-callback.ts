@@ -1,22 +1,38 @@
 import { createServer, type Server } from "node:http";
+import { DEFAULT_MCP_OAUTH_CLIENT_NAME } from "@/mcp-oauth-client-name";
 
 const CALLBACK_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Accepted OAuth callback parameters. */
+export interface OAuthCallbackResult {
+  code: string;
+  /**
+   * Provider-reported site. Datadog appends `domain` (e.g. `us5.datadoghq.com`)
+   * naming the region that issued the code. Untrusted; callers must allowlist.
+   */
+  domain?: string;
+}
 
 export interface OAuthCallbackServer {
   redirectUrl: string;
   expectedState: { value?: string };
-  waitForCode(): Promise<string>;
+  waitForCallback(): Promise<OAuthCallbackResult>;
   close(): void;
 }
 
+/**
+ * @param appName Name shown on the success page ("return to <appName>"),
+ *   normally the consent-screen client name. Defaults to "Letta Code".
+ */
 export async function startOAuthCallbackServer(
   preferredPort?: number,
+  appName: string = DEFAULT_MCP_OAUTH_CLIENT_NAME,
 ): Promise<OAuthCallbackServer> {
   try {
-    return await startOAuthCallbackServerOnPort(preferredPort ?? 0);
+    return await startOAuthCallbackServerOnPort(preferredPort ?? 0, appName);
   } catch (error) {
     if (!preferredPort) throw error;
-    return startOAuthCallbackServerOnPort(0);
+    return startOAuthCallbackServerOnPort(0, appName);
   }
 }
 
@@ -34,23 +50,26 @@ export function callbackPort(redirectUrl?: string): number | undefined {
 
 async function startOAuthCallbackServerOnPort(
   port: number,
+  appName: string,
 ): Promise<OAuthCallbackServer> {
   const expectedState: { value?: string } = {};
   let server: Server;
   let completed = false;
-  let settle: ((code: string) => void) | undefined;
+  let settle: ((result: OAuthCallbackResult) => void) | undefined;
   let reject: ((error: Error) => void) | undefined;
-  const codePromise = new Promise<string>((resolve, rejectPromise) => {
-    settle = (code) => {
-      completed = true;
-      resolve(code);
-    };
-    reject = (error) => {
-      completed = true;
-      rejectPromise(error);
-    };
-  });
-  void codePromise.catch(() => undefined);
+  const callbackPromise = new Promise<OAuthCallbackResult>(
+    (resolve, rejectPromise) => {
+      settle = (result) => {
+        completed = true;
+        resolve(result);
+      };
+      reject = (error) => {
+        completed = true;
+        rejectPromise(error);
+      };
+    },
+  );
+  void callbackPromise.catch(() => undefined);
 
   server = createServer((request, response) => {
     if (
@@ -91,17 +110,18 @@ async function startOAuthCallbackServerOnPort(
     const error = url.searchParams.get("error");
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
+    const domain = url.searchParams.get("domain");
     if (!state || state !== expectedState.value) {
       response.writeHead(400, { "Content-Type": "text/html" });
       response.end(
-        callbackPage("Authorization failed", "Invalid OAuth callback"),
+        callbackPage(appName, "Authorization failed", "Invalid OAuth callback"),
       );
       return;
     }
     if (error) {
       response.writeHead(400, { "Content-Type": "text/html" });
       reject?.(new Error(`MCP OAuth authorization failed: ${error}`));
-      response.end(callbackPage("Authorization failed", error), () => {
+      response.end(callbackPage(appName, "Authorization failed", error), () => {
         void closeServer(true);
       });
       return;
@@ -109,16 +129,21 @@ async function startOAuthCallbackServerOnPort(
     if (!code) {
       response.writeHead(400, { "Content-Type": "text/html" });
       response.end(
-        callbackPage("Authorization failed", "Missing authorization code"),
+        callbackPage(
+          appName,
+          "Authorization failed",
+          "Missing authorization code",
+        ),
       );
       return;
     }
     response.writeHead(200, { "Content-Type": "text/html" });
-    settle?.(code);
+    settle?.(domain ? { code, domain } : { code });
     response.end(
       callbackPage(
+        appName,
         "Authorization complete",
-        "You can close this tab and return to Letta Code.",
+        `You can close this tab and return to ${appName}.`,
       ),
       () => {
         void closeServer(true);
@@ -159,7 +184,7 @@ async function startOAuthCallbackServerOnPort(
   return {
     redirectUrl: `http://127.0.0.1:${address.port}/callback`,
     expectedState,
-    waitForCode: () => codePromise.finally(() => clearTimeout(timeout)),
+    waitForCallback: () => callbackPromise.finally(() => clearTimeout(timeout)),
     close: () => {
       clearTimeout(timeout);
       if (!completed) reject?.(new Error("MCP OAuth flow was cancelled"));
@@ -168,8 +193,8 @@ async function startOAuthCallbackServerOnPort(
   };
 }
 
-function callbackPage(title: string, message: string): string {
-  return `<!doctype html><html><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
+function callbackPage(appName: string, title: string, message: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(`${title} - ${appName}`)}</title></head><body style="font-family:system-ui;padding:2rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></body></html>`;
 }
 
 function escapeHtml(value: string): string {

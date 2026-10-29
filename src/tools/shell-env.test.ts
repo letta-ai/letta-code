@@ -4,6 +4,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { getMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import {
+  __resetOrganizationIdForTests,
+  setExplicitOrganizationId,
+} from "@/agent/organization-id";
 import { configureBackendMode } from "@/backend";
 import {
   disableLocalBackendMemfsForProcess,
@@ -71,6 +75,32 @@ function withTemporaryEnv<T>(
     }
   }
 }
+
+describe("shellEnv LETTA_ORGANIZATION_ID", () => {
+  test("includes the resolved organization id when known", () => {
+    __resetOrganizationIdForTests();
+    setExplicitOrganizationId("org-shell-123");
+    try {
+      withTemporaryEnv({ LETTA_ORGANIZATION_ID: undefined }, () => {
+        expect(getShellEnv().LETTA_ORGANIZATION_ID).toBe("org-shell-123");
+      });
+    } finally {
+      __resetOrganizationIdForTests();
+    }
+  });
+
+  test("does not override an inherited LETTA_ORGANIZATION_ID", () => {
+    __resetOrganizationIdForTests();
+    setExplicitOrganizationId("org-shell-123");
+    try {
+      withTemporaryEnv({ LETTA_ORGANIZATION_ID: "org-inherited" }, () => {
+        expect(getShellEnv().LETTA_ORGANIZATION_ID).toBe("org-inherited");
+      });
+    } finally {
+      __resetOrganizationIdForTests();
+    }
+  });
+});
 
 describe("shellEnv letta shim", () => {
   test("resolveLettaInvocation prefers explicit launcher env", () => {

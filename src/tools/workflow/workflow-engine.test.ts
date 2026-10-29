@@ -251,7 +251,7 @@ try { await tools.mcp__db__broken() } catch (e) { failed = e.message }
 const invalid = typeof tools.Bash
 return { structured, json, text, failed, invalid }`,
         journalPath,
-        callMcpTool: async (toolName, args) => {
+        callTool: async (toolName, args) => {
           calls.push([toolName, args]);
           if (toolName === "mcp__db__query")
             return { content: [], structuredContent: { rows: [1] } };
@@ -281,14 +281,54 @@ return { structured, json, text, failed, invalid }`,
       expect(
         journal.map((entry) => [entry.kind, entry.toolName, entry.isError]),
       ).toEqual([
-        ["mcp_call", "mcp__db__query", false],
-        ["mcp_call", "mcp__db__json", false],
-        ["mcp_call", "mcp__db__text", false],
-        ["mcp_call", "mcp__db__broken", true],
+        ["tool_call", "mcp__db__query", false],
+        ["tool_call", "mcp__db__json", false],
+        ["tool_call", "mcp__db__text", false],
+        ["tool_call", "mcp__db__broken", true],
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  test("built-in tools, listTools(), and describeTool() share the tools scope", async () => {
+    const calls: string[] = [];
+    const run = await executeWorkflow(echoSpawner(), {
+      script: `${META}
+const listed = (await listTools()).map((t) => t.name)
+const read = await tools.Read({ file_path: '/x' })
+const schema = await describeTool('Read')
+const missing = await describeTool('Nope')
+let failed = null
+try { await tools.Bash({ command: 'false' }) } catch (e) { failed = e.message }
+return { listed, read, schema, missing, failed, unregistered: typeof tools.Edit }`,
+      builtinToolNames: ["Read", "Bash"],
+      listTools: async () => [
+        { name: "Read", description: "read", inputSchema: { type: "object" } },
+        { name: "Bash", description: "bash", inputSchema: { type: "object" } },
+        { name: "mcp__db__query", description: "q", inputSchema: {} },
+      ],
+      callTool: async (toolName) => {
+        calls.push(toolName);
+        if (toolName === "Bash")
+          return { content: [{ type: "text", text: "exit 1" }], isError: true };
+        return { content: [{ type: "text", text: '{"looks":"like json"}' }] };
+      },
+    });
+    expect(run.result).toEqual({
+      listed: ["Read", "Bash", "mcp__db__query"],
+      // Built-in output stays verbatim text, never JSON-parsed.
+      read: '{"looks":"like json"}',
+      schema: {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object" },
+      },
+      missing: undefined,
+      failed: "Bash failed: exit 1",
+      unregistered: "undefined",
+    });
+    expect(calls).toEqual(["Read", "Bash"]);
   });
 
   test.each([
@@ -298,7 +338,7 @@ return { structured, json, text, failed, invalid }`,
     await expect(
       executeWorkflow(echoSpawner(), {
         script: META + script,
-        callMcpTool: async () => ({
+        callTool: async () => ({
           content: [{ type: "text", text: "denied" }],
           isError: true,
         }),

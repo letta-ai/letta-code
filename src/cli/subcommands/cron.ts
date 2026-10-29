@@ -25,6 +25,7 @@ import {
   getCloudSchedule,
   listCloudScheduleHistory,
   listCloudSchedules,
+  listCloudSchedulesByExactMatch,
 } from "@/backend/api/schedules";
 import {
   addTask,
@@ -84,8 +85,9 @@ Add options:
                          conversation; "default" for the agent default)
   --computer <id>        (managed Cloud sandbox only) Run on a connected
                          external computer (deviceId from \`letta computers
-                         list\`). Falls back to the Cloud sandbox if that
-                         computer is offline at fire time.
+                         list\`). If that computer is offline at fire
+                         time, that run fails (no Cloud sandbox fallback);
+                         omit --computer to run in the Cloud sandbox.
 
 List/filter options:
   --agent <id>           Filter by agent ID
@@ -390,7 +392,7 @@ async function handleCloudAdd(params: CloudAddParams): Promise<number> {
     console.log(JSON.stringify(output, null, 2));
     console.error(
       targetDeviceId
-        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (sandbox fallback if offline).`
+        ? `Created Cloud schedule: it fires from the cloud and runs on computer "${targetDeviceId}" (if it is offline at fire time, that run fails; no sandbox fallback).`
         : "Created Cloud schedule: it fires from the cloud and runs in this agent's managed cloud sandbox (survives local shutdown).",
     );
     return 0;
@@ -418,14 +420,10 @@ async function handleList(values: CronArgValues): Promise<number> {
   if (agentId && canManageCloudSchedules(agentId)) {
     try {
       await ensureSettingsForCloud();
-      const response = await listCloudSchedules(agentId);
-      for (const schedule of response.scheduled_messages) {
-        if (
-          conversationId &&
-          (schedule.conversation_id ?? "default") !== conversationId
-        ) {
-          continue;
-        }
+      const schedules = conversationId
+        ? await listCloudSchedulesByExactMatch(agentId, { conversationId })
+        : (await listCloudSchedules(agentId)).scheduled_messages;
+      for (const schedule of schedules) {
         output.push(formatCloudScheduleOutput(schedule));
       }
     } catch (err) {

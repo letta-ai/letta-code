@@ -1,3 +1,4 @@
+import { cancelMonitorBackup } from "./monitor-backup.js";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
@@ -23,6 +24,7 @@ export function killBackgroundProcess(shell_id: string): boolean {
       proc.status = "failed";
     }
     proc.process.kill("SIGTERM");
+    if (proc.kind === "monitor") void cancelMonitorBackup(shell_id);
     clearBackgroundProcessCleanup(shell_id);
     if (retainsEntry) {
       scheduleBackgroundProcessCleanup(shell_id);

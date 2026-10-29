@@ -13,6 +13,8 @@ import {
 } from "./lifecycle";
 import { createListenerMessageHandler } from "./message-router";
 import { setActiveRuntime } from "./runtime";
+import { StartupFrameBuffer } from "./startup-frame-buffer";
+import { activateStartupIngress } from "./startup-ingress";
 import type { ListenerTransport } from "./transport";
 import type { StartListenerOptions } from "./types";
 
@@ -164,13 +166,18 @@ test("emits initial state before opening the inbound startup gate", async () => 
   }
 });
 
-test("publishes connection readiness only after exact ingress activation", async () => {
+test.each([false, true])("heartbeat recovery", async (abort) => {
   const runtime = createRuntime();
   const transport = new MockTransport();
   let releaseIngress!: () => void;
   const ingressBlocked = new Promise<void>((resolve) => {
     releaseIngress = resolve;
   });
+  const buffer = new StartupFrameBuffer();
+  const processInput = mock(async () => {});
+  const input = Buffer.from(
+    JSON.stringify({ type: "message", content: "hello" }),
+  );
   let signalActivationStarted!: () => void;
   const activationStarted = new Promise<void>((resolve) => {
     signalActivationStarted = resolve;
@@ -197,30 +204,45 @@ test("publishes connection readiness only after exact ingress activation", async
   });
   setActiveRuntime(runtime);
   try {
+    runtime.processServicesStarted = true;
     const starting = startConnectedListenerRuntime(
       runtime,
       transport,
       options,
       async () => {},
       {
-        startHeartbeat: false,
         startCronScheduler: false,
-        startProcessServices: false,
         emitInitialState: false,
-        activateIngress: async () => {
+        recoverRecordedWork: async () => {
           signalActivationStarted();
           await ingressBlocked;
-          return true;
         },
+        restoreDurableQueuedInputs: () => 0,
+        activateIngress: activateStartupIngress(
+          buffer,
+          processInput,
+          () => true,
+        ),
       },
     );
     await activationStarted;
+    expect(runtime.heartbeatInterval).not.toBeNull();
+    buffer.accept(input, processInput);
+    expect(processInput).not.toHaveBeenCalled();
     expect(connection.initialized).toBe(true);
     expect(connection.ingressReady).toBe(false);
     expect(onConnectionReady).not.toHaveBeenCalled();
+    if (abort) connection.cancellation.abort();
     releaseIngress();
     await starting;
-    expect(onConnectionReady).toHaveBeenCalledTimes(1);
+    if (abort) {
+      expect(runtime.heartbeatInterval).toBeNull();
+      expect(processInput).not.toHaveBeenCalled();
+      expect(connection.ingressReady).toBe(false);
+    } else {
+      expect(onConnectionReady).toHaveBeenCalledTimes(1);
+      expect(processInput).toHaveBeenCalledWith(input);
+    }
   } finally {
     releaseIngress();
     stopRuntime(runtime, true);

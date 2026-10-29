@@ -1,13 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import {
   spawnManagedWorkloadProcess,
   spawnSubagentProcess,
 } from "@/agent/subagents/subagent-process";
-import { getMcpScopeAgentId } from "@/mcp-scope";
+import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
+import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
 import {
   buildMcpServersReminderText,
   listMcpServersForAgent,
@@ -19,9 +21,14 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
+import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
-import { runCodexTurn } from "./codex-app-server";
+import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
+import { runCursorTurn } from "./cursor-session";
+import type { ExternalToolCallListener } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -29,8 +36,14 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
+import { runOpenCodeTurn } from "./opencode-session";
 
-export const EXTERNAL_CODING_AGENT_TYPES = ["claude-code", "codex"] as const;
+export const EXTERNAL_CODING_AGENT_TYPES = [
+  "claude-code",
+  "codex",
+  "opencode",
+  "cursor",
+] as const;
 export type ExternalCodingAgentType =
   (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
 
@@ -56,6 +69,8 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
+  /** Live progress: called once per tool call the worker makes. */
+  onToolCall?: ExternalToolCallListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -102,6 +117,7 @@ export interface ExternalCodingAgentDependencies {
     signal?: AbortSignal,
   ) => Promise<ExternalCodingAgentProcessResult>;
   env?: NodeJS.ProcessEnv;
+  resolveSecretEnv?: (parentAgentId: string) => Promise<Record<string, string>>;
 }
 
 export function isExternalCodingAgentType(
@@ -113,6 +129,8 @@ export function isExternalCodingAgentType(
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
+  opencode: "opencode_",
+  cursor: "cursor_",
 };
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -120,20 +138,33 @@ const NATIVE_SESSION_ID_PATTERN =
 export function formatExternalCodingAgentId(
   type: ExternalCodingAgentType,
   sessionId: string,
+  computer?: string,
 ): string {
-  return `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  const id = `${EXTERNAL_AGENT_ID_PREFIXES[type]}${sessionId}`;
+  return computer ? `${id}@${computer}` : id;
 }
 
-export function parseExternalCodingAgentId(
-  agentId: string | undefined,
-): { type: ExternalCodingAgentType; sessionId: string } | null {
+export function parseExternalCodingAgentId(agentId: string | undefined): {
+  type: ExternalCodingAgentType;
+  sessionId: string;
+  computer?: string;
+} | null {
   if (!agentId) return null;
+  const separator = agentId.lastIndexOf("@");
+  const nativeId = separator === -1 ? agentId : agentId.slice(0, separator);
+  const computer = separator === -1 ? undefined : agentId.slice(separator + 1);
+  if (computer !== undefined && !computer.trim()) return null;
   for (const type of EXTERNAL_CODING_AGENT_TYPES) {
     const prefix = EXTERNAL_AGENT_ID_PREFIXES[type];
-    if (agentId.startsWith(prefix)) {
-      const sessionId = agentId.slice(prefix.length);
-      if (NATIVE_SESSION_ID_PATTERN.test(sessionId)) {
-        return { type, sessionId };
+    if (nativeId.startsWith(prefix)) {
+      const sessionId = nativeId.slice(prefix.length);
+      if (
+        (type === "opencode"
+          ? /^ses_[a-zA-Z0-9]+$/
+          : NATIVE_SESSION_ID_PATTERN
+        ).test(sessionId)
+      ) {
+        return { type, sessionId, ...(computer ? { computer } : {}) };
       }
     }
   }
@@ -212,6 +243,12 @@ export function buildExternalCodingAgentCommand(
     "type" | "prompt" | "model" | "resumeSessionId" | "cwd" | "mcpReminder"
   >,
 ): ExternalCodingAgentCommand {
+  if (options.type === "opencode") {
+    return {
+      executable: "opencode",
+      args: ["serve", "--hostname=127.0.0.1", "--port=0"],
+    };
+  }
   if (options.type === "claude-code") {
     const args = [
       "--print",
@@ -266,6 +303,10 @@ async function runProcess(
   return { exitCode: result.exitCode, stdout, stderr };
 }
 
+const MISSING_EXECUTABLE_PREFIX = "Required executable '";
+const CODEX_NOT_READY_PREFIX = "Codex executable is not ready";
+const CLAUDE_NOT_SIGNED_IN_PREFIX = "claude-code authentication is not ready";
+
 async function defaultRunPreflight(
   executable: string,
   args: string[],
@@ -301,11 +342,29 @@ async function defaultRunPreflight(
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
       throw new Error(
-        `Required executable '${executable}' was not found on PATH`,
+        `${MISSING_EXECUTABLE_PREFIX}${executable}' was not found on PATH`,
       );
     }
     throw error;
   }
+}
+
+/** Classify this module's startup failures for a remote caller. */
+export function classifyExternalCodingAgentStartupError(
+  error: string,
+): SubagentStartupErrorCode | undefined {
+  if (
+    error.startsWith(MISSING_EXECUTABLE_PREFIX) ||
+    error.startsWith(CODEX_NOT_READY_PREFIX)
+  )
+    return "not_installed";
+  if (
+    error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
+    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
+    error.startsWith("Cursor is not signed in:")
+  )
+    return "not_signed_in";
+  return undefined;
 }
 
 function preflightArgs(type: ExternalCodingAgentType): string[] {
@@ -329,8 +388,8 @@ function assertPreflightReady(
   }
   throw new Error(
     type === "codex"
-      ? `Codex executable is not ready${output ? `: ${output}` : ""}`
-      : `${type} authentication is not ready${output ? `: ${output}` : ""}`,
+      ? `${CODEX_NOT_READY_PREFIX}${output ? `: ${output}` : ""}`
+      : `${CLAUDE_NOT_SIGNED_IN_PREFIX}${output ? `: ${output}` : ""}`,
   );
 }
 
@@ -382,20 +441,75 @@ export function parseExternalCodingAgentOutput(
   };
 }
 
+/**
+ * Vault secrets an external coding agent receives at launch. Claude Code and
+ * Codex run their own shells, so the harness's per-command `$NAME`
+ * substitution never reaches them; export the vault of the agent the parent
+ * inherits MCP from (same parent linkage and trust boundary), with the
+ * parent's own secrets winning. Unresolvable linkage falls back to the
+ * parent's own vault only.
+ */
+export async function resolveExternalCodingAgentSecretEnv(
+  parentAgentId: string,
+  lookupParent?: ParentAgentLookup,
+): Promise<Record<string, string>> {
+  const { ensureSecretsLoaded, loadSecrets } = await import(
+    "@/utils/secrets-store"
+  );
+  let inherited: Record<string, string> = {};
+  try {
+    const scopeAgentId = await getMcpScopeAgentId(
+      parentAgentId,
+      undefined,
+      lookupParent,
+    );
+    if (scopeAgentId !== parentAgentId) {
+      await ensureSecretsLoaded(scopeAgentId);
+      inherited = loadSecrets(scopeAgentId);
+    }
+  } catch {
+    // Never widen access on unresolvable parent linkage.
+  }
+  try {
+    await ensureSecretsLoaded(parentAgentId);
+  } catch {
+    // Vault unavailable; the worker still runs without secrets.
+  }
+  return { ...inherited, ...loadSecrets(parentAgentId) };
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
+  const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
+  // Compose once for both providers, independently of MCP inheritance.
+  options = {
+    ...options,
+    mcpReminder:
+      [
+        parentMemoryNote
+          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+          : undefined,
+        options.mcpReminder,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || undefined,
+  };
   const startedAt = Date.now();
-  const env: NodeJS.ProcessEnv = {
+  const secretEnv = await (
+    deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
+  )(options.parentAgentId);
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
+    ...secretEnv,
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
-  };
+  });
   if (typeof options.actingUserId === "string") {
     env[ACTING_USER_ID_ENV] = options.actingUserId;
   } else if (
@@ -429,7 +543,18 @@ export async function runExternalCodingAgent(
     );
     return captureReservation;
   };
-  const capture = async (result: SubagentResult): Promise<SubagentResult> => {
+  const capture = async (
+    rawResult: SubagentResult,
+  ): Promise<SubagentResult> => {
+    // The worker had the vault in its environment; keep exported values out
+    // of the report that returns to the parent's context.
+    const result: SubagentResult = {
+      ...rawResult,
+      report: scrubSecretsFromString(rawResult.report, secretEnv),
+      ...(rawResult.error !== undefined && {
+        error: scrubSecretsFromString(rawResult.error, secretEnv),
+      }),
+    };
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
@@ -459,6 +584,33 @@ export async function runExternalCodingAgent(
       durationMs: Date.now() - startedAt,
     };
   }
+  if (options.type === "opencode") {
+    // OpenCode persists native sessions itself; transcript capture currently
+    // supports only Claude/Codex formats, not OpenCode's database.
+    return runOpenCodeTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(
+            formatExternalCodingAgentId("opencode", sessionId),
+          ),
+      },
+      env,
+    );
+  }
+  if (options.type === "cursor") {
+    return runCursorTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(formatExternalCodingAgentId("cursor", sessionId)),
+      },
+      env,
+      secretEnv,
+    );
+  }
   if (options.type === "codex") {
     try {
       const preflight = await (deps.runPreflight ?? defaultRunPreflight)(
@@ -484,6 +636,7 @@ export async function runExternalCodingAgent(
             mcpReminder: options.mcpReminder,
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
+            onToolCall: options.onToolCall,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -539,6 +692,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeSessionId: options.resumeSessionId,
             sessionId,
+            onToolCall: options.onToolCall,
           },
           { env },
         ),

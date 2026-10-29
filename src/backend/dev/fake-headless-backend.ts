@@ -1,3 +1,4 @@
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type {
@@ -17,6 +18,7 @@ import type {
   ConversationResumeTailOptions,
   RunMessageStreamBody,
 } from "@/backend/backend";
+import { localConversationKey } from "@/backend/local/local-conversation-key";
 import {
   LocalBackendNotFoundError,
   LocalStore,
@@ -199,8 +201,14 @@ export class HeadlessBackend implements Backend {
   protected readonly store: LocalStore;
   private readonly executor: HeadlessTurnExecutor;
   private readonly runs = new Map<string, Run>();
+  // Keyed by localConversationKey: "default" is per-agent, so a bare
+  // conversation id would let two agents' default chats collide.
   private readonly activeRunByConversation = new Map<string, string>();
   private readonly runControllerByRunId = new Map<string, AbortController>();
+  // Fires when a run is cancelled (or its turn signal aborts) while the turn
+  // is still in async startup, so a hung startup promise cannot wedge the
+  // send: the startup awaits race this preemption.
+  private readonly runStartupPreemptByRunId = new Map<string, () => void>();
   private readonly runChunksByRunId = new Map<
     string,
     LettaStreamingResponse[]
@@ -357,21 +365,33 @@ export class HeadlessBackend implements Backend {
   async createConversationMessageStream(
     conversationId: string,
     body: ConversationMessageCreateBody,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(conversationId, body, options);
   }
 
   async streamConversationMessages(
     conversationId: string,
     body: ConversationMessageStreamBody,
+    options?: { signal?: AbortSignal },
   ) {
-    return this.executeConversationTurn(conversationId, body);
+    return this.executeConversationTurn(conversationId, body, options);
   }
 
   async cancelConversation(...args: Parameters<Backend["cancelConversation"]>) {
     const [conversationIdOrAgentId] = args;
+    // Callers pass the agent id for a default conversation, else the
+    // conversation id; try both scoped keys before the agent-wide fallback.
     const runId =
-      this.activeRunByConversation.get(conversationIdOrAgentId) ??
+      this.activeRunByConversation.get(
+        localConversationKey(
+          conversationIdOrAgentId,
+          this.store.resolveAgentIdForConversation(conversationIdOrAgentId),
+        ),
+      ) ??
+      this.activeRunByConversation.get(
+        localConversationKey("default", conversationIdOrAgentId),
+      ) ??
       this.findActiveRunByAgentId(conversationIdOrAgentId);
     const run = runId ? this.runs.get(runId) : undefined;
     if (run?.conversation_id && run.agent_id) {
@@ -383,12 +403,16 @@ export class HeadlessBackend implements Backend {
     }
     if (runId) {
       const controller = this.runControllerByRunId.get(runId);
+      // Captured before completeRun clears it: preemption must still reach a
+      // turn parked in hung startup.
+      const preemptStartup = this.runStartupPreemptByRunId.get(runId);
       this.recordRunChunk(runId, {
         message_type: "stop_reason",
         stop_reason: "cancelled",
       } as LettaStreamingResponse);
       this.completeRun(runId, "cancelled");
       controller?.abort();
+      preemptStartup?.();
     }
     return { status: "cancelled" } as never;
   }
@@ -417,12 +441,15 @@ export class HeadlessBackend implements Backend {
       this.store.settleInterruptedToolCalls(run.agent_id);
     }
     const controller = this.runControllerByRunId.get(runId);
+    // Captured before completeRun clears it, as in cancelConversation.
+    const preemptStartup = this.runStartupPreemptByRunId.get(runId);
     this.recordRunChunk(runId, {
       message_type: "stop_reason",
       stop_reason: "cancelled",
     } as LettaStreamingResponse);
     this.completeRun(runId, "cancelled");
     controller?.abort();
+    preemptStartup?.();
     return { [runId]: "cancelled" } as never;
   }
 
@@ -431,13 +458,27 @@ export class HeadlessBackend implements Backend {
   ) {
     const [conversationId, requestedRunId] = args;
     const runId =
-      requestedRunId ?? this.activeRunByConversation.get(conversationId);
+      requestedRunId ??
+      this.activeRunByConversation.get(
+        localConversationKey(
+          conversationId,
+          this.store.resolveAgentIdForConversation(conversationId),
+        ),
+      );
     if (!runId) return {} as never;
     const run = this.runs.get(runId);
     if (!run || run.conversation_id !== conversationId || isTerminalRun(run)) {
       return { [runId]: "failed" } as never;
     }
     return this.cancelRunById(runId);
+  }
+
+  async latestConversationRun(conversationId: string): Promise<Run | null> {
+    let latest: Run | null = null;
+    for (const run of this.runs.values()) {
+      if (run.conversation_id === conversationId) latest = run;
+    }
+    return latest;
   }
 
   async retrieveRun(runId: string) {
@@ -469,8 +510,20 @@ export class HeadlessBackend implements Backend {
   private async executeConversationTurn(
     conversationId: string,
     body: ConversationMessageCreateBody | ConversationMessageStreamBody,
+    options?: { signal?: AbortSignal },
   ) {
-    const activeRunId = this.activeRunByConversation.get(conversationId);
+    // Honor a pre-aborted turn signal before persisting input or starting a
+    // run: a cancel that landed during pre-stream prep found no run to stop,
+    // so this send must not leave an orphaned active run behind.
+    if (options?.signal?.aborted) {
+      throw new APIUserAbortError();
+    }
+    const turnAgentId =
+      (body as { agent_id?: string }).agent_id ??
+      this.store.resolveAgentIdForConversation(conversationId);
+    const activeRunId = this.activeRunByConversation.get(
+      localConversationKey(conversationId, turnAgentId),
+    );
     const activeRun = activeRunId ? this.runs.get(activeRunId) : undefined;
     if (activeRun && !isTerminalRun(activeRun)) {
       throw new Error(
@@ -502,6 +555,23 @@ export class HeadlessBackend implements Backend {
       turnInput.agentId,
       body,
     );
+    // Startup preemption: until a stream controller is registered, the cancel
+    // paths cannot abort provider work — and a hung prompt/provider startup
+    // would wedge the send forever. The cancel paths and the turn signal fire
+    // this deferred; the startup awaits below race it so a cancel unwinds the
+    // send promptly even when the startup promise never settles.
+    let preemptStartup!: () => void;
+    const startupPreempted = new Promise<never>((_, reject) => {
+      preemptStartup = () => reject(new APIUserAbortError());
+    });
+    // The preemption promise intentionally rejects and is only raced, so an
+    // abort after startup finished must never surface as unhandled.
+    startupPreempted.catch(() => {});
+    this.runStartupPreemptByRunId.set(run.id, preemptStartup);
+    const preemptOnSignal = () => preemptStartup();
+    options?.signal?.addEventListener("abort", preemptOnSignal, {
+      once: true,
+    });
     const history = this.store.listConversationMessages(
       turnInput.conversationId,
       {
@@ -523,45 +593,107 @@ export class HeadlessBackend implements Backend {
         turnInput.agentId,
       ),
     );
-    const resolvedPrompt = await this.resolveSystemPromptForTurn({
-      conversationId: turnInput.conversationId,
-      agentId: turnInput.agentId,
-      agent,
-      body,
-      history,
-      uiMessages,
-    });
-    const systemPrompt =
-      typeof resolvedPrompt === "string"
-        ? resolvedPrompt
-        : resolvedPrompt.systemPrompt;
-    const midConversationSystemPrompt =
-      typeof resolvedPrompt === "string"
-        ? undefined
-        : resolvedPrompt.midConversationSystemPrompt;
-    let stream: Stream<LettaStreamingResponse>;
+    let resolvedPrompt:
+      | string
+      | {
+          systemPrompt: string;
+          midConversationSystemPrompt?: string;
+        };
     try {
-      stream = await this.executor.execute({
-        conversationId: turnInput.conversationId,
-        agentId: turnInput.agentId,
-        agent,
-        systemPrompt,
-        midConversationSystemPrompt,
-        body,
-        history,
-        uiMessages,
-      });
-    } catch (error) {
-      this.failRun(run.id, error);
-      throw error;
+      // Deferred through Promise.resolve().then: a synchronously throwing
+      // override becomes a rejection the inner catch can failRun on instead
+      // of leaking an active run past the finally.
+      const promptPromise = Promise.resolve().then(() =>
+        this.resolveSystemPromptForTurn({
+          conversationId: turnInput.conversationId,
+          agentId: turnInput.agentId,
+          agent,
+          body,
+          history,
+          uiMessages,
+        }),
+      );
+      try {
+        resolvedPrompt = await Promise.race([promptPromise, startupPreempted]);
+      } catch (error) {
+        // Swallow a late prompt rejection so it never surfaces unhandled.
+        promptPromise.catch(() => {});
+        // Cancellation dominates a prep rejection: after Esc this is a user
+        // interrupt, never a stream error — and the run must not stay active
+        // even if the backend cancel failed to land.
+        if (this.turnWasAborted(run.id, options?.signal)) {
+          this.cancelUnobservedRun(run.id);
+          throw new APIUserAbortError();
+        }
+        this.failRun(run.id, error);
+        throw error;
+      }
+      const systemPrompt =
+        typeof resolvedPrompt === "string"
+          ? resolvedPrompt
+          : resolvedPrompt.systemPrompt;
+      const midConversationSystemPrompt =
+        typeof resolvedPrompt === "string"
+          ? undefined
+          : resolvedPrompt.midConversationSystemPrompt;
+      // A cancel that landed during prompt prep found no registered
+      // controller to abort; re-check before starting provider execution so
+      // an already-cancelled run never begins orphaned provider work.
+      if (this.turnWasAborted(run.id, options?.signal)) {
+        this.cancelUnobservedRun(run.id);
+        throw new APIUserAbortError();
+      }
+      let stream: Stream<LettaStreamingResponse>;
+      // Same sync-throw containment for injected executors.
+      const executePromise = Promise.resolve().then(() =>
+        this.executor.execute({
+          conversationId: turnInput.conversationId,
+          agentId: turnInput.agentId,
+          agent,
+          systemPrompt,
+          midConversationSystemPrompt,
+          body,
+          history,
+          uiMessages,
+        }),
+      );
+      try {
+        stream = await Promise.race([executePromise, startupPreempted]);
+      } catch (error) {
+        // Cancellation dominates a provider/startup rejection after Esc.
+        if (this.turnWasAborted(run.id, options?.signal)) {
+          // Abort the controller a hung startup may still hand back, and
+          // swallow a late startup rejection.
+          void executePromise.then(
+            (late) => late.controller.abort(),
+            () => {},
+          );
+          this.cancelUnobservedRun(run.id);
+          throw new APIUserAbortError();
+        }
+        this.failRun(run.id, error);
+        throw error;
+      }
+      // The same race one await later: abort the fresh controller
+      // immediately instead of registering it for an already-cancelled run,
+      // and unwind as a user interrupt rather than returning a stream nobody
+      // will consume.
+      if (this.turnWasAborted(run.id, options?.signal)) {
+        stream.controller.abort();
+        this.cancelUnobservedRun(run.id);
+        throw new APIUserAbortError();
+      }
+      this.runControllerByRunId.set(run.id, stream.controller);
+      return this.persistExecutorStream(
+        turnInput.conversationId,
+        turnInput.agentId,
+        stream,
+        run.id,
+      );
+    } finally {
+      this.runStartupPreemptByRunId.delete(run.id);
+      options?.signal?.removeEventListener("abort", preemptOnSignal);
     }
-    this.runControllerByRunId.set(run.id, stream.controller);
-    return this.persistExecutorStream(
-      turnInput.conversationId,
-      turnInput.agentId,
-      stream,
-      run.id,
-    );
   }
 
   protected async resolveSystemPromptForTurn(input: {
@@ -599,7 +731,10 @@ export class HeadlessBackend implements Backend {
       },
     } as Run;
     this.runs.set(run.id, run);
-    this.activeRunByConversation.set(conversationId, run.id);
+    this.activeRunByConversation.set(
+      localConversationKey(conversationId, agentId),
+      run.id,
+    );
     return run;
   }
 
@@ -634,10 +769,9 @@ export class HeadlessBackend implements Backend {
             }
           : run.metadata,
     });
-    if (run.conversation_id) {
-      this.activeRunByConversation.delete(run.conversation_id);
-    }
+    this.releaseActiveRun(run);
     this.runControllerByRunId.delete(runId);
+    this.runStartupPreemptByRunId.delete(runId);
   }
 
   private failRun(runId: string, error: unknown): void {
@@ -661,10 +795,43 @@ export class HeadlessBackend implements Backend {
         },
       },
     });
-    if (run.conversation_id) {
-      this.activeRunByConversation.delete(run.conversation_id);
-    }
+    this.releaseActiveRun(run);
     this.runControllerByRunId.delete(runId);
+    this.runStartupPreemptByRunId.delete(runId);
+  }
+
+  // Cancel a run whose turn was aborted while no stream controller was
+  // registered (mid prompt/provider prep): cancelConversation's controller
+  // abort is a no-op in that window, so close the run here instead. No-op
+  // when cancelConversation already recorded and completed the run.
+  private cancelUnobservedRun(runId: string): void {
+    const run = this.runs.get(runId);
+    if (!run || isTerminalRun(run)) return;
+    this.recordRunChunk(runId, {
+      message_type: "stop_reason",
+      stop_reason: "cancelled",
+    } as LettaStreamingResponse);
+    this.completeRun(runId, "cancelled");
+  }
+
+  // A turn is aborted once the caller's signal fired OR the run is already
+  // terminal: cancelConversation/cancelRun/cancelConversationRun can cancel
+  // backend-only during prep without aborting the request signal, and any
+  // further work from either path belongs to a cancelled run.
+  private turnWasAborted(runId: string, signal?: AbortSignal): boolean {
+    if (signal?.aborted) return true;
+    const run = this.runs.get(runId);
+    return run ? isTerminalRun(run) : false;
+  }
+
+  // Only drop the entry this run owns: a stale run's cleanup must not clear
+  // a newer run's ownership of the same conversation.
+  private releaseActiveRun(run: Run): void {
+    if (!run.conversation_id) return;
+    const key = localConversationKey(run.conversation_id, run.agent_id);
+    if (this.activeRunByConversation.get(key) === run.id) {
+      this.activeRunByConversation.delete(key);
+    }
   }
 
   private findActiveRunByAgentId(agentId: string): string | undefined {

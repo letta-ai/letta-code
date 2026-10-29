@@ -48,14 +48,14 @@ function writeMemory(marker = "LOCAL_MEMFS_SCENARIO_OK") {
 test("validates committed parent memory when a fresh worker sorts first", async () => {
   writeMemory();
   git("add", ".");
-  git("commit", "-m", "Save delegated memory");
+  git("commit", "-m", "Save memory");
   await expect(validateLocalStorage(root)).resolves.toBeUndefined();
 });
 
 test("a saved but uncommitted update does not pass the scenario", async () => {
   writeMemory();
   await expect(validateLocalStorage(root)).rejects.toThrow(
-    "commit the delegated memory update",
+    "commit the memory update",
   );
 });
 
@@ -68,12 +68,10 @@ test("a successful commit still needs the requested memory content", async () =>
   );
 });
 
-test("direct primary edits do not pass as background memory delegation", async () => {
+test("validates direct primary edits without a memory worker", async () => {
   rmSync(join(root, "agents", "a-worker.json"));
   writeMemory();
   git("add", ".");
   git("commit", "-m", "Save memory directly");
-  await expect(validateLocalStorage(root)).rejects.toThrow(
-    "did not launch a memory worker",
-  );
+  await expect(validateLocalStorage(root)).resolves.toBeUndefined();
 });

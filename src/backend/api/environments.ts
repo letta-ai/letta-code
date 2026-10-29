@@ -9,6 +9,10 @@ export interface EnvironmentMetadata {
   workingDirectory?: string;
   gitBranch?: string;
   supported_commands?: string[];
+  /** Accepts `launch_subagent` with `notify: "caller"`. */
+  launch_subagent_notify_caller?: boolean;
+  /** Supports steering and stopping remote external subagents. */
+  subagent_message?: boolean;
   [key: string]: unknown;
 }
 
@@ -138,7 +142,7 @@ export async function resolveDesktopEnvironmentConnectionId(
 
   if (matches.length === 0) {
     throw new Error(
-      "Desktop Local is unavailable. Open Letta Desktop and wait for its computer connection to come online.",
+      "No Desktop Local computer is online. Run `letta teleport list` and choose a connected computer by name, device ID, or connection ID. To connect a computer, run `letta server` on it.",
     );
   }
   if (matches.length > 1) {

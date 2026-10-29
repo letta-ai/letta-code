@@ -1,7 +1,10 @@
-FROM public.ecr.aws/docker/library/node:22.19-bookworm-slim
+# Docker Hub credentials are scoped to publishing letta/letta and cannot pull
+# library/node. Use Google's pull-through cache instead of quota-limited ECR Public.
+FROM mirror.gcr.io/library/node:22.23.4-bookworm-slim
 
 ARG LETTA_CODE_VERSION=latest
 
+ENV DISABLE_AUTOUPDATER=1
 ENV DEBIAN_FRONTEND=noninteractive \
     LETTA_PACKAGE_MANAGER=npm
 

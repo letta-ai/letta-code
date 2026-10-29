@@ -9,6 +9,7 @@ import {
 import type { SlackChannelAccount } from "@/channels/types";
 import {
   listSlackChannels,
+  lookupSlackChannelById,
   openSlackDirectMessage,
   resolveSlackMessageTarget,
 } from "./target-resolution";
@@ -73,18 +74,19 @@ describe("Slack MessageChannel target resolution", () => {
     });
   });
 
-  test("resolves live lookup matches by raw Slack channel id and warms the cache", async () => {
+  test("resolves exact channel ids without listing channels and warms the cache", async () => {
     __testOverrideLoadTargetStore(() => {});
     __testOverrideSaveTargetStore(() => {});
 
-    const lookupChannels = mock(async () => [
-      { id: "C777", name: "eng" },
-      { id: "C888", name: "sales" },
-    ]);
+    const lookupChannelById = mock(async () => ({ id: "C777", name: "eng" }));
+    const lookupChannels = mock(async () => {
+      throw new Error("exact channel ids should not list channels");
+    });
 
     const resolved = await resolveSlackMessageTarget({
       account: makeSlackAccount("docsbot"),
       target: "channel:C777",
+      lookupChannelById,
       lookupChannels,
     });
 
@@ -93,7 +95,11 @@ describe("Slack MessageChannel target resolution", () => {
       chatType: "channel",
       label: "#eng",
     });
-    expect(lookupChannels).toHaveBeenCalledTimes(1);
+    expect(lookupChannelById).toHaveBeenCalledWith(
+      makeSlackAccount("docsbot"),
+      "C777",
+    );
+    expect(lookupChannels).not.toHaveBeenCalled();
     expect(listChannelTargets("slack", "docsbot")).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -104,6 +110,107 @@ describe("Slack MessageChannel target resolution", () => {
         }),
       ]),
     );
+  });
+
+  test("rejects an exact id lookup that returns a different channel", async () => {
+    __testOverrideLoadTargetStore(() => {});
+    __testOverrideSaveTargetStore(() => {});
+
+    const lookupChannelById = mock(async () => ({ id: "C888", name: "sales" }));
+    const lookupChannels = mock(async () => {
+      throw new Error("exact channel ids should not list channels");
+    });
+
+    await expect(
+      resolveSlackMessageTarget({
+        account: makeSlackAccount("docsbot"),
+        target: "C777",
+        lookupChannelById,
+        lookupChannels,
+      }),
+    ).rejects.toThrow(
+      'Unknown Slack MessageChannel target "C777" for account "docsbot".',
+    );
+    expect(lookupChannels).not.toHaveBeenCalled();
+    expect(listChannelTargets("slack", "docsbot")).toEqual([]);
+  });
+
+  test("keeps exact-name resolution on paginated channel listing", async () => {
+    __testOverrideLoadTargetStore(() => {});
+    __testOverrideSaveTargetStore(() => {});
+
+    const lookupChannelById = mock(async () => {
+      throw new Error("channel names should not use conversations.info");
+    });
+    const lookupChannels = mock(async () => [
+      { id: "C777", name: "eng" },
+      { id: "C888", name: "sales" },
+    ]);
+
+    const resolved = await resolveSlackMessageTarget({
+      account: makeSlackAccount("docsbot"),
+      target: "#sales",
+      lookupChannelById,
+      lookupChannels,
+    });
+
+    expect(resolved).toEqual({
+      chatId: "C888",
+      chatType: "channel",
+      label: "#sales",
+    });
+    expect(lookupChannelById).not.toHaveBeenCalled();
+    expect(lookupChannels).toHaveBeenCalledTimes(1);
+  });
+
+  test("looks up exact ids with conversations.info and validates channel type", async () => {
+    const info = mock(async () => ({
+      ok: true,
+      channel: {
+        id: "G777",
+        name: "private-eng",
+        is_group: true,
+        is_mpim: false,
+      },
+    }));
+    const list = mock(async () => ({ ok: true, channels: [] }));
+    const client = { conversations: { info, list } };
+
+    const channel = await lookupSlackChannelById(
+      makeSlackAccount("docsbot"),
+      "G777",
+      client,
+    );
+
+    expect(channel).toEqual({ id: "G777", name: "private-eng" });
+    expect(info).toHaveBeenCalledWith({ channel: "G777" });
+    expect(list).not.toHaveBeenCalled();
+
+    info.mockResolvedValue({
+      ok: true,
+      channel: {
+        id: "G777",
+        name: "group-dm",
+        is_group: true,
+        is_mpim: true,
+      },
+    });
+    expect(
+      await lookupSlackChannelById(makeSlackAccount("docsbot"), "G777", client),
+    ).toBeNull();
+  });
+
+  test("treats invisible exact channel ids as unknown", async () => {
+    const info = mock(async () => ({
+      ok: false,
+      error: "channel_not_found",
+    }));
+
+    expect(
+      await lookupSlackChannelById(makeSlackAccount("docsbot"), "C777", {
+        conversations: { info },
+      }),
+    ).toBeNull();
   });
 
   test("paginates Slack channel listing until exhaustion", async () => {

@@ -6,7 +6,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
@@ -19,6 +19,10 @@ import {
   getScopedMemoryFilesystemRoot,
   resolveScopedMemoryDir,
 } from "@/agent/memory-filesystem";
+import {
+  peekOrganizationId,
+  warmOrganizationId,
+} from "@/agent/organization-id";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getServerUrl } from "@/backend/api/server-url";
@@ -30,6 +34,7 @@ import {
 } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { LISTENER_CONNECTION_ENV } from "@/utils/subagent-launch-marker";
 import { getRipgrepBinDir } from "./ripgrep-manager.js";
 
@@ -167,7 +172,7 @@ export function getLettaShimDir(env: NodeJS.ProcessEnv = process.env): string {
   // harness state when already sandboxed. `~/.letta` is writable in that profile,
   // while the cross-agent memory subtrees inside it remain masked.
   if (env.LETTA_SANDBOX) {
-    return path.join(homedir(), ".letta", SHELL_SHIM_DIR_NAME);
+    return path.join(resolveGlobalConfigDir(env), SHELL_SHIM_DIR_NAME);
   }
 
   return path.join(tmpdir(), SHELL_SHIM_DIR_NAME);
@@ -365,6 +370,16 @@ export function getShellEnv(): NodeJS.ProcessEnv {
   const environmentDeviceId = getRuntimeContext()?.environmentDeviceId?.trim();
   if (environmentDeviceId) {
     env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = environmentDeviceId;
+  }
+  // Expose the signed-in organization when known. Never block on resolving it:
+  // the first shell may miss it while the cached one-shot lookup warms up.
+  if (!env.LETTA_ORGANIZATION_ID?.trim()) {
+    const organizationId = peekOrganizationId();
+    if (organizationId) {
+      env.LETTA_ORGANIZATION_ID = organizationId;
+    } else {
+      void warmOrganizationId();
+    }
   }
   const listenerConnectionId = getRuntimeContext()?.connectionId;
   if (listenerConnectionId?.startsWith("conn-")) {

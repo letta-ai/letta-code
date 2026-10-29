@@ -51,6 +51,18 @@ export interface AuthorizeMcpServerWithStorageOptions {
   fetch?: McpOAuthFetch;
   openBrowser?: (url: string) => Promise<void>;
   onStatus?: (message: string) => void;
+  /**
+   * Inspect provider callback params before the token exchange; throwing
+   * aborts the flow. Flights are shared per fetch function, so pair a custom
+   * hook with its own fetch.
+   */
+  onAuthorizationCallback?: (callback: { domain?: string }) => void;
+  /**
+   * `client_name` shown on the provider's consent screen. Defaults to
+   * "Letta Code"; only sent at dynamic client registration, so a provider that
+   * already has a registration for this storage keeps its original name.
+   */
+  clientName?: string;
   signal?: AbortSignal;
 }
 
@@ -93,7 +105,9 @@ export async function authorizeMcpServerWithStorage(
     options.serverName,
     options.serverUrl,
   );
-  const flightKey = `${options.storageNamespace}\0${credentialKey}\0${fetchIdentity(options.fetch)}`;
+  // A different consent-screen name is a different registration, so callers
+  // asking for distinct names must not share one authorization flight.
+  const flightKey = `${options.storageNamespace}\0${credentialKey}\0${fetchIdentity(options.fetch)}\0${options.clientName ?? ""}`;
   let flight = inFlightAuthorizations.get(flightKey);
   if (!flight) {
     const controller = new AbortController();
@@ -133,6 +147,8 @@ async function runAuthorization(
     interactive: true,
     openBrowser: options.openBrowser,
     onStatus: options.onStatus,
+    onAuthorizationCallback: options.onAuthorizationCallback,
+    clientName: options.clientName,
   });
   let oauth: Awaited<typeof creating>;
   try {

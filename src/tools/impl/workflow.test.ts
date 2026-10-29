@@ -37,6 +37,7 @@ import {
   __setWorkflowSpawnerFactoryForTests,
   __setWorkflowStartupTimeoutForTests,
   createSdkSpawnerHandle,
+  formatFailureResult,
   normalizeWorkflowArgs,
   workflow,
 } from "./workflow";
@@ -258,6 +259,39 @@ describe("Workflow tool (background launch)", () => {
       expect(retrieveConversation).toHaveBeenCalledWith("conv-child");
     } finally {
       retrieveConversation.mockRestore();
+    }
+  });
+
+  test("background handle wires its TaskStop controller into script tool calls", async () => {
+    const handle = await createSdkSpawnerHandle({
+      model: "openai/gpt-4.1-mini",
+      parentScope: { agentId: "agent-parent", conversationId: "conv-child" },
+    });
+    try {
+      expect(handle.backgroundStopController).toBeDefined();
+      // TaskStop aborts this controller; the script's tools.*() calls must
+      // unwind with it instead of hanging past the engine cut points.
+      handle.backgroundStopController?.abort(
+        new Error("Workflow stopped via TaskStop"),
+      );
+      await expect(handle.callTool?.("mcp__server__tool", {})).rejects.toThrow(
+        "Workflow stopped via TaskStop",
+      );
+    } finally {
+      await handle.cleanup();
+    }
+  });
+
+  test("foreground handle stays turn-scoped with no TaskStop controller", async () => {
+    const handle = await createSdkSpawnerHandle({
+      model: "openai/gpt-4.1-mini",
+      wait: true,
+      parentScope: { agentId: "agent-parent", conversationId: "conv-child" },
+    });
+    try {
+      expect(handle.backgroundStopController).toBeUndefined();
+    } finally {
+      await handle.cleanup();
     }
   });
 
@@ -579,6 +613,47 @@ describe("Workflow tool (background launch)", () => {
     });
   });
 
+  test("wait: true returns the script value in the tool result without a background task", async () => {
+    installSpawner(async (request) => ({
+      value: `done:${request.prompt}`,
+      failed: false,
+      durationMs: 1,
+    }));
+    const before = backgroundProcesses.size;
+    const result = await workflow({ script: SCRIPT, wait: true });
+    expect(result.status).toBe("success");
+    expect(result.toolReturn).toContain('"count": 2');
+    expect(result.toolReturn).not.toContain("Task ID");
+    expect(backgroundProcesses.size).toBe(before);
+    expect(queuedMessages).toHaveLength(0);
+    expect(cleanupCalls).toBe(1);
+
+    const failed = await workflow({
+      script: `export const meta = { name: 'boom', description: 'fails' }
+throw new Error('boom')`,
+      wait: true,
+    });
+    expect(failed.status).toBe("error");
+    expect(failed.toolReturn).toContain("boom");
+    expect(cleanupCalls).toBe(2);
+  });
+
+  test("wait: true aborts the run when the tool call is interrupted", async () => {
+    installSpawner(gatedSpawner());
+    const controller = new AbortController();
+    const pending = workflow({
+      script: SCRIPT,
+      wait: true,
+      signal: controller.signal,
+    });
+    await Bun.sleep(20);
+    controller.abort();
+    const result = await pending;
+    expect(result.status).toBe("error");
+    expect(cleanupCalls).toBe(1);
+    expect(queuedMessages).toHaveLength(0);
+  });
+
   test("TaskStop aborts the run without waking the agent", async () => {
     installSpawner(gatedSpawner());
     const result = await workflow({ script: SCRIPT });
@@ -629,6 +704,35 @@ throw new Error('kaboom')`,
       /Workflow "explodes" failed after \d+s/,
     );
     expect(queuedMessages[0]?.text).toContain("kaboom");
+  });
+
+  test("a late failure points at the completed results in the journal", async () => {
+    installSpawner(async (request) =>
+      request.prompt === "synthesize"
+        ? {
+            value: null,
+            failed: true,
+            error: "Unexpected stop reason: max_tokens_exceeded",
+          }
+        : { value: `done:${request.prompt}`, failed: false, totalTokens: 10 },
+    );
+    const launched = await workflow({
+      script: `export const meta = { name: 'late', description: 'late failure' }
+await parallel([() => agent('a'), () => agent('b')])
+return await agent('synthesize')`,
+    });
+    taskIdOf(launched.toolReturn);
+    await waitFor(() => queuedMessages.length === 1);
+    const text = queuedMessages[0]?.text ?? "";
+    expect(text).toContain("<status>failed</status>");
+    expect(text).toContain("2 agent calls completed before the failure");
+    expect(text).toContain("journal.jsonl");
+  });
+
+  test("formatFailureResult omits the journal hint when nothing completed", () => {
+    expect(formatFailureResult("boom", 0, "/x/journal.jsonl")).toBe(
+      "Workflow failed: boom",
+    );
   });
 
   test.each([

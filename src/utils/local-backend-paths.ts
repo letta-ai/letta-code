@@ -1,9 +1,12 @@
-import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 
 /**
  * Env override for the local-backend storage dir (defaults to
- * `~/.letta/lc-local-backend`).
+ * `<product-config>/lc-local-backend`).
  */
 export const LOCAL_BACKEND_DIR_ENV = "LETTA_LOCAL_BACKEND_DIR";
 
@@ -17,12 +20,14 @@ export const LOCAL_BACKEND_DIR_ENV = "LETTA_LOCAL_BACKEND_DIR";
  * local memory lives to wall off cross-agent access for in-process file tools.
  */
 export function getLocalBackendStorageDir(
-  homeDir: string = homedir(),
+  homeDir?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return (
-    env[LOCAL_BACKEND_DIR_ENV] ?? join(homeDir, ".letta", "lc-local-backend")
-  );
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, ".letta");
+  return env[LOCAL_BACKEND_DIR_ENV] ?? join(configDir, "lc-local-backend");
 }
 
 /**

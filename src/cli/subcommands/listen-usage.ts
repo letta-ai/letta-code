@@ -1,6 +1,6 @@
 export function printListenUsage(): void {
   console.log(
-    "Usage: letta server [--computer-name <name>] [--org <id>] [--channels <list>] [--skills <path>] [--debug]\n",
+    "Usage: letta server [--computer-name <name>] [--org <id>] [--token <code>] [--channels <list>] [--skills <path>] [--debug]\n",
   );
   console.log("Register this computer to receive messages from Letta Cloud.\n");
   console.log("Options:");
@@ -9,6 +9,9 @@ export function printListenUsage(): void {
   );
   console.log(
     "  --org <id>         Register this computer in a specific organization, signing in just for it",
+  );
+  console.log(
+    "  --token <code>     Sign in with a connect token your agent gave you (no browser); requires --org",
   );
   console.log(
     "  --channels <list>  Comma-separated channel names to enable (e.g. telegram)",
@@ -36,6 +39,9 @@ export function printListenUsage(): void {
   console.log('  letta server --computer-name "work-laptop"');
   console.log(
     "  letta server --org org-123                 # Register in one organization",
+  );
+  console.log(
+    "  letta server --org org-123 --token dc_abc  # Sign in with an agent-issued connect token",
   );
   console.log(
     "  letta server --channels telegram           # Enable Telegram channel",

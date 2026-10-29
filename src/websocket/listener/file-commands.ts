@@ -19,6 +19,7 @@ import {
   isWatchFileCommand,
   isWriteFileCommand,
 } from "./protocol-inbound";
+import { writeBase64File, writeUtf8FileViaTools } from "./write-file-command";
 
 const logFileCommand = debugLog.bind(null, "file-commands");
 const warnFileCommand = debugWarn.bind(null, "file-commands");
@@ -781,39 +782,30 @@ export function createFileCommandSession(params: {
       );
       runDetachedListenerTask("write_file", async () => {
         try {
-          const { edit } = await import("@/tools/impl/edit");
-          const { write } = await import("@/tools/impl/write");
-
-          // Read current content so we can use edit for an atomic
-          // read-modify-write that goes through the same code path as
-          // the agent's Edit tool (CRLF normalisation, rich errors, etc.).
-          let currentContent: string | null = null;
-          try {
-            currentContent = await readUtf8TextStrict(parsed.path);
-          } catch (readErr) {
-            const e = readErr as NodeJS.ErrnoException;
-            if (e.code !== "ENOENT") throw readErr;
-            // ENOENT -- new file, fall through to write below
-          }
-
-          if (currentContent === null) {
-            // New file -- use write so directories are created as needed.
-            await write({ file_path: parsed.path, content: parsed.content });
-          } else {
-            // Existing file -- use edit for a full-content replacement.
-            // Normalise line endings before comparing to avoid a spurious
-            // "no changes" error when the only difference is CRLF vs LF.
-            const normalizedCurrent = currentContent.replace(/\r\n/g, "\n");
-            const normalizedNew = parsed.content.replace(/\r\n/g, "\n");
-            if (normalizedCurrent !== normalizedNew) {
-              await edit({
-                file_path: parsed.path,
-                old_string: currentContent,
-                new_string: parsed.content,
-              });
+          if (parsed.encoding === "base64" || parsed.append || parsed.move_to) {
+            // Binary writes bypass the Edit/text path and write bytes directly.
+            if (parsed.encoding !== "base64") {
+              throw new Error("write_file append/move_to require base64");
             }
-            // else: content unchanged -- no-op, still respond success below
+            const written = await writeBase64File(parsed);
+            logFileCommand(
+              `[Listen] write_file success: ${written.path} (${written.bytesWritten} bytes, base64${parsed.append ? ", append" : ""})`,
+            );
+            safeSocketSend(
+              socket,
+              {
+                type: "write_file_response",
+                request_id: parsed.request_id,
+                path: written.path,
+                bytes_written: written.bytesWritten,
+                success: true,
+              },
+              "listener_write_file_send_failed",
+              "listener_write_file",
+            );
+            return;
           }
+          await writeUtf8FileViaTools(parsed.path, parsed.content);
 
           logFileCommand(
             `[Listen] write_file success: ${parsed.path} (${parsed.content.length} bytes)`,

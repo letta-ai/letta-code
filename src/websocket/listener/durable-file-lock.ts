@@ -540,6 +540,18 @@ export function acquireDurableFileLock(
 ): () => void {
   const waitMs = options.waitMs ?? 2_000;
   const now = options.now ?? Date.now;
+  // Learning this process's own creation identity is a one-time, process-wide
+  // cost, and the answer is optional: recording a null start only weakens the
+  // PID-reuse check a later contender runs against this owner. The first
+  // Windows probe spawns a cold PowerShell that can outlast the whole wait, so
+  // charging it to the acquisition deadline left no budget for acquisition
+  // itself and every recovery path that yields once threw on its first retry —
+  // a lock left behind by a dead process stayed unreclaimable. Resolve the
+  // owner under its own bounded budget and start the deadline after it.
+  const owner =
+    options.owner ?? currentDurableLockOwner(Math.max(1, Math.ceil(waitMs)));
+  // Validate injected owners before constructing any path from their fields.
+  parseOwner(owner);
   const startedAt = now();
   const remainingProbeTimeoutMs = (): number => {
     const remaining = waitMs - (now() - startedAt);
@@ -554,10 +566,6 @@ export function acquireDurableFileLock(
   const lockPath = `${path}.lock`;
   const legacyMarkerPath = `${lockPath}.recovery`;
   const legacyOwnersPath = `${lockPath}-owners`;
-  const owner =
-    options.owner ?? currentDurableLockOwner(remainingProbeTimeoutMs());
-  // Validate injected owners before constructing any path from their fields.
-  parseOwner(owner);
   const isAlive =
     options.isOwnerAlive ??
     ((candidate: DurableLockOwner) =>

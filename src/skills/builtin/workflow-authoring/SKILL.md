@@ -80,7 +80,9 @@ Cloud decisions service.
   `phase` (progress group — use this inside concurrent stages), `schema`,
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
-  prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
+  prompt for this subagent), `skills` (skill names whose full content is
+  loaded into the subagent's prompt; workers otherwise have no skills),
+  `timeoutMs` (default 10 minutes), `maxToolCalls`
   (positive safe integer; default 1000 unique tool calls for this subagent),
   `conversationId` (resume a worker — see "Diagnosing a run").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
@@ -113,17 +115,22 @@ Cloud decisions service.
       })
       const verdict = call?.answers?.behavior?.choice  // 'bad' | 'not_bad'
 
-- `tools.mcp__server__tool(args?)` → Promise; not a subagent call. Calls one
-  of the invoking agent's MCP tools directly (find names with
-  `letta mcp search` / `letta mcp tools` before writing the script). Each call
-  goes through the same permission rules as a normal MCP tool call; a tool
-  that would ask for approval throws instead, so the user must allow it first.
-  Resolves to the tool's `structuredContent`, else its text output (parsed
-  when it is JSON), else the raw `content` array. Throws when the tool is
-  unavailable, not allowed, or reports an error; `parallel()` and `pipeline()`
-  propagate that rejection. Use it for deterministic fetches and
-  writes whose arguments the script already knows; use `agent()` when a step
-  needs judgment.
+- `tools.<name>(args?)` → Promise; not a subagent call. Calls a built-in
+  tool registered for the invoking turn (names depend on the toolset, e.g.
+  `tools.Read` or `tools.exec_command`; check `listTools()`) or one of the
+  invoking agent's MCP tools (`tools.mcp__server__tool`) directly. Agent, Workflow,
+  AskUserQuestion, and SendAgentMessage are not exposed. Each call goes
+  through the same permission rules as a normal tool call; a tool that would
+  ask for approval throws instead, so the user must allow it first. A built-in
+  resolves to its text output. An MCP tool resolves to its
+  `structuredContent`, else its text output (parsed when it is JSON), else the
+  raw `content` array. Throws when the tool is unavailable, not allowed, or
+  reports an error; `parallel()` and `pipeline()` propagate that rejection.
+  Use it for deterministic reads and writes whose arguments the script
+  already knows; use `agent()` when a step needs judgment.
+- `listTools()` → Promise of `[{ name, description }]` for every callable
+  tool. `describeTool(name)` → Promise of `{ name, description, inputSchema }`,
+  or `undefined` for an unknown name.
 
       const issues = await tools.mcp__linear__list_issues({ team: 'LET', limit: 20 })
 
@@ -143,8 +150,8 @@ Math, Array, etc.) are available; the hooks are the only globals provided.
 The script runs inside the CLI process with the CLI's own privileges (the
 `vm` context is a scope, not a security boundary), and the user approves it
 by reading it. Keep the script to orchestration: decide what runs and combine
-results. Direct MCP calls belong in `tools.mcp__*()`; other reading, searching, and
-writing belongs in subagents, where the tool allowlist applies.
+results. Direct tool calls with known arguments belong in `tools.*()`; work that
+needs judgment belongs in subagents, where the tool allowlist applies.
 
 ## Pipeline vs barrier
 
@@ -249,7 +256,7 @@ quick checks.
 
 Every run persists its script, args, and a `journal.jsonl` with one line per
 completed subagent call (prompt, outcome, conversation id) under
-`~/.letta/workflows/executions/<id>/`; the tool result names the paths. Before
+`${LETTA_CONFIG_DIR:-$HOME/.letta}/workflows/executions/<id>/`; the tool result names the paths. Before
 diagnosing why a workflow returned an empty or unexpected result, read that
 journal — it records each agent's actual return value and failure detail.
 A failed run is not resumable: fix the script and launch it again.

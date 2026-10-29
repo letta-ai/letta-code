@@ -3,6 +3,7 @@ import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import {
   type EnqueueReceipt,
+  getEnqueueAgentId,
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
@@ -22,9 +23,9 @@ export async function collectRemoteTurnResult(
 ): Promise<SubagentResult> {
   const startedAt = Date.now();
   updateSubagent(subagentId, {
-    agentId: receipt.agent_id,
+    agentId: receipt.agent_id ?? undefined,
     conversationId: receipt.conversation_id,
-    agentURL: buildAgentReference(receipt.agent_id, {
+    agentURL: buildAgentReference(getEnqueueAgentId(receipt), {
       conversationId: receipt.conversation_id,
     }),
   });
@@ -49,7 +50,7 @@ export async function collectRemoteTurnResult(
       },
     });
     return {
-      agentId: receipt.agent_id,
+      agentId: receipt.agent_id ?? "",
       conversationId: receipt.conversation_id,
       report: reply.text,
       success: true,
@@ -66,7 +67,7 @@ export async function collectRemoteTurnResult(
         : `${INTERRUPTED_BY_USER} (could not confirm cancellation of remote Super Run ${receipt.super_run_id})`;
     }
     return {
-      agentId: receipt.agent_id,
+      agentId: receipt.agent_id ?? "",
       conversationId: receipt.conversation_id,
       report: "",
       success: false,

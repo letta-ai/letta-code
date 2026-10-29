@@ -22,6 +22,7 @@ import {
 import {
   __testOverrideLoadRoutes,
   __testOverrideSaveRoutes,
+  addRoute,
   clearAllRoutes,
   getRoute,
 } from "@/channels/routing";
@@ -592,6 +593,66 @@ describe("discord channel registry", () => {
     });
     expect(deliveries).toHaveLength(1);
   });
+
+  // Open DMs auto-route; paired DMs resolve their route in the generic fallthrough.
+  test.each([
+    ["open", []],
+    ["pairing", ["user-1"]],
+  ] as const)(
+    "passes the account permission mode on %s Discord DMs",
+    async (dmPolicy, allowedUsers) => {
+      clearChannelAccountStores();
+      __testOverrideLoadChannelAccounts(() => [
+        {
+          channel: "discord",
+          accountId: "discord-bot",
+          enabled: true,
+          token: "discord-token",
+          agentId: "agent-1",
+          defaultPermissionMode: "unrestricted",
+          dmPolicy,
+          allowedUsers: [...allowedUsers],
+          createdAt: "2026-04-11T00:00:00.000Z",
+          updatedAt: "2026-04-11T00:00:00.000Z",
+        },
+      ]);
+      if (dmPolicy === "pairing") {
+        addRoute("discord", {
+          accountId: "discord-bot",
+          chatId: "dm-1",
+          chatType: "direct",
+          agentId: "agent-1",
+          conversationId: "conv-paired",
+          enabled: true,
+          createdAt: "2026-04-11T00:00:00.000Z",
+        });
+      }
+
+      const { ChannelRegistry } = await import("@/channels/registry");
+      const registry = new ChannelRegistry();
+      const adapter = createAdapter();
+      registry.registerAdapter(adapter);
+      const deliveries: Array<{ defaultPermissionMode?: string }> = [];
+      registry.setMessageHandler((delivery) => deliveries.push(delivery));
+      registry.setReady();
+
+      for (const messageId of ["dm-msg-1", "dm-msg-2"]) {
+        await adapter.onMessage?.(
+          createInboundMessage({
+            chatId: "dm-1",
+            threadId: null,
+            chatType: "direct",
+            messageId,
+          }),
+        );
+      }
+
+      expect(deliveries).toHaveLength(2);
+      for (const delivery of deliveries) {
+        expect(delivery.defaultPermissionMode).toBe("unrestricted");
+      }
+    },
+  );
 
   test("emits standard permission mode when Discord creates a conversation", async () => {
     clearChannelAccountStores();

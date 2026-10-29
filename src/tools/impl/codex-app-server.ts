@@ -2,7 +2,14 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
+import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
+import {
+  type ExternalToolCall,
+  type ExternalToolCallListener,
+  formatExternalToolCallArgs,
+} from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
 
@@ -19,6 +26,7 @@ export interface CodexAppServerTransport {
   stderr?: Readable;
   stdin: Writable;
   kill?: () => void;
+  exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
 
 interface PendingRequest {
@@ -32,6 +40,8 @@ interface TurnWaiter {
   startedAt: number;
   model?: string;
   latestAgentMessage?: string;
+  onToolCall?: ExternalToolCallListener;
+  seenToolCallIds: Set<string>;
 }
 
 interface CodexSession {
@@ -57,6 +67,8 @@ export interface CodexTurnOptions {
   signal?: AbortSignal;
   resumeThreadId?: string;
   onStarted?: (threadId: string, turnId: string) => void;
+  /** Called once per tool-like thread item (command, patch, MCP, search). */
+  onToolCall?: ExternalToolCallListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
 
@@ -87,6 +99,62 @@ const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 
+/** Read the native catalog without creating a thread or starting a turn. */
+export async function listCodexModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  const controller = new AbortController();
+  const running = spawnManagedWorkloadProcess(
+    "codex",
+    ["app-server", "--stdio"],
+    {
+      cwd,
+      env,
+      signal: controller.signal,
+    },
+  );
+  running.process.stdin.on("error", () => {});
+  const transport: CodexAppServerTransport = {
+    stdin: running.process.stdin,
+    stdout: running.process.stdout,
+    stderr: running.process.stderr,
+    kill: () => controller.abort(),
+    exited: running.completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
+    })),
+  };
+  const client = new CodexAppServerClient(
+    transport,
+    () => {},
+    () => {},
+  );
+  const timer = setTimeout(() => client.dispose(), 30_000);
+  try {
+    await client.initialize();
+    const models: unknown[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.request("model/list", { cursor, limit: 100 });
+      if (!Array.isArray(page.data))
+        throw new Error("Codex did not return a model catalog");
+      models.push(...page.data);
+      cursor =
+        typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+      if (cursor && cursors.has(cursor))
+        throw new Error("Codex repeated a model catalog cursor");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  } finally {
+    clearTimeout(timer);
+    client.dispose();
+    await running.completion;
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -114,6 +182,9 @@ function spawnTransport(options: {
     stdout: child.stdout,
     stderr: child.stderr,
     kill: () => child.kill(),
+    exited: new Promise((resolve) => {
+      child.once("close", (code, signal) => resolve({ code, signal }));
+    }),
   };
 }
 
@@ -160,6 +231,7 @@ class CodexAppServerClient {
     private readonly onClose: (error: Error) => void,
   ) {
     const stdout = createInterface({ input: transport.stdout });
+    stdout.once("error", () => void this.close());
     stdout.on("line", (line) => {
       if (!line.trim()) return;
       let message: JsonRpcMessage;
@@ -187,7 +259,7 @@ class CodexAppServerClient {
     transport.stderr?.on("data", (chunk: string) => {
       this.stderr += chunk;
     });
-    const close = () => this.close();
+    const close = () => void this.close();
     transport.stdout.once("close", close);
     transport.stdout.once("error", close);
   }
@@ -231,15 +303,29 @@ class CodexAppServerClient {
 
   dispose(): void {
     this.transport.kill?.();
-    this.close();
+    void this.close();
   }
 
-  private close(): void {
+  private async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
-    const detail = this.stderr.trim();
+    let exitTimeout: ReturnType<typeof setTimeout> | undefined;
+    const exit = this.transport.exited
+      ? await Promise.race([
+          this.transport.exited,
+          new Promise<undefined>((resolve) => {
+            exitTimeout = setTimeout(() => resolve(undefined), 2_000);
+          }),
+        ]).finally(() => clearTimeout(exitTimeout))
+      : undefined;
+    const detail = this.stderr.trim().slice(-300);
+    const exitDetail = exit?.signal
+      ? ` (signal ${exit.signal}${exit.signal === "SIGKILL" || exit.signal === "SIGTERM" ? "; possibly out of memory" : ""})`
+      : exit?.code != null
+        ? ` (exit code ${exit.code}${exit.code === 143 ? "; possibly out of memory" : ""})`
+        : "";
     const error = new Error(
-      `Codex app-server closed${detail ? `: ${detail}` : ""}`,
+      `Codex app-server closed${exitDetail}${detail ? `: ${detail}` : ""}`,
     );
     for (const pending of this.pending.values()) pending.reject(error);
     this.pending.clear();
@@ -266,14 +352,70 @@ function failSession(session: CodexSession, error: Error): void {
   });
 }
 
-function recordCompletedItem(
+/** Map a tool-like app-server ThreadItem to a display tool call. */
+export function describeCodexToolItem(
+  item: Record<string, unknown> | undefined,
+): ExternalToolCall | undefined {
+  const id = readString(item, "id");
+  if (!item || !id) return undefined;
+  const call = (name: string, args: unknown) => ({
+    id,
+    name,
+    args: formatExternalToolCallArgs(args),
+  });
+  switch (item.type) {
+    case "commandExecution":
+      return call("Bash", { command: item.command });
+    case "fileChange": {
+      const changes = Array.isArray(item.changes) ? item.changes : [];
+      return call("Edit", {
+        files: changes.map((change) => readString(change, "path")),
+      });
+    }
+    case "mcpToolCall":
+      return call(
+        `${readString(item, "server") ?? "mcp"}/${readString(item, "tool") ?? "tool"}`,
+        item.arguments,
+      );
+    case "dynamicToolCall":
+      return call(readString(item, "tool") ?? "tool", item.arguments);
+    case "webSearch": {
+      // The query is often filled in only when the search completes.
+      const query = readString(item, "query");
+      return query ? call("WebSearch", { query }) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  if (!waiter.onToolCall) return;
+  const call = describeCodexToolItem(item);
+  if (!call || waiter.seenToolCallIds.has(call.id)) return;
+  waiter.seenToolCallIds.add(call.id);
+  try {
+    waiter.onToolCall(call);
+  } catch {
+    // Progress display must not break the turn.
+  }
+}
+
+function recordItem(
   session: CodexSession,
   params: Record<string, unknown>,
+  completed: boolean,
 ): boolean {
   const turnId = readString(params, "turnId");
   if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
   const item = asRecord(params.item);
-  if (item?.type === "agentMessage" && typeof item.text === "string") {
+  if (!item) return true;
+  recordToolItem(session.activeWaiter, item);
+  if (
+    completed &&
+    item.type === "agentMessage" &&
+    typeof item.text === "string"
+  ) {
     session.activeWaiter.latestAgentMessage = item.text;
   }
   return true;
@@ -313,8 +455,11 @@ function handleNotification(
   message: JsonRpcMessage,
 ): boolean {
   if (!message.params) return true;
+  if (message.method === "item/started") {
+    return recordItem(session, message.params, false);
+  }
   if (message.method === "item/completed") {
-    return recordCompletedItem(session, message.params);
+    return recordItem(session, message.params, true);
   }
   if (message.method === "turn/completed") {
     return settleTurn(session, message.params);
@@ -354,15 +499,41 @@ function scheduleIdleSessionCleanup(session: CodexSession): void {
   session.idleTimer.unref?.();
 }
 
+export const CODEX_NOT_SIGNED_IN_ERROR =
+  "Codex is not signed in. Run `codex login` on this computer.";
+
+/**
+ * Codex reports `requiresOpenaiAuth: false` when its model provider needs no
+ * OpenAI login, such as the Letta proxy used by managed sandboxes.
+ */
+async function assertCodexSignedIn(client: CodexAppServerClient) {
+  const timeout = Promise.withResolvers<null>();
+  const timer = setTimeout(() => timeout.resolve(null), 10_000);
+  try {
+    const account = await Promise.race([
+      client.request("account/read", { refreshToken: false }),
+      timeout.promise,
+    ]);
+    if (account?.account == null && account?.requiresOpenaiAuth === true)
+      throw new Error(CODEX_NOT_SIGNED_IN_ERROR);
+  } catch (error) {
+    if (error instanceof Error && error.message === CODEX_NOT_SIGNED_IN_ERROR)
+      throw error;
+    // Codex without account/read: the turn itself reports provider failures.
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-  };
+  });
   const transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
@@ -383,6 +554,7 @@ async function createSession(
   let response: Record<string, unknown>;
   try {
     await client.initialize();
+    await assertCodexSignedIn(client);
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {
@@ -395,7 +567,7 @@ async function createSession(
           cwd: options.cwd,
           model: options.model,
           approvalPolicy: "never",
-          sandbox: "workspace-write",
+          sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
     response = await client.request(method, params);
@@ -445,6 +617,7 @@ async function startTurnUnlocked(
   prompt: string,
   signal?: AbortSignal,
   onStarted?: (threadId: string, turnId: string) => void,
+  onToolCall?: ExternalToolCallListener,
 ): Promise<CodexTurnHandle> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
@@ -456,11 +629,9 @@ async function startTurnUnlocked(
     cwd: session.cwd,
     model: session.model,
     approvalPolicy: "never",
-    sandboxPolicy: {
-      type: "workspaceWrite",
-      writableRoots: [session.cwd],
-      networkAccess: true,
-    },
+    // Unattended subagent: no approval relay exists, so run without the
+    // workspace sandbox rather than failing writes outside cwd.
+    sandboxPolicy: { type: "dangerFullAccess" },
   });
   const turn = asRecord(response.turn);
   const turnId = readString(turn, "id");
@@ -472,6 +643,8 @@ async function startTurnUnlocked(
       resolve,
       startedAt: Date.now(),
       model: session.model,
+      onToolCall,
+      seenToolCallIds: new Set(),
     };
   });
   onStarted?.(session.threadId, turnId);
@@ -491,7 +664,7 @@ function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "beforeStart"
+    "prompt" | "signal" | "onStarted" | "onToolCall" | "beforeStart"
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
@@ -501,6 +674,7 @@ function startTurn(
       options.prompt,
       options.signal,
       options.onStarted,
+      options.onToolCall,
     );
   });
 }
@@ -571,6 +745,7 @@ export async function sendCodexMessage(
         options.prompt,
         undefined,
         options.onStarted,
+        options.onToolCall,
       );
       if (options.signal?.aborted) {
         await session.client.request("turn/interrupt", {

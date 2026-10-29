@@ -37,7 +37,6 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
-  ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
@@ -94,8 +93,18 @@ import type {
   WatchFileCommand,
   WriteFileCommand,
   WriteMemoryFileCommand,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
+import {
+  isChatGPTRateLimitResetCreditConsumeCommand,
+  isChatGPTRateLimitResetCreditsListCommand,
+  isChatGPTUsageReadCommand,
+} from "@/websocket/listener/chatgpt-usage-protocol-inbound";
+
+export {
+  isChatGPTRateLimitResetCreditConsumeCommand,
+  isChatGPTRateLimitResetCreditsListCommand,
+  isChatGPTUsageReadCommand,
+} from "@/websocket/listener/chatgpt-usage-protocol-inbound";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
@@ -549,17 +558,17 @@ export function isReadFileCommand(value: unknown): value is ReadFileCommand {
 
 export function isWriteFileCommand(value: unknown): value is WriteFileCommand {
   if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    path?: unknown;
-    content?: unknown;
-    request_id?: unknown;
-  };
+  const c = value as Record<string, unknown>;
   return (
     c.type === "write_file" &&
     typeof c.path === "string" &&
     typeof c.content === "string" &&
-    typeof c.request_id === "string"
+    typeof c.request_id === "string" &&
+    (c.encoding === undefined ||
+      c.encoding === "utf8" ||
+      c.encoding === "base64") &&
+    (c.append === undefined || typeof c.append === "boolean") &&
+    (c.move_to === undefined || typeof c.move_to === "string")
   );
 }
 
@@ -839,25 +848,6 @@ export function isDisconnectProviderCommand(
   );
 }
 
-export function isChatGPTUsageReadCommand(
-  value: unknown,
-): value is ChatGPTUsageReadCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    target?: unknown;
-    provider_name?: unknown;
-    force_refresh?: unknown;
-  };
-  return (
-    c.type === "chatgpt_usage_read" &&
-    typeof c.request_id === "string" &&
-    (c.target === "local" || c.target === "api") &&
-    (c.provider_name === undefined || typeof c.provider_name === "string") &&
-    (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
-  );
-}
 export function isUpdateModelCommand(
   value: unknown,
 ): value is UpdateModelCommand {
@@ -1975,6 +1965,8 @@ export function parseServerMessage(
       isConnectProviderCommand(parsed) ||
       isDisconnectProviderCommand(parsed) ||
       isChatGPTUsageReadCommand(parsed) ||
+      isChatGPTRateLimitResetCreditsListCommand(parsed) ||
+      isChatGPTRateLimitResetCreditConsumeCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||
@@ -2037,7 +2029,7 @@ export function parseServerMessage(
       isSecretListCommand(parsed) ||
       isSecretApplyCommand(parsed)
     ) {
-      return parsed as WsProtocolCommand;
+      return parsed as ParsedServerMessage;
     }
     const invalidInput = getInvalidInputReason(parsed);
     if (invalidInput) {

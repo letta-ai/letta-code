@@ -1,7 +1,9 @@
+import { applyCommitTrailer } from "./commit-trailer";
 import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
 import BashDescription from "./descriptions/Bash.md";
+import CodeModeDescription from "./descriptions/CodeMode.md";
 import EditDescription from "./descriptions/Edit.md";
 import EnterWorktreeDescription from "./descriptions/EnterWorktree.md";
 import ExecCommandDescription from "./descriptions/ExecCommand.md";
@@ -35,6 +37,7 @@ import { apply_patch } from "./impl/apply-patch";
 import { read_artifact_file, write_artifact_file } from "./impl/artifact-files";
 import { ask_user_question_async } from "./impl/ask-user-question";
 import { bash } from "./impl/bash";
+import { code_mode } from "./impl/code-mode";
 import { edit } from "./impl/edit";
 import { enter_worktree } from "./impl/enter-worktree";
 import { exec_command, write_stdin } from "./impl/exec-command";
@@ -65,6 +68,7 @@ import { write } from "./impl/write";
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
+import CodeModeSchema from "./schemas/CodeMode.json";
 import EditSchema from "./schemas/Edit.json";
 import EnterWorktreeSchema from "./schemas/EnterWorktree.json";
 import ExecCommandSchema from "./schemas/ExecCommand.json";
@@ -109,14 +113,14 @@ ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
 export function buildBashDescriptionForPlatform(
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const baseDescription = BashDescription.trim();
+  const baseDescription = applyCommitTrailer(BashDescription.trim());
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
 }
 
 function execCommandDescription(): string {
-  const baseDescription = ExecCommandDescription.trim();
+  const baseDescription = applyCommitTrailer(ExecCommandDescription.trim());
   return process.platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
     : baseDescription;
@@ -249,6 +253,11 @@ const toolDefinitions = {
     schema: TaskUpdateSchema,
     description: TaskUpdateDescription.trim(),
     impl: task_update,
+  }),
+  CodeMode: defineTool({
+    schema: CodeModeSchema,
+    description: CodeModeDescription.trim(),
+    impl: code_mode,
   }),
   Workflow: defineTool({
     schema: WorkflowSchema,

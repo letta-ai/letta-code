@@ -828,6 +828,7 @@ export function Input({
   queueMode = "immediate",
   deferModeSupported = false,
   interruptRequested = false,
+  hasStopFailedTasks = false,
   agentId,
   agentName,
   currentModel,
@@ -878,6 +879,8 @@ export function Input({
   queueMode?: "immediate" | "defer";
   deferModeSupported?: boolean;
   interruptRequested?: boolean;
+  /** A background task's remote stop failed and Esc retries it while idle. */
+  hasStopFailedTasks?: boolean;
   agentId?: string;
   agentName?: string | null;
   currentModel?: string | null;
@@ -1307,8 +1310,13 @@ export function Input({
         return;
       }
 
-      // When agent streaming, use Esc to interrupt
-      if (streaming && onInterrupt && !interruptRequested) {
+      // Esc interrupts; a second Esc mid-unwind escalates, so keep forwarding.
+      // Idle Esc also forwards when a background task's remote stop failed:
+      // the interrupt handler retries its stop through the restored row.
+      if (
+        (streaming || interruptRequested || hasStopFailedTasks) &&
+        onInterrupt
+      ) {
         onInterrupt();
         // Don't load queued messages into input - let the dequeue effect
         // in App.tsx process them automatically after the interrupt completes.

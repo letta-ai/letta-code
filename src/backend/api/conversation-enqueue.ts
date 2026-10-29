@@ -58,15 +58,23 @@ async function waitForShutdownRetry(
 
 export interface EnqueueReceipt {
   status: "queued";
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   client_message_id: string;
   workflow_id: string;
   super_run_id: string;
   /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
+  /** Parent used for Cloud status and cancellation, never for history ownership. */
+  parent_agent_id?: string;
   /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
   acting_user_id?: string | null;
+}
+
+export function getEnqueueAgentId(receipt: EnqueueReceipt): string {
+  const id = receipt.agent_id ?? receipt.parent_agent_id;
+  if (!id) throw new Error("Queued conversation has no agent or parent agent.");
+  return id;
 }
 
 export interface EnqueueConversationInput {

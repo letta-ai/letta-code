@@ -9,6 +9,7 @@ import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type {
   AgentRuntimeScope,
+  ConversationRuntimeScope,
   LoopState,
   WsProtocolCommand,
 } from "@/types/protocol_v2";
@@ -24,6 +25,7 @@ const scope: AgentRuntimeScope = {
   conversation_id: "conv-child",
   acting_user_id: "user-parent",
 };
+const scopes = [scope, { ...scope, agent_id: null }];
 const settings: RuntimeExecutionSettings = {
   parent_agent_id: "agent-parent",
   allowed_tools: ["Read"],
@@ -31,7 +33,10 @@ const settings: RuntimeExecutionSettings = {
   disable_memory_guard: false,
   max_turns: 10,
 };
-function transport(supportsSettings = true) {
+function transport(
+  supportsSettings = true,
+  runtimeScope: ConversationRuntimeScope = scope,
+) {
   const commands: WsProtocolCommand[] = [];
   let socket!: Socket;
   class Socket extends EventEmitter {
@@ -52,7 +57,7 @@ function transport(supportsSettings = true) {
           type: "runtime_start_response",
           request_id: command.request_id,
           success: true,
-          runtime: scope,
+          runtime: runtimeScope,
           agent: null,
           conversation: null,
           created: { agent: false, conversation: false },
@@ -64,14 +69,14 @@ function transport(supportsSettings = true) {
         emit({
           type: "sync_response",
           request_id: command.request_id,
-          runtime: scope,
+          runtime: runtimeScope,
           success: true,
         });
       if (command.type === "abort_message")
         emit({
           type: "abort_message_response",
           request_id: command.request_id,
-          runtime: scope,
+          runtime: runtimeScope,
           success: true,
           aborted: true,
         });
@@ -111,6 +116,44 @@ const backend = {
   retrieveRun: async (id: string) =>
     ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
 };
+
+test("listener resume keeps conversation identity separate from its parent", async () => {
+  const conversationScope = { ...scope, agent_id: null };
+  const wire = transport(true, conversationScope);
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope: conversationScope,
+      parentAgentId: "agent-parent",
+      content: "Continue the previous turn.",
+      backend,
+      settings,
+      mode: "standard",
+      noWait: true,
+    },
+    {
+      client: wire.client,
+      enqueue: async (input) => {
+        expect(wire.commands[0]).toMatchObject({
+          type: "runtime_start",
+          conversation_id: scope.conversation_id,
+        });
+        expect(wire.commands[0]).not.toHaveProperty("agent_id");
+        expect(input.agentId).toBe("agent-parent");
+        return { ...receipt(input.clientMessageId), agent_id: input.agentId };
+      },
+    },
+  );
+  expect(result).toMatchObject({
+    status: "queued",
+    receipt: {
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      conversation_id: scope.conversation_id,
+      connection_id: "conn-target",
+    },
+  });
+});
 
 test.each([
   { content: "hello" },
@@ -273,17 +316,18 @@ test("queued CLI cancellation uses the existing dequeue API, never aborts the tu
   ).toBe(false);
 });
 
-test("active cancellation targets only a run mapped to the requested input", async () => {
-  const wire = transport();
-  const dequeue = async () => ({
-    client_message_id: "own",
-    status: "too_late" as const,
-  });
+test.each(scopes)("cancels only the requested input: %j", async (scope) => {
+  const wire = transport(true, scope);
+  const dequeue = async (input: { agentId: string }) => {
+    expect(input.agentId).toBe(scope.agent_id ?? "agent-parent");
+    return { client_message_id: "own", status: "too_late" as const };
+  };
   try {
     expect(
       await cancelListenerInput({
         client: wire.client,
         scope,
+        parentAgentId: "agent-parent",
         clientMessageId: "own",
         dequeue,
         readState: () => ({ loop: loop("someone-else"), cancelled: false }),
@@ -296,6 +340,7 @@ test("active cancellation targets only a run mapped to the requested input", asy
       await cancelListenerInput({
         client: wire.client,
         scope,
+        parentAgentId: "agent-parent",
         clientMessageId: "own",
         dequeue,
         readState: () => ({ loop: loop("own"), cancelled: false }),

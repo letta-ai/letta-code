@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,12 +18,14 @@ import {
 describe("organization listener credentials", () => {
   const originalHome = process.env.HOME;
   const originalSkipKeychain = process.env.LETTA_SKIP_KEYCHAIN_CHECK;
+  const originalConfigDir = process.env.LETTA_CONFIG_DIR;
   let home: string;
 
   beforeEach(() => {
     home = mkdtempSync(join(tmpdir(), "letta-org-credentials-"));
     process.env.HOME = home;
     process.env.LETTA_SKIP_KEYCHAIN_CHECK = "1";
+    delete process.env.LETTA_CONFIG_DIR;
   });
 
   afterEach(() => {
@@ -25,6 +35,8 @@ describe("organization listener credentials", () => {
     } else {
       process.env.LETTA_SKIP_KEYCHAIN_CHECK = originalSkipKeychain;
     }
+    if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = originalConfigDir;
     rmSync(home, { recursive: true, force: true });
   });
 
@@ -61,5 +73,31 @@ describe("organization listener credentials", () => {
       },
       "org-2": { apiKey: "key-2" },
     });
+  });
+
+  test("isolates file-backed credentials under the product config root", async () => {
+    const configDir = join(home, ".dream");
+    const legacyPath = join(home, ".letta", "listener-org-auth.json");
+    mkdirSync(join(home, ".letta"), { recursive: true });
+    writeFileSync(
+      legacyPath,
+      JSON.stringify({ "org-1": { apiKey: "legacy" } }),
+    );
+    process.env.LETTA_CONFIG_DIR = configDir;
+
+    await orgCredentialStore.save("org-1", { apiKey: "dream" });
+
+    expect(await orgCredentialStore.load("org-1")).toEqual({ apiKey: "dream" });
+    const isolatedPath = join(configDir, "listener-org-auth.json");
+    expect(JSON.parse(readFileSync(isolatedPath, "utf8"))).toEqual({
+      "org-1": { apiKey: "dream" },
+    });
+    expect(JSON.parse(readFileSync(legacyPath, "utf8"))).toEqual({
+      "org-1": { apiKey: "legacy" },
+    });
+    if (process.platform !== "win32") {
+      expect(statSync(configDir).mode & 0o777).toBe(0o700);
+      expect(statSync(isolatedPath).mode & 0o777).toBe(0o600);
+    }
   });
 });

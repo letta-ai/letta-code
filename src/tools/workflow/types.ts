@@ -46,6 +46,8 @@ export interface AgentCallOptions {
   allowedTools?: string[];
   /** Extra system prompt appended for this subagent. */
   systemPrompt?: string;
+  /** Skill names whose full content is loaded into this subagent's prompt. */
+  skills?: string[];
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
   /** Maximum unique tool calls for this subagent. Default 1000. */
@@ -126,23 +128,33 @@ export interface RunWorkflowOptions {
   signal?: AbortSignal;
   /** Progress callback. */
   onProgress?: (event: WorkflowProgressEvent) => void;
-  /** Calls one of the invoking agent's MCP tools; backs the `tools` global. */
-  callMcpTool?: WorkflowMcpCaller;
-  /** Lifetime MCP tool call cap (runaway-loop backstop). Default 1000. */
-  maxTotalMcpCalls?: number;
+  /** Calls a built-in or MCP tool by its model-facing name; backs the `tools` global. */
+  callTool?: WorkflowToolCaller;
+  /** Built-in tool names exposed on `tools` (MCP tools match `mcp__*`). */
+  builtinToolNames?: readonly string[];
+  /** Lists callable tools; backs `listTools()` and `describeTool()`. */
+  listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** Lifetime tool call cap (runaway-loop backstop). Default 1000. */
+  maxTotalToolCalls?: number;
 }
 
-/** MCP tool result shape (`content`, `structuredContent`, `isError`). */
-export interface WorkflowMcpResult {
+export interface WorkflowToolInfo {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+}
+
+/** Tool result shape (`content`, `structuredContent`, `isError`); built-ins return text content. */
+export interface WorkflowToolResult {
   content: unknown[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
 }
 
-export type WorkflowMcpCaller = (
+export type WorkflowToolCaller = (
   toolName: string,
   args: Record<string, unknown>,
-) => Promise<WorkflowMcpResult>;
+) => Promise<WorkflowToolResult>;
 
 export interface WorkflowExecutionResult {
   meta: WorkflowMeta;

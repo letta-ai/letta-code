@@ -6,6 +6,7 @@ import type {
 import {
   type BrowserDeviceMcpOAuthRequest,
   BrowserDeviceMcpOAuthRequestError,
+  BrowserDeviceMcpOAuthSiteMismatchError,
   connectBrowserDeviceMcpOAuth,
   submitBrowserDeviceMcpOAuthHandoff,
 } from "./browser-device-mcp-oauth";
@@ -56,10 +57,28 @@ describe("browser device MCP OAuth", () => {
       /^browser-device-mcp-oauth-/,
     );
     expect(authorization?.fetch).toEqual(expect.any(Function));
+    expect(authorization?.clientName).toBeUndefined();
     expect(opened).toEqual([
       "https://app.datadoghq.com/oauth2/authorize?state=test",
     ]);
     expect(imported).toEqual({ request: REQUEST, credentials: CREDENTIALS });
+  });
+
+  test("forwards the requested consent-screen client name", async () => {
+    let authorization: AuthorizeMcpServerWithStorageOptions | undefined;
+    await connectBrowserDeviceMcpOAuth(
+      { ...REQUEST, clientName: "My Agent" },
+      {
+        authorize: async (options) => {
+          authorization = options;
+          return CREDENTIALS;
+        },
+        importCredentials: async () => undefined,
+        openBrowser: async () => undefined,
+      },
+    );
+
+    expect(authorization?.clientName).toBe("My Agent");
   });
 
   test("clears ephemeral credentials after a successful import", async () => {
@@ -282,6 +301,55 @@ describe("browser device MCP OAuth", () => {
       "https://mcp.datadoghq.com/v1/mcp",
       "https://mcp.datadoghq.com/v1/mcp",
     ]);
+  });
+
+  test("maps the callback domain to an allowlisted Datadog site", async () => {
+    let imported = 0;
+    const withDomain = (domain: string | undefined) => ({
+      authorize: async (options: AuthorizeMcpServerWithStorageOptions) => {
+        options.onAuthorizationCallback?.({ domain });
+        return CREDENTIALS;
+      },
+      importCredentials: async () => {
+        imported += 1;
+      },
+      openBrowser: async () => undefined,
+    });
+
+    const mismatch = await connectBrowserDeviceMcpOAuth(
+      REQUEST,
+      withDomain("us5.datadoghq.com"),
+    ).catch((error: unknown) => error);
+    expect(mismatch).toBeInstanceOf(BrowserDeviceMcpOAuthSiteMismatchError);
+    expect(mismatch).toMatchObject({
+      site: "us5.datadoghq.com",
+      serverUrl: "https://mcp.us5.datadoghq.com/v1/mcp",
+    });
+    expect(imported).toBe(0);
+
+    // Matching, missing, and non-allowlisted domains proceed unchanged.
+    for (const domain of [
+      "datadoghq.com",
+      "app.datadoghq.com",
+      undefined,
+      "evil.example.com",
+      "mcp.evil.datadoghq.com",
+    ]) {
+      await expect(
+        connectBrowserDeviceMcpOAuth(REQUEST, withDomain(domain)),
+      ).resolves.toBeUndefined();
+    }
+    await expect(
+      connectBrowserDeviceMcpOAuth(
+        {
+          handoffKey: "c".repeat(43),
+          service: "comfy",
+          serverUrl: "https://cloud.comfy.org/mcp",
+        },
+        withDomain("us5.datadoghq.com"),
+      ),
+    ).resolves.toBeUndefined();
+    expect(imported).toBe(6);
   });
 
   test("pairs each Datadog MCP region with only its matching app origin", async () => {

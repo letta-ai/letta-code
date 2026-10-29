@@ -42,6 +42,7 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  hasStopFailedSubagents,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
@@ -199,7 +200,10 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import {
+  appendTaskNotificationEventsToBuffer,
+  selectStopFailedNotifications,
+} from "@/utils/task-notifications";
 import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";
@@ -1649,8 +1653,7 @@ export function App({
   // Restored input value - set when we need to restore a message to the input after error
   const [restoredInput, setRestoredInput] = useState<string | null>(null);
 
-  // Helper to check if agent is busy (streaming, executing tool, or running command)
-  // Uses refs for synchronous access outside React's closure system
+  // Busy = streaming/tool/command; refs allow synchronous access outside renders.
   // biome-ignore lint/correctness/useExhaustiveDependencies: refs are stable objects, .current is read dynamically
   const isAgentBusy = useCallback(() => {
     return (
@@ -3712,6 +3715,7 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,
@@ -4239,9 +4243,8 @@ export function App({
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
 
-  // Process queued messages when streaming ends. QueueRuntime is authoritative
-  // (consumeItems fires onDequeued → setQueueDisplay). dequeueEpoch is the sole
-  // re-trigger: enqueue, turn completion, and interrupt settle (cancelling->idle).
+  // Process queued messages when streaming ends.
+  // dequeueEpoch re-triggers: enqueue, turn completion, interrupt settle.
   useEffect(() => {
     void dequeueEpoch; // explicit dep to satisfy exhaustive-deps lint
 
@@ -4386,9 +4389,8 @@ export function App({
     withCommandLock,
   });
 
-  // Process queued overlay actions when streaming ends
-  // These are actions from interactive commands (like /agents, /model) that were
-  // used while the agent was busy. The change is applied after end_turn.
+  // Process queued overlay actions when streaming ends: interactive commands
+  // (/agents, /model) used while busy apply after end_turn.
   useEffect(() => {
     if (
       !streaming &&
@@ -4663,6 +4665,30 @@ export function App({
     subscribeToSubagents,
     getSubagentSnapshot,
   );
+
+  // A background task whose remote stop failed is still running: idle Esc
+  // must reach the interrupt handler so it can retry the stop, and the
+  // failure must surface as a transcript event instead of letting the
+  // promoted "interrupted" line claim the stop succeeded.
+  const hasStopFailedTasks = hasStopFailedSubagents({
+    agentId,
+    conversationId,
+  });
+  const stopFailedNotifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const { failures, stops } = selectStopFailedNotifications(
+      subagents,
+      stopFailedNotifiedRef.current,
+      // Match the Esc retry's scoping: a failure (or its correction) must
+      // land in the transcript of the agent that owns the row, never be
+      // consumed by whichever agent the user switched to mid-flight.
+      { agentId, conversationId },
+    );
+    const messages = [...failures, ...stops];
+    if (messages.length > 0) {
+      appendTaskNotificationEvents(messages);
+    }
+  }, [subagents, conversationId, appendTaskNotificationEvents, agentId]);
 
   // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
@@ -5021,7 +5047,11 @@ export function App({
         includeSystemPromptUpgradeTip={includeSystemPromptUpgradeTip}
         inputEnabled={inputEnabled}
         inputVisible={inputVisible}
-        interruptRequested={interruptRequested}
+        // Aborted-but-unwound turn: keep Esc routed to the interrupt handler.
+        interruptRequested={
+          interruptRequested || !!abortControllerRef.current?.signal.aborted
+        }
+        hasStopFailedTasks={hasStopFailedTasks}
         isAgentBusy={isAgentBusy}
         liveItems={liveItems}
         liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}

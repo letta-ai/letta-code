@@ -13,12 +13,19 @@ export interface BrowserDeviceMcpOAuthRequest {
   handoffKey: string;
   service: string;
   serverUrl: string;
+  /**
+   * `client_name` shown on the provider's consent screen. Defaults to
+   * "Letta Code" when omitted.
+   */
+  clientName?: string;
 }
 
 interface BrowserDeviceMcpOAuthDefinition {
   authorizationOrigins: readonly string[];
   serverName: string;
   serverUrl: string;
+  /** Provider site reported by the OAuth callback `domain` param (Datadog). */
+  site?: string;
 }
 
 interface BrowserDeviceMcpOAuthDependencies {
@@ -79,6 +86,21 @@ export class BrowserDeviceMcpOAuthRequestError extends Error {
 }
 
 /**
+ * The OAuth callback named a different allowlisted provider site than the
+ * selected server URL. The code is only redeemable at that site, so the caller
+ * must restart authorization against `serverUrl` with a handoff bound to it.
+ */
+export class BrowserDeviceMcpOAuthSiteMismatchError extends Error {
+  constructor(
+    readonly site: string,
+    readonly serverUrl: string,
+  ) {
+    super(`OAuth provider authorized on ${site}; use ${serverUrl}`);
+    this.name = "BrowserDeviceMcpOAuthSiteMismatchError";
+  }
+}
+
+/**
  * Complete a Cloud agent's localhost-callback MCP authorization from a local
  * Letta Code runtime. Letta Daemon runs the same runtime, so it exposes this
  * bridge without a separate daemon-specific OAuth implementation.
@@ -107,6 +129,7 @@ export async function connectBrowserDeviceMcpOAuth(
   try {
     const credentials = await dependencies.authorize({
       agentId: handoffNamespace(request.handoffKey),
+      clientName: request.clientName,
       openBrowser: async (value) => {
         const url = allowedAuthorizationUrl(
           value,
@@ -118,6 +141,15 @@ export async function connectBrowserDeviceMcpOAuth(
         definition,
         dependencies.providerFetch ?? globalThis.fetch,
       ),
+      onAuthorizationCallback: ({ domain }) => {
+        const reported = definitionForCallbackDomain(request.service, domain);
+        if (reported?.site && reported !== definition) {
+          throw new BrowserDeviceMcpOAuthSiteMismatchError(
+            reported.site,
+            reported.serverUrl,
+          );
+        }
+      },
       serverName: definition.serverName,
       serverUrl: definition.serverUrl,
       signal: authorizationSignal,
@@ -213,15 +245,14 @@ function resolveDefinition(
   if (!HANDOFF_KEY_PATTERN.test(request.handoffKey)) {
     throw new BrowserDeviceMcpOAuthRequestError("Invalid OAuth handoff key");
   }
-  const definitions = BROWSER_DEVICE_MCP_OAUTH_SERVICES[request.service];
-  if (!definitions) {
+  if (!Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, request.service)) {
     throw new BrowserDeviceMcpOAuthRequestError(
       "Unsupported localhost OAuth service",
     );
   }
-  const requestedUrl = normalizeServerUrl(request.serverUrl);
-  const definition = definitions.find(
-    (candidate) => normalizeServerUrl(candidate.serverUrl) === requestedUrl,
+  const definition = findDefinition(
+    request.service,
+    normalizeServerUrl(request.serverUrl),
   );
   if (!definition) {
     throw new BrowserDeviceMcpOAuthRequestError(
@@ -229,6 +260,70 @@ function resolveDefinition(
     );
   }
   return definition;
+}
+
+function findDefinition(
+  service: string,
+  normalizedServerUrl: string,
+): BrowserDeviceMcpOAuthDefinition | undefined {
+  if (!Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, service)) {
+    return undefined;
+  }
+  return BROWSER_DEVICE_MCP_OAUTH_SERVICES[service]?.find(
+    (candidate) =>
+      normalizeServerUrl(candidate.serverUrl) === normalizedServerUrl,
+  );
+}
+
+/**
+ * Map an untrusted callback `domain` (e.g. `us5.datadoghq.com`) to an
+ * allowlisted site definition. Anything not on the allowlist is ignored.
+ */
+function definitionForCallbackDomain(
+  service: string,
+  domain: string | undefined,
+): BrowserDeviceMcpOAuthDefinition | undefined {
+  if (!domain || !Object.hasOwn(BROWSER_DEVICE_MCP_OAUTH_SERVICES, service)) {
+    return undefined;
+  }
+  const site = domain
+    .trim()
+    .toLowerCase()
+    .replace(/^https:\/\//, "")
+    .replace(/\/+$/, "")
+    .replace(/^(?:app|api)\./, "");
+  return BROWSER_DEVICE_MCP_OAUTH_SERVICES[service]?.find(
+    (candidate) => candidate.site !== undefined && candidate.site === site,
+  );
+}
+
+/** Allowlisted MCP server URLs per localhost-callback OAuth service. */
+export function browserDeviceMcpOAuthServerUrls(): Record<string, string[]> {
+  return Object.fromEntries(
+    Object.entries(BROWSER_DEVICE_MCP_OAUTH_SERVICES).map(
+      ([service, definitions]) => [
+        service,
+        definitions.map((definition) => definition.serverUrl),
+      ],
+    ),
+  );
+}
+
+/**
+ * Return the canonical allowlisted server URL matching `serverUrl` for
+ * `service`, or undefined when the service or URL is not supported.
+ */
+export function matchBrowserDeviceMcpOAuthServerUrl(
+  service: string,
+  serverUrl: string,
+): string | undefined {
+  let normalized: string;
+  try {
+    normalized = normalizeServerUrl(serverUrl);
+  } catch {
+    return undefined;
+  }
+  return findDefinition(service, normalized)?.serverUrl;
 }
 
 export function canonicalizeBrowserDeviceMcpOAuthRequest(
@@ -445,6 +540,7 @@ function datadogDefinition(
     authorizationOrigins: [`https://${appHost}`],
     serverName: "Datadog",
     serverUrl: `https://mcp.${mcpHost}/v1/mcp`,
+    site: mcpHost,
   };
 }
 

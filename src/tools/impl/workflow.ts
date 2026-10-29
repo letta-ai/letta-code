@@ -17,7 +17,7 @@
 
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { getConversationId } from "@/agent/context";
 import { resolveModel } from "@/agent/model-catalog";
 import { getPrimaryAgentModelHandle } from "@/agent/subagents/subagent-model";
 import { getBackend } from "@/backend";
@@ -28,7 +28,12 @@ import {
   getRuntimeContext,
 } from "@/runtime-context";
 import {
+  createScriptToolScope,
+  resolveScriptParentAgentId,
+} from "@/tools/script-tool-scope";
+import {
   finishWorkflowExecution,
+  getWorkflowExecution,
   recordWorkflowProgress,
   registerWorkflowExecution,
 } from "@/tools/workflow/execution-registry";
@@ -47,9 +52,10 @@ import { createSdkSpawner } from "@/tools/workflow/sdk-spawner";
 import type {
   SubagentSpawner,
   WorkflowExecutionResult,
-  WorkflowMcpCaller,
   WorkflowMeta,
   WorkflowProgressEvent,
+  WorkflowToolCaller,
+  WorkflowToolInfo,
 } from "@/tools/workflow/types";
 import {
   DEFAULT_MAX_CONCURRENT,
@@ -78,6 +84,7 @@ interface WorkflowArgs {
   maxConcurrent?: number;
   model?: string;
   allowedTools?: string[];
+  wait?: boolean;
   // Injected by the tool manager; not in the JSON schema.
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
@@ -92,8 +99,12 @@ interface WorkflowResult {
 /** What the tool needs from a subagent backend; the SDK spawner in production. */
 export interface WorkflowSpawnerHandle {
   spawner: SubagentSpawner;
-  /** Backs the script's `tools.mcp__*()` calls with the invoking agent's MCP tools. */
-  callMcpTool?: WorkflowMcpCaller;
+  /** Backs the script's `tools.*()` calls with the invoking turn's built-ins and agent MCP tools. */
+  callTool?: WorkflowToolCaller;
+  builtinToolNames?: readonly string[];
+  listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** TaskStop controller for background runs; absent for foreground runs. */
+  backgroundStopController?: AbortController;
   cleanup(): Promise<void>;
 }
 
@@ -106,43 +117,12 @@ const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 30_000;
 let startupTimeoutMs = DEFAULT_STARTUP_TIMEOUT_MS;
 
-function isOwningAgentId(value: string | null | undefined): value is string {
-  return (
-    value?.startsWith("agent-") === true && !value.startsWith("agent-free:")
-  );
-}
-
-async function resolveParentAgentId(
-  args: WorkflowArgs,
-): Promise<string | null> {
-  let parentAgentId: string | null | undefined = args.parentScope?.agentId;
-  const conversationId =
-    args.parentScope?.conversationId ?? getConversationId();
-  if (!isOwningAgentId(parentAgentId)) {
-    if (conversationId && conversationId !== "default") {
-      // The invoking conversation may itself be agent-free (a worker of an
-      // outer workflow); its parent supplies the lineage then.
-      const conversation = (await getBackend().retrieveConversation(
-        conversationId,
-      )) as unknown as {
-        agent_id: string | null;
-        parent_agent_id?: string | null;
-      };
-      parentAgentId =
-        conversation.agent_id ?? conversation.parent_agent_id ?? null;
-    } else {
-      parentAgentId = getCurrentAgentId();
-    }
-  }
-  return isOwningAgentId(parentAgentId) ? parentAgentId : null;
-}
-
 export async function createSdkSpawnerHandle(
   args: WorkflowArgs,
   setStage: (stage: string) => void = () => {},
 ): Promise<WorkflowSpawnerHandle> {
   setStage("resolving parent agent");
-  const parentAgentId = await resolveParentAgentId(args);
+  const parentAgentId = await resolveScriptParentAgentId(args);
   if (!parentAgentId) {
     throw new Error("Workflow requires an invoking parent agent.");
   }
@@ -200,6 +180,13 @@ export async function createSdkSpawnerHandle(
   setStage("loading Agent SDK");
   const sdk = await loadAgentSdk();
   setStage("creating SDK client and spawner");
+  const runtime = getRuntimeContext();
+  const toolContextId = runtime?.toolContextId ?? null;
+  // Lazy: tool impls are loaded by the manager, so a static import cycles.
+  const manager = await import("@/tools/manager");
+  const executionContext = toolContextId
+    ? manager.getExecutionContextById(toolContextId)
+    : undefined;
   const client = sdk.createLocalClient(backendMode);
   let spawner: SubagentSpawner;
   try {
@@ -207,9 +194,14 @@ export async function createSdkSpawnerHandle(
       parentAgentId,
       model,
       resolveModel,
-      allowedTools: args.allowedTools ?? getRuntimeContext()?.clientToolNames,
-      permissionMode:
-        getRuntimeContext()?.permissionMode ?? permissionMode.getMode(),
+      allowedTools: args.allowedTools,
+      parentToolNames: runtime?.clientToolNames,
+      agentScopedToolNames: Array.from(
+        executionContext?.modTools.values() ?? [],
+      )
+        .filter((tool) => tool.owner?.scope === "agent")
+        .map((tool) => tool.name),
+      permissionMode: runtime?.permissionMode ?? permissionMode.getMode(),
       cwd: getCurrentWorkingDirectory(),
       supportsAgentFreeResume: sdk.supportsAgentFreeResume,
       verifyPersistedRuns: backendMode === "api",
@@ -222,53 +214,36 @@ export async function createSdkSpawnerHandle(
     void client[Symbol.asyncDispose]?.().catch(() => undefined);
     throw error;
   }
-  // The run outlives this tool call, so capture the invoking turn's permission
-  // inputs now; each direct MCP call is checked against them.
-  const runtime = getRuntimeContext();
-  const toolContextId = runtime?.toolContextId ?? null;
-  // Lazy: tool impls are loaded by the manager, so a static import cycles.
-  const manager = await import("@/tools/manager");
-  const permissionModeState = toolContextId
-    ? manager.getExecutionContextPermissionModeState(toolContextId)
-    : undefined;
-  const permissionCwd = getCurrentWorkingDirectory();
-  // Memoize the promise, not the session: concurrent first calls must share
-  // one session so cleanup closes every connection that was opened.
-  let mcpSession:
-    | Promise<
-        ReturnType<typeof import("@/cli/subcommands/mcp").createAgentMcpSession>
-      >
-    | undefined;
+  // Foreground workflows are turn-scoped: their script tool calls must honor
+  // the turn's abort signal. Background workflows run past turn interrupts
+  // by design; TaskStop aborts them via engine cut points, so their script
+  // tool calls honor the TaskStop controller created here — without it, a
+  // hanging MCP call inside the script would outlive TaskStop.
+  const backgroundStopController = args.wait
+    ? undefined
+    : new AbortController();
+  const toolScope = await createScriptToolScope(
+    parentAgentId,
+    args.wait ? args.signal : backgroundStopController?.signal,
+  );
   return {
     spawner,
-    callMcpTool: async (toolName, toolArgs) => {
-      const { decision } = await manager.checkToolPermission(
-        toolName,
-        toolArgs,
-        permissionCwd,
-        permissionModeState && { ...permissionModeState },
-        // Same agent whose MCP scope runs the call; a nested agent-free
-        // worker's runtime agent would not match it.
-        parentAgentId,
-      );
-      if (decision !== "allow") {
-        throw new Error(
-          decision === "deny"
-            ? `${toolName} is denied by permission rules.`
-            : `${toolName} needs approval, which a workflow cannot request; add an allow rule for it to call it from a script.`,
-        );
-      }
-      mcpSession ??= import("@/cli/subcommands/mcp").then((mcp) =>
-        mcp.createAgentMcpSession(parentAgentId),
-      );
-      return (await mcpSession).callTool(toolName, toolArgs);
-    },
+    ...toolScope,
+    backgroundStopController,
     cleanup: async () => {
-      await mcpSession
-        ?.then((session) => session.close())
-        .catch(() => undefined);
+      await toolScope.cleanup();
       await client[Symbol.asyncDispose]?.().catch(() => undefined);
     },
+  };
+}
+
+function toolOptions(handle: WorkflowSpawnerHandle) {
+  return {
+    ...(handle.callTool ? { callTool: handle.callTool } : {}),
+    ...(handle.builtinToolNames
+      ? { builtinToolNames: handle.builtinToolNames }
+      : {}),
+    ...(handle.listTools ? { listTools: handle.listTools } : {}),
   };
 }
 
@@ -342,6 +317,24 @@ function jsonSafe(value: unknown): unknown {
   } catch {
     return String(value);
   }
+}
+
+/**
+ * A failure late in a run (e.g. the final synthesis agent) must not read as
+ * if everything was lost: completed calls are already in the journal.
+ */
+export function formatFailureResult(
+  error: string | undefined,
+  agentsDone: number,
+  journalPath: string,
+): string {
+  const lines = [`Workflow failed: ${error ?? "unknown error"}`];
+  if (agentsDone > 0) {
+    lines.push(
+      `${agentsDone} agent call${agentsDone === 1 ? "" : "s"} completed before the failure. Their full results are saved in ${journalPath} (one line per completed call; the return value is outcome.value).`,
+    );
+  }
+  return lines.join("\n");
 }
 
 function formatCompletionResult(
@@ -478,7 +471,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     if (onAbort) args.signal?.removeEventListener("abort", onAbort);
   }
 
-  const taskId = getNextWorkflowId();
   const scriptArgs = normalizeWorkflowArgs(args.args);
   const { executionDir, scriptPath, journalPath } = createExecutionDir(
     defaultExecutionsDir(),
@@ -486,9 +478,40 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     script,
     scriptArgs,
   );
+
+  if (args.wait) {
+    // Foreground: the call's signal aborts the run, and the value is the result.
+    try {
+      const run = await executeWorkflow(handle.spawner, {
+        script,
+        args: scriptArgs,
+        maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+        journalPath,
+        ...(args.signal ? { signal: args.signal } : {}),
+        ...toolOptions(handle),
+      });
+      return {
+        toolReturn: truncateResult(formatCompletionResult(run, executionDir)),
+        status: "success",
+      };
+    } catch (error) {
+      return {
+        toolReturn: `Workflow failed: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+      };
+    } finally {
+      await handle.cleanup().catch(() => {});
+    }
+  }
+
+  const taskId = getNextWorkflowId();
   const outputFile = createBackgroundOutputFile(taskId);
   const scope = resolveNotificationScope(args.parentScope);
-  const abortController = new AbortController();
+  // Use the TaskStop controller the spawner handle created so the script's
+  // tools.*() calls share the same abort signal the engine cut points use.
+  // Custom test factories may not provide one; fall back to a fresh signal.
+  const abortController =
+    handle.backgroundStopController ?? new AbortController();
 
   const processState: BackgroundProcess = {
     process: {
@@ -546,7 +569,11 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     }
     const result = outcome.run
       ? formatCompletionResult(outcome.run, executionDir)
-      : `Workflow failed: ${outcome.error ?? "unknown error"}`;
+      : formatFailureResult(
+          outcome.error,
+          getWorkflowExecution(taskId)?.agentsDone ?? 0,
+          journalPath,
+        );
     appendToOutputFile(
       outputFile,
       outcome.run ? `\n[result]\n${result}\n` : `\n[error] ${outcome.error}\n`,
@@ -597,7 +624,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
     journalPath,
     signal: abortController.signal,
-    ...(handle.callMcpTool ? { callMcpTool: handle.callMcpTool } : {}),
+    ...toolOptions(handle),
     onProgress: (event) => {
       recordWorkflowProgress(taskId, event);
       if (event.kind !== "log") publishProgress();

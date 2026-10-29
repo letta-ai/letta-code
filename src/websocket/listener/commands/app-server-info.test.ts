@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { APP_SERVER_PROTOCOL_VERSION } from "@/types/app-server-info";
+import {
+  APP_SERVER_PROTOCOL_VERSION,
+  isAppServerInfoResponseMessage,
+} from "@/types/app-server-info";
 import { parseServerMessage } from "@/websocket/listener/protocol-inbound";
 import { buildAppServerInfoResponse } from "./app-server-info";
 
@@ -48,9 +51,12 @@ describe("app-server info protocol", () => {
         runtime_start: true,
         agent_free_conversations: true,
         launch_subagent: true,
+        launch_subagent_notify_caller: true,
+        subagent_message: true,
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
         structured_outputs: false,
+        write_file_base64: true,
         split_channels: false,
       },
     });
@@ -62,5 +68,6 @@ describe("app-server info protocol", () => {
       { backend: "api", version: "0.32.14" },
     );
     expect(response.capabilities.structured_outputs).toBe(true);
+    expect(isAppServerInfoResponseMessage(response)).toBe(true);
   });
 });

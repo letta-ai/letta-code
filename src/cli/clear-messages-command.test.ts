@@ -17,20 +17,20 @@ describe("/clear-messages command", () => {
     });
   });
 
-  test("is handled by interactive and remote command paths", () => {
+  test("is handled by the interactive command path only", () => {
     const submitHandlerPath = fileURLToPath(
       new URL("./app/use-submit-handler.ts", import.meta.url),
-    );
-    const listenerCommandsPath = fileURLToPath(
-      new URL("../websocket/listener/commands.ts", import.meta.url),
     );
 
     expect(readFileSync(submitHandlerPath, "utf8")).toContain(
       'trimmed === "/clear-messages"',
     );
-    expect(readFileSync(listenerCommandsPath, "utf8")).toContain(
-      'case "clear-messages":',
-    );
-    expect(SUPPORTED_REMOTE_COMMANDS).toContain("clear-messages");
+  });
+
+  test("is not advertised to remote clients", () => {
+    // The remote clear corrupted the listener's durable input ledger and was
+    // removed; the TUI command above is a separate path and still works.
+    expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("clear-messages");
+    expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("clear");
   });
 });

@@ -322,6 +322,125 @@ describe("listener auth", () => {
     expect(await getOrgAccessToken()).toBe("org-access-token");
   });
 
+  test("redeems a connect token without the browser sign-in", async () => {
+    settings = {
+      ...settings,
+      env: { LETTA_API_KEY: "global-access-token" },
+      refreshToken: "global-refresh-token",
+    };
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123", connectToken: "dc_preapproved" },
+    );
+
+    expect(result.apiKey).toBe("org-access-token");
+    expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    expect(openInBrowserMock).not.toHaveBeenCalled();
+    expect(pollForTokenMock).toHaveBeenCalledWith(
+      "dc_preapproved",
+      0,
+      expect.any(Number),
+      "org-device-id",
+      "listener-name",
+    );
+    expect(orgCredentials["org-123"]).toEqual({
+      apiKey: "org-access-token",
+      refreshToken: "org-refresh-token",
+      tokenExpiresAt: expect.any(Number),
+    });
+    expect(updateSettingsMock).not.toHaveBeenCalled();
+    expect(peekOrgAccessToken()).toBe("org-access-token");
+  });
+
+  test("redeems a connect token even when the organization slot already has credentials", async () => {
+    orgCredentials["org-123"] = {
+      apiKey: "stale-org-token",
+      refreshToken: "stale-refresh",
+      tokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    pollForTokenMock.mockResolvedValue({
+      access_token: "fresh-org-token",
+      refresh_token: "fresh-refresh",
+      expires_in: 3600,
+      token_type: "Bearer",
+    });
+
+    const result = await resolveListenerRegistrationOptions(
+      "org-device-id",
+      "listener-name",
+      { organizationId: "org-123", connectToken: "dc_preapproved" },
+    );
+
+    expect(result.apiKey).toBe("fresh-org-token");
+    expect(refreshAccessTokenMock).not.toHaveBeenCalled();
+    expect(orgCredentials["org-123"]?.apiKey).toBe("fresh-org-token");
+  });
+
+  test("tells the user to ask for a new command when the connect token was already used", async () => {
+    pollForTokenMock.mockRejectedValue(
+      new Error("OAuth error: Device code already used"),
+    );
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token was already used. Ask your agent for a new letta server command.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+  });
+
+  test("tells the user to ask for a new command when the connect token expired", async () => {
+    pollForTokenMock.mockRejectedValue(new Error("Device code expired"));
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow("This connect token was expired.");
+  });
+
+  test("refuses a connect token minted for another organization", async () => {
+    pollForTokenMock.mockResolvedValue({
+      access_token: "org-access-token",
+      refresh_token: "org-refresh-token",
+      expires_in: 3600,
+      token_type: "Bearer",
+      organization_id: "org-other",
+    });
+
+    await expect(
+      resolveListenerRegistrationOptions("org-device-id", "listener-name", {
+        organizationId: "org-123",
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow(
+      "This connect token belongs to organization org-other, not org-123.",
+    );
+    expect(orgCredentials["org-123"]).toBeUndefined();
+    expect(peekOrgAccessToken()).toBeUndefined();
+  });
+
+  test("rejects a connect token without an organization", async () => {
+    await expect(
+      resolveListenerRegistrationOptions("device-id", "listener-name", {
+        connectToken: "dc_preapproved",
+      }),
+    ).rejects.toThrow("--token requires --org");
+    expect(pollForTokenMock).not.toHaveBeenCalled();
+  });
+
   test("leaves turn-side readers alone when no organization is requested", async () => {
     settings = {
       ...settings,

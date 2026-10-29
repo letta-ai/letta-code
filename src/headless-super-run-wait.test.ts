@@ -67,7 +67,11 @@ function deps(extra: Partial<SuperRunWaitDeps> = {}): SuperRunWaitDeps {
   };
 }
 
-test("requires the exact accepted Super Run and its newest child run", async () => {
+test.each([
+  receipt,
+  { ...receipt, agent_id: null, parent_agent_id: "agent-1" },
+  { ...receipt, parent_agent_id: "agent-parent" },
+])("reads the exact send and newest child: %j", async (receipt) => {
   const reads: string[] = [];
   const result = await waitForAcceptedSuperRun(
     receipt,

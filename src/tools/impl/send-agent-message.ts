@@ -28,13 +28,19 @@ import { debugLog } from "@/utils/debug";
 import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
-import { parseExternalCodingAgentId } from "./external-coding-agent";
+import { sendCursorMessage } from "./cursor-session";
+import {
+  parseExternalCodingAgentId,
+  resolveExternalCodingAgentSecretEnv,
+} from "./external-coding-agent";
 import { trackExternalFollowupCompletion } from "./external-coding-agent-task";
 import {
   type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
+import { sendOpenCodeMessage } from "./opencode-session";
+import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
   message: string;
@@ -57,6 +63,7 @@ interface SendAgentMessageDeps {
   sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
+  sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
 }
 
 const FULL_CONVERSATION_ID =
@@ -160,6 +167,104 @@ export async function send_agent_message(
       }
       args.signal?.throwIfAborted();
       const parentScope = sender;
+      if (externalTarget.computer) {
+        const receipt = await (
+          deps.sendRemoteExternalMessage ?? sendRemoteExternalCodingAgentMessage
+        )(
+          {
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope: {
+              ...parentScope,
+              actingUserId: getRuntimeActingUserAttribution(),
+            },
+          },
+          {
+            track:
+              deps.trackExternalFollowup ?? trackExternalFollowupCompletion,
+          },
+        );
+        return {
+          content: JSON.stringify({
+            status: "accepted",
+            agent_id: args.agent_id,
+            delivery:
+              receipt.delivery === "steered" ? "remote/steer" : "remote/resume",
+            ...(receipt.taskId ? { task_id: receipt.taskId } : {}),
+            ...(receipt.outputFile ? { output_file: receipt.outputFile } : {}),
+          }),
+          status: "success",
+        };
+      }
+      if (
+        externalTarget.type === "opencode" ||
+        externalTarget.type === "cursor"
+      ) {
+        const messageOptions = {
+          sessionId: externalTarget.sessionId,
+          prompt: args.message,
+          parentAgentId: parentScope.agentId,
+          cwd: getCurrentWorkingDirectory(),
+          signal: args.signal,
+        };
+        const secrets =
+          externalTarget.type === "cursor"
+            ? await resolveExternalCodingAgentSecretEnv(parentScope.agentId)
+            : {};
+        const receipt =
+          externalTarget.type === "cursor"
+            ? await sendCursorMessage(
+                messageOptions,
+                { ...process.env, ...secrets },
+                secrets,
+              )
+            : await sendOpenCodeMessage(messageOptions);
+        if (receipt.mode === "steered") {
+          return {
+            content: JSON.stringify({
+              status: "accepted",
+              agent_id: args.agent_id,
+              delivery:
+                externalTarget.type === "cursor"
+                  ? "run/steer"
+                  : "session/abort+prompt",
+            }),
+            status: "success",
+          };
+        }
+        if (!receipt.completion || !receipt.interrupt)
+          throw new Error(
+            "External coding agent returned an incomplete background-task receipt",
+          );
+        try {
+          const tracked = (
+            deps.trackExternalFollowup ?? trackExternalFollowupCompletion
+          )({
+            type: externalTarget.type,
+            agentId: args.agent_id as string,
+            message: args.message,
+            parentScope: {
+              ...parentScope,
+              actingUserId: getRuntimeActingUserAttribution(),
+            },
+            completion: receipt.completion,
+            interrupt: receipt.interrupt,
+          });
+          return {
+            content: JSON.stringify({
+              status: "accepted",
+              agent_id: args.agent_id,
+              delivery: "session/prompt",
+              task_id: tracked.taskId,
+              output_file: tracked.outputFile,
+            }),
+            status: "success",
+          };
+        } catch (error) {
+          await receipt.interrupt();
+          throw error;
+        }
+      }
       if (externalTarget.type === "codex") {
         let captureReservation: NativeSessionCaptureReservation | undefined;
         let receipt: Awaited<ReturnType<typeof sendCodexMessage>>;

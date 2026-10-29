@@ -2,7 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { ApprovalDecision } from "@/agent/approval-execution";
-import { STALE_APPROVAL_RECOVERY_DENIAL_REASON } from "@/agent/turn-recovery-policy";
+import {
+  STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+  STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+} from "@/agent/turn-recovery-policy";
 import {
   markListenerConnectionInitialized,
   openListenerConnection,
@@ -323,6 +326,41 @@ describe("recoverApprovalStateForSync restart recovery", () => {
       expect.objectContaining({ approval: bashApproval }),
     ]);
     expect(runtime.pendingInterruptedResults).toBeNull();
+  });
+
+  test("owner sync distinguishes started calls without results from unknown calls", async () => {
+    const runtime = createScopedRuntime();
+    await recoverApprovalStateForSync(
+      runtime,
+      scope,
+      {
+        ...createDeps([bashApproval, askUserQuestionApproval]),
+        readInterruptedTurn: () => ({
+          agentId: "agent-1",
+          conversationId: "conv-1",
+          runId: "run-started",
+          toolCallIds: [bashApproval.toolCallId],
+          unstartedToolCallIds: [],
+          results: [],
+          requestOtid: "request-started",
+          workingDirectory: "/project",
+        }),
+      },
+      { resumeInterruptedTurn: true },
+    );
+
+    expect(runtime.recoveredApprovalState?.autoDecisions).toEqual([
+      {
+        type: "deny",
+        approval: bashApproval,
+        reason: STARTED_TOOL_CALL_RECOVERY_DENIAL_REASON,
+      },
+      {
+        type: "deny",
+        approval: askUserQuestionApproval,
+        reason: STALE_APPROVAL_RECOVERY_DENIAL_REASON,
+      },
+    ]);
   });
 
   test("observer sync leaves explicitly unstarted work for the owner", async () => {

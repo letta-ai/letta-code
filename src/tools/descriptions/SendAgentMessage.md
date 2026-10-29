@@ -5,11 +5,11 @@ the Cloud backend and fail on the local backend (`agent-local-` IDs). Use this
 to coordinate with an agent already working, including an Agent child, or to
 contact any conversation you are authorized to access.
 
-Claude Code and Codex workers return synthetic `claude_...` and `codex_...`
-agent IDs backed by their native sessions. A message to active work steers its
-in-flight turn (Claude interrupts through stream-json and sends the replacement
-instruction; Codex uses app-server turn/steer). An idle follow-up starts one tracked local background
-turn. Neither path uses the Cloud messaging backend.
+External coding workers return IDs backed by their native sessions. Use the
+receipt to distinguish steering from a new or queued follow-up. An idle follow-up
+starts one tracked local background turn. These messages do not use the Cloud
+messaging backend.
+Computer-qualified IDs returned by remote launches can be steered too.
 
 An agent has a persistent identity and shared memory. It can have multiple
 conversations, each with its own message history.

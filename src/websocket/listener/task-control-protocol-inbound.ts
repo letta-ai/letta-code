@@ -1,4 +1,8 @@
 import type {
+  SubagentMessageCommand,
+  SubagentStopCommand,
+} from "@/types/subagent-protocol";
+import type {
   BrowserDeviceMcpOAuthCancelCommand,
   BrowserDeviceMcpOAuthCommand,
   ExecuteCommandCommand,
@@ -7,6 +11,10 @@ import type {
 } from "@/types/task-control-protocol";
 import { isBrowserDeviceMcpOAuthProtocolCommand } from "./browser-device-mcp-oauth-protocol-inbound";
 import { isAgentRuntimeScope } from "./protocol-validation";
+import {
+  isSubagentMessageCommand,
+  isSubagentStopCommand,
+} from "./subagent-protocol-inbound";
 
 export function isTaskControlProtocolCommand(
   value: unknown,
@@ -15,12 +23,16 @@ export function isTaskControlProtocolCommand(
   | BrowserDeviceMcpOAuthCancelCommand
   | ExecuteCommandCommand
   | RemoveQueueItemCommand
-  | MonitorStopCommand {
+  | MonitorStopCommand
+  | SubagentMessageCommand
+  | SubagentStopCommand {
   return (
     isBrowserDeviceMcpOAuthProtocolCommand(value) ||
     isExecuteCommandCommand(value) ||
     isRemoveQueueItemCommand(value) ||
-    isMonitorStopCommand(value)
+    isMonitorStopCommand(value) ||
+    isSubagentMessageCommand(value) ||
+    isSubagentStopCommand(value)
   );
 }
 

@@ -20,6 +20,7 @@ import type { SharedReminderState } from "@/reminders/state";
 import type { RuntimeWorkspaceSandbox } from "@/runtime-context";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { ToolsetName, ToolsetPreference } from "@/tools/toolset";
+import type { AppServerProtocolCommand } from "@/types/app-server-protocol";
 import type { UsageStatistics } from "@/types/protocol";
 import type {
   ApprovalResponseBody,
@@ -31,7 +32,6 @@ import type {
   RuntimeScope,
   StopReasonType,
   TeleportContinuation,
-  WsProtocolCommand,
 } from "@/types/protocol_v2";
 import type {
   ServiceCommandRequest,
@@ -58,7 +58,7 @@ export interface StartListenerOptions {
     connection: ListenerConnectionState,
   ) => void | Promise<void>;
   onDisconnected: () => void;
-  onNeedsReregister?: (replacement: ListenerClientReplacement) => void;
+  onNeedsReregister?: (replacement?: ListenerClientReplacement) => void;
   /** Explicit state lineage supplied only by onNeedsReregister. */
   replacement?: ListenerClientReplacement;
   onError: (error: Error) => void;
@@ -143,6 +143,22 @@ export interface IncomingMessage {
   durableInputIdentities?: readonly InputIdentity[];
   /** External applications which must acknowledge this turn's terminal. */
   terminalConsumerIds?: readonly string[];
+  /**
+   * Cloud super run this input belongs to, when the relay delivered one. The
+   * MCP originator token for this run is never carried here (this message is
+   * persisted by the durable input ledger); it lives only in the in-memory
+   * token store keyed by this id. Undefined on mixed-originator batches.
+   */
+  mcpOriginatorSuperRunId?: string;
+  /**
+   * Whether this input's relay delivery carried a live MCP originator token.
+   * The queue merge votes on (super run id, token presence) together: a
+   * token-bearing and a tokenless delivery for the SAME run must not merge
+   * into an attributed turn, because the tokenless one is a stale pre-mint
+   * frame whose delivery cleared the run's authority — merging them would
+   * let the stale member borrow the fresh member's token.
+   */
+  mcpOriginatorTokenPresent?: boolean;
 }
 
 export type ProcessQueuedTurn = (
@@ -202,7 +218,7 @@ export type InboundMessagePayload =
   | (MessageCreate & { client_message_id?: string })
   | ApprovalCreate;
 
-export type ServerMessage = WsProtocolCommand;
+export type ServerMessage = AppServerProtocolCommand;
 
 export type InvalidInputCommand = {
   type: "__invalid_input";
@@ -429,6 +445,8 @@ export type ConversationRuntime = {
   conversationId: string;
   /** Runtime-scoped SDK override. Undefined uses the process defaults. */
   skillSources: SkillSource[] | undefined;
+  /** Bundled skill IDs exposed when skillSources omits "bundled". */
+  bundledSkills?: string[];
   /** Explicit runtime filesystem boundary for shared app-server sessions. */
   workspaceSandbox: RuntimeWorkspaceSandbox | undefined;
   executionSettings?: RuntimeExecutionSettings;
@@ -552,9 +570,10 @@ export type ListenerRuntime = {
   heartbeatInterval: NodeJS.Timeout | null;
   reconnectTimeout: NodeJS.Timeout | null;
   /**
-   * Epoch ms of the last `pong` observed from the cloud relay. Used by the
-   * heartbeat watchdog to detect a half-open socket (no `close` event) and
-   * force a reconnect. `null` until the first pong on a connection.
+   * Epoch ms of the last `pong` observed on the legacy single connection.
+   * Reported for diagnostics only: once several connections are live this is
+   * not attributable to a socket, so the heartbeat watchdog reads the pong time
+   * of the socket it pings instead. `null` until the first pong.
    */
   lastPongAt: number | null;
   intentionallyClosed: boolean;
@@ -609,7 +628,7 @@ export type ListenerRuntime = {
   serviceCommandHandler:
     | ((command: ServiceCommandRequest) => Promise<ServiceCommandResponse>)
     | null;
-  serviceCommandTypes: Set<WsProtocolCommand["type"]>;
+  serviceCommandTypes: Set<AppServerProtocolCommand["type"]>;
   eventSeqCounter: number;
   queueEmitScheduled: boolean;
   pendingQueueEmitScope?: {
@@ -628,7 +647,10 @@ export type ListenerRuntime = {
     import("@/websocket/listener/permission-mode").ConversationPermissionModeState
   >;
   /** Per-conversation skill overrides survive idle ConversationRuntime eviction. */
-  skillSourcesByConversation: Map<string, SkillSource[]>;
+  skillSourcesByConversation: Map<
+    string,
+    { sources: SkillSource[]; bundledSkills?: string[] }
+  >;
   /** Per-conversation reminder state survives ConversationRuntime eviction. */
   reminderStateByConversation: Map<string, SharedReminderState>;
   /** Per-conversation context tracker survives ConversationRuntime eviction. */
@@ -707,6 +729,7 @@ export interface InterruptPopulateInput {
   agentId: string | null;
   conversationId: string;
   requestOtid?: string;
+  denialReason?: string;
 }
 
 export interface InterruptToolReturn {
@@ -718,3 +741,25 @@ export interface InterruptToolReturn {
 }
 
 export type { DequeuedBatch, QueueBlockedReason, QueueItem };
+
+export type ConnectedListenerOptions = Pick<
+  StartListenerOptions,
+  | "connectionId"
+  | "onConnected"
+  | "onLog"
+  | "onConnectionReady"
+  | "onStatusChange"
+  | "onWsEvent"
+>;
+
+export interface ConnectedListenerRuntimeOptions {
+  /** Disable for startup tests using transports without WebSocket events. */
+  startStartupDeadline?: boolean;
+  startHeartbeat?: boolean;
+  startCronScheduler?: boolean;
+  startProcessServices?: boolean;
+  streamTransport?: ListenerTransport | null;
+  emitInitialState?: boolean;
+  updateReconnectState?: boolean;
+  activateIngress?: () => Promise<boolean>;
+}

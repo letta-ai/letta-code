@@ -185,9 +185,15 @@ export async function captureDocsSnapshot(
   const fetcher = options.fetch ?? globalThis.fetch;
   const indexUrl = options.indexUrl ?? DEFAULT_LLMS_URL;
   const allowedOrigin = new URL(indexUrl).origin;
-  const fixedAllowedUrls = new Set(
-    indexUrl === DEFAULT_LLMS_URL ? [OFFICIAL_CHANGELOG_URL] : [],
-  );
+  const fixedSourceUrls =
+    indexUrl === DEFAULT_LLMS_URL ? [OFFICIAL_CHANGELOG_URL] : [];
+  const fixedAllowedUrls = new Set(fixedSourceUrls);
+  if (indexUrl === DEFAULT_LLMS_URL) {
+    // The indexed claude-tag.md page redirects through these two URLs. Do not
+    // fetch them separately or trust other URLs on claude.com.
+    fixedAllowedUrls.add("https://claude.com/docs/claude-tag");
+    fixedAllowedUrls.add("https://claude.com/docs/claude-tag/overview");
+  }
   const now = toDate(options.now ?? new Date());
   const indexText = await fetchText(
     indexUrl,
@@ -198,7 +204,7 @@ export async function captureDocsSnapshot(
   );
   const normalizedIndex = normalizeDocsMarkdown(indexText);
   const urls = [
-    ...new Set([...parseLlmsTxt(indexText), ...fixedAllowedUrls]),
+    ...new Set([...parseLlmsTxt(indexText), ...fixedSourceUrls]),
   ].sort();
   const fullScan = shouldFullScan(options);
   const pages: Record<string, ClaudeDocsPageSnapshot> = {};

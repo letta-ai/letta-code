@@ -178,10 +178,19 @@ export function buildModelSettings(
   } else if (isXai) {
     // xAI is OpenAI-compatible on the wire, but direct xAI handles must route
     // through provider_type=xai instead of the generic OpenAI fallback.
-    settings = {
+    const xaiSettings: Record<string, unknown> = {
       provider_type: "xai",
       parallel_tool_calls: true,
     };
+    // Cloud reads Grok effort from nested `reasoning`; without it the
+    // selected level is dropped and the server falls back to its default.
+    if (updateArgs && "reasoning_effort" in updateArgs) {
+      xaiSettings.reasoning =
+        updateArgs.reasoning_effort === null
+          ? null
+          : { reasoning_effort: String(updateArgs.reasoning_effort) };
+    }
+    settings = xaiSettings as ModelSettings;
   } else if (isGoogleAI) {
     const googleSettings: GoogleAIModelSettings & { temperature?: number } = {
       provider_type: "google_ai",
