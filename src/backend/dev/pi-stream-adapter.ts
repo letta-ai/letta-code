@@ -421,6 +421,15 @@ function maxTokensForSettings(
     : undefined;
 }
 
+function temperatureForSettings(
+  modelSettings: Record<string, unknown>,
+): number | undefined {
+  const temperature = modelSettings.temperature;
+  return typeof temperature === "number" && Number.isFinite(temperature)
+    ? temperature
+    : undefined;
+}
+
 function serviceTierForSettings(
   model: Model<string>,
   modelSettings: Record<string, unknown>,
@@ -630,6 +639,9 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...(reasoning ? { reasoning } : {}),
       ...(maxTokensForSettings(input.agent.model_settings)
         ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
+        : {}),
+      ...(temperatureForSettings(input.agent.model_settings) !== undefined
+        ? { temperature: temperatureForSettings(input.agent.model_settings) }
         : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
         ? {
