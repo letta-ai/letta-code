@@ -730,13 +730,14 @@ Changes [settings](https://code.claude.com/docs/en/settings.md) on a running ses
 
 Only some keys take effect mid-session:
 
-* **Applied on the next turn**: `effortLevel`, `ultracode`, `permissions`, `hooks`, `skillOverrides`, `fastMode`, `agent`. Switching `agent` also applies that agent's model override and hooks on the next turn. Its system prompt applies on the next turn, or, in a session that [reuses a recorded system prompt](https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts.md#change-the-prompt-of-an-existing-session), once the session is compacted.
+* **Applied on the next turn**: `ultracode`, `permissions`, `hooks`, `skillOverrides`, `fastMode`, `agent`. Switching `agent` also applies that agent's model override and hooks on the next turn. Its system prompt applies on the next turn. In a session that [reuses a recorded system prompt](https://code.claude.com/docs/en/agent-sdk/modifying-system-prompts.md#change-the-prompt-of-an-existing-session), it applies once the session is compacted.
 * **Applied during the current turn**: `model`. If you switch `model` while Claude is working on a turn, the response Claude is already generating finishes on the old model, and the rest of the turn, starting with the next call Claude Code makes to the model, uses the new one. Subagents keep their own model. Before v2.1.212, a mid-turn switch waited for the next turn.
+* **Applied by the next turn**: `effortLevel`. The level applies from Claude Code's next call to the model. If [changing effort keeps the prompt cache](https://code.claude.com/docs/en/prompt-caching.md#changing-effort-level), as on Claude Opus 5.5 with an API key or a Claude subscription, expect it on the next turn instead.
 * **No effect mid-session**: the system prompt options. These are resolved once at startup, so the running session keeps the original value even though the call succeeds. To change them, start a new session.
 
 `effortLevel` accepts an [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) name. It also accepts `"ultracode"`, which requests `xhigh` effort with [ultracode](https://code.claude.com/docs/en/workflows.md#let-claude-decide-with-ultracode) on. `applyFlagSettings()` declares `effortLevel` without that value, so in TypeScript pass `{ ultracode: true, effortLevel: "xhigh" }` for the same result, or the [`ultracode`](https://code.claude.com/docs/en/settings-reference#ultracode) key alone to turn ultracode on at the session's current effort level. The `ultracode` value requires Claude Code v2.1.203 or later and is accepted only by `applyFlagSettings()`, not by the `effortLevel` key in a settings file. Before v2.1.284, the `ultracode` key alone also set the level to `xhigh`.
 
-The values are written to the flag-settings layer, merged over what the inline `settings` option of `query()` set at startup. This is the same tier the [on-page precedence section](#settings-precedence) calls programmatic options.
+The values are written to the flag-settings layer, merged over what the inline `settings` option of `query()` set at startup. This is the same tier the [on-page precedence section](#settings-precedence) calls programmatic options. `effortLevel` is an exception: the level you pass replaces one from `--effort` or settings, managed settings included, as the [effort resolution order](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) shows.
 
 Successive calls shallow-merge top-level keys. A second call with `{ permissions: {...} }` replaces the entire `permissions` object from the prior call rather than deep-merging into it.
 
@@ -1327,7 +1328,7 @@ When multiple sources are loaded, settings are merged with this precedence (high
 2. Project settings (`.claude/settings.json`)
 3. User settings (`~/.claude/settings.json`)
 
-Programmatic options such as `agents`, `allowedTools`, and `settings` override user, project, and local filesystem settings. Managed policy settings take precedence over programmatic options.
+Programmatic options such as `agents`, `allowedTools`, and `settings` override user, project, and local filesystem settings. If a managed policy setting and a programmatic option set the same key, the managed value applies, with exceptions such as an `effortLevel` passed to [`applyFlagSettings()`](#applyflagsettings).
 
 ### `PermissionMode`
 
@@ -2095,7 +2096,7 @@ type SDKSystemMessage = {
 `terminal_slash_commands` names the entries in `slash_commands` whose interface is bound to the local terminal, such as `exit`. You can send them like any other entry in `slash_commands`; the field exists so a remote or mobile client can hide them from its command menus. The field is present only when non-empty, and requires Agent SDK v0.3.229 or later.
 
 * `source` on each `mcp_servers` entry: where the server's definition came from, with the same values as [`McpServerStatus`](#mcpserverstatus)'s `source`. Requires Agent SDK v0.3.274 or later.
-* `effort`: the [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) Claude Code sends on the session's next request, or `null` when it sends none. Claude Code sets the field only on the init message it sends to [Remote Control](https://code.claude.com/docs/en/remote-control.md) clients, and omits it from the init message your application reads. Requires Agent SDK v0.3.234 or later.
+* `effort`: the [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) set for the session's next turn, or `null` when Claude Code sends no level. Claude Code sets the field only on the init message it sends to [Remote Control](https://code.claude.com/docs/en/remote-control.md) clients, and omits it from the init message your application reads. Requires Agent SDK v0.3.234 or later.
 
 The `capabilities` array names the protocol behaviors this CLI implements, so you can feature-detect instead of comparing `claude_code_version` strings. It is an open set: ignore values you don't recognize, and check for the specific capability whose behavior you rely on. The field requires Claude Code v2.1.205 or later and is absent on earlier CLIs.
 

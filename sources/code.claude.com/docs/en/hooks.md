@@ -735,7 +735,7 @@ Hook events receive these fields as JSON, in addition to event-specific fields d
 | `cwd` | Current working directory when the hook is invoked |
 | `scratchpad_dir` | Path to the session's [scratchpad directory](https://code.claude.com/docs/en/claude-directory.md#session-scratchpad-directory), where Claude keeps temporary working files. Absent when the session has no scratchpad or the temp directory is unavailable. Requires Claude Code v2.1.257 or later |
 | `permission_mode` | Current [permission mode](https://code.claude.com/docs/en/permissions.md#permission-modes): `"default"`, `"plan"`, `"acceptEdits"`, `"auto"`, `"dontAsk"`, or `"bypassPermissions"`. The mode labeled **Manual** arrives as `"default"`, never as `"manual"`, so scripts that match `"default"` keep working. Not all events receive this field. Check the JSON example in each [hook event](#hook-events) section |
-| `effort` | Object with a `level` field holding the [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) in effect when the hook runs: `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. If you set a level the active model doesn't support, `level` reports the level Claude Code ran instead; [Adjust effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) says how it picks that level. The object matches the [status line](https://code.claude.com/docs/en/statusline.md#available-data) `effort` field. Present for events that fire within a tool-use context, such as `PreToolUse`, `PostToolUse`, `Stop`, and `SubagentStop`, when the current model supports the effort parameter. The level is also available to hook commands and the Bash tool as the `$CLAUDE_EFFORT` environment variable. |
+| `effort` | Object whose `level` is the [effort level](https://code.claude.com/docs/en/model-config.md#adjust-effort-level) setting when the hook runs, including a skill's, subagent's, or `ultrathink` level: `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. Present for `PreToolUse`, `PostToolUse`, `Stop`, `SubagentStop`, and other events with a tool-use context, on models with effort. If the model doesn't support your level, `level` is the level that ran. A level you changed can show here before it [starts](https://code.claude.com/docs/en/model-config.md#when-a-new-effort-level-starts). `$CLAUDE_EFFORT` holds the same level. |
 | `hook_event_name` | Name of the event that fired |
 
 `agent_id` and `agent_type` tell your script which agent a hook fired in, such as a subagent, an [in-process teammate](https://code.claude.com/docs/en/agent-teams.md#choose-a-display-mode), or the agent you chose with `--agent`:
@@ -1898,6 +1898,7 @@ Searches the web.
 | `query` | string | `"react hooks best practices"` | Search query |
 | `allowed_domains` | array | `["docs.example.com"]` | Optional: only include results from these domains |
 | `blocked_domains` | array | `["spam.example.com"]` | Optional: exclude results from these domains |
+| `mode` | string | `"extended"` | Optional: search type. `"standard"` requests a lighter search and `"extended"` the full search. Some sessions don't send `mode`, and a call without it runs the full search. Requires Claude Code v2.1.282 or later |
 
 ##### Agent
 
@@ -1968,8 +1969,6 @@ A hook that blocks by exiting 2 routes the same way as `"deny"`: Claude sees the
 
 When a hook returns `"ask"`, the permission prompt displayed to the user includes a label identifying where the hook came from: `[settings]` for a hook from any settings file or from agent frontmatter, `[plugin:<name>]` for a plugin's hook, or `[skill]` for a hook from skill frontmatter. This helps users understand which configuration source is requesting confirmation.
 
-A hook's `"ask"` also forces a permission prompt in [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode): the classifier can still deny the tool call, but it can't approve the call silently.
-
 ```json theme={null}
 {
   "hookSpecificOutput": {
@@ -1987,6 +1986,15 @@ A hook's `"ask"` also forces a permission prompt in [auto mode](https://code.cla
 > [!NOTE]
 >
 > PreToolUse previously used top-level `decision` and `reason` fields, but these are deprecated for this event. Use `hookSpecificOutput.permissionDecision` and `hookSpecificOutput.permissionDecisionReason` instead. The deprecated values `"approve"` and `"block"` map to `"allow"` and `"deny"` respectively. Other events like PostToolUse and Stop continue to use top-level `decision` and `reason` as their current format.
+
+#### PreToolUse `ask` decisions in auto mode
+
+In [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-prompts-with-auto-mode), a PreToolUse hook's `"ask"` normally sends the tool call to the permission prompt, and the [classifier](https://code.claude.com/docs/en/permission-modes.md#how-the-classifier-evaluates-actions) doesn't decide it. Some calls take a different path:
+
+* **Calls that Claude Code's own checks flag too**: these include writes to [protected paths](https://code.claude.com/docs/en/permission-modes.md#protected-paths) and commands that ask to [run outside the sandbox](https://code.claude.com/docs/en/sandboxing.md#the-unsandboxed-retry-escape-hatch). The classifier can deny one of these calls before any prompt appears. If it approves, the call normally still goes to the prompt.
+* **`SubagentHandback` calls**: this tool delivers a subagent's report. No prompt appears for it, and the call runs even if the classifier objects.
+
+To stop a `SubagentHandback` call, return `"deny"`. Claude Code then tells the subagent, up to three times, that its report wasn't delivered and to call the tool again. If your hook keeps denying, the subagent ends without delivering a report through this tool, and the conversation waiting on it gets a note saying so.
 
 #### Tools that require user interaction
 

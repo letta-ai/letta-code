@@ -3322,7 +3322,7 @@ A `disallowed_tools` entry or a deny rule that still names either name is ignore
 
 ### TaskStop
 
-**Tool name:** `TaskStop`. The previous names `KillShell` and `KillBash` are still accepted as aliases.
+**Tool name:** `TaskStop`. You can still use the previous names `KillShell` and `KillBash` in permission rules, in hook matchers, and in the `tools`, `allowed_tools`, and `disallowed_tools` options.
 
 **Input:**
 
