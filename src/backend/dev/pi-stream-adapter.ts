@@ -613,6 +613,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       provider: resolved.model.provider,
       configuredHeaders: resolved.headers,
       conversationId: input.conversationId,
+      requestKind: "turn",
     });
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
