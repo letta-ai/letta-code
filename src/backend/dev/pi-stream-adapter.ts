@@ -610,6 +610,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       provider: resolved.model.provider,
       configuredHeaders: resolved.headers,
       conversationId: input.conversationId,
+      requestKind: "turn",
     });
     const maxTokens = finiteNumberValue(input.agent.model_settings.max_tokens);
     const temperature = finiteNumberValue(
@@ -619,7 +620,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(headers ? { headers } : {}),
+      headers,
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
