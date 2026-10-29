@@ -62,7 +62,8 @@ async function waitForProcessGroupExit(
   return true;
 }
 
-async function killWindowsProcessTree(
+/** Kills the child and its descendants, including a shim's cmd.exe wrapper. */
+export async function killWindowsProcessTree(
   childProcess: ChildProcessWithoutNullStreams,
 ): Promise<void> {
   if (!childProcess.pid) return;

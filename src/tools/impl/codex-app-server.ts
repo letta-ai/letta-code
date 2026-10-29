@@ -2,7 +2,10 @@ import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
-import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import {
+  killWindowsProcessTree,
+  spawnManagedWorkloadProcess,
+} from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
@@ -196,7 +199,11 @@ function spawnTransport(options: {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    kill: () => child.kill(),
+    // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
+    kill: () =>
+      process.platform === "win32"
+        ? void killWindowsProcessTree(child)
+        : child.kill(),
     exited: new Promise((resolve) => {
       child.once("close", (code, signal) => resolve({ code, signal }));
     }),
