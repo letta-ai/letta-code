@@ -215,7 +215,7 @@ jobs:
         shell: bash
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+        run: bun run scripts/run-api-integration-tests.ts src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
 
   worker-model-discovery:
     needs: classify
