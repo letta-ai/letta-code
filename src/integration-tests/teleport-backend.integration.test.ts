@@ -14,9 +14,10 @@ import type {
 } from "@/backend/api/environments";
 import { createCloudFixture } from "@/test-utils/cloud-fixture-retry";
 import {
-  CloudReadinessError,
-  isRetryableCloudReadinessError,
-} from "@/test-utils/cloud-readiness-retry";
+  CloudRequestTimeoutError,
+  pollCloudReadiness,
+} from "@/test-utils/cloud-readiness-poll";
+import { CloudReadinessError } from "@/test-utils/cloud-readiness-retry";
 import {
   deleteCloudFixture,
   initiateFixtureTeleport,
@@ -44,58 +45,52 @@ async function bounded<T>(label: string, work: Promise<T>, ms = 30_000) {
   }
 }
 
-async function poll<T>(
-  label: string,
-  probe: () => Promise<T | undefined>,
-  retryReadinessErrors = false,
-) {
+async function poll<T>(label: string, probe: () => Promise<T | undefined>) {
   const deadline = Date.now() + 60_000;
-  let lastError: unknown;
   while (Date.now() < deadline) {
-    try {
-      const result = await probe();
-      if (result !== undefined) return result;
-    } catch (error) {
-      if (!retryReadinessErrors || !isRetryableCloudReadinessError(error))
-        throw error;
-      lastError = error;
-    }
-    await delay(Math.min(500, Math.max(0, deadline - Date.now())));
+    const result = await probe();
+    if (result !== undefined) return result;
+    await delay(500);
   }
-  throw new Error(
-    `${label} timed out${lastError instanceof Error ? `; last transient error: ${lastError.message}` : ""}`,
-    { cause: lastError },
-  );
+  throw new Error(`${label} timed out`);
 }
 
 async function request<T>(
   path: string,
   body?: object,
   method = body ? "POST" : "GET",
+  timeoutMs = 15_000,
 ): Promise<T> {
-  const response = await fetch(new URL(path, baseURL), {
-    method,
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    ...(body ? { body: JSON.stringify(body) } : {}),
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) {
-    const error = (await response.json().catch(() => ({}))) as {
-      errorCode?: string;
-      message?: string;
-    };
-    throw new CloudReadinessError(
-      response.status,
-      error.errorCode,
-      error.message,
-    );
+  const signal = AbortSignal.timeout(timeoutMs);
+  try {
+    const response = await fetch(new URL(path, baseURL), {
+      method,
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal,
+    });
+    if (!response.ok) {
+      const error = (await response.json().catch(() => ({}))) as {
+        errorCode?: string;
+        message?: string;
+      };
+      throw new CloudReadinessError(
+        response.status,
+        error.errorCode,
+        error.message,
+      );
+    }
+    // DELETE may return 204 (or an empty 200), with no JSON document.
+    if (method === "DELETE") return undefined as T;
+    return (await response.json()) as T;
+  } catch (error) {
+    if (signal.aborted)
+      throw new CloudRequestTimeoutError(`${method} ${path}`, error);
+    throw error;
   }
-  // DELETE may return 204 (or an empty 200), with no JSON document.
-  if (method === "DELETE") return undefined as T;
-  return response.json() as Promise<T>;
 }
 
 async function stop(child: ChildProcess) {
@@ -133,6 +128,8 @@ testWithAPI.each([
     let destinationAgentNotFound = false;
     const failures: string[] = [];
     const stderrByRole = new Map<string, string>();
+    const stdoutByRole = new Map<string, string>();
+    const readinessByRole = new Map<string, string>();
     let releaseTool: (() => void) | undefined;
     try {
       async function listener(role: "source" | "destination") {
@@ -204,18 +201,29 @@ testWithAPI.each([
         );
         children.push(child);
         let listenerReady = false;
+        readinessByRole.set(
+          role,
+          "spawned; lifecycle=none; environment=unknown",
+        );
         // Registration and the status relay can be online before startup ingress
         // is active. This is the same readiness signal process supervisors use.
         createInterface({ input: child.stdout }).on("line", (line) => {
           try {
             const event = JSON.parse(line);
             if (event.lettaLifecycleProtocol !== 1) return;
+            readinessByRole.set(role, `lifecycle=${event.state}`);
             if (event.state === "connected") listenerReady = true;
             if (event.state === "reconnecting" || event.state === "error")
               listenerReady = false;
           } catch {
             // Ignore non-lifecycle startup output.
           }
+        });
+        child.stdout?.on("data", (chunk: Buffer) => {
+          stdoutByRole.set(
+            role,
+            `${stdoutByRole.get(role) ?? ""}${chunk.toString()}`.slice(-12000),
+          );
         });
         child.stderr?.on("data", (chunk: Buffer) => {
           stderrByRole.set(
@@ -238,9 +246,9 @@ testWithAPI.each([
           });
         }
         stage = `${role} registration and listener readiness`;
-        const connectionId = await poll(
+        const connectionId = await pollCloudReadiness(
           `${stage} (expected connected lifecycle event)`,
-          async () => {
+          async (remainingMs) => {
             if (
               spawnFailed ||
               child.exitCode !== null ||
@@ -250,16 +258,22 @@ testWithAPI.each([
             }
             const result = await request<ListEnvironmentsResponse>(
               "/v1/environments?limit=100&onlineOnly=true",
+              undefined,
+              "GET",
+              Math.min(15_000, remainingMs),
             );
             const environment = result.connections.find(
               (item) => item.connectionName === name,
             );
             if (environment) environmentIds.add(environment.id);
+            readinessByRole.set(
+              role,
+              `lifecycleConnected=${listenerReady}; environment=${environment?.connectionId ?? "absent"}`,
+            );
             return listenerReady
               ? (environment?.connectionId ?? undefined)
               : undefined;
           },
-          true,
         );
         const client = new AppServerClient({
           url: new URL(
@@ -485,6 +499,12 @@ testWithAPI.each([
       );
       const detail = [
         error instanceof Error ? error.message : "Unknown failure",
+        ...[...readinessByRole].map(
+          ([role, state]) => `${role} readiness: ${state}`,
+        ),
+        ...[...stdoutByRole].map(
+          ([role, stdout]) => `${role} stdout: ${stdout}`,
+        ),
         ...[...stderrByRole].map(([role, stderr]) => `${role}: ${stderr}`),
       ].join("\n");
       failures.push(
