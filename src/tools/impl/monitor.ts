@@ -31,6 +31,7 @@ import {
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
 import { startScriptMonitor } from "./monitor-script.js";
+import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -49,15 +50,17 @@ import { applyShellSandbox } from "./shell-sandbox.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 const MIN_TIMEOUT_MS = 1000;
-export const MONITOR_MAX_TIMEOUT_MS = 3_600_000;
 const DEFAULT_TIMEOUT_MS = 300_000;
 export const MONITOR_OUTPUT_FILE_BYTES = 1024 * 1024;
 const WEBSOCKET_MAX_PAYLOAD_BYTES = MONITOR_EVENT_BUFFER_CHARS * 2;
 const WEBSOCKET_PROTOCOL_PATTERN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 
-export function getMonitorTimeoutEvent(timeoutMs: number): string {
-  return isManagedCloudRuntime() && timeoutMs === MONITOR_MAX_TIMEOUT_MS
-    ? "Monitor stopped at the 1-hour Cloud sandbox limit. Cloud monitors have a hard 1-hour limit to avoid keeping sandbox resources unnecessarily running. For later checks, schedule a Wake or cron, which does not keep the sandbox running between turns, and combine it with shorter monitors when needed."
+export function getMonitorTimeoutEvent(
+  timeoutMs: number,
+  tool = "Monitor",
+): string {
+  return isManagedCloudRuntime() && timeoutMs === getMonitorMaxTimeoutMs()
+    ? `${tool} stopped at the ${timeoutMs / 3_600_000}-hour Cloud sandbox limit. If you still need to watch, simply re-arm it by calling ${tool} again. For much longer waits, schedule a Wake or cron, which does not keep the sandbox running between turns.`
     : "[Monitor timed out — re-arm if needed.]";
 }
 
@@ -239,10 +242,10 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     typeof normalized.timeout_ms !== "number" ||
     !Number.isFinite(normalized.timeout_ms) ||
     normalized.timeout_ms < MIN_TIMEOUT_MS ||
-    (!normalized.persistent && normalized.timeout_ms > MONITOR_MAX_TIMEOUT_MS)
+    (!normalized.persistent && normalized.timeout_ms > getMonitorMaxTimeoutMs())
   ) {
     throw new Error(
-      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${MONITOR_MAX_TIMEOUT_MS}`,
+      `Monitor timeout_ms must be between ${MIN_TIMEOUT_MS} and ${getMonitorMaxTimeoutMs()}`,
     );
   }
   if (typeof normalized.persistent !== "boolean") {
@@ -311,7 +314,7 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
   }
   if (isManagedCloudRuntime() && normalized.persistent) {
     normalized.persistent = false;
-    normalized.timeout_ms = MONITOR_MAX_TIMEOUT_MS;
+    normalized.timeout_ms = getMonitorMaxTimeoutMs();
   }
   return normalized;
 }
