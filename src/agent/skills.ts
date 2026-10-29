@@ -160,6 +160,7 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "managing-shared-memory",
   "music-generation",
   "speech-generation",
+  "video-generation",
   "working-across-computers",
 ]);
 
