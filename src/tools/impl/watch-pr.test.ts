@@ -11,7 +11,10 @@ import { watch_pr } from "./watch-pr";
 
 const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
+let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
+  previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
+  delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
@@ -38,6 +41,9 @@ function snapshot(
 }
 
 afterEach(() => {
+  if (previousMonitorMaxTimeout === undefined)
+    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
+  else process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = previousMonitorMaxTimeout;
   if (previousManagedCloud === undefined)
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
@@ -58,11 +64,12 @@ afterEach(() => {
 describe("WatchPR background lifecycle", () => {
   test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = "86400000";
     const realSetTimeout = globalThis.setTimeout;
     const timers = spyOn(globalThis, "setTimeout").mockImplementation(
       Object.assign(
         (...[callback, ms, ...args]: Parameters<typeof setTimeout>) =>
-          realSetTimeout(callback, ms === 3_600_000 ? 50 : ms, ...args),
+          realSetTimeout(callback, ms === 86_400_000 ? 50 : ms, ...args),
         { __promisify__: realSetTimeout.__promisify__ },
       ),
     );
@@ -96,7 +103,7 @@ describe("WatchPR background lifecycle", () => {
         },
       );
       expect(result.persistent).toBe(false);
-      expect(result.content[0]?.text).toContain("1-hour");
+      expect(result.content[0]?.text).toContain("24-hour");
       await Bun.sleep(150);
       expect(pollSignal?.aborted).toBe(true);
       expect(backgroundProcesses.get(result.taskId)?.status).toBe("failed");
@@ -106,6 +113,8 @@ describe("WatchPR background lifecycle", () => {
         agentId: "agent-cloud",
         conversationId: "conv-cloud",
       });
+      expect(queued[0]?.text).toContain("24-hour Cloud sandbox limit");
+      expect(queued[0]?.text).toContain("re-arm it by calling WatchPR again");
       expect(queued[0]?.text).toContain("Wake or cron");
     } finally {
       timers.mockRestore();
