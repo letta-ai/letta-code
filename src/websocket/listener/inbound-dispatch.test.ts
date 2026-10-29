@@ -7,7 +7,6 @@ import {
   resolvePendingApprovalResolver,
 } from "./approval";
 import {
-  getOrCreateProcessTransport,
   markListenerConnectionInitialized,
   openListenerConnection,
   subscribeListenerConnection,
@@ -28,6 +27,7 @@ import {
 import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
+import { shouldProcessInboundMessageDirectly } from "./queue";
 import {
   evictConversationRuntimeIfIdle,
   getConversationRuntime,
@@ -387,7 +387,7 @@ test("replays a timed-out thrown-tool terminal to a later App Server owner", asy
   expect(runtime.activeConnectionId).toBe("client-b");
 });
 
-test("queued App Server turn follows a subscribed client after origin disconnect", async () => {
+test("direct App Server turn follows a subscribed client after origin disconnect", async () => {
   const listener = createRuntime();
   setActiveRuntime(listener);
   const socketA = new MockSocket();
@@ -439,9 +439,8 @@ test("queued App Server turn follows a subscribed client after origin disconnect
     },
     socket: socketA as never,
     options: makeOptions("client-a", false),
-    processIncomingMessage: mock(async () => {}),
-    processQueuedTurn: mock(async () => {
-      const turnTransport = getOrCreateProcessTransport(listener);
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(async (_incoming, turnTransport) => {
       runtime.activeConnectionId = "client-a";
       const turnLease = runtime.turnLifecycle.begin({
         origin: "message",
@@ -557,7 +556,7 @@ test("queued App Server turn follows a subscribed client after origin disconnect
   expect(terminalTypes).toEqual(["client_tool_end", "tool_return_message"]);
 });
 
-test("queued remote turn follows the replacement WS pair after reconnect", async () => {
+test("direct remote turn follows the replacement WS pair after reconnect", async () => {
   const listener = createRuntime();
   setActiveRuntime(listener);
   const originalControl = new MockSocket();
@@ -610,9 +609,8 @@ test("queued remote turn follows the replacement WS pair after reconnect", async
     },
     socket: originalControl as never,
     options: makeOptions("relay"),
-    processIncomingMessage: mock(async () => {}),
-    processQueuedTurn: mock(async () => {
-      const turnTransport = getOrCreateProcessTransport(listener);
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(async (_incoming, turnTransport) => {
       runtime.activeConnectionId = "relay";
       const turnLease = runtime.turnLifecycle.begin({
         origin: "message",
@@ -719,7 +717,7 @@ test("queued remote turn follows the replacement WS pair after reconnect", async
   expect(sendApprovalContinuation).toHaveBeenCalledTimes(1);
 });
 
-test("queued turn dispatched during previous turn cleanup keeps reporting its loop status", async () => {
+test("direct turn dispatched during previous turn cleanup keeps reporting its loop status", async () => {
   const listener = createRuntime();
   setActiveRuntime(listener);
   const socket = new MockSocket();
@@ -757,8 +755,8 @@ test("queued turn dispatched during previous turn cleanup keeps reporting its lo
     },
     socket: socket as never,
     options: makeOptions("sdk"),
-    processIncomingMessage: mock(async () => {}),
-    processQueuedTurn: mock(async () => {
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(async () => {
       const lease = runtime.turnLifecycle.begin({
         origin: "message",
         workingDirectory: process.cwd(),
@@ -772,8 +770,8 @@ test("queued turn dispatched during previous turn cleanup keeps reporting its lo
   });
   await waitFor(() => turnAFinished, "turn A did not finish");
 
-  // Turn B arrives while A is still in cleanup. The lifecycle is idle, but A's
-  // queue pump is still active, so B waits for A's cleanup.
+  // Turn B arrives while A is still in cleanup. The router resolves the same
+  // runtime and, because the lifecycle is idle, routes it directly.
   const scopedRuntime = getOrCreateScopedRuntime(
     listener,
     scope.agent_id,
@@ -787,7 +785,9 @@ test("queued turn dispatched during previous turn cleanup keeps reporting its lo
     conversationId: scope.conversation_id,
     messages: [{ role: "user" as const, content: "printf MARKER" }],
   };
-  expect(scopedRuntime.turnLifecycle.kind).toBe("idle");
+  expect(shouldProcessInboundMessageDirectly(scopedRuntime, incomingB)).toBe(
+    true,
+  );
 
   const approval = {
     toolCallId: "exec-marker",
@@ -816,12 +816,9 @@ test("queued turn dispatched during previous turn cleanup keeps reporting its lo
     incoming: incomingB,
     socket: socket as never,
     options: makeOptions("sdk"),
-    processIncomingMessage: mock(async () => {}),
-    processQueuedTurn: mock(
-      // Match the queued turn processor's scope and process transport.
-      async () => {
-        const turnTransport = getOrCreateProcessTransport(listener);
-        const turnRuntime = scopedRuntime;
+    processQueuedTurn: mock(async () => {}),
+    processIncomingMessage: mock(
+      async (_incoming, turnTransport, turnRuntime) => {
         const turnLease = turnRuntime.turnLifecycle.begin({
           origin: "message",
           workingDirectory: process.cwd(),

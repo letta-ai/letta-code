@@ -406,14 +406,14 @@ describe("listener message router ownership handoff", () => {
     );
   });
 
-  test("preserves the acting user on a queued input and deduplicates retries", async () => {
+  test("preserves the acting user on a directly-owned input and deduplicates retries", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const socket = new MockSocket();
     initializeMockConnection(listener, socket);
     const sent: unknown[] = [];
     let receivedActingUserId: string | undefined;
-    const processQueuedTurn = mock(async (incoming: IncomingMessage) => {
+    const processIncomingMessage = mock(async (incoming: IncomingMessage) => {
       receivedActingUserId = incoming.actingUserId;
     });
     setActiveRuntime(listener);
@@ -421,7 +421,7 @@ describe("listener message router ownership handoff", () => {
       runtime: listener,
       socket: socket as unknown as WebSocket,
       opts: makeListenerOptions(),
-      processIncomingMessage: async () => {},
+      processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -436,7 +436,7 @@ describe("listener message router ownership handoff", () => {
       },
       runDetachedListenerTask: () => {},
       trackListenerError: () => {},
-      processQueuedTurn,
+      processIncomingMessage,
     });
 
     await handleMessage(
@@ -489,14 +489,14 @@ describe("listener message router ownership handoff", () => {
     );
     await runtime.messageQueue;
 
-    expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+    expect(processIncomingMessage).toHaveBeenCalledTimes(1);
     expect(receivedActingUserId).toBe("cloud-user-1");
     expect(sent).toContainEqual(
       expect.objectContaining({
         type: "input_accepted",
         request_id: "input-direct",
         accepted: true,
-        disposition: "queued",
+        disposition: "started",
       }),
     );
     expect(sent).toContainEqual(

@@ -91,9 +91,7 @@ function buildHandler(
     runtime: listener,
     socket: socket as unknown as WebSocket,
     opts: makeListenerOptions(),
-    processQueuedTurn: async (incoming) => {
-      processed.push(incoming);
-    },
+    processQueuedTurn: async () => {},
     fileCommandSession: { handle: () => false },
     getParsedRuntimeScope: () => null,
     replaySyncStateForRuntime: async () => {},

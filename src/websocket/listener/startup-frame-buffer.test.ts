@@ -194,7 +194,6 @@ describe("startup frame buffering", () => {
     markListenerConnectionInitialized(runtime, replacement.id, replacement);
     setActiveRuntime(runtime);
     const executeTurn = mock(async (_incoming: IncomingMessage) => {});
-    const executeQueuedTurn = mock(async (_incoming: IncomingMessage) => {});
     const dispatchedRuntime = getOrCreateScopedRuntime(
       runtime,
       "agent-1",
@@ -205,7 +204,7 @@ describe("startup frame buffering", () => {
       socket: socket as unknown as WebSocket,
       connectionId: replacement.id,
       opts: options,
-      processQueuedTurn: executeQueuedTurn,
+      processQueuedTurn: async () => {},
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -233,13 +232,7 @@ describe("startup frame buffering", () => {
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
-    expect(executeTurn).not.toHaveBeenCalled();
-    expect(
-      executeQueuedTurn.mock.calls.flatMap(([incoming]) => incoming.messages),
-    ).toMatchObject([
-      { role: "user", content: "legacy pre-ready" },
-      { role: "user", content: "v2 pre-ready" },
-    ]);
+    expect(executeTurn).toHaveBeenCalledTimes(2);
     expect(
       claimRequestlessStartupFrameHandoff(runtime, replacement.startupOwner)
         .handoff,
