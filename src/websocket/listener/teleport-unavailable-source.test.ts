@@ -12,7 +12,6 @@ import {
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
-import { createConnectionTurnProcessor } from "./connection-lifecycle";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { dispatchInboundMessageWhenReady } from "./inbound-dispatch";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -123,17 +122,18 @@ test("a real local turn persists its reply after an unsent teleport is cleared",
       socket: socket as never,
       options,
       processIncomingMessage: handleIncomingMessage,
-      processQueuedTurn: createConnectionTurnProcessor(listener),
+      processQueuedTurn: async () => {
+        throw new Error("idle input should start directly");
+      },
       trackListenerError: (_type, error) => {
         throw error;
       },
       onInputAccepted: accepted,
     });
     await runtime.messageQueue;
-    await runtime.messageQueue;
     expect(accepted).toHaveBeenCalledWith({
       accepted: true,
-      disposition: "queued",
+      disposition: "started",
     });
     expect(socket.sent).toContainEqual(
       expect.objectContaining({
@@ -299,13 +299,8 @@ for (const boundary of ["idle", "active", "drained"] as const) {
           connectionId: options.connectionId,
           writer: reconnected as never,
           options,
-        }).initialized = true;
-        subscribeListenerConnection(listener, options.connectionId, {
-          agent_id: agentId,
-          conversation_id: conversationId,
         });
         const processIncomingMessage = mock(async () => {});
-        const processQueuedTurn = mock(async () => {});
         const onInputAccepted = mock(() => {});
         dispatchInboundMessageWhenReady({
           listener,
@@ -319,18 +314,16 @@ for (const boundary of ["idle", "active", "drained"] as const) {
           socket: reconnected as never,
           options,
           processIncomingMessage,
-          processQueuedTurn,
+          processQueuedTurn: mock(async () => {}),
           trackListenerError: mock(() => {}),
           onInputAccepted,
         });
         await runtime.messageQueue;
-        await runtime.messageQueue;
         expect(onInputAccepted).toHaveBeenCalledWith({
           accepted: true,
-          disposition: "queued",
+          disposition: "started",
         });
-        expect(processIncomingMessage).not.toHaveBeenCalled();
-        expect(processQueuedTurn).toHaveBeenCalledTimes(1);
+        expect(processIncomingMessage).toHaveBeenCalledTimes(1);
         expect(
           isRuntimeTeleportPending(listener, agentId, conversationId),
         ).toBe(false);

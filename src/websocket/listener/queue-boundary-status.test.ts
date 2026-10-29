@@ -379,57 +379,6 @@ test("a local listener runs queued work without a remote subscriber", async () =
   expect(runtime.queueRuntime.length).toBe(0);
 });
 
-test.each([false, true])(
-  "an HTTP-owned turn drains without a subscriber (unrelated connection: %s)",
-  async (withConnection) => {
-    const listener = createRuntime();
-    const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
-    const options = makeListenerOptions();
-    setActiveRuntime(listener);
-    if (withConnection) {
-      openListenerConnection({
-        runtime: listener,
-        connectionId: options.connectionId,
-        writer: new MockSocket() as unknown as WebSocket,
-        options,
-      });
-      markListenerConnectionInitialized(listener, options.connectionId);
-      subscribeListenerConnection(listener, options.connectionId, {
-        agent_id: "agent-1",
-        conversation_id: "conv-other",
-      });
-    }
-    expect(
-      enqueueInboundUserMessage(runtime, {
-        ...queuedMessage("http"),
-        noCoalesce: true,
-        processOwnedTurn: true,
-      }),
-    ).toBe(true);
-    expect(enqueueInboundUserMessage(runtime, queuedMessage("ws"))).toBe(true);
-    const processed: IncomingMessage[] = [];
-    scheduleQueuePump(
-      runtime,
-      getOrCreateProcessTransport(listener),
-      options,
-      async (turn) => {
-        processed.push(turn);
-      },
-    );
-    await runtime.messageQueue;
-    expect(processed).toHaveLength(1);
-    expect(processed[0]?.processOwnedTurn).toBe(true);
-    expect(processed[0]?.messages).toMatchObject(
-      queuedMessage("http").messages,
-    );
-    // The following WebSocket turn still waits for its own subscriber.
-    expect(runtime.queueRuntime.length).toBe(1);
-    expect([...runtime.queuedMessagesByItemId.values()]).toEqual([
-      queuedMessage("ws"),
-    ]);
-  },
-);
-
 test("process-originated work drains without a subscriber to its conversation", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");

@@ -15,7 +15,11 @@ import {
 } from "./input-disposition";
 import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
-import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
+import {
+  scheduleQueuePump,
+  shouldProcessInboundMessageDirectly,
+  shouldQueueInboundMessage,
+} from "./queue";
 import {
   emitListenerStatus,
   evictConversationRuntimeIfIdle,
@@ -200,7 +204,10 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
-        if (shouldQueueInboundMessage(incoming)) {
+        if (
+          shouldQueueInboundMessage(incoming) &&
+          !shouldProcessInboundMessageDirectly(runtime, incoming)
+        ) {
           // The replayable payload and queued disposition commit before the
           // volatile enqueue and before acknowledgement. A crash at either
           // boundary is recovered from the durable payload on process startup.
@@ -250,6 +257,9 @@ export function dispatchInboundMessageWhenReady(params: {
           options.onStatusChange,
           options.connectionId,
         );
+        // Queued turns store the actor on the queue item. Direct turns skip
+        // that item, so carry the actor and durable identity on the replayable
+        // message committed before acknowledgement.
         if (
           !commitInputDisposition(runtime, reservation, "started", {
             incoming: attributedIncoming,
@@ -260,14 +270,25 @@ export function dispatchInboundMessageWhenReady(params: {
           acknowledgeInput({ accepted: false });
           return;
         }
+        const directBatchId = `batch-direct-${crypto.randomUUID()}`;
+        if (identity) {
+          runtime.dequeuedInputIdentitiesByBatchId.set(directBatchId, [
+            identity,
+          ]);
+        }
         acknowledgeInput({ accepted: true, disposition: "started" });
-        await processIncomingMessage(
-          attributedIncoming,
-          getOrCreateProcessTransport(listener),
-          runtime,
-          options.onStatusChange,
-          options.connectionId,
-        );
+        try {
+          await processIncomingMessage(
+            attributedIncoming,
+            getOrCreateProcessTransport(listener),
+            runtime,
+            options.onStatusChange,
+            options.connectionId,
+            directBatchId,
+          );
+        } finally {
+          runtime.dequeuedInputIdentitiesByBatchId.delete(directBatchId);
+        }
         emitListenerStatus(
           listener,
           options.onStatusChange,
