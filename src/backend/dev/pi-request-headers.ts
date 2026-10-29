@@ -8,8 +8,8 @@ export const LETTA_REQUEST_KIND_HEADER = "x-letta-request-kind";
 /** Whether a model request is an agent turn or a compaction summary. */
 export type PiRequestKind = "turn" | "compaction";
 
-// Self-hosted OpenAI-compatible endpoints, where the server (e.g. a proxy that
-// logs or trains on requests) can act on the request kind.
+// Self-hosted OpenAI-compatible endpoints, where the server (e.g. a logging
+// proxy) can act on the request kind.
 const REQUEST_KIND_PROVIDERS: ReadonlySet<string> = new Set([
   LLAMA_CPP_PI_PROVIDER_ID,
   LMSTUDIO_PI_PROVIDER_ID,
