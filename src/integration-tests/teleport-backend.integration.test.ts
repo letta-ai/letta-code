@@ -13,6 +13,10 @@ import type {
   TeleportResponse,
 } from "@/backend/api/environments";
 import { createCloudFixture } from "@/test-utils/cloud-fixture-retry";
+import {
+  CloudReadinessError,
+  isRetryableCloudReadinessError,
+} from "@/test-utils/cloud-readiness-retry";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 // Real Cloud relay, model turn, and two real CLIs; the test owns the tool reply.
@@ -36,14 +40,28 @@ async function bounded<T>(label: string, work: Promise<T>, ms = 30_000) {
   }
 }
 
-async function poll<T>(label: string, probe: () => Promise<T | undefined>) {
+async function poll<T>(
+  label: string,
+  probe: () => Promise<T | undefined>,
+  retryReadinessErrors = false,
+) {
   const deadline = Date.now() + 60_000;
+  let lastError: unknown;
   while (Date.now() < deadline) {
-    const result = await probe();
-    if (result !== undefined) return result;
-    await delay(500);
+    try {
+      const result = await probe();
+      if (result !== undefined) return result;
+    } catch (error) {
+      if (!retryReadinessErrors || !isRetryableCloudReadinessError(error))
+        throw error;
+      lastError = error;
+    }
+    await delay(Math.min(500, Math.max(0, deadline - Date.now())));
   }
-  throw new Error(`${label} timed out`);
+  throw new Error(
+    `${label} timed out${lastError instanceof Error ? `; last transient error: ${lastError.message}` : ""}`,
+    { cause: lastError },
+  );
 }
 
 async function request<T>(
@@ -65,8 +83,10 @@ async function request<T>(
       errorCode?: string;
       message?: string;
     };
-    throw new Error(
-      `Cloud request failed: HTTP ${response.status}: ${error.errorCode ?? ""} ${error.message ?? ""}`,
+    throw new CloudReadinessError(
+      response.status,
+      error.errorCode,
+      error.message,
     );
   }
   return response.json() as Promise<T>;
@@ -233,6 +253,7 @@ testWithAPI.each([
               ? (environment?.connectionId ?? undefined)
               : undefined;
           },
+          true,
         );
         const client = new AppServerClient({
           url: new URL(
