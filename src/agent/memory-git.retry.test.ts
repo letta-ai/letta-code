@@ -4,11 +4,18 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { buildGitTransferStallArgs } from "@/agent/git-transfer-config";
 import {
   isMissingCwdGitError,
   isRetryableGitTransientError,
   runGitWithRetry,
 } from "@/agent/memory-git";
+
+test("clones include HTTP transfer stall detection", () => {
+  expect(
+    buildGitTransferStallArgs(["clone", "https://example.com/repo.git"]),
+  ).toEqual(["-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]);
+});
 
 describe("isRetryableGitTransientError", () => {
   test.each([
