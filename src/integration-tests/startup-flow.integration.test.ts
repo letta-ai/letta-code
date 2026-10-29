@@ -393,9 +393,11 @@ describe("Startup Flow - Integration", () => {
           );
           parentId = parent.id;
         }
+        const workerSystem =
+          "You are a worker helping with a history resume test.";
         const conversation = await createEphemeralConversation({
           model: "openai/gpt-5.6-luna",
-          system: "Always prefix your reply with WORKER-PROMPT.",
+          system: workerSystem,
           ...(parentId ? { parent_agent_id: parentId } : {}),
           is_subagent: true,
           name,
@@ -426,43 +428,60 @@ describe("Startup Flow - Integration", () => {
               },
             },
           );
-        await runTurn("Remember the codeword MINT-8932. Reply only OK.");
-        const resumed = await runTurn(
-          "What codeword did I ask you to remember? Reply only the codeword.",
-          connectionId,
-        );
+        const client = await getClient();
+        const firstPrompt = `First turn ${crypto.randomUUID()}. Acknowledge briefly.`;
+        const secondPrompt = `Second turn ${crypto.randomUUID()}. Acknowledge briefly.`;
+        await runTurn(firstPrompt);
+        const originalHistory =
+          await client.conversations.messages.list(conversationId);
+        expect(originalHistory.items.length).toBeGreaterThan(0);
+        const resumed = await runTurn(secondPrompt, connectionId);
         expect(resumed.output).toMatchObject({
           agent_id: null,
           conversation_id: conversationId,
         });
-        const client = await getClient();
         expect(
           await client.conversations.retrieve(conversationId),
         ).toMatchObject({
           agent_id: null,
           parent_agent_id: parentId ?? null,
+          system: workerSystem,
         });
-        let reply = resumed.output.result;
         if (connectionId) {
           expect(resumed.output).toMatchObject({
             status: "queued",
             parent_agent_id: parentId,
             connection_id: connectionId,
           });
-          reply = (
-            await waitForAcceptedSuperRun(
-              resumed.output as unknown as EnqueueReceipt,
-              AbortSignal.timeout(180000),
-              {
-                exact: getExactSuperRun,
-                run: (id, signal) => client.runs.retrieve(id, { signal }),
-                messages: listEnqueuedRunMessages,
-              },
-            )
-          ).text;
+          await waitForAcceptedSuperRun(
+            resumed.output as unknown as EnqueueReceipt,
+            AbortSignal.timeout(180000),
+            {
+              exact: getExactSuperRun,
+              run: (id, signal) => client.runs.retrieve(id, { signal }),
+              messages: listEnqueuedRunMessages,
+            },
+          );
         }
-        expect(String(reply)).toContain("MINT-8932");
-        expect(String(reply)).toStartWith("WORKER-PROMPT");
+        // Assert durable history, not whether a model follows competing wording
+        // instructions. The second CLI process must append to the same history.
+        const history =
+          await client.conversations.messages.list(conversationId);
+        expect(history.items.map((message) => message.id)).toEqual(
+          expect.arrayContaining(
+            originalHistory.items.map((message) => message.id),
+          ),
+        );
+        for (const prompt of [firstPrompt, secondPrompt]) {
+          expect(history.items).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                message_type: "user_message",
+                content: prompt,
+              }),
+            ]),
+          );
+        }
       } finally {
         listener?.kill();
         if (
