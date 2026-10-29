@@ -56,6 +56,8 @@ test("an exact reservation whose durable rollback failed can be reclaimed", () =
   }
 });
 
+// These 128 cycles use real durable file locks and fsyncs. Keep every cycle and
+// assertion, but allow slower Windows disks more than the unit runner's 15s.
 test("durable synchronization bounds abandoned reservation metadata", () => {
   const root = mkdtempSync(join(tmpdir(), "letta-disposition-bound-"));
   try {
@@ -122,4 +124,4 @@ test("durable synchronization bounds abandoned reservation metadata", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 60_000);
