@@ -3,7 +3,6 @@
  * Desktop may proxy transport through localhost but never persists that URL.
  */
 
-import { execFile as execFileCb } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -14,9 +13,9 @@ import {
 } from "node:fs";
 import { platform } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import { execGit } from "@/agent/memory-git-process";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   getMemfsGitProxyRewriteConfig,
@@ -43,8 +42,6 @@ import {
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
-
-const execFile = promisify(execFileCb);
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
@@ -576,13 +573,12 @@ export async function runGit(
   debugLog("memfs-git", `git ${loggableCommand} (in ${cwd})`);
 
   const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
-  let result: Awaited<ReturnType<typeof execFile>>;
+  let result: Awaited<ReturnType<typeof execGit>>;
   try {
-    result = await execFile("git", allArgs, {
+    result = await execGit(allArgs, {
       cwd,
       env: buildNonInteractiveGitEnv(),
-      maxBuffer: 10 * 1024 * 1024, // 10MB
-      timeout: timeoutMs,
+      timeoutMs,
     });
   } catch (error) {
     throw redactGitAuthError(error);
