@@ -3,9 +3,11 @@ import type {
   Context,
   Model,
   SimpleStreamOptions,
+  Tool,
 } from "@earendil-works/pi-ai";
 import { isContextOverflow } from "@earendil-works/pi-ai";
 import { isContextWindowOverflowError } from "@/backend/dev/context-window-overflow";
+import { toPiHistoryMessages } from "@/backend/dev/pi-messages";
 import {
   applyPiEnvOverrides,
   reasoningForSettings,
@@ -15,7 +17,7 @@ import { LocalPiModelsRuntime } from "@/backend/dev/pi-models-runtime";
 import { resolvePiRequestHeaders } from "@/backend/dev/pi-request-headers";
 import { estimateLocalMessagesTokens } from "@/backend/local/local-context-estimate";
 import { isRecord } from "@/utils/type-guards";
-import type { LocalMessage } from "./local-message";
+import { emptyLocalUsage, type LocalMessage } from "./local-message";
 import { resolveAvailableLocalModelForTurn } from "./local-model-config";
 import type { LocalAgentRecord } from "./local-types";
 
@@ -43,7 +45,30 @@ const TRANSCRIPT_FALLBACK_MAX_CHAR_STEPS = [
 export const LOCAL_DEFAULT_COMPACTION_MODE = "sliding_window";
 export const LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE = 0.3;
 
-export type LocalCompactionMode = "all" | "sliding_window";
+export type LocalCompactionMode =
+  | "all"
+  | "sliding_window"
+  | "self_compact_all"
+  | "self_compact_sliding_window";
+
+/** Self-compaction modes summarize inside the agent's own request context. */
+export function isLocalSelfCompactionMode(mode: LocalCompactionMode): boolean {
+  return mode === "self_compact_all" || mode === "self_compact_sliding_window";
+}
+
+export function isLocalSlidingWindowMode(mode: LocalCompactionMode): boolean {
+  return mode === "sliding_window" || mode === "self_compact_sliding_window";
+}
+
+/**
+ * The agent's own request context for self-compaction: the summary request is
+ * the turn's system prompt, history, and tools, plus the compaction prompt as
+ * a final user message.
+ */
+export interface LocalSelfCompactionContext {
+  systemPrompt: string;
+  tools?: Tool[];
+}
 
 export class LocalSlidingWindowCompactionPlanningError extends Error {
   constructor(message: string) {
@@ -69,7 +94,7 @@ export function assertLocalCompactionProgress(
     (stats.context_tokens_after ?? Number.POSITIVE_INFINITY) <
       (stats.context_tokens_before ?? 0);
   if (hasProgress) return;
-  if (mode === "all") {
+  if (mode === "all" || mode === "self_compact_all") {
     throw new LocalIrreducibleContextError(
       "Irreducible context: full compaction would not reduce the message count or estimated tokens.",
     );
@@ -123,7 +148,8 @@ Write in first person as a factual record of what occurred. Be concise but thoro
 
 Keep your summary under ${ALL_WORD_LIMIT} words. Only output the summary.`;
 
-export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
+function slidingWindowCompactionPrompt(evictedMessages: string): string {
+  return `${evictedMessages} are being evicted from the BEGINNING of your context window. Write a detailed summary that captures what happened in these messages to appear BEFORE the remaining recent messages in context, providing background for what comes after. Include the following sections:
 
 1.**High level goals**: What is the high level goal and ongoing task? Capture the user's explicit requests and intent in detail. If there is an existing summary in the transcript, make sure to take it into consideration to continue tracking the higher level goals and long-term progress.
 
@@ -141,6 +167,24 @@ export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT = `The following messages ar
 Write in first person as a factual record of what occurred. Be thorough and detailed - the goal is to preserve enough context that the recent messages make sense and important information isn't lost to prevent duplicate work or repeated mistakes.
 
 Keep your summary under ${SLIDING_WORD_LIMIT} words. Only output the summary.`;
+}
+
+export const LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT =
+  slidingWindowCompactionPrompt("The following messages");
+
+const SELF_COMPACTION_INSTRUCTIONS =
+  "Write the summary as your reply to this message. Do NOT continue the conversation, respond to questions in it, or call any tools: respond with ONLY the summary as text.";
+
+export const LOCAL_SELF_ALL_COMPACTION_PROMPT = `${LOCAL_ALL_COMPACTION_PROMPT}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
+
+// In self mode the evicted messages come before the prompt, not after it.
+export const LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT = `${slidingWindowCompactionPrompt(
+  "The messages above",
+)}\n\n${SELF_COMPACTION_INSTRUCTIONS}`;
+
+// Ends the history with an assistant message before the summary request, as
+// the server's self-compaction does, so the model doesn't continue the turn.
+const SELF_COMPACTION_ACKNOWLEDGEMENT = "I understand. Let me summarize.";
 
 export interface LocalCompactionStats {
   trigger?: string;
@@ -167,6 +211,8 @@ export interface LocalAllCompactionInput {
   abortSignal?: AbortSignal;
   localProviderAuthStorageDir?: string;
   modelsRuntime?: LocalPiModelsRuntime;
+  /** Set for self-compaction modes. */
+  self?: LocalSelfCompactionContext;
 }
 
 export interface LocalSlidingWindowCompactionPlan {
@@ -445,10 +491,8 @@ function fableCompactionSummaryFallbackSettings(
 
 async function runGenerateText(
   input: LocalAllCompactionInput,
-  transcript: string,
-  defaultPrompt: string,
+  buildContext: (model: Model<string>) => Context,
 ): Promise<{ text: string }> {
-  const systemPrompt = input.prompt ?? defaultPrompt;
   const modelsRuntime =
     input.modelsRuntime ??
     new LocalPiModelsRuntime({
@@ -495,10 +539,7 @@ async function runGenerateText(
     );
   }
   const run = input.complete ?? runtimeComplete(modelsRuntime);
-  const context: Context = {
-    systemPrompt,
-    messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
-  };
+  const context = buildContext(resolved.model as Model<string>);
   const reasoning = reasoningForSettings(
     localModel.modelSettings,
     localModel.model,
@@ -541,17 +582,97 @@ async function runGenerateText(
   return { text: assistantMessageText(result) };
 }
 
+function transcriptContext(transcript: string, systemPrompt: string): Context {
+  return {
+    systemPrompt,
+    messages: [{ role: "user", content: transcript, timestamp: Date.now() }],
+  };
+}
+
+function selfCompactionContext(
+  self: LocalSelfCompactionContext,
+  messages: LocalMessage[],
+  prompt: string,
+  model: Model<string>,
+): Context {
+  const history = toPiHistoryMessages(messages);
+  if (history.at(-1)?.role !== "assistant") {
+    history.push({
+      role: "assistant",
+      content: [{ type: "text", text: SELF_COMPACTION_ACKNOWLEDGEMENT }],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: emptyLocalUsage(),
+      stopReason: "stop",
+      timestamp: Date.now(),
+    });
+  }
+  history.push({ role: "user", content: prompt, timestamp: Date.now() });
+  return {
+    systemPrompt: self.systemPrompt,
+    messages: history,
+    ...(self.tools ? { tools: self.tools } : {}),
+  };
+}
+
+/**
+ * Summarize within the agent's own context. Returns undefined when that
+ * request overflows or yields no text (e.g. the model called a tool), so the
+ * caller falls back to a transcript summary.
+ */
+async function summarizeInSelfContext(
+  input: LocalAllCompactionInput & { self: LocalSelfCompactionContext },
+  defaultPrompt: string,
+): Promise<{ text: string } | undefined> {
+  const prompt = input.prompt ?? defaultPrompt;
+  try {
+    const result = await runGenerateText(input, (model) =>
+      selfCompactionContext(input.self, input.messages, prompt, model),
+    );
+    return result.text.trim() ? result : undefined;
+  } catch (error) {
+    if (!isContextWindowOverflowError(error)) throw error;
+    return undefined;
+  }
+}
+
 async function summarizeLocalMessagesWithPrompt(
   input: LocalAllCompactionInput,
   defaultPrompt: string,
+  defaultSelfPrompt: string,
 ): Promise<string> {
   if (input.messages.length === 0) return "No prior conversation messages.";
+  let result = input.self
+    ? await summarizeInSelfContext(
+        { ...input, self: input.self },
+        defaultSelfPrompt,
+      )
+    : undefined;
+  if (!result) {
+    result = await summarizeTranscript(input, defaultPrompt);
+  }
+  let summary = result.text.trim();
+  const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
+  if (clipChars !== null && summary.length > clipChars) {
+    summary = `${summary.slice(0, clipChars)}${SUMMARY_TRUNCATION_SUFFIX}`;
+  }
+  return summary;
+}
+
+async function summarizeTranscript(
+  input: LocalAllCompactionInput,
+  defaultPrompt: string,
+): Promise<{ text: string }> {
+  const systemPrompt = input.prompt ?? defaultPrompt;
   const primaryTranscript = formatLocalMessagesForSummary(input.messages, {
     truncationChars: LOCAL_SUMMARY_TOOL_RETURN_TRUNCATION_CHARS,
   });
   let result: { text: string } | undefined;
   try {
-    result = await runGenerateText(input, primaryTranscript, defaultPrompt);
+    result = await runGenerateText(input, () =>
+      transcriptContext(primaryTranscript, systemPrompt),
+    );
   } catch (error) {
     if (!isContextWindowOverflowError(error)) throw error;
     let overflowError: unknown = error;
@@ -564,10 +685,8 @@ async function summarizeLocalMessagesWithPrompt(
       if (fallbackTranscript === previousTranscript) continue;
       previousTranscript = fallbackTranscript;
       try {
-        result = await runGenerateText(
-          input,
-          fallbackTranscript,
-          defaultPrompt,
+        result = await runGenerateText(input, () =>
+          transcriptContext(fallbackTranscript, systemPrompt),
         );
         break;
       } catch (fallbackError) {
@@ -581,18 +700,17 @@ async function summarizeLocalMessagesWithPrompt(
   if (!result) {
     throw new Error("Compaction summarizer did not return a result.");
   }
-  let summary = result.text.trim();
-  const clipChars = input.clipChars === undefined ? 50000 : input.clipChars;
-  if (clipChars !== null && summary.length > clipChars) {
-    summary = `${summary.slice(0, clipChars)}${SUMMARY_TRUNCATION_SUFFIX}`;
-  }
-  return summary;
+  return result;
 }
 
 export async function summarizeLocalMessagesAll(
   input: LocalAllCompactionInput,
 ): Promise<string> {
-  return summarizeLocalMessagesWithPrompt(input, LOCAL_ALL_COMPACTION_PROMPT);
+  return summarizeLocalMessagesWithPrompt(
+    input,
+    LOCAL_ALL_COMPACTION_PROMPT,
+    LOCAL_SELF_ALL_COMPACTION_PROMPT,
+  );
 }
 
 function hasPendingLocalToolCall(message: LocalMessage): boolean {
@@ -713,6 +831,7 @@ export async function summarizeLocalMessagesSlidingWindow(
   return summarizeLocalMessagesWithPrompt(
     input,
     LOCAL_SLIDING_WINDOW_COMPACTION_PROMPT,
+    LOCAL_SELF_SLIDING_WINDOW_COMPACTION_PROMPT,
   );
 }
 
@@ -726,7 +845,7 @@ export function packageLocalSummaryMessage(
   mode?: LocalCompactionMode,
 ): string {
   let message: string;
-  if (mode?.includes("sliding_window")) {
+  if (mode && isLocalSlidingWindowMode(mode)) {
     if (
       stats?.messages_count_before !== undefined &&
       stats.messages_count_after !== undefined

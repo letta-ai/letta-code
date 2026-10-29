@@ -200,4 +200,85 @@ describe("LocalBackend context pressure", () => {
       await rm(storageDir, { recursive: true, force: true });
     }
   });
+
+  test("self-compaction summarizes with the turn's system prompt and tools", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-self-compaction-"));
+    try {
+      const providerContexts: Context[] = [];
+      const compactionContexts: Context[] = [];
+      const backend = new LocalBackend({
+        storageDir,
+        stream: (_model, context) => {
+          providerContexts.push(context);
+          return streamFromMessage(assistantMessage("provider response"));
+        },
+        complete: async (_model, context) => {
+          compactionContexts.push(context);
+          return assistantMessage("self summary");
+        },
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "Self Compaction",
+        system: "You are the self-compaction agent.",
+        model: "openai/gpt-5.5",
+        model_settings: {
+          provider_type: "openai",
+          context_window_limit: 1_000,
+        },
+        compaction_settings: {
+          mode: "self_compact_all",
+          prompt: "Summarize the conversation now.",
+        },
+      } as never);
+      const conversation = await backend.createConversation({
+        agent_id: agent.id,
+      } as never);
+
+      await collect(
+        await backend.createConversationMessageStream(conversation.id, {
+          agent_id: agent.id,
+          messages: [{ role: "user", content: "x".repeat(4_000) }],
+          client_tools: [
+            {
+              name: "Bash",
+              description: "Run a command",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        } as ConversationMessageCreateBody),
+      );
+
+      expect(compactionContexts).toHaveLength(1);
+      const [compaction] = compactionContexts;
+      expect(compaction?.systemPrompt).toContain(
+        "You are the self-compaction agent.",
+      );
+      expect(compaction?.tools?.map((tool) => tool.name)).toEqual(["Bash"]);
+      expect(compaction?.messages.map((message) => message.role)).toEqual([
+        "user",
+        "assistant",
+        "user",
+      ]);
+      expect(compaction?.messages.at(-1)).toMatchObject({
+        content: "Summarize the conversation now.",
+      });
+      expect(providerContexts).toHaveLength(1);
+      expect(JSON.stringify(providerContexts[0]?.messages)).toContain(
+        "self summary",
+      );
+
+      // Manual compaction has no turn: the compiled prompt, and no tools.
+      await backend.compactConversationMessages(conversation.id, {
+        agent_id: agent.id,
+      } as never);
+      expect(compactionContexts).toHaveLength(2);
+      expect(compactionContexts[1]?.systemPrompt).toContain(
+        "You are the self-compaction agent.",
+      );
+      expect(compactionContexts[1]?.tools).toBeUndefined();
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
 });
