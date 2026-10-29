@@ -65,6 +65,11 @@ import {
   findSignalBaseUrlConflict,
   findSignalBaseUrlConflictForStart,
 } from "./signal/account-conflicts";
+import {
+  type ChannelStartupRetryPolicy,
+  type ChannelStartupRetryTarget,
+  scheduleChannelStartupRetries,
+} from "./startup-retry";
 import { loadTargetStore } from "./targets";
 import type {
   ChannelAdapter,
@@ -132,9 +137,6 @@ function formatChannelStartupError(error: unknown): string {
 export function formatChannelStartupFailures(
   failures: ChannelStartupFailure[],
 ): string {
-  const failedChannels = Array.from(
-    new Set(failures.map((failure) => failure.channelId)),
-  );
   const lines = failures.map((failure) => {
     const label = failure.accountId
       ? `${failure.channelId}/${failure.accountId}`
@@ -142,17 +144,35 @@ export function formatChannelStartupFailures(
     return `- ${label}: ${failure.error}`;
   });
 
+  const missingRuntimeChannels = Array.from(
+    new Set(
+      failures
+        .filter((failure) => isMissingChannelRuntimeError(failure.error))
+        .map((failure) => failure.channelId),
+    ),
+  );
+  const runtimeHint =
+    missingRuntimeChannels.length > 0
+      ? [
+          `Install missing runtimes with: letta server --channels ${missingRuntimeChannels.join(",")} --install-channel-runtimes`,
+          "Or install them once with:",
+          ...missingRuntimeChannels.map(
+            (channelId) => `  letta channels install ${channelId}`,
+          ),
+        ]
+      : [];
+
   return [
     "Failed to start requested channel listeners.",
     ...lines,
     "",
     "The listener is not running for these channels.",
-    `Install missing runtimes with: letta server --channels ${failedChannels.join(",")} --install-channel-runtimes`,
-    "Or install them once with:",
-    ...failedChannels.map(
-      (channelId) => `  letta channels install ${channelId}`,
-    ),
+    ...runtimeHint,
   ].join("\n");
+}
+
+function isMissingChannelRuntimeError(error: string): boolean {
+  return / support is not installed\b/.test(error);
 }
 
 // ── Registry ──────────────────────────────────────────────────────
@@ -173,6 +193,7 @@ export class ChannelRegistry {
   private readonly commands: ChannelCommandRouter;
   private readonly inbound: ChannelInboundRouter;
   private readonly unsubscribeWhatsAppState: () => void;
+  private cancelStartupRetries: (() => void) | null = null;
 
   constructor() {
     if (instance) {
@@ -697,7 +718,15 @@ export class ChannelRegistry {
    * Fully stop all adapters and destroy the singleton.
    * Only called on actual process shutdown, NOT on WS disconnect.
    */
+  /** Own the background retries for accounts that failed during startup. */
+  setStartupRetries(cancel: () => void): void {
+    this.cancelStartupRetries?.();
+    this.cancelStartupRetries = cancel;
+  }
+
   async stopAll(): Promise<void> {
+    this.cancelStartupRetries?.();
+    this.cancelStartupRetries = null;
     for (const adapter of Array.from(this.adapters.values())) {
       if (adapter.isRunning()) {
         await adapter.stop();
@@ -758,10 +787,13 @@ export async function initializeChannels(
     failOnStartupError?: boolean;
     logger?: ChannelStartupLogger;
     restoreAgentScope?: ChannelRestoreAgentScope | null;
+    startupRetryPolicy?: Partial<ChannelStartupRetryPolicy>;
   },
 ): Promise<ChannelRegistry> {
   const registry = ensureChannelRegistry();
   const failures: ChannelStartupFailure[] = [];
+  const retryTargets: ChannelStartupRetryTarget[] = [];
+  let startedAccounts = 0;
 
   logChannelStartup(
     options?.logger,
@@ -835,9 +867,13 @@ export async function initializeChannels(
 
     for (const account of restorableAccounts) {
       try {
-        await registry.startChannelAccount(channelId, account.accountId, {
-          logger: options?.logger,
-        });
+        if (
+          await registry.startChannelAccount(channelId, account.accountId, {
+            logger: options?.logger,
+          })
+        ) {
+          startedAccounts += 1;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         failures.push({
@@ -845,6 +881,9 @@ export async function initializeChannels(
           accountId: account.accountId,
           error: message,
         });
+        if (!isMissingChannelRuntimeError(message)) {
+          retryTargets.push({ channelId, accountId: account.accountId });
+        }
         console.error(
           `[Channels] Failed to start ${channelId}/${account.accountId}:`,
           message,
@@ -857,9 +896,38 @@ export async function initializeChannels(
     }
   }
 
-  if (failures.length > 0 && options?.failOnStartupError) {
+  if (failures.length === 0) return registry;
+
+  // Only fail the whole startup when nothing came up. One bad account must
+  // not take down accounts that started successfully.
+  if (options?.failOnStartupError && startedAccounts === 0) {
     await registry.stopAll();
     throw new ChannelInitializationError(failures);
+  }
+
+  if (options?.failOnStartupError) {
+    const report = formatChannelStartupFailures(failures);
+    console.error(report);
+    logChannelStartup(options.logger, report);
+  }
+  if (retryTargets.length > 0) {
+    registry.setStartupRetries(
+      scheduleChannelStartupRetries({
+        targets: retryTargets,
+        policy: options?.startupRetryPolicy,
+        shouldRetry: ({ channelId, accountId }) =>
+          getChannelRegistry() === registry &&
+          !registry.getAdapter(channelId, accountId)?.isRunning() &&
+          listChannelAccounts(channelId).some(
+            (account) => account.accountId === accountId && account.enabled,
+          ),
+        start: ({ channelId, accountId }) =>
+          registry.startChannelAccount(channelId, accountId, {
+            logger: options?.logger,
+          }),
+        log: (message) => logChannelStartup(options?.logger, message),
+      }),
+    );
   }
 
   return registry;

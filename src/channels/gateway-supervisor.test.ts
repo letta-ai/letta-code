@@ -459,3 +459,121 @@ test("closing during restart backoff cancels the replacement", async () => {
   await new Promise((resolve) => setTimeout(resolve, 75));
   expect(spawnCount).toBe(1);
 });
+
+test("a first start that exits before ready is retried with backoff", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 1) process.exit(1);
+      else process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const lifecycleEvents: ChannelGatewayLifecycleEvent[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram", "slack"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: { initialDelayMs: 1, maxDelayMs: 1, stableAfterMs: 1000 },
+    onLifecycleEvent: (event) => lifecycleEvents.push(event),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(lifecycleEvents.map((event) => event.kind)).toEqual([
+    "exit",
+    "restart_scheduled",
+    "restart_ready",
+  ]);
+  expect(lifecycleEvents[0]).toMatchObject({ reachedReady: false });
+  await supervisor.close();
+});
+
+test("a first start that never becomes ready is terminated and retried", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 2) process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const logs: string[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      readyTimeoutMs: 5,
+      stableAfterMs: 1000,
+    },
+    onLog: (message) => logs.push(message),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(logs).toContain(
+    "[ChannelGateway] Timed out waiting for ChannelGateway",
+  );
+  await supervisor.close();
+});
+
+test("first-start failures that exhaust the restart budget reject startup", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    queueMicrotask(() => process.exit(1));
+    return process.child;
+  }) as typeof spawn;
+  let exhaustedError: Error | undefined;
+
+  await expect(
+    startChannelGatewaySupervisor({
+      appServerUrl: "ws://127.0.0.1:1/ws",
+      channelNames: ["telegram"],
+      launcher: { command: "fixture" },
+      spawnProcess,
+      restartPolicy: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1 },
+      onRestartExhausted: (error) => {
+        exhaustedError = error;
+      },
+    }),
+  ).rejects.toThrow("restart attempts exhausted (2)");
+  expect(spawnCount).toBe(3);
+  expect(exhaustedError?.message).toContain("exited before ready (1)");
+});
+
+test("aborting a first start cancels its pending retry", async () => {
+  let spawnCount = 0;
+  const abort = new AbortController();
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    queueMicrotask(() => process.exit(1));
+    return process.child;
+  }) as typeof spawn;
+
+  const startup = startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    signal: abort.signal,
+    restartPolicy: { initialDelayMs: 50, maxDelayMs: 50 },
+    onLifecycleEvent: (event) => {
+      if (event.kind === "restart_scheduled") abort.abort();
+    },
+  });
+
+  await expect(startup).rejects.toThrow("ChannelGateway startup cancelled");
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  expect(spawnCount).toBe(1);
+});

@@ -60,6 +60,8 @@ export interface StartChannelGatewaySupervisorOptions {
   onRestartExhausted?: (error: Error) => void;
   onLifecycleEvent?: (event: ChannelGatewayLifecycleEvent) => void;
   onServiceEvent?: (event: ServiceEvent) => void;
+  /** Abort a startup that has not become ready yet, including its retries. */
+  signal?: AbortSignal;
   /** Override restart timing for deterministic embedding/tests. */
   restartPolicy?: Partial<ChannelGatewayRestartPolicy>;
   /** Override the executable used to launch the gateway (embedding/tests). */
@@ -194,6 +196,11 @@ export async function startChannelGatewaySupervisor(
         maxRestartAttempts: restartPolicy.maxAttempts,
       });
       options.onRestartExhausted?.(exhaustedError);
+      if (!initialReadyCompleted) {
+        rejectInitialReady?.(exhaustedError);
+        resolveInitialReady = null;
+        rejectInitialReady = null;
+      }
       return;
     }
 
@@ -243,21 +250,23 @@ export async function startChannelGatewaySupervisor(
       readyForceKillTimeout = null;
     }
 
-    if (initialReadyCompleted) {
-      readyTimeout = setTimeout(() => {
+    // Every launch, including the first, must become ready in time. A
+    // launch that does not is terminated and retried with backoff.
+    readyTimeout = setTimeout(() => {
+      if (generationReady || terminationHandled) return;
+      forcedTerminationError = new Error(
+        launchedRestartAttempt === 0
+          ? "Timed out waiting for ChannelGateway"
+          : `ChannelGateway restart attempt ${launchedRestartAttempt} timed out waiting for ready`,
+      );
+      terminateChild(launchedChild, "SIGTERM");
+      readyForceKillTimeout = setTimeout(() => {
         if (generationReady || terminationHandled) return;
-        forcedTerminationError = new Error(
-          `ChannelGateway restart attempt ${launchedRestartAttempt} timed out waiting for ready`,
-        );
-        terminateChild(launchedChild, "SIGTERM");
-        readyForceKillTimeout = setTimeout(() => {
-          if (generationReady || terminationHandled) return;
-          terminateChild(launchedChild, "SIGKILL");
-        }, restartPolicy.shutdownTimeoutMs);
-        readyForceKillTimeout.unref?.();
-      }, restartPolicy.readyTimeoutMs);
-      readyTimeout.unref?.();
-    }
+        terminateChild(launchedChild, "SIGKILL");
+      }, restartPolicy.shutdownTimeoutMs);
+      readyForceKillTimeout.unref?.();
+    }, restartPolicy.readyTimeoutMs);
+    readyTimeout.unref?.();
 
     const handleTermination = (
       error: Error,
@@ -281,12 +290,8 @@ export async function startChannelGatewaySupervisor(
       options.onLog?.(`[ChannelGateway] ${error.message}`);
       rejectPendingCommands(error);
       options.onUnexpectedExit?.(error);
-      if (!initialReadyCompleted) {
-        rejectInitialReady?.(error);
-        resolveInitialReady = null;
-        rejectInitialReady = null;
-        return;
-      }
+      // First-start failures (for example a channel that timed out during
+      // init) are often transient, so they share the restart backoff.
       scheduleRestart(error);
     };
 
@@ -312,7 +317,8 @@ export async function startChannelGatewaySupervisor(
             resolveInitialReady?.();
             resolveInitialReady = null;
             rejectInitialReady = null;
-          } else {
+          }
+          if (launchedRestartAttempt > 0) {
             options.onLog?.(
               `[ChannelGateway] restart attempt ${launchedRestartAttempt}/${restartPolicy.maxAttempts} ready`,
             );
@@ -395,21 +401,25 @@ export async function startChannelGatewaySupervisor(
     });
   }
 
-  launch();
-
-  const startupTimeout = setTimeout(() => {
-    rejectInitialReady?.(new Error("Timed out waiting for ChannelGateway"));
+  const cancelStartup = (): void => {
+    rejectInitialReady?.(new Error("ChannelGateway startup cancelled"));
     resolveInitialReady = null;
     rejectInitialReady = null;
-  }, STARTUP_TIMEOUT_MS);
+  };
+  options.signal?.addEventListener("abort", cancelStartup, { once: true });
+  if (options.signal?.aborted) cancelStartup();
+  else launch();
+
   try {
     await initialReady;
   } catch (error) {
     stopping = true;
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = null;
     terminateChild(child, "SIGTERM");
     throw error;
   } finally {
-    clearTimeout(startupTimeout);
+    options.signal?.removeEventListener("abort", cancelStartup);
   }
 
   return {

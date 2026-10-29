@@ -288,3 +288,43 @@ test("keeps the gateway for a resumed runtime and rebuilds for a new runtime", a
   stopRuntime(runtimeB, true);
   setActiveRuntime(null);
 });
+
+test("replacing the runtime cancels a gateway start that is still retrying", async () => {
+  const events: string[] = [];
+  let rejectPendingStart: ((error: Error) => void) | undefined;
+  const startGateway = createRuntimeBoundGatewayStarter({
+    getRuntime: getActiveRuntime,
+    start: async (runtime) => {
+      if (runtime !== runtimeA) {
+        events.push("start:B");
+        return;
+      }
+      events.push("start:A");
+      await new Promise<void>((_resolve, reject) => {
+        rejectPendingStart = reject;
+      });
+    },
+    close: async () => {
+      events.push("close");
+    },
+    cancel: () => {
+      events.push("cancel");
+      rejectPendingStart?.(new Error("cancelled"));
+    },
+  });
+
+  const runtimeA = createRuntime();
+  setActiveRuntime(runtimeA);
+  const pendingStart = startGateway();
+  await Promise.resolve();
+
+  stopRuntime(runtimeA, true);
+  const runtimeB = createRuntime();
+  setActiveRuntime(runtimeB);
+  await startGateway();
+  await expect(pendingStart).rejects.toThrow("cancelled");
+  expect(events).toEqual(["start:A", "cancel", "close", "start:B"]);
+
+  stopRuntime(runtimeB, true);
+  setActiveRuntime(null);
+});

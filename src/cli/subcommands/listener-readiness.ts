@@ -124,6 +124,8 @@ export function createRuntimeBoundGatewayStarter<R extends object>(options: {
   getRuntime: () => R | null;
   start: (runtime: R) => Promise<void>;
   close: () => Promise<void>;
+  /** Cancel a start that is still in flight (for example, retrying). */
+  cancel?: () => void;
 }): () => Promise<void> {
   let current: { runtime: R; promise: Promise<void> } | null = null;
   return () => {
@@ -137,6 +139,7 @@ export function createRuntimeBoundGatewayStarter<R extends object>(options: {
     const previous = current;
     const promise = (async () => {
       if (previous) {
+        options.cancel?.();
         await previous.promise.catch(() => {});
         await options.close();
       }
