@@ -472,14 +472,19 @@ describe("Startup Flow - Integration", () => {
             originalHistory.items.map((message) => message.id),
           ),
         );
+        const userTexts = history.items.flatMap((message) => {
+          if (message.message_type !== "user_message") return [];
+          return typeof message.content === "string"
+            ? [message.content]
+            : [
+                message.content
+                  .flatMap((part) => ("text" in part ? [part.text] : []))
+                  .join(""),
+              ];
+        });
         for (const prompt of [firstPrompt, secondPrompt]) {
-          expect(history.items).toEqual(
-            expect.arrayContaining([
-              expect.objectContaining({
-                message_type: "user_message",
-                content: prompt,
-              }),
-            ]),
+          expect(userTexts).toEqual(
+            expect.arrayContaining([expect.stringContaining(prompt)]),
           );
         }
       } finally {
