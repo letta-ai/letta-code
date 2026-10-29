@@ -279,7 +279,6 @@ jobs:
       - name: Run native Cursor tests
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          CURSOR_TEST_MODEL: claude-haiku-5-5
         run: |
           bun test ./src/tools/impl/cursor-session.integration.ts
           bun run build

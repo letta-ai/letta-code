@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { runCursorTurn, sendCursorMessage } from "./cursor-session";
+import { resolveCursorTestModel } from "./cursor-test-model";
 
 test(
   "Node runs and resumes a Cursor SDK session across worker exits",
@@ -16,9 +17,10 @@ test(
     process.env.HOME = root;
     const options = { parentAgentId: "agent-cursor-node", cwd: root };
     try {
+      const model = await resolveCursorTestModel(root);
       const first = await runCursorTurn({
         ...options,
-        model: process.env.CURSOR_TEST_MODEL ?? "claude-haiku-5-5",
+        model,
         prompt: "Remember NODE_PROOF_681. Reply with that phrase.",
       });
       assert.equal(first.success, true, first.error);
