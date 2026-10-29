@@ -50,3 +50,19 @@ test("falls back to agent-derived roots when no explicit env roots exist", () =>
   expect(scope.roots).toContain(selfRoot);
   expect(scope.roots).toContain(parentRoot);
 });
+
+test("fallback roots use the execution environment HOME", () => {
+  const env = {
+    HOME: "/tmp/product-home",
+    AGENT_ID: "agent-env-home",
+  } as NodeJS.ProcessEnv;
+
+  const scope = resolveAllowedMemoryRoots({ env });
+  const expectedRoot = normalizeMemoryPath(
+    getMemoryFilesystemRoot("agent-env-home", env.HOME, env),
+  );
+
+  expect(scope.usedFallback).toBe(true);
+  expect(scope.primaryRoot).toBe(expectedRoot);
+  expect(scope.roots).toContain(expectedRoot);
+});

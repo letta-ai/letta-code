@@ -13,7 +13,7 @@ function scopeServiceName(name: string): string {
   return testPrefix ? `${testPrefix}:${name}` : name;
 }
 
-let SERVICE_NAME = scopeServiceName("letta-code");
+let serviceNameOverride: string | undefined;
 const API_KEY_NAME = "letta-api-key";
 const REFRESH_TOKEN_NAME = "letta-refresh-token";
 
@@ -24,6 +24,14 @@ let secretGetOverrideForTests:
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getServiceName(): string {
+  const configured =
+    serviceNameOverride ??
+    process.env.LETTA_SECRETS_SERVICE_NAME?.trim() ??
+    "letta-code";
+  return scopeServiceName(configured || "letta-code");
 }
 
 function isDuplicateKeychainItemError(error: unknown): boolean {
@@ -44,7 +52,7 @@ export async function getSecretValue(
 
   try {
     const options = {
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     };
     const value = secretGetOverrideForTests
@@ -74,7 +82,7 @@ export async function setSecretValue(
 
   try {
     await secrets.set({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
       value,
     });
@@ -88,7 +96,7 @@ export async function setSecretValue(
   // Replace existing keychain item and retry once.
   try {
     await secrets.delete({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     });
   } catch {
@@ -96,7 +104,7 @@ export async function setSecretValue(
   }
 
   await secrets.set({
-    service: SERVICE_NAME,
+    service: getServiceName(),
     name,
     value,
   });
@@ -109,7 +117,7 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
 
   try {
     return await secrets.delete({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name,
     });
   } catch (error) {
@@ -121,8 +129,8 @@ export async function deleteSecretValue(name: string): Promise<boolean> {
 /**
  * Override the keychain service name (useful for tests to avoid touching real credentials)
  */
-export function setServiceName(name: string): void {
-  SERVICE_NAME = scopeServiceName(name);
+export function setServiceName(name?: string): void {
+  serviceNameOverride = name;
 }
 
 // Note: When secrets API is unavailable (Node.js), tokens will be managed
@@ -217,7 +225,7 @@ export async function deleteApiKey(): Promise<void> {
   if (secrets) {
     try {
       await secrets.delete({
-        service: SERVICE_NAME,
+        service: getServiceName(),
         name: API_KEY_NAME,
       });
       return;
@@ -237,7 +245,7 @@ export async function deleteRefreshToken(): Promise<void> {
   if (secrets) {
     try {
       await secrets.delete({
-        service: SERVICE_NAME,
+        service: getServiceName(),
         name: REFRESH_TOKEN_NAME,
       });
       return;
@@ -283,7 +291,7 @@ export async function isKeychainAvailable(): Promise<boolean> {
   try {
     // Non-mutating probe: if this call succeeds (even with null), keychain is usable.
     await secrets.get({
-      service: SERVICE_NAME,
+      service: getServiceName(),
       name: API_KEY_NAME,
     });
     return true;

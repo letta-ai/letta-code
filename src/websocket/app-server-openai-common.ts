@@ -169,25 +169,83 @@ function getPageItems<T>(page: unknown): T[] {
   return [];
 }
 
-const MAX_LISTED_AGENTS = 1000;
+const AGENT_LIST_PAGE_LIMIT = 1000;
+const AGENT_SEARCH_PAGE_LIMIT = 50;
 
-async function listAgentEntries(): Promise<AgentModelEntry[]> {
-  const page = await getBackend().listAgents({ limit: MAX_LISTED_AGENTS });
+function isAgentShapedId(model: string): boolean {
+  return model.startsWith("agent-") || model.startsWith("agent_");
+}
+
+function isBackendNotFoundError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const candidate = error as { name?: unknown; status?: unknown };
+  return (
+    candidate.name === "LocalBackendNotFoundError" ||
+    candidate.status === 404 ||
+    candidate.status === 422
+  );
+}
+
+async function listAgentEntries(options: {
+  limit: number;
+  query_text?: string;
+}): Promise<AgentModelEntry[]> {
+  const backend = getBackend();
+  let page: unknown = await backend.listAgents(options);
   if (Array.isArray(page)) return page as AgentModelEntry[];
-  // SDK pages are async-iterable across ALL pages; a first-page-only read
-  // silently drops agents once the list exceeds one page.
-  const iterable = page as unknown as {
+
+  const iterable = page as {
     [Symbol.asyncIterator]?: () => AsyncIterator<AgentModelEntry>;
   };
   if (typeof iterable[Symbol.asyncIterator] === "function") {
     const items: AgentModelEntry[] = [];
     for await (const item of iterable as AsyncIterable<AgentModelEntry>) {
       items.push(item);
-      if (items.length >= MAX_LISTED_AGENTS) break;
     }
     return items;
   }
-  return getPageItems<AgentModelEntry>(page);
+
+  // LocalBackend returns plain pages rather than SDK async iterables. Follow
+  // its id cursor with the same filter so name lookup remains complete without
+  // constructing the global advertised-model map.
+  const items: AgentModelEntry[] = [];
+  const seenCursors = new Set<string>();
+  while (true) {
+    const pageItems = getPageItems<AgentModelEntry>(page);
+    items.push(...pageItems);
+    const sdkPage = page as {
+      hasNextPage?: () => boolean;
+      getNextPage?: () => Promise<unknown>;
+    };
+    if (typeof sdkPage.hasNextPage === "function") {
+      if (!sdkPage.hasNextPage() || typeof sdkPage.getNextPage !== "function") {
+        break;
+      }
+      page = await sdkPage.getNextPage();
+      continue;
+    }
+    if (pageItems.length < options.limit) break;
+    const cursor = pageItems.at(-1)?.id;
+    if (!cursor || seenCursors.has(cursor)) break;
+    seenCursors.add(cursor);
+    page = await backend.listAgents({ ...options, after: cursor });
+    if (Array.isArray(page)) {
+      items.push(...(page as AgentModelEntry[]));
+      break;
+    }
+  }
+  return items;
+}
+
+async function listAllAgentEntries(): Promise<AgentModelEntry[]> {
+  return listAgentEntries({ limit: AGENT_LIST_PAGE_LIMIT });
+}
+
+async function searchAgentEntries(model: string): Promise<AgentModelEntry[]> {
+  return listAgentEntries({
+    query_text: model,
+    limit: AGENT_SEARCH_PAGE_LIMIT,
+  });
 }
 
 /**
@@ -219,7 +277,7 @@ function buildAdvertisedModelMap(
 export async function handleListModels(
   response: ServerResponse,
 ): Promise<void> {
-  const advertised = buildAdvertisedModelMap(await listAgentEntries());
+  const advertised = buildAdvertisedModelMap(await listAllAgentEntries());
   const data = [...advertised.entries()].map(([id, agent]) => ({
     id,
     object: "model" as const,
@@ -232,12 +290,23 @@ export async function handleListModels(
 export async function resolveAgentForModel(
   model: string,
 ): Promise<AgentModelEntry | null> {
-  const agents = await listAgentEntries();
-  return (
-    buildAdvertisedModelMap(agents).get(model) ??
-    agents.find((agent) => agent.id === model) ??
-    null
-  );
+  const backend = getBackend();
+  if (isAgentShapedId(model)) {
+    try {
+      return (await backend.retrieveAgent(model)) as AgentModelEntry;
+    } catch (error) {
+      // An agent-shaped name can still be an advertised alias. Only a genuine
+      // not-found continues to name lookup; auth and backend failures keep
+      // flowing through the existing request error path.
+      if (!isBackendNotFoundError(error)) throw error;
+    }
+  }
+
+  const searched = await searchAgentEntries(model);
+  const exactId = searched.find((agent) => agent.id === model);
+  if (exactId) return exactId;
+  const exactNames = searched.filter((agent) => agent.name === model);
+  return exactNames.length === 1 ? (exactNames[0] ?? null) : null;
 }
 
 // Conversation continuity for header-keyed chats. Clients that supply a

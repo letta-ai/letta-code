@@ -1,7 +1,6 @@
 import { execFile as execFileCb } from "node:child_process";
 import { randomInt, randomUUID } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -33,6 +32,7 @@ import {
 import type { AutoReflectionPayload } from "@/cli/helpers/reflection-transcript";
 import { telemetry } from "@/telemetry";
 import { debugWarn } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const execFile = promisify(execFileCb);
 const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
@@ -220,7 +220,7 @@ function candidateIsConfirmedNoOp(
 }
 
 function getReflectionArenaRoot(): string {
-  return join(homedir(), ".letta", "reflection-arena");
+  return join(resolveGlobalConfigDir(), "reflection-arena");
 }
 
 function getReflectionArenaRunsDir(): string {

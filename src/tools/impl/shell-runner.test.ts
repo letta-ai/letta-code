@@ -223,6 +223,68 @@ describe("shared shell process", () => {
     expect(streamed).toBe("😀");
   });
 
+  test("finishes forced termination when an exited launcher leaves inherited pipes open", async () => {
+    let descendantPid = 0;
+    let ready!: () => void;
+    const inheritedPipes = new Promise<void>((resolve) => {
+      ready = resolve;
+    });
+    const running = startShellProcess(
+      [
+        process.execPath,
+        "-e",
+        [
+          'const { spawn } = require("node:child_process");',
+          'const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { detached: true, stdio: "inherit" });',
+          'process.stdout.write("descendant:" + child.pid + "\\n");',
+          "child.unref();",
+        ].join(""),
+      ],
+      {
+        cwd: process.cwd(),
+        env: process.env,
+        timeoutMs: 0,
+        onOutput(chunk) {
+          const match = chunk.match(/descendant:(\d+)/);
+          if (match) {
+            descendantPid = Number(match[1]);
+            ready();
+          }
+        },
+      },
+    );
+    let completionTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await inheritedPipes;
+      // Let the launcher exit while its detached descendant retains both pipes.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(isProcessStillRunning(descendantPid)).toBe(true);
+      running.process.kill("SIGKILL");
+      await Promise.race([
+        running.completion,
+        new Promise((_, reject) => {
+          completionTimer = setTimeout(
+            () =>
+              reject(
+                new Error("Forced termination waited for inherited pipes"),
+              ),
+            1000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(completionTimer);
+      // This deliberately detached fixture is outside the launcher's kill tree.
+      if (descendantPid) {
+        try {
+          process.kill(descendantPid, "SIGKILL");
+        } catch {
+          // Already exited.
+        }
+      }
+    }
+  }, 3000);
+
   test("force-kills a timed-out process tree that ignores graceful termination", async () => {
     let output = "";
     const startedAt = Date.now();

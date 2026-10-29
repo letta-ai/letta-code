@@ -216,6 +216,42 @@ describe("Wake", () => {
     });
   });
 
+  test("lists and cancels a NULL-backed wake from the default conversation", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const defaultScope = { ...SCOPE, conversationId: "default" };
+    const nullBacked = cloudSchedule({ conversation_id: null });
+    let deleted = false;
+    const deps = {
+      listLocal: () => [],
+      listCloud: async () => ({
+        scheduled_messages: [
+          nullBacked,
+          cloudSchedule({ id: "other", conversation_id: "conv-other" }),
+        ],
+        has_next_page: false,
+      }),
+      getLocal: () => null,
+      getCloud: async () => nullBacked,
+      deleteCloud: async () => {
+        deleted = true;
+      },
+    };
+
+    const listed = await runWithRuntimeContext(defaultScope, () =>
+      wake({ action: "list" }, deps),
+    );
+    expect(payload(listed)).toMatchObject({
+      conversation_id: "default",
+      wakes: [{ id: "schedule-cloud", runner: "cloud" }],
+    });
+
+    const cancelled = await runWithRuntimeContext(defaultScope, () =>
+      wake({ action: "cancel", id: "schedule-cloud" }, deps),
+    );
+    expect(cancelled.status).toBe("success");
+    expect(deleted).toBe(true);
+  });
+
   test("reads and cancels an exact Cloud wake without listing schedules", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const reads: unknown[][] = [];

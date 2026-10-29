@@ -24,12 +24,12 @@ import {
 import {
   getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
-  MONITOR_MAX_TIMEOUT_MS,
   MonitorOutputWriter,
   markMonitorFinished,
   queueMonitorEvent,
 } from "./monitor";
 import { createMonitorEventStream } from "./monitor-event-stream";
+import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -138,6 +138,7 @@ export async function watch_pr(
   const secrets: Readonly<Record<string, string>> = {};
   let processState: BackgroundProcess;
   const persistent = !isManagedCloudRuntime();
+  const maxTimeoutMs = getMonitorMaxTimeoutMs();
   let timeout: ReturnType<typeof setTimeout> | undefined;
 
   const events = createMonitorEventStream({
@@ -200,13 +201,13 @@ export async function watch_pr(
       if (processState.status !== "running") return;
       events.finish();
       if (processState.status !== "running") return;
-      const event = getMonitorTimeoutEvent(MONITOR_MAX_TIMEOUT_MS);
+      const event = getMonitorTimeoutEvent(maxTimeoutMs, "WatchPR");
       output.append(`\n${event}\n`);
       queueMonitorEvent({ taskId, event, scope, actingUserId, secrets });
       processState.completionNotificationSuppressed = true;
       markMonitorFinished(taskId, processState, "failed", null);
       processState.process.kill();
-    }, MONITOR_MAX_TIMEOUT_MS);
+    }, maxTimeoutMs);
     unrefTimer(timeout);
   }
 
@@ -281,7 +282,7 @@ export async function watch_pr(
     content: [
       {
         type: "text",
-        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : " A hard 1-hour limit applies in this Cloud sandbox; use Wake or cron for later checks."}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}\n\nOutput file: ${outputFile}`,
+        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}\n\nOutput file: ${outputFile}`,
       },
     ],
     taskId,

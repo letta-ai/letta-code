@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
+import { getChannelAccountsPath } from "@/channels/config";
 import type {
   DiscordChannelAccount,
   DiscordChannelMode,
@@ -163,9 +164,7 @@ export async function runDiscordSetup(): Promise<boolean> {
       console.log(
         "  You can bind later: letta channels bind --channel discord --agent <id>",
       );
-      console.log(
-        "  Or set agentId in ~/.letta/channels/discord/accounts.json\n",
-      );
+      console.log(`  Or set agentId in ${getChannelAccountsPath("discord")}\n`);
     }
 
     const now = new Date().toISOString();
@@ -189,7 +188,7 @@ export async function runDiscordSetup(): Promise<boolean> {
 
     await upsertChannelAccountWithSecrets("discord", account);
     console.log("\n✓ Discord bot configured!");
-    console.log("Config written to: ~/.letta/channels/discord/accounts.json\n");
+    console.log(`Config written to: ${getChannelAccountsPath("discord")}\n`);
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels discord");
     if (channelMode === "open") {

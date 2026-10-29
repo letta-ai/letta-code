@@ -8,7 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join, parse } from "node:path";
+import { dirname, join, parse } from "node:path";
 
 import { checkPermission } from "@/permissions/checker";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
@@ -49,6 +49,7 @@ const ENV_KEYS_TO_RESET = [
   "LETTA_CODE_AGENT_ROLE",
   "MEMORY_DIR",
   "LETTA_MEMORY_DIR",
+  "LETTA_CONFIG_DIR",
   "LETTA_LOCAL_BACKEND_DIR",
   SANDBOX_ENV_VAR,
 ] as const;
@@ -630,6 +631,31 @@ describe("symlink-escape (realpath classification of in-process file tools)", ()
   function agentMemory(home: string, id: string, rel = ""): string {
     return join(home, ".letta", "agents", id, "memory", rel);
   }
+
+  test("a product override keeps both product and legacy agents trees guarded", () => {
+    const home = makeTempHome();
+    const productRoot = join(home, ".dream");
+    const env = {
+      HOME: home,
+      LETTA_CONFIG_DIR: productRoot,
+      AGENT_ID: SELF,
+    } as NodeJS.ProcessEnv;
+
+    for (const configRoot of [productRoot, join(home, ".letta")]) {
+      const target = join(configRoot, "agents", OTHER, "memory", "secret.md");
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, "TOPSECRET");
+
+      const result = evaluateCrossAgentGuard(
+        "Read",
+        { file_path: target },
+        home,
+        { env, currentAgentId: SELF, disableMemoryGuard: false },
+      );
+
+      expect(result?.offendingAgentIds).toContain(OTHER);
+    }
+  });
 
   afterEach(() => {
     while (tempHomes.length) {

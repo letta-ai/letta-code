@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   __resetCodexSessionsForTests,
   CODEX_NOT_SIGNED_IN_ERROR,
   type CodexAppServerTransport,
+  listCodexModels,
   sendCodexMessage,
   startCodexTurn,
 } from "./codex-app-server";
@@ -324,7 +328,15 @@ describe("Codex app-server lifecycle", () => {
         parentAgentId: "parent",
         cwd: "/repo",
       },
-      { createTransport: () => second.transport() },
+      {
+        env: { HOME: "/home/test", PATH: "/usr/bin:/bin" },
+        createTransport: ({ env }) => {
+          if (process.platform !== "win32") {
+            expect(env.PATH).toBe("/usr/bin:/bin:/home/test/.local/bin");
+          }
+          return second.transport();
+        },
+      },
     );
     expect(second.requests.map((request) => request.method)).toContain(
       "thread/resume",
@@ -583,5 +595,18 @@ describe("Codex app-server lifecycle", () => {
     expect(fake.requests.map((request) => request.method)).toContain(
       "turn/interrupt",
     );
+  });
+});
+
+describe("Codex model discovery", () => {
+  test("reports a missing codex executable instead of a stdin EPIPE", async () => {
+    const emptyPath = mkdtempSync(join(tmpdir(), "letta-codex-missing-"));
+    try {
+      await expect(
+        listCodexModels(process.cwd(), { PATH: emptyPath, Path: emptyPath }),
+      ).rejects.toThrow("Required executable 'codex' was not found on PATH");
+    } finally {
+      rmSync(emptyPath, { force: true, recursive: true });
+    }
   });
 });

@@ -2,11 +2,30 @@ import {
   type ExecFileOptionsWithStringEncoding,
   execFile,
 } from "node:child_process";
-import { accessSync, constants, realpathSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import {
+  accessSync,
+  closeSync,
+  constants,
+  linkSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeSync,
+} from "node:fs";
 import { readdir, rm } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
+import {
+  getOwnProcessStartTime,
+  isSameProcessRunning,
+} from "@/utils/process-liveness";
 import { getVersion } from "@/version";
 
 const execFileAsync = promisify(execFile);
@@ -45,7 +64,17 @@ const INSTALL_ARG_PREFIX: Record<PackageManager, string[]> = {
 
 const VALID_PACKAGE_MANAGERS = new Set<string>(Object.keys(INSTALL_ARG_PREFIX));
 const NPM_PREFIX_TIMEOUT_MS = 5000;
+// A lock left by a dead process is only taken over once it is this old.
+const UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
 type FetchImpl = typeof fetch;
+type RunUpdateCommand = typeof runUpdateCommand;
+
+/** Test seams; production callers pass nothing. */
+export interface UpdateDeps {
+  fetchImpl?: FetchImpl;
+  runCommand?: RunUpdateCommand;
+  lockPath?: string;
+}
 
 export interface SelfUpdateStatus {
   supported: boolean;
@@ -356,9 +385,11 @@ export async function checkForUpdate(
 /**
  * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
  */
-async function getNpmGlobalPath(): Promise<string | null> {
+async function getNpmGlobalPath(
+  runCommand: RunUpdateCommand,
+): Promise<string | null> {
   try {
-    const { stdout } = await runUpdateCommand(
+    const { stdout } = await runCommand(
       "npm",
       ["prefix", "-g"],
       NPM_PREFIX_TIMEOUT_MS,
@@ -390,7 +421,180 @@ async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
   }
 }
 
-async function performUpdate(progressLog?: (message: string) => void): Promise<{
+function getUpdateLockPath(): string {
+  return join(homedir(), ".letta", "auto-update.lock");
+}
+
+interface UpdateLockOwner {
+  pid: number;
+  started?: string;
+  createdAt: number;
+}
+
+function readUpdateLockOwner(
+  lockPath: string,
+): { owner: UpdateLockOwner; raw: string } | null {
+  try {
+    const raw = readFileSync(lockPath, "utf8");
+    try {
+      const parsed = JSON.parse(raw) as Partial<UpdateLockOwner>;
+      if (
+        typeof parsed.pid === "number" &&
+        typeof parsed.createdAt === "number"
+      ) {
+        return {
+          owner: {
+            pid: parsed.pid,
+            started:
+              typeof parsed.started === "string" ? parsed.started : undefined,
+            createdAt: parsed.createdAt,
+          },
+          raw,
+        };
+      }
+    } catch {
+      // Fall through: a torn or foreign file is judged by its mtime alone.
+    }
+    return { owner: { pid: 0, createdAt: statSync(lockPath).mtimeMs }, raw };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function tryCreateUpdateLock(lockPath: string, contents: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(lockPath, "wx", 0o600);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+  try {
+    writeSync(fd, contents);
+  } finally {
+    closeSync(fd);
+  }
+  return true;
+}
+
+function removeQuietly(path: string): void {
+  try {
+    unlinkSync(path);
+  } catch {
+    // Best effort.
+  }
+}
+
+/**
+ * Move a stale lock aside so exactly one contender can replace it. rename is
+ * atomic: when several processes judge the same lock stale, only one rename
+ * succeeds and the rest see ENOENT. Returns true only for that winner.
+ */
+function takeOverStaleLock(lockPath: string, staleRaw: string): boolean {
+  const asidePath = `${lockPath}.stale-${process.pid}-${randomUUID()}`;
+  try {
+    renameSync(lockPath, asidePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  try {
+    if (readFileSync(asidePath, "utf8") === staleRaw) return true;
+    // Another contender already replaced the stale lock and we moved its
+    // fresh lock aside. Put it back without overwriting anything, and back off.
+    try {
+      linkSync(asidePath, lockPath);
+    } catch {
+      // A newer lock already exists; leave it.
+    }
+    return false;
+  } finally {
+    removeQuietly(asidePath);
+  }
+}
+
+/**
+ * Machine-wide lock so only one global install runs at a time. Concurrent
+ * `npm install -g` runs of the same package race on npm's bin and package
+ * swaps and can leave the install broken. Returns a release function, or null
+ * when the update should be skipped: another live (or recent) update holds the
+ * lock, another process won a stale-lock takeover, or the lock could not be
+ * acquired at all. It never lets an install run unlocked.
+ */
+export async function acquireUpdateLock(
+  lockPath: string,
+): Promise<(() => void) | null> {
+  const started = (await getOwnProcessStartTime()) ?? undefined;
+  const contents = JSON.stringify({
+    pid: process.pid,
+    started,
+    createdAt: Date.now(),
+    nonce: randomUUID(),
+  });
+  const release = () => {
+    try {
+      if (readFileSync(lockPath, "utf8") === contents) unlinkSync(lockPath);
+    } catch {
+      // Already gone or unreadable; nothing to release.
+    }
+  };
+
+  try {
+    mkdirSync(dirname(lockPath), { recursive: true });
+    if (tryCreateUpdateLock(lockPath, contents)) return release;
+
+    const current = readUpdateLockOwner(lockPath);
+    if (current) {
+      const { owner, raw } = current;
+      const recent = Date.now() - owner.createdAt < UPDATE_LOCK_STALE_MS;
+      if (recent || (await isSameProcessRunning(owner))) {
+        debugLog("Another update holds the lock; skipping:", lockPath);
+        return null;
+      }
+      if (!takeOverStaleLock(lockPath, raw)) {
+        debugLog("Another process took over the stale lock; skipping");
+        return null;
+      }
+      debugLog("Took over stale update lock:", lockPath);
+    }
+    // Exclusive create so a contender that slipped in first still wins alone.
+    return tryCreateUpdateLock(lockPath, contents) ? release : null;
+  } catch (error) {
+    debugLog("Could not acquire update lock; skipping update:", error);
+    return null;
+  }
+}
+
+async function performUpdate(
+  progressLog?: (message: string) => void,
+  deps: UpdateDeps = {},
+): Promise<{
+  success: boolean;
+  error?: string;
+  enotemptyFailed?: boolean;
+}> {
+  const release = await acquireUpdateLock(deps.lockPath ?? getUpdateLockPath());
+  if (!release) {
+    return {
+      success: false,
+      error: "Another Letta Code update is already in progress.",
+    };
+  }
+  try {
+    return await performUpdateLocked(
+      deps.runCommand ?? runUpdateCommand,
+      progressLog,
+    );
+  } finally {
+    release();
+  }
+}
+
+async function performUpdateLocked(
+  runCommand: RunUpdateCommand,
+  progressLog?: (message: string) => void,
+): Promise<{
   success: boolean;
   error?: string;
   enotemptyFailed?: boolean;
@@ -404,7 +608,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
   // ENOTEMPTY orphan cleanup is npm-specific (npm's temp rename behavior)
   let globalPath: string | null = null;
   if (pm === "npm") {
-    globalPath = await getNpmGlobalPath();
+    globalPath = await getNpmGlobalPath(runCommand);
     if (globalPath) {
       debugLog("Pre-cleaning orphaned directories in:", globalPath);
       await cleanupOrphanedDirs(globalPath);
@@ -415,7 +619,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
     debugLog(`Running ${installCmd}...`);
     progressLog?.(`Running update command: ${installCmd}`);
     // Never time out an install: killing it can leave the global package incomplete.
-    await runUpdateCommand(pm, installArgs);
+    await runCommand(pm, installArgs);
     debugLog("Update completed successfully");
     progressLog?.("Update command completed successfully.");
     return { success: true };
@@ -435,7 +639,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
       await cleanupOrphanedDirs(globalPath);
 
       try {
-        await runUpdateCommand(pm, installArgs);
+        await runCommand(pm, installArgs);
         debugLog("Update succeeded after cleanup retry");
         return { success: true };
       } catch (retryError) {
@@ -474,7 +678,7 @@ async function performUpdate(progressLog?: (message: string) => void): Promise<{
         await cleanupOrphanedDirs(globalPath);
       }
       try {
-        await runUpdateCommand(pm, installArgs);
+        await runCommand(pm, installArgs);
         debugLog("Update succeeded after race condition retry");
         return { success: true };
       } catch (retryError) {
@@ -519,9 +723,9 @@ function isSignificantUpdate(current: string, latest: string): boolean {
   return false;
 }
 
-export async function checkAndAutoUpdate(): Promise<
-  AutoUpdateResult | undefined
-> {
+export async function checkAndAutoUpdate(
+  deps: UpdateDeps = {},
+): Promise<AutoUpdateResult | undefined> {
   if (isPythonDistribution()) return;
   debugLog("Auto-update check starting...");
   debugLog("isAutoUpdateEnabled:", isAutoUpdateEnabled());
@@ -533,15 +737,21 @@ export async function checkAndAutoUpdate(): Promise<
     return;
   }
 
+  // A subagent must never replace the global install its parent runs from.
+  if (process.env.LETTA_CODE_AGENT_ROLE === "subagent") {
+    debugLog("Subagent process, skipping auto-update");
+    return;
+  }
+
   if (runningLocally) {
     debugLog("Running locally, skipping auto-update");
     return;
   }
 
-  const result = await checkForUpdate();
+  const result = await checkForUpdate(deps.fetchImpl);
 
   if (result.updateAvailable) {
-    const updateResult = await performUpdate();
+    const updateResult = await performUpdate(undefined, deps);
     if (updateResult.enotemptyFailed) {
       return { enotemptyFailed: true };
     }

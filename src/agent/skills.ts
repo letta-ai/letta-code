@@ -13,6 +13,7 @@ import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseFrontmatter } from "@/utils/frontmatter";
+import { resolveGlobalStateDir } from "@/utils/settings-path";
 import { isLocalAgentId } from "./agent-id";
 import { ALL_SKILL_SOURCES, type SkillSource } from "./skill-sources";
 
@@ -159,6 +160,7 @@ const LOCAL_AGENT_EXCLUDED_BUNDLED_SKILLS = new Set([
   "managing-shared-memory",
   "music-generation",
   "speech-generation",
+  "video-generation",
   "working-across-computers",
 ]);
 
@@ -188,24 +190,23 @@ export const PROJECT_SKILLS_DIR = join(".agents", "skills");
 export const SKILLS_DIR = ".skills";
 
 /**
- * Global skills directory (in user's home directory)
+ * Global skills directory for the active product config root.
  */
-export const GLOBAL_SKILLS_DIR = join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".letta/skills",
-);
+export function getGlobalSkillsDir(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return join(
+    resolveGlobalStateDir(env, env.HOME || env.USERPROFILE || "~"),
+    "skills",
+  );
+}
 
 /**
  * Get the agent-scoped skills directory for a specific agent.
- * Primary path is ~/.letta/agents/{id}/memory/skills/ (memfs).
+ * Primary path is <product-config>/agents/{id}/memory/skills/ (memfs).
  */
 export function getAgentSkillsDir(agentId: string): string {
-  return join(
-    process.env.HOME || process.env.USERPROFILE || "~",
-    ".letta/agents",
-    agentId,
-    "memory/skills",
-  );
+  return join(resolveGlobalStateDir(), "agents", agentId, "memory/skills");
 }
 
 /**
@@ -287,7 +288,7 @@ export async function discoverSkills(
   // 2. Add global skills (override bundled)
   if (includeSource("global")) {
     const globalResult = await discoverSkillsFromDir(
-      GLOBAL_SKILLS_DIR,
+      getGlobalSkillsDir(),
       "global",
     );
     allErrors.push(...globalResult.errors);

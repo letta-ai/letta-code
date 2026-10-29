@@ -107,7 +107,9 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
       runtime: listener,
       socket: socket as unknown as WebSocket,
       opts,
-      processQueuedTurn: async () => {},
+      processQueuedTurn: async () => {
+        onProcess();
+      },
       fileCommandSession: { handle: () => false },
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
@@ -208,14 +210,16 @@ describe("pre-commit originator admission gate (evil-shub round-8 P1)", () => {
     });
     await handleMessage(makeOriginatorInputFrame("req-r9-1", "run-r9-1"));
 
-    const frames = socket.sentPayloads.map(
-      (p) =>
-        JSON.parse(p) as {
-          type?: string;
-          accepted?: boolean;
-          abortReason?: string;
-        },
-    );
+    const frames = socket.sentPayloads
+      .map(
+        (p) =>
+          JSON.parse(p) as {
+            type?: string;
+            accepted?: boolean;
+            abortReason?: string;
+          },
+      )
+      .filter((frame) => frame.type === "input_accepted");
     expect(frames).toHaveLength(1);
     expect(frames[0]?.accepted).toBe(true);
     expect(frames[0]?.abortReason).toBeUndefined();

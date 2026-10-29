@@ -30,6 +30,23 @@ const LETTA_SCOPED = buildFsSandboxPolicy({
   restrictWrites: true,
 });
 
+const NESTED_DENY = buildFsSandboxPolicy({
+  deniedRoots: [
+    "/home/u/.letta/agents",
+    "/home/u/.letta/agents/self/memory/local-store/memfs",
+  ],
+  writableRoots: [
+    "/home/u/.letta/agents/self",
+    "/home/u/.letta/agents/self/memory/local-store/memfs/self/memory",
+  ],
+  restrictWrites: false,
+});
+
+const NESTED_READONLY = buildFsSandboxPolicy({
+  readonlyRoots: ["/scope/locked"],
+  writableRoots: ["/scope", "/scope/locked/open"],
+});
+
 test("profile is allow-default with a denied root walled off", () => {
   const { profile } = buildSeatbeltProfile(CROSS_AGENT);
   expect(profile).toContain("(version 1)");
@@ -108,6 +125,46 @@ test("base writable is layered: after global write-deny, before the deny, self a
   expect(deny).toBeGreaterThan(base);
   // ...and self memory is re-carved AFTER the deny (so self wins again).
   expect(self).toBeGreaterThan(deny);
+});
+
+test("nested deny ordering preserves a legitimate inner self carve", () => {
+  const { profile, defines } = buildSeatbeltProfile(NESTED_DENY);
+  const outerSelf = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
+  );
+  const nestedDeny = profile.indexOf(
+    '(deny file-read* file-write* (subpath (param "DENIED_1")))',
+  );
+  const innerSelf = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_1")))',
+  );
+
+  expect(nestedDeny).toBeGreaterThan(outerSelf);
+  expect(innerSelf).toBeGreaterThan(nestedDeny);
+  expect(defines).toContainEqual({
+    name: "DENIED_1",
+    value: "/home/u/.letta/agents/self/memory/local-store/memfs",
+  });
+});
+
+test("readonly child revokes writable parent before inner writable restore", () => {
+  const { profile } = buildSeatbeltProfile(NESTED_READONLY);
+  const outerWritable = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_0")))',
+  );
+  const readonlyWriteDeny = profile.indexOf(
+    '(deny file-write* (subpath (param "READONLY_0")))',
+  );
+  const readonlyReadAllow = profile.indexOf(
+    '(allow file-read* (subpath (param "READONLY_0")))',
+  );
+  const innerWritable = profile.indexOf(
+    '(allow file-read* file-write* (subpath (param "WRITABLE_1")))',
+  );
+
+  expect(readonlyWriteDeny).toBeGreaterThan(outerWritable);
+  expect(readonlyReadAllow).toBeGreaterThan(readonlyWriteDeny);
+  expect(innerWritable).toBeGreaterThan(readonlyReadAllow);
 });
 
 test("defines map every param referenced in the profile", () => {

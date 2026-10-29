@@ -100,6 +100,8 @@ export async function uploadFileToSandbox(
 }
 
 export interface SandboxDesktopSession {
+  /** Optional browser viewer URL supplied by the server. */
+  viewerUrl?: string;
   /** Relay websocket URL carrying a bearer token; treat it as a secret. */
   url: string;
   expiresAt: string;

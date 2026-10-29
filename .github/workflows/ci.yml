@@ -138,7 +138,7 @@ jobs:
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Unit / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.runner == 'windows-latest' && 15 || 10 }}
     permissions:
       contents: read
     strategy:
@@ -215,7 +215,29 @@ jobs:
         shell: bash
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+        run: bun run scripts/run-api-integration-tests.ts src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  worker-model-discovery:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' }}
+    name: External worker model discovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install native worker CLIs
+        run: npm install --prefix "$RUNNER_TEMP/workers" @anthropic-ai/claude-code@2.1.310 @openai/codex@0.164.0 opencode-ai@1.19.0
+      - name: Discover models without inference
+        run: |
+          export PATH="$RUNNER_TEMP/workers/node_modules/.bin:$PATH"
+          bun test ./src/tools/impl/external-worker-models.integration.ts
+          bun run build
+          LETTA_TEST_CLI_BUNDLE="$PWD/letta.js" bun test ./src/tools/impl/external-worker-models.integration.ts
 
   opencode-integration:
     needs: classify

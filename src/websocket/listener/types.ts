@@ -183,7 +183,13 @@ export type ListenerStreamObserver = (
 ) => void;
 
 export interface PendingExternalToolCall {
+  /** Captures the owning lease before awaiting the remote response. */
+  isOwningTurnCurrent?: () => boolean;
   connectionId: ListenerConnectionId;
+  /** Serialized request, resent if the socket drops before a response. */
+  requestFrame: string;
+  /** Transport that last carried `requestFrame`. */
+  sentOn: ListenerTransport;
   resolve: (result: ExternalToolCallResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;

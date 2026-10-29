@@ -1,7 +1,13 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import type { SubagentResult } from "@/agent/subagents";
+import {
+  killWindowsProcessTree,
+  spawnManagedWorkloadProcess,
+} from "@/agent/subagents/subagent-process";
+import { withNativeCliPath } from "@/utils/native-cli-env";
+import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   type ExternalToolCall,
@@ -97,6 +103,76 @@ const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
 
+/** Read the native catalog without creating a thread or starting a turn. */
+export async function listCodexModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  const controller = new AbortController();
+  const running = spawnManagedWorkloadProcess(
+    "codex",
+    ["app-server", "--stdio"],
+    {
+      cwd,
+      env,
+      signal: controller.signal,
+    },
+  );
+  running.process.stdin.on("error", () => {});
+  const transport: CodexAppServerTransport = {
+    stdin: running.process.stdin,
+    stdout: running.process.stdout,
+    stderr: running.process.stderr,
+    kill: () => controller.abort(),
+    exited: running.completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
+    })),
+  };
+  const client = new CodexAppServerClient(
+    transport,
+    () => {},
+    () => {},
+  );
+  // A failed start (e.g. ENOENT) otherwise surfaces as EPIPE on the first
+  // stdin write, hiding the real cause.
+  let startError: Error | undefined;
+  running.process.once("error", (error: NodeJS.ErrnoException) => {
+    startError =
+      error.code === "ENOENT"
+        ? new Error("Required executable 'codex' was not found on PATH")
+        : error;
+    client.dispose();
+  });
+  const timer = setTimeout(() => client.dispose(), 30_000);
+  try {
+    await client.initialize();
+    const models: unknown[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.request("model/list", { cursor, limit: 100 });
+      if (!Array.isArray(page.data))
+        throw new Error("Codex did not return a model catalog");
+      models.push(...page.data);
+      cursor =
+        typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+      if (cursor && cursors.has(cursor))
+        throw new Error("Codex repeated a model catalog cursor");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  } catch (error) {
+    client.dispose();
+    await running.completion;
+    throw startError ?? error;
+  } finally {
+    clearTimeout(timer);
+    client.dispose();
+    await running.completion;
+  }
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -113,17 +189,21 @@ function spawnTransport(options: {
     ["codex", "app-server", "--stdio"],
     { env: options.env },
   );
-  const child = nodeSpawn(command, args, {
+  const child = getCommandProcessFactory()(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-  });
+  }) as ChildProcessWithoutNullStreams;
   return {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    kill: () => child.kill(),
+    // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
+    kill: () =>
+      process.platform === "win32"
+        ? void killWindowsProcessTree(child)
+        : child.kill(),
     exited: new Promise((resolve) => {
       child.once("close", (code, signal) => resolve({ code, signal }));
     }),
@@ -471,11 +551,11 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-  };
+  });
   const transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,

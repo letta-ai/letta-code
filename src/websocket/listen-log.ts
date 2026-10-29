@@ -18,11 +18,11 @@ import {
   readdirSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { redactWsEventForLogging } from "./ws-event-redaction";
 
-const REMOTE_LOG_DIR = join(homedir(), ".letta", "logs", "remote");
+const REMOTE_LOG_DIR = join(resolveGlobalConfigDir(), "logs", "remote");
 const MAX_LOG_FILES = 10;
 const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB per session file
 

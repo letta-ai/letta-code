@@ -4,6 +4,7 @@
  */
 
 import {
+  chmodSync,
   existsSync,
   readFileSync as fsReadFileSync,
   writeFileSync as fsWriteFileSync,
@@ -21,12 +22,23 @@ export async function readFile(path: string): Promise<string> {
 /**
  * Write content to a file, creating parent directories if needed
  */
-export async function writeFile(path: string, content: string): Promise<void> {
+export async function writeFile(
+  path: string,
+  content: string,
+  options?: { directoryMode?: number; mode?: number },
+): Promise<void> {
   const dir = dirname(path);
   if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+    mkdirSync(dir, { recursive: true, mode: options?.directoryMode });
   }
-  fsWriteFileSync(path, content, { encoding: "utf-8", flush: true });
+  if (options?.directoryMode !== undefined)
+    chmodSync(dir, options.directoryMode);
+  fsWriteFileSync(path, content, {
+    encoding: "utf-8",
+    flush: true,
+    mode: options?.mode,
+  });
+  if (options?.mode !== undefined) chmodSync(path, options.mode);
 }
 
 /**
@@ -41,9 +53,10 @@ export function exists(path: string): boolean {
  */
 export async function mkdir(
   path: string,
-  options?: { recursive?: boolean },
+  options?: { recursive?: boolean; mode?: number },
 ): Promise<void> {
   mkdirSync(path, options);
+  if (options?.mode !== undefined) chmodSync(path, options.mode);
 }
 
 export async function readJsonFile<T>(path: string): Promise<T> {
