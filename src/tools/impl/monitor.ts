@@ -30,6 +30,7 @@ import {
   createMonitorEventStream,
   MONITOR_EVENT_BUFFER_CHARS,
 } from "./monitor-event-stream.js";
+import { startScriptMonitor } from "./monitor-script.js";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -71,6 +72,8 @@ interface MonitorArgs {
   persistent?: boolean;
   command?: string;
   ws?: MonitorWebSocketSource;
+  script?: string;
+  args?: unknown;
   backup_after_seconds?: number;
   backup_prompt?: string;
   secretEnv?: Record<string, string>;
@@ -259,8 +262,17 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
     throw new Error("Monitor command must be a string");
   }
 
-  // Some tool calls include both source fields with an empty value for the
-  // unused one.
+  if (
+    normalized.script !== undefined &&
+    typeof normalized.script !== "string"
+  ) {
+    throw new Error("Monitor script must be a string");
+  }
+
+  // Some tool calls include every source field with an empty value for the
+  // unused ones.
+  const hasScript =
+    typeof normalized.script === "string" && normalized.script.trim() !== "";
   const hasCommand =
     typeof normalized.command === "string" && normalized.command.length > 0;
   const hasWebSocket =
@@ -270,8 +282,12 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
       normalized.ws !== null &&
       normalized.ws.url === ""
     );
-  if (Number(hasCommand) + Number(hasWebSocket) !== 1) {
-    throw new Error("Monitor requires exactly one of command or ws");
+  if (Number(hasCommand) + Number(hasWebSocket) + Number(hasScript) !== 1) {
+    throw new Error("Monitor requires exactly one of command, ws, or script");
+  }
+  if (!hasScript) {
+    delete normalized.script;
+    delete normalized.args;
   }
   if (!hasCommand) {
     delete normalized.command;
@@ -812,6 +828,33 @@ function startWebSocketMonitor(args: NormalizedMonitorArgs): MonitorResult {
   );
 }
 
+async function startScriptSource(
+  args: NormalizedMonitorArgs,
+): Promise<MonitorResult> {
+  const { taskId, outputFile } = await startScriptMonitor(
+    {
+      description: args.description,
+      script: args.script as string,
+      args: args.args,
+      timeout_ms: args.timeout_ms,
+      persistent: args.persistent,
+      parentScope: args.parentScope,
+    },
+    {
+      createOutput: (path) => new MonitorOutputWriter(path),
+      queueEvent: queueMonitorEvent,
+      markFinished: markMonitorFinished,
+      timeoutEvent: getMonitorTimeoutEvent,
+    },
+  );
+  return buildMonitorResult(
+    taskId,
+    args.persistent ? 0 : args.timeout_ms,
+    args.persistent,
+    outputFile,
+  );
+}
+
 function backupScopeFor(taskId: string) {
   const processState = backgroundProcesses.get(taskId);
   const runtimeScope = processState?.runtimeScope;
@@ -825,9 +868,11 @@ export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
   const result =
-    normalized.command !== undefined
-      ? startCommandMonitor(normalized)
-      : startWebSocketMonitor(normalized);
+    normalized.script !== undefined
+      ? await startScriptSource(normalized)
+      : normalized.command !== undefined
+        ? startCommandMonitor(normalized)
+        : startWebSocketMonitor(normalized);
   if (normalized.backup_after_seconds === undefined) return result;
   const note = await armMonitorBackup({
     taskId: result.taskId,

@@ -111,12 +111,18 @@ export async function executeToolScript(
     | "builtinToolNames"
     | "listTools"
     | "onProgress"
-  >,
+    | "maxTotalToolCalls"
+  > & {
+    /** Extra script globals, e.g. Monitor's `emit` and `sleep`. */
+    globals?: Record<string, unknown>;
+  },
 ): Promise<unknown> {
-  const run = await executeScript(undefined, options, {
-    name: "code-mode",
-    description: "Combine tools with JavaScript",
-  });
+  const run = await executeScript(
+    undefined,
+    options,
+    { name: "code-mode", description: "Combine tools with JavaScript" },
+    options.globals,
+  );
   return run.result;
 }
 
@@ -124,6 +130,7 @@ async function executeScript(
   spawner: SubagentSpawner | undefined,
   options: RunWorkflowOptions,
   meta: WorkflowMeta,
+  extraGlobals?: Record<string, unknown>,
 ): Promise<WorkflowExecutionResult> {
   const signal = options.signal ?? new AbortController().signal;
   // Progress stops once the run has settled, not at abort: an interrupted
@@ -512,6 +519,7 @@ async function executeScript(
     ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
+    ...extraGlobals,
   });
   const wrapped = `(async () => { "use strict";\n${spawner ? stripMetaExport(options.script) : options.script}\n})()`;
   const parseError = (error: unknown) =>
