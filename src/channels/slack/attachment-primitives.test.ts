@@ -79,9 +79,14 @@ test("collectSlackFiles caps one Slack message at eight attachments", () => {
   );
 });
 
-test("resolveSlackMessageFiles uses one bounded request for a thread reply", async () => {
+test("resolveSlackMessageFiles finds a thread reply after the parent row", async () => {
+  // Slack returns the thread parent first even when oldest/latest exclude it.
   const replies = mock(async () => ({
     messages: [
+      {
+        ts: "100.1",
+        files: [{ id: "FPARENT", name: "parent.png" }],
+      },
       {
         ts: "100.2",
         files: [{ id: "FEXACT", name: "exact.png" }],
@@ -115,7 +120,7 @@ test("resolveSlackMessageFiles uses one bounded request for a thread reply", asy
     oldest: "100.2",
     latest: "100.2",
     inclusive: true,
-    limit: 1,
+    limit: 2,
   });
 });
 

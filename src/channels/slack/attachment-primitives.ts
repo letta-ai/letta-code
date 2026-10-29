@@ -182,6 +182,9 @@ export async function resolveSlackMessageFiles(params: {
   client: SlackAttachmentReadClient;
 }): Promise<SlackFileLike[] | null> {
   if (isNonEmptyString(params.threadTs)) {
+    // Slack always returns the thread parent first; oldest/latest only filter
+    // the replies. limit: 2 leaves room for the parent plus the exact reply.
+    // https://docs.slack.dev/messaging/retrieving-messages/#pulling_threads
     const messages = parseSlackMessages(
       await params.client.conversations.replies({
         channel: params.channelId,
@@ -189,7 +192,7 @@ export async function resolveSlackMessageFiles(params: {
         oldest: params.messageTs,
         latest: params.messageTs,
         inclusive: true,
-        limit: 1,
+        limit: 2,
       }),
     );
     const message = messages.find((entry) => entry.ts === params.messageTs);
