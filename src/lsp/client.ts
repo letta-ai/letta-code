@@ -39,6 +39,7 @@ export class LSPClient extends EventEmitter {
   private buffer = "";
   private initialized = false;
   private disposed = false;
+  private terminalError: Error | undefined;
 
   constructor(options: LSPClientOptions) {
     super();
@@ -64,22 +65,30 @@ export class LSPClient extends EventEmitter {
     });
 
     this.stdout.on("error", (err) => {
-      this.emit("error", err);
-      // A broken stdout means no more responses will arrive — fail pending
-      // requests instead of leaving their promises pending forever.
-      this.rejectAllPending(
-        new Error(`LSP stdout stream error: ${err.message}`),
-      );
+      this.disposed = true;
+      this.terminalError = new Error(`LSP stdout stream error: ${err.message}`);
+      this.rejectAllPending(this.terminalError);
+      try {
+        this.emit("error", err);
+      } finally {
+        this.process.process.kill();
+      }
     });
 
     this.process.process.on("exit", (code) => {
       this.disposed = true;
-      // The server process is gone, so in-flight requests will never get a
-      // response — reject them so callers (including shutdown()) don't hang.
-      this.rejectAllPending(
-        new Error(`LSP server exited (code ${code ?? "null"})`),
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
       );
       this.emit("exit", code);
+    });
+
+    this.process.process.on("close", (code) => {
+      this.disposed = true;
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
+      );
+      this.rejectAllPending(this.terminalError);
     });
   }
 
@@ -158,7 +167,7 @@ export class LSPClient extends EventEmitter {
       // If the server is already gone, fail fast instead of enqueueing a
       // request that can never be written or answered.
       if (this.disposed) {
-        reject(new Error("LSP server has exited"));
+        reject(this.terminalError ?? new Error("LSP server has exited"));
         return;
       }
       const id = ++this.requestId;
@@ -286,10 +295,13 @@ export class LSPClient extends EventEmitter {
    * Shutdown the LSP server gracefully
    */
   async shutdown(): Promise<void> {
-    if (this.initialized) {
-      await this.sendRequest("shutdown");
-      this.sendNotification("exit");
+    try {
+      if (this.initialized) {
+        await this.sendRequest("shutdown");
+        this.sendNotification("exit");
+      }
+    } finally {
+      this.process.process.kill();
     }
-    this.process.process.kill();
   }
 }
