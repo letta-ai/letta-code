@@ -4,7 +4,6 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import Letta from "@letta-ai/letta-client";
-import { resolveAgentSandboxConnectionId } from "@/backend/api/environments";
 import { createAuthenticatedCliTestEnv } from "@/test-utils/test-process-env";
 
 type Sandbox = { sandboxId: string; conversationId?: string | null };
@@ -123,14 +122,6 @@ test.skipIf(!process.env.LETTA_API_KEY)(
         payload: Buffer.from([0, 255, 128, 13, 10, i, 0, 254]),
         remotePath: "",
       }));
-      // Provisioning is not a file-transfer readiness signal: wait for the
-      // sandbox listener to register a live connection before invoking the CLI.
-      for (const target of [conversationId, "default"]) {
-        await resolveAgentSandboxConnectionId(agentId, {
-          conversationId: target,
-          timeoutMs: 90000,
-        });
-      }
       for (const scenario of scenarios) {
         const { target, payload, localPath: uploadPath, flags } = scenario;
         await writeFile(uploadPath, payload);
