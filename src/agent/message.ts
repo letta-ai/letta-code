@@ -54,6 +54,7 @@ const RESPONSE_STATE_HEADER = "X-Letta-Response-State";
 const RESPONSE_STATE_CACHE_SCOPE = "approval_boundary";
 const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
 const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
+const MCP_ORIGINATOR_SUPER_RUN_HEADER = "x-letta-mcp-originator-super-run-id";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
@@ -570,13 +571,16 @@ export async function sendMessageStreamWithBackend(
   // listener's API key as the human who started it. The bearer remains
   // process-local: it is never copied into message bodies, tool arguments, or
   // transcripts, and headerless turns keep their existing behavior.
-  const originatorSuperRunId =
-    executionRuntimeContext?.mcpOriginatorSuperRunId ??
-    getRuntimeContext()?.mcpOriginatorSuperRunId;
+  // A prepared tool context is an authority boundary. Its explicit null must
+  // not fall back to an outer AsyncLocalStorage turn's originator.
+  const originatorSuperRunId = executionRuntimeContext
+    ? executionRuntimeContext.mcpOriginatorSuperRunId
+    : getRuntimeContext()?.mcpOriginatorSuperRunId;
   const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
-  if (originatorToken) {
+  if (originatorToken && originatorSuperRunId) {
     extraHeaders[MCP_ORIGINATOR_TOKEN_HEADER] = originatorToken;
     extraHeaders[MCP_ORIGINATOR_ISOLATION_HEADER] = "1";
+    extraHeaders[MCP_ORIGINATOR_SUPER_RUN_HEADER] = originatorSuperRunId;
   }
 
   const messageSummary = normalizedMessages
