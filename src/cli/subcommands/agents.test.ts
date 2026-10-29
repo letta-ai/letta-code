@@ -167,7 +167,7 @@ describe("agents create --body", () => {
     name: "Body agent",
     system: "You are a body-created agent.",
     tags: ["parent:agent-seeded", "suite:test"],
-    model: "llama.cpp/policy",
+    model: "llama.cpp/local-model",
     model_settings: { max_tokens: 2048, context_window_limit: 32768 },
     compaction_settings: { mode: "all", prompt: "Summarize." },
   };
