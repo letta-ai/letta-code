@@ -66,3 +66,54 @@ test("API runner warms a shared cache for children with isolated homes and confi
     await rm(root, { recursive: true, force: true });
   }
 }, 30000);
+
+test("API runner retries a timed-out catalog warmup before running tests", async () => {
+  const root = await mkdtemp(join(tmpdir(), "letta-api-catalog-retry-"));
+  const preload = join(root, "flaky.ts");
+  const fixture = join(root, "noop.test.ts");
+  try {
+    // The first catalog request times out; later requests succeed.
+    await writeFile(
+      preload,
+      `let calls = 0;
+      globalThis.fetch = async () => {
+        calls += 1;
+        if (calls === 1) throw new DOMException("timed out", "TimeoutError");
+        return Response.json({ models: [{
+          id: "auto", handle: "letta/auto", label: "Auto", brand: "letta",
+          maxContextWindow: 140000, isDefault: true
+        }] });
+      };`,
+    );
+    await writeFile(
+      fixture,
+      `import { expect, test } from "bun:test";
+      test("runs after warmup", () => { expect(true).toBe(true); });`,
+    );
+    const child = Bun.spawn(
+      [
+        process.execPath,
+        "--preload",
+        preload,
+        "scripts/run-api-integration-tests.ts",
+        fixture,
+      ],
+      {
+        env: {
+          ...process.env,
+          LETTA_TEST_HOME: "",
+          LETTA_API_KEY: "test-key",
+          LETTA_BASE_URL: "https://api.letta.com",
+          LETTA_LOCAL_BACKEND_EXPERIMENTAL: "0",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      },
+    );
+    const stderr = await new Response(child.stderr).text();
+    expect(await child.exited, stderr).toBe(0);
+    expect(stderr).toContain("warmup attempt 1/4 failed");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 30000);
