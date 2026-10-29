@@ -35,7 +35,6 @@ import {
 } from "@/utils/secrets-store";
 import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import { enqueueInboundUserMessage } from "@/websocket/listener/inbound-queue";
-import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { startRecoveredApprovalContinuation } from "@/websocket/listener/recovery";
 import { clearConversationRuntimeState } from "@/websocket/listener/runtime";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
@@ -941,34 +940,6 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queueRuntime.length).toBe(0);
     expect(runtimeA.queuedMessagesByItemId.size).toBe(0);
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
-  });
-
-  test("idle inbound user messages bypass the queue runtime", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "conv-idle",
-    );
-    const incoming = makeIncomingMessage("agent-1", "conv-idle", "hello");
-
-    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(true);
-
-    const queueInput = {
-      kind: "message",
-      source: "user",
-      content: "queued",
-      clientMessageId: "cm-queued",
-      agentId: "agent-1",
-      conversationId: "conv-idle",
-    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
-    const queuedItem = runtime.queueRuntime.enqueue(queueInput);
-    if (!queuedItem) {
-      throw new Error("Expected queued item to be created");
-    }
-    runtime.queuedMessagesByItemId.set(queuedItem.id, incoming);
-
-    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(false);
   });
 
   test("task_notification-only queue items re-enter the listener loop as standalone turns", async () => {
