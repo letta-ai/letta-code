@@ -242,7 +242,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
   let channelGatewaySupervisor: ChannelGatewaySupervisor | null = null;
   let channelAppServer: AppServerHandle | null = null;
   let clearChannelServiceHandler: (() => void) | null = null;
+  let channelGatewayStartAbort: AbortController | null = null;
   const closeChannelGateway = async (): Promise<void> => {
+    channelGatewayStartAbort?.abort();
+    channelGatewayStartAbort = null;
     const supervisor = channelGatewaySupervisor;
     const appServer = channelAppServer;
     channelGatewaySupervisor = null;
@@ -518,6 +521,8 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
       runtime: ListenerRuntime,
     ): Promise<void> =>
       (async () => {
+        const startAbort = new AbortController();
+        channelGatewayStartAbort = startAbort;
         const { startAppServer } = await import("@/websocket/app-server");
         channelAppServer = await startAppServer({
           runtime,
@@ -536,6 +541,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
           channelNames,
           restoreEnabledChannels,
           restoreAgentScope,
+          signal: startAbort.signal,
           failOnStartupError: Boolean(values.channels),
           installChannelRuntimes: Boolean(
             values.channels && values["install-channel-runtimes"],

@@ -459,3 +459,141 @@ test("closing during restart backoff cancels the replacement", async () => {
   await new Promise((resolve) => setTimeout(resolve, 75));
   expect(spawnCount).toBe(1);
 });
+
+test("a first start that exits before ready is retried with backoff", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 1) {
+        process.exit(1);
+        return;
+      }
+      process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const logs: string[] = [];
+  const lifecycleEvents: ChannelGatewayLifecycleEvent[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      stableAfterMs: 1000,
+    },
+    onLog: (message) => logs.push(message),
+    onLifecycleEvent: (event) => lifecycleEvents.push(event),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(logs).toContain(
+    "[ChannelGateway] ChannelGateway exited before ready (1)",
+  );
+  expect(logs).toContain("[ChannelGateway] restart attempt 1/2 in 1ms");
+  expect(lifecycleEvents.map((event) => event.kind)).toEqual([
+    "exit",
+    "restart_scheduled",
+    "restart_ready",
+  ]);
+  expect(lifecycleEvents[0]).toMatchObject({ reachedReady: false });
+  await supervisor.close();
+});
+
+test("a first start that never becomes ready is retried", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    const thisSpawn = spawnCount;
+    queueMicrotask(() => {
+      if (thisSpawn === 1) return;
+      process.stdout.write("CHANNEL_GATEWAY_READY\n");
+    });
+    return process.child;
+  }) as typeof spawn;
+  const logs: string[] = [];
+  const supervisor = await startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    restartPolicy: {
+      maxAttempts: 2,
+      initialDelayMs: 1,
+      maxDelayMs: 1,
+      readyTimeoutMs: 5,
+      stableAfterMs: 1000,
+    },
+    onLog: (message) => logs.push(message),
+  });
+
+  expect(spawnCount).toBe(2);
+  expect(logs).toContain(
+    "[ChannelGateway] Timed out waiting for ChannelGateway",
+  );
+  await supervisor.close();
+});
+
+test("a first start that keeps failing rejects once restarts are exhausted", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    queueMicrotask(() => process.exit(1));
+    return process.child;
+  }) as typeof spawn;
+  let exhaustedError: Error | undefined;
+
+  await expect(
+    startChannelGatewaySupervisor({
+      appServerUrl: "ws://127.0.0.1:1/ws",
+      channelNames: ["telegram"],
+      launcher: { command: "fixture" },
+      spawnProcess,
+      restartPolicy: { maxAttempts: 2, initialDelayMs: 1, maxDelayMs: 1 },
+      onRestartExhausted: (error) => {
+        exhaustedError = error;
+      },
+    }),
+  ).rejects.toThrow("restart attempts exhausted (2)");
+  expect(spawnCount).toBe(3);
+  expect(exhaustedError?.message).toContain("restart attempts exhausted (2)");
+});
+
+test("aborting a first start cancels pending retries", async () => {
+  let spawnCount = 0;
+  const spawnProcess = (() => {
+    spawnCount += 1;
+    const process = createControllableGatewayProcess();
+    queueMicrotask(() => process.exit(1));
+    return process.child;
+  }) as typeof spawn;
+  const abort = new AbortController();
+  let reportUnexpectedExit: (() => void) | undefined;
+  const unexpectedExit = new Promise<void>((resolve) => {
+    reportUnexpectedExit = resolve;
+  });
+
+  const startup = startChannelGatewaySupervisor({
+    appServerUrl: "ws://127.0.0.1:1/ws",
+    channelNames: ["telegram"],
+    launcher: { command: "fixture" },
+    spawnProcess,
+    signal: abort.signal,
+    restartPolicy: { initialDelayMs: 50, maxDelayMs: 50 },
+    onUnexpectedExit: () => reportUnexpectedExit?.(),
+  });
+  await unexpectedExit;
+  abort.abort();
+
+  await expect(startup).rejects.toThrow("ChannelGateway startup aborted");
+  await new Promise((resolve) => setTimeout(resolve, 75));
+  expect(spawnCount).toBe(1);
+});

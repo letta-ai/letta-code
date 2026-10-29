@@ -17,6 +17,7 @@ import {
 import {
   ChannelInitializationError,
   ChannelRegistry,
+  formatChannelStartupFailures,
   getChannelRegistry,
   initializeChannels,
 } from "@/channels/registry";
@@ -26,7 +27,51 @@ import {
   addRoute,
   clearAllRoutes,
 } from "@/channels/routing";
-import type { SignalChannelAccount } from "@/channels/types";
+import { MissingChannelRuntimeError } from "@/channels/runtime-deps";
+import type {
+  ChannelAdapter,
+  SignalChannelAccount,
+  TelegramChannelAccount,
+} from "@/channels/types";
+
+function telegramAccount(accountId: string): TelegramChannelAccount {
+  return {
+    channel: "telegram",
+    accountId,
+    enabled: true,
+    token: `token-${accountId}`,
+    binding: { agentId: null, conversationId: null },
+    dmPolicy: "pairing",
+    allowedUsers: [],
+    createdAt: "2026-06-17T00:00:00.000Z",
+    updatedAt: "2026-06-17T00:00:00.000Z",
+  };
+}
+
+function fakeAdapter(
+  channelId: string,
+  accountId: string,
+  onStop: (id: string) => void,
+): ChannelAdapter {
+  let running = true;
+  const id = `${channelId}:${accountId}`;
+  return {
+    id,
+    channelId,
+    accountId,
+    name: id,
+    start: async () => {
+      running = true;
+    },
+    stop: async () => {
+      running = false;
+      onStop(id);
+    },
+    isRunning: () => running,
+    sendMessage: async () => ({ messageId: "msg-1" }),
+    sendDirectReply: async () => {},
+  };
+}
 
 beforeEach(() => {
   __testOverrideLoadPendingControlRequestStore(null);
@@ -251,5 +296,101 @@ describe("ChannelRegistry lifecycle", () => {
     expect(logs).toContain(
       '[Channels] Channel "slack" has no enabled accounts in local restore scope.',
     );
+  });
+  test("initializeChannels keeps healthy accounts running when one account fails", async () => {
+    __testOverrideLoadChannelAccounts((channelId) =>
+      channelId === "telegram"
+        ? [
+            telegramAccount("bot-a"),
+            telegramAccount("bot-slow"),
+            telegramAccount("bot-b"),
+          ]
+        : [],
+    );
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+    const stopped: string[] = [];
+    registry.startChannelAccount = async (channelId, accountId) => {
+      if (accountId === "bot-slow") {
+        throw new Error("Telegram bot init timed out after 15000ms");
+      }
+      registry.registerAdapter(
+        fakeAdapter(channelId, accountId, (id) => stopped.push(id)),
+      );
+      return true;
+    };
+    const logs: string[] = [];
+
+    await expect(
+      initializeChannels(["telegram"], {
+        failOnStartupError: true,
+        logger: (message) => logs.push(message),
+      }),
+    ).resolves.toBe(registry);
+
+    expect(stopped).toEqual([]);
+    expect(getChannelRegistry()).toBe(registry);
+    expect(registry.getAdapter("telegram", "bot-a")?.isRunning()).toBe(true);
+    expect(registry.getAdapter("telegram", "bot-b")?.isRunning()).toBe(true);
+    const report = logs.find((line) =>
+      line.includes("Failed to start requested channel listeners."),
+    );
+    expect(report).toContain(
+      "- telegram/bot-slow: Telegram bot init timed out after 15000ms",
+    );
+    expect(report).not.toContain("bot-a");
+    expect(report).not.toContain("--install-channel-runtimes");
+  });
+
+  test("initializeChannels fails startup when no requested account starts", async () => {
+    __testOverrideLoadChannelAccounts((channelId) =>
+      channelId === "telegram" ? [telegramAccount("bot-slow")] : [],
+    );
+    __testOverrideSaveChannelAccounts(() => {});
+    const registry = new ChannelRegistry();
+    registry.startChannelAccount = async () => {
+      throw new Error("Telegram bot init timed out after 15000ms");
+    };
+
+    const error = await initializeChannels(["telegram"], {
+      failOnStartupError: true,
+    }).catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ChannelInitializationError);
+    expect((error as ChannelInitializationError).message).not.toContain(
+      "--install-channel-runtimes",
+    );
+    expect(getChannelRegistry()).toBeNull();
+  });
+
+  test("startup failure hint only suggests installing missing runtimes", () => {
+    const timeout = formatChannelStartupFailures([
+      {
+        channelId: "telegram",
+        accountId: "bot-slow",
+        error: "Telegram bot init timed out after 15000ms",
+      },
+    ]);
+    expect(timeout).not.toContain("--install-channel-runtimes");
+    expect(timeout).not.toContain("letta channels install");
+
+    const missing = formatChannelStartupFailures([
+      {
+        channelId: "telegram",
+        accountId: "bot-slow",
+        error: "Telegram bot init timed out after 15000ms",
+      },
+      {
+        channelId: "slack",
+        accountId: "acct-slack",
+        error: new MissingChannelRuntimeError("slack").message,
+        missingRuntime: true,
+      },
+    ]);
+    expect(missing).toContain(
+      "Install missing runtimes with: letta server --channels slack --install-channel-runtimes",
+    );
+    expect(missing).toContain("  letta channels install slack");
+    expect(missing).not.toContain("letta channels install telegram");
   });
 });
