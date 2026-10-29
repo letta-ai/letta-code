@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
+import {
+  clearMcpOriginatorTokens,
+  setMcpOriginatorToken,
+} from "@/agent/mcp-originator-tokens";
 import type { Backend } from "@/backend";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { prepareToolExecutionContextForSpecificTools } from "@/tools/manager";
 import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "./acting-user";
 import { sendMessageStreamWithBackend } from "./message";
@@ -26,11 +31,15 @@ function makeRecordingBackend(recordedHeaders: Array<Record<string, string>>) {
 async function sendWithPreparedContext(
   backend: Backend,
   actingUserId?: string,
+  mcpOriginatorSuperRunId?: string,
 ): Promise<void> {
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     [],
     {
-      runtimeContext: actingUserId ? { actingUserId } : undefined,
+      runtimeContext:
+        actingUserId || mcpOriginatorSuperRunId
+          ? { actingUserId, mcpOriginatorSuperRunId }
+          : undefined,
     },
   );
   await sendMessageStreamWithBackend(
@@ -47,17 +56,24 @@ async function sendWithPreparedContext(
 }
 
 describe("sendMessageStream acting-user propagation", () => {
-  test("uses the acting user captured in the turn tool context", async () => {
+  afterEach(() => clearMcpOriginatorTokens());
+
+  test("uses the acting user and originator captured in the turn tool context", async () => {
     const recordedHeaders: Array<Record<string, string>> = [];
+    setMcpOriginatorToken("super-run-a", "originator-token-a");
 
     await sendWithPreparedContext(
       makeRecordingBackend(recordedHeaders),
       "cloud-user-a",
+      "super-run-a",
     );
 
     expect(recordedHeaders).toEqual([
       expect.objectContaining({
         [ACTING_USER_ID_HEADER]: "cloud-user-a",
+        "x-letta-mcp-originator-token": "originator-token-a",
+        "x-letta-mcp-originator-isolation": "1",
+        "x-letta-mcp-originator-super-run-id": "super-run-a",
       }),
     ]);
   });
@@ -65,24 +81,32 @@ describe("sendMessageStream acting-user propagation", () => {
   test("explicit null suppresses inherited and ambient attribution", async () => {
     const preparedToolContext =
       await prepareToolExecutionContextForSpecificTools([], {
-        runtimeContext: { actingUserId: "runtime-user" },
+        runtimeContext: {
+          actingUserId: "runtime-user",
+          mcpOriginatorSuperRunId: null,
+        },
       });
     const previousActingUserId = process.env[ACTING_USER_ID_ENV];
     process.env[ACTING_USER_ID_ENV] = "ambient-user";
+    setMcpOriginatorToken("ambient-super-run", "ambient-originator-token");
     const recordedHeaders: Array<Record<string, string>> = [];
 
     try {
-      await sendMessageStreamWithBackend(
-        makeRecordingBackend(recordedHeaders),
-        "conv-acting-user",
-        [{ role: "user", content: "Unattributed system input." }],
-        {
-          streamTokens: true,
-          background: true,
-          skillSources: [],
-          preparedToolContext,
-          actingUserId: null,
-        },
+      await runWithRuntimeContext(
+        { mcpOriginatorSuperRunId: "ambient-super-run" },
+        () =>
+          sendMessageStreamWithBackend(
+            makeRecordingBackend(recordedHeaders),
+            "conv-acting-user",
+            [{ role: "user", content: "Unattributed system input." }],
+            {
+              streamTokens: true,
+              background: true,
+              skillSources: [],
+              preparedToolContext,
+              actingUserId: null,
+            },
+          ),
       );
     } finally {
       if (previousActingUserId === undefined) {
@@ -94,6 +118,12 @@ describe("sendMessageStream acting-user propagation", () => {
 
     expect(recordedHeaders).toHaveLength(1);
     expect(recordedHeaders[0]?.[ACTING_USER_ID_HEADER]).toBeUndefined();
+    expect(
+      recordedHeaders[0]?.["x-letta-mcp-originator-token"],
+    ).toBeUndefined();
+    expect(
+      recordedHeaders[0]?.["x-letta-mcp-originator-super-run-id"],
+    ).toBeUndefined();
   });
 
   test("nested subagent child environments keep attribution on every request", async () => {
