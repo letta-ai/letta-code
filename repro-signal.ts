@@ -1,5 +1,8 @@
 import { bash } from "./src/tools/impl/bash";
-import { spawnWithLauncher } from "./src/tools/impl/shell-runner";
+import {
+  spawnWithLauncher,
+  startShellProcess,
+} from "./src/tools/impl/shell-runner";
 
 console.log(
   "raw SIGKILL",
@@ -27,3 +30,22 @@ console.log(
     }),
   ),
 );
+
+let ready!: () => void;
+const started = new Promise<void>((resolve) => {
+  ready = resolve;
+});
+const running = startShellProcess(
+  ["bash", "-c", "echo buffered-before-kill; sleep 60"],
+  {
+    cwd: process.cwd(),
+    env: process.env,
+    timeoutMs: 0,
+    onOutput() {
+      ready();
+    },
+  },
+);
+await started;
+running.process.kill("SIGKILL");
+console.log("forced handle SIGKILL", await running.completion);

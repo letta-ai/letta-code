@@ -1,4 +1,4 @@
-// Usage: bun repro-queued-idle.ts /path/to/letta-agent-sdk-0.6.3/src/remote-turn-coordinator.ts
+// Usage: LETTA_CONFIG_DIR=$(mktemp -d) bun repro-queued-idle.ts /path/to/letta-agent-sdk-0.6.3/src/remote-turn-coordinator.ts
 // The turn callback is deliberately stubbed: inspect whether the client finishes before it is entered.
 
 import { resolve } from "node:path";
