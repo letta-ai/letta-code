@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import { type ChildProcess, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -169,6 +176,8 @@ testWithAPI.each([
           LETTA_BASE_URL: baseURL,
           LETTA_DEBUG: undefined,
           DEBUG: undefined,
+          // File-only frame logging preserves machine-readable lifecycle stdout.
+          LETTA_LOG_WS_EVENTS: "1",
         });
         for (const key of Object.keys(env)) {
           if (
@@ -497,11 +506,36 @@ testWithAPI.each([
       failures.push(
         `stage=${stage}; HTTP=${httpStatus ?? "n/a"}; destination Agent not found=${destinationAgentNotFound}; listener exits=${children.map((child) => child.exitCode ?? child.signalCode ?? "running").join(",")}`,
       );
+      const sessionLogs = await Promise.all(
+        ["source", "destination"].map(async (role) => {
+          const directory = join(
+            root,
+            role,
+            "home",
+            ".letta",
+            "logs",
+            "remote",
+          );
+          try {
+            const files = (await readdir(directory))
+              .filter((name) => name.endsWith(".log"))
+              .sort()
+              .slice(-2);
+            const logs = await Promise.all(
+              files.map((name) => readFile(join(directory, name), "utf8")),
+            );
+            return `${role} session log: ${logs.join("\n").slice(-16000)}`;
+          } catch {
+            return `${role} session log: unavailable`;
+          }
+        }),
+      );
       const detail = [
         error instanceof Error ? error.message : "Unknown failure",
         ...[...readinessByRole].map(
           ([role, state]) => `${role} readiness: ${state}`,
         ),
+        ...sessionLogs,
         ...[...stdoutByRole].map(
           ([role, stdout]) => `${role} stdout: ${stdout}`,
         ),
