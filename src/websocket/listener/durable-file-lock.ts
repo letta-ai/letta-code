@@ -188,11 +188,15 @@ export function currentDurableLockOwner(
 ): DurableLockOwner {
   let processStart = cachedCurrentProcessStart;
   if (processStart === undefined) {
+    const probeStartedAt = performance.now();
     processStart = getProcessStart(
       process.pid,
       process.platform,
       undefined,
       processStartTimeoutMs,
+    );
+    console.info(
+      `own process identity probe: ${performance.now() - probeStartedAt}ms, budget=${processStartTimeoutMs}, found=${processStart !== null}`,
     );
     // A short lock-acquisition deadline may not leave enough time for the first
     // platform process probe. Cache only a proven identity so a transient null
