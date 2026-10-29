@@ -251,52 +251,6 @@ export function shouldQueueInboundMessage(parsed: IncomingMessage): boolean {
   return parsed.messages.some((payload) => "content" in payload);
 }
 
-export function shouldProcessInboundMessageDirectly(
-  runtime: ConversationRuntime,
-  parsed: IncomingMessage,
-  // A dispatch re-checking from inside its own chained callback is itself
-  // counted in pendingInboundDispatches.
-  ownPendingDispatches = 0,
-): boolean {
-  if (!shouldQueueInboundMessage(parsed)) {
-    return false;
-  }
-
-  // A direct dispatch that has not begun its turn still leaves the lifecycle
-  // idle. Routing another input directly would chain it behind that turn and
-  // hold its acknowledgement until the turn finishes.
-  if (
-    runtime.pendingInboundDispatches > ownPendingDispatches ||
-    runtime.queueRuntime.length > 0 ||
-    runtime.queuePumpActive ||
-    runtime.queuePumpScheduled ||
-    runtime.pendingTurns > 0 ||
-    runtime.queuedMessagesByItemId.size > 0 ||
-    runtime.turnLifecycle.kind !== "idle" ||
-    runtime.pendingApprovalResolvers.size > 0 ||
-    runtime.pendingApprovalBatchByToolCallId.size > 0 ||
-    runtime.recoveredApprovalState !== null ||
-    runtime.pendingInterruptedResults !== null ||
-    runtime.pendingInterruptedContext !== null ||
-    (runtime.pendingInterruptedToolCallIds?.length ?? 0) > 0
-  ) {
-    return false;
-  }
-
-  const activeScope = resolveRuntimeScope(runtime.listener, {
-    agent_id: runtime.agentId,
-    conversation_id: runtime.conversationId,
-  });
-  return (
-    getListenerBlockedReason(
-      runtime.turnLifecycle.snapshot(),
-      activeScope
-        ? getPendingControlRequestCount(runtime.listener, activeScope)
-        : 0,
-    ) === null
-  );
-}
-
 export function consumeQueuedTurn(runtime: ConversationRuntime): {
   dequeuedBatch: DequeuedBatch;
   queuedTurn: IncomingMessage;

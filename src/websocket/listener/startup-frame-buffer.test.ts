@@ -233,14 +233,11 @@ describe("startup frame buffering", () => {
     ).resolves.toBe(true);
     await dispatchedRuntime.messageQueue;
 
-    // The first replayed input starts directly; the second arrives while that
-    // dispatch is pending and runs as a queued follow-up.
-    expect(executeTurn).toHaveBeenCalledTimes(1);
-    expect(executeTurn.mock.calls[0]?.[0].messages).toEqual([
+    expect(executeTurn).not.toHaveBeenCalled();
+    expect(
+      executeQueuedTurn.mock.calls.flatMap(([incoming]) => incoming.messages),
+    ).toMatchObject([
       { role: "user", content: "legacy pre-ready" },
-    ]);
-    expect(executeQueuedTurn).toHaveBeenCalledTimes(1);
-    expect(executeQueuedTurn.mock.calls[0]?.[0].messages).toMatchObject([
       { role: "user", content: "v2 pre-ready" },
     ]);
     expect(

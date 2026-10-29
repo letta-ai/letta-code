@@ -130,21 +130,21 @@ afterEach(() => {
   setActiveRuntime(null);
 });
 
-describe("inputs that arrive while a direct dispatch is pending", () => {
-  test("a second input is acknowledged before the pending direct turn begins", async () => {
+describe("inputs that arrive while a queued turn is pending", () => {
+  test("a second input is acknowledged while the first turn is pending", async () => {
     let releaseTurnA!: () => void;
     const turnAGate = new Promise<void>((resolve) => {
       releaseTurnA = resolve;
     });
     let turnAEntered = false;
+    // Hold pre-turn setup while the lifecycle still projects idle.
+    const holdTurnA = async () => {
+      turnAEntered = true;
+      await turnAGate;
+    };
     const { runtime, acks, handleMessage } = setUpRouter({
-      // Turn A has been dispatched but is still in pre-turn setup, so the
-      // lifecycle has not left idle yet.
-      processIncomingMessage: async () => {
-        turnAEntered = true;
-        await turnAGate;
-      },
-      processQueuedTurn: async () => {},
+      processIncomingMessage: holdTurnA,
+      processQueuedTurn: holdTurnA,
     });
 
     await handleMessage(inputFrame("input-a", "turn A"));
@@ -152,7 +152,7 @@ describe("inputs that arrive while a direct dispatch is pending", () => {
     expect(runtime.turnLifecycle.kind).toBe("idle");
 
     await handleMessage(inputFrame("input-b", "turn B"));
-    await Bun.sleep(20);
+    expect(turnAEntered).toBe(true);
 
     try {
       expect(acks).toContainEqual(
@@ -168,7 +168,7 @@ describe("inputs that arrive while a direct dispatch is pending", () => {
     }
   });
 
-  test("the queued input runs as a follow-up after the pending direct turn", async () => {
+  test("the pump runs idle input promptly and then runs its queued follow-up", async () => {
     const order: string[] = [];
     let releaseTurnA!: () => void;
     const turnAGate = new Promise<void>((resolve) => {
@@ -176,9 +176,16 @@ describe("inputs that arrive while a direct dispatch is pending", () => {
     });
     let turnAEntered = false;
     const { runtime, acks, handleMessage } = setUpRouter({
-      processIncomingMessage: async (incoming) => {
+      processIncomingMessage: async () => {
+        throw new Error("content must go through the queue");
+      },
+      processQueuedTurn: async (incoming) => {
+        if (turnAEntered) {
+          order.push(`queued:${contentOf(incoming).join(",")}`);
+          return;
+        }
         turnAEntered = true;
-        order.push(`direct:start:${contentOf(incoming).join(",")}`);
+        order.push(`queued:start:${contentOf(incoming).join(",")}`);
         await turnAGate;
         const lease = runtime.turnLifecycle.begin({
           origin: "message",
@@ -186,10 +193,7 @@ describe("inputs that arrive while a direct dispatch is pending", () => {
         });
         await Bun.sleep(5);
         runtime.turnLifecycle.finish(lease, "end_turn");
-        order.push(`direct:end:${contentOf(incoming).join(",")}`);
-      },
-      processQueuedTurn: async (incoming) => {
-        order.push(`queued:${contentOf(incoming).join(",")}`);
+        order.push(`queued:end:${contentOf(incoming).join(",")}`);
       },
     });
 
@@ -197,21 +201,21 @@ describe("inputs that arrive while a direct dispatch is pending", () => {
     await waitFor(() => turnAEntered);
     await handleMessage(inputFrame("input-b", "turn B"));
     await waitFor(() => acks.some((ack) => ack.request_id === "input-b"));
-    expect(order).toEqual(["direct:start:turn A"]);
+    expect(order).toEqual(["queued:start:turn A"]);
 
     releaseTurnA();
     await waitFor(() => order.length === 3 && !runtime.queuePumpActive);
 
     expect(order).toEqual([
-      "direct:start:turn A",
-      "direct:end:turn A",
+      "queued:start:turn A",
+      "queued:end:turn A",
       "queued:turn B",
     ]);
     expect(acks).toEqual([
       expect.objectContaining({
         request_id: "input-a",
         accepted: true,
-        disposition: "started",
+        disposition: "queued",
       }),
       expect.objectContaining({
         request_id: "input-b",
