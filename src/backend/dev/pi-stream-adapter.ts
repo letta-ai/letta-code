@@ -412,21 +412,9 @@ function anthropicEffortForSettings(
   );
 }
 
-function maxTokensForSettings(
-  modelSettings: Record<string, unknown>,
-): number | undefined {
-  const maxTokens = modelSettings.max_tokens;
-  return typeof maxTokens === "number" && Number.isFinite(maxTokens)
-    ? maxTokens
-    : undefined;
-}
-
-function temperatureForSettings(
-  modelSettings: Record<string, unknown>,
-): number | undefined {
-  const temperature = modelSettings.temperature;
-  return typeof temperature === "number" && Number.isFinite(temperature)
-    ? temperature
+function finiteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
     : undefined;
 }
 
@@ -623,6 +611,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       configuredHeaders: resolved.headers,
       conversationId: input.conversationId,
     });
+    const maxTokens = finiteNumberValue(input.agent.model_settings.max_tokens);
+    const temperature = finiteNumberValue(
+      input.agent.model_settings.temperature,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
@@ -637,12 +629,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         ? { samplingParams: input.agent.model_settings.sampling_params }
         : {}),
       ...(reasoning ? { reasoning } : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
-        ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
-        : {}),
-      ...(temperatureForSettings(input.agent.model_settings) !== undefined
-        ? { temperature: temperatureForSettings(input.agent.model_settings) }
-        : {}),
+      ...(maxTokens ? { maxTokens } : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
         ? {
             serviceTier: serviceTierForSettings(
