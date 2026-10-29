@@ -434,18 +434,15 @@ describe("Startup Flow - Integration", () => {
         await runTurn(firstPrompt);
         const originalHistory =
           await client.conversations.messages.list(conversationId);
-        expect(originalHistory.items.length).toBeGreaterThan(0);
+        expect(
+          originalHistory.items.filter(
+            (message) => message.message_type === "user_message",
+          ).length,
+        ).toBeGreaterThan(0);
         const resumed = await runTurn(secondPrompt, connectionId);
         expect(resumed.output).toMatchObject({
           agent_id: null,
           conversation_id: conversationId,
-        });
-        expect(
-          await client.conversations.retrieve(conversationId),
-        ).toMatchObject({
-          agent_id: null,
-          parent_agent_id: parentId ?? null,
-          system: workerSystem,
         });
         if (connectionId) {
           expect(resumed.output).toMatchObject({
@@ -463,6 +460,18 @@ describe("Startup Flow - Integration", () => {
             },
           );
         }
+        expect(
+          await client.conversations.retrieve(conversationId),
+        ).toMatchObject({
+          agent_id: null,
+          parent_agent_id: parentId ?? null,
+          system: workerSystem,
+          in_context_message_ids: expect.arrayContaining(
+            originalHistory.items
+              .filter((message) => message.message_type === "user_message")
+              .map((message) => message.id),
+          ),
+        });
         // Assert durable history, not whether a model follows competing wording
         // instructions. The second CLI process must append to the same history.
         const history =
