@@ -47,24 +47,11 @@ Recommendation as of 2026-10-29. Video models move fast, so this will go stale; 
 
 ## Writing the prompt
 
-Current models follow long, specific prompts; a one-line idea gets a generic clip. Write it like a director's brief and cover what you care about:
+For a single clip, read [references/cinematography.md](references/cinematography.md).
+For multiple shots or a sequence, read
+[references/storytelling.md](references/storytelling.md).
 
-- **Subject and setting**: who or what, materials, wardrobe, location, era.
-- **Action over time**: for more than one beat, a timestamped shot list that ends on the payoff (`0–3s: … 3–6s: … 11–15s: <final beat>`). Without timing, models tend to drop later beats.
-- **Camera**: framing, angle, movement (slow push-in, crane up, handheld), lens (35mm, 90mm), depth of field.
-- **Light, palette and texture**: time of day, light direction, three or four colors, film grain or clean digital.
-- **Sound**: ambience, music, and quoted dialogue with the speaker named.
-- **On-screen text**: the exact words in quotes, and how they appear.
-- **Exclusions**: what must not appear ("no people or hands in frame", "no UI, no particles").
-- **Mood**: close with a few words on tone ("quiet, restrained, tactile").
-
-Example:
-
-```
-1985 TV beer commercial, 35mm film grain, golden-hour sunset. One continuous slow push-in on a weathered cowboy leaning against a ranch porch rail, his horse tied up behind him. He pulls an ice-cold bottle from a cooler, cracks it open with a hiss, takes a long sip, and turns to camera with a tired grin. Warm amber tones, soft lens flare, slide guitar soundtrack.
-Narrator (deep, gravelly): "Sunup to sundown, he's earned every drop."
-Cowboy (raising the bottle): "Now this is quittin' time."
-```
+A timestamped shot list ending on the payoff helps multi-beat clips.
 
 ## Full workflow (drop-in)
 
