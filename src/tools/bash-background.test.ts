@@ -44,7 +44,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
     }
   });
 
-  test("uses timeout defaults based on foreground or background execution", async () => {
+  test("runs without a timeout unless one is explicitly set", async () => {
     const observedTimeouts: number[] = [];
     __setShellProcessStarterForTests((launcher, options) => {
       observedTimeouts.push(options.timeoutMs);
@@ -60,8 +60,18 @@ describe.skipIf(isWindows)("Bash background tools", () => {
       command: "echo foreground",
       description: "Test foreground timeout default",
     });
+    await bash({
+      command: "echo foreground",
+      description: "Test explicit foreground timeout",
+      timeout: 1_234,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test clamped foreground timeout",
+      timeout: 700_000,
+    });
 
-    expect(observedTimeouts).toEqual([0, 120000]);
+    expect(observedTimeouts).toEqual([0, 0, 1_234, 600_000]);
   });
 
   test("starts background process and returns ID in text", async () => {

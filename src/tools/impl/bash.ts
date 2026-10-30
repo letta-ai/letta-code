@@ -439,7 +439,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     ? timeout !== undefined && timeout > 0
       ? timeout
       : 0
-    : Math.min(Math.max(timeout ?? 120000, 1), 600000);
+    : timeout === undefined
+      ? 0
+      : Math.min(Math.max(timeout, 1), 600000);
   const runningProcess = shellProcessStarter(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
