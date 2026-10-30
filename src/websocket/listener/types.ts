@@ -726,6 +726,8 @@ export type ListenerRuntime = {
   _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
   /** Unsubscribe from background process state (set on socket open, cleared on close). */
   _unsubscribeBackgroundProcessState?: (() => void) | undefined;
+  /** Stop the sandbox disk watcher (set with process services, cleared with them). */
+  _stopDiskSpaceWatch?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {
