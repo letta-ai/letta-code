@@ -15,6 +15,12 @@ export interface RegisterResult {
   wsUrl: string;
   supportsSplitStatusChannels: boolean;
   supportsPairedListenerGenerations: boolean;
+  /**
+   * Optional first-run welcome page the server asks this listener to open
+   * locally. Absent from servers that predate it and from every registration
+   * the server does not consider a first run.
+   */
+  welcomeUrl?: string;
 }
 
 export interface RegisterOptions {
@@ -203,7 +209,19 @@ export async function registerWithCloud(
     supportsSplitStatusChannels: result.supportsSplitStatusChannels === true,
     supportsPairedListenerGenerations:
       result.supportsPairedListenerGenerations === true,
+    ...(isWebUrl(result.welcomeUrl) ? { welcomeUrl: result.welcomeUrl } : {}),
   };
+}
+
+/** Only http(s) URLs are handed to the platform opener. */
+function isWebUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    const { protocol } = new URL(value);
+    return protocol === "https:" || protocol === "http:";
+  } catch {
+    return false;
+  }
 }
 
 const REGISTER_INITIAL_DELAY_MS = 1_000;
