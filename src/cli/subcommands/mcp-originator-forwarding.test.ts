@@ -4,6 +4,10 @@ import {
   clearMcpOriginatorTokens,
   setMcpOriginatorToken,
 } from "@/agent/mcp-originator-tokens";
+import {
+  createMcpSubprocessBroker,
+  createMcpSubprocessBrokerClient,
+} from "@/backend/api/mcp-subprocess-broker";
 import type { UnifiedMcpClient } from "@/backend/api/unified-mcp";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
@@ -146,5 +150,68 @@ describe("MCP originator token forwarding", () => {
     expect(requests).toEqual([
       { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
     ]);
+  });
+
+  test("keeps originator authority in the parent when a shell child calls MCP", async () => {
+    const { deps, requests, runPath } = originatorHarness();
+    const upstreamClient = await deps.getClient?.();
+    if (!upstreamClient) throw new Error("Missing MCP test client");
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    let activeSuperRunId: string | null = "sr-1";
+    const broker = createMcpSubprocessBroker({
+      getScope: () => ({
+        agentId: "agent-cloud",
+        ...(activeSuperRunId
+          ? {
+              originatorToken:
+                activeSuperRunId === "sr-1" ? "mst_one.secret-a" : undefined,
+            }
+          : {}),
+      }),
+      getClient: async () => upstreamClient,
+    });
+
+    try {
+      expect(JSON.stringify(broker.env)).not.toContain("mst_one.secret-a");
+      const childClient = createMcpSubprocessBrokerClient(broker.env);
+      expect(childClient).not.toBeNull();
+      const { getClient: _parentClient, ...childBaseDeps } = deps;
+      const childDeps: McpSubcommandDependencies = {
+        ...childBaseDeps,
+        env: { ...deps.env, ...broker.env },
+      };
+
+      await callAgentMcpTool(
+        "agent-cloud",
+        "mcp__github__create_issue",
+        { title: "First" },
+        childDeps,
+      );
+      activeSuperRunId = null;
+      await callAgentMcpTool(
+        "agent-cloud",
+        "mcp__github__create_issue",
+        { title: "Second" },
+        childDeps,
+      );
+
+      expect(requests).toEqual([
+        {
+          path: runPath,
+          body: { args: { title: "First" } },
+          headers: {
+            "x-letta-mcp-originator-token": "mst_one.secret-a",
+            "x-letta-mcp-originator-isolation": "1",
+          },
+        },
+        {
+          path: runPath,
+          body: { args: { title: "Second" } },
+          headers: undefined,
+        },
+      ]);
+    } finally {
+      broker.close();
+    }
   });
 });
