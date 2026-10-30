@@ -107,6 +107,7 @@ function trySpawnWithLauncher(
       }),
     },
     stdio: ["pipe", "pipe", "pipe"],
+    windowsHide: true,
   });
 }
 

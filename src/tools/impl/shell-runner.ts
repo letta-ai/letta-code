@@ -264,6 +264,7 @@ function spawnPipeProcess(
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
+    windowsHide: true,
   });
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
@@ -309,6 +310,7 @@ function spawnPtyBridgeProcess(
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      windowsHide: true,
     },
   );
 

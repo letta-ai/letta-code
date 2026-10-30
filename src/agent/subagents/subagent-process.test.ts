@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { once } from "node:events";
 import {
   chmodSync,
@@ -29,6 +30,25 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe.skipIf(process.platform === "win32")("subagent process", () => {
+  test("hides the Windows console window for subagent processes", async () => {
+    // A detached listener has no console on Windows, so a child spawned
+    // without windowsHide opens a visible console window that steals focus.
+    const spawnSpy = spyOn(childProcess, "spawn");
+    try {
+      const running = spawnSubagentProcess(
+        process.execPath,
+        ["-e", "process.exit(0)"],
+        { cwd: process.cwd(), env: process.env },
+      );
+      await running.completion;
+
+      expect(spawnSpy).toHaveBeenCalledTimes(1);
+      expect(spawnSpy.mock.calls[0]?.[2]).toMatchObject({ windowsHide: true });
+    } finally {
+      spawnSpy.mockRestore();
+    }
+  });
+
   test("stops the launcher and a descendant that outlives graceful cancellation", async () => {
     const descendantScript = [
       'process.on("SIGINT", () => {});',

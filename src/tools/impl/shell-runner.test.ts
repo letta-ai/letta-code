@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import * as childProcess from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import {
@@ -91,6 +92,31 @@ describe("shared shell process", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  test("hides the Windows console window for pipe-mode processes", async () => {
+    // A detached listener has no console on Windows, so a child spawned
+    // without windowsHide opens a visible console window that steals focus.
+    const spawnSpy = spyOn(childProcess, "spawn");
+    try {
+      const running = startShellProcess(
+        [process.execPath, "-e", 'process.stdout.write("hidden")'],
+        {
+          cwd: process.cwd(),
+          env: process.env,
+          timeoutMs: 0,
+        },
+      );
+      await running.completion;
+
+      // The launcher may be wrapped (e.g. systemd-run), so check every spawn.
+      expect(spawnSpy).toHaveBeenCalled();
+      for (const [, , options] of spawnSpy.mock.calls) {
+        expect(options).toMatchObject({ windowsHide: true });
+      }
+    } finally {
+      spawnSpy.mockRestore();
+    }
   });
 
   test.skipIf(process.platform === "win32")(

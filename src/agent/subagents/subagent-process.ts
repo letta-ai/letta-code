@@ -127,6 +127,7 @@ export function spawnSubagentProcess(
     cwd: options.cwd,
     env: options.env,
     detached: process.platform !== "win32",
+    windowsHide: true,
   }) as ChildProcessWithoutNullStreams;
   let aborted = false;
   let termination: Promise<void> = Promise.resolve();
