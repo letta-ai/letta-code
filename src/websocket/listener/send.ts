@@ -791,6 +791,7 @@ export async function sendApprovalContinuationWithRetry(
 ): Promise<ApprovalContinuationSendResult> {
   const abortSignal = turnLease.signal;
   const allowApprovalRecovery = retryOptions.allowApprovalRecovery ?? true;
+  opts = { ...opts, mcpOriginatorContinuation: true };
   let transientRetries = 0;
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;

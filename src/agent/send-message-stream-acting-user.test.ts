@@ -32,7 +32,8 @@ async function sendWithPreparedContext(
   backend: Backend,
   actingUserId?: string,
   mcpOriginatorSuperRunId?: string,
-  approvalContinuation = false,
+  approvalPayload = false,
+  mcpOriginatorContinuation = false,
 ): Promise<void> {
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     [],
@@ -46,7 +47,7 @@ async function sendWithPreparedContext(
   await sendMessageStreamWithBackend(
     backend,
     "conv-acting-user",
-    approvalContinuation
+    approvalPayload
       ? [
           {
             type: "approval",
@@ -71,6 +72,7 @@ async function sendWithPreparedContext(
       background: true,
       skillSources: [],
       preparedToolContext,
+      mcpOriginatorContinuation,
     },
   );
 }
@@ -86,11 +88,13 @@ describe("sendMessageStream acting-user propagation", () => {
       makeRecordingBackend(recordedHeaders),
       "cloud-user-a",
       "super-run-a",
+      true,
     );
     await sendWithPreparedContext(
       makeRecordingBackend(recordedHeaders),
       "cloud-user-a",
       "super-run-a",
+      true,
       true,
     );
 
@@ -146,6 +150,7 @@ describe("sendMessageStream acting-user propagation", () => {
               skillSources: [],
               preparedToolContext,
               actingUserId: null,
+              mcpOriginatorContinuation: true,
             },
           ),
       );
