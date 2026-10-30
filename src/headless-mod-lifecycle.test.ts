@@ -86,7 +86,7 @@ describe("headless mod adapter", () => {
     );
     const initialToolContextIndex = source.indexOf("const initialToolContext");
     const bidirectionalIndex = source.indexOf(
-      "// If input-format is stream-json, use bidirectional mode",
+      "    await runBidirectionalMode(",
     );
     expect(adapterIndex).toBeGreaterThan(-1);
     expect(initialToolContextIndex).toBeGreaterThan(adapterIndex);
