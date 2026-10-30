@@ -8,6 +8,7 @@
 
 import { getAvailableModelHandles } from "@/agent/available-models";
 import { getCurrentAgentId } from "@/agent/context";
+import { DEFAULT_CREATED_AGENT_BASE_TOOLS } from "@/agent/create-agent-request";
 import { getDefaultModelForTier, resolveModel } from "@/agent/model";
 import { resolveCatalogModel } from "@/agent/model-catalog";
 import { type BackendMode, getBackend } from "@/backend";
@@ -32,6 +33,30 @@ export function getModelHandleFromAgent(agent: {
     return `${endpoint}/${model}`;
   }
   return directModel || model || null;
+}
+
+/**
+ * Server-side base tools for a new API subagent: the defaults its parent also
+ * has attached, so a parent without web access never spawns a child with it.
+ * If the parent cannot be read, the child gets none. Undefined (keep the CLI
+ * default) only when there is no API parent to inherit from.
+ */
+export async function resolveParentBaseTools(
+  backendMode: BackendMode,
+  parentAgentId: string | undefined,
+): Promise<string[] | undefined> {
+  if (backendMode !== "api" || !parentAgentId) return undefined;
+  try {
+    const parent = await getBackend().retrieveAgent(parentAgentId, {
+      include: ["agent.tools"],
+    });
+    const attached = new Set((parent.tools ?? []).map((tool) => tool.name));
+    return DEFAULT_CREATED_AGENT_BASE_TOOLS.filter((name) =>
+      attached.has(name),
+    );
+  } catch {
+    return [];
+  }
 }
 
 export async function getPrimaryAgentModelHandle(
