@@ -34,7 +34,9 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
     include: ["agent.tags"],
   });
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
+  const { GIT_MEMORY_ENABLED_TAG, LETTA_CODE_SUBAGENT_TAG } = await import(
+    "@/agent/agent-tags"
+  );
   const { applyMemfsFlags, isLettaCloud } = await import(
     "@/agent/memory-filesystem"
   );
@@ -44,6 +46,7 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
     // configuration: some creation path skipped memfs setup. Repair it here
     // (tag + prompt + repo clone + legacy tool detach) instead of silently
     // running the agent without memory. Matches headless auto-enable behavior.
+    if (agent.tags?.includes(LETTA_CODE_SUBAGENT_TAG)) return;
     if (!(await isLettaCloud())) {
       debugLog(
         "memfs-sync",

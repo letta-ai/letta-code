@@ -28,7 +28,7 @@ describe("headless MemFS policy", () => {
     });
   });
 
-  test("keeps existing subagent deployments stateful by default", () => {
+  test("keeps resumed subagents stateless without a CLI flag", () => {
     expect(
       resolveHeadlessMemfsPolicy({
         statelessRequested: false,
@@ -37,7 +37,17 @@ describe("headless MemFS policy", () => {
       }),
     ).toEqual({
       isFreshStatelessSubagent: false,
-      isStatelessSession: false,
+      isStatelessSession: true,
     });
+  });
+  test("keeps a tagged resumed subagent stateless without the role environment", () => {
+    expect(
+      resolveHeadlessMemfsPolicy({
+        statelessRequested: false,
+        isSubagentRole: false,
+        newAgentRequested: false,
+        hasSubagentTag: true,
+      }),
+    ).toEqual({ isFreshStatelessSubagent: false, isStatelessSession: true });
   });
 });

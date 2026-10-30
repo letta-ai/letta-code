@@ -10,6 +10,7 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
+import { LETTA_CODE_SUBAGENT_TAG } from "@/agent/agent-tags";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -824,16 +825,13 @@ export async function handleHeadlessCommand(
   const memfsFlag = values.memfs;
   const statelessFlag = values.stateless;
   const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  // Fresh subagents are stateless by role; --stateless only extends that to
-  // an existing --agent/--conversation launch — model, prompt, tools, and
-  // sampling config are unchanged.
   const memfsPolicy = resolveHeadlessMemfsPolicy({
     statelessRequested: Boolean(statelessFlag),
     isSubagentRole,
     newAgentRequested: Boolean(forceNew),
   });
   const { isFreshStatelessSubagent } = memfsPolicy;
-  const isStatelessSession =
+  let isStatelessSession =
     Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
   if (isStatelessSession && backend.capabilities.localMemfs) {
     const { disableLocalBackendMemfsForProcess } = await import(
@@ -1259,6 +1257,12 @@ export async function handleHeadlessCommand(
     console.error("No agent found. Use --new-agent to create a new agent.");
     process.exit(1);
   }
+  isStatelessSession ||= resolveHeadlessMemfsPolicy({
+    statelessRequested: false,
+    isSubagentRole,
+    newAgentRequested: false,
+    hasSubagentTag: agent.tags?.includes(LETTA_CODE_SUBAGENT_TAG),
+  }).isStatelessSession;
   markMilestone("HEADLESS_AGENT_RESOLVED");
   const publicAgentId = isDetached ? null : agent.id;
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
@@ -1306,16 +1310,13 @@ export async function handleHeadlessCommand(
     );
     const memfsEnabled = await hydrateMemfsSettingFromAgent(agent);
     if (!memfsEnabled && (await isLettaCloud())) {
-      // Auto-enable memfs for existing agents that don't have it yet.
-      // Matches interactive mode behavior where memfs defaults to enabled.
+      // Auto-enable MemFS for existing non-stateless agents on Letta Cloud.
       startupMemfsFlag = true;
     }
   }
 
-  // Captured so prompt logic below can await it when needed.
   let memfsBgPromise: Promise<unknown> | undefined;
 
-  // Init secrets cache — runs in parallel with memfs sync below.
   const secretsAgentId = isDetached ? undefined : agent?.id;
   const secretsInitPromise = secretsAgentId
     ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
@@ -1323,7 +1324,6 @@ export async function handleHeadlessCommand(
       )
     : Promise.resolve();
 
-  // Apply MemFS startup policy only to agent-backed sessions.
   if (isStatelessSession || isDetached) {
     // Stateless subagents retain the inherited checkout without enabling their own MemFS.
     settingsManager.setMemfsEnabled(agent.id, false);
