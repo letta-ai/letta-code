@@ -442,6 +442,7 @@ export class LocalStore {
   listAgents(body?: AgentListBody): { items: AgentState[] } {
     this.refreshLoadedAgentRecordsFromStorage();
     const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const name = optionalString(bodyRecord.name);
     const queryText = optionalString(bodyRecord.query_text)?.toLowerCase();
     const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
     const after = optionalString(bodyRecord.after);
@@ -450,6 +451,9 @@ export class LocalStore {
       .filter((agent) => !isHiddenLocalAgentRecord(agent))
       .map((agent) => this.projectAgent(agent));
 
+    if (name) {
+      agents = agents.filter((agent) => agent.name === name);
+    }
     if (tags.length > 0) {
       agents = agents.filter((agent) =>
         tags.every((tag) => agent.tags?.includes(tag)),
@@ -464,15 +468,9 @@ export class LocalStore {
         return haystack.includes(queryText);
       });
     }
-    agents.sort((a, b) => {
-      const aDate =
-        (a as { last_run_completion?: string | null }).last_run_completion ??
-        "";
-      const bDate =
-        (b as { last_run_completion?: string | null }).last_run_completion ??
-        "";
-      return bDate.localeCompare(aDate);
-    });
+    agents.sort((a, b) =>
+      (b.last_run_completion ?? "").localeCompare(a.last_run_completion ?? ""),
+    );
     if (after) {
       const afterIndex = agents.findIndex((agent) => agent.id === after);
       if (afterIndex >= 0) agents = agents.slice(afterIndex + 1);
