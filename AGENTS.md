@@ -775,6 +775,38 @@ Harness manages the worktree lifecycle (not the reflection agent):
 
 ---
 
+## Background Process Lifetime & Observability
+
+The Cloud platform treats running `bash`, `monitor`, `workflow`, and
+`agent_task` entries as sandbox activity and keeps the sandbox awake while they
+exist, so these mechanisms decide liveness even when the UI looks idle:
+
+- **`exec_command`**: no process timeout (`timeoutMs: 0`). `yield_time_ms` and
+  write-stdin limits bound only how long the tool call waits for a response;
+  dev servers, `sleep`, and stdin-waiting commands run indefinitely
+  (`src/tools/impl/exec-command.ts`).
+- **`Bash` (`run_in_background`)**: uses the supplied `timeout` verbatim;
+  `timeout: 0` disables it. Only the foreground path is clamped to 600s
+  (`src/tools/impl/bash.ts`).
+- **`Workflow`**: unbounded once registered — runs as long as its script needs
+  (`src/tools/impl/workflow.ts`).
+- **`CodeMode`**: registers a background process with no `kind`, so the
+  snapshot reports it as `bash` (`src/tools/impl/code-mode.ts`).
+- **`Agent`**: registers a background task (snapshot kind `agent_task`,
+  `src/tools/impl/task.ts`) that stays `running` until completion or stop,
+  including children running on another computer.
+- **`Monitor`**: snapshot kind `monitor` with `source` and `persistent`;
+  long-lived by design (`src/tools/impl/monitor.ts`).
+
+Waiting for user input/approval, an unfired Wake/cron, or an open terminal does
+not count as activity. For observability, `telemetry.trackToolUsage` records
+the tool call's foreground duration, not the background process lifetime —
+compute process age from the live snapshot's `started_at_ms`, and correlate
+with the transcript to recover the original tool (`bash` covers `Bash`,
+`exec_command`, and `CodeMode`).
+
+---
+
 ## Cross-Platform Patterns
 
 ### Windows Symlinks
