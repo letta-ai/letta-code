@@ -2,9 +2,9 @@
  * `letta cron` CLI subcommand.
  *
  * Usage:
- *   letta cron add --prompt <text> --every <interval> [--agent <id>] [--conversation <id>]
- *   letta cron add --prompt <text> --at <time> [--once] [--agent <id>]
- *   letta cron add --prompt <text> --cron <expr> [--agent <id>]
+ *   letta cron add --name <name> --description <text> --prompt <text> --every <interval> [--agent <id>] [--conversation <id>]
+ *   letta cron add --name <name> --description <text> --prompt <text> --at <time> [--once] [--agent <id>]
+ *   letta cron add --name <name> --description <text> --prompt <text> --cron <expr> [--agent <id>]
  *   letta cron list [--agent <id>] [--conversation <id>]
  *   letta cron get <id|name>
  *   letta cron runs --id <id>
@@ -63,9 +63,9 @@ function printUsage(): void {
   console.log(
     `
 Usage:
-  letta cron add --prompt <text> --every <interval> [options]
-  letta cron add --prompt <text> --at <time> [--once] [options]
-  letta cron add --prompt <text> --cron <expr> [options]
+  letta cron add --name <name> --description <text> --prompt <text> --every <interval> [options]
+  letta cron add --name <name> --description <text> --prompt <text> --at <time> [--once] [options]
+  letta cron add --name <name> --description <text> --prompt <text> --cron <expr> [options]
   letta cron list [options]
   letta cron get <id|name>
   letta cron runs --id <id> [--limit <n>]
@@ -73,6 +73,9 @@ Usage:
   letta cron delete --all [--agent <id>]
 
 Add options:
+  --name <name>          Short name for the task, e.g. "dog-walk-reminder"
+                         (required; use it later with get/delete)
+  --description <text>   What the task does (required)
   --prompt <text>        Prompt to send to the agent (required)
   --every <interval>     Recurring interval (e.g. 5m, 2h, 1d)
   --at <time>            Scheduled time (e.g. "in 45m", "3:00pm", or an
