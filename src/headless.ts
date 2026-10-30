@@ -74,6 +74,7 @@ import {
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
+import { tagSubagentConversation } from "./agent/subagents/conversation-tags";
 import {
   type BackendMode,
   type ConversationCreateBody,
@@ -1541,9 +1542,8 @@ export async function handleHeadlessCommand(
     conversationOpenReason = "new";
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
-
-  // Set conversation ID in context for tools (e.g., Skill tool) to access
   setConversationId(conversationId);
+  await tagSubagentConversation(backend, conversationId, isAgentLaunch);
 
   // Only foreground agent sessions belong in the project/global LRU.
   if (!isDetached && shouldPersistSessionState()) {
