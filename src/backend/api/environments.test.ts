@@ -13,6 +13,10 @@ import {
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
+import {
+  createMcpSubprocessBroker,
+  createMcpSubprocessBrokerClient,
+} from "@/backend/api/mcp-subprocess-broker";
 import type { apiRequest } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
@@ -390,3 +394,51 @@ test("environment discovery forwards held originator proof and omits absent proo
     resetMcpOriginatorAuthority();
   }
 });
+
+test("aborts a pending teleport status request through the broker promptly", async () => {
+  const controller = new AbortController();
+  const timeout = spyOn(AbortSignal, "timeout").mockReturnValue(
+    controller.signal,
+  );
+  let finishUpstream!: (value: unknown) => void;
+  const upstream = new Promise((resolve) => {
+    finishUpstream = resolve;
+  });
+  const broker = createMcpSubprocessBroker({
+    agentId: "agent-1",
+    getScope: () => ({ agentId: "agent-1" }),
+    getClient: async () => ({
+      get: async () => {
+        controller.abort();
+        return upstream;
+      },
+      post: async () => ({}),
+    }),
+  });
+  const previous = Object.fromEntries(
+    Object.keys(broker.env).map((key) => [key, process.env[key]]),
+  );
+  Object.assign(process.env, broker.env);
+  try {
+    const started = Date.now();
+    await expect(
+      getTeleportStatus("agent-1", "conv-1", "teleport-1"),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(Date.now() - started).toBeLessThan(1000);
+    const client = createMcpSubprocessBrokerClient(broker.env)!;
+    await expect(
+      client.get("/v1/environments", { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    await expect(
+      client.post("/v1/environments", { signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+  } finally {
+    timeout.mockRestore();
+    finishUpstream({});
+    broker.close();
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}, 2000);

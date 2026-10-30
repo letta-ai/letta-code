@@ -18,8 +18,8 @@ async function environmentRequest<T>(
     const route = url.pathname + url.search;
     return (
       method === "GET"
-        ? await broker.get(route)
-        : await broker.post(route, { body })
+        ? await broker.get(route, { signal: options.signal })
+        : await broker.post(route, { body, signal: options.signal })
     ) as T;
   }
   const context = getRuntimeContext();

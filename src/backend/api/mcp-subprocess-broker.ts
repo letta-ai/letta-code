@@ -450,7 +450,13 @@ async function requestBroker(
   endpoint: string,
   key: string,
   payload: BrokerRequest,
+  signal?: AbortSignal,
 ): Promise<unknown> {
+  if (signal?.aborted) {
+    throw Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+  }
   const body = JSON.stringify(payload);
   const target = await brokerRequestTarget(endpoint);
   return new Promise((resolve, reject) => {
@@ -494,7 +500,20 @@ async function requestBroker(
         response.on("aborted", () => reject(new Error("MCP broker aborted")));
       },
     );
+    const onAbort = () => {
+      const error = Object.assign(new Error("The operation was aborted"), {
+        name: "AbortError",
+      });
+      request.destroy(error);
+      reject(error);
+    };
     request.on("error", reject);
+    request.on("close", () => signal?.removeEventListener("abort", onAbort));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
     request.end(body);
   });
 }
@@ -503,11 +522,12 @@ async function requestBrokerWithStartupRetry(
   endpoint: string,
   key: string,
   payload: BrokerRequest,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
-      return await requestBroker(endpoint, key, payload);
+      return await requestBroker(endpoint, key, payload, signal);
     } catch (error) {
       lastError = error;
       const code =
@@ -524,24 +544,42 @@ async function requestBrokerWithStartupRetry(
 }
 
 /** Return the parent-mediated MCP client available to a shell child. */
-export function createMcpSubprocessBrokerClient(
-  env: NodeJS.ProcessEnv,
-): UnifiedMcpClient | null {
+export function createMcpSubprocessBrokerClient(env: NodeJS.ProcessEnv): {
+  get(path: string, options?: { signal?: AbortSignal }): Promise<unknown>;
+  post(
+    path: string,
+    options?: {
+      body?: unknown;
+      headers?: Record<string, string>;
+      signal?: AbortSignal;
+    },
+  ): Promise<unknown>;
+} | null {
   const endpoint = env[MCP_SUBPROCESS_BROKER_SOCKET_ENV]?.trim();
   const key = env[MCP_SUBPROCESS_BROKER_KEY_ENV]?.trim();
   if (!endpoint || !key) return null;
   return {
-    get: (requestPath) =>
-      requestBrokerWithStartupRetry(endpoint, key, {
-        method: "GET",
-        path: requestPath,
-      }),
+    get: (requestPath, options?: { signal?: AbortSignal }) =>
+      requestBrokerWithStartupRetry(
+        endpoint,
+        key,
+        {
+          method: "GET",
+          path: requestPath,
+        },
+        options?.signal,
+      ),
     post: (requestPath, options) =>
-      requestBrokerWithStartupRetry(endpoint, key, {
-        method: "POST",
-        path: requestPath,
-        ...(options?.body !== undefined ? { body: options.body } : {}),
-      }),
+      requestBrokerWithStartupRetry(
+        endpoint,
+        key,
+        {
+          method: "POST",
+          path: requestPath,
+          ...(options?.body !== undefined ? { body: options.body } : {}),
+        },
+        options?.signal,
+      ),
   };
 }
 
