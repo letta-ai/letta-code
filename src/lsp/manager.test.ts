@@ -26,6 +26,36 @@ afterAll(async () => {
   await lspManager.shutdown();
 });
 
+test("LSP Manager: shutdown clears state when a server fails", async () => {
+  const manager = lspManager as unknown as {
+    servers: Map<string, unknown>;
+    diagnostics: Map<string, unknown>;
+    openDocuments: Map<string, unknown>;
+  };
+  let otherStopped = false;
+  manager.servers.set("failed", {
+    client: {
+      shutdown: async () => {
+        throw new Error("shutdown failed");
+      },
+    },
+  });
+  manager.servers.set("other", {
+    client: {
+      shutdown: async () => {
+        otherStopped = true;
+      },
+    },
+  });
+  manager.diagnostics.set("file", []);
+  manager.openDocuments.set("file", {});
+  await expect(lspManager.shutdown()).rejects.toThrow("shutdown failed");
+  expect(otherStopped).toBe(true);
+  expect(manager.servers.size).toBe(0);
+  expect(manager.diagnostics.size).toBe(0);
+  expect(manager.openDocuments.size).toBe(0);
+});
+
 test("LSP Manager: initializes successfully", () => {
   // Just verify it doesn't throw
   expect(true).toBe(true);
