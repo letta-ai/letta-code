@@ -75,14 +75,22 @@ export interface SubagentOutcome {
   durationMs?: number;
   /** Total tokens consumed by the subagent session (prompt + completion). */
   totalTokens?: number;
+  /**
+   * Server-estimated list-price USD for the session: the sum of each step's
+   * `cost_usd`. Null once any step reported usage without one.
+   */
+  costUsd?: number | null;
 }
 
 /** Live signals a spawner may report while a subagent runs. */
 export interface SubagentSpawnHooks {
   /** Worker ID once the SDK initializes, before the turn completes. */
   onStarted?: (conversationId: string) => void;
-  /** Tokens consumed so far by this subagent (cumulative, per model step). */
-  onUsage?: (totalTokens: number) => void;
+  /**
+   * Usage so far by this subagent (cumulative, per model step). `costUsd` is
+   * null once a step reported usage without a cost estimate.
+   */
+  onUsage?: (totalTokens: number, costUsd?: number | null) => void;
 }
 
 /**
@@ -122,6 +130,11 @@ export interface RunWorkflowOptions {
   maxTotalAgents?: number;
   /** Lifetime decision cap (runaway-loop backstop). Default 1000. */
   maxTotalDecisions?: number;
+  /**
+   * Cost budget in USD. Reaching it, or a subagent step that reports no cost
+   * estimate, stops the run. Omit for no budget.
+   */
+  maxCostUsd?: number;
   /** JSONL file that receives one line per completed subagent call. */
   journalPath?: string;
   /** Abort signal for the whole run. */
@@ -165,6 +178,8 @@ export interface WorkflowExecutionResult {
   agentsSpawned: number;
   /** Sum of subagent and decision API token usage across the run. */
   totalTokens: number;
+  /** Sum of subagent and decision USD cost; null when any usage was unpriced. */
+  totalCostUsd: number | null;
 }
 
 // ── Structural view of the Letta Agent SDK surface the engine touches ──────

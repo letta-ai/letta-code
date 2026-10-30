@@ -30,6 +30,13 @@ export interface WorkflowStatsInput {
   agentsDone: number;
   agentsTotal: number;
   totalTokens: number;
+  /** Run cost in USD, when every step reported one. */
+  totalCostUsd?: number | null;
+}
+
+/** 0.0421 → "$0.0421", 3.5 → "$3.50". */
+export function formatUsd(value: number): string {
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
 }
 
 /**
@@ -53,6 +60,9 @@ export function formatWorkflowSummary(stats: WorkflowStatsInput): string {
   const parts = [formatWorkflowDuration(stats.durationMs), agents];
   if (stats.totalTokens > 0) {
     parts.push(`${formatCompactTokens(stats.totalTokens)} tokens`);
+  }
+  if (typeof stats.totalCostUsd === "number") {
+    parts.push(formatUsd(stats.totalCostUsd));
   }
   return parts.join(" · ");
 }

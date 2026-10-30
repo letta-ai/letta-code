@@ -82,6 +82,7 @@ interface WorkflowArgs {
   scriptPath?: string;
   args?: unknown;
   maxConcurrent?: number;
+  maxCostUsd?: number;
   model?: string;
   allowedTools?: string[];
   wait?: boolean;
@@ -348,6 +349,7 @@ function formatCompletionResult(
       result: jsonSafe(run.result),
       agentsSpawned: run.agentsSpawned,
       totalTokens: run.totalTokens,
+      ...(run.totalCostUsd !== null ? { totalCostUsd: run.totalCostUsd } : {}),
     },
     null,
     2,
@@ -387,6 +389,27 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
   ) {
     return {
       toolReturn: "maxConcurrent must be a positive integer.",
+      status: "error",
+    };
+  }
+
+  if (
+    args.maxCostUsd !== undefined &&
+    (typeof args.maxCostUsd !== "number" ||
+      !Number.isFinite(args.maxCostUsd) ||
+      args.maxCostUsd <= 0)
+  ) {
+    return {
+      toolReturn: "maxCostUsd must be a positive number of US dollars.",
+      status: "error",
+    };
+  }
+  // Only Letta Cloud reports per-step cost; a budget nothing can measure
+  // must not look enforced.
+  if (args.maxCostUsd !== undefined && resolveBackendMode() === "local") {
+    return {
+      toolReturn:
+        "maxCostUsd requires Letta Cloud: the local backend does not report per-step cost.",
       status: "error",
     };
   }
@@ -488,6 +511,9 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
         script,
         args: scriptArgs,
         maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+        ...(args.maxCostUsd !== undefined
+          ? { maxCostUsd: args.maxCostUsd }
+          : {}),
         journalPath,
         ...(args.signal ? { signal: args.signal } : {}),
         ...toolOptions(handle),
@@ -596,6 +622,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
           agentsDone: outcome.run.agentsSpawned,
           agentsTotal: outcome.run.agentsSpawned,
           totalTokens: outcome.run.totalTokens,
+          totalCostUsd: outcome.run.totalCostUsd,
         })}`
       : `Workflow "${meta.description}" failed after ${formatWorkflowDuration(durationMs)}`;
     addToMessageQueue({
@@ -624,6 +651,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
     script,
     args: scriptArgs,
     maxConcurrent: args.maxConcurrent ?? DEFAULT_MAX_CONCURRENT,
+    ...(args.maxCostUsd !== undefined ? { maxCostUsd: args.maxCostUsd } : {}),
     journalPath,
     signal: abortController.signal,
     ...toolOptions(handle),

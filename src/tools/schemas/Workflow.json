@@ -17,6 +17,11 @@
       "minimum": 1,
       "description": "Maximum subagents running at once (default 16). Further agent() calls queue."
     },
+    "maxCostUsd": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Cost budget in US dollars (Letta Cloud only). Reaching it stops the run: new agent()/decide() calls reject and running subagents are interrupted. A subagent step that reports no cost estimate also stops the run. Omit for no budget."
+    },
     "model": {
       "type": "string",
       "description": "Default model handle or alias for subagents (see `letta model list`). Omit to inherit the invoking conversation's model; per-call opts.model overrides this."
