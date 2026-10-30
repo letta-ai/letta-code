@@ -59,10 +59,36 @@ export class LocalIrreducibleContextError extends Error {
   }
 }
 
+export function assertLocalPressureBudget(
+  tokens: number,
+  mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
+): void {
+  if (tokens <= maxMessageTokens) return;
+  const ErrorType =
+    mode === "all"
+      ? LocalIrreducibleContextError
+      : LocalSlidingWindowCompactionPlanningError;
+  throw new ErrorType("Compaction would still exceed the pressure threshold.");
+}
+
+export interface LocalCompactionResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summary: string;
+  stats: LocalCompactionStats;
+}
+
 export function assertLocalCompactionProgress(
   stats: LocalCompactionStats,
   mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
 ): void {
+  assertLocalPressureBudget(
+    stats.context_tokens_after ?? 0,
+    mode,
+    maxMessageTokens,
+  );
   const hasProgress =
     (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
       (stats.messages_count_before ?? 0) ||
