@@ -155,10 +155,12 @@ function encodeResponseStateHeader(
 function isApprovalContinuationRequest(
   messages: Array<MessageCreate | ApprovalCreate>,
 ): boolean {
-  if (messages.length !== 1) {
-    return false;
-  }
+  return messages.length === 1 && startsWithApprovalContinuation(messages);
+}
 
+function startsWithApprovalContinuation(
+  messages: Array<MessageCreate | ApprovalCreate>,
+): boolean {
   const [message] = messages;
   return (
     Boolean(message) &&
@@ -484,6 +486,8 @@ export async function sendMessageStreamWithBackend(
   ];
   const isApprovalContinuation =
     isApprovalContinuationRequest(normalizedMessages);
+  const isClientToolContinuation =
+    startsWithApprovalContinuation(normalizedMessages);
   // Only reuse cached response state when the approval continuation was fully
   // auto-handled by the client. If a human reviewed any approval, the pause can
   // allow visible agent/conversation state to change, so use the full server path.
@@ -571,13 +575,15 @@ export async function sendMessageStreamWithBackend(
   // listener's API key as the human who started it. The bearer remains
   // process-local: it is never copied into message bodies, tool arguments, or
   // transcripts, and headerless turns keep their existing behavior.
+  // Initial user sends can carry the same runtime context but are not
+  // continuations, so they must not present continuation-only proof.
   // A prepared tool context is an authority boundary. Its explicit null must
   // not fall back to an outer AsyncLocalStorage turn's originator.
   const originatorSuperRunId = executionRuntimeContext
     ? executionRuntimeContext.mcpOriginatorSuperRunId
     : getRuntimeContext()?.mcpOriginatorSuperRunId;
   const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
-  if (originatorToken && originatorSuperRunId) {
+  if (isClientToolContinuation && originatorToken && originatorSuperRunId) {
     extraHeaders[MCP_ORIGINATOR_TOKEN_HEADER] = originatorToken;
     extraHeaders[MCP_ORIGINATOR_ISOLATION_HEADER] = "1";
     extraHeaders[MCP_ORIGINATOR_SUPER_RUN_HEADER] = originatorSuperRunId;

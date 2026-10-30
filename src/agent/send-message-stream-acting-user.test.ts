@@ -32,6 +32,7 @@ async function sendWithPreparedContext(
   backend: Backend,
   actingUserId?: string,
   mcpOriginatorSuperRunId?: string,
+  approvalContinuation = false,
 ): Promise<void> {
   const preparedToolContext = await prepareToolExecutionContextForSpecificTools(
     [],
@@ -45,7 +46,26 @@ async function sendWithPreparedContext(
   await sendMessageStreamWithBackend(
     backend,
     "conv-acting-user",
-    [{ role: "user", content: "Investigate." }],
+    approvalContinuation
+      ? [
+          {
+            type: "approval",
+            approvals: [
+              {
+                type: "tool",
+                tool_call_id: "call-client-tool",
+                status: "success",
+                tool_return: "done",
+              },
+            ],
+          },
+          {
+            type: "message",
+            role: "user",
+            content: "Queued steering input.",
+          },
+        ]
+      : [{ role: "user", content: "Investigate." }],
     {
       streamTokens: true,
       background: true,
@@ -58,7 +78,7 @@ async function sendWithPreparedContext(
 describe("sendMessageStream acting-user propagation", () => {
   afterEach(() => clearMcpOriginatorTokens());
 
-  test("uses the acting user and originator captured in the turn tool context", async () => {
+  test("forwards originator proof only for approval continuations", async () => {
     const recordedHeaders: Array<Record<string, string>> = [];
     setMcpOriginatorToken("super-run-a", "originator-token-a");
 
@@ -67,8 +87,17 @@ describe("sendMessageStream acting-user propagation", () => {
       "cloud-user-a",
       "super-run-a",
     );
+    await sendWithPreparedContext(
+      makeRecordingBackend(recordedHeaders),
+      "cloud-user-a",
+      "super-run-a",
+      true,
+    );
 
     expect(recordedHeaders).toEqual([
+      {
+        [ACTING_USER_ID_HEADER]: "cloud-user-a",
+      },
       expect.objectContaining({
         [ACTING_USER_ID_HEADER]: "cloud-user-a",
         "x-letta-mcp-originator-token": "originator-token-a",
@@ -98,7 +127,19 @@ describe("sendMessageStream acting-user propagation", () => {
           sendMessageStreamWithBackend(
             makeRecordingBackend(recordedHeaders),
             "conv-acting-user",
-            [{ role: "user", content: "Unattributed system input." }],
+            [
+              {
+                type: "approval",
+                approvals: [
+                  {
+                    type: "tool",
+                    tool_call_id: "call-client-tool",
+                    status: "success",
+                    tool_return: "done",
+                  },
+                ],
+              },
+            ],
             {
               streamTokens: true,
               background: true,
@@ -120,6 +161,9 @@ describe("sendMessageStream acting-user propagation", () => {
     expect(recordedHeaders[0]?.[ACTING_USER_ID_HEADER]).toBeUndefined();
     expect(
       recordedHeaders[0]?.["x-letta-mcp-originator-token"],
+    ).toBeUndefined();
+    expect(
+      recordedHeaders[0]?.["x-letta-mcp-originator-isolation"],
     ).toBeUndefined();
     expect(
       recordedHeaders[0]?.["x-letta-mcp-originator-super-run-id"],
