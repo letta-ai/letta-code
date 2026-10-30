@@ -386,109 +386,109 @@ Most MCP servers require authentication to access external services. Pass creden
 
 Use the `env` field to pass API keys, tokens, and other credentials to the MCP server:
 
-**In code**
+> [tab] In code
+>
+> ```typescript TypeScript hidelines={1,-1} theme={null}
+> const _ = {
+>   options: {
+>     mcpServers: {
+>       "api-server": {
+>         command: "npx",
+>         args: ["-y", "@your-org/api-mcp-server"],
+>         env: {
+>           API_KEY: process.env.API_KEY
+>         }
+>       }
+>     },
+>     allowedTools: ["mcp__api-server__*"]
+>   }
+> };
+> ```
+>
+> ```python Python theme={null}
+> options = ClaudeAgentOptions(
+>     mcp_servers={
+>         "api-server": {
+>             "command": "npx",
+>             "args": ["-y", "@your-org/api-mcp-server"],
+>             "env": {"API_KEY": os.environ["API_KEY"]},
+>         }
+>     },
+>     allowed_tools=["mcp__api-server__*"],
+> )
+> ```
 
-```typescript TypeScript hidelines={1,-1} theme={null}
-const _ = {
-  options: {
-    mcpServers: {
-      "api-server": {
-        command: "npx",
-        args: ["-y", "@your-org/api-mcp-server"],
-        env: {
-          API_KEY: process.env.API_KEY
-        }
-      }
-    },
-    allowedTools: ["mcp__api-server__*"]
-  }
-};
-```
-
-```python Python theme={null}
-options = ClaudeAgentOptions(
-    mcp_servers={
-        "api-server": {
-            "command": "npx",
-            "args": ["-y", "@your-org/api-mcp-server"],
-            "env": {"API_KEY": os.environ["API_KEY"]},
-        }
-    },
-    allowed_tools=["mcp__api-server__*"],
-)
-```
-
-**.mcp.json**
-
-```json theme={null}
-{
-  "mcpServers": {
-    "api-server": {
-      "command": "npx",
-      "args": ["-y", "@your-org/api-mcp-server"],
-      "env": {
-        "API_KEY": "${API_KEY}"
-      }
-    }
-  }
-}
-```
-
-The `${API_KEY}` syntax expands environment variables at runtime.
+> [tab] .mcp.json
+>
+> ```json theme={null}
+> {
+>   "mcpServers": {
+>     "api-server": {
+>       "command": "npx",
+>       "args": ["-y", "@your-org/api-mcp-server"],
+>       "env": {
+>         "API_KEY": "${API_KEY}"
+>       }
+>     }
+>   }
+> }
+> ```
+>
+> The `${API_KEY}` syntax expands environment variables at runtime.
 
 ### HTTP headers for remote servers
 
 For HTTP and SSE servers, pass authentication headers directly in the server configuration:
 
-**In code**
+> [tab] In code
+>
+> ```typescript TypeScript hidelines={1,-1} theme={null}
+> const _ = {
+>   options: {
+>     mcpServers: {
+>       "secure-api": {
+>         type: "http",
+>         url: "https://api.example.com/mcp",
+>         headers: {
+>           Authorization: `Bearer ${process.env.API_TOKEN}`
+>         }
+>       }
+>     },
+>     allowedTools: ["mcp__secure-api__*"]
+>   }
+> };
+> ```
+>
+> ```python Python theme={null}
+> options = ClaudeAgentOptions(
+>     mcp_servers={
+>         "secure-api": {
+>             "type": "http",
+>             "url": "https://api.example.com/mcp",
+>             "headers": {"Authorization": f"Bearer {os.environ['API_TOKEN']}"},
+>         }
+>     },
+>     allowed_tools=["mcp__secure-api__*"],
+> )
+> ```
 
-```typescript TypeScript hidelines={1,-1} theme={null}
-const _ = {
-  options: {
-    mcpServers: {
-      "secure-api": {
-        type: "http",
-        url: "https://api.example.com/mcp",
-        headers: {
-          Authorization: `Bearer ${process.env.API_TOKEN}`
-        }
-      }
-    },
-    allowedTools: ["mcp__secure-api__*"]
-  }
-};
-```
-
-```python Python theme={null}
-options = ClaudeAgentOptions(
-    mcp_servers={
-        "secure-api": {
-            "type": "http",
-            "url": "https://api.example.com/mcp",
-            "headers": {"Authorization": f"Bearer {os.environ['API_TOKEN']}"},
-        }
-    },
-    allowed_tools=["mcp__secure-api__*"],
-)
-```
-
-**.mcp.json**
-
-```json theme={null}
-{
-  "mcpServers": {
-    "secure-api": {
-      "type": "http",
-      "url": "https://api.example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer ${API_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-The `${API_TOKEN}` syntax expands environment variables at runtime.
+> [tab] .mcp.json
+>
+> ```json theme={null}
+> {
+>   "mcpServers": {
+>     "secure-api": {
+>       "type": "http",
+>       "url": "https://api.example.com/mcp",
+>       "headers": {
+>         "Authorization": "Bearer ${API_TOKEN}"
+>       }
+>     }
+>   }
+> }
+> ```
+>
+> The `${API_TOKEN}` syntax expands environment variables at runtime.
 
 For a complete working example of a remote server authenticated with headers, see [List issues from a repository](#list-issues-from-a-repository).
 

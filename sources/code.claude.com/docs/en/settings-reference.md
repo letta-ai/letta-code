@@ -3865,7 +3865,7 @@ Allow [channels](https://code.claude.com/docs/en/channels.md) for your organizat
 * **Type**: Boolean
   * `true`: Claude Code allows channels for your organization
   * `false`: the same as unset; whether channels are blocked depends on your plan, as the Default says
-* **Default**: unset; channels are blocked on Team and Enterprise plans and on Console accounts with managed settings, and allowed on Pro and Max plans and on Console accounts without managed settings
+* **Default**: unset; channels are blocked on Team and Enterprise plans and on Console accounts with managed settings, and allowed on Pro, Max, and Ultra plans and on Console accounts without managed settings
 
 ```json managed-settings.json theme={null}
 {

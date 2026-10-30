@@ -585,17 +585,17 @@ Run the script from the same directory as your utility file.
 >
 > Open your utility file (`utils.py` or `utils.ts`) in your IDE or editor before running the script. You'll see the file update in real-time as the agent adds doc comments, then revert back to the original when you choose to rewind.
 
-**Python**
+> [tab] Python
+>
+> ```bash theme={null}
+> python try_checkpointing.py
+> ```
 
-```bash theme={null}
-python try_checkpointing.py
-```
-
-**TypeScript**
-
-```bash theme={null}
-npx tsx try_checkpointing.ts
-```
+> [tab] TypeScript
+>
+> ```bash theme={null}
+> npx tsx try_checkpointing.ts
+> ```
 
 You'll see the agent add doc comments, then a prompt asking if you want to rewind. If you choose yes, the file is restored to its original state.
 

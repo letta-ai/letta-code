@@ -163,7 +163,7 @@ Checkpoints are separate from git and remain available when you resume a convers
 
 Choose a permission mode to set what Claude can do without asking you. Press `Shift+Tab` to cycle through the permission modes:
 
-* **Auto**: a classifier reviews most actions in the background and blocks the risky ones instead of asking you. With Claude Code v2.1.283 or later, it's the [built-in starting permission mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for interactive terminal and VS Code sessions, and on earlier versions only on Pro, Max, and Team plans
+* **Auto**: a classifier reviews most actions in the background and blocks the risky ones instead of asking you. With Claude Code v2.1.283 or later, it's the [built-in starting permission mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for interactive terminal and VS Code sessions. On earlier versions, it's the built-in starting permission mode only on Pro, Max, Ultra, and Team plans.
 * **Manual**: Claude asks before file edits and shell commands
 * **Accept edits**: Claude edits files and runs common filesystem commands like `mkdir` and `mv` without asking, still asks for other commands
 * **Plan**: Claude explores and proposes a plan without editing your source files
@@ -223,10 +223,10 @@ You don't need to specify which files to read or what commands to run. Claude fi
 
 ## What's next
 
-> **[Extend with features](https://code.claude.com/docs/en/features-overview.md)**
+> [card] [Extend with features](https://code.claude.com/docs/en/features-overview.md)
 >
 > Add skills and MCP connections
 
-> **[Common workflows](https://code.claude.com/docs/en/common-workflows.md)**
+> [card] [Common workflows](https://code.claude.com/docs/en/common-workflows.md)
 >
 > Step-by-step guides for typical tasks

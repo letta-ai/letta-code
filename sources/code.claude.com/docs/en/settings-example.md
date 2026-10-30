@@ -20,75 +20,75 @@ Each example has two tabs. **Copyable settings file** is the file as you'd save 
 
 One developer's personal settings. It picks a model and effort, adjusts the terminal, and pre-approves a read-only command and one file read. Everything not listed keeps its default. A file like this goes in `~/.claude/settings.json`, where it applies to every project you open.
 
-**Copyable settings file**
+> [tab] Copyable settings file
+>
+> Save this as `~/.claude/settings.json`. It's valid JSON with no comments, so you can paste it as is and delete the keys you don't want.
+>
+> ```json ~/.claude/settings.json theme={null}
+> {
+>   "model": "claude-sonnet-5",
+>   "modelSettings": {
+>     "claude-sonnet-5": { "effortLevel": "xhigh" }
+>   },
+>   "editorMode": "vim",
+>   "theme": "light-daltonized",
+>   "statusLine": {
+>     "type": "command",
+>     "command": "jq -r '\"[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context\"'",
+>     "padding": 2
+>   },
+>   "spinnerTipsEnabled": false,
+>   "preferredNotifChannel": "terminal_bell",
+>   "permissions": {
+>     "allow": [
+>       "Bash(git diff *)",
+>       "Read(~/.zshrc)"
+>     ]
+>   },
+>   "autoUpdatesChannel": "stable",
+>   "cleanupPeriodDays": 20
+> }
+> ```
 
-Save this as `~/.claude/settings.json`. It's valid JSON with no comments, so you can paste it as is and delete the keys you don't want.
-
-```json ~/.claude/settings.json theme={null}
-{
-  "model": "claude-sonnet-5",
-  "modelSettings": {
-    "claude-sonnet-5": { "effortLevel": "xhigh" }
-  },
-  "editorMode": "vim",
-  "theme": "light-daltonized",
-  "statusLine": {
-    "type": "command",
-    "command": "jq -r '\"[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context\"'",
-    "padding": 2
-  },
-  "spinnerTipsEnabled": false,
-  "preferredNotifChannel": "terminal_bell",
-  "permissions": {
-    "allow": [
-      "Bash(git diff *)",
-      "Read(~/.zshrc)"
-    ]
-  },
-  "autoUpdatesChannel": "stable",
-  "cleanupPeriodDays": 20
-}
-```
-
-**What each key does**
-
-The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
-
-```jsonc ~/.claude/settings.json theme={null}
-{
-  // Start every session on Sonnet 5
-  "model": "claude-sonnet-5",
-  // Run Sonnet 5 above its default high level; /effort saves a level per model, and --effort sets one for a single session
-  "modelSettings": {
-    "claude-sonnet-5": { "effortLevel": "xhigh" }
-  },
-  // Vim keybindings in the prompt
-  "editorMode": "vim",
-  // The colorblind-friendly light theme
-  "theme": "light-daltonized",
-  // A status line below the prompt: model name and context used
-  "statusLine": {
-    "type": "command",
-    "command": "jq -r '\"[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context\"'",
-    "padding": 2
-  },
-  // Hide the tips that rotate under the spinner
-  "spinnerTipsEnabled": false,
-  // Ring the terminal bell for notifications, such as a finished task or a waiting permission prompt
-  "preferredNotifChannel": "terminal_bell",
-  // Let Claude Code run git diff and read your .zshrc without asking
-  "permissions": {
-    "allow": [
-      "Bash(git diff *)",
-      "Read(~/.zshrc)"
-    ]
-  },
-  // Take updates from the stable channel
-  "autoUpdatesChannel": "stable",
-  // Delete session transcripts and other local session data older than 20 days
-  "cleanupPeriodDays": 20
-}
-```
+> [tab] What each key does
+>
+> The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
+>
+> ```jsonc ~/.claude/settings.json theme={null}
+> {
+>   // Start every session on Sonnet 5
+>   "model": "claude-sonnet-5",
+>   // Run Sonnet 5 above its default high level; /effort saves a level per model, and --effort sets one for a single session
+>   "modelSettings": {
+>     "claude-sonnet-5": { "effortLevel": "xhigh" }
+>   },
+>   // Vim keybindings in the prompt
+>   "editorMode": "vim",
+>   // The colorblind-friendly light theme
+>   "theme": "light-daltonized",
+>   // A status line below the prompt: model name and context used
+>   "statusLine": {
+>     "type": "command",
+>     "command": "jq -r '\"[\\(.model.display_name)] \\(.context_window.used_percentage // 0)% context\"'",
+>     "padding": 2
+>   },
+>   // Hide the tips that rotate under the spinner
+>   "spinnerTipsEnabled": false,
+>   // Ring the terminal bell for notifications, such as a finished task or a waiting permission prompt
+>   "preferredNotifChannel": "terminal_bell",
+>   // Let Claude Code run git diff and read your .zshrc without asking
+>   "permissions": {
+>     "allow": [
+>       "Bash(git diff *)",
+>       "Read(~/.zshrc)"
+>     ]
+>   },
+>   // Take updates from the stable channel
+>   "autoUpdatesChannel": "stable",
+>   // Delete session transcripts and other local session data older than 20 days
+>   "cleanupPeriodDays": 20
+> }
+> ```
 
 ## A team's shared settings
 
@@ -100,135 +100,135 @@ One team's shared settings, committed to the repository so everyone who clones i
 * **The hook is a script in the repo.** This file's hook runs `.claude/hooks/block-rm.sh`; [How a hook resolves](https://code.claude.com/docs/en/hooks.md#how-a-hook-resolves) walks through writing it.
 * **Rules match the command and path as written.** `Bash(git push *)` doesn't match [`git -C . push`](https://code.claude.com/docs/en/permissions#bash-rule-limits). `Read(./.env)` on its own stops the file tools and commands that name the file, such as `cat .env`, but not [`grep -r` run over the directory](https://code.claude.com/docs/en/permissions#read-and-edit); the `sandbox` block in this file closes that gap, because the sandbox [adds your `Read` deny paths](https://code.claude.com/docs/en/settings-reference#sandbox-filesystem-denyread) to what every sandboxed command can't read.
 
-**Copyable settings file**
+> [tab] Copyable settings file
+>
+> Save this as `.claude/settings.json` at the top of the repository and commit it. It's valid JSON with no comments, so you can paste it as is and delete the keys you don't want.
+>
+> ```json .claude/settings.json theme={null}
+> {
+>   "permissions": {
+>     "allow": [
+>       "Bash(npm run *)"
+>     ],
+>     "ask": [
+>       "Bash(git push *)"
+>     ],
+>     "deny": [
+>       "Read(./.env)",
+>       "Read(./.env.*)",
+>       "Read(./secrets/**)"
+>     ]
+>   },
+>   "hooks": {
+>     "PreToolUse": [
+>       {
+>         "matcher": "Bash",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh"
+>           }
+>         ]
+>       }
+>     ]
+>   },
+>   "extraKnownMarketplaces": {
+>     "acme-tools": {
+>       "source": {
+>         "source": "github",
+>         "repo": "acme-corp/claude-plugins"
+>       }
+>     }
+>   },
+>   "enabledPlugins": {
+>     "code-formatter@acme-tools": true
+>   },
+>   "sandbox": {
+>     "enabled": true,
+>     "filesystem": {
+>       "allowWrite": [
+>         "/tmp/build"
+>       ]
+>     },
+>     "network": {
+>       "allowedDomains": [
+>         "registry.npmjs.org",
+>         "*.example.com"
+>       ]
+>     }
+>   },
+>   "plansDirectory": "./plans"
+> }
+> ```
 
-Save this as `.claude/settings.json` at the top of the repository and commit it. It's valid JSON with no comments, so you can paste it as is and delete the keys you don't want.
-
-```json .claude/settings.json theme={null}
-{
-  "permissions": {
-    "allow": [
-      "Bash(npm run *)"
-    ],
-    "ask": [
-      "Bash(git push *)"
-    ],
-    "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)",
-      "Read(./secrets/**)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh"
-          }
-        ]
-      }
-    ]
-  },
-  "extraKnownMarketplaces": {
-    "acme-tools": {
-      "source": {
-        "source": "github",
-        "repo": "acme-corp/claude-plugins"
-      }
-    }
-  },
-  "enabledPlugins": {
-    "code-formatter@acme-tools": true
-  },
-  "sandbox": {
-    "enabled": true,
-    "filesystem": {
-      "allowWrite": [
-        "/tmp/build"
-      ]
-    },
-    "network": {
-      "allowedDomains": [
-        "registry.npmjs.org",
-        "*.example.com"
-      ]
-    }
-  },
-  "plansDirectory": "./plans"
-}
-```
-
-**What each key does**
-
-The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
-
-```jsonc .claude/settings.json theme={null}
-{
-  "permissions": {
-    // Run npm scripts without asking
-    "allow": [
-      "Bash(npm run *)"
-    ],
-    // Confirm before git push commands
-    "ask": [
-      "Bash(git push *)"
-    ],
-    // Deny reads of env files and the secrets folder by the file tools and file-reading commands
-    "deny": [
-      "Read(./.env)",
-      "Read(./.env.*)",
-      "Read(./secrets/**)"
-    ]
-  },
-  // Before every Bash command, run a script in the repo that can block it
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh"
-          }
-        ]
-      }
-    ]
-  },
-  // Register the team's plugin marketplace on every clone
-  "extraKnownMarketplaces": {
-    "acme-tools": {
-      "source": {
-        "source": "github",
-        "repo": "acme-corp/claude-plugins"
-      }
-    }
-  },
-  // Enable one plugin from that marketplace; a plugin from an external source such as a GitHub repository still needs each person to install it once
-  "enabledPlugins": {
-    "code-formatter@acme-tools": true
-  },
-  // Sandbox commands: writable build dir; npm and example.com pre-allowed
-  "sandbox": {
-    "enabled": true,
-    "filesystem": {
-      "allowWrite": [
-        "/tmp/build"
-      ]
-    },
-    "network": {
-      "allowedDomains": [
-        "registry.npmjs.org",
-        "*.example.com"
-      ]
-    }
-  },
-  // Keep plan files inside the repo
-  "plansDirectory": "./plans"
-}
-```
+> [tab] What each key does
+>
+> The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
+>
+> ```jsonc .claude/settings.json theme={null}
+> {
+>   "permissions": {
+>     // Run npm scripts without asking
+>     "allow": [
+>       "Bash(npm run *)"
+>     ],
+>     // Confirm before git push commands
+>     "ask": [
+>       "Bash(git push *)"
+>     ],
+>     // Deny reads of env files and the secrets folder by the file tools and file-reading commands
+>     "deny": [
+>       "Read(./.env)",
+>       "Read(./.env.*)",
+>       "Read(./secrets/**)"
+>     ]
+>   },
+>   // Before every Bash command, run a script in the repo that can block it
+>   "hooks": {
+>     "PreToolUse": [
+>       {
+>         "matcher": "Bash",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh"
+>           }
+>         ]
+>       }
+>     ]
+>   },
+>   // Register the team's plugin marketplace on every clone
+>   "extraKnownMarketplaces": {
+>     "acme-tools": {
+>       "source": {
+>         "source": "github",
+>         "repo": "acme-corp/claude-plugins"
+>       }
+>     }
+>   },
+>   // Enable one plugin from that marketplace; a plugin from an external source such as a GitHub repository still needs each person to install it once
+>   "enabledPlugins": {
+>     "code-formatter@acme-tools": true
+>   },
+>   // Sandbox commands: writable build dir; npm and example.com pre-allowed
+>   "sandbox": {
+>     "enabled": true,
+>     "filesystem": {
+>       "allowWrite": [
+>         "/tmp/build"
+>       ]
+>     },
+>     "network": {
+>       "allowedDomains": [
+>         "registry.npmjs.org",
+>         "*.example.com"
+>       ]
+>     }
+>   },
+>   // Keep plan files inside the repo
+>   "plansDirectory": "./plans"
+> }
+> ```
 
 ## An organization's managed settings
 
@@ -247,130 +247,130 @@ A `managed-settings.json` file that shows the shape of the managed keys, with on
 
 Administrators deploy a file like this as `managed-settings.json`, or the same JSON through MDM or [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md). One deployed file applies to every machine or account it reaches. To give a group different values, deploy a different file or profile to that group, since [server-managed settings don't support per-group policy yet](https://code.claude.com/docs/en/server-managed-settings.md#current-limitations).
 
-**Copyable settings file**
+> [tab] Copyable settings file
+>
+> Deploy this as `managed-settings.json`, or the same JSON through MDM or the claude.ai console. It's valid JSON with no comments; replace the example organization UUID, server URL, and marketplace with your own and delete the keys you don't want.
+>
+> ```json managed-settings.json theme={null}
+> {
+>   "forceLoginMethod": "claudeai",
+>   "forceLoginOrgUUID": [
+>     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+>   ],
+>   "availableModels": [
+>     "opus",
+>     "sonnet"
+>   ],
+>   "enforceAvailableModels": true,
+>   "permissions": {
+>     "deny": [
+>       "Bash(curl *)",
+>       "Read(./.env)",
+>       "Read(./secrets/**)"
+>     ],
+>     "disableBypassPermissionsMode": "disable"
+>   },
+>   "allowManagedPermissionRulesOnly": true,
+>   "allowedMcpServers": [
+>     {
+>       "serverUrl": "https://api.githubcopilot.com/*"
+>     }
+>   ],
+>   "allowManagedMcpServersOnly": true,
+>   "strictKnownMarketplaces": [
+>     {
+>       "source": "github",
+>       "repo": "acme-corp/approved-plugins"
+>     }
+>   ],
+>   "sandbox": {
+>     "enabled": true,
+>     "failIfUnavailable": true,
+>     "allowUnsandboxedCommands": false,
+>     "network": {
+>       "allowedDomains": [
+>         "registry.npmjs.org",
+>         "github.com"
+>       ],
+>       "allowManagedDomainsOnly": true
+>     }
+>   },
+>   "requiredMinimumVersion": "2.1.150",
+>   "cleanupPeriodDays": 7,
+>   "companyAnnouncements": [
+>     "Welcome to Acme Corp! Review our code guidelines at docs.example.com"
+>   ]
+> }
+> ```
 
-Deploy this as `managed-settings.json`, or the same JSON through MDM or the claude.ai console. It's valid JSON with no comments; replace the example organization UUID, server URL, and marketplace with your own and delete the keys you don't want.
-
-```json managed-settings.json theme={null}
-{
-  "forceLoginMethod": "claudeai",
-  "forceLoginOrgUUID": [
-    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  ],
-  "availableModels": [
-    "opus",
-    "sonnet"
-  ],
-  "enforceAvailableModels": true,
-  "permissions": {
-    "deny": [
-      "Bash(curl *)",
-      "Read(./.env)",
-      "Read(./secrets/**)"
-    ],
-    "disableBypassPermissionsMode": "disable"
-  },
-  "allowManagedPermissionRulesOnly": true,
-  "allowedMcpServers": [
-    {
-      "serverUrl": "https://api.githubcopilot.com/*"
-    }
-  ],
-  "allowManagedMcpServersOnly": true,
-  "strictKnownMarketplaces": [
-    {
-      "source": "github",
-      "repo": "acme-corp/approved-plugins"
-    }
-  ],
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "allowUnsandboxedCommands": false,
-    "network": {
-      "allowedDomains": [
-        "registry.npmjs.org",
-        "github.com"
-      ],
-      "allowManagedDomainsOnly": true
-    }
-  },
-  "requiredMinimumVersion": "2.1.150",
-  "cleanupPeriodDays": 7,
-  "companyAnnouncements": [
-    "Welcome to Acme Corp! Review our code guidelines at docs.example.com"
-  ]
-}
-```
-
-**What each key does**
-
-The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
-
-```jsonc managed-settings.json theme={null}
-{
-  // Only claude.ai logins, and only in this organization
-  "forceLoginMethod": "claudeai",
-  "forceLoginOrgUUID": [
-    "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-  ],
-  // Only Opus and Sonnet models; with enforceAvailableModels, the Default option obeys the list too
-  "availableModels": [
-    "opus",
-    "sonnet"
-  ],
-  "enforceAvailableModels": true,
-  "permissions": {
-    // Deny curl commands and reads of the project's .env file and secrets folder on every machine
-    "deny": [
-      "Bash(curl *)",
-      "Read(./.env)",
-      "Read(./secrets/**)"
-    ],
-    // Remove the bypass-permissions mode from every session
-    "disableBypassPermissionsMode": "disable"
-  },
-  // Ignore permission rules from user, project, and local settings
-  "allowManagedPermissionRulesOnly": true,
-  // Only the GitHub MCP server, matched by URL rather than by name, since a user can
-  // name any server "github". User-added servers that don't match don't load, including
-  // every stdio server when the list has only URL entries. The allowManagedMcpServersOnly
-  // key below makes this managed list the only allowlist that applies
-  "allowedMcpServers": [
-    {
-      "serverUrl": "https://api.githubcopilot.com/*"
-    }
-  ],
-  "allowManagedMcpServersOnly": true,
-  // Plugins can come only from this marketplace
-  "strictKnownMarketplaces": [
-    {
-      "source": "github",
-      "repo": "acme-corp/approved-plugins"
-    }
-  ],
-  // Sandbox every command Claude runs, refuse to start if the sandbox can't be
-  // set up, and never let a blocked command retry outside the sandbox; network
-  // limited to npm and GitHub, and users can't add domains
-  "sandbox": {
-    "enabled": true,
-    "failIfUnavailable": true,
-    "allowUnsandboxedCommands": false,
-    "network": {
-      "allowedDomains": [
-        "registry.npmjs.org",
-        "github.com"
-      ],
-      "allowManagedDomainsOnly": true
-    }
-  },
-  // Refuse to start on versions older than 2.1.150
-  "requiredMinimumVersion": "2.1.150",
-  // Delete session transcripts and other local session data after 7 days
-  "cleanupPeriodDays": 7,
-  // A message every user sees at startup
-  "companyAnnouncements": [
-    "Welcome to Acme Corp! Review our code guidelines at docs.example.com"
-  ]
-}
-```
+> [tab] What each key does
+>
+> The same file with a comment above each key. Read it here; copy from the other tab, because Claude Code doesn't accept comments in a settings file.
+>
+> ```jsonc managed-settings.json theme={null}
+> {
+>   // Only claude.ai logins, and only in this organization
+>   "forceLoginMethod": "claudeai",
+>   "forceLoginOrgUUID": [
+>     "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+>   ],
+>   // Only Opus and Sonnet models; with enforceAvailableModels, the Default option obeys the list too
+>   "availableModels": [
+>     "opus",
+>     "sonnet"
+>   ],
+>   "enforceAvailableModels": true,
+>   "permissions": {
+>     // Deny curl commands and reads of the project's .env file and secrets folder on every machine
+>     "deny": [
+>       "Bash(curl *)",
+>       "Read(./.env)",
+>       "Read(./secrets/**)"
+>     ],
+>     // Remove the bypass-permissions mode from every session
+>     "disableBypassPermissionsMode": "disable"
+>   },
+>   // Ignore permission rules from user, project, and local settings
+>   "allowManagedPermissionRulesOnly": true,
+>   // Only the GitHub MCP server, matched by URL rather than by name, since a user can
+>   // name any server "github". User-added servers that don't match don't load, including
+>   // every stdio server when the list has only URL entries. The allowManagedMcpServersOnly
+>   // key below makes this managed list the only allowlist that applies
+>   "allowedMcpServers": [
+>     {
+>       "serverUrl": "https://api.githubcopilot.com/*"
+>     }
+>   ],
+>   "allowManagedMcpServersOnly": true,
+>   // Plugins can come only from this marketplace
+>   "strictKnownMarketplaces": [
+>     {
+>       "source": "github",
+>       "repo": "acme-corp/approved-plugins"
+>     }
+>   ],
+>   // Sandbox every command Claude runs, refuse to start if the sandbox can't be
+>   // set up, and never let a blocked command retry outside the sandbox; network
+>   // limited to npm and GitHub, and users can't add domains
+>   "sandbox": {
+>     "enabled": true,
+>     "failIfUnavailable": true,
+>     "allowUnsandboxedCommands": false,
+>     "network": {
+>       "allowedDomains": [
+>         "registry.npmjs.org",
+>         "github.com"
+>       ],
+>       "allowManagedDomainsOnly": true
+>     }
+>   },
+>   // Refuse to start on versions older than 2.1.150
+>   "requiredMinimumVersion": "2.1.150",
+>   // Delete session transcripts and other local session data after 7 days
+>   "cleanupPeriodDays": 7,
+>   // A message every user sees at startup
+>   "companyAnnouncements": [
+>     "Welcome to Acme Corp! Review our code guidelines at docs.example.com"
+>   ]
+> }
+> ```

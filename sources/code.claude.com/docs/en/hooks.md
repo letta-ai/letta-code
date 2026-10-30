@@ -68,115 +68,115 @@ The table below summarizes when each event fires. The [Hook events](#hook-events
 
 To see how the event, the matcher, and the handler fit together, consider this `PreToolUse` hook that blocks destructive shell commands.
 
-**macOS/Linux**
+> [tab] macOS/Linux
+>
+> The `matcher` narrows to Bash tool calls and the `if` condition narrows further to Bash subcommands matching `rm *`, so `block-rm.sh` only spawns when both filters match:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "PreToolUse": [
+>       {
+>         "matcher": "Bash",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "if": "Bash(rm *)",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh",
+>             "args": []
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> The script reads the JSON input from stdin, extracts the command, and returns a `permissionDecision` of `"deny"` if it contains `rm -rf`. Save it to `.claude/hooks/block-rm.sh` in your project and make it executable with `chmod +x .claude/hooks/block-rm.sh` so Claude Code can run it:
+>
+> ```bash theme={null}
+> #!/bin/bash
+> # .claude/hooks/block-rm.sh
+> COMMAND=$(jq -r '.tool_input.command')
+>
+> if echo "$COMMAND" | grep -q 'rm -rf'; then
+>   jq -n '{
+>     hookSpecificOutput: {
+>       hookEventName: "PreToolUse",
+>       permissionDecision: "deny",
+>       permissionDecisionReason: "Destructive command blocked by hook"
+>     }
+>   }'
+> else
+>   exit 0  # no decision; normal permission flow applies
+> fi
+> ```
+>
+> This script, like the other Bash examples on this page that parse JSON input, uses `jq`, so install `jq` and make sure it is on your `PATH` before trying them.
 
-The `matcher` narrows to Bash tool calls and the `if` condition narrows further to Bash subcommands matching `rm *`, so `block-rm.sh` only spawns when both filters match:
-
-```json theme={null}
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(rm *)",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.sh",
-            "args": []
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The script reads the JSON input from stdin, extracts the command, and returns a `permissionDecision` of `"deny"` if it contains `rm -rf`. Save it to `.claude/hooks/block-rm.sh` in your project and make it executable with `chmod +x .claude/hooks/block-rm.sh` so Claude Code can run it:
-
-```bash theme={null}
-#!/bin/bash
-# .claude/hooks/block-rm.sh
-COMMAND=$(jq -r '.tool_input.command')
-
-if echo "$COMMAND" | grep -q 'rm -rf'; then
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "Destructive command blocked by hook"
-    }
-  }'
-else
-  exit 0  # no decision; normal permission flow applies
-fi
-```
-
-This script, like the other Bash examples on this page that parse JSON input, uses `jq`, so install `jq` and make sure it is on your `PATH` before trying them.
-
-**Windows (PowerShell)**
-
-The matcher `Bash|PowerShell` covers the [PowerShell tool](#powershell) as well as Bash. A single `if` rule matches only one tool's calls, so each tool gets its own handler: the first narrows to Bash subcommands matching `rm *`, the second to PowerShell commands matching `Remove-Item *`. Both run the same script through `powershell.exe`:
-
-```json theme={null}
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "if": "Bash(rm *)",
-            "command": "powershell.exe",
-            "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
-            ]
-          },
-          {
-            "type": "command",
-            "if": "PowerShell(Remove-Item *)",
-            "command": "powershell.exe",
-            "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
-            ]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The `-NoProfile` flag skips loading your PowerShell profile so the hook starts fast, and `-ExecutionPolicy Bypass` lets PowerShell run the local script file.
-
-The script reads the JSON input from stdin, extracts the command, and returns a `permissionDecision` of `"deny"` if it contains `rm -rf` or `Remove-Item` followed by `-Recurse`. Save it to `.claude/hooks/block-rm.ps1` in your project:
-
-```powershell theme={null}
-# .claude/hooks/block-rm.ps1
-$callInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$command = $callInput.tool_input.command
-
-if ($command -match 'rm -rf|Remove-Item.*-Recurse') {
-  @{
-    hookSpecificOutput = @{
-      hookEventName = "PreToolUse"
-      permissionDecision = "deny"
-      permissionDecisionReason = "Destructive command blocked by hook"
-    }
-  } | ConvertTo-Json
-} else {
-  exit 0  # no decision; normal permission flow applies
-}
-```
+> [tab] Windows (PowerShell)
+>
+> The matcher `Bash|PowerShell` covers the [PowerShell tool](#powershell) as well as Bash. A single `if` rule matches only one tool's calls, so each tool gets its own handler: the first narrows to Bash subcommands matching `rm *`, the second to PowerShell commands matching `Remove-Item *`. Both run the same script through `powershell.exe`:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "PreToolUse": [
+>       {
+>         "matcher": "Bash|PowerShell",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "if": "Bash(rm *)",
+>             "command": "powershell.exe",
+>             "args": [
+>               "-NoProfile",
+>               "-ExecutionPolicy",
+>               "Bypass",
+>               "-File",
+>               "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
+>             ]
+>           },
+>           {
+>             "type": "command",
+>             "if": "PowerShell(Remove-Item *)",
+>             "command": "powershell.exe",
+>             "args": [
+>               "-NoProfile",
+>               "-ExecutionPolicy",
+>               "Bypass",
+>               "-File",
+>               "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-rm.ps1"
+>             ]
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> The `-NoProfile` flag skips loading your PowerShell profile so the hook starts fast, and `-ExecutionPolicy Bypass` lets PowerShell run the local script file.
+>
+> The script reads the JSON input from stdin, extracts the command, and returns a `permissionDecision` of `"deny"` if it contains `rm -rf` or `Remove-Item` followed by `-Recurse`. Save it to `.claude/hooks/block-rm.ps1` in your project:
+>
+> ```powershell theme={null}
+> # .claude/hooks/block-rm.ps1
+> $callInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
+> $command = $callInput.tool_input.command
+>
+> if ($command -match 'rm -rf|Remove-Item.*-Recurse') {
+>   @{
+>     hookSpecificOutput = @{
+>       hookEventName = "PreToolUse"
+>       permissionDecision = "deny"
+>       permissionDecisionReason = "Destructive command blocked by hook"
+>     }
+>   } | ConvertTo-Json
+> } else {
+>   exit 0  # no decision; normal permission flow applies
+> }
+> ```
 
 Now suppose Claude Code decides to run `Bash "rm -rf /tmp/build"` against the macOS/Linux config. Here's what happens:
 
@@ -601,57 +601,57 @@ Use these placeholders to reference hook scripts relative to the project or plug
 
 Prefer [exec form](#exec-form-and-shell-form) for any hook that references a path placeholder. In shell form, wrap each placeholder in double quotes.
 
-**Project scripts**
+> [tab] Project scripts
+>
+> This example uses `${CLAUDE_PROJECT_DIR}` to run a style checker from the project's `.claude/hooks/` directory after any `Write` or `Edit` tool call:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "PostToolUse": [
+>       {
+>         "matcher": "Write|Edit",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh",
+>             "args": []
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
 
-This example uses `${CLAUDE_PROJECT_DIR}` to run a style checker from the project's `.claude/hooks/` directory after any `Write` or `Edit` tool call:
-
-```json theme={null}
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/check-style.sh",
-            "args": []
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Plugin scripts**
-
-Define plugin hooks in `hooks/hooks.json` with an optional top-level `description` field. When a plugin is enabled, its hooks merge with your user and project hooks.
-
-This example runs a formatting script bundled with the plugin:
-
-```json theme={null}
-{
-  "description": "Automatic code formatting",
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Write|Edit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/format.sh",
-            "args": [],
-            "timeout": 30
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-See the [plugin components reference](https://code.claude.com/docs/en/plugins/components.md#hooks) for details on creating plugin hooks.
+> [tab] Plugin scripts
+>
+> Define plugin hooks in `hooks/hooks.json` with an optional top-level `description` field. When a plugin is enabled, its hooks merge with your user and project hooks.
+>
+> This example runs a formatting script bundled with the plugin:
+>
+> ```json theme={null}
+> {
+>   "description": "Automatic code formatting",
+>   "hooks": {
+>     "PostToolUse": [
+>       {
+>         "matcher": "Write|Edit",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/format.sh",
+>             "args": [],
+>             "timeout": 30
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> See the [plugin components reference](https://code.claude.com/docs/en/plugins/components.md#hooks) for details on creating plugin hooks.
 
 ### Hooks in skills and agents
 
@@ -1180,48 +1180,48 @@ For redaction or transformation use cases, intercept at `PreToolUse` for outboun
 
 Here are examples of each pattern in action:
 
-**Top-level decision**
+> [tab] Top-level decision
+>
+> The only value for `decision` is `"block"`. To allow the action to proceed, omit `decision` from your JSON, or exit 0 without any JSON at all:
+>
+> ```json theme={null}
+> {
+>   "decision": "block",
+>   "reason": "Test suite must pass before proceeding"
+> }
+> ```
 
-The only value for `decision` is `"block"`. To allow the action to proceed, omit `decision` from your JSON, or exit 0 without any JSON at all:
+> [tab] PreToolUse
+>
+> Uses `hookSpecificOutput` for richer control: allow, deny, or escalate to the user. You can also modify tool input before it runs or inject additional context for Claude. See [PreToolUse decision control](#pretooluse-decision-control) for the full set of options.
+>
+> ```json theme={null}
+> {
+>   "hookSpecificOutput": {
+>     "hookEventName": "PreToolUse",
+>     "permissionDecision": "deny",
+>     "permissionDecisionReason": "Database writes are not allowed"
+>   }
+> }
+> ```
 
-```json theme={null}
-{
-  "decision": "block",
-  "reason": "Test suite must pass before proceeding"
-}
-```
-
-**PreToolUse**
-
-Uses `hookSpecificOutput` for richer control: allow, deny, or escalate to the user. You can also modify tool input before it runs or inject additional context for Claude. See [PreToolUse decision control](#pretooluse-decision-control) for the full set of options.
-
-```json theme={null}
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PreToolUse",
-    "permissionDecision": "deny",
-    "permissionDecisionReason": "Database writes are not allowed"
-  }
-}
-```
-
-**PermissionRequest**
-
-Uses `hookSpecificOutput` to allow or deny a permission request on behalf of the user. When allowing, you can also modify the tool's input or apply permission rules so the user isn't prompted again. See [PermissionRequest decision control](#permissionrequest-decision-control) for the full set of options.
-
-```json theme={null}
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PermissionRequest",
-    "decision": {
-      "behavior": "allow",
-      "updatedInput": {
-        "command": "npm run lint"
-      }
-    }
-  }
-}
-```
+> [tab] PermissionRequest
+>
+> Uses `hookSpecificOutput` to allow or deny a permission request on behalf of the user. When allowing, you can also modify the tool's input or apply permission rules so the user isn't prompted again. See [PermissionRequest decision control](#permissionrequest-decision-control) for the full set of options.
+>
+> ```json theme={null}
+> {
+>   "hookSpecificOutput": {
+>     "hookEventName": "PermissionRequest",
+>     "decision": {
+>       "behavior": "allow",
+>       "updatedInput": {
+>         "command": "npm run lint"
+>       }
+>     }
+>   }
+> }
+> ```
 
 For extended examples including Bash command validation, prompt filtering, and auto-approval scripts, see [What you can automate](https://code.claude.com/docs/en/hooks-guide.md#what-you-can-automate) in the guide and the [Bash command validator reference implementation](https://github.com/anthropics/claude-code/blob/main/examples/hooks/bash_command_validator_example.py).
 
@@ -1656,77 +1656,77 @@ MessageDisplay hooks have no decision control. They can't block the message or c
 
 This example strips markdown formatting from Claude's responses for a plain-text display. The script reads each batch from stdin, removes bold markers and inline code backticks from `delta`, and returns the result as `displayContent`.
 
-**macOS/Linux**
+> [tab] macOS/Linux
+>
+> Register a command hook for the event in your settings file:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "MessageDisplay": [
+>       {
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/plain-display.sh",
+>             "args": []
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> Save this script to `.claude/hooks/plain-display.sh` in your project and make it executable with `chmod +x`:
+>
+> ```bash theme={null}
+> #!/bin/bash
+> jq '{hookSpecificOutput: {hookEventName: "MessageDisplay", displayContent: (.delta | gsub("\\*\\*"; "") | gsub("`"; ""))}}'
+> ```
 
-Register a command hook for the event in your settings file:
-
-```json theme={null}
-{
-  "hooks": {
-    "MessageDisplay": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/plain-display.sh",
-            "args": []
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Save this script to `.claude/hooks/plain-display.sh` in your project and make it executable with `chmod +x`:
-
-```bash theme={null}
-#!/bin/bash
-jq '{hookSpecificOutput: {hookEventName: "MessageDisplay", displayContent: (.delta | gsub("\\*\\*"; "") | gsub("`"; ""))}}'
-```
-
-**Windows (PowerShell)**
-
-Register a command hook that runs the script through PowerShell:
-
-```json theme={null}
-{
-  "hooks": {
-    "MessageDisplay": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe",
-            "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/plain-display.ps1"
-            ]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-The `-NoProfile` flag skips loading your PowerShell profile so the hook starts fast, and `-ExecutionPolicy Bypass` lets PowerShell run the local script file.
-
-Save this script to `.claude/hooks/plain-display.ps1` in your project:
-
-```powershell theme={null}
-$batch = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$text = $batch.delta -replace '\*\*', '' -replace '`', ''
-@{
-  hookSpecificOutput = @{
-    hookEventName = "MessageDisplay"
-    displayContent = $text
-  }
-} | ConvertTo-Json
-```
+> [tab] Windows (PowerShell)
+>
+> Register a command hook that runs the script through PowerShell:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "MessageDisplay": [
+>       {
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "powershell.exe",
+>             "args": [
+>               "-NoProfile",
+>               "-ExecutionPolicy",
+>               "Bypass",
+>               "-File",
+>               "${CLAUDE_PROJECT_DIR}/.claude/hooks/plain-display.ps1"
+>             ]
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> The `-NoProfile` flag skips loading your PowerShell profile so the hook starts fast, and `-ExecutionPolicy Bypass` lets PowerShell run the local script file.
+>
+> Save this script to `.claude/hooks/plain-display.ps1` in your project:
+>
+> ```powershell theme={null}
+> $batch = [Console]::In.ReadToEnd() | ConvertFrom-Json
+> $text = $batch.delta -replace '\*\*', '' -replace '`', ''
+> @{
+>   hookSpecificOutput = @{
+>     hookEventName = "MessageDisplay"
+>     displayContent = $text
+>   }
+> } | ConvertTo-Json
+> ```
 
 Batches with no markdown pass through unchanged. If the script fails, for example because `jq` is missing, Claude Code displays the original text and notes the failure only in [debug output](#debug-hooks), not in the session.
 
@@ -3357,67 +3357,67 @@ When Claude Code can't determine a canonical name for the target, for example a 
 
 Write the matcher as an exact name, a `|`-separated list such as `claude-opus-4-6|claude-opus-5`, or a regular expression such as `.*opus.*`. This example uses an exact-name matcher and also checks `to_model` from the hook input, so it refuses a switch to Opus 4.6 by exiting with code 2 and lets any other target through:
 
-**macOS/Linux**
+> [tab] macOS/Linux
+>
+> The command checks `to_model` with `jq`:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "PreModelSwitch": [
+>       {
+>         "matcher": "claude-opus-4-6",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "jq -e '.to_model | test(\"opus-4-6\")' > /dev/null && { echo 'Opus 4.6 is retired for this project. Use a newer model.' >&2; exit 2; }; exit 0"
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
 
-The command checks `to_model` with `jq`:
-
-```json theme={null}
-{
-  "hooks": {
-    "PreModelSwitch": [
-      {
-        "matcher": "claude-opus-4-6",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "jq -e '.to_model | test(\"opus-4-6\")' > /dev/null && { echo 'Opus 4.6 is retired for this project. Use a newer model.' >&2; exit 2; }; exit 0"
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-**Windows (PowerShell)**
-
-Register a command hook that runs a script through PowerShell:
-
-```json theme={null}
-{
-  "hooks": {
-    "PreModelSwitch": [
-      {
-        "matcher": "claude-opus-4-6",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe",
-            "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-opus-46.ps1"
-            ]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Save this script to `.claude/hooks/block-opus-46.ps1` in your project:
-
-```powershell theme={null}
-$hookInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
-if ($hookInput.to_model -match 'opus-4-6') {
-  [Console]::Error.WriteLine('Opus 4.6 is retired for this project. Use a newer model.')
-  exit 2
-}
-exit 0
-```
+> [tab] Windows (PowerShell)
+>
+> Register a command hook that runs a script through PowerShell:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "PreModelSwitch": [
+>       {
+>         "matcher": "claude-opus-4-6",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "powershell.exe",
+>             "args": [
+>               "-NoProfile",
+>               "-ExecutionPolicy",
+>               "Bypass",
+>               "-File",
+>               "${CLAUDE_PROJECT_DIR}/.claude/hooks/block-opus-46.ps1"
+>             ]
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> Save this script to `.claude/hooks/block-opus-46.ps1` in your project:
+>
+> ```powershell theme={null}
+> $hookInput = [Console]::In.ReadToEnd() | ConvertFrom-Json
+> if ($hookInput.to_model -match 'opus-4-6') {
+>   [Console]::Error.WriteLine('Opus 4.6 is retired for this project. Use a newer model.')
+>   exit 2
+> }
+> exit 0
+> ```
 
 To confirm the hook works, run `/model claude-opus-4-6` from a session running a different model. Claude Code keeps the current model and reports that a PreModelSwitch hook blocked the switch, with your message as the reason.
 
@@ -3705,86 +3705,86 @@ Claude Code ignored a top-level `decision` from `Elicitation` and `ElicitationRe
 
 This example answers one recurring question for the user. An MCP server named `issue-tracker` asks for a project key in a form, and the hook fills in `DOCS`. The script accepts when `project_key` is the form's single field. For any other request it prints nothing, so the dialog appears.
 
-**macOS/Linux**
+> [tab] macOS/Linux
+>
+> Register a command hook for the event in your settings file, with the server name as the matcher:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "Elicitation": [
+>       {
+>         "matcher": "issue-tracker",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/answer-project-key.sh",
+>             "args": []
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> Save this script to `.claude/hooks/answer-project-key.sh` in your project and make it executable with `chmod +x`:
+>
+> ```bash theme={null}
+> #!/bin/bash
+> input=$(cat)
+> fields=$(jq -c '.requested_schema.properties // {} | keys' <<<"$input")
+>
+> if [ "$fields" = '["project_key"]' ]; then
+>   jq -n '{hookSpecificOutput: {hookEventName: "Elicitation", action: "accept", content: {project_key: "DOCS"}}}'
+> fi
+> ```
 
-Register a command hook for the event in your settings file, with the server name as the matcher:
-
-```json theme={null}
-{
-  "hooks": {
-    "Elicitation": [
-      {
-        "matcher": "issue-tracker",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/answer-project-key.sh",
-            "args": []
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Save this script to `.claude/hooks/answer-project-key.sh` in your project and make it executable with `chmod +x`:
-
-```bash theme={null}
-#!/bin/bash
-input=$(cat)
-fields=$(jq -c '.requested_schema.properties // {} | keys' <<<"$input")
-
-if [ "$fields" = '["project_key"]' ]; then
-  jq -n '{hookSpecificOutput: {hookEventName: "Elicitation", action: "accept", content: {project_key: "DOCS"}}}'
-fi
-```
-
-**Windows (PowerShell)**
-
-Register a command hook that runs the script through PowerShell, with the server name as the matcher:
-
-```json theme={null}
-{
-  "hooks": {
-    "Elicitation": [
-      {
-        "matcher": "issue-tracker",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe",
-            "args": [
-              "-NoProfile",
-              "-ExecutionPolicy",
-              "Bypass",
-              "-File",
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/answer-project-key.ps1"
-            ]
-          }
-        ]
-      }
-    ]
-  }
-}
-```
-
-Save this script to `.claude/hooks/answer-project-key.ps1` in your project:
-
-```powershell theme={null}
-$request = [Console]::In.ReadToEnd() | ConvertFrom-Json
-$fields = @($request.requested_schema.properties.PSObject.Properties.Name)
-
-if ($fields.Count -eq 1 -and $fields[0] -eq 'project_key') {
-  @{
-    hookSpecificOutput = @{
-      hookEventName = "Elicitation"
-      action = "accept"
-      content = @{ project_key = "DOCS" }
-    }
-  } | ConvertTo-Json -Depth 3
-}
-```
+> [tab] Windows (PowerShell)
+>
+> Register a command hook that runs the script through PowerShell, with the server name as the matcher:
+>
+> ```json theme={null}
+> {
+>   "hooks": {
+>     "Elicitation": [
+>       {
+>         "matcher": "issue-tracker",
+>         "hooks": [
+>           {
+>             "type": "command",
+>             "command": "powershell.exe",
+>             "args": [
+>               "-NoProfile",
+>               "-ExecutionPolicy",
+>               "Bypass",
+>               "-File",
+>               "${CLAUDE_PROJECT_DIR}/.claude/hooks/answer-project-key.ps1"
+>             ]
+>           }
+>         ]
+>       }
+>     ]
+>   }
+> }
+> ```
+>
+> Save this script to `.claude/hooks/answer-project-key.ps1` in your project:
+>
+> ```powershell theme={null}
+> $request = [Console]::In.ReadToEnd() | ConvertFrom-Json
+> $fields = @($request.requested_schema.properties.PSObject.Properties.Name)
+>
+> if ($fields.Count -eq 1 -and $fields[0] -eq 'project_key') {
+>   @{
+>     hookSpecificOutput = @{
+>       hookEventName = "Elicitation"
+>       action = "accept"
+>       content = @{ project_key = "DOCS" }
+>     }
+>   } | ConvertTo-Json -Depth 3
+> }
+> ```
 
 To confirm the hook works, start Claude Code with `claude --debug` and give Claude a task that makes the server ask for the project key. No dialog appears, and the [debug log](#debug-hooks) has a line that ends with `Elicitation resolved by hook: {"action":"accept","content":{"project_key":"DOCS"}}`.
 

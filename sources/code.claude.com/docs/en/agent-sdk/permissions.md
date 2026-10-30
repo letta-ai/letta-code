@@ -163,101 +163,101 @@ The SDK supports these permission modes:
 
 You can set the permission mode once when starting a query, or change it dynamically while the session is active.
 
-**At query time**
+> [tab] At query time
+>
+> Pass `permission_mode` (Python) or `permissionMode` (TypeScript) when creating a query.
+>
+> ```python Python theme={null}
+> import asyncio
+> from claude_agent_sdk import query, ClaudeAgentOptions
+>
+>
+> async def main():
+>     async for message in query(
+>         prompt="Help me refactor this code",
+>         options=ClaudeAgentOptions(
+>             permission_mode="default",  # Set the mode here
+>         ),
+>     ):
+>         if hasattr(message, "result"):
+>             print(message.result)
+>
+>
+> asyncio.run(main())
+> ```
+>
+> ```typescript TypeScript theme={null}
+> import { query } from "@anthropic-ai/claude-agent-sdk";
+>
+> async function main() {
+>   for await (const message of query({
+>     prompt: "Help me refactor this code",
+>     options: {
+>       permissionMode: "default" // Set the mode here
+>     }
+>   })) {
+>     if ("result" in message) {
+>       console.log(message.result);
+>     }
+>   }
+> }
+>
+> main();
+> ```
 
-Pass `permission_mode` (Python) or `permissionMode` (TypeScript) when creating a query.
-
-```python Python theme={null}
-import asyncio
-from claude_agent_sdk import query, ClaudeAgentOptions
-
-
-async def main():
-    async for message in query(
-        prompt="Help me refactor this code",
-        options=ClaudeAgentOptions(
-            permission_mode="default",  # Set the mode here
-        ),
-    ):
-        if hasattr(message, "result"):
-            print(message.result)
-
-
-asyncio.run(main())
-```
-
-```typescript TypeScript theme={null}
-import { query } from "@anthropic-ai/claude-agent-sdk";
-
-async function main() {
-  for await (const message of query({
-    prompt: "Help me refactor this code",
-    options: {
-      permissionMode: "default" // Set the mode here
-    }
-  })) {
-    if ("result" in message) {
-      console.log(message.result);
-    }
-  }
-}
-
-main();
-```
-
-**During streaming**
-
-Call `set_permission_mode()` (Python) or `setPermissionMode()` (TypeScript) to change the mode mid-session. The new mode takes effect immediately for all subsequent tool requests. This lets you start restrictive and loosen permissions as trust builds, for example switching to `acceptEdits` after reviewing Claude's initial approach.
-
-```python Python theme={null}
-import asyncio
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-
-
-async def main():
-    async with ClaudeSDKClient(
-        options=ClaudeAgentOptions(
-            permission_mode="default",  # Start in default mode
-        )
-    ) as client:
-        await client.query("Help me refactor this code")
-
-        # Change mode dynamically mid-session
-        await client.set_permission_mode("acceptEdits")
-
-        # Process messages with the new permission mode
-        async for message in client.receive_response():
-            if hasattr(message, "result"):
-                print(message.result)
-
-
-asyncio.run(main())
-```
-
-```typescript TypeScript theme={null}
-import { query } from "@anthropic-ai/claude-agent-sdk";
-
-async function main() {
-  const q = query({
-    prompt: "Help me refactor this code",
-    options: {
-      permissionMode: "default" // Start in default mode
-    }
-  });
-
-  // Change mode dynamically mid-session
-  await q.setPermissionMode("acceptEdits");
-
-  // Process messages with the new permission mode
-  for await (const message of q) {
-    if ("result" in message) {
-      console.log(message.result);
-    }
-  }
-}
-
-main();
-```
+> [tab] During streaming
+>
+> Call `set_permission_mode()` (Python) or `setPermissionMode()` (TypeScript) to change the mode mid-session. The new mode takes effect immediately for all subsequent tool requests. This lets you start restrictive and loosen permissions as trust builds, for example switching to `acceptEdits` after reviewing Claude's initial approach.
+>
+> ```python Python theme={null}
+> import asyncio
+> from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+>
+>
+> async def main():
+>     async with ClaudeSDKClient(
+>         options=ClaudeAgentOptions(
+>             permission_mode="default",  # Start in default mode
+>         )
+>     ) as client:
+>         await client.query("Help me refactor this code")
+>
+>         # Change mode dynamically mid-session
+>         await client.set_permission_mode("acceptEdits")
+>
+>         # Process messages with the new permission mode
+>         async for message in client.receive_response():
+>             if hasattr(message, "result"):
+>                 print(message.result)
+>
+>
+> asyncio.run(main())
+> ```
+>
+> ```typescript TypeScript theme={null}
+> import { query } from "@anthropic-ai/claude-agent-sdk";
+>
+> async function main() {
+>   const q = query({
+>     prompt: "Help me refactor this code",
+>     options: {
+>       permissionMode: "default" // Start in default mode
+>     }
+>   });
+>
+>   // Change mode dynamically mid-session
+>   await q.setPermissionMode("acceptEdits");
+>
+>   // Process messages with the new permission mode
+>   for await (const message of q) {
+>     if ("result" in message) {
+>       console.log(message.result);
+>     }
+>   }
+> }
+>
+> main();
+> ```
 
 ### Mode details
 

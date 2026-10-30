@@ -23,52 +23,52 @@ A variable you set in your shell lasts for that terminal session, while a variab
 
 Set the variable before launching `claude`:
 
-**macOS, Linux, WSL**
+> [tab] macOS, Linux, WSL
+>
+> ```bash theme={null}
+> export API_TIMEOUT_MS="1200000"
+> claude
+> ```
+>
+> To set it for every session, add the `export` line to `~/.bashrc`, `~/.zshrc`, or your shell's profile file.
 
-```bash theme={null}
-export API_TIMEOUT_MS="1200000"
-claude
-```
+> [tab] Windows PowerShell
+>
+> ```powershell theme={null}
+> $env:API_TIMEOUT_MS = "1200000"
+> claude
+> ```
+>
+> To set it for every session, run `[Environment]::SetEnvironmentVariable("API_TIMEOUT_MS", "1200000", "User")` and open a new terminal.
 
-To set it for every session, add the `export` line to `~/.bashrc`, `~/.zshrc`, or your shell's profile file.
-
-**Windows PowerShell**
-
-```powershell theme={null}
-$env:API_TIMEOUT_MS = "1200000"
-claude
-```
-
-To set it for every session, run `[Environment]::SetEnvironmentVariable("API_TIMEOUT_MS", "1200000", "User")` and open a new terminal.
-
-**Windows CMD**
-
-```batch theme={null}
-set API_TIMEOUT_MS=1200000
-claude
-```
-
-To set it for every session, run `setx API_TIMEOUT_MS "1200000"` and open a new terminal.
+> [tab] Windows CMD
+>
+> ```batch theme={null}
+> set API_TIMEOUT_MS=1200000
+> claude
+> ```
+>
+> To set it for every session, run `setx API_TIMEOUT_MS "1200000"` and open a new terminal.
 
 The assignment line prints nothing on success. To confirm the variable is set, print it in the same shell:
 
-**macOS, Linux, WSL**
+> [tab] macOS, Linux, WSL
+>
+> ```bash theme={null}
+> echo $API_TIMEOUT_MS
+> ```
 
-```bash theme={null}
-echo $API_TIMEOUT_MS
-```
+> [tab] Windows PowerShell
+>
+> ```powershell theme={null}
+> echo $env:API_TIMEOUT_MS
+> ```
 
-**Windows PowerShell**
-
-```powershell theme={null}
-echo $env:API_TIMEOUT_MS
-```
-
-**Windows CMD**
-
-```batch theme={null}
-echo %API_TIMEOUT_MS%
-```
+> [tab] Windows CMD
+>
+> ```batch theme={null}
+> echo %API_TIMEOUT_MS%
+> ```
 
 ### Set variables in settings files
 
@@ -130,7 +130,7 @@ Numeric variables such as timeouts, token budgets, and retry counts accept scien
 
 | Variable | Purpose |
 | :- | :- |
-| `ANTHROPIC_API_KEY` | API key sent as `X-Api-Key` header. When set, this key is used instead of your Claude Pro, Max, Team, or Enterprise subscription even if you are logged in. In non-interactive mode (`-p`), the key is always used when present. In interactive mode, you are prompted to approve the key once before it overrides your subscription. To use your subscription instead, run `unset ANTHROPIC_API_KEY` |
+| `ANTHROPIC_API_KEY` | API key sent as `X-Api-Key` header. When set, this key is used instead of your Claude Pro, Max, Ultra, Team, or Enterprise subscription even if you are logged in. In non-interactive mode (`-p`), the key is always used when present. In interactive mode, you are prompted to approve the key once before it overrides your subscription. To use your subscription instead, run `unset ANTHROPIC_API_KEY` |
 | `ANTHROPIC_AUTH_TOKEN` | Custom value for the `Authorization` header (the value you set here will be prefixed with `Bearer `) |
 | `ANTHROPIC_AWS_API_KEY` | Workspace API key for [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md), generated in the AWS Console. Sent as `x-api-key` and takes precedence over AWS SigV4 |
 | `ANTHROPIC_AWS_BASE_URL` | Override the [Claude Platform on AWS](https://code.claude.com/docs/en/claude-platform-on-aws.md) endpoint URL. Use for custom regions or when routing through an [LLM gateway](https://code.claude.com/docs/en/llm-gateway). Defaults to `https://aws-external-anthropic.{region}.api.aws`. Claude Code resolves the region with the [same precedence as on Amazon Bedrock](https://code.claude.com/docs/en/amazon-bedrock.md#3-configure-claude-code) |
@@ -575,7 +575,7 @@ With fetching off, you can't:
 * [Message sessions beyond this machine](https://code.claude.com/docs/en/cross-session-messaging.md#message-sessions-on-other-machines) when [Remote Control](https://code.claude.com/docs/en/remote-control.md#requirements) is unavailable. Messaging between sessions on this machine works with fetching off
 * Run [`claude import` or the `/import` command](https://code.claude.com/docs/en/cli-reference#cli-commands)
 * Run [`/skill-doctor`](https://code.claude.com/docs/en/skills#find-unused-skills) or open its report in the `/plugin` **Stats** tab
-* Run [`/restart`](https://code.claude.com/docs/en/commands) on Pro and Max plans
+* Run [`/restart`](https://code.claude.com/docs/en/commands) on Pro, Max, and Ultra plans
 * Sync the [skills](https://code.claude.com/docs/en/skills.md#where-synced-skills-load) and [plugins](https://code.claude.com/docs/en/plugins/loading.md#synced-plugins) enabled for your claude.ai account into your terminal sessions
 * Turn on the [You should know mod](https://code.claude.com/docs/en/interactive-mode.md#you-should-know-suggestions)
 * Use [the advisor tool](https://code.claude.com/docs/en/advisor.md#requirements)

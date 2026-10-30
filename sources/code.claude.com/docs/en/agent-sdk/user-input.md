@@ -225,165 +225,165 @@ Beyond allowing or denying, you can modify the tool's input or provide context t
 
 The `ask_user` and `askUser` helpers in the following snippets stand in for your application's own prompt UI.
 
-**Approve**
+> [tab] Approve
+>
+> The user approves the action as-is. Pass through the `input` from your callback unchanged and the tool executes exactly as Claude requested.
+>
+> ```python Python theme={null}
+> async def can_use_tool(tool_name, input_data, context):
+>     print(f"Claude wants to use {tool_name}")
+>     approved = await ask_user("Allow this action?")
+>
+>     if approved:
+>         return PermissionResultAllow(updated_input=input_data)
+>     return PermissionResultDeny(message="User declined")
+> ```
+>
+> ```typescript TypeScript theme={null}
+> canUseTool: async (toolName, input) => {
+>   console.log(`Claude wants to use ${toolName}`);
+>   const approved = await askUser("Allow this action?");
+>
+>   if (approved) {
+>     return { behavior: "allow", updatedInput: input };
+>   }
+>   return { behavior: "deny", message: "User declined" };
+> };
+> ```
 
-The user approves the action as-is. Pass through the `input` from your callback unchanged and the tool executes exactly as Claude requested.
+> [tab] Approve with changes
+>
+> The user approves but wants to modify the request first. You can change the input before the tool executes. Claude sees the result but isn't told you changed anything. Useful for sanitizing parameters, adding constraints, or scoping access.
+>
+> ```python Python theme={null}
+> async def can_use_tool(tool_name, input_data, context):
+>     if tool_name == "Bash":
+>         # User approved, but scope all commands to sandbox
+>         sandboxed_input = {**input_data}
+>         sandboxed_input["command"] = input_data["command"].replace(
+>             "/tmp", "/tmp/sandbox"
+>         )
+>         return PermissionResultAllow(updated_input=sandboxed_input)
+>     return PermissionResultAllow(updated_input=input_data)
+> ```
+>
+> ```typescript TypeScript theme={null}
+> canUseTool: async (toolName, input) => {
+>   if (toolName === "Bash") {
+>     // User approved, but scope all commands to sandbox
+>     const sandboxedInput = {
+>       ...input,
+>       command: input.command.replace("/tmp", "/tmp/sandbox")
+>     };
+>     return { behavior: "allow", updatedInput: sandboxedInput };
+>   }
+>   return { behavior: "allow", updatedInput: input };
+> };
+> ```
 
-```python Python theme={null}
-async def can_use_tool(tool_name, input_data, context):
-    print(f"Claude wants to use {tool_name}")
-    approved = await ask_user("Allow this action?")
+> [tab] Approve and remember
+>
+> The user approves and doesn't want to be asked again for this kind of call. The third callback argument carries `suggestions`, an array of ready-made [`PermissionUpdate`](https://code.claude.com/docs/en/agent-sdk/typescript#permissionupdate) entries. Echo one back in `updatedPermissions` to apply it. A suggestion with the `localSettings` destination writes the rule to `.claude/settings.local.json` so future sessions skip the prompt for matching calls.
+>
+> In TypeScript, skip the always-allow choice for a request whose options carry [`suppressAlwaysAllowRule: true`](https://code.claude.com/docs/en/agent-sdk/typescript#canusetool). The hint requires Agent SDK v0.3.268 or later, and the Python `context` doesn't carry it.
+>
+> The Python example requires `claude-agent-sdk` 0.1.80 or later.
+>
+> ```python Python theme={null}
+> async def can_use_tool(tool_name, input_data, context):
+>     choice = await ask_user(f"Allow {tool_name}?", ["once", "always", "no"])
+>
+>     if choice == "always":
+>         persist = [
+>             s for s in context.suggestions if s.destination == "localSettings"
+>         ]
+>         return PermissionResultAllow(
+>             updated_input=input_data, updated_permissions=persist
+>         )
+>     if choice == "once":
+>         return PermissionResultAllow(updated_input=input_data)
+>     return PermissionResultDeny(message="User declined")
+> ```
+>
+> ```typescript TypeScript theme={null}
+> canUseTool: async (toolName, input, { suggestions = [] }) => {
+>   const choice = await askUser(`Allow ${toolName}?`, ["once", "always", "no"]);
+>
+>   if (choice === "always") {
+>     const persist = suggestions.filter(
+>       (s) => s.destination === "localSettings"
+>     );
+>     return {
+>       behavior: "allow",
+>       updatedInput: input,
+>       updatedPermissions: persist
+>     };
+>   }
+>   if (choice === "once") {
+>     return { behavior: "allow", updatedInput: input };
+>   }
+>   return { behavior: "deny", message: "User declined" };
+> };
+> ```
 
-    if approved:
-        return PermissionResultAllow(updated_input=input_data)
-    return PermissionResultDeny(message="User declined")
-```
+> [tab] Reject
+>
+> The user doesn't want this action to happen. Block the tool and provide a message explaining why. Claude sees this message and may try a different approach.
+>
+> ```python Python theme={null}
+> async def can_use_tool(tool_name, input_data, context):
+>     approved = await ask_user(f"Allow {tool_name}?")
+>
+>     if not approved:
+>         return PermissionResultDeny(message="User rejected this action")
+>     return PermissionResultAllow(updated_input=input_data)
+> ```
+>
+> ```typescript TypeScript theme={null}
+> canUseTool: async (toolName, input) => {
+>   const approved = await askUser(`Allow ${toolName}?`);
+>
+>   if (!approved) {
+>     return {
+>       behavior: "deny",
+>       message: "User rejected this action"
+>     };
+>   }
+>   return { behavior: "allow", updatedInput: input };
+> };
+> ```
 
-```typescript TypeScript theme={null}
-canUseTool: async (toolName, input) => {
-  console.log(`Claude wants to use ${toolName}`);
-  const approved = await askUser("Allow this action?");
+> [tab] Suggest alternative
+>
+> The user doesn't want this specific action, but has a different idea. Block the tool and include guidance in your message. Claude will read this and decide how to proceed based on your feedback.
+>
+> ```python Python theme={null}
+> async def can_use_tool(tool_name, input_data, context):
+>     if tool_name == "Bash" and "rm" in input_data.get("command", ""):
+>         # User doesn't want to delete, suggest archiving instead
+>         return PermissionResultDeny(
+>             message="User doesn't want to delete files. They asked if you could compress them into an archive instead."
+>         )
+>     return PermissionResultAllow(updated_input=input_data)
+> ```
+>
+> ```typescript TypeScript theme={null}
+> canUseTool: async (toolName, input) => {
+>   if (toolName === "Bash" && input.command.includes("rm")) {
+>     // User doesn't want to delete, suggest archiving instead
+>     return {
+>       behavior: "deny",
+>       message:
+>         "User doesn't want to delete files. They asked if you could compress them into an archive instead."
+>     };
+>   }
+>   return { behavior: "allow", updatedInput: input };
+> };
+> ```
 
-  if (approved) {
-    return { behavior: "allow", updatedInput: input };
-  }
-  return { behavior: "deny", message: "User declined" };
-};
-```
-
-**Approve with changes**
-
-The user approves but wants to modify the request first. You can change the input before the tool executes. Claude sees the result but isn't told you changed anything. Useful for sanitizing parameters, adding constraints, or scoping access.
-
-```python Python theme={null}
-async def can_use_tool(tool_name, input_data, context):
-    if tool_name == "Bash":
-        # User approved, but scope all commands to sandbox
-        sandboxed_input = {**input_data}
-        sandboxed_input["command"] = input_data["command"].replace(
-            "/tmp", "/tmp/sandbox"
-        )
-        return PermissionResultAllow(updated_input=sandboxed_input)
-    return PermissionResultAllow(updated_input=input_data)
-```
-
-```typescript TypeScript theme={null}
-canUseTool: async (toolName, input) => {
-  if (toolName === "Bash") {
-    // User approved, but scope all commands to sandbox
-    const sandboxedInput = {
-      ...input,
-      command: input.command.replace("/tmp", "/tmp/sandbox")
-    };
-    return { behavior: "allow", updatedInput: sandboxedInput };
-  }
-  return { behavior: "allow", updatedInput: input };
-};
-```
-
-**Approve and remember**
-
-The user approves and doesn't want to be asked again for this kind of call. The third callback argument carries `suggestions`, an array of ready-made [`PermissionUpdate`](https://code.claude.com/docs/en/agent-sdk/typescript#permissionupdate) entries. Echo one back in `updatedPermissions` to apply it. A suggestion with the `localSettings` destination writes the rule to `.claude/settings.local.json` so future sessions skip the prompt for matching calls.
-
-In TypeScript, skip the always-allow choice for a request whose options carry [`suppressAlwaysAllowRule: true`](https://code.claude.com/docs/en/agent-sdk/typescript#canusetool). The hint requires Agent SDK v0.3.268 or later, and the Python `context` doesn't carry it.
-
-The Python example requires `claude-agent-sdk` 0.1.80 or later.
-
-```python Python theme={null}
-async def can_use_tool(tool_name, input_data, context):
-    choice = await ask_user(f"Allow {tool_name}?", ["once", "always", "no"])
-
-    if choice == "always":
-        persist = [
-            s for s in context.suggestions if s.destination == "localSettings"
-        ]
-        return PermissionResultAllow(
-            updated_input=input_data, updated_permissions=persist
-        )
-    if choice == "once":
-        return PermissionResultAllow(updated_input=input_data)
-    return PermissionResultDeny(message="User declined")
-```
-
-```typescript TypeScript theme={null}
-canUseTool: async (toolName, input, { suggestions = [] }) => {
-  const choice = await askUser(`Allow ${toolName}?`, ["once", "always", "no"]);
-
-  if (choice === "always") {
-    const persist = suggestions.filter(
-      (s) => s.destination === "localSettings"
-    );
-    return {
-      behavior: "allow",
-      updatedInput: input,
-      updatedPermissions: persist
-    };
-  }
-  if (choice === "once") {
-    return { behavior: "allow", updatedInput: input };
-  }
-  return { behavior: "deny", message: "User declined" };
-};
-```
-
-**Reject**
-
-The user doesn't want this action to happen. Block the tool and provide a message explaining why. Claude sees this message and may try a different approach.
-
-```python Python theme={null}
-async def can_use_tool(tool_name, input_data, context):
-    approved = await ask_user(f"Allow {tool_name}?")
-
-    if not approved:
-        return PermissionResultDeny(message="User rejected this action")
-    return PermissionResultAllow(updated_input=input_data)
-```
-
-```typescript TypeScript theme={null}
-canUseTool: async (toolName, input) => {
-  const approved = await askUser(`Allow ${toolName}?`);
-
-  if (!approved) {
-    return {
-      behavior: "deny",
-      message: "User rejected this action"
-    };
-  }
-  return { behavior: "allow", updatedInput: input };
-};
-```
-
-**Suggest alternative**
-
-The user doesn't want this specific action, but has a different idea. Block the tool and include guidance in your message. Claude will read this and decide how to proceed based on your feedback.
-
-```python Python theme={null}
-async def can_use_tool(tool_name, input_data, context):
-    if tool_name == "Bash" and "rm" in input_data.get("command", ""):
-        # User doesn't want to delete, suggest archiving instead
-        return PermissionResultDeny(
-            message="User doesn't want to delete files. They asked if you could compress them into an archive instead."
-        )
-    return PermissionResultAllow(updated_input=input_data)
-```
-
-```typescript TypeScript theme={null}
-canUseTool: async (toolName, input) => {
-  if (toolName === "Bash" && input.command.includes("rm")) {
-    // User doesn't want to delete, suggest archiving instead
-    return {
-      behavior: "deny",
-      message:
-        "User doesn't want to delete files. They asked if you could compress them into an archive instead."
-    };
-  }
-  return { behavior: "allow", updatedInput: input };
-};
-```
-
-**Redirect entirely**
-
-For a complete change of direction (not just a nudge), use [streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
+> [tab] Redirect entirely
+>
+> For a complete change of direction (not just a nudge), use [streaming input](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode.md) to send Claude a new instruction directly. This bypasses the current tool request and gives Claude entirely new instructions to follow.
 
 ## Handle clarifying questions
 

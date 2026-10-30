@@ -77,7 +77,7 @@ How you check message types depends on the SDK:
 * **Python:** check message types with `isinstance()` against classes imported from `claude_agent_sdk` (for example, `isinstance(message, ResultMessage)`).
 * **TypeScript:** check the `type` string field (for example, `message.type === "result"`). `AssistantMessage` and `UserMessage` wrap the raw API message in a `.message` field, so content blocks are at `message.message.content`, not `message.content`.
 
-> **Example: Check message types and handle results**
+> [accordion] Example: Check message types and handle results
 >
 > ```python Python theme={null}
 > import asyncio
@@ -273,7 +273,7 @@ You can customize compaction behavior in several ways:
 * **`PreCompact` hook:** Run custom logic before compaction occurs, for example to archive the full transcript. The hook receives a `trigger` field (`manual` or `auto`). See [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md).
 * **Manual compaction:** Send `/compact` as a prompt string to trigger compaction on demand. Commands sent this way are ordinary SDK inputs. See [dispatch commands by name](https://code.claude.com/docs/en/agent-sdk/skills.md#dispatch-commands-by-name).
 
-> **Example: Summarization instructions in CLAUDE.md**
+> [accordion] Example: Summarization instructions in CLAUDE.md
 >
 > Add a section to your project's CLAUDE.md telling the compactor what to preserve. The header name isn't special; use any clear label.
 >

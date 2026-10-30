@@ -36,56 +36,56 @@ For your own projects, you can run the SDK from any folder; it will have access 
 
 Install the Agent SDK package for your language:
 
-**TypeScript (new project)**
+> [tab] TypeScript (new project)
+>
+> ```bash theme={null}
+> npm init -y
+> npm pkg set type=module
+> npm install @anthropic-ai/claude-agent-sdk
+> npm install --save-dev tsx
+> ```
+>
+> Setting `"type": "module"` in `package.json` lets your agent script use top-level `await`, and [tsx](https://tsx.hirok.io) runs TypeScript files directly. npm prints `added N packages` when the install succeeds.
 
-```bash theme={null}
-npm init -y
-npm pkg set type=module
-npm install @anthropic-ai/claude-agent-sdk
-npm install --save-dev tsx
-```
+> [tab] TypeScript (existing project)
+>
+> ```bash theme={null}
+> npm install @anthropic-ai/claude-agent-sdk
+> npm install --save-dev tsx
+> ```
+>
+> [tsx](https://tsx.hirok.io) runs TypeScript files directly. If your project uses CommonJS, name your agent script `agent.mts` instead of `agent.ts`. The `.mts` extension makes tsx treat the file as an ES module, so top-level `await` works without converting your whole project to ES modules. Use `agent.mts` in place of `agent.ts` in the create and run steps later in this quickstart.
 
-Setting `"type": "module"` in `package.json` lets your agent script use top-level `await`, and [tsx](https://tsx.hirok.io) runs TypeScript files directly. npm prints `added N packages` when the install succeeds.
+> [tab] Python (uv)
+>
+> [Install uv](https://docs.astral.sh/uv/), a fast Python package manager that handles virtual environments automatically. Then initialize a project and add the SDK:
+>
+> ```bash theme={null}
+> uv init
+> uv add claude-agent-sdk
+> ```
 
-**TypeScript (existing project)**
-
-```bash theme={null}
-npm install @anthropic-ai/claude-agent-sdk
-npm install --save-dev tsx
-```
-
-[tsx](https://tsx.hirok.io) runs TypeScript files directly. If your project uses CommonJS, name your agent script `agent.mts` instead of `agent.ts`. The `.mts` extension makes tsx treat the file as an ES module, so top-level `await` works without converting your whole project to ES modules. Use `agent.mts` in place of `agent.ts` in the create and run steps later in this quickstart.
-
-**Python (uv)**
-
-[Install uv](https://docs.astral.sh/uv/), a fast Python package manager that handles virtual environments automatically. Then initialize a project and add the SDK:
-
-```bash theme={null}
-uv init
-uv add claude-agent-sdk
-```
-
-**Python (pip)**
-
-Create and activate a virtual environment, then install the package.
-
-On macOS or Linux:
-
-```bash theme={null}
-python3 -m venv .venv
-source .venv/bin/activate
-pip install claude-agent-sdk
-```
-
-On Windows:
-
-```powershell theme={null}
-py -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install claude-agent-sdk
-```
-
-If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-ExecutionPolicy -Scope Process RemoteSigned` first.
+> [tab] Python (pip)
+>
+> Create and activate a virtual environment, then install the package.
+>
+> On macOS or Linux:
+>
+> ```bash theme={null}
+> python3 -m venv .venv
+> source .venv/bin/activate
+> pip install claude-agent-sdk
+> ```
+>
+> On Windows:
+>
+> ```powershell theme={null}
+> py -m venv .venv
+> .venv\Scripts\Activate.ps1
+> pip install claude-agent-sdk
+> ```
+>
+> If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-ExecutionPolicy -Scope Process RemoteSigned` first.
 
 > [!NOTE]
 >
@@ -98,17 +98,17 @@ If PowerShell blocks `Activate.ps1` with an execution policy error, run `Set-Exe
 
 Get an API key from the [Claude Console](https://platform.claude.com/), then set it as an environment variable in the shell where you'll run your agent:
 
-**macOS / Linux**
+> [tab] macOS / Linux
+>
+> ```bash theme={null}
+> export ANTHROPIC_API_KEY=your-api-key
+> ```
 
-```bash theme={null}
-export ANTHROPIC_API_KEY=your-api-key
-```
-
-**Windows (PowerShell)**
-
-```powershell theme={null}
-$env:ANTHROPIC_API_KEY = "your-api-key"
-```
+> [tab] Windows (PowerShell)
+>
+> ```powershell theme={null}
+> $env:ANTHROPIC_API_KEY = "your-api-key"
+> ```
 
 The SDK reads the key from the environment of the process that runs your agent; it doesn't load `.env` files automatically. If you keep the key in a `.env` file, load it yourself, for example with the `dotenv` package, before calling the SDK.
 
@@ -224,27 +224,27 @@ The message handling inside the loop filters for human-readable output. Without 
 
 Your agent is ready. Run it with the following command:
 
-**TypeScript**
+> [tab] TypeScript
+>
+> ```bash theme={null}
+> npx tsx agent.ts
+> ```
+>
+> If you named your script `agent.mts`, run `npx tsx agent.mts` instead.
 
-```bash theme={null}
-npx tsx agent.ts
-```
+> [tab] Python (uv)
+>
+> ```bash theme={null}
+> uv run agent.py
+> ```
 
-If you named your script `agent.mts`, run `npx tsx agent.mts` instead.
-
-**Python (uv)**
-
-```bash theme={null}
-uv run agent.py
-```
-
-**Python (pip)**
-
-With your virtual environment still activated:
-
-```bash theme={null}
-python agent.py
-```
+> [tab] Python (pip)
+>
+> With your virtual environment still activated:
+>
+> ```bash theme={null}
+> python agent.py
+> ```
 
 As it works, the agent prints its reasoning and each tool it calls, ending with `Done: success`. After running, check `utils.py`. You'll see defensive code handling empty lists and null users. Your agent autonomously:
 
