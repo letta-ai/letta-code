@@ -197,6 +197,7 @@ test("exposes decide() and validates requests before calling the provider", asyn
   const { taskId } = await launch({
     script: `
 emit(typeof decide);
+decide(null, {}); // unawaited rejection must not crash the host
 try { await decide(null, {}); } catch (e) { emit(e.message); }
 try { await decide('s', { q: { type: 'noul', instructions: 'x' } }, 1); } catch (e) { emit(e.message); }`,
   });

@@ -275,19 +275,23 @@ export async function startScriptMonitor(
       // The engine's decide() rejects on its own (never-aborting) signal and
       // has a lifetime cap meant for one-shot scripts; a watch loop instead
       // shares the rate limit and parks once stopped, like tool calls.
-      decide: async (state: unknown, questions: unknown, options?: unknown) => {
+      decide: (state: unknown, questions: unknown, options?: unknown) => {
         if (
           options !== undefined &&
           (!options || typeof options !== "object" || Array.isArray(options))
         ) {
           throw new Error("decide() options must be an object.");
         }
-        return limit(() =>
+        // Like the engine's trackCall: a script that forgets to await must
+        // not surface as an unhandled rejection (fatal for the host).
+        const pending = limit(() =>
           submitWorkflowDecision(
             { ...(options as object | undefined), state, questions },
             controller.signal,
           ),
         );
+        void pending.catch(() => {});
+        return pending;
       },
     },
     onProgress: (event) => {
