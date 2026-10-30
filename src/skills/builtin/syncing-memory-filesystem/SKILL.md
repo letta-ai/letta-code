@@ -5,7 +5,7 @@ description: Diagnose and repair MemFS repository setup, remote sync, authentica
 
 # MemFS Repository Repair
 
-Use this skill when the Git repository behind an agent's memory is not setting up or syncing correctly. Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then make the edit directly with ordinary file tools so the agent with the context applies the memory guidance. Stage only changed files by explicit path and commit in the same shell call, using the commit format in their *Commit memory changes* section with scope `sync`. Verify the repair before reporting success. While the harness reports a repair in progress, leave memory files and Git state to that repair worker, which edits `$MEMORY_DIR` in place.
+Use this skill when the Git repository behind an agent's memory is not setting up or syncing correctly. Before editing memory, load the relevant skills: `maintaining-core-memory` for root/core files, `maintaining-deferred-memory` for deferred files, and `creating-skills` for skills. Then make the edit directly with ordinary file tools so the agent with the context applies the memory guidance. Stage only changed files by explicit path and commit in the same shell call, using the commit format in their *Commit memory changes* section. Verify the repair before reporting success. While the harness reports a repair in progress, leave memory files and Git state to that repair worker, which edits `$MEMORY_DIR` in place.
 
 ## Current Model
 

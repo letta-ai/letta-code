@@ -102,10 +102,10 @@ When a root file is long or the total is near its limit:
 
 ## Commit memory changes
 
-Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+Commit each learning separately, so every commit holds one learning and names where it came from. `git log` then holds the evidence, and memory files do not. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
 
 ```bash
-git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+git add <changed files> && git commit -m "memory(<kind>): <what changed>
 
 <why: the correction, instruction, or pattern this encodes>
 
@@ -113,8 +113,7 @@ Sources:
 - <where the learning came from>"
 ```
 
-- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
-- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `<kind>` is where the change lives: `core` for root Markdown files (the system prompt), `skill` for anything under `skills/`, `external` for deferred memory, shared memory, and other files. When one learning changes more than one kind, list them: `memory(core, external): ...`.
 - `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
 - Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
 - Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.

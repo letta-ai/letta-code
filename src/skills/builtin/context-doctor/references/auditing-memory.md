@@ -66,8 +66,8 @@ alone does not preserve their in-context effect.
 
 Review the diff and validate changed file structure and links. Commit with the
 *Commit memory changes* format from `maintaining-core-memory` or
-`maintaining-deferred-memory`, using scope `doctor` and citing the
-conversations, message IDs, and files that support each repair under `Sources:`.
+`maintaining-deferred-memory`: one commit per repair, citing the conversations,
+message IDs, and files that support it under `Sources:`.
 Doctor has no separate worktree or completion-time integration step. If there
 are no supported fixes, make no commit.
 

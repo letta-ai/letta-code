@@ -187,7 +187,7 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 ### 10. Commit, then report
 **Uncommitted memory is not part of your future system prompt.** If a commit is blocked, report initialization as incomplete rather than describing working-tree files as live memory.
 
-Review `git status`, then commit with [Commit memory changes](#commit-memory-changes) using scope `init` and `--author="${AGENT_NAME:-$AGENT_ID} <$AGENT_ID@letta.com>"`. Explain what was initialized and the key decisions in the body; list the repositories, files, and `sessionId`s the findings came from under `Sources:`. Then confirm the result:
+Review `git status`, then commit with [Commit memory changes](#commit-memory-changes), adding `--author="${AGENT_NAME:-$AGENT_ID} <$AGENT_ID@letta.com>"`. Commit each topic you wrote (identity, preferences, a project) separately, and list the repositories, files, and `sessionId`s its findings came from under `Sources:`. Then confirm the result:
 
 ```bash
 cd "$MEMORY_DIR"
@@ -201,10 +201,10 @@ Only once the commit is verified, tell the user what you built and whether cover
 
 ## Commit memory changes
 
-Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+Commit each learning separately, so every commit holds one learning and names where it came from. `git log` then holds the evidence, and memory files do not. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
 
 ```bash
-git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+git add <changed files> && git commit -m "memory(<kind>): <what changed>
 
 <why: the correction, instruction, or pattern this encodes>
 
@@ -212,8 +212,7 @@ Sources:
 - <where the learning came from>"
 ```
 
-- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
-- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `<kind>` is where the change lives: `core` for root Markdown files (the system prompt), `skill` for anything under `skills/`, `external` for deferred memory, shared memory, and other files. When one learning changes more than one kind, list them: `memory(core, external): ...`.
 - `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
 - Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
 - Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.
