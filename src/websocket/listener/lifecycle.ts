@@ -870,16 +870,25 @@ async function connectWithRetry(
   socket.on("close", (code: number, reason: Buffer) => {
     lifecycleLog(formatListenerSocketClose("control", code, reason));
     abortStartupIngress();
-    if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
+    if (
+      !shouldHandleControlSocketClose(runtime, socket, opts.connectionId) &&
+      !(
+        runtime === getActiveRuntime() &&
+        !runtime.intentionallyClosed &&
+        (!runtime.socket || runtime.socket.readyState === WebSocket.CLOSED) &&
+        ![...runtime.connections.values()].some(({ writer }) =>
+          isListenerTransportOpen(writer),
+        ) &&
+        !runtime.reconnectTimeout
+      )
+    ) {
       return;
     }
-
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
       reason: reason.toString(),
     });
-
     fileCommandSession.dispose();
     const reasonText = reason.toString();
     // Fencing 1008s can supersede us without a prior replacement close.
@@ -888,13 +897,10 @@ async function connectWithRetry(
       (code === 1008 &&
         reasonText !== CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON) ||
       (code === 1000 && reasonText === "Replaced by new connection");
-
     if (!terminalClose && runtime.hasSuccessfulConnection) {
       opts.onRetrying?.(0, MAX_RETRY_ATTEMPTS, 0, opts.connectionId);
     }
-
     clearRuntimeTimers(runtime);
-
     if (!terminalClose) {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         rejectPendingApprovalResolversForConnection(
@@ -949,21 +955,18 @@ async function connectWithRetry(
       else opts.onDisconnected();
       return;
     }
-
     // If we had connected before, restart backoff from zero for this outage window.
     const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
     const nextStartTime = runtime.hasSuccessfulConnection
       ? Date.now()
       : startTime;
     runtime.hasSuccessfulConnection = false;
-
     connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
       (error) => {
         opts.onError(error instanceof Error ? error : new Error(String(error)));
       },
     );
   });
-
   socket.on("error", (error: Error) => {
     if (runtime.socket !== socket) return;
     trackListenerError("listener_websocket_error", error, "listener_socket");

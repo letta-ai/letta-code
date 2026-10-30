@@ -11,6 +11,8 @@ import {
   stopListenerClient,
 } from "@/websocket/listen-client";
 import { createListenerSocket } from "@/websocket/listener/handshake-deadline";
+import { getOrCreateProcessTransport } from "./connection";
+import { getActiveRuntime } from "./runtime";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -149,4 +151,37 @@ test("a listener socket stuck CONNECTING is terminated at the deadline", async (
   expect(socket.readyState).toBe(WebSocket.CONNECTING);
   expect(await closed).toBe(1006);
   expect(socket.readyState).toBe(WebSocket.CLOSED);
+});
+
+test("transport refresh preserves a connecting reconnect and its next retry", async () => {
+  const retryAttempts: number[] = [];
+  await startListenerClient({
+    connectionId: "conn-reconnect",
+    wsUrl,
+    deviceId: "device-id",
+    connectionName: "listener-name",
+    onConnected: () => {},
+    onDisconnected: () => {},
+    onError: () => {},
+    onRetrying: (attempt) => {
+      retryAttempts.push(attempt);
+      process.env.LETTA_LISTENER_HANDSHAKE_TIMEOUT_MS = "10000";
+    },
+  });
+  await waitFor(
+    () => retryAttempts.includes(1) && tcpSockets.length >= 2,
+    "first reconnect never started",
+  );
+  const runtime = getActiveRuntime();
+  if (!runtime?.socket) throw new Error("missing reconnect socket");
+  const socket = runtime.socket;
+  expect(socket.readyState).toBe(WebSocket.CONNECTING);
+  getOrCreateProcessTransport(runtime);
+  tcpSockets[1]?.destroy();
+  await waitFor(
+    () => socket.readyState === WebSocket.CLOSED,
+    "reconnect socket never closed",
+  );
+  expect(retryAttempts).toContain(2);
+  expect(runtime.reconnectTimeout).not.toBeNull();
 });
