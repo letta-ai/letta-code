@@ -1,5 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { chmodSync, existsSync, unlinkSync } from "node:fs";
+import { chmodSync, existsSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import {
   createServer,
   request as httpRequest,
@@ -21,6 +22,7 @@ const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const BROKER_PATH = "/mcp";
+const TCP_RENDEZVOUS_PREFIX = "tcp-file:";
 
 type BrokerRequest = {
   method: "GET" | "POST";
@@ -61,9 +63,8 @@ export interface McpSubprocessBroker {
 
 function socketPath(): string {
   const nonce = randomBytes(16).toString("hex");
-  return process.platform === "win32"
-    ? `\\\\.\\pipe\\letta-mcp-${process.pid}-${nonce}`
-    : path.join(tmpdir(), `letta-mcp-${process.pid}-${nonce}.sock`);
+  const extension = process.platform === "win32" ? "port" : "sock";
+  return path.join(tmpdir(), `letta-mcp-${process.pid}-${nonce}.${extension}`);
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -184,6 +185,8 @@ export function createMcpSubprocessBroker(options: {
   getClient: () => Promise<BrokerUpstreamClient>;
 }): McpSubprocessBroker {
   const socket = socketPath();
+  const endpoint =
+    process.platform === "win32" ? `${TCP_RENDEZVOUS_PREFIX}${socket}` : socket;
   const key = randomBytes(32).toString("hex");
   const connections = new Set<Socket>();
   let closed = false;
@@ -298,24 +301,44 @@ export function createMcpSubprocessBroker(options: {
     connections.add(connection);
     connection.once("close", () => connections.delete(connection));
   });
-  server.listen(socket);
   server.on("listening", () => {
-    if (process.platform !== "win32") {
+    if (closed) {
+      server.close();
+      return;
+    }
+    if (process.platform === "win32") {
+      const address = server.address();
+      if (address && typeof address === "object") {
+        try {
+          writeFileSync(socket, String(address.port), {
+            encoding: "utf8",
+            flag: "wx",
+            mode: 0o600,
+          });
+        } catch {
+          server.close();
+        }
+      }
+    } else {
       try {
         chmodSync(socket, 0o600);
       } catch {
         // The random capability still protects the short-lived broker.
       }
     }
-    if (closed) server.close();
   });
+  if (process.platform === "win32") {
+    server.listen(0, "127.0.0.1");
+  } else {
+    server.listen(socket);
+  }
   return {
     env: {
-      [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: socket,
+      [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: endpoint,
       [MCP_SUBPROCESS_BROKER_KEY_ENV]: key,
     },
     redactions: {
-      [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: socket,
+      [MCP_SUBPROCESS_BROKER_SOCKET_ENV]: endpoint,
       [MCP_SUBPROCESS_BROKER_KEY_ENV]: key,
     },
     close() {
@@ -328,7 +351,7 @@ export function createMcpSubprocessBroker(options: {
       } catch {
         // The child may exit before the asynchronous listen completes.
       }
-      if (process.platform !== "win32" && existsSync(socket)) {
+      if (existsSync(socket)) {
         try {
           unlinkSync(socket);
         } catch {
@@ -339,16 +362,34 @@ export function createMcpSubprocessBroker(options: {
   };
 }
 
-function requestBroker(
-  socket: string,
+async function brokerRequestTarget(
+  endpoint: string,
+): Promise<{ socketPath: string } | { host: string; port: number }> {
+  if (!endpoint.startsWith(TCP_RENDEZVOUS_PREFIX)) {
+    return { socketPath: endpoint };
+  }
+  const rendezvousPath = endpoint.slice(TCP_RENDEZVOUS_PREFIX.length);
+  const value = (await readFile(rendezvousPath, "utf8")).trim();
+  const port = Number(value);
+  if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+    throw Object.assign(new Error("MCP broker is starting"), {
+      code: "EAGAIN",
+    });
+  }
+  return { host: "127.0.0.1", port };
+}
+
+async function requestBroker(
+  endpoint: string,
   key: string,
   payload: BrokerRequest,
 ): Promise<unknown> {
   const body = JSON.stringify(payload);
+  const target = await brokerRequestTarget(endpoint);
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       {
-        socketPath: socket,
+        ...target,
         path: BROKER_PATH,
         method: "POST",
         headers: {
@@ -392,21 +433,23 @@ function requestBroker(
 }
 
 async function requestBrokerWithStartupRetry(
-  socket: string,
+  endpoint: string,
   key: string,
   payload: BrokerRequest,
 ): Promise<unknown> {
   let lastError: unknown;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
     try {
-      return await requestBroker(socket, key, payload);
+      return await requestBroker(endpoint, key, payload);
     } catch (error) {
       lastError = error;
       const code =
         error && typeof error === "object" && "code" in error
           ? String(error.code)
           : "";
-      if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      if (code !== "ENOENT" && code !== "ECONNREFUSED" && code !== "EAGAIN") {
+        throw error;
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
   }
@@ -417,17 +460,17 @@ async function requestBrokerWithStartupRetry(
 export function createMcpSubprocessBrokerClient(
   env: NodeJS.ProcessEnv,
 ): UnifiedMcpClient | null {
-  const socket = env[MCP_SUBPROCESS_BROKER_SOCKET_ENV]?.trim();
+  const endpoint = env[MCP_SUBPROCESS_BROKER_SOCKET_ENV]?.trim();
   const key = env[MCP_SUBPROCESS_BROKER_KEY_ENV]?.trim();
-  if (!socket || !key) return null;
+  if (!endpoint || !key) return null;
   return {
     get: (requestPath) =>
-      requestBrokerWithStartupRetry(socket, key, {
+      requestBrokerWithStartupRetry(endpoint, key, {
         method: "GET",
         path: requestPath,
       }),
     post: (requestPath, options) =>
-      requestBrokerWithStartupRetry(socket, key, {
+      requestBrokerWithStartupRetry(endpoint, key, {
         method: "POST",
         path: requestPath,
         ...(options?.body !== undefined ? { body: options.body } : {}),
