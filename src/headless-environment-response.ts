@@ -14,10 +14,10 @@ import {
   getEnvironmentConnection,
   isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { toolFilter } from "@/tools/filter";
 import type { ResultMessage, UsageStatistics } from "@/types/protocol";
 

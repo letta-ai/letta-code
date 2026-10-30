@@ -5,11 +5,13 @@ import {
   isEnvironmentOnline,
   listEnvironments,
   resolveAgentSandboxConnectionId,
-  resolveDesktopEnvironmentConnectionId,
-  resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import {
+  resolveDesktopEnvironmentConnectionId,
+  resolveEnvironmentConnectionId,
+} from "@/backend/environment-lookup";
 import { getLocalChannelTeleportError } from "@/channels/teleport-guard";
 import { type SessionRef, settingsManager } from "@/settings-manager";
 

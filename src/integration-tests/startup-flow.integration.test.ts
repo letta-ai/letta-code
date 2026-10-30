@@ -10,9 +10,13 @@ import {
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { resolveEnvironmentConnectionId } from "@/backend/api/environments";
+import {
+  isEnvironmentOnline,
+  listEnvironments,
+} from "@/backend/api/environments";
 import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
 import { apiRequest } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -378,7 +382,30 @@ describe("Startup Flow - Integration", () => {
               }
             });
           });
-          ({ connectionId } = await resolveEnvironmentConnectionId(name));
+          const registered = await listEnvironments({
+            limit: 100,
+            connectionName: name,
+            source: "remote",
+            onlineOnly: true,
+          });
+          expect(registered).toMatchObject({ hasNextPage: false });
+          expect(registered.connections).toHaveLength(1);
+          const registeredEnvironment = registered.connections[0];
+          if (!registeredEnvironment) {
+            throw new Error("Connected listener registration was not returned");
+          }
+          expect(registeredEnvironment.connectionName).toBe(name);
+          expect(registeredEnvironment.organizationId).not.toBe("local");
+          expect(registeredEnvironment.connectionId?.startsWith("local-")).toBe(
+            false,
+          );
+          expect(isEnvironmentOnline(registeredEnvironment)).toBe(true);
+          if (!registeredEnvironment.deviceId) {
+            throw new Error("Connected listener did not expose a device ID");
+          }
+          ({ connectionId } = await resolveEnvironmentConnectionId(
+            registeredEnvironment.deviceId,
+          ));
           const parent = await apiRequest<{ id: string }>(
             "POST",
             "/v1/agents/",

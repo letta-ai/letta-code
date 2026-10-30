@@ -1,10 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { AgentRuntimeStatusSnapshot } from "@/backend/api/agents";
-import {
-  type EnvironmentConnection,
-  resolveEnvironmentConnectionId,
-} from "@/backend/api/environments";
+import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import {
   buildEnvironmentCreateMessageBody,
   buildEnvironmentLaunchResult,
@@ -33,10 +31,15 @@ test("an offline --computer resolves to a reportable error instead of throwing",
     agentId: "agent-1",
     conversationId: "conv-1",
     resolveComputer: (selector) =>
-      resolveEnvironmentConnectionId(selector, async () => ({
-        connections: [offline],
-        hasNextPage: false,
-      })),
+      resolveEnvironmentConnectionId(selector, {
+        get: async () => {
+          throw new ApiRequestError("not found", 404, "");
+        },
+        list: async () => ({
+          connections: [offline],
+          hasNextPage: false,
+        }),
+      }),
   });
   expect(result).toEqual({
     error:

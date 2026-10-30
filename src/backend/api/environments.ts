@@ -56,8 +56,18 @@ export interface CreateAgentSandboxResponse {
   connectionName: string;
 }
 
+export type EnvironmentSource = "local" | "remote";
+
+export interface ListEnvironmentsOptions {
+  limit?: number;
+  after?: string;
+  onlineOnly?: boolean;
+  connectionName?: string;
+  source?: EnvironmentSource;
+}
+
 export async function listEnvironments(
-  options: { limit?: number; after?: string; onlineOnly?: boolean } = {},
+  options: ListEnvironmentsOptions = {},
 ): Promise<ListEnvironmentsResponse> {
   return apiRequest<ListEnvironmentsResponse>(
     "GET",
@@ -68,6 +78,8 @@ export async function listEnvironments(
         limit: options.limit,
         after: options.after,
         onlineOnly: options.onlineOnly,
+        connectionName: options.connectionName,
+        source: options.source,
       },
     },
   );
@@ -123,97 +135,6 @@ export function describeEnvironment(
 ): string {
   const status = isEnvironmentOnline(environment) ? "online" : "offline";
   return `${environment.connectionName} (${environment.deviceId}, ${status})`;
-}
-
-export async function resolveDesktopEnvironmentConnectionId(
-  list: typeof listEnvironments = listEnvironments,
-): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
-  const response = await list({ limit: 100, onlineOnly: true });
-  const matches = response.connections.filter(
-    (environment) =>
-      ((environment.deviceId.startsWith("desktop:") &&
-        environment.listenerInstanceId?.startsWith("desktop-primary:") ===
-          true) ||
-        environment.listenerInstanceId?.startsWith("desktop-direct-cloud:") ===
-          true) &&
-      environment.organizationId !== "local" &&
-      isEnvironmentOnline(environment),
-  );
-
-  if (matches.length === 0) {
-    throw new Error(
-      "No Desktop Local computer is online. Run `letta teleport list` and choose a connected computer by name, device ID, or connection ID. To connect a computer, run `letta server` on it.",
-    );
-  }
-  if (matches.length > 1) {
-    throw new Error(
-      `Multiple Desktop computers are online. Run \`letta teleport list\` and choose one by name, device ID, or connection ID. Matched: ${matches.map(describeEnvironment).join(", ")}`,
-    );
-  }
-
-  const environment = matches[0];
-  if (!environment?.connectionId) {
-    throw new Error("Desktop Local has no active connection id");
-  }
-  return { connectionId: environment.connectionId, environment };
-}
-
-export async function resolveEnvironmentConnectionId(
-  selector: string,
-  list: typeof listEnvironments = listEnvironments,
-): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
-  const trimmed = selector.trim();
-  if (!trimmed) {
-    throw new Error("Computer selector must not be empty");
-  }
-
-  const response = await list({ limit: 100 });
-  const matches = response.connections.filter((environment) => {
-    return (
-      environment.connectionId === trimmed ||
-      environment.id === trimmed ||
-      environment.deviceId === trimmed ||
-      environment.connectionName === trimmed
-    );
-  });
-
-  if (matches.length === 0) {
-    throw new Error(
-      `Computer "${trimmed}" not found. Run \`letta computers list\` to discover available computers.`,
-    );
-  }
-
-  const onlineMatches = matches.filter(isEnvironmentOnline);
-  if (onlineMatches.length === 0) {
-    throw new Error(
-      `Computer "${trimmed}" is offline. Matched: ${matches.map(describeEnvironment).join(", ")}`,
-    );
-  }
-
-  if (
-    new Set(onlineMatches.map((environment) => environment.deviceId)).size > 1
-  ) {
-    throw new Error(
-      `Computer "${trimmed}" is ambiguous. Matched: ${onlineMatches.map(describeEnvironment).join(", ")}`,
-    );
-  }
-
-  // Multiple listeners for one device are not multiple computers. Match the
-  // picker by preferring the online listener with the most recent activity.
-  onlineMatches.sort(
-    (a, b) =>
-      Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
-      Math.max(a.lastHeartbeat ?? 0, a.lastSeenAt),
-  );
-  const environment = onlineMatches[0];
-  if (!environment) {
-    throw new Error(`Computer "${trimmed}" is offline`);
-  }
-  if (!environment.connectionId) {
-    throw new Error(`Computer "${trimmed}" has no active connection id`);
-  }
-
-  return { connectionId: environment.connectionId, environment };
 }
 
 export async function resolveAgentSandboxConnectionId(

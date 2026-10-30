@@ -15,12 +15,10 @@ import {
 import { getClient } from "@/backend/api/client";
 import {
   type EnvironmentConnection,
-  getEnvironmentConnection,
-  isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
 } from "@/backend/api/environments";
 import { getApiRequestConfig } from "@/backend/api/request";
+import { resolveEnvironmentConnectionId } from "@/backend/environment-lookup";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
@@ -145,15 +143,7 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
 }
 
 async function resolveQualifiedComputer(deviceId: string) {
-  try {
-    const environment = await getEnvironmentConnection(deviceId);
-    if (!isEnvironmentOnline(environment) || !environment.connectionId)
-      throw new Error(`Computer "${deviceId}" is offline`);
-    return { connectionId: environment.connectionId, environment };
-  } catch (error) {
-    if (errorMessage(error).includes("offline")) throw error;
-    return resolveEnvironmentConnectionId(deviceId);
-  }
+  return resolveEnvironmentConnectionId(deviceId);
 }
 
 function errorMessage(error: unknown): string {

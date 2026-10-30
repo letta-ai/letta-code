@@ -381,8 +381,14 @@ describe("launchRemoteExternalCodingAgent", () => {
     process.env.LETTA_BASE_URL = "https://api.example.test";
     const fetch = mockApiFetch(async (request) => {
       expect(request.method).toBe("GET");
-      expect(new URL(request.url).pathname).toBe("/v1/environments");
-      expect(new URL(request.url).searchParams.get("limit")).toBe("100");
+      const url = new URL(request.url);
+      if (url.pathname === "/v1/environments/brad-box") {
+        return new Response("not found", { status: 404 });
+      }
+      expect(url.pathname).toBe("/v1/environments");
+      expect(url.searchParams.get("limit")).toBe("100");
+      expect(url.searchParams.has("connectionName")).toBe(false);
+      expect(url.searchParams.has("source")).toBe(false);
       return Response.json({
         connections: [environment(true)],
         hasNextPage: false,
@@ -405,7 +411,7 @@ describe("launchRemoteExternalCodingAgent", () => {
     );
     if (!result.success) throw new Error(result.error);
     expect(result.success).toBe(true);
-    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(fetch).toHaveBeenCalledTimes(2);
     expect(connect).toHaveBeenCalledWith("conn-1", scope);
     expect(computer.launches[0]).toMatchObject({ runtime, notify: "caller" });
     computer.snapshot({ status: "completed", result: "Done" });
