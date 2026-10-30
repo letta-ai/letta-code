@@ -216,7 +216,7 @@ Custom prompt body`,
       ],
       init: [
         "### 5. Commit (1 bash call)",
-        "memory(self): initialize memory for <project name>",
+        "feat(init): initialize memory for project",
       ],
       memory: [
         "Repair only the reported memory Git conflict",

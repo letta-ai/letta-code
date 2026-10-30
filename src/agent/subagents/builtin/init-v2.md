@@ -87,20 +87,12 @@ Rules:
 
 **Commit format:**
 ```
-memory(self): initialize memory for <project name>
-
-<what you learned: the project, the user, and the conventions you recorded, and why they belong in memory>
-
-Sources:
-- <each project file you read>: <what it contributed>
-- $LETTA_PARENT_CONVERSATION_ID: user ran /init
+feat(init): initialize memory for project
 
 Generated-By: Letta Code
 Agent-ID: $LETTA_AGENT_ID
 Parent-Agent-ID: $LETTA_PARENT_AGENT_ID
 ```
-
-`Sources:` lets someone reading a memory line through `git blame` trace it back to the files it came from. List only files you actually read; never invent one. If `$LETTA_PARENT_CONVERSATION_ID` is empty, omit that line.
 
 ## Rules
 
