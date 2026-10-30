@@ -1,9 +1,5 @@
 import * as path from "node:path";
 import { isUsableDirectory } from "@/helpers/usable-directory";
-import {
-  deliverDiskSpaceReminder,
-  watchDiskSpaceWhileBackgroundRuns,
-} from "@/reminders/disk-space";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   captureSecretRedactions,
@@ -688,13 +684,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     scheduleBackgroundProcessCleanup(id);
   }
 
-  // Sessions keep writing after exec_command returns, beyond the batch's
-  // disk watcher.
-  const releaseDiskWatch = watchDiskSpaceWhileBackgroundRuns(
-    getCurrentWorkingDirectory(),
-    (text) => deliverDiskSpaceReminder(text, args.parentScope),
-  );
-  void runningProcess.completion.finally(releaseDiskWatch).then(
+  void runningProcess.completion.then(
     ({ exitCode }) => markSessionClosed(session, exitCode),
     (error: unknown) => {
       if (error instanceof ShellExecutionError) {

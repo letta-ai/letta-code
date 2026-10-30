@@ -4,6 +4,11 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
+import {
+  deliverDiskSpaceReminder,
+  watchSandboxDiskSpace,
+} from "@/reminders/disk-space";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { TO_SUBSCRIBERS } from "./connection";
@@ -128,6 +133,24 @@ export function installProcessEventRouting(params: {
     >);
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
+
+  // One disk watcher per sandbox, alerting every conversation served here.
+  runtime._stopDiskSpaceWatch?.();
+  runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
+    getCurrentWorkingDirectory,
+    (text) => {
+      let delivered = false;
+      for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+        if (!conversationRuntime.agentId) continue;
+        delivered = true;
+        deliverDiskSpaceReminder(text, {
+          agentId: conversationRuntime.agentId,
+          conversationId: conversationRuntime.conversationId,
+        });
+      }
+      if (!delivered) deliverDiskSpaceReminder(text);
+    },
+  );
 }
 
 export function clearProcessServices(runtime: ListenerRuntime): void {
@@ -137,6 +160,8 @@ export function clearProcessServices(runtime: ListenerRuntime): void {
   runtime._unsubscribeSubagentStreamEvents = undefined;
   runtime._unsubscribeBackgroundProcessState?.();
   runtime._unsubscribeBackgroundProcessState = undefined;
+  runtime._stopDiskSpaceWatch?.();
+  runtime._stopDiskSpaceWatch = undefined;
   setMessageQueueAdder(null);
   stopCronScheduler();
   clearRuntimeTimers(runtime);

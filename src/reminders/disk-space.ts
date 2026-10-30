@@ -172,7 +172,8 @@ export async function watchDiskSpaceDuring<T>(
     intervalMs?: number;
   } = {},
 ): Promise<T> {
-  if (!isManagedCloudRuntime(options.env)) return work();
+  // The listener's sandbox watcher already covers this process.
+  if (!isManagedCloudRuntime(options.env) || sandboxPollTimer) return work();
   const check = () =>
     void checkDiskSpaceNow(path, options).then((text) => {
       if (text) deliver(text);
@@ -190,30 +191,16 @@ export async function watchDiskSpaceDuring<T>(
   }
 }
 
-interface BackgroundWatch {
-  path: string;
-  deliver: (reminder: string) => void;
-  options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn };
-}
-
-const backgroundWatches = new Set<BackgroundWatch>();
-let backgroundPollTimer: ReturnType<typeof setInterval> | null = null;
-
-function checkForBackgroundWatch(watch: BackgroundWatch): void {
-  void checkDiskSpaceNow(watch.path, watch.options).then((text) => {
-    if (text) watch.deliver(text);
-  });
-}
+let sandboxPollTimer: ReturnType<typeof setInterval> | null = null;
 
 /**
- * Keep polling the disk while a background command runs, as
- * `watchDiskSpaceDuring` does for the foreground batch. Every running
- * command shares one timer; the returned release stops it after the last
- * one exits and measures once more, so a job that filled the disk right
- * before exiting is still reported.
+ * Poll the sandbox disk for the life of the listener process. The disk is
+ * shared by everything in the sandbox (foreground and background commands,
+ * subagents, external coding workers), so one process-wide timer sees every
+ * writer. Returns a stop function; never throws.
  */
-export function watchDiskSpaceWhileBackgroundRuns(
-  path: string,
+export function watchSandboxDiskSpace(
+  getPath: () => string,
   deliver: (reminder: string) => void,
   options: {
     env?: NodeJS.ProcessEnv;
@@ -223,34 +210,29 @@ export function watchDiskSpaceWhileBackgroundRuns(
 ): () => void {
   try {
     if (!isManagedCloudRuntime(options.env)) return () => {};
-    const watch: BackgroundWatch = { path, deliver, options };
-    backgroundWatches.add(watch);
-    if (!backgroundPollTimer) {
-      backgroundPollTimer = setInterval(() => {
-        // The newest command decides which agent hears about it.
-        const latest = [...backgroundWatches].at(-1);
-        if (latest) checkForBackgroundWatch(latest);
-      }, options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS);
-      backgroundPollTimer.unref?.();
-    }
-    let released = false;
+    if (sandboxPollTimer) clearInterval(sandboxPollTimer);
+    const timer = setInterval(() => {
+      try {
+        void checkDiskSpaceNow(getPath(), options)
+          .then((text) => {
+            if (text) deliver(text);
+          })
+          .catch(() => {});
+      } catch {}
+    }, options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS);
+    timer.unref?.();
+    sandboxPollTimer = timer;
     return () => {
-      if (released) return;
-      released = true;
-      backgroundWatches.delete(watch);
-      if (backgroundWatches.size === 0 && backgroundPollTimer) {
-        clearInterval(backgroundPollTimer);
-        backgroundPollTimer = null;
-      }
-      checkForBackgroundWatch(watch);
+      clearInterval(timer);
+      if (sandboxPollTimer === timer) sandboxPollTimer = null;
     };
   } catch {
     return () => {};
   }
 }
 
-export function isBackgroundDiskPollRunningForTests(): boolean {
-  return backgroundPollTimer !== null;
+export function isSandboxDiskWatchRunning(): boolean {
+  return sandboxPollTimer !== null;
 }
 
 // Alert waiting for the next model request in loops with no queue consumer
@@ -285,9 +267,8 @@ export function takePendingDiskSpaceReminder(): string | null {
 
 export function resetDiskSpaceAlertForTests(): void {
   pushedLevel = 0;
-  backgroundWatches.clear();
-  if (backgroundPollTimer) clearInterval(backgroundPollTimer);
-  backgroundPollTimer = null;
+  if (sandboxPollTimer) clearInterval(sandboxPollTimer);
+  sandboxPollTimer = null;
   pendingRequestReminder = null;
 }
 
