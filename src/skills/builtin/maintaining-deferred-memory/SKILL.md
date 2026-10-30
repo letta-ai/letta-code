@@ -7,7 +7,7 @@ Deferred memory contains the agent's knowledge. Use deferred memory for understa
 
 Deferred memory should NOT be used to store:
 - Information that can be accessed by querying the message history (recall memory). For example, logs of specific interactions can simply be looked up in past messages. Reserve deferred memory to store knowledge that is actually *derived* from experience, or to organize knowledge in a way that optimizes recalling the right information at the right time through progressive disclosure.
-- Justifications or reasons for updating memory. These belong in the git commit history of MemFS.
+- Justifications, reasons, or sources for updating memory. These belong in the commit message; see [Commit memory changes](#commit-memory-changes).
 
 ## Check the limits first
 
@@ -84,3 +84,21 @@ Recall already returns what happened. A deferred memory file is worth keeping on
 - Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, and current status. Link to the owning source instead.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
+## Commit memory changes
+
+Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+
+<why: the correction, instruction, or pattern this encodes>
+
+Sources:
+- <where the learning came from>"
+```
+
+- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
+- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.

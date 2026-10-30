@@ -61,7 +61,7 @@ Core memory is the agent's working model: who it is, how the user thinks and wha
 - When several rules share a cause, replace them with the one principle that explains them all, and delete the lines it absorbs in the same edit. Adding the principle while keeping the old rules is a log with a summary on top. A healthy file becomes more general over time; a growing count of narrow rules is a sign of failure.
 - State the principle with the reason that makes it generalize: "Verify claims against the running system, because Sarah trusts evidence over plausibility", not three separate rules about tests, logs, and deployments.
 - Write to the agent in the second person or imperative mood: "Lead with the answer", not "The user likes answers first". Say what to do rather than only what to avoid.
-- Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
+- Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed and where the learning came from. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
 - Update only from a pattern or an explicit instruction, not a single ambiguous event.
 - Check that a change does not contradict an existing line; resolve the conflict instead of adding both.
 - Write in plain language without all-caps or absolute emphasis. Overstated instructions get overapplied.
@@ -99,3 +99,22 @@ When a root file is long or the total is near its limit:
 1. Delete stale, duplicated, or rederivable content.
 2. Move subject detail into deferred memory and leave a one-line pointer in root `MEMORY.md`.
 3. Move procedures into skills.
+
+## Commit memory changes
+
+Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+
+<why: the correction, instruction, or pattern this encodes>
+
+Sources:
+- <where the learning came from>"
+```
+
+- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
+- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.

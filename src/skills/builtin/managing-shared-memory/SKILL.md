@@ -23,13 +23,7 @@ ls "$MEMORY_DIR/../"                      # attached repositories appear here by
 cat "$MEMORY_DIR/../<repo-name>/<path>"   # read like any file
 ```
 
-Edit files with your normal file tools, then commit with git. The mount's origin and credentials are already configured:
-
-```bash
-cd "$MEMORY_DIR/../<repo-name>"
-git add <files>
-git commit -m "describe the change"
-```
+Edit files with your normal file tools, then commit from the mount (`cd "$MEMORY_DIR/../<repo-name>"`) using [Commit memory changes](#commit-memory-changes). The mount's origin and credentials are already configured. Other agents read this history, so the sources matter as much as in your own memory.
 
 The harness pushes clean commits from read/write attached repositories after the turn. If a push collides with another agent's work, it pulls with rebase and retries once. Dirty files and conflicts are not changed automatically; the harness adds a reminder to the next turn instead.
 
@@ -84,6 +78,25 @@ letta shared-memory history shared-notes --path docs/plan.md
 - **Never hand-clone the repository to another location (e.g. /tmp) to work around a broken mount** — fix the mount with `letta shared-memory sync` so every session and other agents see the same checkout.
 - **Permission denied under another agent's directory** — shared repositories mount per-agent. Only your own mount (under your agent directory) is accessible; another agent's mount of the same repository is walled off by the cross-agent guard. Run `letta shared-memory sync` to get your own mount.
 - **Shared-memory conflict reminder** — resolve the conflict in the named repository, finish the rebase or commit, and leave the repository clean. The harness retries the push after a future turn.
+
+## Commit memory changes
+
+Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+
+<why: the correction, instruction, or pattern this encodes>
+
+Sources:
+- <where the learning came from>"
+```
+
+- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
+- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.
 
 ## Notes and Limits
 

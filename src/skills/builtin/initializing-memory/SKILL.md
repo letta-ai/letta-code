@@ -187,15 +187,10 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 ### 10. Commit, then report
 **Uncommitted memory is not part of your future system prompt.** If a commit is blocked, report initialization as incomplete rather than describing working-tree files as live memory.
 
+Review `git status`, then commit with [Commit memory changes](#commit-memory-changes) using scope `init` and `--author="${AGENT_NAME:-$AGENT_ID} <$AGENT_ID@letta.com>"`. Explain what was initialized and the key decisions in the body; list the repositories, files, and `sessionId`s the findings came from under `Sources:`. Then confirm the result:
+
 ```bash
-cd $MEMORY_DIR
-git status                # Review what changed before staging
-git add <specific files>  # Stage targeted paths — avoid blind `git add -A`
-author_name="${AGENT_NAME:-$AGENT_ID}"
-git commit --author="$author_name <$AGENT_ID@letta.com>" -m "feat(init): <summary> ✨
-
-<what was initialized and key decisions made>"
-
+cd "$MEMORY_DIR"
 git status                        # Your memory changes should no longer be listed
 git ls-tree -r --name-only HEAD   # What your future self will actually load
 ```
@@ -203,6 +198,25 @@ git ls-tree -r --name-only HEAD   # What your future self will actually load
 Do **not** run `git push`. The harness pushes clean committed memory automatically after the turn, so pushing by hand races it. The commit is the finish line.
 
 Only once the commit is verified, tell the user what you built and whether coverage was complete, then ask whether they want refinement — which means another commit, so repeat this step.
+
+## Commit memory changes
+
+Every memory commit names where the learning came from, so `git log` holds the evidence and memory files do not. From the repository root, stage only the files you changed and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "<type>(<scope>): <what changed>
+
+<why: the correction, instruction, or pattern this encodes>
+
+Sources:
+- <where the learning came from>"
+```
+
+- `<type>`: `feat` adds knowledge or behavior, `fix` corrects wrong or stale memory, `chore` reorganizes without changing meaning.
+- `<scope>`: the process making the change: `memory` for ordinary edits, or `init`, `doctor`, `sync`, `reflection`.
+- `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.
 
 ## Critical
 - **Use parallel tool calls wherever possible** — read many files in one turn, write many memory files in one turn.
