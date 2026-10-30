@@ -12,7 +12,7 @@ import {
 } from "@/websocket/listen-client";
 import { createListenerSocket } from "@/websocket/listener/handshake-deadline";
 import { getOrCreateProcessTransport } from "./connection";
-import { getActiveRuntime } from "./runtime";
+import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
 
 type ListenerSettings = Awaited<
   ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
@@ -91,6 +91,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  const runtime = getActiveRuntime();
+  if (runtime) clearRuntimeTimers(runtime);
   stopListenerClient();
   for (const socket of tcpSockets) socket.destroy();
   await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -104,6 +106,11 @@ afterEach(async () => {
     const value = originalEnv[key];
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
+  }
+  expect(getActiveRuntime()).toBeNull();
+  if (runtime) {
+    expect(runtime.intentionallyClosed).toBeTrue();
+    expect(runtime.reconnectTimeout).toBeNull();
   }
 });
 
