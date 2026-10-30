@@ -2,7 +2,10 @@ import { isRecord } from "@/utils/type-guards";
 
 /** Structural API surface used only by the unified `letta mcp` command. */
 export interface UnifiedMcpClient {
-  get(path: string): Promise<unknown>;
+  get(
+    path: string,
+    options?: { headers?: Record<string, string> },
+  ): Promise<unknown>;
   post(
     path: string,
     options?: { body?: unknown; headers?: Record<string, string> },
@@ -181,6 +184,23 @@ function parseSearchResult(value: unknown): UnifiedMcpSearchResult | null {
   return { toolId, jsonSchema, score };
 }
 
+/**
+ * Originator headers for an agent MCP request. Discovery (list, tools, search)
+ * and execution send the same pair, so the server can show a restricted
+ * server's tools only to a turn whose originator may use them. Without a token
+ * the headers are omitted and the server treats the caller as unattributed.
+ */
+function originatorHeaders(
+  originatorToken: string | undefined,
+): Record<string, string> | undefined {
+  return originatorToken
+    ? {
+        [MCP_ORIGINATOR_TOKEN_HEADER]: originatorToken,
+        [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
+      }
+    : undefined;
+}
+
 async function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
@@ -207,9 +227,14 @@ export async function listUnifiedMcpServers(
   client: UnifiedMcpClient,
   agentId: string,
   timeoutMs = 10_000,
+  options: { originatorToken?: string | undefined } = {},
 ): Promise<UnifiedMcpServer[]> {
+  const headers = originatorHeaders(options.originatorToken);
   const value = await withTimeout(
-    client.get(`/v1/agents/${encodeURIComponent(agentId)}/mcp-servers`),
+    client.get(
+      `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers`,
+      ...(headers ? [{ headers }] : []),
+    ),
     timeoutMs,
     "Listing agent MCP servers",
   );
@@ -250,10 +275,13 @@ export async function listUnifiedMcpTools(
   agentId: string,
   mcpServerId: string,
   timeoutMs = 10_000,
+  options: { originatorToken?: string | undefined } = {},
 ): Promise<UnifiedMcpTool[]> {
+  const headers = originatorHeaders(options.originatorToken);
   const value = await withTimeout(
     client.get(
       `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(mcpServerId)}/tools`,
+      ...(headers ? [{ headers }] : []),
     ),
     timeoutMs,
     "Listing agent MCP server tools",
@@ -269,7 +297,10 @@ export async function searchUnifiedMcpTools(params: {
   searchMode: UnifiedMcpSearchMode;
   limit: number;
   timeoutMs?: number;
+  /** See runUnifiedMcpTool. Omitted when the turn holds no token. */
+  originatorToken?: string | undefined;
 }): Promise<UnifiedMcpSearchResult[]> {
+  const headers = originatorHeaders(params.originatorToken);
   const value = await withTimeout(
     params.client.post(
       `/v1/agents/${encodeURIComponent(params.agentId)}/mcp-servers/tools/search`,
@@ -279,6 +310,7 @@ export async function searchUnifiedMcpTools(params: {
           search_mode: params.searchMode,
           limit: params.limit,
         },
+        ...(headers ? { headers } : {}),
       },
     ),
     params.timeoutMs ?? 60_000,
@@ -316,12 +348,7 @@ export async function runUnifiedMcpTool(params: {
       {
         body: { args: params.args },
         ...(params.originatorToken
-          ? {
-              headers: {
-                [MCP_ORIGINATOR_TOKEN_HEADER]: params.originatorToken,
-                [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
-              },
-            }
+          ? { headers: originatorHeaders(params.originatorToken) }
           : {}),
       },
     ),

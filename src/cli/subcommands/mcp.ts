@@ -1,5 +1,4 @@
 import { parseArgs } from "node:util";
-import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
 import { getClient as getDefaultClient } from "@/backend/api/client";
@@ -24,7 +23,6 @@ import {
 import { createMcpOAuthSession } from "@/mcp-oauth";
 import { formatClientMcpToolName } from "@/mcp-runtime";
 import { getMcpScopeAgentId, type ParentAgentLookup } from "@/mcp-scope";
-import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { isRecord } from "@/utils/type-guards";
 import { type McpConnectDependencies, runMcpConnect } from "./mcp-connect";
@@ -38,6 +36,10 @@ import {
   writeMcpStderr,
   writeMcpStdout,
 } from "./mcp-io";
+import {
+  mcpOriginatorOptions,
+  mcpOriginatorTokenForToolRun,
+} from "./mcp-originator";
 import {
   mergeMcpSearchResults,
   runMcpSearch,
@@ -318,7 +320,12 @@ async function listUnifiedServers(
   );
   if (!serverMcpAvailable(deps)) return local;
   const client = await getServerClient(deps);
-  const connected = await listUnifiedMcpServers(client, agentId);
+  const connected = await listUnifiedMcpServers(
+    client,
+    agentId,
+    undefined,
+    mcpOriginatorOptions(),
+  );
   return [
     ...local,
     ...connected.map((server): ServerTarget => ({ kind: "server", server })),
@@ -475,7 +482,13 @@ async function buildToolCatalog(
       const toolLists = await Promise.all(
         serverTargets.map(async ({ server }) => ({
           server,
-          tools: await listUnifiedMcpTools(client, agentId, server.id),
+          tools: await listUnifiedMcpTools(
+            client,
+            agentId,
+            server.id,
+            undefined,
+            mcpOriginatorOptions(),
+          ),
         })),
       );
       for (const { server, tools } of toolLists) {
@@ -724,6 +737,7 @@ async function runSearch(
         client: await getServerClient(deps),
         agentId,
         ...request,
+        ...mcpOriginatorOptions(),
       });
       const catalogPromise = buildToolCatalog(deps, agentId, {
         ...(includeLocal ? {} : { targetKind: "server" }),
@@ -823,21 +837,7 @@ async function callCatalogTool(
       `MCP tool '${toolName}' is not available`,
     );
   }
-  // When this call runs inside a listener turn attributed to a cloud super
-  // run, forward that run's originator token (in-memory store lookup only;
-  // the value is never logged here). Unattributed callers omit the header.
-  const originatorSuperRunId = getRuntimeContext()?.mcpOriginatorSuperRunId;
-  const originatorToken = getMcpOriginatorToken(originatorSuperRunId);
-  if (originatorSuperRunId && !originatorToken) {
-    // The turn is attributed to a super run but holds no token — expected
-    // after a listener restart, when the durable ledger replays an
-    // acknowledged input but the memory-only token store was cleared. The
-    // call proceeds without the header; the server fails closed on any
-    // restricted connection. Surface the loss so it is never silent.
-    console.warn(
-      `[mcp-originator] no originator token held for super run ${originatorSuperRunId}; running tool call unattributed (expected after listener restart)`,
-    );
-  }
+  const originatorToken = mcpOriginatorTokenForToolRun();
   return tool.target.kind === "client"
     ? await tool.target.connection.callTool(tool.target.rawName, args, options)
     : mcpToolResultFromServer(
