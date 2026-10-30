@@ -6,7 +6,11 @@ import {
 } from "@/agent/mcp-originator-tokens";
 import type { UnifiedMcpClient } from "@/backend/api/unified-mcp";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
+import {
+  callAgentMcpTool,
+  type McpSubcommandDependencies,
+  runMcpSubcommand,
+} from "./mcp";
 
 /**
  * USER_SCOPED_MCP_CONNECTIONS: an MCP tool-run made inside a listener turn
@@ -29,8 +33,13 @@ describe("MCP originator token forwarding", () => {
       body: unknown;
       headers?: Record<string, string>;
     }> = [];
+    const discovery: Array<{
+      path: string;
+      headers?: Record<string, string>;
+    }> = [];
     const client: UnifiedMcpClient = {
-      get: async (path) => {
+      get: async (path, options) => {
+        discovery.push({ path, headers: options?.headers });
         if (path === serverPath) {
           return [
             {
@@ -58,6 +67,7 @@ describe("MCP originator token forwarding", () => {
           body: options?.body,
           headers: options?.headers,
         });
+        if (path.endsWith("/mcp-servers/tools/search")) return [];
         return { status: "success", func_return: "ok" };
       },
     };
@@ -68,11 +78,12 @@ describe("MCP originator token forwarding", () => {
       getLocalServers: () => [],
       getClient: async () => client,
     };
-    return { deps, requests, runPath };
+    return { deps, requests, runPath, discovery, serverPath, toolsPath };
   }
 
   test("forwards the held token when the call runs inside an attributed super run", async () => {
-    const { deps, requests, runPath } = originatorHarness();
+    const { deps, requests, runPath, discovery, serverPath, toolsPath } =
+      originatorHarness();
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
 
     await runWithRuntimeContext({ mcpOriginatorSuperRunId: "sr-1" }, async () =>
@@ -84,16 +95,58 @@ describe("MCP originator token forwarding", () => {
       ),
     );
 
+    const headers = {
+      "x-letta-mcp-originator-token": "mst_one.secret-a",
+      "x-letta-mcp-originator-isolation": "1",
+    };
     expect(requests).toEqual([
-      {
-        path: runPath,
-        body: { args: { title: "Bug" } },
-        headers: {
-          "x-letta-mcp-originator-token": "mst_one.secret-a",
-          "x-letta-mcp-originator-isolation": "1",
-        },
-      },
+      { path: runPath, body: { args: { title: "Bug" } }, headers },
     ]);
+    // Discovery resolves the tool with the same originator as execution, so a
+    // restricted server is found only by turns allowed to call it.
+    expect(discovery).toEqual([
+      { path: serverPath, headers },
+      { path: toolsPath, headers },
+    ]);
+  });
+
+  test("forwards the held token on tool listing and search", async () => {
+    const { deps, requests, discovery } = originatorHarness();
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+    const headers = {
+      "x-letta-mcp-originator-token": "mst_one.secret-a",
+      "x-letta-mcp-originator-isolation": "1",
+    };
+    const errors: string[] = [];
+    const output = async () => {};
+
+    await runWithRuntimeContext(
+      { mcpOriginatorSuperRunId: "sr-1" },
+      async () => {
+        expect(
+          await runMcpSubcommand(["tools"], {
+            ...deps,
+            stdout: output,
+            stderr: (message) => errors.push(message),
+          }),
+        ).toBe(0);
+        expect(
+          await runMcpSubcommand(["search", "issue"], {
+            ...deps,
+            stdout: output,
+            stderr: (message) => errors.push(message),
+          }),
+        ).toBe(0);
+      },
+    );
+
+    expect(errors).toEqual([]);
+    expect(discovery.length).toBeGreaterThan(0);
+    for (const request of discovery) expect(request.headers).toEqual(headers);
+    const search = requests.find((request) =>
+      request.path.endsWith("/mcp-servers/tools/search"),
+    );
+    expect(search?.headers).toEqual(headers);
   });
 
   test("omits the header when no token is held for the active super run", async () => {
@@ -146,5 +199,20 @@ describe("MCP originator token forwarding", () => {
     expect(requests).toEqual([
       { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
     ]);
+  });
+
+  test("omits the headers on discovery outside any super run context", async () => {
+    const { deps, discovery } = originatorHarness();
+    setMcpOriginatorToken("sr-1", "mst_one.secret-a");
+
+    await callAgentMcpTool(
+      "agent-cloud",
+      "mcp__github__create_issue",
+      { title: "Bug" },
+      deps,
+    );
+
+    expect(discovery.length).toBeGreaterThan(0);
+    for (const request of discovery) expect(request.headers).toBeUndefined();
   });
 });
