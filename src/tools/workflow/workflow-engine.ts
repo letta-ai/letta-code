@@ -100,7 +100,7 @@ export async function executeWorkflow(
   return executeScript(spawner, options, meta);
 }
 
-/** The same tool bindings and call limits, without metadata or orchestration globals. */
+/** The same tool bindings, decide(), and call limits, without metadata or agent orchestration. */
 export async function executeToolScript(
   options: Pick<
     RunWorkflowOptions,
@@ -113,6 +113,7 @@ export async function executeToolScript(
     | "onProgress"
     | "env"
     | "maxTotalToolCalls"
+    | "maxTotalDecisions"
   > & {
     /** Extra script globals, e.g. Monitor's `emit` and `sleep`. */
     globals?: Record<string, unknown>;
@@ -517,7 +518,8 @@ async function executeScript(
     tools,
     listTools,
     describeTool,
-    ...(spawner ? { agent, decide, parallel, pipeline, phase, log } : {}),
+    decide,
+    ...(spawner ? { agent, parallel, pipeline, phase, log } : {}),
     args: options.args,
     console: { log, warn: log, error: log, info: log },
     // Only `env`: the host process's exit, kill, and bindings stay out.
