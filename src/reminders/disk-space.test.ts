@@ -4,12 +4,14 @@ import {
   deliverDiskSpaceReminder,
   evaluateDiskSpaceReminder,
   getCachedDiskSpaceSample,
+  isBackgroundDiskPollRunningForTests,
   isDiskSpaceLow,
   refreshDiskSpaceSample,
   resetDiskSpaceAlertForTests,
   resetDiskSpaceCacheForTests,
   takePendingDiskSpaceReminder,
   watchDiskSpaceDuring,
+  watchDiskSpaceWhileBackgroundRuns,
 } from "@/reminders/disk-space";
 import {
   clearPendingMessages,
@@ -252,5 +254,96 @@ describe("watchDiskSpaceDuring", () => {
       "task_notification",
     ]);
     expect(queued[0]?.conversationId).toBe("conv-1");
+  });
+});
+
+describe("watchDiskSpaceWhileBackgroundRuns", () => {
+  const managed = { LETTA_MANAGED_CLOUD_RUNTIME: "1" } as NodeJS.ProcessEnv;
+  const scope = { agentId: "agent-1", conversationId: "conv-1" };
+  afterEach(() => {
+    resetDiskSpaceAlertForTests();
+    setMessageQueueAdder(null);
+    clearPendingMessages();
+  });
+
+  test("alerts once while a background command fills the disk", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let free = 10 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    const release = watchDiskSpaceWhileBackgroundRuns(
+      "/work",
+      (text) => deliverDiskSpaceReminder(text, scope),
+      { env: managed, statfsFn, intervalMs: 10 },
+    );
+    free = 1.5 * GIB; // 92.5% used, with no foreground batch running
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.kind).toBe("task_notification");
+    expect(queued[0]?.text).toContain("LOW DISK SPACE");
+    expect(queued[0]?.conversationId).toBe("conv-1");
+    release();
+  });
+
+  test("exit measures fresh even when the cached sample looked fine", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let free = 10 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    evaluateDiskSpaceReminder({
+      workingDirectory: "/work",
+      notified: false,
+      env: managed,
+      statfsFn,
+    });
+    await flush();
+    expect(isDiskSpaceLow(getCachedDiskSpaceSample()!)).toBe(false);
+
+    const release = watchDiskSpaceWhileBackgroundRuns(
+      "/work",
+      (text) => deliverDiskSpaceReminder(text, scope),
+      { env: managed, statfsFn, intervalMs: 60_000 },
+    );
+    free = 1 * GIB; // filled right before exiting, before any poll ran
+    release();
+    await flush();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.text).toContain("95% full");
+  });
+
+  test("one shared poller stops after the last background command exits", async () => {
+    const { fn, calls } = fakeStatfs(20 * GIB, 10 * GIB);
+    const options = { env: managed, statfsFn: fn, intervalMs: 10 };
+    const releaseA = watchDiskSpaceWhileBackgroundRuns(
+      "/work",
+      () => {},
+      options,
+    );
+    const releaseB = watchDiskSpaceWhileBackgroundRuns(
+      "/work",
+      () => {},
+      options,
+    );
+    releaseA();
+    expect(isBackgroundDiskPollRunningForTests()).toBe(true);
+    releaseB();
+    expect(isBackgroundDiskPollRunningForTests()).toBe(false);
+    await flush();
+    const callsAfterExit = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(calls.length).toBe(callsAfterExit);
+  });
+
+  test("does nothing outside managed Cloud runtimes", () => {
+    const { fn, calls } = fakeStatfs(20 * GIB, 0.5 * GIB);
+    const release = watchDiskSpaceWhileBackgroundRuns("/work", () => {}, {
+      env: {},
+      statfsFn: fn,
+    });
+    expect(isBackgroundDiskPollRunningForTests()).toBe(false);
+    release();
+    expect(calls).toHaveLength(0);
   });
 });

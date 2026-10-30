@@ -1,6 +1,10 @@
 import { rmSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import {
+  deliverDiskSpaceReminder,
+  watchDiskSpaceWhileBackgroundRuns,
+} from "@/reminders/disk-space";
+import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
@@ -544,7 +548,13 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   );
 
   const notifyWhenSettled = () => {
+    // Backgrounded commands outlive the batch's disk watcher.
+    const releaseDiskWatch = watchDiskSpaceWhileBackgroundRuns(
+      getCurrentWorkingDirectory(),
+      (text) => deliverDiskSpaceReminder(text, parentScope),
+    );
     void settled.then(({ status, detail }) => {
+      releaseDiskWatch();
       notifyBackgroundCompletion({
         bashId,
         description,

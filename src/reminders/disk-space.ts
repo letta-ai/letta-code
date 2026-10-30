@@ -190,6 +190,69 @@ export async function watchDiskSpaceDuring<T>(
   }
 }
 
+interface BackgroundWatch {
+  path: string;
+  deliver: (reminder: string) => void;
+  options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn };
+}
+
+const backgroundWatches = new Set<BackgroundWatch>();
+let backgroundPollTimer: ReturnType<typeof setInterval> | null = null;
+
+function checkForBackgroundWatch(watch: BackgroundWatch): void {
+  void checkDiskSpaceNow(watch.path, watch.options).then((text) => {
+    if (text) watch.deliver(text);
+  });
+}
+
+/**
+ * Keep polling the disk while a background command runs, as
+ * `watchDiskSpaceDuring` does for the foreground batch. Every running
+ * command shares one timer; the returned release stops it after the last
+ * one exits and measures once more, so a job that filled the disk right
+ * before exiting is still reported.
+ */
+export function watchDiskSpaceWhileBackgroundRuns(
+  path: string,
+  deliver: (reminder: string) => void,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    statfsFn?: StatfsFn;
+    intervalMs?: number;
+  } = {},
+): () => void {
+  try {
+    if (!isManagedCloudRuntime(options.env)) return () => {};
+    const watch: BackgroundWatch = { path, deliver, options };
+    backgroundWatches.add(watch);
+    if (!backgroundPollTimer) {
+      backgroundPollTimer = setInterval(() => {
+        // The newest command decides which agent hears about it.
+        const latest = [...backgroundWatches].at(-1);
+        if (latest) checkForBackgroundWatch(latest);
+      }, options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS);
+      backgroundPollTimer.unref?.();
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      backgroundWatches.delete(watch);
+      if (backgroundWatches.size === 0 && backgroundPollTimer) {
+        clearInterval(backgroundPollTimer);
+        backgroundPollTimer = null;
+      }
+      checkForBackgroundWatch(watch);
+    };
+  } catch {
+    return () => {};
+  }
+}
+
+export function isBackgroundDiskPollRunningForTests(): boolean {
+  return backgroundPollTimer !== null;
+}
+
 // Alert waiting for the next model request in loops with no queue consumer
 // (headless one-shot, which includes every subagent).
 let pendingRequestReminder: string | null = null;
@@ -222,6 +285,9 @@ export function takePendingDiskSpaceReminder(): string | null {
 
 export function resetDiskSpaceAlertForTests(): void {
   pushedLevel = 0;
+  backgroundWatches.clear();
+  if (backgroundPollTimer) clearInterval(backgroundPollTimer);
+  backgroundPollTimer = null;
   pendingRequestReminder = null;
 }
 
