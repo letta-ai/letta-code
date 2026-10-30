@@ -332,7 +332,7 @@ Write instructions for using the skill and its bundled resources.
 
 ### Step 5: Packaging a Skill
 
-Package the skill only when it needs to be distributed as a file, for example when sharing it with a user. Skills maintained in place, such as those under an agent's memory `skills/` directory, are used directly and need no packaging.
+Package the skill only when it needs to be distributed as a file, for example when sharing it with a user. Skills maintained in place, such as those under an agent's memory `skills/` directory, are used directly and need no packaging. Commit them instead, following [Commit memory changes](#commit-memory-changes).
 
 To package a skill into a distributable .skill file, run the packaging script. The packaging process automatically validates the skill first to ensure it meets all requirements:
 
@@ -369,3 +369,23 @@ Improve a skill when real usage shows it falling short, whether through user fee
 2. Notice struggles or inefficiencies
 3. Identify how SKILL.md or bundled resources should be updated
 4. Implement changes and test again
+
+## Commit memory changes
+
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
+
+<what happened: the events that led to this learning and why it should persist>
+
+Sources:
+- <conversation ID> (<message IDs>): <what happened there>"
+```
+
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.

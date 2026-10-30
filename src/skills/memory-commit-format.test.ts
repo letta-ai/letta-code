@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import creatingSkills from "@/skills/builtin/creating-skills/SKILL.md";
 import initializingMemory from "@/skills/builtin/initializing-memory/SKILL.md";
 import maintainingCoreMemory from "@/skills/builtin/maintaining-core-memory/SKILL.md";
 import maintainingDeferredMemory from "@/skills/builtin/maintaining-deferred-memory/SKILL.md";
@@ -20,6 +21,7 @@ describe("memory commit format", () => {
     "maintaining-deferred-memory": maintainingDeferredMemory,
     "initializing-memory": initializingMemory,
     "managing-shared-memory": managingSharedMemory,
+    "creating-skills": creatingSkills,
   };
   const canonical = commitSection(maintainingCoreMemory);
 
