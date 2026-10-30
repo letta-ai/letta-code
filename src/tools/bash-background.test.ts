@@ -2,18 +2,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  __setShellProcessStarterForTests,
-  bash,
-} from "@/tools/impl/bash";
+import { __setShellProcessStarterForTests, bash } from "@/tools/impl/bash";
 import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
-import { clearPendingMessages } from "@/utils/message-queue-bridge";
 import { startShellProcess } from "@/tools/impl/shell-runner";
+import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
 
