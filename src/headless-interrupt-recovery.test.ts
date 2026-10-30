@@ -8,8 +8,20 @@ import { type WebSocket, WebSocketServer } from "ws";
 import { createIsolatedCliTestEnv } from "@/test-utils/test-process-env";
 
 // Run the real bidirectional entrypoint in isolation: only the model/backend is
-// fake. Monitor, its socket, stdin control requests, and queue recovery are real.
+// fake, plus the OS process-start lookup used by transcript file locks.
+// Monitor, its socket, stdin control requests, and queue recovery are real.
 const fixture = `
+import { mock } from "bun:test";
+import * as processLiveness from "./src/utils/process-liveness";
+// Transcript finalization takes a file lock before emitting result. Its first
+// owner record otherwise launches PowerShell on Windows, unrelated to Monitor
+// recovery and potentially slower than this test's deadline on busy CI hosts.
+// This fixture has a private home and no competing lock owners; a missing start
+// time is a supported lock identity (PID liveness remains real).
+mock.module("./src/utils/process-liveness", () => ({
+  ...processLiveness,
+  getOwnProcessStartTime: async () => null,
+}));
 import { __testSetBackend } from "./src/backend";
 import { setConfiguredBackendMode } from "./src/backend/backend-mode";
 import { FakeHeadlessBackend } from "./src/backend/dev/fake-headless-backend";
