@@ -7,7 +7,7 @@
     },
     "timeout": {
       "type": "number",
-      "description": "Optional timeout in milliseconds (max 600000)"
+      "description": "Optional timeout in milliseconds. Foreground commands default to 120000 (max 600000); background commands have no default."
     },
     "description": {
       "type": "string",
