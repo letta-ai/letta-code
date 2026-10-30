@@ -7,7 +7,9 @@ import {
   type McpSubprocessBroker,
 } from "@/backend/api/mcp-subprocess-broker";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { getMcpScopeAgentId } from "@/mcp-scope";
 import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { createSecretStreamScrubber } from "@/tools/secret-substitution";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
@@ -405,20 +407,30 @@ export function startShellProcess(
   const dynamicOrigin = runtimeContext?.resolveMcpOriginatorSuperRunId;
   const initialOrigin =
     dynamicOrigin?.() ?? runtimeContext?.mcpOriginatorSuperRunId;
+  const brokerAgentId = runtimeContext?.agentId;
   let broker: McpSubprocessBroker | null = null;
   if (
-    runtimeContext?.agentId &&
+    brokerAgentId &&
     (initialOrigin || (runtimeContext.connectionId && dynamicOrigin))
   ) {
     try {
       broker = createMcpSubprocessBroker({
+        agentId: brokerAgentId,
+        getAllowedAgentIds: async () => {
+          const inheritedAgentId = await getMcpScopeAgentId(
+            brokerAgentId,
+            getRuntimeExecutionEnv(
+              process.env,
+              runtimeContext.executionSettings,
+            ),
+          );
+          return new Set([brokerAgentId, inheritedAgentId]);
+        },
         getScope: () => {
-          const agentId = runtimeContext.agentId;
           const superRunId =
             dynamicOrigin?.() ?? runtimeContext.mcpOriginatorSuperRunId;
-          if (!agentId) return null;
           return {
-            agentId,
+            agentId: brokerAgentId,
             ...(superRunId
               ? { originatorToken: resolveMcpOriginatorToken(superRunId) }
               : {}),

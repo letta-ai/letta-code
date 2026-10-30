@@ -9,6 +9,7 @@ import {
   createMcpSubprocessBrokerClient,
 } from "@/backend/api/mcp-subprocess-broker";
 import type { UnifiedMcpClient } from "@/backend/api/unified-mcp";
+import { getMcpScopeAgentId } from "@/mcp-scope";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { callAgentMcpTool, type McpSubcommandDependencies } from "./mcp";
 
@@ -152,15 +153,28 @@ describe("MCP originator token forwarding", () => {
     ]);
   });
 
-  test("keeps originator authority in the parent when a shell child calls MCP", async () => {
+  test("keeps originator authority in the inherited parent when a shell child calls MCP", async () => {
     const { deps, requests, runPath } = originatorHarness();
     const upstreamClient = await deps.getClient?.();
     if (!upstreamClient) throw new Error("Missing MCP test client");
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     let activeSuperRunId: string | null = "sr-1";
     const broker = createMcpSubprocessBroker({
+      agentId: "agent-child",
+      getAllowedAgentIds: async () => {
+        const inheritedAgentId = await getMcpScopeAgentId(
+          "agent-child",
+          {
+            LETTA_CODE_AGENT_ROLE: "subagent",
+            LETTA_PARENT_AGENT_ID: "agent-cloud",
+          },
+          async (agentId) =>
+            agentId === "agent-child" ? "agent-cloud" : undefined,
+        );
+        return new Set(["agent-child", inheritedAgentId]);
+      },
       getScope: () => ({
-        agentId: "agent-cloud",
+        agentId: "agent-child",
         ...(activeSuperRunId
           ? {
               originatorToken:

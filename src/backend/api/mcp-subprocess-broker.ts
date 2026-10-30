@@ -181,6 +181,8 @@ function sendJson(
  * raw bearer material never enters the child process.
  */
 export function createMcpSubprocessBroker(options: {
+  agentId: string;
+  getAllowedAgentIds?: () => Promise<ReadonlySet<string>>;
   getScope: () => McpBrokerScope | null;
   getClient: () => Promise<BrokerUpstreamClient>;
 }): McpSubprocessBroker {
@@ -189,6 +191,15 @@ export function createMcpSubprocessBroker(options: {
     process.platform === "win32" ? `${TCP_RENDEZVOUS_PREFIX}${socket}` : socket;
   const key = randomBytes(32).toString("hex");
   const connections = new Set<Socket>();
+  let allowedAgentIds: Promise<ReadonlySet<string>> | undefined;
+  const resolveAllowedAgentIds = () => {
+    if (!allowedAgentIds) {
+      allowedAgentIds = options.getAllowedAgentIds
+        ? options.getAllowedAgentIds()
+        : Promise.resolve(new Set([options.agentId]));
+    }
+    return allowedAgentIds;
+  };
   let closed = false;
   const server = createServer(
     (request: IncomingMessage, response: ServerResponse) => {
@@ -245,12 +256,16 @@ export function createMcpSubprocessBroker(options: {
         }
 
         const parsed = parseMcpRequest(payload.method, payload.path);
-        const initialScope = options.getScope();
+        const [initialScope, allowedAgents] = await Promise.all([
+          options.getScope(),
+          resolveAllowedAgentIds(),
+        ]);
         if (
           closed ||
           !parsed ||
           !initialScope ||
-          parsed.agentId !== initialScope.agentId
+          initialScope.agentId !== options.agentId ||
+          !allowedAgents.has(parsed.agentId)
         ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;
@@ -262,7 +277,7 @@ export function createMcpSubprocessBroker(options: {
           response.destroy();
           return;
         }
-        if (!scope || parsed.agentId !== scope.agentId) {
+        if (!scope || scope.agentId !== options.agentId) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;
         }
