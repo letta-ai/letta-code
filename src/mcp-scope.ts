@@ -28,6 +28,15 @@ export async function getMcpScopeAgentId(
   ),
   lookupParent: ParentAgentLookup = lookupParentAgent,
 ): Promise<string> {
+  if (agentId.startsWith("conv-") || agentId.startsWith("local-conv-")) {
+    const conversation = await getBackend().retrieveConversation(agentId);
+    const parent = Reflect.get(conversation, "parent_agent_id");
+    const scope =
+      conversation.agent_id ?? (typeof parent === "string" ? parent : null);
+    if (!scope)
+      throw new Error("This conversation has no parent MCP connections");
+    return scope;
+  }
   if (env.LETTA_CODE_AGENT_ROLE !== "subagent" || !env.LETTA_PARENT_AGENT_ID)
     return agentId;
   const visited = new Set<string>();

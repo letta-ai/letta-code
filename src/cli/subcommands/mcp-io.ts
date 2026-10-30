@@ -132,7 +132,15 @@ export function resolveMcpAgentId(
   agentId?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return (agent || agentId || env.LETTA_AGENT_ID || env.AGENT_ID || "").trim();
+  return (
+    agent ||
+    agentId ||
+    env.LETTA_AGENT_ID ||
+    env.AGENT_ID ||
+    env.LETTA_CONVERSATION_ID ||
+    env.CONVERSATION_ID ||
+    ""
+  ).trim();
 }
 
 export async function loadMcpToolArgs(

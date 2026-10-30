@@ -36,6 +36,7 @@ import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
+  getRuntimeContext,
 } from "@/runtime-context";
 import type {
   SubagentLaunchArgs,
@@ -333,7 +334,10 @@ export function spawnBackgroundSubagentTask(
 
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
-  const parentAgentIdForSpawn = resolvedParentScope?.agentId;
+  const parentAgentIdForSpawn =
+    resolvedParentScope?.agentId ||
+    getRuntimeContext()?.resourceAgentId ||
+    undefined;
   const workerMemoryDir =
     subagentType === "memory" && resolvedParentScope
       ? (memoryScope?.primaryRoot ??
@@ -755,7 +759,10 @@ export async function launchSubagent(
       }
     : {};
   if (isExternalCodingAgent) {
-    const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+    const parentAgentId =
+      resolvedParentScope?.agentId ||
+      getRuntimeContext()?.resourceAgentId ||
+      getCurrentAgentId();
     if (!parentAgentId) {
       return {
         success: false,
@@ -890,7 +897,10 @@ export async function launchSubagent(
       };
     }
     try {
-      const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+      const parentAgentId =
+        resolvedParentScope?.agentId ||
+        getRuntimeContext()?.resourceAgentId ||
+        getCurrentAgentId();
       const parentConvId =
         resolvedParentScope?.conversationId ?? getConversationId() ?? "default";
       const forkedConv = await forkParentConversation({
@@ -901,7 +911,7 @@ export async function launchSubagent(
         model,
         signal,
       });
-      effectiveAgentId = parentAgentId;
+      effectiveAgentId = undefined;
       effectiveConversationId = forkedConv.id;
     } catch (error) {
       const errorMessage =

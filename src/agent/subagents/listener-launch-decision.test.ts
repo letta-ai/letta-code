@@ -32,21 +32,21 @@ test("ordinary children use the existing listener and preserve local execution w
   ).toBe(true);
 });
 
-test("ephemeral launches stay local and reject explicit computer routing", () => {
+test("ephemeral launches preserve inherited and explicit computer routing", () => {
   expect(
     shouldLaunchThroughListener({
       cloudBackend: true,
       connectionId: "conn-parent",
       ephemeral: true,
     }),
-  ).toBe(false);
-  expect(() =>
+  ).toBe(true);
+  expect(
     shouldLaunchThroughListener({
       cloudBackend: true,
       computer: "cloud",
       ephemeral: true,
     }),
-  ).toThrow("Ephemeral conversations");
+  ).toBe(true);
 });
 
 test("memory workers remain confined processes, without an inherited listener route", () => {

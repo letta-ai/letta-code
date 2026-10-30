@@ -418,7 +418,7 @@ async function prepareHeadlessToolExecutionContext(params: {
   availableTools: string[];
 }> {
   const preparedToolContext = await prepareToolExecutionContextForScope({
-    agentId: params.agentId,
+    agentId: params.agentId === params.conversationId ? null : params.agentId,
     conversationId: params.conversationId,
     overrideModel: params.overrideModel,
     workingDirectory: getCurrentWorkingDirectory(),
@@ -672,7 +672,6 @@ export async function handleHeadlessCommand(
     disableModsForProcess();
   }
 
-  // Set tool filter if provided (controls which tools are loaded)
   if (values.tools !== undefined) {
     const { toolFilter } = await import("@/tools/filter");
     toolFilter.setEnabledTools(values.tools);
@@ -698,7 +697,6 @@ export async function handleHeadlessCommand(
     process.exit(1);
   }
 
-  // Set CLI permission overrides if provided
   if (
     values.allowedTools ||
     values.disallowedTools ||
@@ -752,7 +750,10 @@ export async function handleHeadlessCommand(
     const { configureDevBackend } = await import("@/backend");
     await configureDevBackend(devBackend);
   }
-  prepareHeadlessEphemeralBackend(Boolean(values.ephemeral));
+  prepareHeadlessEphemeralBackend(
+    Boolean(values.ephemeral) &&
+      process.env.LETTA_CODE_AGENT_ROLE !== "subagent",
+  );
   const backend = getBackend();
   markMilestone("HEADLESS_CLIENT_READY");
   const sendExitCode = await tryCloudHeadlessSend(
@@ -943,7 +944,7 @@ export async function handleHeadlessCommand(
     !specifiedAgentId &&
     !specifiedAgentName &&
     !specifiedConversationId &&
-    !forceNew &&
+    !(forceNew || ephemeralFlag) &&
     !fromAgentId
   ) {
     specifiedAgentId = ambientAgentId;
@@ -1009,10 +1010,10 @@ export async function handleHeadlessCommand(
     );
   }
 
-  if (ephemeralFlag && (isBidirectionalMode || usesRemoteEnvironment)) {
+  if (ephemeralFlag && isBidirectionalMode) {
     return reportAndExitHeadless(
       "headless_ephemeral_transport_unsupported",
-      "--ephemeral supports direct one-shot headless prompts only",
+      "--ephemeral does not support bidirectional mode",
       "headless_startup_flag_conflicts",
     );
   }
@@ -1029,7 +1030,7 @@ export async function handleHeadlessCommand(
     }
   }
 
-  if (baseToolsRaw && !forceNew) {
+  if (baseToolsRaw && !forceNew && !ephemeralFlag) {
     console.error(
       "Error: --base-tools can only be used together with --new to control initial base tools.",
     );
@@ -1126,9 +1127,16 @@ export async function handleHeadlessCommand(
         model,
         systemPromptPreset,
         systemPromptCustom: systemCustom,
+        parentAgentId: isSubagentRole
+          ? process.env.LETTA_PARENT_AGENT_ID
+          : undefined,
+        isSubagent: isSubagentRole,
       });
       agent = result.agent;
       ephemeralConversationId = result.conversationId;
+      parentAgentId = isSubagentRole
+        ? (process.env.LETTA_PARENT_AGENT_ID ?? null)
+        : null;
     } catch (error) {
       await reportStartupErrorAndExit(
         "headless_ephemeral_conversation_create_failed",
@@ -1264,7 +1272,6 @@ export async function handleHeadlessCommand(
   telemetry.setCurrentAgent(publicAgentId, agent.tags);
   const isResumingAgent = !isDetached && !!(specifiedAgentId || !forceNew);
   let conversationModel: Partial<ConversationCreateBody> | undefined;
-  // Refresh presets before applying optional model/system-prompt overrides.
 
   if (isResumingAgent) {
     const modelHandle = model ? resolveModel(model) : undefined;
@@ -1626,9 +1633,7 @@ export async function handleHeadlessCommand(
 
   let availableTools =
     agent.tools?.map((t) => t.name).filter((n): n is string => !!n) || [];
-  // Cache the initial agent to avoid repeated retrievals in the turn loop.
   let cachedAgent: AgentState | null = null;
-  // Cache the resolved toolset model; reserve request override_model for fallback.
   let preparedEffectiveModel: string | null | undefined;
   {
     const initialToolContext = await prepareHeadlessToolExecutionContext({
@@ -1648,7 +1653,6 @@ export async function handleHeadlessCommand(
     preparedEffectiveModel ??
     agent.llm_config?.model;
 
-  // If input-format is stream-json, use bidirectional mode
   if (isBidirectionalMode) {
     await runBidirectionalMode(
       agent,
@@ -1709,7 +1713,6 @@ export async function handleHeadlessCommand(
     return await flushAndExit(code);
   };
 
-  // Output init event for stream-json format
   if (outputFormat === "stream-json") {
     const initEvent: SystemInitMessage = {
       type: "system",
@@ -1904,7 +1907,6 @@ export async function handleHeadlessCommand(
     }
   }
 
-  // Pre-load specific skills' full content (used by subagents with skills: field).
   // Remote computer turns inject their own local context and skills.
   if (preLoadSkillsRaw && !usesRemoteEnvironment) {
     pushPart(
@@ -2187,7 +2189,6 @@ export async function handleHeadlessCommand(
         }
       }
 
-      // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
       let stream: Awaited<ReturnType<typeof sendMessageStream>>;
       let turnToolContextId: string | null = null;
       try {
@@ -2210,7 +2211,7 @@ export async function handleHeadlessCommand(
           conversationId,
           currentInput,
           {
-            agentId: agent.id,
+            agentId: publicAgentId ?? undefined,
             allowResponseStateReuse: responseState.consume(currentInput),
             preparedToolContext:
               turnToolContext.preparedToolContext.preparedToolContext,
@@ -2223,7 +2224,6 @@ export async function handleHeadlessCommand(
           await exitInterrupted();
         }
 
-        // Extract error detail using shared helper (handles nested/direct/message shapes)
         const errorDetail = extractConflictDetail(preStreamError);
 
         const preStreamAction = getPreStreamErrorAction(

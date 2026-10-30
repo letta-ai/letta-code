@@ -24,6 +24,8 @@ export interface RuntimeContextSnapshot {
   /** Registered listener device that owns the current turn, when present. */
   environmentDeviceId?: string | null;
   agentId?: string | null;
+  /** Persisted conversation parent supplying tools/secrets, not history or memory. */
+  resourceAgentId?: string | null;
   agentName?: string | null;
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */

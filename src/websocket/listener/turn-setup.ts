@@ -16,6 +16,7 @@ import type { Line } from "@/cli/helpers/accumulator";
 import {
   buildSharedReminderParts,
   prependReminderPartsToContent,
+  sharedReminderProviders,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -261,6 +262,27 @@ export async function prepareListenerTurn(params: {
   }
   if (isInterrupted()) {
     return { kind: "interrupted" };
+  }
+
+  if (!isApprovalMessage && !agentId) {
+    const context = buildListenReminderContext({
+      agentId: conversationId,
+      conversationId,
+      state: runtime.reminderState,
+      workingDirectory,
+    });
+    const reminders = await Promise.all([
+      sharedReminderProviders["secrets-info"](context),
+      sharedReminderProviders["mcp-servers-info"](context),
+    ]);
+    const first = messagesToSend.find((m) => "role" in m && m.role === "user");
+    if (first && "content" in first)
+      first.content = prependReminderPartsToContent(
+        first.content,
+        reminders.flatMap((text) =>
+          text ? [{ type: "text" as const, text }] : [],
+        ),
+      );
   }
 
   const hasUserMessage = messagesToSend.some(
