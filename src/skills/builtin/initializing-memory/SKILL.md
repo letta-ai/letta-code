@@ -47,7 +47,7 @@ Working with the maintainer of orchard, a CLI for build fleets.
 Repo conventions live in `AGENTS.md` and its nested guides; read them there.
 
 Where the rest of what I know lives:
-- [orchard](orchard/MEMORY.md) — architecture, gotchas, and correction history to consult when working there
+- [orchard](orchard/MEMORY.md) — architecture, gotchas, and recurring corrections to consult when working there
 ```
 
 An index pointing at nothing is worse than the content it displaced.
@@ -71,10 +71,10 @@ human.md                   # The person: role, motivations, how they work
 orchard/
 ├── MEMORY.md              # Index for the deferred orchard notes
 ├── architecture.md        # How the subsystems actually fit together
-├── gotchas.md             # Footguns, with the evidence behind each
+├── gotchas.md             # Footguns and why each one bites
 └── history/
     ├── MEMORY.md          # Required — every directory level needs its own index
-    └── corrections.md     # Correction loops with session ids and quotes
+    └── corrections.md     # Recurring corrections as rules; quotes and session ids go in the commits
 ```
 
 `orchard/history/` needs its own `MEMORY.md` purely because it is a directory level. An agent with no child directories at all would be equally correct.
@@ -169,9 +169,9 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 
 **Provenance gates promotion here too**, not only in the subagent — a worker's authorship flag must survive curation, because flagged excerpts still read like preferences. Before promoting any claim about what the human wants, check who wrote the quoted words; agent-authored dispatch prompts describe how an *agent* was instructed to work. If it is ambiguous, corroborate from a session you know the human drove, or store it as an observed pattern with the uncertainty stated. Repetition does not establish authorship: a template reused across fifty sessions repeats fifty times.
 
-**Combine, then deduplicate.** Cohorts report the same topic at different specificity. Keep the unique details from each — quotes, paths, correction counts — and sum correction counts across cohorts, since a correction seen in five cohorts is a chronic failure. Keep the specific form alongside the general: "Use factory methods, such as `create_token_counter()`, not direct instantiation" beats "prefers factory methods". Then keep each fact exactly once, and push what you don't need every turn into deferred memory with a discovery link from the core tier.
+**Combine, then deduplicate.** Cohorts report the same topic at different specificity. Keep the unique details from each — paths, correction counts — and sum correction counts across cohorts, since a correction seen in five cohorts is a chronic failure. Keep the specific form alongside the general: "Use factory methods, such as `create_token_counter()`, not direct instantiation" beats "prefers factory methods". Then keep each fact exactly once, and push what you don't need every turn into deferred memory with a discovery link from the core tier.
 
-**Promote into canonical memory.** Write the survivors into the files their topics belong in, with supporting evidence deferred. Cover all three of identity and personality, hard rules and preferences with the quotes behind them, and project context; skip generic repo facts unless they change how you execute. If the output reads generically, the analysis failed for that area — re-read those transcripts or that code yourself. Keep stable `sessionId`s beside significant findings; `/tmp` results and journals are scratch, not retrievable evidence.
+**Promote into canonical memory.** Write the survivors into the files their topics belong in, as rules and facts. Cover all three of identity and personality, hard rules and preferences, and project context; skip generic repo facts unless they change how you execute. If the output reads generically, the analysis failed for that area — re-read those transcripts or that code yourself. Put the quotes and stable `sessionId`s behind each finding in its commit, not the memory file; `/tmp` results and journals are scratch, not retrievable evidence.
 
 **Consider skills.** If the history surfaces genuinely repeatable multi-step procedures, create them now (load `creating-skills`) or note the candidates in memory. Don't force it.
 
@@ -187,15 +187,10 @@ It reports sessions analyzed, unread, excluded, export errors, and any dropped f
 ### 10. Commit, then report
 **Uncommitted memory is not part of your future system prompt.** If a commit is blocked, report initialization as incomplete rather than describing working-tree files as live memory.
 
+Review `git status`, then commit with [Commit memory changes](#commit-memory-changes), adding `--author="${AGENT_NAME:-$AGENT_ID} <$AGENT_ID@letta.com>"`. Commit each topic you wrote (identity, preferences, a project) separately, and list the repositories, files, and `sessionId`s its findings came from under `Sources:`. Then confirm the result:
+
 ```bash
-cd $MEMORY_DIR
-git status                # Review what changed before staging
-git add <specific files>  # Stage targeted paths — avoid blind `git add -A`
-author_name="${AGENT_NAME:-$AGENT_ID}"
-git commit --author="$author_name <$AGENT_ID@letta.com>" -m "feat(init): <summary> ✨
-
-<what was initialized and key decisions made>"
-
+cd "$MEMORY_DIR"
 git status                        # Your memory changes should no longer be listed
 git ls-tree -r --name-only HEAD   # What your future self will actually load
 ```
@@ -203,6 +198,27 @@ git ls-tree -r --name-only HEAD   # What your future self will actually load
 Do **not** run `git push`. The harness pushes clean committed memory automatically after the turn, so pushing by hand races it. The commit is the finish line.
 
 Only once the commit is verified, tell the user what you built and whether coverage was complete, then ask whether they want refinement — which means another commit, so repeat this step.
+
+## Commit memory changes
+
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
+
+<what happened: the events that led to this learning and why it should persist>
+
+Sources:
+- <conversation ID> (<message IDs>), <who>, <date>: <what happened there>"
+```
+
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- Provenance belongs in the commit, not the memory file: who said or did it (name and ID), when, the quote, and the incident go in the body and `Sources:`. The memory line states only the resulting rule or fact. For example, the file says "Be concise" and the commit says "feedback 'talk more concisely' from Charles <id> on <date>". Git dates the commit, not the event, so write the event date.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Never include secrets.
 
 ## Critical
 - **Use parallel tool calls wherever possible** — read many files in one turn, write many memory files in one turn.
