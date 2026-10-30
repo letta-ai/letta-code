@@ -478,11 +478,23 @@ test("slack approval widget forwards the click and replaces its buttons with the
     "Approve",
     "Deny",
   ]);
+  // Slack rejects the whole message (invalid_blocks) on duplicate action_ids.
+  const actionIds = (
+    actions?.elements as Array<{ action_id?: string }> | undefined
+  )?.map((element) => element.action_id);
+  expect(actionIds).toEqual([
+    "letta_channel_approval_allow",
+    "letta_channel_approval_deny",
+  ]);
+  expect(new Set(actionIds).size).toBe(actionIds?.length ?? 0);
   const approveValue = actions?.elements?.[0]?.value;
   expect(approveValue).toBeString();
 
   const app = FakeSlackApp.instances[0];
-  const handler = app?.actionHandlers.get("letta_channel_approval");
+  const handler = app?.actionHandlers.get("letta_channel_approval_allow");
+  expect(app?.actionHandlers.get("letta_channel_approval_deny")).toBe(handler);
+  // Prompts posted by older builds used one shared id; keep answering them.
+  expect(app?.actionHandlers.get("letta_channel_approval")).toBe(handler);
   const ack = mock(async () => {});
   await handler?.({
     body: { user: { id: "U123", name: "Sarah" } },
@@ -549,7 +561,7 @@ test("slack approval widget retires both stale and re-posted recovery prompts", 
     (block) => block.type === "actions",
   )?.elements?.[0]?.value;
   const handler = FakeSlackApp.instances[0]?.actionHandlers.get(
-    "letta_channel_approval",
+    "letta_channel_approval_allow",
   );
 
   await handler?.({
