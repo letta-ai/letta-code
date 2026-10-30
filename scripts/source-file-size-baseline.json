@@ -20,7 +20,7 @@
   "src/cli/reflection-transcript.test.ts": 1084,
   "src/cli/subcommands/mcp.ts": 1045,
   "src/cli/subcommands/skills.ts": 1243,
-  "src/headless.ts": 4837,
+  "src/headless.ts": 4836,
   "src/hooks/integration.test.ts": 1147,
   "src/index.ts": 2575,
   "src/mods/learning-harness.ts": 2434,
