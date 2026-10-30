@@ -55,6 +55,16 @@ let cachedWorkingLauncher: string[] | null = null;
 /** Time to wait for an ordinary Bash command before returning it as a task. */
 const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 
+type ShellProcessStarter = typeof startShellProcess;
+let shellProcessStarter: ShellProcessStarter = startShellProcess;
+
+/** Test-only override for observing shell process launch options. */
+export function __setShellProcessStarterForTests(
+  starter: ShellProcessStarter | null,
+): void {
+  shellProcessStarter = starter ?? startShellProcess;
+}
+
 function rebuildCachedLauncher(
   command: string,
   secretEnv?: Record<string, string>,
@@ -328,7 +338,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   validateRequiredParams(args, ["command"], "Bash");
   const {
     command,
-    timeout = 120000,
+    timeout,
     description,
     run_in_background = false,
     signal,
@@ -426,11 +436,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   let outputWriteFailed = false;
   const foregroundOutput = { stdout: "", stderr: "" };
   const effectiveTimeout = run_in_background
-    ? timeout > 0
+    ? timeout !== undefined && timeout > 0
       ? timeout
       : 0
-    : Math.min(Math.max(timeout, 1), 600000);
-  const runningProcess = startShellProcess(sandboxed.launcher, {
+    : Math.min(Math.max(timeout ?? 120000, 1), 600000);
+  const runningProcess = shellProcessStarter(sandboxed.launcher, {
     cwd: userCwd,
     env: sandboxed.env,
     timeoutMs: effectiveTimeout,
@@ -524,14 +534,16 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       flushStreamScrubbers();
       const err = error as Error & { killed?: boolean };
       const message = sanitizeOutput(
-        err.killed ? `Command timed out after ${timeout}ms` : err.message,
+        err.killed
+          ? `Command timed out after ${effectiveTimeout}ms`
+          : err.message,
       );
       bgProcess.status = "failed";
       appendBackgroundProcessOutput(bgProcess, "stderr", message);
       appendToOutputFile(
         outputFile,
         err.killed
-          ? `\n[timeout after ${timeout}ms]\n`
+          ? `\n[timeout after ${effectiveTimeout}ms]\n`
           : `\n[error] ${message}\n`,
       );
       scrubCompletedBackgroundOutput(bgProcess);
