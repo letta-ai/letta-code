@@ -47,4 +47,4 @@ Each text frame becomes one notification (multiline frames stay as one event). B
 
 Prefer this over `command: 'websocat wss://…'` — it avoids the extra process and line-buffering pitfalls. Use bash when you need to transform or filter frames with shell tools before they become events.
 
-**script source** — a JavaScript watch loop with the same globals as CodeMode, plus `emit(text)` (one event) and `sleep(ms)`. Returning or throwing ends the watch.
+**script source** — a JavaScript watch loop with the same globals as CodeMode (including `decide()`), plus `emit(text)` (one event) and `sleep(ms)`. Tool calls and `decide()` share one rate limit; `decide()` spends money on every call, so call it only when an observed change needs judgment, not on every poll. Returning or throwing ends the watch.

@@ -14,7 +14,7 @@ import {
   releaseRetainedToolContext,
   retainToolContext,
 } from "@/tools/tool-context-retention";
-import type { WorkflowToolCaller } from "@/tools/workflow/types";
+import { submitWorkflowDecision } from "@/tools/workflow/decide";
 import { executeToolScript } from "@/tools/workflow/workflow-engine";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import {
@@ -67,13 +67,11 @@ export interface ScriptMonitorHooks {
   timeoutEvent(timeoutMs: number): string;
 }
 
-function rateLimitToolCalls(
-  call: WorkflowToolCaller,
-  signal: AbortSignal,
-): WorkflowToolCaller {
+/** One token bucket shared by tool calls and decide(), so neither can flood. */
+function createCallLimiter(signal: AbortSignal) {
   let tokens = TOOL_CALL_BURST;
   let refilledAt = Date.now();
-  return (toolName, toolArgs) => {
+  return <T>(call: () => Promise<T>): Promise<T> => {
     // After stop, park instead of rejecting so a catch-all loop can't spin.
     if (signal.aborted) return new Promise<never>(() => {});
     const now = Date.now();
@@ -84,11 +82,11 @@ function rateLimitToolCalls(
     }
     if (tokens === 0) {
       throw new Error(
-        `Monitor script exceeded ${1000 / TOOL_CALL_REFILL_MS} tool calls per second; add sleep() between polls.`,
+        `Monitor script exceeded ${1000 / TOOL_CALL_REFILL_MS} calls per second; add sleep() between polls.`,
       );
     }
     tokens -= 1;
-    return call(toolName, toolArgs);
+    return call();
   };
 }
 
@@ -262,9 +260,11 @@ export async function startScriptMonitor(
       { once: true },
     );
   });
+  const limit = createCallLimiter(controller.signal);
   const run = executeToolScript({
     ...toolScope,
-    callTool: rateLimitToolCalls(toolScope.callTool, controller.signal),
+    callTool: (toolName, toolArgs) =>
+      limit(() => toolScope.callTool(toolName, toolArgs)),
     maxTotalToolCalls: Number.POSITIVE_INFINITY,
     script: args.script,
     args: args.args,
@@ -272,6 +272,27 @@ export async function startScriptMonitor(
     globals: {
       emit,
       sleep: (ms: unknown) => abortableSleep(ms, controller.signal),
+      // The engine's decide() rejects on its own (never-aborting) signal and
+      // has a lifetime cap meant for one-shot scripts; a watch loop instead
+      // shares the rate limit and parks once stopped, like tool calls.
+      decide: (state: unknown, questions: unknown, options?: unknown) => {
+        if (
+          options !== undefined &&
+          (!options || typeof options !== "object" || Array.isArray(options))
+        ) {
+          throw new Error("decide() options must be an object.");
+        }
+        // Like the engine's trackCall: a script that forgets to await must
+        // not surface as an unhandled rejection (fatal for the host).
+        const pending = limit(() =>
+          submitWorkflowDecision(
+            { ...(options as object | undefined), state, questions },
+            controller.signal,
+          ),
+        );
+        void pending.catch(() => {});
+        return pending;
+      },
     },
     onProgress: (event) => {
       if (event.kind === "log") output.append(`${scrub(event.message)}\n`);

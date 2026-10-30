@@ -167,7 +167,7 @@ return {
       read: true,
       hidden: false,
       excluded: ["undefined", "undefined", "undefined"],
-      orchestration: ["undefined", "undefined"],
+      orchestration: ["undefined", "function"],
     },
     output: ["combined true { echoed: 'Echo: hello from MCP' }"],
   });
