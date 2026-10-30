@@ -27,6 +27,11 @@ conversations, each with its own message history.
   active on A, selecting B is rejected rather than moving the conversation.
 - If delivery cannot be confirmed, check the recipient's messages before resending
   to avoid duplicates. The tool result includes details for inspecting the send.
+- Do not message your own other conversations (your own agent ID, including
+  `default`) just to keep them informed: they already share your memory, and
+  each message starts a turn there that can collide with whoever is using that
+  conversation. Message one only when the user asks, to steer work you started
+  there, or to report to the conversation that assigned you work.
 - Keep sends sparse and useful: concise assignments, specific questions, or
   material updates. Skip status pings and repeated acknowledgments; repeat a
   point only when you have something new to add.

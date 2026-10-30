@@ -477,7 +477,12 @@ export async function send_agent_message(
       {
         ...destination,
         clientMessageId,
-        content: buildAgentSendContent(sender, true, args.message),
+        content: buildAgentSendContent(
+          sender,
+          true,
+          args.message,
+          destination.agentId,
+        ),
         computer,
         actingUserId,
       },
