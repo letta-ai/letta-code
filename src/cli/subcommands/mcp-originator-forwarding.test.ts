@@ -35,7 +35,14 @@ describe("MCP originator token forwarding", () => {
       headers?: Record<string, string>;
     }> = [];
     const client: UnifiedMcpClient = {
-      get: async (path) => {
+      get: async (
+        path: string,
+        options?: { headers?: Record<string, string> },
+      ) => {
+        if (path.startsWith("/v1/environments")) {
+          requests.push({ path, body: undefined, headers: options?.headers });
+          return { connections: [], hasNextPage: false };
+        }
         if (path === serverPath) {
           return [
             {
@@ -201,6 +208,36 @@ describe("MCP originator token forwarding", () => {
         { title: "First" },
         childDeps,
       );
+      const child = Bun.spawn(
+        [
+          process.execPath,
+          "run",
+          "src/index.ts",
+          "computers",
+          "list",
+          "--limit",
+          "100",
+          "--online-only",
+        ],
+        {
+          env: { ...process.env, ...broker.env },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      const [exitCode, output, stderr] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+      ]);
+      expect(exitCode, stderr).toBe(0);
+      expect(JSON.parse(output).connections).toEqual([]);
+      await expect(
+        childClient?.get("/v1/environments/../agents"),
+      ).rejects.toThrow("Forbidden");
+      await expect(
+        childClient?.get("/v1/environments?unexpected=true"),
+      ).rejects.toThrow("Forbidden");
       activeSuperRunId = null;
       await callAgentMcpTool(
         "agent-cloud",
@@ -219,6 +256,14 @@ describe("MCP originator token forwarding", () => {
           },
         },
         {
+          path: "/v1/environments?limit=100&onlineOnly=true",
+          body: undefined,
+          headers: {
+            "x-letta-mcp-originator-token": "mst_one.secret-a",
+            "x-letta-mcp-originator-isolation": "1",
+          },
+        },
+        {
           path: runPath,
           body: { args: { title: "Second" } },
           headers: undefined,
@@ -227,5 +272,5 @@ describe("MCP originator token forwarding", () => {
     } finally {
       broker.close();
     }
-  });
+  }, 30_000);
 });

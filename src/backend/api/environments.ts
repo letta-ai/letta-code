@@ -1,5 +1,45 @@
 import { randomUUID } from "node:crypto";
+import { getRuntimeContext } from "@/runtime-context";
+import { resolveMcpOriginatorToken } from "./mcp-originator-resolver";
+import { createMcpSubprocessBrokerClient } from "./mcp-subprocess-broker";
 import { apiRequest } from "./request";
+
+async function environmentRequest<T>(
+  ...[method, path, body, options = {}]: Parameters<typeof apiRequest>
+): Promise<T> {
+  const broker = createMcpSubprocessBrokerClient(process.env);
+  if (broker) {
+    const url = new URL(path, "http://localhost");
+    for (const [key, value] of Object.entries(options.query ?? {})) {
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
+    }
+    const route = url.pathname + url.search;
+    return (
+      method === "GET"
+        ? await broker.get(route)
+        : await broker.post(route, { body })
+    ) as T;
+  }
+  const context = getRuntimeContext();
+  const token = resolveMcpOriginatorToken(
+    context?.resolveMcpOriginatorSuperRunId?.() ??
+      context?.mcpOriginatorSuperRunId,
+  );
+  return apiRequest<T>(method, path, body, {
+    ...options,
+    ...(token
+      ? {
+          headers: {
+            ...options.headers,
+            "x-letta-mcp-originator-token": token,
+            "x-letta-mcp-originator-isolation": "1",
+          },
+        }
+      : {}),
+  });
+}
 
 export interface EnvironmentMetadata {
   os?: string;
@@ -59,7 +99,7 @@ export interface CreateAgentSandboxResponse {
 export async function listEnvironments(
   options: { limit?: number; after?: string; onlineOnly?: boolean } = {},
 ): Promise<ListEnvironmentsResponse> {
-  return apiRequest<ListEnvironmentsResponse>(
+  return environmentRequest<ListEnvironmentsResponse>(
     "GET",
     "/v1/environments",
     undefined,
@@ -77,7 +117,7 @@ export async function sendEnvironmentMessage(
   connectionId: string,
   body: SendEnvironmentMessageBody,
 ): Promise<SendEnvironmentMessageResponse> {
-  return apiRequest<SendEnvironmentMessageResponse>(
+  return environmentRequest<SendEnvironmentMessageResponse>(
     "POST",
     `/v1/environments/${encodeURIComponent(connectionId)}/messages`,
     body,
@@ -87,7 +127,7 @@ export async function sendEnvironmentMessage(
 export async function getEnvironmentConnection(
   deviceId: string,
 ): Promise<EnvironmentConnection> {
-  return apiRequest<EnvironmentConnection>(
+  return environmentRequest<EnvironmentConnection>(
     "GET",
     `/v1/environments/${encodeURIComponent(deviceId)}`,
   );
@@ -282,7 +322,7 @@ export function getTeleportStatus(
   agentId: string,
   conversationId: string,
   teleportId: string,
-  request: typeof apiRequest = apiRequest,
+  request: typeof apiRequest = environmentRequest,
 ): Promise<TeleportResponse> {
   return request<TeleportResponse>(
     "GET",
@@ -300,7 +340,7 @@ export async function teleportToEnvironment(
   agentId: string,
   conversationId: string,
   targetConnectionId: string,
-  request: typeof apiRequest = apiRequest,
+  request: typeof apiRequest = environmentRequest,
 ): Promise<TeleportResponse> {
   return request<TeleportResponse>(
     "POST",

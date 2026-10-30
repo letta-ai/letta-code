@@ -161,6 +161,53 @@ function parseMcpRequest(
   return null;
 }
 
+function parseEnvironmentRequest(
+  method: BrokerRequest["method"],
+  requestPath: string,
+): ParsedMcpRequest | null {
+  // Accept only canonical environment routes, never arbitrary Cloud requests.
+  const [pathname, query] = requestPath.split("?");
+  if (
+    !pathname ||
+    requestPath.includes("#") ||
+    requestPath.split("?").length > 2
+  )
+    return null;
+  const parts = pathname.split("/");
+  if (parts[0] !== "" || parts[1] !== "v1" || parts[2] !== "environments")
+    return null;
+  if (query !== undefined) {
+    if (method !== "GET" || parts.length !== 3) return null;
+    for (const key of new URLSearchParams(query).keys()) {
+      if (!["limit", "after", "onlineOnly"].includes(key)) return null;
+    }
+  }
+  const valid =
+    (method === "GET" && parts.length === 3) ||
+    (method === "GET" &&
+      parts.length === 4 &&
+      !!decodeCanonicalSegment(parts[3] ?? "")) ||
+    (method === "POST" &&
+      parts.length === 5 &&
+      parts[4] === "messages" &&
+      !!decodeCanonicalSegment(parts[3] ?? "")) ||
+    (parts[3] === "runtimes" &&
+      !!decodeCanonicalSegment(parts[4] ?? "") &&
+      !!decodeCanonicalSegment(parts[5] ?? "") &&
+      ((method === "POST" && parts.length === 7 && parts[6] === "teleport") ||
+        (method === "GET" &&
+          parts.length === 8 &&
+          parts[6] === "teleports" &&
+          !!decodeCanonicalSegment(parts[7] ?? ""))));
+  return valid
+    ? {
+        agentId:
+          parts[3] === "runtimes" ? decodeURIComponent(parts[4] ?? "") : "",
+        path: requestPath,
+      }
+    : null;
+}
+
 function sendJson(
   response: ServerResponse,
   status: number,
@@ -255,7 +302,12 @@ export function createMcpSubprocessBroker(options: {
           return;
         }
 
-        const parsed = parseMcpRequest(payload.method, payload.path);
+        const environmentRequest = parseEnvironmentRequest(
+          payload.method,
+          payload.path,
+        );
+        const parsed =
+          environmentRequest ?? parseMcpRequest(payload.method, payload.path);
         const [initialScope, allowedAgents] = await Promise.all([
           options.getScope(),
           resolveAllowedAgentIds(),
@@ -265,7 +317,7 @@ export function createMcpSubprocessBroker(options: {
           !parsed ||
           !initialScope ||
           initialScope.agentId !== options.agentId ||
-          !allowedAgents.has(parsed.agentId)
+          (parsed.agentId !== "" && !allowedAgents.has(parsed.agentId))
         ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;

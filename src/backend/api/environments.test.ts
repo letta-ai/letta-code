@@ -1,16 +1,21 @@
-import { describe, expect, test } from "bun:test";
-import type {
-  EnvironmentConnection,
-  listEnvironments,
-} from "@/backend/api/environments";
+import { describe, expect, spyOn, test } from "bun:test";
+import { resetMcpOriginatorAuthority } from "@/agent/mcp-originator-authority";
+import {
+  clearMcpOriginatorTokens,
+  setMcpOriginatorToken,
+} from "@/agent/mcp-originator-tokens";
+import type { EnvironmentConnection } from "@/backend/api/environments";
 import {
   createAgentSandbox,
   getTeleportStatus,
+  listEnvironments,
   resolveDesktopEnvironmentConnectionId,
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
 } from "@/backend/api/environments";
 import type { apiRequest } from "@/backend/api/request";
+import { runWithRuntimeContext } from "@/runtime-context";
+import { settingsManager } from "@/settings-manager";
 
 test("reads the scoped teleport receipt without starting a handoff", async () => {
   const calls: unknown[][] = [];
@@ -338,4 +343,50 @@ describe("teleportToEnvironment", () => {
     expect(result.status).toBe("waiting_for_source");
     expect(result.targetConnectionId).toBe("conn-target");
   });
+});
+
+test("environment discovery forwards held originator proof and omits absent proof", async () => {
+  const headers: Headers[] = [];
+  const settings = spyOn(
+    settingsManager,
+    "getSettingsWithSecureTokens",
+  ).mockResolvedValue({
+    env: { LETTA_BASE_URL: "https://example.com", LETTA_API_KEY: "test-key" },
+  } as unknown as Awaited<
+    ReturnType<typeof settingsManager.getSettingsWithSecureTokens>
+  >);
+  const fetchMock = spyOn(globalThis, "fetch").mockImplementation((async (
+    _url,
+    init,
+  ) => {
+    headers.push(new Headers(init?.headers));
+    return new Response(
+      JSON.stringify({ connections: [], hasNextPage: false }),
+    );
+  }) as typeof fetch);
+  setMcpOriginatorToken("environment-test-held", "test-originator");
+  try {
+    for (const id of [
+      "environment-test-held",
+      "environment-test-missing",
+      undefined,
+    ]) {
+      await runWithRuntimeContext({ mcpOriginatorSuperRunId: id }, () =>
+        listEnvironments(),
+      );
+    }
+    expect(headers.map((h) => h.get("x-letta-mcp-originator-token"))).toEqual([
+      "test-originator",
+      null,
+      null,
+    ]);
+    expect(
+      headers.map((h) => h.get("x-letta-mcp-originator-isolation")),
+    ).toEqual(["1", null, null]);
+  } finally {
+    fetchMock.mockRestore();
+    settings.mockRestore();
+    clearMcpOriginatorTokens();
+    resetMcpOriginatorAuthority();
+  }
 });
