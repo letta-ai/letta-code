@@ -126,7 +126,6 @@ const STREAMING_SHELL_TOOLS = new Set([
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
-
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
@@ -821,7 +820,8 @@ function capturePreparedToolExecutionContext(
   );
   const contextId = saveExecutionContext(executionSnapshot);
   executionSnapshot.runtimeContext.toolContextId = contextId;
-
+  executionSnapshot.runtimeContext.resolveMcpOriginatorSuperRunId = () =>
+    executionSnapshot.runtimeContext.mcpOriginatorSuperRunId;
   return {
     contextId,
     clientTools,

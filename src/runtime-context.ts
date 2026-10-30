@@ -34,6 +34,11 @@ export interface RuntimeContextSnapshot {
    * agent-layer token store and is looked up by this id at MCP tool-run time.
    */
   mcpOriginatorSuperRunId?: string | null;
+  /**
+   * Resolve the execution context's current origin after a queued-turn swap.
+   * Internal-only function reference; never exported to child environments.
+   */
+  resolveMcpOriginatorSuperRunId?: () => string | null | undefined;
   /** Explicitly disable inherited process/runtime acting-user attribution. */
   suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
