@@ -292,7 +292,7 @@ async function getTotalCommitCount(repoDir: string): Promise<number> {
   return Number.isNaN(n) ? 0 : n;
 }
 
-const REFLECTION_PATTERN = /\(reflection\)|🔮|reflection:/i;
+const REFLECTION_PATTERN = /\(reflection\)|\(dream\)|🔮|reflection:/i;
 
 /** Assemble all data into a MemoryViewerData object. */
 async function collectMemoryData(

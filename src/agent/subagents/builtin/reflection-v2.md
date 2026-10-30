@@ -53,26 +53,21 @@ Use the printed value (e.g., `agent-abc123...`) in the trailer. If it is empty o
 
 ```bash
 cd $MEMORY_DIR
-git add -A
-git commit --author="Reflection Subagent <<CHILD_AGENT_ID>@letta.com>" -m "<type>(reflection): <summary> 🔮
+git add <this learning's files>
+git commit --author="Reflection Subagent <<CHILD_AGENT_ID>@letta.com>" -m "memory(dream): <what was learned>
 
-Reviewed transcripts:
-- <transcript_filepath>
-- ...
+<what happened: the events that led to this learning and why it should persist>
 
-Updates:
-- <what changed and why>
+Sources:
+- <conversation ID> (<message IDs>): <what happened there>
 
 Generated-By: Reflection
 Agent-ID: <CHILD_AGENT_ID>"
 ```
 
-**Commit type** — pick the one that fits:
-- `fix` — correcting a mistake or bad memory, or fixing a wrong/obsolete skill
-- `feat` — adding wholly new memory content, or new skill content/structure
-- `chore` — routine updates, adding context, minor doc-only skill edits
+**Sources** — cite the events, not the payload file (transcript paths are temporary). For each transcript you drew on, list its conversation ID (`transcripts[].conversation_id` in a manifest, or `$LETTA_PARENT_CONVERSATION_ID` for a single-conversation payload; cite `default` together with `$LETTA_PARENT_AGENT_ID`) with the `source_message_id`s of the messages where the lesson happened, and one line on what happened there. If no conversation ID is available, cite the transcript path and say so.
 
-In the commit message body, explain what changed and why, drawing from the categories in the trajectory review. If the change is skill-related, say so in the subject, e.g. `feat(reflection): create docker-debugging skill 🔮`.
+Commit each learning separately, so each memory line traces back to its own evidence; a learning may touch several files. The subject states the learning itself, not the file edit. The body tells what happened in the transcripts and why it should persist, so a reader of `git blame` understands the memory without opening the sources. If the learning is a skill change, name the skill operation in the body. After the last commit, `git status --short` must be empty; uncommitted edits are discarded.
 
 If no changes were needed, do NOT commit. Report that the conversation contained no memory worth persisting.
 

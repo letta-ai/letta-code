@@ -86,18 +86,20 @@ Recall already returns what happened. A deferred memory file is worth keeping on
 
 ## Commit memory changes
 
-Commit each learning separately, so every commit holds one learning and names where it came from. `git log` then holds the evidence, and memory files do not. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
 
 ```bash
-git add <changed files> && git commit -m "memory(<kind>): <what changed>
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
 
-<why: the correction, instruction, or pattern this encodes>
+<what happened: the events that led to this learning and why it should persist>
 
 Sources:
-- <where the learning came from>"
+- <conversation ID> (<message IDs>): <what happened there>"
 ```
 
-- `<kind>` is where the change lives: `core` for root Markdown files (the system prompt), `skill` for anything under `skills/`, `external` for deferred memory, shared memory, and other files. When one learning changes more than one kind, list them: `memory(core, external): ...`.
-- `Sources:` lists each origin precisely enough to find again: a conversation ID (with a message ID when one message decided it), a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, that request is a source; cite its conversation. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
 - Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
 - Commit messages are visible wherever the repository syncs. Never include secrets, and keep quotes and personal details to what the reason needs.
