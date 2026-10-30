@@ -12,7 +12,7 @@ import {
 import { __testSetBackend } from "@/backend";
 import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { DEFAULT_PERMISSION_MODE } from "@/permissions/mode";
-import { runWithRuntimeContext } from "@/runtime-context";
+import { getRuntimeContext, runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { TestDirectory } from "@/test-utils/test-fs";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
@@ -73,14 +73,13 @@ test.each([false, undefined, true])(
       },
     });
     markListenerConnectionInitialized(listener, "conn-sandbox");
-    __testSetBackend(
-      new FakeHeadlessBackend(
-        agentId,
-        undefined,
-        {},
-        { modelHandle: "anthropic/claude-sonnet-4-6" },
-      ),
+    const backend = new FakeHeadlessBackend(
+      agentId,
+      undefined,
+      {},
+      { modelHandle: "anthropic/claude-sonnet-4-6" },
     );
+    __testSetBackend(backend);
     __listenerWarmupTestUtils.setWarmupDepsForTests({
       ensureMemfsSyncedForAgent: async () => false,
       ensureSecretsHydratedForAgent: async () => {},
@@ -115,6 +114,20 @@ test.each([false, undefined, true])(
 
     try {
       await settingsManager.initialize();
+      const parent = await backend.createAgent({ name: "Parent" });
+      await backend.updateAgent(agentId, {
+        tags: ["role:subagent", `parent:${parent.id}`],
+      });
+      settingsManager.setMcpServers(parent.id, [
+        { name: "parent-search", transport: "stdio", command: "node" },
+      ]);
+      runtime.executionSettings = {
+        allowed_tools: [],
+        disallowed_tools: [],
+        disable_memory_guard: false,
+        agent_role: "subagent",
+        parent_agent_id: parent.id,
+      };
       await listener.modAdapter.reload();
       setMcpOriginatorToken("sr-a", "fresh-token");
       const result = await runWithRuntimeContext(
@@ -141,6 +154,13 @@ test.each([false, undefined, true])(
       );
       expect(result.kind).toBe("ready");
       if (result.kind !== "ready") throw new Error("Turn setup was not ready");
+      expect(JSON.stringify(result.turnInput.messages)).toContain(
+        "MCP servers with available tools: parent-search",
+      );
+      expect(JSON.stringify(result.turnInput.messages)).not.toContain(
+        "MCP servers with available tools: None",
+      );
+      expect(getRuntimeContext()?.executionSettings).toBeUndefined();
       const contextId =
         result.preparedToolContext.preparedToolContext.contextId;
       expect(
