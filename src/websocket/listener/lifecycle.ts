@@ -115,6 +115,8 @@ import {
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
+  shouldRecoverOrphanedControlClose,
+  trackReconnectInFlight,
 } from "./split-stream-lifecycle";
 import { startListenerStartupDeadline } from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
@@ -872,15 +874,7 @@ async function connectWithRetry(
     abortStartupIngress();
     if (
       !shouldHandleControlSocketClose(runtime, socket, opts.connectionId) &&
-      !(
-        runtime === getActiveRuntime() &&
-        !runtime.intentionallyClosed &&
-        (!runtime.socket || runtime.socket.readyState === WebSocket.CLOSED) &&
-        ![...runtime.connections.values()].some(({ writer }) =>
-          isListenerTransportOpen(writer),
-        ) &&
-        !runtime.reconnectTimeout
-      )
+      !shouldRecoverOrphanedControlClose(runtime)
     ) {
       return;
     }
@@ -961,11 +955,12 @@ async function connectWithRetry(
       ? Date.now()
       : startTime;
     runtime.hasSuccessfulConnection = false;
-    connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
-      (error) => {
-        opts.onError(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
+    trackReconnectInFlight(
+      runtime,
+      connectWithRetry(runtime, opts, nextAttempt, nextStartTime),
+    ).catch((error) => {
+      opts.onError(error instanceof Error ? error : new Error(String(error)));
+    });
   });
   socket.on("error", (error: Error) => {
     if (runtime.socket !== socket) return;
