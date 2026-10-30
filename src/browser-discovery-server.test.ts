@@ -13,6 +13,11 @@ import {
 const handles: BrowserDiscoveryServerHandle[] = [];
 const blockers: Server[] = [];
 const tempDirs: string[] = [];
+// Cold Node starts on loaded Windows runners can take several seconds. A
+// fixture that a handle keeps alive never exits, so a generous bound still
+// catches the leak these tests exist for.
+const NODE_FIXTURE_TIMEOUT_MS = 15_000;
+const NODE_FIXTURE_TEST_TIMEOUT_MS = 40_000;
 
 afterEach(async () => {
   await Promise.all(handles.splice(0).map((handle) => handle.close()));
@@ -192,93 +197,113 @@ describe("browser discovery server", () => {
     expect((replacement.address() as AddressInfo).port).toBe(port);
   });
 
-  test("accepted sockets do not keep the published Node runtime alive", async () => {
-    const fixture = await buildNodeFixture(`
+  test(
+    "accepted sockets do not keep the published Node runtime alive",
+    async () => {
+      const fixture = await buildNodeFixture(`
 const handle = startBrowserDiscoveryServer({ port: 0 });
 const address = await handle.ready;
 console.log(JSON.stringify(address));
 setTimeout(() => undefined, 500);
 `);
-    const child = spawn("node", [fixture], {
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-    const address = JSON.parse(
-      await readFirstLine(child, () => stderr),
-    ) as Awaited<BrowserDiscoveryServerHandle["ready"]>;
-    const socket = createConnection(address.port, address.host);
-    socket.on("error", () => undefined);
-
-    try {
-      await new Promise<void>((resolve, reject) => {
-        socket.once("connect", resolve);
-        socket.once("error", reject);
+      const child = spawn("node", [fixture], {
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      socket.write(
-        `GET /status HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\n`,
-      );
-      const exit = await waitForChildExit(child, 2_000, () => stderr);
-      expect(exit).toEqual({ code: 0, signal: null });
-    } finally {
-      socket.destroy();
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-    }
-  });
+      let stderr = "";
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
+      const address = JSON.parse(
+        await readFirstLine(child, () => stderr),
+      ) as Awaited<BrowserDiscoveryServerHandle["ready"]>;
+      const socket = createConnection(address.port, address.host);
+      socket.on("error", () => undefined);
 
-  test("the discovery listener does not keep the Bun runtime alive", async () => {
-    const fixture = await buildNodeFixture(`
+      try {
+        await new Promise<void>((resolve, reject) => {
+          socket.once("connect", resolve);
+          socket.once("error", reject);
+        });
+        socket.write(
+          `GET /status HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\n`,
+        );
+        const exit = await waitForChildExit(
+          child,
+          NODE_FIXTURE_TIMEOUT_MS,
+          () => stderr,
+        );
+        expect(exit).toEqual({ code: 0, signal: null });
+      } finally {
+        socket.destroy();
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }
+    },
+    NODE_FIXTURE_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "the discovery listener does not keep the Bun runtime alive",
+    async () => {
+      const fixture = await buildNodeFixture(`
 await startBrowserDiscoveryServer({ port: 0 }).ready;
 setTimeout(() => undefined, 500);
 `);
-    const result = spawnSync("bun", [fixture], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+      const result = spawnSync("bun", [fixture], {
+        encoding: "utf8",
+        timeout: NODE_FIXTURE_TIMEOUT_MS,
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    },
+    NODE_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
-  test("a fixed-port contender does not keep the published Node runtime alive", async () => {
-    const blocker = createServer();
-    blockers.push(blocker);
-    await listen(blocker, 0);
-    const port = (blocker.address() as AddressInfo).port;
-    const fixture = await buildNodeFixture(`
+  test(
+    "a fixed-port contender does not keep the published Node runtime alive",
+    async () => {
+      const blocker = createServer();
+      blockers.push(blocker);
+      await listen(blocker, 0);
+      const port = (blocker.address() as AddressInfo).port;
+      const fixture = await buildNodeFixture(`
 startBrowserDiscoveryServer({ port: ${port}, retryDelayMs: 10 });
 setTimeout(() => undefined, 500);
 `);
-    const result = spawnSync("node", [fixture], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+      const result = spawnSync("node", [fixture], {
+        encoding: "utf8",
+        timeout: NODE_FIXTURE_TIMEOUT_MS,
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe("");
-    expect(result.stderr).toBe("");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toBe("");
+    },
+    NODE_FIXTURE_TEST_TIMEOUT_MS,
+  );
 
-  test("early close does not leave an unhandled ready rejection in Node", async () => {
-    const fixture = await buildNodeFixture(`
+  test(
+    "early close does not leave an unhandled ready rejection in Node",
+    async () => {
+      const fixture = await buildNodeFixture(`
 const handle = startBrowserDiscoveryServer({ port: 0 });
 await handle.close();
 console.log("closed");
 `);
-    const result = spawnSync("node", [fixture], {
-      encoding: "utf8",
-      timeout: 5_000,
-    });
+      const result = spawnSync("node", [fixture], {
+        encoding: "utf8",
+        timeout: NODE_FIXTURE_TIMEOUT_MS,
+      });
 
-    expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("closed");
-    expect(result.stderr).toBe("");
-  });
+      expect(result.status).toBe(0);
+      expect(result.stdout.trim()).toBe("closed");
+      expect(result.stderr).toBe("");
+    },
+    NODE_FIXTURE_TEST_TIMEOUT_MS,
+  );
 });
 
 async function startServer(): Promise<{
@@ -365,7 +390,7 @@ async function readFirstLine(
       reject(
         new Error(`Timed out waiting for Node fixture output: ${getStderr()}`),
       );
-    }, 2_000);
+    }, NODE_FIXTURE_TIMEOUT_MS);
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
       const newline = output.indexOf("\n");
