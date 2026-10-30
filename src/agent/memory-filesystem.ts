@@ -18,6 +18,7 @@ import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
 } from "@/backend/local/paths";
+import { debugLog } from "@/utils/debug";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
@@ -522,6 +523,19 @@ export async function applyMemfsFlags(
   const { getBackend } = await import("@/backend");
   const backend = getBackend();
 
+  // Choke point for every launch path: a subagent without its own MemFS stays
+  // stateless. Memory subagents use the parent's MEMORY_DIR and never get here.
+  const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
+    "@/agent/agent-tags"
+  );
+  const tags =
+    options?.agentTags ??
+    (await backend.retrieveAgent(agentId, { include: ["agent.tags"] })).tags;
+  if (isStatelessSubagentTags(tags)) {
+    debugLog("memfs", `Not enabling MemFS for stateless subagent ${agentId}`);
+    return { action: "unchanged" };
+  }
+
   if (backend.capabilities.localMemfs) {
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
@@ -554,7 +568,6 @@ export async function applyMemfsFlags(
   }
 
   const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const shouldAutoEnableFromTag =
     !memfsFlag &&
     !localMemfsEnabled &&

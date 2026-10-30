@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { APIError } from "@letta-ai/letta-client/core/error";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
+import { isStatelessSubagentTags } from "@/agent/agent-tags";
 import { getTerminalTelemetrySurface, telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
@@ -2097,9 +2098,7 @@ async function main(): Promise<void> {
           }
         }
 
-        // Start memfs sync early. Interactive startup is optimistic: keep the
-        // session moving and let memfs clone/pull finish in the background
-        // unless the user explicitly requested a memfs mode toggle.
+        // Start memfs sync early; it finishes in the background unless --memfs.
         const agentId = agent.id;
         const agentTags = agent.tags ?? undefined;
         const shouldBlockOnMemfsStartup = Boolean(memfsFlag);
@@ -2113,8 +2112,9 @@ async function main(): Promise<void> {
             )
           : Promise.resolve().then(() => {
               if (backend.capabilities.localMemfs) {
-                settingsManager.setMemfsEnabled(agentId, true);
-                return { action: "enabled" };
+                const enabled = !isStatelessSubagentTags(agentTags);
+                settingsManager.setMemfsEnabled(agentId, enabled);
+                return { action: enabled ? "enabled" : "unchanged" };
               }
               if (memfsFlag) {
                 throw new Error(

@@ -34,12 +34,19 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
     include: ["agent.tags"],
   });
 
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
+  const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
+    "@/agent/agent-tags"
+  );
   const { applyMemfsFlags, isLettaCloud } = await import(
     "@/agent/memory-filesystem"
   );
 
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
+    if (isStatelessSubagentTags(agent.tags)) {
+      // Subagents are stateless by design, not a broken creation path.
+      debugLog("memfs-sync", `Agent ${agentId} is a subagent, skipping repair`);
+      return;
+    }
     // An agent without the memfs tag on Letta Cloud is a bug, not a
     // configuration: some creation path skipped memfs setup. Repair it here
     // (tag + prompt + repo clone + legacy tool detach) instead of silently
