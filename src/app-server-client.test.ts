@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   type AppServerSocketLike,
   type AppServerSocketOptions,
@@ -72,6 +74,44 @@ function createFakeClient() {
 describe("app-server client", () => {
   afterEach(() => {
     FakeSocket.instances = [];
+  });
+
+  test("includes the HTTP status and body when the WebSocket upgrade is rejected", async () => {
+    class RejectedSocket extends EventEmitter {
+      constructor(_url: string) {
+        super();
+      }
+      readyState = 0;
+      send() {}
+      close() {}
+    }
+    const client = createAppServerClient({
+      url: "http://localhost:4500",
+      WebSocket: RejectedSocket,
+    });
+    const pending = client.connect();
+    const response = Object.assign(new PassThrough(), { statusCode: 403 });
+    let aborted = false;
+    const request = new EventEmitter();
+    Object.assign(request, {
+      abort() {
+        aborted = true;
+        request.emit("close");
+      },
+    });
+    (client.socket as RejectedSocket).emit(
+      "unexpected-response",
+      request,
+      response,
+    );
+    response.end('Computer "workstation" is private to its owner.');
+    await expect(pending).rejects.toThrow(
+      'App-server WebSocket failed to open: HTTP 403: Computer "workstation" is private to its owner.',
+    );
+    expect(aborted).toBe(true);
+    expect(
+      (client.socket as RejectedSocket).listenerCount("unexpected-response"),
+    ).toBe(0);
   });
 
   test("launches a subagent and correlates success and failure responses", async () => {
