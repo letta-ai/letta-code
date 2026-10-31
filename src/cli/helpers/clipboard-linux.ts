@@ -54,13 +54,21 @@ const XCLIP = {
   ],
 };
 
-function pickImageMediaType(listing: string): string | null {
+function baseMediaType(type: string): string {
+  return (type.split(";")[0] ?? type).trim().toLowerCase();
+}
+
+function pickImageType(listing: string): string | null {
   const types = listing
     .split(/\r?\n/)
-    .map((line) => line.trim().toLowerCase())
-    .filter((line) => /^image\/[a-z0-9.+-]+$/.test(line));
+    .map((line) => line.trim())
+    .filter((line) => /^image\//i.test(line));
   return (
-    PREFERRED_MEDIA_TYPES.find((p) => types.includes(p)) ?? types[0] ?? null
+    PREFERRED_MEDIA_TYPES.map((preferred) =>
+      types.find((type) => baseMediaType(type) === preferred),
+    ).find(Boolean) ??
+    types[0] ??
+    null
   );
 }
 
@@ -85,12 +93,10 @@ export async function readLinuxClipboardImage({
   let failure: Error | null = null;
   for (const tool of tools) {
     try {
-      const type = pickImageMediaType(
-        (await run(tool.list, LIST)).toString("utf8"),
-      );
+      const type = pickImageType((await run(tool.list, LIST)).toString("utf8"));
       if (!type) return null;
       const data = await run(tool.read(type), READ);
-      return data.length > 0 ? { data, mediaType: type } : null;
+      return data.length > 0 ? { data, mediaType: baseMediaType(type) } : null;
     } catch (err) {
       const e = err as NodeJS.ErrnoException & {
         killed?: boolean;

@@ -97,6 +97,17 @@ describe("readLinuxClipboardImage", () => {
     expect(runner.calls).toHaveLength(2);
   });
 
+  test("requests the offered type verbatim and reports its base media type", async () => {
+    const runner = fakeRunner({
+      [XCLIP_LIST]: "TARGETS\nImage/PNG;charset=binary\n",
+      "xclip -selection clipboard -t Image/PNG;charset=binary -o": PNG_BYTES,
+    });
+
+    const result = await readLinuxClipboardImage({ env: X11_ENV, ...runner });
+
+    expect(result).toEqual({ data: PNG_BYTES, mediaType: "image/png" });
+  });
+
   test("returns null without calling xclip when the Wayland clipboard has only text", async () => {
     const runner = fakeRunner({ [WL_LIST]: "text/plain\nUTF8_STRING\n" });
 
