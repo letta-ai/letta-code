@@ -125,6 +125,24 @@ export function describeEnvironment(
   return `${environment.connectionName} (${environment.deviceId}, ${status})`;
 }
 
+/**
+ * Report from a managed Cloud sandbox listener, with the sandbox's own key,
+ * that its disk crossed critical. Cloud notifies the owner once per crossing
+ * and requests more disk for the next time the sandbox is stopped.
+ */
+export async function reportEnvironmentDiskPressure(
+  scope: { connectionName: string; agentId: string; conversationId: string },
+  request: typeof apiRequest = apiRequest,
+): Promise<{ ownerNotified: boolean; resizeRequested: boolean }> {
+  return request("POST", "/v1/environments/disk-pressure", {
+    connectionName: scope.connectionName,
+    agentId: scope.agentId,
+    ...(scope.conversationId === "default"
+      ? {}
+      : { conversationId: scope.conversationId }),
+  });
+}
+
 export async function resolveDesktopEnvironmentConnectionId(
   list: typeof listEnvironments = listEnvironments,
 ): Promise<{ connectionId: string; environment: EnvironmentConnection }> {
