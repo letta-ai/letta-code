@@ -119,6 +119,93 @@ describe("createSdkSpawner local continuation", () => {
     expect(await first).toMatchObject({ value: "done" });
   });
 
+  test("continues a turn it interrupted only after the interrupt is acknowledged", async () => {
+    let acknowledge!: (ok: boolean) => void;
+    const interrupted = new Promise<boolean>((resolve) => {
+      acknowledge = resolve;
+    });
+    let calls = 0;
+    const spawner = createSdkSpawner(
+      {
+        query: () => {
+          calls++;
+          if (calls > 1) {
+            return completedQuery([
+              { type: "result", success: true, result: "steered" },
+            ]);
+          }
+          return {
+            conversationId: "conv-worker",
+            agentId: null,
+            async *[Symbol.asyncIterator]() {
+              yield { type: "loop_status", conversationId: "conv-worker" };
+              await new Promise(() => {});
+            },
+            async interrupt() {
+              if (!(await interrupted)) throw new Error("not acknowledged");
+            },
+            close() {},
+          };
+        },
+      },
+      CONFIG,
+    );
+    const controller = new AbortController();
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const first = spawner(request(), controller.signal, {
+      onStarted: started,
+    });
+    await didStart;
+    controller.abort();
+    expect(await first).toMatchObject({
+      failed: true,
+      conversationId: "conv-worker",
+    });
+    // The continuation waits for the interrupt rather than racing it.
+    const second = spawner(
+      request({ conversationId: "conv-worker" }),
+      new AbortController().signal,
+    );
+    await Promise.resolve();
+    expect(calls).toBe(1);
+    acknowledge(true);
+    expect(await second).toMatchObject({ value: "steered" });
+  });
+
+  test("refuses to continue a turn whose interrupt failed", async () => {
+    const spawner = createSdkSpawner(
+      {
+        query: () => ({
+          conversationId: "conv-worker",
+          agentId: null,
+          async *[Symbol.asyncIterator]() {
+            yield { type: "loop_status", conversationId: "conv-worker" };
+            await new Promise(() => {});
+          },
+          async interrupt() {
+            throw new Error("transport closed");
+          },
+          close() {},
+        }),
+      },
+      CONFIG,
+    );
+    const controller = new AbortController();
+    const first = spawner(request(), controller.signal, {
+      onStarted: () => controller.abort(),
+    });
+    expect(await first).toMatchObject({ failed: true });
+    await expect(
+      spawner(
+        request({ conversationId: "conv-worker" }),
+        new AbortController().signal,
+      ),
+    ).rejects.toThrow("only safe within the workflow execution");
+  });
+
   test("releases a resume lock after an immediate SDK ID mismatch", async () => {
     let calls = 0;
     const spawner = createSdkSpawner(
