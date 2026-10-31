@@ -29,7 +29,10 @@ test("conversation workers inherit resources without owning agents or memory", a
     initial_message_sequence: [],
     include_base_tools: false,
     include_base_tool_rules: false,
-    secrets: { WORKER_TEST_SECRET: secret },
+    secrets: {
+      WORKER_TEST_SECRET: secret,
+      UNREFERENCED_WORKER_SECRET: randomUUID(),
+    },
   });
   const backend = getBackend();
   const children: string[] = [];
@@ -99,17 +102,34 @@ test("conversation workers inherit resources without owning agents or memory", a
       conversationId: worker.conversationId,
     });
     expect(scope.agent).toBeNull();
-    const command = `${JSON.stringify(process.execPath)} -e 'console.log("HAS_SECRET="+Boolean(process.env.WORKER_TEST_SECRET));console.log("HAS_MEMORY="+Boolean(process.env.MEMORY_DIR));console.log("HAS_OWNER="+Boolean(process.env.AGENT_ID));console.log(process.env.WORKER_TEST_SECRET)'`;
-    const output = await executeTool(
+    const command = `${JSON.stringify(process.execPath)} -e 'console.log("HAS_SECRET="+Boolean(process.env.WORKER_TEST_SECRET));console.log("HAS_UNREFERENCED="+Boolean(process.env.UNREFERENCED_WORKER_SECRET));console.log("HAS_MEMORY="+Boolean(process.env.MEMORY_DIR));console.log("HAS_OWNER="+Boolean(process.env.AGENT_ID));console.log(process.env.WORKER_TEST_SECRET)'`;
+    const unreferencedOutput = await executeTool(
       "exec_command",
       {
         cmd: process.platform === "win32" ? `& ${command}` : command,
+        description: "Verify worker secrets require explicit references",
+      },
+      { toolContextId: scope.preparedToolContext.contextId },
+    );
+    expect(unreferencedOutput.status).toBe("success");
+    expect(unreferencedOutput.toolReturn).toContain("HAS_SECRET=false");
+    // A shell comment triggers the normal lexical reference scan on both OSes
+    // without relying on their different variable-expansion syntax.
+    const referencedCommand = `${command} # $WORKER_TEST_SECRET`;
+    const output = await executeTool(
+      "exec_command",
+      {
+        cmd:
+          process.platform === "win32"
+            ? `& ${referencedCommand}`
+            : referencedCommand,
         description: "Verify worker resource scope",
       },
       { toolContextId: scope.preparedToolContext.contextId },
     );
     expect(output.status).toBe("success");
     expect(output.toolReturn).toContain("HAS_SECRET=true");
+    expect(output.toolReturn).toContain("HAS_UNREFERENCED=false");
     expect(output.toolReturn).toContain("HAS_MEMORY=false");
     expect(output.toolReturn).toContain("HAS_OWNER=false");
     expect(output.toolReturn).not.toContain(secret);
@@ -181,7 +201,10 @@ test("conversation workers inherit resources without owning agents or memory", a
     const isolatedOutput = await executeTool(
       "exec_command",
       {
-        cmd: process.platform === "win32" ? `& ${command}` : command,
+        cmd:
+          process.platform === "win32"
+            ? `& ${referencedCommand}`
+            : referencedCommand,
         description: "Verify unparented resource isolation",
       },
       { toolContextId: isolated.preparedToolContext.contextId },

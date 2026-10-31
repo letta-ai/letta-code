@@ -87,9 +87,9 @@ export async function resolveSecretEnvFromCommand(
     agentId
   ) {
     await ensureSecretsLoaded(agentId);
-    // Worker shells inherit the vault, but cannot replace harness identity/auth.
+    // Inject only referenced parent secrets, without replacing harness identity/auth.
     return Object.fromEntries(
-      Object.entries(loadSecrets(agentId)).filter(
+      Object.entries(extractSecretEnvFromCommand(command, agentId)).filter(
         ([name]) =>
           !/^(LETTA_API_KEY|LETTA_API_BASE|LETTA_BASE_URL|LETTA_ACCESS_TOKEN|LETTA_REFRESH_TOKEN|LETTA_ACTING_USER_ID|LETTA_MCP_ORIGINATOR_.*|LETTA_AGENT_ID|LETTA_CONVERSATION_ID|LETTA_PARENT_AGENT_ID|LETTA_CODE_AGENT_ROLE|AGENT_ID|CONVERSATION_ID|MEMORY_DIR|LETTA_MEMORY_DIR|HOME|PATH|NODE_OPTIONS|BUN_OPTIONS)$/.test(
             name,
