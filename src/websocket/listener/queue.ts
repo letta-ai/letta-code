@@ -266,6 +266,8 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
   let hasTaskNotification = false;
   let hasCronPrompt = false;
   let hasModContinue = false;
+  let hasAttributedMessage = false;
+  let hasProcessOwnedItem = false;
   let batchConnectionId: string | undefined;
   let batchImageFailureMode: "strict" | "drop" | null = null;
   let batchPreferences = JSON.stringify(
@@ -294,6 +296,23 @@ export function consumeQueuedTurn(runtime: ConversationRuntime): {
     // existing batch, and nothing joins a batch it started.
     if (queueLen > 0 && (isNoCoalesce(item) || isNoCoalesce(firstQueuedItem))) {
       break;
+    }
+    // Process-owned items (cron/task/mod) never share a turn with an
+    // originator-attributed client message. Merged, they would either strip
+    // the sender's token (they vote unattributed) or, if they rode it, let
+    // untrusted content drive the sender's private MCP access. Split instead
+    // so each runs as its own turn, in queue order.
+    if (item.kind === "message") {
+      if (
+        incoming?.mcpOriginatorSuperRunId &&
+        incoming.mcpOriginatorTokenPresent
+      ) {
+        if (hasProcessOwnedItem) break;
+        hasAttributedMessage = true;
+      }
+    } else {
+      if (hasAttributedMessage) break;
+      hasProcessOwnedItem = true;
     }
 
     if (item.kind === "message") {

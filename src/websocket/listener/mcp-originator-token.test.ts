@@ -487,12 +487,13 @@ describe("MCP originator batch resolution", () => {
     "mod_continue",
   ] as const) {
     for (const processFirst of [true, false]) {
-      test(`${kind} merges with attributed work unattributed, processFirst=${processFirst}`, () => {
+      test(`${kind} runs as its own turn beside attributed work, processFirst=${processFirst}`, () => {
         const runtime = getOrCreateScopedRuntime(
           createRuntime(),
           "agent-1",
           "conv-1",
         );
+        setMcpOriginatorToken("sr-1", "mst_one.secret-a");
         function enqueueProcess() {
           runtime.queueRuntime.enqueue({
             kind,
@@ -506,12 +507,21 @@ describe("MCP originator batch resolution", () => {
         if (processFirst) enqueueProcess();
         enqueueMessage(runtime, "A", "sr-1", true);
         if (!processFirst) enqueueProcess();
-        const consumed = consumeQueuedTurn(runtime);
-        expect(consumed?.queuedTurn.messages).toHaveLength(2);
-        // Process-owned work never rides the client message's token.
-        expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
-        expect(consumed?.queuedTurn.processOwnedTurn).toBeUndefined();
+        const first = consumeQueuedTurn(runtime);
+        const second = consumeQueuedTurn(runtime);
         expect(runtime.queueRuntime.length).toBe(0);
+        const [processTurn, clientTurn] = processFirst
+          ? [first, second]
+          : [second, first];
+        // The sender's message keeps its originator and held token.
+        expect(clientTurn?.queuedTurn.messages).toHaveLength(1);
+        expect(clientTurn?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
+        expect(clientTurn?.queuedTurn.processOwnedTurn).toBeUndefined();
+        expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
+        // Process-owned work never rides the client message's token.
+        expect(processTurn?.queuedTurn.messages).toHaveLength(1);
+        expect(processTurn?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+        expect(processTurn?.queuedTurn.processOwnedTurn).toBe(true);
       });
     }
   }
