@@ -222,7 +222,14 @@ test("active and drained teleport intent is journaled before terminal commit", (
         finishClaimedTeleport(
           runtime,
           pending,
-          () => {
+          (options) => {
+            if (activeTurn) {
+              expect(
+                options.onBeforePrepareInputTerminal?.({
+                  message: { terminal_consumer_ids: ["consumer-1"] },
+                } as never),
+              ).toBeTruthy();
+            }
             const beforeCommit = createInterruptedTurnStore().read(
               "agent-1",
               "conversation-1",
@@ -282,7 +289,14 @@ test("active and drained teleport intent is journaled before terminal commit", (
             type: "teleport_ready",
             teleport_id: `teleport-${activeTurn}`,
             active_turn: activeTurn,
-            ...(continuation ? { continuation } : {}),
+            ...(continuation
+              ? {
+                  continuation: expect.objectContaining({
+                    approvals: [{ tool_call_id: "call-1", approve: true }],
+                    terminal_consumer_ids: ["consumer-1"],
+                  }),
+                }
+              : {}),
           }),
         );
       } finally {
@@ -853,7 +867,10 @@ test("terminal teleport failure preserves approval results before resuming", asy
     received.push(incoming);
   });
   setActiveRuntime(listener);
-  prepareSourceTeleport(listener, runtime, socket, { approvals });
+  prepareSourceTeleport(listener, runtime, socket, {
+    approvals,
+    terminal_consumer_ids: ["consumer-1"],
+  });
 
   await deliverTeleportFailure({
     listener,
@@ -876,6 +893,7 @@ test("terminal teleport failure preserves approval results before resuming", asy
       otid: "teleport-1:failed",
     },
   ]);
+  expect(received[0]?.terminalConsumerIds).toEqual(["consumer-1"]);
 });
 
 test("teleport readiness is fenced by durable source terminal commit", () => {

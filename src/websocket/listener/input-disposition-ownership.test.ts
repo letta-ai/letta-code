@@ -21,9 +21,14 @@ import {
   hasLiveAcceptedInputOwnerWithOriginatorRetirement,
 } from "./input-disposition-ownership";
 import {
+  hasCompletedInputTerminalAuthority,
+  hasCompletedInputTerminalRevision,
+} from "./input-terminal-evidence";
+import {
   completeInputReplay,
   loadPreparedInputTerminals,
   prepareInputTerminal,
+  publishPreparedInputTerminalIfCurrent,
 } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
@@ -353,7 +358,8 @@ test("duplicate consumer attachment stays bounded by consumer count", () => {
 test("aggregate terminal consumers are stored in one canonical journal", () => {
   const root = mkdtempSync(join(tmpdir(), "letta-aggregate-terminal-"));
   try {
-    const runtime = persistentRuntime(join(root, "state.json"));
+    const path = join(root, "state.json");
+    const runtime = persistentRuntime(path);
     const listener = runtime.listener;
     const identities = Array.from({ length: 64 }, (_, index) => {
       const identity = ordinaryInputIdentity(`aggregate-${index}`);
@@ -384,6 +390,9 @@ test("aggregate terminal consumers are stored in one canonical journal", () => {
           connectionId: "conn-owner",
           canRotate: false,
           lineageId: "lineage-owner",
+          interruptedRevision: "revision-aggregate",
+          interruptedAuthorityRevision: "authority-aggregate",
+          recoveryLineageId: "recovery-aggregate",
         },
       }),
     ).toBe(true);
@@ -395,6 +404,38 @@ test("aggregate terminal consumers are stored in one canonical journal", () => {
     expect(
       loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
     ).toHaveLength(64);
+    const prepared = loadPreparedInputTerminals(listener)[0];
+    if (!prepared) throw new Error("expected canonical prepared terminal");
+    expect(
+      publishPreparedInputTerminalIfCurrent(listener, prepared, () => {}),
+    ).toBe(true);
+    expect(
+      [...listener.acceptedInputDispositionLedger.entries.values()].filter(
+        (entry) => entry.completedTerminalRevision === "revision-aggregate",
+      ),
+    ).toHaveLength(64);
+
+    const restarted = persistentRuntime(path);
+    expect(
+      hasCompletedInputTerminalRevision(
+        restarted.listener,
+        restarted.key,
+        identities,
+        "revision-aggregate",
+      ),
+    ).toBe(true);
+    expect(
+      hasCompletedInputTerminalAuthority(
+        restarted.listener,
+        restarted.key,
+        identities,
+        {
+          interruptedRevision: "revision-aggregate",
+          authorityRevision: "authority-aggregate",
+          recoveryLineageId: "recovery-aggregate",
+        },
+      ),
+    ).toBe(true);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

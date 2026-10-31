@@ -67,9 +67,13 @@ function makeOptions(): StartListenerOptions {
  * Drive a Slack-originated source turn through the production finalizer while
  * a teleport is pending, and return the frames the source connection emitted.
  */
-function yieldSourceTurnToTeleport(drained: boolean, lateDuplicate = false) {
+function yieldSourceTurnToTeleport(
+  drained: boolean,
+  lateDuplicate = false,
+  durableListener = true,
+) {
   const listener = createRuntime();
-  listener.connectionId = "conn-source";
+  listener.connectionId = durableListener ? "conn-source" : "source";
   const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
   const socket = new MockSocket();
   openListenerConnection({
@@ -208,6 +212,17 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
     socket.sent.length = 0;
     replayPendingTurnFinishedToConnection(socket as never, runtime, "source");
     expect(socket.sent).toEqual([]);
+
+    const unavailable = yieldSourceTurnToTeleport(false, false, false).socket;
+    expect(unavailable.sent).toContainEqual(
+      expect.objectContaining({
+        type: "turn_finished",
+        terminal_consumer_ids: [SLACK_CONSUMER],
+      }),
+    );
+    expect(unavailable.sent).not.toContainEqual(
+      expect.objectContaining({ type: "teleport_ready" }),
+    );
   });
 });
 

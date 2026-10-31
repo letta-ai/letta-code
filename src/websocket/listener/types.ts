@@ -297,6 +297,8 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
+  /** Canonical journal aliases stamped when restart promotion completes. */
+  inputDispositionKeys?: string[];
   /** Durable claim that orders this publication before later quarantine. */
   publicationClaimed?: true;
   /** Persist a crash proof even when no external terminal consumer exists. */

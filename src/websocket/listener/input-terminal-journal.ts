@@ -172,6 +172,7 @@ export function prepareInputTerminal(
         const preparedBase = mergeTerminalConsumers(store.entries);
         const prepared = {
           ...preparedBase,
+          inputDispositionKeys: keys,
           preparedAt: terminal.preparedAt ?? Date.now(),
           preparationSequence,
           owner: { ...preparedBase.owner, preparationSequence },
@@ -219,6 +220,7 @@ export function prepareInputTerminal(
   );
   const prepared = {
     ...preparedBase,
+    inputDispositionKeys: keys,
     preparedAt: terminal.preparedAt ?? Date.now(),
     preparationSequence,
     owner: { ...preparedBase.owner, preparationSequence },
@@ -251,14 +253,18 @@ export function completePreparedInputTerminal(
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
+        const prepared = keys
+          .map((key) => store.entries[key]?.preparedTerminal)
+          .find((terminal) => terminal?.message.turn_id === turnId);
         let changed = false;
-        for (const key of keys) {
-          const entry = store.entries[key];
-          if (entry?.preparedTerminal?.message.turn_id === turnId) {
+        if (prepared) {
+          for (const key of keys) {
+            const entry = store.entries[key];
+            if (!entry) continue;
             recordCompletedTerminalAuthority(
               entry,
-              entry.preparedTerminal.owner,
-              entry.preparedTerminal.publicationClaimed,
+              prepared.owner,
+              prepared.publicationClaimed,
             );
             delete entry.preparedTerminal;
             changed = true;
@@ -271,13 +277,17 @@ export function completePreparedInputTerminal(
       return false;
     }
   }
-  for (const key of keys) {
-    const entry = ledger.entries.get(key);
-    if (entry?.preparedTerminal?.message.turn_id === turnId) {
+  const prepared = keys
+    .map((key) => ledger.entries.get(key)?.preparedTerminal)
+    .find((terminal) => terminal?.message.turn_id === turnId);
+  if (prepared) {
+    for (const key of keys) {
+      const entry = ledger.entries.get(key);
+      if (!entry) continue;
       recordCompletedTerminalAuthority(
         entry,
-        entry.preparedTerminal.owner,
-        entry.preparedTerminal.publicationClaimed,
+        prepared.owner,
+        prepared.publicationClaimed,
       );
       delete entry.preparedTerminal;
     }
@@ -327,9 +337,6 @@ export function loadPreparedInputTerminals(
           message: prepared.suppressConsumerPublication
             ? terminalMessageWithoutConsumers(prepared.message)
             : prepared.message,
-          // Pre-sequence journals can only use their durable reservation
-          // generation as a stable upgrade order. New writes always carry the
-          // exact monotonic preparation sequence.
           preparationSequence: prepared.preparationSequence ?? entry.generation,
           owner: {
             ...prepared.owner,
@@ -614,9 +621,9 @@ export function publishPreparedInputTerminalIfCurrent(
   const ledger = getLedger(listener);
   const expected = preparedTerminalWithoutClaim(terminal);
   const publishAndRetire = (
-    entries: Iterable<AcceptedInputDispositionEntry>,
+    entries: Map<string, AcceptedInputDispositionEntry>,
   ) => {
-    const values = [...entries];
+    const values = [...entries.values()];
     const quarantines = buildLegacyAuthorityQuarantineIndex(values);
     const matches = values.filter(
       (entry) =>
@@ -638,9 +645,12 @@ export function publishPreparedInputTerminalIfCurrent(
         (matches.includes(entry) || terminalAuthorityMatches(prepared, winner))
       );
     });
-    for (const entry of resolvedEntries) {
-      const prepared = entry.preparedTerminal;
-      if (!prepared) continue;
+    const completedEntries = new Set(resolvedEntries);
+    for (const key of winner.inputDispositionKeys ?? []) {
+      const entry = entries.get(key);
+      if (entry) completedEntries.add(entry);
+    }
+    for (const entry of completedEntries) {
       recordCompletedTerminalAuthority(
         entry,
         winner.owner,
@@ -651,10 +661,10 @@ export function publishPreparedInputTerminalIfCurrent(
     return true;
   };
   if (!ledger.persistentPath) {
-    return publishAndRetire(ledger.entries.values());
+    return publishAndRetire(ledger.entries);
   }
   return durableTransaction(ledger.persistentPath, (store) => {
-    const result = publishAndRetire(Object.values(store.entries));
+    const result = publishAndRetire(new Map(Object.entries(store.entries)));
     syncMemoryFromDurable(ledger, store);
     return { result, changed: result };
   });

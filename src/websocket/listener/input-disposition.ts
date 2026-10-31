@@ -290,6 +290,13 @@ function validateDurableStore(value: unknown): DurableStore {
         (prepared.preparationSequence !== undefined &&
           (!Number.isSafeInteger(prepared.preparationSequence) ||
             (prepared.preparationSequence as number) < 0)) ||
+        (prepared.inputDispositionKeys !== undefined &&
+          (!Array.isArray(prepared.inputDispositionKeys) ||
+            prepared.inputDispositionKeys.length >
+              MAX_ACCEPTED_INPUT_DISPOSITIONS_PER_SCOPE ||
+            !prepared.inputDispositionKeys.every(
+              (key) => typeof key === "string",
+            ))) ||
         (prepared.publicationClaimed !== undefined &&
           prepared.publicationClaimed !== true) ||
         (prepared.persistWithoutConsumers !== undefined &&

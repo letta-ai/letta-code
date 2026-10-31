@@ -3,6 +3,7 @@ import type { UsageStatistics } from "@/types/protocol";
 import type { StopReasonType } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
 import { TO_SUBSCRIBERS } from "./connection";
+import { snapshotInputTerminalConsumers } from "./input-terminal-consumer-snapshot";
 import {
   claimPreparedInputTerminalIfCurrent,
   completePreparedInputTerminal,
@@ -20,6 +21,10 @@ import {
   emitRuntimeStateUpdates,
 } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
+import {
+  TeleportIntentUnavailableError,
+  TeleportTerminalConsumerRaceError,
+} from "./teleport-terminal-transfer";
 import type { ListenerTransport } from "./transport";
 import {
   type createTurnFinishedStore,
@@ -75,10 +80,14 @@ export function finishListenerTurn(
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
     prepareInputTerminal?: typeof prepareInputTerminal;
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
-    /** Transfer a prepared source handoff before replay input is retired. */
-    onPreparedInputTerminal?: (
+    /** Journal a transfer before taking the accepted-input prepare lock. */
+    onBeforePrepareInputTerminal?: (
       terminal: DurablePreparedInputTerminal,
     ) => string | false | undefined;
+    /** Verify the prepared consumer set without taking another durable lock. */
+    validatePreparedInputTerminal?: (
+      terminal: DurablePreparedInputTerminal,
+    ) => boolean;
     /** Persist a crash proof even when no external terminal consumer exists. */
     persistTerminalWithoutConsumers?: boolean;
     /**
@@ -165,6 +174,14 @@ export function finishListenerTurn(
     terminalOwner.recoveryLineageId = options.recoveryLineageId;
     terminalOwner.interruptedAuthorityRevision = expectedAuthorityRevision;
   }
+  if (turnFinishedMessage && options.onBeforePrepareInputTerminal) {
+    const consumers = snapshotInputTerminalConsumers(
+      runtime,
+      options.durableInputIdentities ?? [],
+      turnFinishedMessage.terminal_consumer_ids ?? [],
+    );
+    if (consumers.length) turnFinishedMessage.terminal_consumer_ids = consumers;
+  }
   const identitylessConsumerTerminal =
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     (options.durableInputIdentities?.length ?? 0) === 0;
@@ -176,41 +193,54 @@ export function finishListenerTurn(
   }
   let preparedTurnFinished: ReturnType<typeof prepareTurnFinished> | null =
     null;
+  const inputTerminal: DurablePreparedInputTerminal | undefined =
+    turnFinishedMessage
+      ? {
+          scope: {
+            agentId: runtime.agentId,
+            conversationId: runtime.conversationId,
+          },
+          message: turnFinishedMessage,
+          owner: terminalOwner,
+          ...(options.persistTerminalWithoutConsumers
+            ? { persistWithoutConsumers: true }
+            : {}),
+          ...(options.teleportHandoff
+            ? { suppressConsumerPublication: true }
+            : {}),
+        }
+      : undefined;
+  if (inputTerminal && options.onBeforePrepareInputTerminal) {
+    const nextRevision = options.onBeforePrepareInputTerminal(inputTerminal);
+    if (nextRevision === false) throw new TeleportIntentUnavailableError();
+    if (nextRevision) {
+      expectedAuthorityRevision = nextRevision;
+      terminalOwner.interruptedRevision = nextRevision;
+      terminalOwner.interruptedAuthorityRevision = nextRevision;
+    }
+  }
+  let preparedValidationRejected = false;
   if (
-    turnFinishedMessage &&
+    inputTerminal &&
     !(options.prepareInputTerminal ?? prepareInputTerminal)(
       runtime,
       options.durableInputIdentities ?? [],
+      inputTerminal,
       {
-        scope: {
-          agentId: runtime.agentId,
-          conversationId: runtime.conversationId,
-        },
-        message: turnFinishedMessage,
-        owner: terminalOwner,
-        ...(options.persistTerminalWithoutConsumers
-          ? { persistWithoutConsumers: true }
-          : {}),
-        ...(options.teleportHandoff
-          ? { suppressConsumerPublication: true }
-          : {}),
-      },
-      {
-        onPrepared: options.onPreparedInputTerminal
+        onPrepared: options.validatePreparedInputTerminal
           ? (terminal) => {
-              const nextRevision = options.onPreparedInputTerminal?.(terminal);
-              if (nextRevision === false) return false;
-              if (nextRevision) {
-                expectedAuthorityRevision = nextRevision;
-                terminalOwner.interruptedRevision = nextRevision;
-                terminalOwner.interruptedAuthorityRevision = nextRevision;
-              }
-              return true;
+              const valid =
+                options.validatePreparedInputTerminal?.(terminal) === true;
+              preparedValidationRejected = !valid;
+              return valid;
             }
           : undefined,
       },
     )
   ) {
+    if (preparedValidationRejected) {
+      throw new TeleportTerminalConsumerRaceError();
+    }
     // No state transition is safe: the accepted input is still replayable.
     runtime.turnLifecycle.finish(lease, options.stopReason);
     throw new Error("Failed to atomically prepare accepted-input terminal");

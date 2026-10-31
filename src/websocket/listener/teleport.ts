@@ -32,8 +32,8 @@ import { emitProtocolV2Message } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime, getConversationRuntimeKey } from "./runtime";
 import {
+  commitActiveTeleportTerminalTransfer,
   journalTeleportIntent,
-  journalTeleportIntentWithTerminalConsumers,
 } from "./teleport-terminal-transfer";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { createTurnFinishedStore } from "./turn-finished-replay";
@@ -559,7 +559,6 @@ export function handleTeleportRequest(params: {
     pending.agentId,
     pending.conversationId,
   );
-  // An active pump owns the current turn; it is not waiting input.
   pending.drainAcceptedInputs = hasAcceptedInputsWaiting(
     conversationRuntime,
     !conversationRuntime.isProcessing,
@@ -627,7 +626,6 @@ export function claimPendingTeleportAtBoundary(params: {
   }
   const connection = params.listener.connections.get(pending.connectionId);
   if (!connection || !isListenerTransportOpen(connection.writer)) {
-    // No readiness was sent and the source still owns its turn and results.
     // Drop only the handoff request so later input is not blocked forever.
     params.listener.pendingTeleports?.delete(
       pendingTeleportKey(
@@ -684,9 +682,12 @@ export function finishClaimedTeleport(
     persistTerminalWithoutConsumers?: boolean;
     expectedInterruptedRevision?: string;
     teleportHandoff?: boolean;
-    onPreparedInputTerminal?: (
+    onBeforePrepareInputTerminal?: (
       terminal: import("./types").DurablePreparedInputTerminal,
     ) => string | false | undefined;
+    validatePreparedInputTerminal?: (
+      terminal: import("./types").DurablePreparedInputTerminal,
+    ) => boolean;
   }) => TurnFinishTransition,
   options: {
     stopReason?: import("@/types/protocol_v2").StopReasonType;
@@ -711,30 +712,28 @@ export function finishClaimedTeleport(
 
   let transition: TurnFinishTransition;
   try {
-    transition = commit({
-      stopReason: options.stopReason ?? "cancelled",
-      agentId: pending.agentId,
-      conversationId: pending.conversationId,
-      persistTerminalWithoutConsumers:
-        pending.activeTurn || intentRevision !== undefined,
-      expectedInterruptedRevision: pending.activeTurn
-        ? options.expectedInterruptedRevision
-        : intentRevision,
-      teleportHandoff: pending.activeTurn,
-      ...(pending.activeTurn
-        ? {
-            onPreparedInputTerminal: (terminal) => {
-              intentRevision = journalTeleportIntentWithTerminalConsumers(
-                runtime,
-                pending,
-                terminal,
-                options.expectedInterruptedRevision,
-              );
-              return intentRevision ?? false;
-            },
-          }
-        : {}),
-    });
+    if (pending.activeTurn) {
+      const result = commitActiveTeleportTerminalTransfer({
+        runtime,
+        pending,
+        commit,
+        stopReason: options.stopReason ?? "cancelled",
+        expectedInterruptedRevision: options.expectedInterruptedRevision,
+        onUnavailable: (revision) =>
+          abandonTeleportIntent(runtime.listener, pending, revision),
+      });
+      if (result.fallback) return result.transition;
+      intentRevision = result.revision;
+      transition = result.transition;
+    } else {
+      transition = commit({
+        stopReason: options.stopReason ?? "cancelled",
+        agentId: pending.agentId,
+        conversationId: pending.conversationId,
+        persistTerminalWithoutConsumers: intentRevision !== undefined,
+        expectedInterruptedRevision: intentRevision,
+      });
+    }
   } catch (error) {
     abandonTeleportIntent(runtime.listener, pending, intentRevision);
     throw error;
@@ -934,6 +933,7 @@ export function handleTeleportFailure(params: {
       approvals: pending.continuation?.approvals,
     }),
     durableInputIdentities: [identity],
+    terminalConsumerIds: pending.continuation?.terminal_consumer_ids,
   };
   const admission = reserveInputDisposition(runtime, identity);
   if (admission.kind === "full") return;
