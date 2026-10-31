@@ -233,6 +233,11 @@ export function journalTeleportIntent(
   expectedRevision?: string,
   terminal?: DurablePreparedInputTerminal,
 ): string | undefined {
+  const sidecarAuthority =
+    terminal?.owner.recoveryLineageId &&
+    terminal.owner.interruptedAuthorityRevision &&
+    terminal.owner.interruptedAuthorityRevision !==
+      terminal.owner.interruptedRevision;
   return recordListenerWork(
     runtime,
     {
@@ -247,13 +252,18 @@ export function journalTeleportIntent(
           ? {
               terminalAuthority: {
                 interruptedRevision: "",
-                authorityRevision:
-                  terminal.owner.interruptedAuthorityRevision ?? "",
+                authorityRevision: sidecarAuthority
+                  ? (terminal.owner.interruptedAuthorityRevision ?? "")
+                  : "",
                 ...(terminal.owner.recoveryLineageId
                   ? {
                       recoveryLineageId: terminal.owner.recoveryLineageId,
-                      recoveryAuthorityBaseRevision:
-                        terminal.owner.interruptedRevision,
+                      ...(sidecarAuthority
+                        ? {
+                            recoveryAuthorityBaseRevision:
+                              terminal.owner.interruptedRevision,
+                          }
+                        : {}),
                     }
                   : {}),
                 ...(terminal.owner.terminalIdentity

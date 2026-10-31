@@ -13,6 +13,7 @@ export function emitTeleportFailedAck(params: {
   connectionId: ListenerConnectionId;
   command: TeleportFailedCommand;
 }): void {
+  if (!params.command.request_id) return;
   const message: TeleportFailedAckMessage = {
     type: "teleport_failed_ack",
     request_id: params.command.request_id,

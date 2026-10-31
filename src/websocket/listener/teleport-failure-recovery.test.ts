@@ -614,6 +614,12 @@ test("idle teleport survives restart, rejects a different id, and admits failure
       error: "Destination crashed",
     });
     expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+    expect(
+      restartedSocket.sent.filter(
+        (message) =>
+          (message as { type?: unknown }).type === "teleport_failed_ack",
+      ),
+    ).toHaveLength(2);
     expect(received[0]?.durableInputIdentities).toEqual([
       { domain: "teleport", id: "teleport-1" },
     ]);

@@ -894,6 +894,12 @@ export function handleTeleportFailure(params: {
   ) => Promise<void>;
   failedTeleportCleanup?: FailedTeleportCleanupDependencies;
 }): void {
+  const runtime = params.getOrCreateScopedRuntime(
+    params.listener,
+    params.command.runtime.agent_id,
+    params.command.runtime.conversation_id,
+  );
+  const identity = teleportInputIdentity(params.command.teleport_id);
   const pending = findFailedTeleport({
     listener: params.listener,
     teleportId: params.command.teleport_id,
@@ -901,14 +907,14 @@ export function handleTeleportFailure(params: {
     conversationId: params.command.runtime.conversation_id,
     connectionId: params.connectionId,
   });
-  if (!pending || pending.error) return;
-
-  const runtime = params.getOrCreateScopedRuntime(
-    params.listener,
-    pending.agentId,
-    pending.conversationId,
-  );
-  const identity = teleportInputIdentity(params.command.teleport_id);
+  if (!pending) {
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind === "duplicate") emitTeleportFailedAck(params);
+    if (admission.kind === "reserved")
+      rollbackInputDisposition(runtime, admission.reservation);
+    return;
+  }
+  if (pending.error) return;
   const incoming: IncomingMessage = {
     type: "message",
     connectionId: params.connectionId,

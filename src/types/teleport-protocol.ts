@@ -39,7 +39,7 @@ export interface TeleportRequestCommand {
 
 export interface TeleportFailedCommand {
   type: "teleport_failed";
-  request_id: string;
+  request_id?: string;
   teleport_id: string;
   runtime: RuntimeScope;
   error: string;
