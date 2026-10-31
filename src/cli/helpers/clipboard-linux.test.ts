@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
-  type CommandResult,
-  type LinuxClipboardDeps,
+  type RunCommand,
   readLinuxClipboardImage,
-  spawnCommand,
+  runCommand,
 } from "./clipboard-linux";
 
 const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
@@ -13,28 +12,27 @@ const WAYLAND_ENV = { WAYLAND_DISPLAY: "wayland-1", DISPLAY: ":0" };
 const WAYLAND_ONLY_ENV = { WAYLAND_DISPLAY: "wayland-1" };
 const X11_ENV = { DISPLAY: ":0" };
 
-function ok(stdout: string | Buffer): CommandResult {
-  return {
-    status: "ok",
-    stdout: typeof stdout === "string" ? Buffer.from(stdout) : stdout,
-  };
+function commandError(fields: Record<string, unknown>) {
+  return Object.assign(new Error("Command failed"), fields);
 }
 
-function failed(stderr: string): CommandResult {
-  return { status: "failed", stderr };
-}
+const missing = () => commandError({ code: "ENOENT" });
+const timedOut = () => commandError({ killed: true, signal: "SIGKILL" });
+const tooLarge = () =>
+  commandError({ code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER" });
+const failed = (stderr: string) =>
+  commandError({ code: 1, stderr: Buffer.from(stderr) });
 
-function fakeRunner(responses: Record<string, CommandResult>) {
+function fakeRunner(responses: Record<string, Buffer | string | Error>) {
   const calls: string[] = [];
-  const runCommand: LinuxClipboardDeps["runCommand"] = async (
-    command,
-    args,
-  ) => {
-    const line = [command, ...args].join(" ");
+  const run: RunCommand = async (argv) => {
+    const line = argv.join(" ");
     calls.push(line);
-    return responses[line] ?? { status: "missing" };
+    const response = responses[line] ?? missing();
+    if (response instanceof Error) throw response;
+    return Buffer.from(response);
   };
-  return { calls, runCommand };
+  return { calls, run, notice: { shown: false } };
 }
 
 const WL_LIST = "wl-paste --list-types";
@@ -45,324 +43,215 @@ const XCLIP_PNG = "xclip -selection clipboard -t image/png -o";
 
 describe("readLinuxClipboardImage", () => {
   test("returns the png bytes from wl-paste on Wayland", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: ok("text/plain\nimage/png\n"),
-      [WL_PNG]: ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [WL_LIST]: "text/plain\nimage/png\n",
+      [WL_PNG]: PNG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({
-      kind: "image",
-      data: PNG_BYTES,
-      mediaType: "image/png",
-    });
-    expect(calls).toEqual([WL_LIST, WL_PNG]);
+    expect(result).toEqual({ data: PNG_BYTES, mediaType: "image/png" });
+    expect(runner.calls).toEqual([WL_LIST, WL_PNG]);
   });
 
   test("reads jpeg when it is the only image type offered", async () => {
-    const { runCommand } = fakeRunner({
-      [WL_LIST]: ok("text/html\nimage/jpeg\n"),
-      [WL_JPEG]: ok(JPEG_BYTES),
+    const runner = fakeRunner({
+      [WL_LIST]: "text/html\nimage/jpeg\n",
+      [WL_JPEG]: JPEG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({
-      kind: "image",
-      data: JPEG_BYTES,
-      mediaType: "image/jpeg",
-    });
+    expect(result).toEqual({ data: JPEG_BYTES, mediaType: "image/jpeg" });
   });
 
   test("prefers png over jpeg when both are offered", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: ok("image/jpeg\nimage/png\n"),
-      [WL_PNG]: ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [WL_LIST]: "image/jpeg\nimage/png\n",
+      [WL_PNG]: PNG_BYTES,
     });
 
-    await readLinuxClipboardImage({ env: WAYLAND_ENV, runCommand });
+    await readLinuxClipboardImage({ env: WAYLAND_ENV, ...runner });
 
-    expect(calls).toEqual([WL_LIST, WL_PNG]);
+    expect(runner.calls).toEqual([WL_LIST, WL_PNG]);
   });
 
   test("falls back to any other image type", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: ok("image/bmp\n"),
-      "wl-paste --no-newline --type image/bmp": ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [WL_LIST]: "image/bmp\n",
+      "wl-paste --no-newline --type image/bmp": PNG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toMatchObject({ kind: "image", mediaType: "image/bmp" });
-    expect(calls).toHaveLength(2);
+    expect(result).toMatchObject({ mediaType: "image/bmp" });
+    expect(runner.calls).toHaveLength(2);
   });
 
-  test("returns empty without calling xclip when the Wayland clipboard has only text", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: ok("text/plain\nUTF8_STRING\n"),
-    });
+  test("returns null without calling xclip when the Wayland clipboard has only text", async () => {
+    const runner = fakeRunner({ [WL_LIST]: "text/plain\nUTF8_STRING\n" });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({ kind: "empty" });
-    expect(calls).toEqual([WL_LIST]);
+    expect(result).toBeNull();
+    expect(runner.calls).toEqual([WL_LIST]);
   });
 
-  test("returns empty when wl-paste reports an empty clipboard", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: failed("Nothing is copied"),
-    });
+  test("returns null when wl-paste reports an empty clipboard", async () => {
+    const runner = fakeRunner({ [WL_LIST]: failed("Nothing is copied") });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({ kind: "empty" });
-    expect(calls).toEqual([WL_LIST]);
+    expect(result).toBeNull();
+    expect(runner.calls).toEqual([WL_LIST]);
   });
 
   test("uses xclip when wl-paste is missing and DISPLAY is set", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [XCLIP_LIST]: ok("TARGETS\nimage/png\n"),
-      [XCLIP_PNG]: ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [XCLIP_LIST]: "TARGETS\nimage/png\n",
+      [XCLIP_PNG]: PNG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({
-      kind: "image",
-      data: PNG_BYTES,
-      mediaType: "image/png",
-    });
-    expect(calls).toEqual([WL_LIST, XCLIP_LIST, XCLIP_PNG]);
+    expect(result).toEqual({ data: PNG_BYTES, mediaType: "image/png" });
+    expect(runner.calls).toEqual([WL_LIST, XCLIP_LIST, XCLIP_PNG]);
   });
 
   test("uses xclip alone on a plain X11 session", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [XCLIP_LIST]: ok("image/png\n"),
-      [XCLIP_PNG]: ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [XCLIP_LIST]: "image/png\n",
+      [XCLIP_PNG]: PNG_BYTES,
     });
 
-    const result = await readLinuxClipboardImage({ env: X11_ENV, runCommand });
+    const result = await readLinuxClipboardImage({ env: X11_ENV, ...runner });
 
-    expect(result.kind).toBe("image");
-    expect(calls).toEqual([XCLIP_LIST, XCLIP_PNG]);
+    expect(result).not.toBeNull();
+    expect(runner.calls).toEqual([XCLIP_LIST, XCLIP_PNG]);
   });
 
   test("uses xclip when wl-paste times out", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: { status: "timeout" },
-      [XCLIP_LIST]: ok("image/png\n"),
-      [XCLIP_PNG]: ok(PNG_BYTES),
+    const runner = fakeRunner({
+      [WL_LIST]: timedOut(),
+      [XCLIP_LIST]: "image/png\n",
+      [XCLIP_PNG]: PNG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result.kind).toBe("image");
-    expect(calls).toEqual([WL_LIST, XCLIP_LIST, XCLIP_PNG]);
+    expect(result).not.toBeNull();
+    expect(runner.calls).toEqual([WL_LIST, XCLIP_LIST, XCLIP_PNG]);
   });
 
   test("uses xclip when wl-paste fails with an unexpected error", async () => {
-    const { runCommand } = fakeRunner({
+    const runner = fakeRunner({
       [WL_LIST]: failed("Failed to connect to a Wayland server"),
-      [XCLIP_LIST]: ok("image/png\n"),
-      [XCLIP_PNG]: ok(PNG_BYTES),
+      [XCLIP_LIST]: "image/png\n",
+      [XCLIP_PNG]: PNG_BYTES,
     });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result.kind).toBe("image");
+    expect(result).not.toBeNull();
   });
 
-  test("returns empty when xclip reports the target is not available", async () => {
-    const { runCommand } = fakeRunner({
+  test("returns null when xclip reports the target is not available", async () => {
+    const runner = fakeRunner({
       [XCLIP_LIST]: failed("Error: target TARGETS not available"),
     });
 
-    const result = await readLinuxClipboardImage({ env: X11_ENV, runCommand });
+    const result = await readLinuxClipboardImage({ env: X11_ENV, ...runner });
 
-    expect(result).toEqual({ kind: "empty" });
+    expect(result).toBeNull();
   });
 
-  test("returns an error when wl-paste times out and there is no X11 display", async () => {
-    const { runCommand } = fakeRunner({
-      [WL_LIST]: { status: "timeout" },
-    });
+  test("throws when wl-paste times out and there is no X11 display", async () => {
+    const runner = fakeRunner({ [WL_LIST]: timedOut() });
 
-    const result = await readLinuxClipboardImage({
-      env: WAYLAND_ONLY_ENV,
-      runCommand,
-    });
-
-    expect(result).toEqual({
-      kind: "error",
-      message: "wl-paste timed out listing types",
-    });
+    await expect(
+      readLinuxClipboardImage({ env: WAYLAND_ONLY_ENV, ...runner }),
+    ).rejects.toThrow("wl-paste timed out");
   });
 
-  test("returns an error when the image read times out", async () => {
-    const { runCommand } = fakeRunner({
-      [WL_LIST]: ok("image/png\n"),
-      [WL_PNG]: { status: "timeout" },
+  test("throws when the image exceeds the size cap", async () => {
+    const runner = fakeRunner({
+      [WL_LIST]: "image/png\n",
+      [WL_PNG]: tooLarge(),
     });
 
-    const result = await readLinuxClipboardImage({
-      env: WAYLAND_ONLY_ENV,
-      runCommand,
-    });
-
-    expect(result).toEqual({
-      kind: "error",
-      message: "wl-paste timed out reading the image",
-    });
+    await expect(
+      readLinuxClipboardImage({ env: WAYLAND_ENV, ...runner }),
+    ).rejects.toThrow("clipboard image is too large");
+    expect(runner.calls).toEqual([WL_LIST, WL_PNG]);
   });
 
-  test("returns an error when the image exceeds the size cap", async () => {
-    const { runCommand, calls } = fakeRunner({
-      [WL_LIST]: ok("image/png\n"),
-      [WL_PNG]: { status: "too-large" },
-    });
+  test("asks once for the clipboard tools when neither wl-paste nor xclip exist", async () => {
+    const runner = fakeRunner({});
 
-    const result = await readLinuxClipboardImage({
-      env: WAYLAND_ENV,
-      runCommand,
-    });
-
-    expect(result).toEqual({
-      kind: "error",
-      message: "Clipboard image is too large",
-    });
-    expect(calls).toEqual([WL_LIST, WL_PNG]);
-  });
-
-  test("returns tools-missing when neither wl-paste nor xclip exist", async () => {
-    const { runCommand, calls } = fakeRunner({});
-
-    const result = await readLinuxClipboardImage({
-      env: WAYLAND_ENV,
-      runCommand,
-    });
-
-    expect(result).toEqual({ kind: "tools-missing" });
-    expect(calls).toEqual([WL_LIST, XCLIP_LIST]);
-  });
-
-  test("returns tools-missing on a Wayland-only session without wl-paste", async () => {
-    const { runCommand } = fakeRunner({});
-
-    const result = await readLinuxClipboardImage({
-      env: WAYLAND_ONLY_ENV,
-      runCommand,
-    });
-
-    expect(result).toEqual({ kind: "tools-missing" });
+    await expect(
+      readLinuxClipboardImage({ env: WAYLAND_ENV, ...runner }),
+    ).rejects.toThrow("install wl-clipboard (Wayland) or xclip (X11)");
+    expect(
+      await readLinuxClipboardImage({ env: WAYLAND_ENV, ...runner }),
+    ).toBeNull();
+    expect(runner.calls).toEqual([WL_LIST, XCLIP_LIST, WL_LIST, XCLIP_LIST]);
   });
 
   test("spawns nothing when neither display variable is set", async () => {
-    const { runCommand, calls } = fakeRunner({});
+    const runner = fakeRunner({});
 
     const result = await readLinuxClipboardImage({
       env: { XDG_SESSION_TYPE: "wayland" },
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({ kind: "empty" });
-    expect(calls).toEqual([]);
+    expect(result).toBeNull();
+    expect(runner.calls).toEqual([]);
   });
 
   test("treats a zero-byte image read as empty", async () => {
-    const { runCommand } = fakeRunner({
-      [WL_LIST]: ok("image/png\n"),
-      [WL_PNG]: ok(""),
-    });
+    const runner = fakeRunner({ [WL_LIST]: "image/png\n", [WL_PNG]: "" });
 
     const result = await readLinuxClipboardImage({
       env: WAYLAND_ENV,
-      runCommand,
+      ...runner,
     });
 
-    expect(result).toEqual({ kind: "empty" });
+    expect(result).toBeNull();
   });
 });
 
-describe("spawnCommand", () => {
-  const node = process.execPath;
-
-  test("reports a missing binary", async () => {
-    const result = await spawnCommand("letta-no-such-binary", [], {
-      timeoutMs: 1000,
-      maxBytes: 1024,
-    });
-
-    expect(result).toEqual({ status: "missing" });
-  });
-
-  test("captures stdout from a successful command", async () => {
-    const result = await spawnCommand(
-      node,
-      ["-e", "process.stdout.write('abc')"],
-      { timeoutMs: 5000, maxBytes: 1024 },
-    );
-
-    expect(result).toEqual({ status: "ok", stdout: Buffer.from("abc") });
-  });
-
-  test("reports stderr from a failing command", async () => {
-    const result = await spawnCommand(
-      node,
-      ["-e", "process.stderr.write('Nothing is copied'); process.exit(1)"],
-      { timeoutMs: 5000, maxBytes: 1024 },
-    );
-
-    expect(result).toEqual({ status: "failed", stderr: "Nothing is copied" });
-  });
-
+describe("runCommand", () => {
   test("kills a command that exceeds the timeout", async () => {
-    const result = await spawnCommand(
-      node,
-      ["-e", "setTimeout(() => {}, 30000)"],
-      {
-        timeoutMs: 200,
-        maxBytes: 1024,
-      },
-    );
-
-    expect(result).toEqual({ status: "timeout" });
-  });
-
-  test("kills a command whose output exceeds the byte cap", async () => {
-    const result = await spawnCommand(
-      node,
-      [
-        "-e",
-        "process.stdout.write('x'.repeat(4096)); setTimeout(() => {}, 30000)",
-      ],
-      { timeoutMs: 5000, maxBytes: 1024 },
-    );
-
-    expect(result).toEqual({ status: "too-large" });
+    await expect(
+      runCommand([process.execPath, "-e", "setTimeout(() => {}, 30000)"], {
+        timeout: 200,
+        maxBuffer: 1024,
+      }),
+    ).rejects.toMatchObject({ killed: true });
   });
 });
