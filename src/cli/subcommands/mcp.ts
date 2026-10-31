@@ -2,7 +2,7 @@ import { parseArgs } from "node:util";
 import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getBackend } from "@/backend";
-import { getClient as getDefaultClient } from "@/backend/api/client";
+import { getMcpSubprocessBrokerClientOrDefault } from "@/backend/api/mcp-subprocess-broker";
 import { getServerUrl } from "@/backend/api/server-url";
 import {
   listUnifiedMcpServers,
@@ -189,7 +189,7 @@ async function getServerClient(
   deps: McpSubcommandDependencies,
 ): Promise<UnifiedMcpClient> {
   if (deps.getClient) return deps.getClient();
-  return (await getDefaultClient()) as UnifiedMcpClient;
+  return getMcpSubprocessBrokerClientOrDefault(deps.env ?? process.env);
 }
 
 function localTransport(config: McpServerConfig): McpTransport {

@@ -7,7 +7,7 @@ Deferred memory contains the agent's knowledge. Use deferred memory for understa
 
 Deferred memory should NOT be used to store:
 - Information that can be accessed by querying the message history (recall memory). For example, logs of specific interactions can simply be looked up in past messages. Reserve deferred memory to store knowledge that is actually *derived* from experience, or to organize knowledge in a way that optimizes recalling the right information at the right time through progressive disclosure.
-- Justifications or reasons for updating memory. These belong in the git commit history of MemFS.
+- Justifications, reasons, or sources for updating memory. These belong in the commit message; see [Commit memory changes](#commit-memory-changes).
 
 ## Check the limits first
 
@@ -77,10 +77,30 @@ Recall already returns what happened. A deferred memory file is worth keeping on
 
 - Before writing, ask whether searching message history would give a future agent the same thing. If it would, do not write the file.
 - Write the current understanding: how the subject works, the patterns across events, why things failed or succeeded, what to do about it, and the open questions.
-- Revise the file in place when new evidence arrives. Fold the new event into the analysis; never append a dated entry, a quote, or an incident narrative.
+- Revise the file in place when new evidence arrives. Fold the new event into the analysis; never append a dated entry, a quote, or an incident narrative; the commit carries the event.
 - When the file you are updating is already a log, convert it: write the analysis the entries support and delete the entries. Keeping them under an "incident history" heading leaves the log in place; git and recall already hold it.
 - When a raw event matters, point to it with terms that will find it in recall rather than copying it.
 - Keep one home per subject. Update the existing file instead of adding a near-duplicate, and replace stale conclusions where they live.
 - Leave out content the agent can cheaply rederive from the source of truth: file contents, command lists, and current status. Link to the owning source instead.
 - Never store secrets. Reference them by name, such as `$SECRET_NAME`.
 
+## Commit memory changes
+
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
+
+<what happened: the events that led to this learning and why it should persist>
+
+Sources:
+- <conversation ID> (<message IDs>), <who>, <date>: <what happened there>"
+```
+
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- Provenance belongs in the commit, not the memory file: who said or did it (name and ID), when, the quote, and the incident go in the body and `Sources:`. The memory line states only the resulting rule or fact. For example, the file says "Be concise" and the commit says "feedback 'talk more concisely' from Charles <id> on <date>". Git dates the commit, not the event, so write the event date.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Never include secrets.

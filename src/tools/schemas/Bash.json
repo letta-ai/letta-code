@@ -7,7 +7,7 @@
     },
     "timeout": {
       "type": "number",
-      "description": "Optional timeout in milliseconds (max 600000)"
+      "description": "Commands run until they exit unless you pass a timeout in milliseconds. Foreground timeouts have a maximum of 600000."
     },
     "description": {
       "type": "string",

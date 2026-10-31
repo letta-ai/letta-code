@@ -70,6 +70,7 @@ const spawnProcess = mock(
 mock.module("@/agent/subagents/subagent-process", () => ({
   spawnSubagentProcess: spawnProcess,
   spawnManagedWorkloadProcess: spawnProcess,
+  killWindowsProcessTree: async () => {},
 }));
 const { task, launchSubagent } = await import("./task");
 const { task_stop } = await import("./task-stop");

@@ -144,7 +144,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
         shard: [1, 2, 3, 4]
         # Windows subprocess-heavy tests need more runners, not concurrent
         # tests sharing cwd, environment, module mocks, or the same CPU.
@@ -187,7 +187,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
         shard: [1, 2, 3, 4]
         # Four Windows shards put the input-format, model CLI, and teleport
         # files together (244 seconds before setup). Split that group again.
@@ -279,7 +279,6 @@ jobs:
       - name: Run native Cursor tests
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
-          CURSOR_TEST_MODEL: claude-haiku-5-5
         run: |
           bun test ./src/tools/impl/cursor-session.integration.ts
           bun run build
@@ -296,8 +295,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS arm64 (macos-14)
-            runner: macos-14
+          - name: macOS arm64 (macos-15)
+            runner: macos-15
           - name: Linux x64 (ubuntu-24.04)
             runner: ubuntu-24.04
           - name: Linux arm64 (ubuntu-24.04-arm)

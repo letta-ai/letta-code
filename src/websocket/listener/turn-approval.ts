@@ -142,6 +142,7 @@ export async function handleApprovalStop(params: {
     toolName: string;
     toolArgs: string;
   }>;
+  onChunk?: Parameters<typeof executeApprovalBatch>[1];
   runtime: ConversationRuntime;
   socket: ListenerTransport;
   agentId?: string | null;
@@ -699,7 +700,7 @@ export async function handleApprovalStop(params: {
     if (shouldInterrupt()) {
       return interruptTermination();
     }
-    executionResults = await executeApprovals(decisions, undefined, {
+    executionResults = await executeApprovals(decisions, params.onChunk, {
       toolContextId: turnToolContextId ?? undefined,
       abortSignal,
       onStreamingOutput: emitToolExecutionOutput,
@@ -978,7 +979,6 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-
   runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);
   emitRuntimeStateUpdates(runtime, {
     agent_id: agentId,

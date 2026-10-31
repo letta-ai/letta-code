@@ -14,6 +14,43 @@ import {
 } from "./memory-git-sync";
 
 describe("post-turn memory push notification", () => {
+  test.each(["dirty", "conflict", "invalid", "push_failed"] as const)(
+    "%s sync reports diagnostics without enqueueing model reminders",
+    async (status) => {
+      const reminders: string[] = [];
+      const warnings: string[] = [];
+      const params = {
+        agentId: "agent-test",
+        enqueueReminder: (text: string) => reminders.push(text),
+        emitWarning: (text: string) => {
+          warnings.push(text);
+        },
+      };
+      await runPostTurnMemorySync(params, {
+        syncMemory: async () => ({
+          status,
+          summary: status,
+          memoryDir: "/tmp/memory",
+          localOnly: false,
+        }),
+        repairMemory: async () => false,
+        syncAttachedRepositories: async () => ({
+          results: [
+            {
+              name: "shared-notes",
+              path: "/tmp/shared-notes",
+              permissions: "read_write",
+              status: "dirty",
+              summary: "Uncommitted changes",
+            },
+          ],
+        }),
+      });
+      expect(warnings).toHaveLength(2);
+      expect(reminders).toEqual([]);
+    },
+  );
+
   test("waits for a successful push before notifying readers", async () => {
     let finishPush!: (result: MemoryPostTurnSyncResult) => void;
     const push = new Promise<MemoryPostTurnSyncResult>((resolve) => {
@@ -223,7 +260,7 @@ test("post-turn conflict launches a memory task and only guards the checkout", a
     {
       agentId: "agent-memory-repair-test",
       conversationId: "conv-origin",
-      enqueueReminder: (text) => {
+      emitWarning: (text) => {
         reminders.push(text);
       },
     },
@@ -267,7 +304,9 @@ test("invalid committed memory launches repair and only guards the checkout", as
     {
       agentId: "agent-memory-repair-test",
       conversationId: "conv-origin",
-      enqueueReminder: (text) => reminders.push(text),
+      emitWarning: (text) => {
+        reminders.push(text);
+      },
     },
     {
       syncMemory: async () => invalid,
@@ -294,14 +333,11 @@ test("invalid committed memory launches repair and only guards the checkout", as
   expect(reminders[0]).toContain("Continue the current task");
 });
 
-test("dirty primary memory still requests its unfinished commit", async () => {
+test("dirty primary memory remains visible in host diagnostics", async () => {
   const messages: string[] = [];
   await runPostTurnMemorySync(
     {
       agentId: "agent-memory-repair-test",
-      enqueueReminder: (text) => {
-        messages.push(text);
-      },
       emitWarning: (text) => {
         messages.push(text);
       },
@@ -314,7 +350,7 @@ test("dirty primary memory still requests its unfinished commit", async () => {
       },
     },
   );
-  expect(messages).toHaveLength(2);
+  expect(messages).toHaveLength(1);
   expect(messages[0]).toContain("MEMORY COMMIT NEEDED");
   expect(messages[0]).toContain(conflict.memoryDir);
 });
@@ -324,9 +360,6 @@ test("push failures report automatic retry without assigning foreground repair",
   await runPostTurnMemorySync(
     {
       agentId: "agent-memory-repair-test",
-      enqueueReminder: (text) => {
-        messages.push(text);
-      },
       emitWarning: (text) => {
         messages.push(text);
       },
@@ -339,13 +372,13 @@ test("push failures report automatic retry without assigning foreground repair",
       },
     },
   );
-  expect(messages).toHaveLength(2);
+  expect(messages).toHaveLength(1);
   expect(messages[0]).toContain("MEMORY SYNC RETRY");
   expect(messages[0]).toContain("Continue the current task");
   expect(messages[0]).toContain("Do not inspect or repair memory");
 });
 
-test("a conflict is reported to the primary only once repair has run on it", async () => {
+test("host diagnostics report a conflict only once repair has run on it", async () => {
   const jobs: SpawnBackgroundSubagentTaskArgs[] = [];
   const reminders: string[] = [];
   const spawn = spawnInto(jobs);
@@ -358,7 +391,7 @@ test("a conflict is reported to the primary only once repair has run on it", asy
     runPostTurnMemorySync(
       {
         agentId: "agent-memory-repair-test",
-        enqueueReminder: (text) => {
+        emitWarning: (text) => {
           reminders.push(text);
         },
       },
@@ -377,7 +410,7 @@ test("a conflict is reported to the primary only once repair has run on it", asy
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(1);
   expect(reminders[0]).toContain("MEMORY REPAIR RUNNING");
-  // The worker is still running, so the primary only sees the checkout guard.
+  // The worker is still running, so diagnostics only show the checkout guard.
   await run();
   expect(jobs).toHaveLength(1);
   expect(reminders).toHaveLength(2);

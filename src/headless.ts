@@ -12,6 +12,7 @@ import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs"
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
@@ -166,10 +167,7 @@ import {
   prependReminderPartsToContent,
 } from "./reminders/engine";
 import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
-import {
-  createSharedReminderState,
-  enqueueMemoryGitSyncReminder,
-} from "./reminders/state";
+import { createSharedReminderState } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -823,24 +821,20 @@ export async function handleHeadlessCommand(
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
   const statelessFlag = values.stateless;
-  const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  // Fresh subagents are stateless by role; --stateless only extends that to
-  // an existing --agent/--conversation launch — model, prompt, tools, and
-  // sampling config are unchanged.
-  const memfsPolicy = resolveHeadlessMemfsPolicy({
-    statelessRequested: Boolean(statelessFlag),
-    isSubagentRole,
-    newAgentRequested: Boolean(forceNew),
-  });
-  const { isFreshStatelessSubagent } = memfsPolicy;
-  const isStatelessSession =
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  // Fresh or resumed subagents, and --stateless launches, never enable MemFS.
+  const memfsPolicyFor = (agentTags?: string[] | null) =>
+    resolveHeadlessMemfsPolicy({
+      statelessRequested: Boolean(statelessFlag),
+      isSubagentRole: isSubagent,
+      newAgentRequested: Boolean(forceNew),
+      agentTags,
+    });
+  const memfsPolicy = memfsPolicyFor();
+  let isStatelessSession =
     Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
-  if (isStatelessSession && backend.capabilities.localMemfs) {
-    const { disableLocalBackendMemfsForProcess } = await import(
-      "@/backend/local/paths"
-    );
+  if (isStatelessSession && backend.capabilities.localMemfs)
     disableLocalBackendMemfsForProcess();
-  }
   // MemFS startup: block (default), pull in background, or skip this session.
   const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
@@ -1150,7 +1144,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? isFreshStatelessSubagent
+      ? memfsPolicy.isFreshStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1290,7 +1284,9 @@ export async function handleHeadlessCommand(
   let conversationOpenReason: ModConversationOpenReason = "startup";
   let effectiveReflectionSettings: ReflectionSettings;
 
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  isStatelessSession ||= memfsPolicyFor(agent.tags).isStatelessSession;
+  if (isStatelessSession && backend.capabilities.localMemfs)
+    disableLocalBackendMemfsForProcess();
   let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
     ? true
     : memfsFlag;
@@ -4803,12 +4799,6 @@ async function runBidirectionalMode(
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
-          enqueueReminder: (text) => {
-            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
-          },
-          emitWarning: (text) => {
-            debugWarn("memfs-git", text);
-          },
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;

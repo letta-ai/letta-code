@@ -462,7 +462,7 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
-  removed: import("./queue-update-protocol").QueueRemovalTransition[];
+  removed?: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
 /** Standard Letta message delta forwarded through the stream channel. */

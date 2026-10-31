@@ -193,6 +193,22 @@ while (true) {
   expect(backgroundProcesses.get(taskId)?.status).toBe("failed");
 }, 20000);
 
+test("exposes decide() and validates requests before calling the provider", async () => {
+  const { taskId } = await launch({
+    script: `
+emit(typeof decide);
+decide(null, {}); // unawaited rejection must not crash the host
+try { await decide(null, {}); } catch (e) { emit(e.message); }
+try { await decide('s', { q: { type: 'noul', instructions: 'x' } }, 1); } catch (e) { emit(e.message); }`,
+  });
+  await waitFor(() => backgroundProcesses.get(taskId)?.status === "completed");
+  await waitFor(() => queued.some((m) => m.text.includes("options must")));
+  const text = queued.map((m) => m.text).join("\n");
+  expect(text).toContain("function");
+  expect(text).toContain("decide() state must be a string, object, or array.");
+  expect(text).toContain("decide() options must be an object.");
+});
+
 test("TaskStop ends a loop that catches every error", async () => {
   const file = join(home, "loop.txt");
   writeFileSync(file, "x");

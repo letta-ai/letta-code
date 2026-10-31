@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { __testSetBackend, type Backend } from "@/backend";
+import { buildSharedReminderParts } from "@/reminders/engine";
 import { settingsManager } from "@/settings-manager";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
@@ -116,8 +117,33 @@ function setupAgent() {
     cleanup,
     commitPicture,
     listener,
+    runtime,
   };
 }
+
+test("dirty memory survives cleanup without entering the next model request", async () => {
+  const { memoryDir, agentId, runtime, cleanup, updates } = setupAgent();
+  writeFileSync(join(memoryDir, "MEMORY.md"), "# Uncommitted memory\n");
+
+  for (const mode of [
+    "listen",
+    "interactive",
+    "headless-one-shot",
+    "headless-bidirectional",
+  ] as const) {
+    await cleanup();
+    const parts = await buildSharedReminderParts({
+      mode,
+      agent: { id: agentId, name: null },
+      state: runtime.reminderState,
+      systemInfoReminderEnabled: false,
+      skillSources: [],
+    });
+    expect(JSON.stringify(parts)).not.toContain("MEMORY COMMIT NEEDED");
+  }
+  expect(git(memoryDir, ["status", "--porcelain"])).toContain("M MEMORY.md");
+  expect(updates).toEqual([]);
+});
 
 test("a direct profile picture commit notifies its conversation after the push", async () => {
   const { remote, agentId, updates, cleanup, commitPicture } = setupAgent();

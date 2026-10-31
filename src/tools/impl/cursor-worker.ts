@@ -14,6 +14,8 @@ import {
   type RunResult,
 } from "@cursor/sdk";
 
+import { isCursorModelRejection, retryCursorStart } from "./cursor-start-retry";
+
 export interface CursorWorkerStart {
   type: "start";
   sessionId: string;
@@ -90,24 +92,38 @@ async function start(command: CursorWorkerStart): Promise<void> {
     ? await Agent.resume(`agent-${command.sessionId}`, options)
     : await Agent.create({ ...options, agentId: `agent-${command.sessionId}` });
   if (cancelled) throw new Error("Cursor startup cancelled");
-  run = await agent.send(
-    [config.reminder, command.prompt].filter(Boolean).join("\n\n"),
-  );
-  if (cancelled) await run.cancel();
-  emit({ type: "started", sessionId: command.sessionId });
   const seen = new Set<string>();
-  for await (const event of run.stream()) {
-    if (event.type === "tool_call" && !seen.has(event.call_id)) {
-      seen.add(event.call_id);
-      emit({
-        type: "tool",
-        id: event.call_id,
-        name: event.name,
-        args: event.args,
-      });
-    }
-  }
-  const result = await run.wait();
+  let notified = false;
+  const result = await retryCursorStart(
+    async () => {
+      run = await agent.send(
+        [config.reminder, command.prompt].filter(Boolean).join("\n\n"),
+      );
+      if (cancelled) await run.cancel();
+      if (!notified) {
+        emit({ type: "started", sessionId: command.sessionId });
+        notified = true;
+      }
+      for await (const event of run.stream()) {
+        if (event.type === "tool_call" && !seen.has(event.call_id)) {
+          seen.add(event.call_id);
+          emit({
+            type: "tool",
+            id: event.call_id,
+            name: event.name,
+            args: event.args,
+          });
+        }
+      }
+      const result = await run.wait();
+      if (result.status !== "finished" && result.error) {
+        const error = new Error(result.error.message);
+        if (isCursorModelRejection(error)) throw error;
+      }
+      return result;
+    },
+    () => !cancelled && seen.size === 0 && steering.size === 0,
+  );
   // Settle all steering acknowledgments before the result closes this process.
   await Promise.all(steering);
   emit({ type: "result", result });

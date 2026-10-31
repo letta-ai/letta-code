@@ -1,6 +1,16 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { StringDecoder } from "node:string_decoder";
+import { getClient } from "@/backend/api/client";
+import { resolveMcpOriginatorToken } from "@/backend/api/mcp-originator-resolver";
+import {
+  createMcpSubprocessBroker,
+  type McpSubprocessBroker,
+} from "@/backend/api/mcp-subprocess-broker";
 import { isUsableDirectory } from "@/helpers/usable-directory";
+import { getMcpScopeAgentId } from "@/mcp-scope";
+import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
+import { createSecretStreamScrubber } from "@/tools/secret-substitution";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
 import {
@@ -264,6 +274,7 @@ function spawnPipeProcess(
     shell: false,
     stdio: ["ignore", "pipe", "pipe"],
     detached: process.platform !== "win32",
+    windowsHide: true,
   });
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
@@ -309,6 +320,7 @@ function spawnPtyBridgeProcess(
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       detached: process.platform !== "win32",
+      windowsHide: true,
     },
   );
 
@@ -391,25 +403,70 @@ export function startShellProcess(
   launcher: string[],
   options: ShellSpawnOptions,
 ): RunningShellProcess {
+  const runtimeContext = getRuntimeContext();
+  const dynamicOrigin = runtimeContext?.resolveMcpOriginatorSuperRunId;
+  const initialOrigin =
+    dynamicOrigin?.() ?? runtimeContext?.mcpOriginatorSuperRunId;
+  const brokerAgentId = runtimeContext?.agentId;
+  let broker: McpSubprocessBroker | null = null;
+  if (
+    brokerAgentId &&
+    (initialOrigin || (runtimeContext.connectionId && dynamicOrigin))
+  ) {
+    try {
+      broker = createMcpSubprocessBroker({
+        agentId: brokerAgentId,
+        getAllowedAgentIds: async () => {
+          const inheritedAgentId = await getMcpScopeAgentId(
+            brokerAgentId,
+            getRuntimeExecutionEnv(
+              process.env,
+              runtimeContext.executionSettings,
+            ),
+          );
+          return new Set([brokerAgentId, inheritedAgentId]);
+        },
+        getScope: () => {
+          const superRunId =
+            dynamicOrigin?.() ?? runtimeContext.mcpOriginatorSuperRunId;
+          return {
+            agentId: brokerAgentId,
+            ...(superRunId
+              ? { originatorToken: resolveMcpOriginatorToken(superRunId) }
+              : {}),
+          };
+        },
+        getClient: async () => await getClient(),
+      });
+    } catch {
+      // A local broker failure must not break unrelated shell commands. A
+      // restricted MCP call from this child will continue to fail closed.
+    }
+  }
+  const launchOptions: ShellSpawnOptions = broker
+    ? { ...options, env: { ...options.env, ...broker.env } }
+    : options;
   const managedLauncher = wrapManagedWorkloadLauncher(launcher, {
-    env: options.env,
+    env: launchOptions.env,
   });
   const [executable] = managedLauncher;
   if (!executable) {
+    broker?.close();
     throw new ShellExecutionError("Executable is required");
   }
-  if (!isUsableDirectory(options.cwd)) {
+  if (!isUsableDirectory(launchOptions.cwd)) {
+    broker?.close();
     throw buildSpawnError(
       { code: "ENOENT" } as NodeJS.ErrnoException,
       executable,
-      options.cwd,
+      launchOptions.cwd,
     );
   }
 
-  noteExpectedWorktreeForLauncher(launcher, options.cwd);
+  noteExpectedWorktreeForLauncher(launcher, launchOptions.cwd);
 
   const pullRequestTracker = createGitHubPullRequestOutputTracker(
-    options.sourceCommand ?? launcher,
+    launchOptions.sourceCommand ?? launcher,
   );
 
   const stdoutChunks: Buffer[] = [];
@@ -418,6 +475,12 @@ export function startShellProcess(
     stdout: new StringDecoder("utf8"),
     stderr: new StringDecoder("utf8"),
   };
+  const brokerScrubbers = broker
+    ? {
+        stdout: createSecretStreamScrubber(broker.redactions),
+        stderr: createSecretStreamScrubber(broker.redactions),
+      }
+    : null;
   let completed = false;
   let timedOut = false;
   let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
@@ -438,7 +501,8 @@ export function startShellProcess(
       clearTimeout(forceKillTimer);
       forceKillTimer = undefined;
     }
-    options.signal?.removeEventListener("abort", abortHandler);
+    launchOptions.signal?.removeEventListener("abort", abortHandler);
+    broker?.close();
   };
 
   let processHandle: ShellProcessHandle;
@@ -462,27 +526,35 @@ export function startShellProcess(
     terminateProcess();
   };
 
-  const emitDecodedOutput = (text: string, stream: ShellOutputStream): void => {
+  const emitOutput = (text: string, stream: ShellOutputStream): void => {
     if (!text) return;
+    if (launchOptions.captureOutput !== false) {
+      if (stream === "stdout") {
+        stdoutChunks.push(Buffer.from(text));
+      } else {
+        stderrChunks.push(Buffer.from(text));
+      }
+    }
     pullRequestTracker?.append(text, stream);
-    options.onOutput?.(text, stream);
+    launchOptions.onOutput?.(text, stream);
+  };
+
+  const emitDecodedOutput = (text: string, stream: ShellOutputStream): void => {
+    emitOutput(brokerScrubbers?.[stream].push(text) ?? text, stream);
   };
 
   const flushOutputDecoders = (): void => {
     emitDecodedOutput(outputDecoders.stdout.end(), "stdout");
     emitDecodedOutput(outputDecoders.stderr.end(), "stderr");
+    if (brokerScrubbers) {
+      emitOutput(brokerScrubbers.stdout.flush(), "stdout");
+      emitOutput(brokerScrubbers.stderr.flush(), "stderr");
+    }
   };
 
   const events: ProcessEvents = {
     output(data, stream) {
       const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
-      if (options.captureOutput !== false) {
-        if (stream === "stdout") {
-          stdoutChunks.push(buffer);
-        } else {
-          stderrChunks.push(buffer);
-        }
-      }
       emitDecodedOutput(outputDecoders[stream].write(buffer), stream);
     },
     error(error) {
@@ -505,7 +577,7 @@ export function startShellProcess(
         rejectCompletion(buildTimeoutError(stdout, stderr, code));
         return;
       }
-      if (options.signal?.aborted) {
+      if (launchOptions.signal?.aborted) {
         rejectCompletion(buildAbortError(stdout, stderr));
         return;
       }
@@ -514,9 +586,9 @@ export function startShellProcess(
   };
 
   try {
-    processHandle = options.tty
-      ? spawnPtyProcess(managedLauncher, options, events)
-      : spawnPipeProcess(managedLauncher, options, events);
+    processHandle = launchOptions.tty
+      ? spawnPtyProcess(managedLauncher, launchOptions, events)
+      : spawnPipeProcess(managedLauncher, launchOptions, events);
   } catch (error) {
     completed = true;
     cleanup();
@@ -528,15 +600,15 @@ export function startShellProcess(
     throw failure;
   }
 
-  if (options.timeoutMs) {
+  if (launchOptions.timeoutMs) {
     timeoutTimer = setTimeout(() => {
       if (completed) return;
       timedOut = true;
       terminateProcess();
-    }, options.timeoutMs);
+    }, launchOptions.timeoutMs);
   }
-  options.signal?.addEventListener("abort", abortHandler, { once: true });
-  if (options.signal?.aborted) {
+  launchOptions.signal?.addEventListener("abort", abortHandler, { once: true });
+  if (launchOptions.signal?.aborted) {
     abortHandler();
   }
 

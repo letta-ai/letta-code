@@ -2,13 +2,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { bash } from "@/tools/impl/bash";
+import { __setShellProcessStarterForTests, bash } from "@/tools/impl/bash";
 import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import {
   __resetBackgroundRetentionConfigForTests,
   __setBackgroundRetentionConfigForTests,
   backgroundProcesses,
 } from "@/tools/impl/process_manager";
+import { startShellProcess } from "@/tools/impl/shell-runner";
 import { clearPendingMessages } from "@/utils/message-queue-bridge";
 
 const isWindows = process.platform === "win32";
@@ -20,6 +21,7 @@ describe.skipIf(isWindows)("Bash background tools", () => {
   });
 
   afterEach(() => {
+    __setShellProcessStarterForTests(null);
     __resetBackgroundRetentionConfigForTests();
     const outputFiles = Array.from(backgroundProcesses.values())
       .map((proc) => proc.outputFile)
@@ -40,6 +42,36 @@ describe.skipIf(isWindows)("Bash background tools", () => {
         fs.rmSync(outputFile, { recursive: true, force: true });
       }
     }
+  });
+
+  test("runs without a timeout unless one is explicitly set", async () => {
+    const observedTimeouts: number[] = [];
+    __setShellProcessStarterForTests((launcher, options) => {
+      observedTimeouts.push(options.timeoutMs);
+      return startShellProcess(launcher, options);
+    });
+
+    await bash({
+      command: "echo background",
+      description: "Test background timeout default",
+      run_in_background: true,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test foreground timeout default",
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test explicit foreground timeout",
+      timeout: 1_234,
+    });
+    await bash({
+      command: "echo foreground",
+      description: "Test clamped foreground timeout",
+      timeout: 700_000,
+    });
+
+    expect(observedTimeouts).toEqual([0, 0, 1_234, 600_000]);
   });
 
   test("starts background process and returns ID in text", async () => {

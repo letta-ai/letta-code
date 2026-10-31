@@ -64,9 +64,12 @@ Moving detail behind a link changes when it reaches the model. Keep essential
 instructions and cues for when to retrieve that detail in core memory; a link
 alone does not preserve their in-context effect.
 
-Review the diff and validate changed file structure and links. Follow the
-ordinary memory commit/sync workflow; doctor has no separate worktree or
-completion-time integration step. If there are no supported fixes, make no commit.
+Review the diff and validate changed file structure and links. Commit with the
+*Commit memory changes* format from `maintaining-core-memory` or
+`maintaining-deferred-memory`: one commit per repair, citing the conversations,
+message IDs, and files that support it under `Sources:`.
+Doctor has no separate worktree or completion-time integration step. If there
+are no supported fixes, make no commit.
 
 After a repair, recheck the original structural or content defect and any
 affected links or indexes.

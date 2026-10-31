@@ -19,7 +19,6 @@ describe("post-compaction context reminders", () => {
     state.lastNotifiedPermissionMode = "standard";
     state.turnCount = 7;
     state.pendingReflectionTrigger = true;
-    state.pendingMemoryGitSyncReminders.push({ text: "memory sync" });
     state.pendingCommandIoReminders.push({
       input: "/doctor",
       output: "ok",
@@ -33,7 +32,6 @@ describe("post-compaction context reminders", () => {
       newTools: ["Read", "Edit"],
     });
 
-    const memoryQueue = state.pendingMemoryGitSyncReminders;
     const commandQueue = state.pendingCommandIoReminders;
     const toolsetQueue = state.pendingToolsetChangeReminders;
 
@@ -50,7 +48,6 @@ describe("post-compaction context reminders", () => {
     expect(state.lastNotifiedPermissionMode).toBeNull();
     expect(state.turnCount).toBe(7);
     expect(state.pendingReflectionTrigger).toBe(true);
-    expect(state.pendingMemoryGitSyncReminders).toBe(memoryQueue);
     expect(state.pendingCommandIoReminders).toBe(commandQueue);
     expect(state.pendingToolsetChangeReminders).toBe(toolsetQueue);
   });
