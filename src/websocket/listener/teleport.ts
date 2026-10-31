@@ -274,7 +274,7 @@ function abandonTeleportIntent(
   listener: ListenerRuntime,
   pending: PendingTeleport,
   intentRevision: string | undefined,
-): void {
+): string | undefined {
   listener.pendingTeleports?.delete(
     pendingTeleportKey(
       pending.agentId,
@@ -282,22 +282,23 @@ function abandonTeleportIntent(
       pending.teleportId,
     ),
   );
-  if (!intentRevision) return;
+  if (!intentRevision) return undefined;
   const store = createInterruptedTurnStore();
   const record = store.read(pending.agentId, pending.conversationId);
   if (
     record?.revision !== intentRevision ||
     record.teleport?.teleportId !== pending.teleportId
   ) {
-    return;
+    return undefined;
   }
   try {
-    store.write(
+    return store.write(
       { ...record, teleportId: undefined, teleport: undefined },
       intentRevision,
-    );
+    ).revision;
   } catch {
     // A successor revision now owns the record and must decide its outcome.
+    return undefined;
   }
 }
 
@@ -626,7 +627,6 @@ export function claimPendingTeleportAtBoundary(params: {
   }
   const connection = params.listener.connections.get(pending.connectionId);
   if (!connection || !isListenerTransportOpen(connection.writer)) {
-    // Drop only the handoff request so later input is not blocked forever.
     params.listener.pendingTeleports?.delete(
       pendingTeleportKey(
         pending.agentId,

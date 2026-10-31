@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -406,11 +406,28 @@ test("aggregate terminal consumers are stored in one canonical journal", () => {
     ).toHaveLength(64);
     const prepared = loadPreparedInputTerminals(listener)[0];
     if (!prepared) throw new Error("expected canonical prepared terminal");
+    const durable = JSON.parse(readFileSync(path, "utf8")) as {
+      entries: Record<string, { expiresAt: number }>;
+    };
+    for (const entry of Object.values(durable.entries)) entry.expiresAt = 0;
+    writeFileSync(path, JSON.stringify(durable));
+    const deferred = persistentRuntime(path);
+    const deferredPrepared = loadPreparedInputTerminals(deferred.listener)[0];
+    if (!deferredPrepared) throw new Error("expected deferred terminal");
+    expect(deferred.listener.acceptedInputDispositionLedger.entries.size).toBe(
+      64,
+    );
     expect(
-      publishPreparedInputTerminalIfCurrent(listener, prepared, () => {}),
+      publishPreparedInputTerminalIfCurrent(
+        deferred.listener,
+        deferredPrepared,
+        () => {},
+      ),
     ).toBe(true);
     expect(
-      [...listener.acceptedInputDispositionLedger.entries.values()].filter(
+      [
+        ...deferred.listener.acceptedInputDispositionLedger.entries.values(),
+      ].filter(
         (entry) => entry.completedTerminalRevision === "revision-aggregate",
       ),
     ).toHaveLength(64);
@@ -436,6 +453,12 @@ test("aggregate terminal consumers are stored in one canonical journal", () => {
         },
       ),
     ).toBe(true);
+    expect(reserveInputDisposition(restarted, identities[0]).kind).toBe(
+      "duplicate",
+    );
+    expect(reserveInputDisposition(restarted, identities[63]).kind).toBe(
+      "duplicate",
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

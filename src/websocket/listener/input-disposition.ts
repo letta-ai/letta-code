@@ -32,6 +32,7 @@ import { expireDispositionEntries } from "./input-disposition-expiry";
 import { inputDispositionPersistentPath } from "./input-disposition-path";
 import {
   buildLegacyAuthorityReferenceIndex,
+  buildPreparedTerminalAliasIndex,
   settleExpiredQuarantineJournals,
   shouldRetainDisposition,
 } from "./input-disposition-retention";
@@ -226,7 +227,6 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Invalid accepted-input disposition entry");
     }
-    // Upgrade v2 namespace-free tombstones; v4 requires replay or completion.
     if (value.version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
@@ -418,7 +418,6 @@ function writeDurableStore(path: string, store: DurableStore): void {
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     writeFileSync(temporaryPath, serialized, { mode: 0o600, flag: "wx" });
-    // FlushFileBuffers rejects read-only handles on Windows.
     const fd = openSync(temporaryPath, "r+");
     try {
       fsyncSync(fd);
@@ -460,9 +459,15 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   const references = buildLegacyAuthorityReferenceIndex(
     Object.values(store.entries),
   );
+  const preparedAliasKeys = buildPreparedTerminalAliasIndex(
+    Object.values(store.entries),
+  );
   for (const [key, entry] of Object.entries(store.entries)) {
     if (entry.expiresAt <= now) {
-      if (shouldRetainDisposition(entry, () => references)) {
+      if (
+        preparedAliasKeys.has(key) ||
+        shouldRetainDisposition(entry, () => references)
+      ) {
         entry.expiresAt = now + ACCEPTED_INPUT_DISPOSITION_TTL_MS;
       } else {
         delete store.entries[key];
@@ -806,7 +811,6 @@ export function forgetQueuedInputDisposition(
   return forgetQueuedInputDispositions(runtime, identity ? [identity] : []);
 }
 
-/** Atomically discard a queue mutation's complete set of durable payloads. */
 export function forgetQueuedInputDispositions(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
@@ -904,7 +908,6 @@ export function markQueuedInputDispositionsStarted(
   return true;
 }
 
-/** Return a destructively dequeued input to durable queued ownership. */
 export function requeueStartedInputDispositions(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],

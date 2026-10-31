@@ -15,9 +15,10 @@ export function terminalConsumersMatch(
   expected: readonly string[],
 ): boolean {
   const actual = terminal.message.terminal_consumer_ids ?? [];
+  const expectedSet = new Set(expected);
   return (
-    actual.length === expected.length &&
-    actual.every((consumerId) => expected.includes(consumerId))
+    actual.length === expectedSet.size &&
+    actual.every((consumerId) => expectedSet.has(consumerId))
   );
 }
 
@@ -81,17 +82,18 @@ export function commitActiveTeleportTerminalTransfer(params: {
   commit: TerminalTransferCommit;
   stopReason: import("@/types/protocol_v2").StopReasonType;
   expectedInterruptedRevision?: string;
-  onUnavailable: (revision?: string) => void;
+  onUnavailable: (revision?: string) => string | undefined;
 }): { transition: TurnFinishTransition; revision?: string; fallback?: true } {
   const fallback = () => {
-    params.onUnavailable(revision);
+    const fallbackRevision =
+      params.onUnavailable(revision) ?? params.expectedInterruptedRevision;
     return {
       fallback: true as const,
       transition: params.commit({
         stopReason: params.stopReason,
         agentId: params.pending.agentId,
         conversationId: params.pending.conversationId,
-        expectedInterruptedRevision: params.expectedInterruptedRevision,
+        expectedInterruptedRevision: fallbackRevision,
       }),
     };
   };
@@ -130,13 +132,10 @@ export function commitActiveTeleportTerminalTransfer(params: {
       if (error instanceof TeleportTerminalConsumerRaceError && attempt < 64) {
         continue;
       }
+      if (error instanceof TeleportTerminalConsumerRaceError) return fallback();
       params.onUnavailable(revision);
       throw error;
     }
-  }
-  if (revision) {
-    params.onUnavailable(revision);
-    throw new TeleportTerminalConsumerRaceError();
   }
   return fallback();
 }

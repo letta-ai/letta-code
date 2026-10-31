@@ -1,5 +1,15 @@
 import type { AcceptedInputDispositionEntry } from "./types";
 
+export function buildPreparedTerminalAliasIndex(
+  entries: Iterable<AcceptedInputDispositionEntry>,
+): ReadonlySet<string> {
+  return new Set(
+    [...entries].flatMap(
+      (entry) => entry.preparedTerminal?.inputDispositionKeys ?? [],
+    ),
+  );
+}
+
 export const PERMANENT_LEGACY_AUTHORITY_QUARANTINE_EXPIRY =
   Number.MAX_SAFE_INTEGER;
 
