@@ -55,7 +55,8 @@
           preBuild = ''
             export HOME="$TMPDIR"
             substituteInPlace build.js \
-              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true'
+              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true' \
+              --replace-fail 'rewriteDeclarationAliases(join(__dirname, "dist/types"));' ""
           '';
 
           buildPhase = ''
