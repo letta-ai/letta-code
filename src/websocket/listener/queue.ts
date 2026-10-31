@@ -107,13 +107,13 @@ function buildQueuedTurnMessage(
   const messages: IncomingMessage["messages"] = [];
   const durableInputIdentities: InputIdentity[] = [];
   const terminalConsumerIds = new Set<string>();
-  // Every item in the batch must agree on the originator super run for the
-  // merged turn to stay attributed — including cron prompts, task
-  // notifications, and mod continuations, which vote unattributed so
-  // process-owned work can never ride a client message's originator token.
-  // A mixed batch (or one with an unattributed member) runs unattributed
-  // rather than borrowing another run's originator — the same fail-safe as
-  // a mixed acting-user batch.
+  // Every client message in the batch must agree on the originator super run
+  // for the merged turn to stay attributed. A mixed batch (or one with an
+  // unattributed or payload-less message) runs unattributed rather than
+  // borrowing another run's originator — the same fail-safe as a mixed
+  // acting-user batch. Cron prompts, task notifications, and mod
+  // continuations are process-owned (no human sender), so they abstain:
+  // merging them into one sender's turn must not strip that sender's token.
   //
   // The vote is on (super run id, token presence) together, not the id
   // alone: a token-bearing and a tokenless delivery for the SAME run are
@@ -164,9 +164,7 @@ function buildQueuedTurnMessage(
         ),
       );
     } else {
-      // Not a client message: no originator delivery, votes unattributed.
-      messageOriginatorIds.push(undefined);
-      originatorVotes.push(null);
+      // Not a client message: process-owned, so it abstains from the vote.
       messages.push({
         role: "user",
         content:

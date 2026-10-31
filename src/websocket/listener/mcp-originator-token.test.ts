@@ -487,12 +487,13 @@ describe("MCP originator batch resolution", () => {
     "mod_continue",
   ] as const) {
     for (const processFirst of [true, false]) {
-      test(`${kind} merges with attributed work unattributed, processFirst=${processFirst}`, () => {
+      test(`${kind} merged with one sender's message keeps that sender's originator, processFirst=${processFirst}`, () => {
         const runtime = getOrCreateScopedRuntime(
           createRuntime(),
           "agent-1",
           "conv-1",
         );
+        setMcpOriginatorToken("sr-1", "mst_one.secret-a");
         function enqueueProcess() {
           runtime.queueRuntime.enqueue({
             kind,
@@ -508,8 +509,10 @@ describe("MCP originator batch resolution", () => {
         if (!processFirst) enqueueProcess();
         const consumed = consumeQueuedTurn(runtime);
         expect(consumed?.queuedTurn.messages).toHaveLength(2);
-        // Process-owned work never rides the client message's token.
-        expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBeUndefined();
+        // Process-owned work abstains: the sender's originator and held
+        // token survive the merge instead of being retired.
+        expect(consumed?.queuedTurn.mcpOriginatorSuperRunId).toBe("sr-1");
+        expect(getMcpOriginatorToken("sr-1")).toBe("mst_one.secret-a");
         expect(consumed?.queuedTurn.processOwnedTurn).toBeUndefined();
         expect(runtime.queueRuntime.length).toBe(0);
       });
