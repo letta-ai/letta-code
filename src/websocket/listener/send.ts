@@ -229,9 +229,17 @@ async function tryResumeBusyConversationStream(params: {
   runtime: ConversationRuntime;
   abortSignal?: AbortSignal;
   debugMessage: string;
+  /** Run that holds the conversation (from the 409). Preferred over OTID. */
+  runId?: string;
 }): Promise<MessageStreamResult | null> {
-  const { conversationId, messages, runtime, abortSignal, debugMessage } =
-    params;
+  const {
+    conversationId,
+    messages,
+    runtime,
+    abortSignal,
+    debugMessage,
+    runId,
+  } = params;
 
   try {
     const backend = getBackend();
@@ -252,7 +260,9 @@ async function tryResumeBusyConversationStream(params: {
             conversationId === "default"
               ? (runtime.agentId ?? undefined)
               : undefined,
-          otid: messageOtid ?? undefined,
+          // After a busy 409 the active run belongs to a different input, so
+          // the rejected input's OTID matches no run; resume the blocker.
+          ...(runId ? { run_id: runId } : { otid: messageOtid ?? undefined }),
           starting_after: 0,
           batch_size: 1000,
         } as unknown as ConversationMessageStreamBody,
@@ -723,6 +733,7 @@ export async function sendMessageStreamWithRetry(
           abortSignal,
           debugMessage:
             "[Listen] Pre-stream resume failed, falling back to wait/retry:",
+          runId: blockingRunId ?? undefined,
         });
         if (retryOptions.authorityGuard?.() === false) {
           resumeStream?.controller.abort();
@@ -949,6 +960,7 @@ export async function sendApprovalContinuationWithRetry(
           abortSignal,
           debugMessage:
             "[Listen] Approval continuation pre-stream resume failed, falling back to wait/retry:",
+          runId: blockingRunId ?? undefined,
         });
         if (retryOptions.authorityGuard?.() === false) {
           resumeStream?.controller.abort();
