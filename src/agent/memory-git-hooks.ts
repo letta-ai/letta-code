@@ -146,9 +146,11 @@ case "$memory_layout_policy" in
 esac
 
 if [ "$use_v2_validation" = "true" ]; then
-  for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^skills/[^/]+\\.md$' || true); do
-    errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
-  done
+  while IFS= read -r -d '' file; do
+    if [[ "$file" =~ ^skills/[^/]+\\.md$ ]]; then
+      errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
+    fi
+  done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
   validate_memory_files "memfs-v2"
 
@@ -163,15 +165,20 @@ fi
 
 # Skills must always be directories: skills/<name>/SKILL.md
 # Reject legacy flat skill files (both current and legacy repo layouts).
-for file in $(git diff --cached --name-only --diff-filter=ACMR | grep -E '^(memory/)?skills/[^/]+\\.md$' || true); do
-  errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
-done
+while IFS= read -r -d '' file; do
+  if [[ "$file" =~ ^(memory/)?skills/[^/]+\\.md$ ]]; then
+    errors="$errors\\n  $file: invalid skill path (skills must be folders). Use skills/<name>/SKILL.md"
+  fi
+done < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
 # Match .md files under system/ or reference/ (with optional memory/ prefix).
 # Skip skill SKILL.md files — they use a different frontmatter format.
-for file in $(git diff --cached --name-only --diff-filter=ACM | grep -E '^(memory/)?(system|reference)/.*\\.md$'); do
-  memory_files+=("$file")
-done
+# NUL-delimited so paths containing spaces or quotes stay intact.
+while IFS= read -r -d '' file; do
+  if [[ "$file" =~ ^(memory/)?(system|reference)/.*\\.md$ ]]; then
+    memory_files+=("$file")
+  fi
+done < <(git diff --cached --name-only -z --diff-filter=ACM)
 validate_memory_files "legacy"
 
 if [ -n "$errors" ]; then
