@@ -334,6 +334,17 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     getRuntimeContext()?.executionSettings,
   );
   const env = { ...executionEnv };
+  const conversationOnly = getRuntimeContext()?.agentId === null;
+  if (conversationOnly) {
+    for (const key of [
+      "AGENT_ID",
+      "LETTA_AGENT_ID",
+      "AGENT_NAME",
+      "MEMORY_DIR",
+      "LETTA_MEMORY_DIR",
+    ])
+      delete env[key];
+  }
   const sessionAccessToken = peekOrgAccessToken() ?? getDesktopAccessToken();
   if (sessionAccessToken) env.LETTA_API_KEY = sessionAccessToken;
   const pathKey =
@@ -404,7 +415,7 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     // Context not set yet (e.g., during startup), try env fallback below.
   }
 
-  if (!agentId) {
+  if (!agentId && !conversationOnly) {
     const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
     if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {
       agentId = fallbackAgentId.trim();

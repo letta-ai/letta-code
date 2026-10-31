@@ -30,6 +30,24 @@ describe("ephemeral conversation creation", () => {
     expect(body).not.toHaveProperty("agent_id");
     expect(body).not.toHaveProperty("tags");
     expect(body).not.toHaveProperty("memory_blocks");
+    expect(body).not.toHaveProperty("parent_agent_id");
+  });
+
+  test("persists explicit worker lineage without memory", async () => {
+    const body = await buildEphemeralConversationCreateBody({
+      model: "gpt-5.6-luna",
+      systemPromptCustom: "worker",
+      parentAgentId: "agent-parent",
+      name: "Worker",
+      isSubagent: true,
+    });
+    expect(body).toMatchObject({
+      parent_agent_id: "agent-parent",
+      name: "Worker",
+      is_subagent: true,
+    });
+    expect(body).not.toHaveProperty("memory_blocks");
+    expect(body).not.toHaveProperty("tags");
   });
 
   test("creates local execution state outside the persistent local store", async () => {

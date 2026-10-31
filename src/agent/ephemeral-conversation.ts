@@ -15,6 +15,9 @@ export interface CreateEphemeralConversationOptions {
   systemPromptPreset?: string;
   systemPromptCustom?: string;
   memoryPromptMode?: MemoryPromptMode;
+  parentAgentId?: string;
+  name?: string;
+  isSubagent?: boolean;
 }
 
 export async function buildEphemeralConversationCreateBody(
@@ -43,6 +46,11 @@ export async function buildEphemeralConversationCreateBody(
   return {
     model: request.model,
     system: request.system ?? system,
+    ...(options.parentAgentId
+      ? { parent_agent_id: options.parentAgentId }
+      : {}),
+    ...(options.name ? { name: options.name } : {}),
+    ...(options.isSubagent ? { is_subagent: true } : {}),
     ...(modelSettings ? { model_settings: modelSettings } : {}),
     ...(contextWindow ? { context_window_limit: contextWindow } : {}),
   };
@@ -80,7 +88,10 @@ export async function createEphemeralConversation(
   options: CreateEphemeralConversationOptions,
 ): Promise<{ agent: AgentState; conversationId: string }> {
   const body = await buildEphemeralConversationCreateBody(options);
-  const conversation = await createEphemeralConversationRequest(body);
+  const backend = getBackend();
+  const conversation = backend.createEphemeralConversation
+    ? await backend.createEphemeralConversation(body)
+    : await createEphemeralConversationRequest(body);
   return {
     agent: projectConversationState({ ...body, id: conversation.id }),
     conversationId: conversation.id,

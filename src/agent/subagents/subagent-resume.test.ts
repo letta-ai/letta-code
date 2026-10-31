@@ -37,6 +37,22 @@ function targetFlags(agentId?: string, conversationId?: string) {
 }
 
 describe("subagent resume target", () => {
+  test("new ordinary workers create conversations, not hidden agents", () => {
+    const args = targetFlags().args;
+    expect(args).toContain("--ephemeral");
+    expect(args).not.toContain("--new-agent");
+    const memoryArgs = buildSubagentArgs(
+      "reflection",
+      {
+        ...config,
+        launchProfile: "memory-subagent",
+      },
+      null,
+      "reflect",
+    );
+    expect(memoryArgs).toContain("--new-agent");
+    expect(memoryArgs).not.toContain("--ephemeral");
+  });
   test("keeps the owning agent when resuming its default conversation", () => {
     const target = targetFlags("agent-existing", "default");
     expect(target.agent).toBe("agent-existing");

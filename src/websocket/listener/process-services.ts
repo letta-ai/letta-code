@@ -71,9 +71,9 @@ export function installProcessEventRouting(params: {
         processTransport,
         runtime,
         event as unknown as import("@/types/protocol_v2").StreamDelta,
-        subagent?.parentAgentId
+        subagent?.parentConversationId
           ? {
-              agent_id: subagent.parentAgentId,
+              agent_id: subagent.parentAgentId || null,
               conversation_id: subagent.parentConversationId ?? "default",
             }
           : undefined,
@@ -87,7 +87,7 @@ export function installProcessEventRouting(params: {
     subscribeToBackgroundProcessState((scope) => {
       if (scope) {
         emitDeviceStatusIfOpen(runtime, {
-          agent_id: scope.agentId,
+          agent_id: scope.agentId || null,
           conversation_id: scope.conversationId,
         });
         return;
@@ -105,10 +105,14 @@ export function installProcessEventRouting(params: {
     });
 
   setMessageQueueAdder((queuedMessage) => {
-    if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
+    if (
+      !queuedMessage.conversationId ||
+      (!queuedMessage.agentId && queuedMessage.conversationId === "default")
+    )
+      return;
     const targetRuntime = getOrCreateScopedRuntime(
       runtime,
-      queuedMessage.agentId,
+      queuedMessage.agentId || null,
       queuedMessage.conversationId,
     );
     if (!targetRuntime?.queueRuntime) return;
@@ -119,7 +123,7 @@ export function installProcessEventRouting(params: {
       text: queuedMessage.text,
       content: queuedMessage.content,
       actingUserId: queuedMessage.actingUserId,
-      agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
+      agentId: queuedMessage.agentId || targetRuntime.agentId || undefined,
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,
     } as Omit<

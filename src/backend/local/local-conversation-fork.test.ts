@@ -3,6 +3,34 @@ import type { ConversationMessageCreateBody } from "@/backend";
 import { LocalStore } from "@/backend/local/local-store";
 
 describe("LocalBackend conversation forks", () => {
+  test("forked workers preserve snapshots and lineage without creating agents", () => {
+    const parentId = "agent-local-parent";
+    const store = new LocalStore(parentId);
+    const agents = store.listAgents();
+    const source = store.createEphemeralConversation({
+      model: "openai/gpt-5.6-luna",
+      system: "immutable parent snapshot",
+      parent_agent_id: parentId,
+      is_subagent: true,
+    });
+    store.appendTurnInput(source.id, {
+      messages: [{ role: "user", content: "previous task" }],
+    } as ConversationMessageCreateBody);
+    const fork = store.forkConversation(source.id, {
+      ephemeral: true,
+      name: "Worker",
+      isSubagent: true,
+    });
+    expect(store.retrievePublicConversation(fork.id)).toMatchObject({
+      agent_id: null,
+      parent_agent_id: parentId,
+      is_subagent: true,
+      name: "Worker",
+      system: "immutable parent snapshot",
+    });
+    expect(store.listConversationMessages(fork.id, {})).toHaveLength(1);
+    expect(store.listAgents()).toEqual(agents);
+  });
   test("forks through a projected message ID inclusively", () => {
     const agentId = "agent-local-fork-cutoff";
     const store = new LocalStore(agentId);

@@ -309,11 +309,11 @@ describe("buildSubagentArgs", () => {
     launchProfile: "default",
   };
 
-  test("does not pass --no-memfs (statelessness derives from subagent role env)", () => {
+  test("creates stateless conversation workers without --no-memfs", () => {
     const args = buildSubagentArgs("test-subagent", baseConfig, null, "hello");
 
     expect(args).not.toContain("--no-memfs");
-    expect(args).toContain("--new-agent");
+    expect(args).toContain("--ephemeral");
   });
 
   test("tags new subagents with type and combines parent into one --tags value", () => {

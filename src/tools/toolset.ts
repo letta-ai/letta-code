@@ -352,14 +352,21 @@ export async function prepareToolExecutionContextForScope(params: {
         (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
-  const conversationTarget =
+  const conversation =
     conversationId && conversationId !== "default"
-      ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
-          )) as ScopeModelCarrier,
-        )
-      : { model: null, providerType: null, openAICompatibleProxy: false };
+      ? await backend.retrieveConversation(conversationId)
+      : null;
+  const conversationTarget = modelTargetFromCarrier(conversation);
+  const parentId = conversation && Reflect.get(conversation, "parent_agent_id");
+  const resourceAgentId =
+    agentId ??
+    (conversation?.agent_id === null && typeof parentId === "string"
+      ? parentId
+      : null);
+  if (resourceAgentId && !agentId) {
+    const { ensureSecretsLoaded } = await import("@/utils/secrets-store");
+    await ensureSecretsLoaded(resourceAgentId);
+  }
 
   const explicitModel = normalizeModelHandle(overrideModel);
   const cachedModel = normalizeModelHandle(cachedEffectiveModel);
@@ -432,6 +439,7 @@ export async function prepareToolExecutionContextForScope(params: {
       connectionId,
       environmentDeviceId,
       agentId,
+      resourceAgentId,
       agentName: (agent as AgentState | null)?.name ?? null,
       conversationId: scopedConversationId,
       ...(actingUserId ? { actingUserId } : {}),

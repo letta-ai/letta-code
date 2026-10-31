@@ -70,10 +70,21 @@ export function resolveNotificationScope(parentScope?: {
   const actingUserId = runtime?.suppressActingUserFallback
     ? null
     : runtime?.actingUserId;
-  if (parentScope?.agentId) {
+  if (
+    parentScope &&
+    (parentScope.agentId ||
+      (parentScope.conversationId && parentScope.conversationId !== "default"))
+  ) {
     return {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
+      actingUserId,
+    };
+  }
+  if (runtime?.agentId === null && runtime.conversationId) {
+    return {
+      agentId: "",
+      conversationId: runtime.conversationId,
       actingUserId,
     };
   }
