@@ -15,7 +15,11 @@ import {
   prepareToolExecutionContextForSpecificTools,
   releaseToolExecutionContext,
 } from "@/tools/manager";
-import { clearPendingMessages } from "@/utils/message-queue-bridge";
+import {
+  addToMessageQueue,
+  clearPendingMessages,
+} from "@/utils/message-queue-bridge";
+import { resolveNotificationScope } from "@/utils/task-notifications";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { enqueueInboundUserMessage } from "./inbound-queue";
 import { createRuntime } from "./lifecycle";
@@ -37,6 +41,57 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 }
 
 const originalActingUserId = process.env.LETTA_ACTING_USER_ID;
+
+test("conversation-only completions route to their own listener queue", () => {
+  const listener = createRuntime();
+  const child = getOrCreateScopedRuntime(listener, null, "conv-worker");
+  const other = getOrCreateScopedRuntime(
+    listener,
+    "agent-parent",
+    "conv-parent",
+  );
+  child.turnLifecycle.begin({
+    origin: "message",
+    initialStatus: "PROCESSING_API_RESPONSE",
+    workingDirectory: process.cwd(),
+  });
+  installProcessEventRouting({
+    runtime: listener,
+    processTransport: new LocalListenerTransport(),
+    opts: {
+      connectionId: "conn-1",
+      wsUrl: "ws://test",
+      deviceId: "device-1",
+      connectionName: "test",
+      onConnected() {},
+      onDisconnected() {},
+      onError() {},
+    },
+    processQueuedTurn: async () => {
+      throw new Error("Must not start an idle turn");
+    },
+  });
+  try {
+    const scope = runWithRuntimeContext(
+      {
+        agentId: null,
+        conversationId: child.conversationId,
+        resourceAgentId: "agent-parent",
+      },
+      () => resolveNotificationScope(),
+    );
+    addToMessageQueue({
+      kind: "task_notification",
+      text: "child complete",
+      ...scope,
+    });
+    expect(child.agentId).toBeNull();
+    expect(child.queueRuntime.length).toBe(1);
+    expect(other.queueRuntime.length).toBe(0);
+  } finally {
+    clearProcessServices(listener);
+  }
+});
 
 beforeEach(() => {
   delete process.env.LETTA_ACTING_USER_ID;

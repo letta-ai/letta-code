@@ -13,6 +13,7 @@ import { join } from "node:path";
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { ForkConversationOptions } from "@/backend/api/conversations";
 import type {
   AgentCreateBody,
   AgentListBody,
@@ -264,10 +265,7 @@ export interface LocalStoreOptions {
   conversationIdPrefix?: string;
   storedMessageIdPrefix?: string;
   localMessageIdPrefix?: string;
-  /**
-   * Resident floor for disk-backed stores; in-memory stores keep the full
-   * transcript resident (no disk to page from).
-   */
+  /** Disk-backed resident floor; in-memory stores retain the full transcript. */
   residentMessageTailLimit?: number;
 }
 
@@ -351,8 +349,7 @@ export class LocalStore {
     string,
     LocalMessage[]
   >();
-  // A conversation key is fully resident (loadedConversationKeys) or tail
-  // resident (tailResidentConversationKeys — the in-context window, disk wins).
+  // Residency is full or tail-only (in-context window; disk wins).
   private readonly loadedConversationKeys = new Set<string>();
   private readonly tailResidentConversationKeys = new Set<string>();
   // First resident message's logical index (sourceStartIndex convention).
@@ -758,8 +755,6 @@ export class LocalStore {
     name?: string;
     is_subagent?: boolean;
   }): StoredConversation {
-    // SDK queries create their app-server processes concurrently. UUID-backed
-    // worker IDs avoid a cross-process exists-then-create race in numeric IDs.
     const conversationId = `local-conv-${randomUUID()}`;
     const executionAgentId =
       this.executionAgentIdForConversation(conversationId);
@@ -871,7 +866,7 @@ export class LocalStore {
 
   forkConversation(
     conversationId: string,
-    options: { agentId?: string; hidden?: boolean; messageId?: string } = {},
+    options: ForkConversationOptions = {},
   ): { id: string } {
     const source = this.findConversation(
       conversationId,
@@ -880,11 +875,16 @@ export class LocalStore {
     if (!source) {
       throw new LocalBackendNotFoundError("Conversation", conversationId);
     }
-    const targetAgentId = options.agentId ?? source.agent_id;
-    if (this.strictAgentAccess && !this.agents.has(targetAgentId)) {
+    let targetAgentId = options.agentId ?? source.agent_id;
+    const ephemeral = options.ephemeral || source.agent_free;
+    if (
+      !ephemeral &&
+      this.strictAgentAccess &&
+      !this.agents.has(targetAgentId)
+    ) {
       throw new LocalBackendNotFoundError("Agent", targetAgentId);
     }
-    this.ensureAgent(targetAgentId);
+    if (!ephemeral) this.ensureAgent(targetAgentId);
     const sourceMessages = selectLocalMessagesForFork(
       this.localMessagesForConversation(source.id, source.agent_id),
       options.messageId,
@@ -894,21 +894,39 @@ export class LocalStore {
     if (!sourceMessages) {
       throw new LocalBackendNotFoundError("Message", options.messageId ?? "");
     }
-    const forkedConversationId = this.nextConversationId(targetAgentId);
-    const forked = createLocalConversationRecord(
-      forkedConversationId,
-      targetAgentId,
-      {
-        summary: source.summary ?? null,
-        ...(source.model !== undefined ? { model: source.model } : {}),
-        ...(source.model_settings !== undefined
-          ? { model_settings: source.model_settings }
-          : {}),
-        ...(typeof options.hidden === "boolean"
-          ? { hidden: options.hidden }
-          : {}),
-      } as Partial<ConversationCreateBody>,
-    );
+    let forked: StoredConversation;
+    if (ephemeral) {
+      const execution = this.retrieveExecutionAgentRecord(
+        source.id,
+        source.agent_id,
+      );
+      const child = this.createEphemeralConversation({
+        model: source.model ?? execution.model,
+        system: source.system ?? execution.system,
+        model_settings: {
+          ...(source.model_settings ?? execution.model_settings),
+        },
+        context_window_limit: Reflect.get(source, "context_window_limit"),
+        parent_agent_id: source.agent_free
+          ? source.parent_agent_id
+          : source.agent_id,
+        name: options.name,
+        is_subagent: options.isSubagent ?? source.is_subagent,
+      });
+      forked = this.retrieveConversation(child.id) as StoredConversation;
+      targetAgentId = this.executionAgentIdForConversation(child.id);
+    } else {
+      forked = createLocalConversationRecord(
+        this.nextConversationId(targetAgentId),
+        targetAgentId,
+        {
+          summary: source.summary ?? null,
+          model: source.model,
+          model_settings: source.model_settings,
+          hidden: options.hidden,
+        } as Partial<ConversationCreateBody>,
+      );
+    }
     const forkedMessages = sourceMessages.map((message) =>
       this.cloneLocalMessageForConversation(message, forked.id, targetAgentId),
     );
@@ -920,7 +938,6 @@ export class LocalStore {
     this.persistConversationState(forked.id, targetAgentId, {
       transcript: "rewrite",
     });
-    // Fork transcript fully persisted: keep only the bounded tail resident.
     this.demoteConversationToResidentTail(targetKey);
     return { id: forked.id };
   }
@@ -1831,10 +1848,7 @@ export class LocalStore {
     return messages;
   }
 
-  /**
-   * Index only the projections of the message matching messageId within a
-   * paged list, so deep retrieveMessage scans never pin a whole transcript.
-   */
+  /** Index only the matching message's projections, never a whole paged transcript. */
   private indexMatchingMessageInList(
     localMessages: readonly LocalMessage[],
     agentId: string,
@@ -1986,10 +2000,7 @@ export class LocalStore {
     }
   }
 
-  /**
-   * Page the full transcript from disk and index only the retrieved
-   * message; nothing stays resident.
-   */
+  /** Page from disk and index only the retrieved message; nothing stays resident. */
   private indexMessageFromConversationFullRead(
     conversation: StoredConversation,
     messageId: string,
@@ -2064,12 +2075,8 @@ export class LocalStore {
     }
   }
 
-  /**
-   * Full logical message list for readers that need the whole history
-   * (executor, compaction, fork, export). Serves from the resident array
-   * when fully resident, else pages disk and merges the resident tail.
-   * Fresh array; mutation paths use residentLocalMessagesForConversation.
-   */
+  /** Full history: resident array or disk merged with the resident tail.
+   * Returns a fresh array; mutations use residentLocalMessagesForConversation. */
   private localMessagesForConversation(
     conversationId: string,
     agentId: string,
@@ -2095,11 +2102,7 @@ export class LocalStore {
     return overlayResidentLocalMessageTail(read.messages, resident);
   }
 
-  /**
-   * The live resident message window for mutation paths (append, rollback,
-   * tool settlement, approval application, streaming chunk application).
-   * In-context window on disk-backed stores; appends mirror to the transcript.
-   */
+  /** Mutable resident window; disk-backed appends mirror to the transcript. */
   private residentLocalMessagesForConversation(
     conversationId: string,
     agentId: string,
@@ -2117,10 +2120,7 @@ export class LocalStore {
     return messages;
   }
 
-  /**
-   * Read and normalize the full transcript from disk without changing
-   * message residency; undefined when there is no transcript metadata.
-   */
+  /** Read normalized disk history without changing residency; undefined without metadata. */
   private readConversationMessagesFromDisk(
     key: string,
     agentId: string,

@@ -2027,6 +2027,8 @@ async function executeToolInner(
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
+  const secretsAgentId =
+    scopedAgentId ?? executionScope.resourceAgentId ?? undefined;
   const modContext =
     context?.modContext ??
     toolExecutionModContext(executionScope, { workingDirectory });
@@ -2218,7 +2220,7 @@ async function executeToolInner(
     if (options?.toolEndArgsRef) options.toolEndArgsRef.current = args;
 
     let invocationSecrets: Record<string, string> = {};
-    let invocationRedactions = captureSecretRedactions(scopedAgentId);
+    let invocationRedactions = captureSecretRedactions(secretsAgentId);
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
@@ -2236,12 +2238,10 @@ async function executeToolInner(
           typeof command === "string" ||
           (Array.isArray(command) &&
             command.every((part) => typeof part === "string"))
-            ? await resolveSecretEnvFromCommand(command, scopedAgentId)
+            ? await resolveSecretEnvFromCommand(command, secretsAgentId)
             : {};
-        // Referenced secrets redact regardless of length; merge them over
-        // the always-on vault + ambient set.
         invocationRedactions = captureSecretRedactions(
-          scopedAgentId,
+          secretsAgentId,
           invocationSecrets,
         );
         if (options?.onOutput) {

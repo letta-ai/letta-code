@@ -4,6 +4,7 @@ import {
   createLocalEphemeralConversation,
   projectConversationState,
 } from "@/agent/ephemeral-conversation";
+import { allocateSubagentName } from "@/agent/subagents/names";
 import {
   type Backend,
   configureEphemeralLocalBackend,
@@ -11,6 +12,7 @@ import {
 } from "@/backend";
 import { clearPersistedClientToolRules } from "@/tools/toolset";
 import { debugLog, debugWarn } from "@/utils/debug";
+import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 
 export function prepareHeadlessEphemeralBackend(enabled: boolean): void {
   if (enabled && isLocalBackendEnabled()) {
@@ -24,6 +26,8 @@ export async function createHeadlessEphemeralConversation(params: {
   model: string | undefined;
   systemPromptPreset: string | undefined;
   systemPromptCustom: string | undefined;
+  parentAgentId?: string;
+  isSubagent?: boolean;
 }): Promise<{ agent: AgentState; conversationId: string }> {
   if (params.personality) {
     throw new Error(
@@ -35,8 +39,13 @@ export async function createHeadlessEphemeralConversation(params: {
     systemPromptPreset: params.systemPromptPreset,
     systemPromptCustom: params.systemPromptCustom,
     memoryPromptMode: "standard" as const,
+    parentAgentId: params.parentAgentId,
+    isSubagent: params.isSubagent,
+    ...(params.isSubagent
+      ? { name: process.env[SUBAGENT_NAME_ENV] || allocateSubagentName() }
+      : {}),
   };
-  return params.backendMode === "local"
+  return params.backendMode === "local" && !params.isSubagent
     ? createLocalEphemeralConversation(options)
     : createEphemeralConversation(options);
 }

@@ -2,6 +2,7 @@ import { updateConversationLLMConfig } from "@/agent/modify";
 import type { Backend } from "@/backend";
 import { settingsManager } from "@/settings-manager";
 import type { SubagentConfig } from ".";
+import { allocateSubagentName } from "./names";
 import {
   type ForkModelOverride,
   getPrimaryAgentModelHandle,
@@ -76,6 +77,9 @@ export async function forkParentConversation(
         ? { agentId: params.parentAgentId }
         : {}),
       hidden: true,
+      ephemeral: true,
+      isSubagent: true,
+      name: allocateSubagentName(),
       signal: params.signal,
     },
   );

@@ -17,7 +17,16 @@ const forkConfig: SubagentConfig = {
 
 function backendFixture(events: string[]) {
   return {
-    forkConversation: async (conversationId: string) => {
+    forkConversation: async (
+      conversationId: string,
+      options: Record<string, unknown>,
+    ) => {
+      expect(options).toMatchObject({
+        ephemeral: true,
+        isSubagent: true,
+        hidden: true,
+        name: expect.any(String),
+      });
       events.push(`fork:${conversationId}`);
       return { id: "conv-fork" };
     },

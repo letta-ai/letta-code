@@ -333,13 +333,6 @@ export function shouldLaunchThroughListener(options: {
   computer?: string;
   ephemeral?: boolean;
 }): boolean {
-  if (options.ephemeral) {
-    if (options.computer)
-      throw new Error(
-        "Ephemeral conversations cannot be routed to a Cloud computer",
-      );
-    return false;
-  }
   // Memory workers need whole-process confinement for Edit/Write as well as
   // Bash. A listener can execute ordinary children, but cannot host that boundary.
   // They remain one-shot workers, not resumable or addressable listener sessions.

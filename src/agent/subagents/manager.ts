@@ -177,13 +177,16 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior). A systemPromptOverride replaces the
-    // configured persona with a caller-supplied prompt via `--system-custom`
-    // (mutually exclusive with `--system`).
+    // Ordinary workers own conversation history, never an agent or MemFS.
+    // Memory-profile workers retain their confined process launch.
+    const createFlag =
+      config.launchProfile === "memory-subagent"
+        ? "--new-agent"
+        : "--ephemeral";
     if (options.systemPromptOverride) {
-      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+      args.push(createFlag, "--system-custom", options.systemPromptOverride);
     } else {
-      args.push("--new-agent", "--system", type);
+      args.push(createFlag, "--system", type);
     }
     const subagentTags = [`type:${type}`];
     if (options.parentAgentId) {

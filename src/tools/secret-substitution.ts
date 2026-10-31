@@ -6,6 +6,7 @@ import stripAnsi from "strip-ansi";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import { peekOrgAccessToken } from "@/auth/org-credentials-session";
 import { getMcpScopeAgentId, lookupParentAgent } from "@/mcp-scope";
+import { getRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { ensureSecretsLoaded, loadSecrets } from "@/utils/secrets-store";
 
@@ -79,6 +80,23 @@ export async function resolveSecretEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
 ): Promise<Record<string, string>> {
+  const runtime = getRuntimeContext();
+  if (
+    runtime?.agentId === null &&
+    runtime.resourceAgentId === agentId &&
+    agentId
+  ) {
+    await ensureSecretsLoaded(agentId);
+    // Inject only referenced parent secrets, without replacing harness identity/auth.
+    return Object.fromEntries(
+      Object.entries(extractSecretEnvFromCommand(command, agentId)).filter(
+        ([name]) =>
+          !/^(LETTA_API_KEY|LETTA_API_BASE|LETTA_BASE_URL|LETTA_ACCESS_TOKEN|LETTA_REFRESH_TOKEN|LETTA_ACTING_USER_ID|LETTA_MCP_ORIGINATOR_.*|LETTA_AGENT_ID|LETTA_CONVERSATION_ID|LETTA_PARENT_AGENT_ID|LETTA_CODE_AGENT_ROLE|AGENT_ID|CONVERSATION_ID|MEMORY_DIR|LETTA_MEMORY_DIR|HOME|PATH|NODE_OPTIONS|BUN_OPTIONS)$/.test(
+            name,
+          ),
+      ),
+    );
+  }
   const own = extractSecretEnvFromCommand(command, agentId);
   const parts = typeof command === "string" ? [command] : command;
   const missing = parts.some((part) =>
