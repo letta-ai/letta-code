@@ -124,7 +124,7 @@ export function persistSuccessorTeleportReady(
   pending: PendingTeleport,
   record: InterruptedTurnRecord,
   committedRevision: string,
-): string | undefined {
+): InterruptedTurnRecord | undefined {
   if (
     record.teleport?.teleportId !== pending.teleportId ||
     !hasDurableTeleportTerminal(runtime, pending, committedRevision)
@@ -143,7 +143,7 @@ export function persistSuccessorTeleportReady(
         },
       },
       record.revision,
-    ).revision;
+    );
   } catch {
     runtime.listener.scheduleRecordedRecovery?.();
     return undefined;

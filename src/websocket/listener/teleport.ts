@@ -736,14 +736,15 @@ export function finishClaimedTeleport(
     return transition;
   }
   if (record.revision !== intentRevision) {
-    const successorRevision = persistSuccessorTeleportReady(
+    const readyRecord = persistSuccessorTeleportReady(
       runtime,
       pending,
       record,
       intentRevision,
     );
-    if (successorRevision) {
-      pending.interruptedRevision = successorRevision;
+    if (readyRecord) {
+      pending.interruptedRevision = readyRecord.revision;
+      retireTeleportTerminalProof(readyRecord, intentRevision);
       emitClaimedTeleportReady(runtime.listener, pending);
     }
     return transition;
