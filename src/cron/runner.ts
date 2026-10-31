@@ -182,6 +182,61 @@ async function lookupEnvironmentForTarget(
   }
 }
 
+type TargetDeviceResolution =
+  | { deviceId: string; environment: EnvironmentConnection }
+  | { error: string };
+
+/**
+ * Resolve a `--computer` selector to the computer's deviceId, matching the
+ * Agent tool's selector forms (connection id, environment id, deviceId, or
+ * name). The Cloud schedule API only accepts deviceIds, so passing the `id`
+ * column from `letta computers list` would otherwise earn a 404.
+ *
+ * Offline computers still resolve: schedules may target them. Returns null
+ * when the environments list is unavailable so the caller can fall back to
+ * the raw value and leave the server authoritative.
+ */
+async function resolveTargetDeviceSelector(
+  selector: string,
+): Promise<TargetDeviceResolution | null> {
+  let environments: typeof import("@/backend/api/environments");
+  let response: Awaited<ReturnType<typeof environments.listEnvironments>>;
+  try {
+    environments = await import("@/backend/api/environments");
+    response = await environments.listEnvironments({ limit: 100 });
+  } catch {
+    return null;
+  }
+
+  const matches = response.connections.filter((environment) =>
+    environments.environmentMatchesSelector(environment, selector),
+  );
+  if (matches.length === 0) {
+    // A truncated list cannot prove absence; let the server decide.
+    if (response.hasNextPage) return null;
+    return {
+      error: `Computer "${selector}" not found. Run \`letta computers list\` and pass its deviceId (or name).`,
+    };
+  }
+
+  if (new Set(matches.map((environment) => environment.deviceId)).size > 1) {
+    return {
+      error: `Computer "${selector}" is ambiguous. Matched: ${matches.map(environments.describeEnvironment).join(", ")}. Pass a deviceId instead.`,
+    };
+  }
+
+  // Several listener rows for one device are still one computer; prefer the
+  // most recently active row for the organization check.
+  matches.sort(
+    (a, b) =>
+      Math.max(b.lastHeartbeat ?? 0, b.lastSeenAt) -
+      Math.max(a.lastHeartbeat ?? 0, a.lastSeenAt),
+  );
+  const environment = matches[0];
+  if (!environment) return null;
+  return { deviceId: environment.deviceId, environment };
+}
+
 export type CronCreatePlacement =
   | {
       runner: CronRunner;
@@ -211,15 +266,28 @@ export async function resolveCronCreatePlacement(params: {
     };
   }
 
-  if (targetDeviceId) {
+  if (!targetDeviceId) return { runner: resolved.runner };
+
+  const selectorValidity = validateTargetDevice(targetDeviceId, null);
+  if (!selectorValidity.ok) return selectorValidity;
+
+  const resolution = await resolveTargetDeviceSelector(targetDeviceId);
+  if (!resolution) {
     const validity = validateTargetDevice(
       targetDeviceId,
       await lookupEnvironmentForTarget(targetDeviceId),
     );
     if (!validity.ok) return validity;
+    return { runner: resolved.runner, targetDeviceId };
   }
+  if ("error" in resolution) return resolution;
 
-  return { runner: resolved.runner, targetDeviceId };
+  const validity = validateTargetDevice(
+    resolution.deviceId,
+    resolution.environment,
+  );
+  if (!validity.ok) return validity;
+  return { runner: resolved.runner, targetDeviceId: resolution.deviceId };
 }
 
 // ── Cloud payload mapping ───────────────────────────────────────────
