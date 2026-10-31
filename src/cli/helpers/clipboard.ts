@@ -8,6 +8,10 @@ import {
   ImageWorkerMissingError,
   resizeImageIfNeeded,
 } from "@/utils/image-resize";
+import {
+  type ClipboardImage,
+  readLinuxClipboardImage,
+} from "./clipboard-linux";
 import { allocateImage } from "./paste-registry";
 
 /**
@@ -270,34 +274,47 @@ const UTI_TO_MEDIA_TYPE: Record<string, string> = {
   "public.gif": "image/gif",
 };
 
+function readMacClipboardImage(): ClipboardImage | null {
+  const clip = getClipboardImageToTempFile();
+  if (!clip) return null;
+  try {
+    return {
+      data: readFileSync(clip.tempPath),
+      mediaType: UTI_TO_MEDIA_TYPE[clip.uti] || "image/png",
+    };
+  } finally {
+    try {
+      unlinkSync(clip.tempPath);
+    } catch {}
+  }
+}
+
+function readPlatformClipboardImage():
+  | Promise<ClipboardImage | null>
+  | ClipboardImage
+  | null {
+  if (process.platform === "darwin") return readMacClipboardImage();
+  if (process.platform === "linux") return readLinuxClipboardImage();
+  return null;
+}
+
 /**
- * Import image from macOS clipboard, resize if needed, return placeholder.
- * Uses temp file approach to avoid stdout buffer limits.
+ * Import an image from the system clipboard, resize if needed, return placeholder.
  * Resizes large images to fit within API limits (2000x2000).
  */
-export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult> {
-  if (process.platform !== "darwin") return null;
-
-  const clipboardResult = getClipboardImageToTempFile();
-  if (!clipboardResult) return null;
-
-  const { tempPath, uti } = clipboardResult;
-
+export async function tryImportClipboardImage(
+  read: () =>
+    | Promise<ClipboardImage | null>
+    | ClipboardImage
+    | null = readPlatformClipboardImage,
+): Promise<ClipboardImageResult> {
   try {
-    // Read the temp file
-    const buffer = readFileSync(tempPath);
-
-    // Clean up temp file immediately after reading
-    try {
-      unlinkSync(tempPath);
-    } catch {}
-
-    const mediaType = UTI_TO_MEDIA_TYPE[uti] || "image/png";
+    const image = await read();
+    if (!image) return null;
 
     // Resize if needed (handles large retina screenshots, HEIC conversion, etc.)
-    const resized = await resizeImageIfNeeded(buffer, mediaType);
+    const resized = await resizeImageIfNeeded(image.data, image.mediaType);
 
-    // Store in registry
     const id = allocateImage({
       data: resized.data,
       mediaType: resized.mediaType,
@@ -310,13 +327,6 @@ export async function tryImportClipboardImageMac(): Promise<ClipboardImageResult
       height: resized.height,
     };
   } catch (err) {
-    // Clean up temp file on error
-    if (existsSync(tempPath)) {
-      try {
-        unlinkSync(tempPath);
-      } catch {}
-    }
-
     if (err instanceof ImageWorkerMissingError) {
       trackBoundaryError({
         errorType: "image_worker_missing",
