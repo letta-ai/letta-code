@@ -34,7 +34,7 @@ import { getConversationRuntime, getConversationRuntimeKey } from "./runtime";
 import {
   commitActiveTeleportTerminalTransfer,
   journalTeleportIntent,
-  TeleportTerminalPreparedError,
+  retainDurableTeleportTerminal,
 } from "./teleport-terminal-transfer";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { createTurnFinishedStore } from "./turn-finished-replay";
@@ -734,13 +734,16 @@ export function finishClaimedTeleport(
       });
     }
   } catch (error) {
-    if (!(error instanceof TeleportTerminalPreparedError)) {
+    if (
+      !retainDurableTeleportTerminal(runtime, pending, intentRevision, error)
+    ) {
       abandonTeleportIntent(runtime.listener, pending, intentRevision);
     }
     throw error;
   }
   if (!transition.finished) {
-    abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    if (!retainDurableTeleportTerminal(runtime, pending, intentRevision))
+      abandonTeleportIntent(runtime.listener, pending, intentRevision);
     return transition;
   }
 
@@ -758,9 +761,6 @@ export function finishClaimedTeleport(
     record,
   );
   if (options.canCommit?.() === false) {
-    // Before a durable terminal, authority loss may discard the uncommitted
-    // intent. Once the terminal owns this exact revision, retain it so restart
-    // can publish readiness from proof instead of replaying generic approvals.
     if (!terminalIsDurable) {
       abandonTeleportIntent(runtime.listener, pending, intentRevision);
     } else {

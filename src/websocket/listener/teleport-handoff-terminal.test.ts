@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -78,6 +78,8 @@ function yieldSourceTurnToTeleport(
   forceTerminalStoreFailure = false,
 ) {
   const listener = createRuntime();
+  const scheduleRecordedRecovery = mock(() => {});
+  listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
   listener.connectionId = durableListener ? "conn-source" : "source";
   const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
   const socket = new MockSocket();
@@ -189,7 +191,7 @@ function yieldSourceTurnToTeleport(
         conversationId: CONVERSATION_ID,
       }),
     ).toThrow(TeleportTerminalPreparedError);
-    return { listener, runtime, socket };
+    return { listener, runtime, socket, scheduleRecordedRecovery };
   }
   const transition = finalizer.finishTurn({
     stopReason: drained ? "end_turn" : "cancelled",
@@ -198,12 +200,17 @@ function yieldSourceTurnToTeleport(
   });
   expect(transition.finished).toBe(true);
   expect(runtime.turnLifecycle.kind).toBe("idle");
-  return { listener, runtime, socket };
+  return { listener, runtime, socket, scheduleRecordedRecovery };
 }
 
 test("a post-prepare terminal-store failure preserves transferred ownership", () => {
   withTemporaryHome(() => {
-    const { listener } = yieldSourceTurnToTeleport(false, true, true, true);
+    const { listener, scheduleRecordedRecovery } = yieldSourceTurnToTeleport(
+      false,
+      true,
+      true,
+      true,
+    );
     const interrupted = createInterruptedTurnStore().read(
       AGENT_ID,
       CONVERSATION_ID,
@@ -216,6 +223,7 @@ test("a post-prepare terminal-store failure preserves transferred ownership", ()
     expect(
       loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
     ).toBeUndefined();
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
   });
 });
 

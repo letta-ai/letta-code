@@ -1,5 +1,6 @@
 import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
 import { recordListenerWork } from "./interrupted-turn-record";
+import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -27,6 +28,49 @@ export function terminalConsumersMatch(
     actual.length === expectedSet.size &&
     actual.every((consumerId) => expectedSet.has(consumerId))
   );
+}
+
+export function hasDurableTeleportTerminal(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  revision: string,
+): boolean {
+  try {
+    const scope = {
+      agentId: pending.agentId,
+      conversationId: pending.conversationId,
+    };
+    if (hasPreparedInputTerminalRevision(runtime.listener, scope, revision)) {
+      return true;
+    }
+    return Boolean(
+      createTurnFinishedStore()
+        .read(pending.agentId, pending.conversationId)
+        ?.terminals.some(
+          (terminal) => terminal.owner.interruptedRevision === revision,
+        ),
+    );
+  } catch {
+    // A failed durable read cannot prove the terminal was absent. Preserve the
+    // exact intent so restart recovery can classify it after storage recovers.
+    return true;
+  }
+}
+
+export function retainDurableTeleportTerminal(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  revision?: string,
+  error?: unknown,
+): boolean {
+  if (
+    !(error instanceof TeleportTerminalPreparedError) &&
+    (!revision || !hasDurableTeleportTerminal(runtime, pending, revision))
+  ) {
+    return false;
+  }
+  runtime.listener.scheduleRecordedRecovery?.();
+  return true;
 }
 
 export function journalTeleportIntent(
@@ -142,14 +186,7 @@ export function commitActiveTeleportTerminalTransfer(params: {
       if (error instanceof TeleportTerminalConsumerRaceError) return fallback();
       if (
         revision &&
-        hasPreparedInputTerminalRevision(
-          params.runtime.listener,
-          {
-            agentId: params.pending.agentId,
-            conversationId: params.pending.conversationId,
-          },
-          revision,
-        )
+        hasDurableTeleportTerminal(params.runtime, params.pending, revision)
       ) {
         throw new TeleportTerminalPreparedError(error);
       }

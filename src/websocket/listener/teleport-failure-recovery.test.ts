@@ -316,6 +316,8 @@ test("post-terminal authority loss retains proof for same-generation readiness r
   process.env.HOME = directory.path;
   try {
     const listener = createRuntime();
+    const scheduleRecordedRecovery = mock(() => {});
+    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
     listener.connectionId = "conn-original";
     listener.connectionGeneration = "generation-original";
     const runtime = getOrCreateScopedRuntime(
@@ -384,6 +386,7 @@ test("post-terminal authority loss retains proof for same-generation readiness r
       ),
     ).toBe(false);
     expect(listener.pendingTeleports?.size).toBe(1);
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
 
     handleTeleportRequest({
       listener,
