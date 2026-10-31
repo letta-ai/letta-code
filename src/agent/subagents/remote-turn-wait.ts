@@ -11,7 +11,6 @@ import {
 import { ApiRequestError } from "@/backend/api/request";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
-import { resolveEnvironmentMaxWaitMs } from "@/headless-environment-response";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
@@ -38,7 +37,6 @@ export async function collectRemoteTurnResult(
     const conversationId = receipt.conversation_id;
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       settle: {
-        maxWaitMs: resolveEnvironmentMaxWaitMs(),
         status: async (readSignal) => {
           try {
             const snapshot = await getAgentRuntimeStatus(

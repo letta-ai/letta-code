@@ -49,6 +49,15 @@ export interface AgentRuntimeStatusEntry {
   /** Background work the owning listener reports for this conversation. */
   active_bash_count?: number;
   active_monitor_count?: number;
+  /**
+   * Running Monitors, when the server lists them. Persistent Monitors never
+   * end on their own. Absent on older servers; use active_monitor_count.
+   */
+  active_monitors?: {
+    process_id: string;
+    description: string;
+    persistent?: boolean;
+  }[];
   active_workflow_count?: number;
   has_active_background_subagents?: boolean;
 }

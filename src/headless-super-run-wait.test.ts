@@ -406,7 +406,6 @@ test("returns the answer written after the remote helper's background work finis
       messages: async () => firstTurnMessages,
       sleep: async () => {},
       settle: {
-        maxWaitMs: 60_000,
         status: async () =>
           statuses[Math.min(statusReads++, statuses.length - 1)] ?? null,
         messages: async () => [
@@ -435,34 +434,130 @@ test("returns the answer written after the remote helper's background work finis
   expect(result.runIds).toEqual(["run-1"]);
 });
 
-test("bounds the follow-up wait and tells the parent how to read the conversation", async () => {
-  const clock = makeClock();
-  let exactReads = 0;
+const finalAnswerMessages: Message[] = [
+  {
+    id: "msg-final",
+    date: "now",
+    message_type: "assistant_message",
+    content: "The check passed: 42 tests, 0 failures.",
+    run_id: "run-2",
+    seq_id: 4,
+  },
+  {
+    id: "msg-notification",
+    date: "now",
+    message_type: "user_message",
+    content: "<task-notification>...</task-notification>",
+    run_id: "run-2",
+    seq_id: 3,
+  },
+  ...[...firstTurnMessages].reverse(),
+];
+
+test("ignores a persistent Monitor and returns the helper's later answer", async () => {
+  // A persistent Monitor never ends, so it must not hold the parent forever.
+  const persistentMonitor = {
+    process_id: "monitor-1",
+    description: "watch deploy logs",
+    persistent: true,
+  };
+  const statuses = [
+    runtimeStatus({
+      active_bash_count: 1,
+      active_monitor_count: 1,
+      active_monitors: [persistentMonitor],
+    }),
+    runtimeStatus({
+      state: "IDLE",
+      loop_state: null,
+      last_activity_at: 3,
+      active_monitor_count: 1,
+      active_monitors: [persistentMonitor],
+    }),
+  ];
+  let statusReads = 0;
   const result = await waitForAcceptedSuperRun(
     receipt,
     new AbortController().signal,
     deps({
-      exact: async () => {
-        exactReads++;
-        return exact();
-      },
       messages: async () => firstTurnMessages,
-      sleep: async () => clock.sleep(30_000),
+      sleep: async () => {},
       settle: {
-        maxWaitMs: 120_000,
-        now: clock.now,
-        status: async () => runtimeStatus({ active_monitor_count: 1 }),
-        messages: async () => [...firstTurnMessages].reverse(),
+        status: async () =>
+          statuses[Math.min(statusReads++, statuses.length - 1)] ?? null,
+        messages: async () => finalAnswerMessages,
       },
     }),
   );
-  expect(exactReads).toBe(1);
-  expect(result.text).toStartWith(
-    "Still running, I'll wait for the notification.",
+  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
+});
+
+test("waits for a non-persistent Monitor to finish, with no deadline", async () => {
+  const monitor = {
+    process_id: "monitor-1",
+    description: "wait for CI",
+    persistent: false,
+  };
+  // Many polls with the Monitor still running: there is no cap on the wait.
+  const runningPolls = 500;
+  let statusReads = 0;
+  let messageReadsWhileRunning = 0;
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      messages: async () => firstTurnMessages,
+      sleep: async () => {},
+      settle: {
+        status: async () =>
+          ++statusReads <= runningPolls
+            ? runtimeStatus({
+                active_monitor_count: 1,
+                active_monitors: [monitor],
+              })
+            : runtimeStatus({
+                state: "IDLE",
+                loop_state: null,
+                last_activity_at: 3,
+                active_monitor_count: 0,
+                active_monitors: [],
+              }),
+        messages: async () => {
+          if (statusReads <= runningPolls) messageReadsWhileRunning++;
+          return finalAnswerMessages;
+        },
+      },
+    }),
   );
-  expect(result.text).toContain("still running background work after 2");
-  expect(result.text).toContain(
-    "letta messages list --agent agent-1 --conversation conv-1",
-  );
-  expect(result.text).toContain("Do not launch the task again");
+  expect(statusReads).toBeGreaterThan(runningPolls);
+  expect(messageReadsWhileRunning).toBe(0);
+  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
+});
+
+test("counts every Monitor when the server does not list them", async () => {
+  const controller = new AbortController();
+  let statusReads = 0;
+  await expect(
+    waitForAcceptedSuperRun(
+      receipt,
+      controller.signal,
+      deps({
+        messages: async () => firstTurnMessages,
+        sleep: async () => {},
+        settle: {
+          status: async () => {
+            // Stop the parent (TaskStop) after a few polls.
+            if (++statusReads === 5) controller.abort();
+            return runtimeStatus({
+              state: "IDLE",
+              loop_state: null,
+              active_monitor_count: 1,
+            });
+          },
+          messages: async () => finalAnswerMessages,
+        },
+      }),
+    ),
+  ).rejects.toThrow();
+  expect(statusReads).toBe(5);
 });

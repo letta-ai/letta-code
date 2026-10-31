@@ -23,9 +23,7 @@ export interface ConversationSettleDeps {
   status: (signal: AbortSignal) => Promise<AgentRuntimeStatusEntry | null>;
   /** The conversation's most recent messages, newest first. */
   messages: (signal: AbortSignal) => Promise<Message[]>;
-  maxWaitMs: number;
   pollMs?: number;
-  now?: () => number;
 }
 
 export interface SuperRunWaitDeps {
@@ -118,11 +116,25 @@ function noReplyMessage(
   return `${status} Read the conversation with: letta messages list --agent ${getEnqueueAgentId(receipt)} --conversation ${receipt.conversation_id}. Do not launch the task again to retrieve its result.`;
 }
 
-/** No turn, queued input, or background work (Bash, Monitor, Workflow, subagent) remains. */
+/**
+ * Running Monitors that count as unfinished work. Persistent Monitors are
+ * designed never to end, so they would hold the parent forever. Older servers
+ * that do not list Monitors fall back to counting all of them.
+ */
+function unfinishedMonitorCount(status: AgentRuntimeStatusEntry): number {
+  if (status.active_monitors) {
+    return status.active_monitors.filter(
+      (monitor) => monitor.persistent !== true,
+    ).length;
+  }
+  return status.active_monitor_count ?? 0;
+}
+
+/** No turn, queued input, or background work (Bash, non-persistent Monitor, Workflow, subagent) remains. */
 function isConversationSettled(status: AgentRuntimeStatusEntry): boolean {
   if (
     (status.active_bash_count ?? 0) > 0 ||
-    (status.active_monitor_count ?? 0) > 0 ||
+    unfinishedMonitorCount(status) > 0 ||
     (status.active_workflow_count ?? 0) > 0 ||
     status.has_active_background_subagents === true
   )
@@ -164,6 +176,11 @@ function laterAssistantText(
   return null;
 }
 
+/**
+ * Poll until the conversation settles. There is no deadline: like a local
+ * subagent, the parent waits until the work finishes or the caller's signal
+ * aborts (TaskStop).
+ */
 async function followUntilSettled(
   receipt: EnqueueReceipt,
   reply: EnqueuedReply,
@@ -172,15 +189,9 @@ async function followUntilSettled(
   sleep: (ms: number, signal: AbortSignal) => Promise<void>,
   deps: ConversationSettleDeps,
 ): Promise<EnqueuedReply> {
-  const now = deps.now ?? Date.now;
-  const deadline = now() + deps.maxWaitMs;
-  const followSignal = AbortSignal.any([
-    signal,
-    AbortSignal.timeout(deps.maxWaitMs),
-  ]);
   const read = <T>(
     operation: (signal: AbortSignal) => Promise<T>,
-    within = followSignal,
+    within = signal,
   ) =>
     retryRead(
       () => operation(AbortSignal.any([within, AbortSignal.timeout(30_000)])),
@@ -188,14 +199,12 @@ async function followUntilSettled(
       sleep,
       `Remote conversation read for ${receipt.conversation_id} failed`,
     );
-  const latestText = async (within = followSignal) =>
+  const latestText = async (within = signal) =>
     laterAssistantText(
       await read(deps.messages, within),
       reply.runIds,
       sendMessages,
     ) ?? reply.text;
-  const minutes = Math.round(deps.maxWaitMs / 60_000);
-  let unsettled = `The remote task was still running background work after ${minutes} minute(s); the reply above may not be final.`;
   try {
     while (true) {
       const before = await read(deps.status);
@@ -212,15 +221,11 @@ async function followUntilSettled(
         )
           return { ...reply, text };
       }
-      if (now() >= deadline) break;
-      await sleep(deps.pollMs ?? 2_000, followSignal);
+      await sleep(deps.pollMs ?? 2_000, signal);
     }
   } catch {
     signal.throwIfAborted();
     // A failed follow-up read must not discard the reply already collected.
-    if (!followSignal.aborted)
-      unsettled =
-        "Could not confirm that the remote task finished its background work; the reply above may not be final.";
   }
   let latest = reply.text;
   try {
@@ -232,7 +237,10 @@ async function followUntilSettled(
   }
   return {
     ...reply,
-    text: `${latest}\n\n${noReplyMessage(receipt, unsettled)}`,
+    text: `${latest}\n\n${noReplyMessage(
+      receipt,
+      "Could not confirm that the remote task finished its background work; the reply above may not be final.",
+    )}`,
   };
 }
 
