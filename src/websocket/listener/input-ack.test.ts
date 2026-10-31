@@ -208,6 +208,33 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
     },
   );
 
+  test("a later successful attachment upgrades a transient false ACK proof", () => {
+    const { send, sent } = makeSend();
+    let evaluations = 0;
+    acknowledgeInputFrame(
+      send,
+      SOCKET,
+      {
+        request_id: "req-duplicate-retry",
+        runtime: undefined,
+        super_run_id: "run-retry",
+        mcp_originator_token: "mst_retry",
+        mcp_originator_generation: 1,
+      } as never,
+      true,
+      undefined,
+      "started",
+      "refresh",
+      () => ++evaluations === 2,
+    );
+    expect(evaluations).toBe(2);
+    expect(sent[0]?.payload).toMatchObject({
+      accepted: true,
+      duplicate_owner_live: true,
+    });
+    expect(getMcpOriginatorToken("run-retry")).toBe("mst_retry");
+  });
+
   test("the duplicate fast path attaches and proves the exact terminal consumer", () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(

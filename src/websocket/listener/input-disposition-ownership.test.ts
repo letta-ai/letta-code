@@ -20,7 +20,11 @@ import {
   hasLiveAcceptedInputOwner,
   hasLiveAcceptedInputOwnerWithOriginatorRetirement,
 } from "./input-disposition-ownership";
-import { completeInputReplay } from "./input-terminal-journal";
+import {
+  completeInputReplay,
+  loadPreparedInputTerminals,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
 
@@ -344,4 +348,54 @@ test("duplicate consumer attachment stays bounded by consumer count", () => {
       "consumer-overflow",
     ),
   ).toBe(false);
+});
+
+test("aggregate terminal consumers are stored in one canonical journal", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-aggregate-terminal-"));
+  try {
+    const runtime = persistentRuntime(join(root, "state.json"));
+    const listener = runtime.listener;
+    const identities = Array.from({ length: 64 }, (_, index) => {
+      const identity = ordinaryInputIdentity(`aggregate-${index}`);
+      expect(
+        rememberInputDisposition(runtime, identity, "started", {
+          incoming: {
+            ...durableIncoming(`aggregate-${index}`),
+            terminalConsumerIds: [`slack:${index}`],
+          },
+        }),
+      ).toBe(true);
+      if (!identity) throw new Error("expected stable identity");
+      return identity;
+    });
+
+    expect(
+      prepareInputTerminal(runtime, identities, {
+        scope: {
+          agentId: "agent-durable",
+          conversationId: "conversation-durable",
+        },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-aggregate",
+          stop_reason: "end_turn",
+        },
+        owner: {
+          connectionId: "conn-owner",
+          canRotate: false,
+          lineageId: "lineage-owner",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      [...listener.acceptedInputDispositionLedger.entries.values()].filter(
+        (entry) => entry.preparedTerminal,
+      ),
+    ).toHaveLength(1);
+    expect(
+      loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
+    ).toHaveLength(64);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

@@ -8,6 +8,7 @@ import {
   completePreparedInputTerminal,
   loadPreparedInputTerminals,
   prepareInputTerminal,
+  terminalMessageWithoutConsumers,
 } from "./input-terminal-journal";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
@@ -28,7 +29,11 @@ import {
   type ReplayableTurnFinished,
 } from "./turn-finished-replay";
 import type { TurnFinishTransition, TurnLease } from "./turn-lifecycle";
-import type { ConversationRuntime, InputIdentity } from "./types";
+import type {
+  ConversationRuntime,
+  DurablePreparedInputTerminal,
+  InputIdentity,
+} from "./types";
 
 export function buildTurnUsage(usage: Buffers["usage"]): UsageStatistics {
   return {
@@ -70,6 +75,10 @@ export function finishListenerTurn(
     turnFinishedStore?: ReturnType<typeof createTurnFinishedStore>;
     prepareInputTerminal?: typeof prepareInputTerminal;
     completePreparedInputTerminal?: typeof completePreparedInputTerminal;
+    /** Transfer a prepared source handoff before replay input is retired. */
+    onPreparedInputTerminal?: (
+      terminal: DurablePreparedInputTerminal,
+    ) => string | false | undefined;
     /** Persist a crash proof even when no external terminal consumer exists. */
     persistTerminalWithoutConsumers?: boolean;
     /**
@@ -111,7 +120,7 @@ export function finishListenerTurn(
           type: "turn_finished",
           turn_id: options.turnId,
           stop_reason: options.stopReason,
-          ...(options.terminalConsumerIds?.length && !options.teleportHandoff
+          ...(options.terminalConsumerIds?.length
             ? {
                 terminal_consumer_ids: [
                   ...new Set(options.terminalConsumerIds),
@@ -129,7 +138,7 @@ export function finishListenerTurn(
     options.readInterruptedRevision ??
     (() => readInterruptedTurn(runtime)?.revision);
   const interruptedRevision = readRevision();
-  const expectedAuthorityRevision =
+  let expectedAuthorityRevision =
     options.expectedInterruptedAuthorityRevision ??
     options.expectedInterruptedRevision;
   const readAuthorityRevision =
@@ -182,8 +191,24 @@ export function finishListenerTurn(
         ...(options.persistTerminalWithoutConsumers
           ? { persistWithoutConsumers: true }
           : {}),
+        ...(options.teleportHandoff
+          ? { suppressConsumerPublication: true }
+          : {}),
       },
-      { mergeTerminalConsumerIds: !options.teleportHandoff },
+      {
+        onPrepared: options.onPreparedInputTerminal
+          ? (terminal) => {
+              const nextRevision = options.onPreparedInputTerminal?.(terminal);
+              if (nextRevision === false) return false;
+              if (nextRevision) {
+                expectedAuthorityRevision = nextRevision;
+                terminalOwner.interruptedRevision = nextRevision;
+                terminalOwner.interruptedAuthorityRevision = nextRevision;
+              }
+              return true;
+            }
+          : undefined,
+      },
     )
   ) {
     // No state transition is safe: the accepted input is still replayable.
@@ -196,6 +221,7 @@ export function finishListenerTurn(
     return rejectedCommit();
   }
   const deferUntilReplayOwner =
+    !options.teleportHandoff &&
     runtime.listener.connectionId?.startsWith("conn-") === true &&
     !!turnFinishedMessage?.terminal_consumer_ids?.length &&
     terminalOwner.connectionId === null &&
@@ -249,17 +275,19 @@ export function finishListenerTurn(
     throw error;
   }
   try {
-    const persistTerminal = () =>
-      turnFinishedMessage && !deferUntilReplayOwner
-        ? prepareTurnFinished(
-            runtime,
-            turnFinishedMessage,
-            options.turnFinishedStore,
-            terminalOwner,
-            options.persistTerminalWithoutConsumers ||
-              identitylessConsumerTerminal,
-          )
-        : null;
+    const persistTerminal = () => {
+      if (!turnFinishedMessage || deferUntilReplayOwner) return null;
+      const durableMessage = options.teleportHandoff
+        ? terminalMessageWithoutConsumers(turnFinishedMessage)
+        : turnFinishedMessage;
+      return prepareTurnFinished(
+        runtime,
+        durableMessage,
+        options.turnFinishedStore,
+        terminalOwner,
+        options.persistTerminalWithoutConsumers || identitylessConsumerTerminal,
+      );
+    };
     if (
       guardDirectPublication &&
       authorityGuard?.withRecoveryAuthority &&

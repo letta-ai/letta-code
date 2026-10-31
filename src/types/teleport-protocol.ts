@@ -4,6 +4,8 @@ import type { RuntimeScope } from "./runtime-scope";
 
 export interface TeleportContinuation {
   approvals: NonNullable<ApprovalCreate["approvals"]>;
+  /** External terminal consumers transferred from the source turn. */
+  terminal_consumer_ids?: string[];
 }
 
 export interface InputTeleportContinuePayload {
@@ -54,6 +56,7 @@ export interface TeleportProbeResponseMessage {
   supported: true;
   drains_accepted_inputs: true;
   idempotent_continuation: true;
+  transfers_terminal_consumers: true;
 }
 
 export interface TeleportReadyMessage {

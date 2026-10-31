@@ -99,6 +99,13 @@ function terminalAuthorityMatches(
   );
 }
 
+export function terminalMessageWithoutConsumers(
+  message: DurablePreparedInputTerminal["message"],
+): DurablePreparedInputTerminal["message"] {
+  const { terminal_consumer_ids: _, ...withoutConsumers } = message;
+  return withoutConsumers;
+}
+
 /**
  * Atomically replace replayable input with its terminal intent. A restart may
  * promote this journal entry to the terminal replay store, but must never run
@@ -108,9 +115,15 @@ export function prepareInputTerminal(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
   terminal: DurablePreparedInputTerminal,
-  options?: { mergeTerminalConsumerIds?: boolean },
+  options?: {
+    mergeTerminalConsumerIds?: boolean;
+    /** Runs under the disposition lock after consumer merge, before retirement. */
+    onPrepared?: (terminal: DurablePreparedInputTerminal) => boolean;
+  },
 ): boolean {
-  if (identities.length === 0) return true;
+  if (identities.length === 0) {
+    return options?.onPrepared?.(structuredClone(terminal)) !== false;
+  }
   const ledger = getLedger(runtime.listener);
   const keys = identityKeys(runtime, identities);
   const mergeTerminalConsumers = (
@@ -127,6 +140,9 @@ export function prepareInputTerminal(
       if (consumers.size > 0) {
         terminal.message.terminal_consumer_ids = [...consumers];
       }
+    }
+    if (options?.onPrepared?.(terminal) === false) {
+      throw new Error("Prepared terminal side effect was rejected");
     }
     return structuredClone(terminal);
   };
@@ -161,12 +177,18 @@ export function prepareInputTerminal(
           owner: { ...preparedBase.owner, preparationSequence },
         };
         let changed = false;
+        let storedCanonicalTerminal = false;
         for (const key of keys) {
           const entry = store.entries[key];
           if (!entry) continue;
           delete entry.queuedInput;
           entry.replayCompleted = true;
-          entry.preparedTerminal = prepared;
+          if (!storedCanonicalTerminal) {
+            entry.preparedTerminal = prepared;
+            storedCanonicalTerminal = true;
+          } else {
+            delete entry.preparedTerminal;
+          }
           changed = true;
         }
         syncMemoryFromDurable(ledger, store);
@@ -201,12 +223,18 @@ export function prepareInputTerminal(
     preparationSequence,
     owner: { ...preparedBase.owner, preparationSequence },
   };
+  let storedCanonicalTerminal = false;
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (!entry) continue;
     delete entry.queuedInput;
     entry.replayCompleted = true;
-    entry.preparedTerminal = prepared;
+    if (!storedCanonicalTerminal) {
+      entry.preparedTerminal = prepared;
+      storedCanonicalTerminal = true;
+    } else {
+      delete entry.preparedTerminal;
+    }
   }
   return true;
 }
@@ -296,6 +324,9 @@ export function loadPreparedInputTerminals(
       if (prepared) {
         const ordered = {
           ...prepared,
+          message: prepared.suppressConsumerPublication
+            ? terminalMessageWithoutConsumers(prepared.message)
+            : prepared.message,
           // Pre-sequence journals can only use their durable reservation
           // generation as a stable upgrade order. New writes always carry the
           // exact monotonic preparation sequence.
@@ -379,7 +410,12 @@ export function loadPreparedInputTerminals(
 
 function preparedTerminalWithoutClaim(candidate: DurablePreparedInputTerminal) {
   const { publicationClaimed: _, ...durable } = candidate;
-  return durable;
+  return {
+    ...durable,
+    message: durable.suppressConsumerPublication
+      ? terminalMessageWithoutConsumers(durable.message)
+      : durable.message,
+  };
 }
 
 function completedAuthorityKey(

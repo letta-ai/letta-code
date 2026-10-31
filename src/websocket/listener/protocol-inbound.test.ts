@@ -361,6 +361,13 @@ describe("input protocol-inbound validators", () => {
         ],
       },
     },
+    {
+      name: "malformed transferred terminal consumer",
+      continuation: {
+        approvals: [],
+        terminal_consumer_ids: ["consumer with spaces"],
+      },
+    },
   ])("rejects $name in a teleport continuation", ({ continuation }) => {
     const parsed = parseServerMessage(
       Buffer.from(

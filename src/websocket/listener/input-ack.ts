@@ -124,12 +124,18 @@ export function acknowledgeInputFrame(
   mayRecreateOwner?: () => boolean,
   extras?: InputAckExtras,
 ): void {
-  // Evaluate once for the explicit duplicate proof. Keep passing the original
-  // predicate to the token store so its recreation decision retains the live
-  // owner check instead of relying on a frozen earlier result; attachment is
-  // idempotent when both checks run.
-  const duplicateOwnerLive =
-    accepted && mayRecreateOwner ? mayRecreateOwner() : undefined;
+  // Track every dynamic evaluation: the token store retains its live owner
+  // recheck, while a transient first attachment failure cannot freeze the ACK
+  // false if that later recheck successfully attaches the consumer.
+  let duplicateOwnerLive: boolean | undefined;
+  const trackRecreateOwnerProof = mayRecreateOwner
+    ? () => {
+        const live = mayRecreateOwner();
+        duplicateOwnerLive = duplicateOwnerLive === true || live;
+        return live;
+      }
+    : undefined;
+  if (accepted) trackRecreateOwnerProof?.();
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
@@ -143,12 +149,12 @@ export function acknowledgeInputFrame(
       // authority recheck on every token use.
       installPreGatedMcpOriginatorDelivery(extras.preGated, {
         allowCreate,
-        mayRecreateOwner,
+        mayRecreateOwner: trackRecreateOwnerProof,
       });
     } else {
       const verdict = recordMcpOriginatorDelivery(frame, {
         allowCreate,
-        mayRecreateOwner,
+        mayRecreateOwner: trackRecreateOwnerProof,
       });
       if (verdict === "denied_retryable") {
         // Durable admission could not be evaluated at all (degraded authority

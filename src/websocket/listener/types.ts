@@ -301,6 +301,8 @@ export type DurablePreparedInputTerminal = {
   publicationClaimed?: true;
   /** Persist a crash proof even when no external terminal consumer exists. */
   persistWithoutConsumers?: true;
+  /** Consumers moved to a teleport continuation; source proof stays private. */
+  suppressConsumerPublication?: true;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";

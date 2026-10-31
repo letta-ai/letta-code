@@ -26,12 +26,15 @@ import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
-  recordListenerWork,
 } from "./interrupted-turn-record";
 import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode";
 import { emitProtocolV2Message } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime, getConversationRuntimeKey } from "./runtime";
+import {
+  journalTeleportIntent,
+  journalTeleportIntentWithTerminalConsumers,
+} from "./teleport-terminal-transfer";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { TurnFinishTransition } from "./turn-lifecycle";
@@ -236,29 +239,6 @@ function authorizePersistedTeleportReady(
   }
 }
 
-function journalTeleportIntent(
-  runtime: ConversationRuntime,
-  pending: PendingTeleport,
-  expectedRevision?: string,
-): string | undefined {
-  return recordListenerWork(
-    runtime,
-    {
-      teleport: {
-        teleportId: pending.teleportId,
-        connectionId: pending.connectionId,
-        connectionGeneration:
-          runtime.listener.connectionGeneration ?? undefined,
-        activeTurn: pending.activeTurn,
-        continuation: pending.continuation,
-        ready: false,
-      },
-    },
-    "after_tool_execution",
-    expectedRevision,
-  );
-}
-
 function persistIdleTeleportReady(
   pending: PendingTeleport,
   intentRevision: string,
@@ -461,6 +441,7 @@ export function handleTeleportProbe(
       supported: resolveBackendMode() === "api",
       drains_accepted_inputs: true,
       idempotent_continuation: true,
+      transfers_terminal_consumers: true,
     },
     "teleport_probe_response",
     "teleport_probe",
@@ -579,7 +560,6 @@ export function handleTeleportRequest(params: {
     pending.conversationId,
   );
   // An active pump owns the current turn; it is not waiting input.
-  // Keep its next tool/end-turn boundary eligible for an active handoff.
   pending.drainAcceptedInputs = hasAcceptedInputsWaiting(
     conversationRuntime,
     !conversationRuntime.isProcessing,
@@ -704,6 +684,9 @@ export function finishClaimedTeleport(
     persistTerminalWithoutConsumers?: boolean;
     expectedInterruptedRevision?: string;
     teleportHandoff?: boolean;
+    onPreparedInputTerminal?: (
+      terminal: import("./types").DurablePreparedInputTerminal,
+    ) => string | false | undefined;
   }) => TurnFinishTransition,
   options: {
     stopReason?: import("@/types/protocol_v2").StopReasonType;
@@ -713,15 +696,17 @@ export function finishClaimedTeleport(
   } = {},
 ): TurnFinishTransition {
   let intentRevision: string | undefined;
-  try {
-    intentRevision = journalTeleportIntent(
-      runtime,
-      pending,
-      options.expectedInterruptedRevision,
-    );
-  } catch (error) {
-    abandonTeleportIntent(runtime.listener, pending, undefined);
-    throw error;
+  if (!pending.activeTurn) {
+    try {
+      intentRevision = journalTeleportIntent(
+        runtime,
+        pending,
+        options.expectedInterruptedRevision,
+      );
+    } catch (error) {
+      abandonTeleportIntent(runtime.listener, pending, undefined);
+      throw error;
+    }
   }
 
   let transition: TurnFinishTransition;
@@ -730,10 +715,25 @@ export function finishClaimedTeleport(
       stopReason: options.stopReason ?? "cancelled",
       agentId: pending.agentId,
       conversationId: pending.conversationId,
-      persistTerminalWithoutConsumers: intentRevision !== undefined,
-      expectedInterruptedRevision: intentRevision,
-      // An active turn continues on the destination, which owns its terminal.
+      persistTerminalWithoutConsumers:
+        pending.activeTurn || intentRevision !== undefined,
+      expectedInterruptedRevision: pending.activeTurn
+        ? options.expectedInterruptedRevision
+        : intentRevision,
       teleportHandoff: pending.activeTurn,
+      ...(pending.activeTurn
+        ? {
+            onPreparedInputTerminal: (terminal) => {
+              intentRevision = journalTeleportIntentWithTerminalConsumers(
+                runtime,
+                pending,
+                terminal,
+                options.expectedInterruptedRevision,
+              );
+              return intentRevision ?? false;
+            },
+          }
+        : {}),
     });
   } catch (error) {
     abandonTeleportIntent(runtime.listener, pending, intentRevision);

@@ -134,6 +134,13 @@ export function admitTeleportContinueInput(params: {
         approvals: payload.continuation?.approvals,
       }),
       durableInputIdentities: [identity],
+      ...(payload.continuation?.terminal_consumer_ids?.length
+        ? {
+            terminalConsumerIds: [
+              ...new Set(payload.continuation.terminal_consumer_ids),
+            ],
+          }
+        : {}),
     };
     if (
       !(params.commitDisposition ?? commitInputDisposition)(
