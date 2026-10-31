@@ -12,10 +12,11 @@ import {
   emitDeviceStatusIfOpen,
   emitProtocolV2Message,
   emitStreamDelta,
-  emitSubagentStateIfOpen,
+  emitSubagentStateUpdate,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
 import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
+import { clearSubagentSnapshotCache } from "./subagent-state-cache";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -32,16 +33,33 @@ export function installProcessEventRouting(params: {
 }): void {
   const { runtime, processTransport, opts, processQueuedTurn } = params;
   runtime._unsubscribeSubagentState?.();
-  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
-    if (runtime.conversationRuntimes.size === 0) {
-      emitSubagentStateIfOpen(runtime);
+  const emitSubagentState = (
+    scope?: { agent_id: string | null; conversation_id: string },
+    options?: { onlyIfChanged?: boolean },
+  ) => {
+    const transport = runtime.transport ?? runtime.socket;
+    if (!transport || !isListenerTransportOpen(transport)) {
+      // Nothing was delivered, so the next connection starts from full state.
+      clearSubagentSnapshotCache(runtime);
       return;
     }
+    emitSubagentStateUpdate(transport, runtime, scope, TO_SUBSCRIBERS, options);
+  };
+  runtime._unsubscribeSubagentState = subscribeToSubagentState(() => {
+    if (runtime.conversationRuntimes.size === 0) {
+      emitSubagentState();
+      return;
+    }
+    // Each snapshot is scoped to its parent conversation, so only send it to
+    // conversations whose snapshot changed instead of fanning out to all.
     for (const conversationRuntime of runtime.conversationRuntimes.values()) {
-      emitSubagentStateIfOpen(runtime, {
-        agent_id: conversationRuntime.agentId,
-        conversation_id: conversationRuntime.conversationId,
-      });
+      emitSubagentState(
+        {
+          agent_id: conversationRuntime.agentId,
+          conversation_id: conversationRuntime.conversationId,
+        },
+        { onlyIfChanged: true },
+      );
     }
   });
 
