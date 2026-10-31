@@ -158,6 +158,19 @@ export async function resolveDesktopEnvironmentConnectionId(
   return { connectionId: environment.connectionId, environment };
 }
 
+/** Whether a computer selector names this environment by connection id, id, device id, or name. */
+export function environmentMatchesSelector(
+  environment: EnvironmentConnection,
+  selector: string,
+): boolean {
+  return (
+    environment.connectionId === selector ||
+    environment.id === selector ||
+    environment.deviceId === selector ||
+    environment.connectionName === selector
+  );
+}
+
 export async function resolveEnvironmentConnectionId(
   selector: string,
   list: typeof listEnvironments = listEnvironments,
@@ -168,14 +181,9 @@ export async function resolveEnvironmentConnectionId(
   }
 
   const response = await list({ limit: 100 });
-  const matches = response.connections.filter((environment) => {
-    return (
-      environment.connectionId === trimmed ||
-      environment.id === trimmed ||
-      environment.deviceId === trimmed ||
-      environment.connectionName === trimmed
-    );
-  });
+  const matches = response.connections.filter((environment) =>
+    environmentMatchesSelector(environment, trimmed),
+  );
 
   if (matches.length === 0) {
     throw new Error(
