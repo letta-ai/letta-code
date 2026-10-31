@@ -44,6 +44,13 @@ export interface AgentRuntimeStatusEntry {
   has_conflicting_listeners?: boolean;
   active_run_ids: string[];
   last_activity_at: number;
+  /** Inputs waiting for the owning listener, e.g. a task notification. */
+  queue?: unknown[];
+  /** Background work the owning listener reports for this conversation. */
+  active_bash_count?: number;
+  active_monitor_count?: number;
+  active_workflow_count?: number;
+  has_active_background_subagents?: boolean;
 }
 
 export interface AgentRuntimeStatusSnapshot {

@@ -1,14 +1,17 @@
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
+import { getAgentRuntimeStatus } from "@/backend/api/agents";
 import {
   type EnqueueReceipt,
   getEnqueueAgentId,
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { resolveEnvironmentMaxWaitMs } from "@/headless-environment-response";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
@@ -31,7 +34,50 @@ export async function collectRemoteTurnResult(
   });
   try {
     const backend = getBackend();
+    const agentId = getEnqueueAgentId(receipt);
+    const conversationId = receipt.conversation_id;
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
+      settle: {
+        maxWaitMs: resolveEnvironmentMaxWaitMs(),
+        status: async (readSignal) => {
+          try {
+            const snapshot = await getAgentRuntimeStatus(
+              agentId,
+              [conversationId],
+              readSignal,
+            );
+            return (
+              snapshot.statuses.find(
+                (status) => status.conversation_id === conversationId,
+              ) ?? {
+                conversation_id: conversationId,
+                state: "IDLE",
+                loop_state: null,
+                active_run_ids: [],
+                last_activity_at: 0,
+              }
+            );
+          } catch (error) {
+            if (error instanceof ApiRequestError && error.status === 404)
+              return null;
+            throw error;
+          }
+        },
+        messages: async (readSignal) => {
+          const query = { limit: 50, order: "desc" } as const;
+          const page =
+            conversationId === "default"
+              ? await backend.listAgentMessages(
+                  agentId,
+                  { ...query, conversation_id: "default" },
+                  { signal: readSignal },
+                )
+              : await backend.listConversationMessages(conversationId, query, {
+                  signal: readSignal,
+                });
+          return page.getPaginatedItems();
+        },
+      },
       exact: getExactSuperRun,
       run: (runId, readSignal) =>
         backend.retrieveRun(runId, { signal: readSignal }),

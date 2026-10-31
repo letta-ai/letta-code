@@ -1,5 +1,9 @@
 import { expect, spyOn, test } from "bun:test";
-import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
+import type {
+  Message,
+  Run,
+} from "@letta-ai/letta-client/resources/agents/messages";
+import type { AgentRuntimeStatusEntry } from "@/backend/api/agents";
 import type {
   EnqueueReceipt,
   ExactSuperRun,
@@ -348,4 +352,117 @@ test("abort interrupts background retries", async () => {
       }),
     ),
   ).rejects.toThrow();
+});
+
+function runtimeStatus(
+  overrides: Partial<AgentRuntimeStatusEntry> = {},
+): AgentRuntimeStatusEntry {
+  return {
+    conversation_id: "conv-1",
+    state: "ACTIVE",
+    loop_state: { status: "WAITING_ON_INPUT" },
+    active_run_ids: [],
+    last_activity_at: 1,
+    ...overrides,
+  };
+}
+
+const firstTurnMessages: Message[] = [
+  {
+    id: "msg-input",
+    date: "now",
+    message_type: "user_message",
+    content: "Run the check and report the result.",
+    run_id: "run-1",
+    seq_id: 1,
+  },
+  {
+    id: "msg-waiting",
+    date: "now",
+    message_type: "assistant_message",
+    content: "Still running, I'll wait for the notification.",
+    run_id: "run-1",
+    seq_id: 2,
+  },
+];
+
+test("returns the answer written after the remote helper's background work finishes", async () => {
+  // Turn 1 ends while a background Bash runs; its completion notification
+  // starts turn 2 (run-2), which is not linked to the accepted Super Run.
+  const statuses = [
+    runtimeStatus({ active_bash_count: 1 }),
+    runtimeStatus({
+      loop_state: { status: "PROCESSING_API_RESPONSE" },
+      active_run_ids: ["run-2"],
+      last_activity_at: 2,
+    }),
+    runtimeStatus({ state: "IDLE", loop_state: null, last_activity_at: 3 }),
+  ];
+  let statusReads = 0;
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      messages: async () => firstTurnMessages,
+      sleep: async () => {},
+      settle: {
+        maxWaitMs: 60_000,
+        status: async () =>
+          statuses[Math.min(statusReads++, statuses.length - 1)] ?? null,
+        messages: async () => [
+          {
+            id: "msg-final",
+            date: "now",
+            message_type: "assistant_message",
+            content: "The check passed: 42 tests, 0 failures.",
+            run_id: "run-2",
+            seq_id: 4,
+          },
+          {
+            id: "msg-notification",
+            date: "now",
+            message_type: "user_message",
+            content: "<task-notification>...</task-notification>",
+            run_id: "run-2",
+            seq_id: 3,
+          },
+          ...[...firstTurnMessages].reverse(),
+        ],
+      },
+    }),
+  );
+  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
+  expect(result.runIds).toEqual(["run-1"]);
+});
+
+test("bounds the follow-up wait and tells the parent how to read the conversation", async () => {
+  const clock = makeClock();
+  let exactReads = 0;
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async () => {
+        exactReads++;
+        return exact();
+      },
+      messages: async () => firstTurnMessages,
+      sleep: async () => clock.sleep(30_000),
+      settle: {
+        maxWaitMs: 120_000,
+        now: clock.now,
+        status: async () => runtimeStatus({ active_monitor_count: 1 }),
+        messages: async () => [...firstTurnMessages].reverse(),
+      },
+    }),
+  );
+  expect(exactReads).toBe(1);
+  expect(result.text).toStartWith(
+    "Still running, I'll wait for the notification.",
+  );
+  expect(result.text).toContain("still running background work after 2");
+  expect(result.text).toContain(
+    "letta messages list --agent agent-1 --conversation conv-1",
+  );
+  expect(result.text).toContain("Do not launch the task again");
 });
