@@ -10,7 +10,10 @@ import {
 } from "@/agent/mcp-originator-tokens";
 import type { InputCommand } from "@/types/protocol_v2";
 import { getInputDisposition } from "./input-disposition";
-import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
+import {
+  attachTerminalConsumerToLiveAcceptedInput,
+  hasLiveAcceptedInputOwner,
+} from "./input-disposition-ownership";
 import type { ConversationRuntime, InputIdentity } from "./types";
 
 export type SafeSocketSend = (
@@ -39,6 +42,7 @@ type InputAckFrame = Pick<
   | "super_run_id"
   | "mcp_originator_token"
   | "mcp_originator_generation"
+  | "terminal_consumer_id"
 > & {
   runtime: unknown;
 };
@@ -120,6 +124,13 @@ export function acknowledgeInputFrame(
   mayRecreateOwner?: () => boolean,
   extras?: InputAckExtras,
 ): void {
+  // Evaluate once before token admission and response serialization. Duplicate
+  // recovery callbacks also attach the terminal consumer atomically, so this
+  // boolean proves both the live owner and the consumer Cloud can await.
+  const duplicateOwnerLive =
+    accepted && mayRecreateOwner ? mayRecreateOwner() : undefined;
+  const recreateOwnerProof =
+    duplicateOwnerLive === undefined ? undefined : () => duplicateOwnerLive;
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
@@ -133,12 +144,12 @@ export function acknowledgeInputFrame(
       // authority recheck on every token use.
       installPreGatedMcpOriginatorDelivery(extras.preGated, {
         allowCreate,
-        mayRecreateOwner,
+        mayRecreateOwner: recreateOwnerProof,
       });
     } else {
       const verdict = recordMcpOriginatorDelivery(frame, {
         allowCreate,
-        mayRecreateOwner,
+        mayRecreateOwner: recreateOwnerProof,
       });
       if (verdict === "denied_retryable") {
         // Durable admission could not be evaluated at all (degraded authority
@@ -177,6 +188,9 @@ export function acknowledgeInputFrame(
       runtime: frame.runtime,
       accepted,
       ...(disposition ? { disposition } : {}),
+      ...(duplicateOwnerLive === undefined
+        ? {}
+        : { duplicate_owner_live: duplicateOwnerLive }),
       ...(error ? { error } : {}),
       ...(extras?.abortReason !== undefined && !accepted
         ? { abortReason: extras.abortReason }
@@ -226,6 +240,10 @@ export function acknowledgeAdmissionDuplicate(
   identity: InputIdentity | undefined,
   disposition: "started" | "queued",
 ): void {
+  const terminalConsumerId =
+    typeof transport.frame.terminal_consumer_id === "string"
+      ? transport.frame.terminal_consumer_id
+      : undefined;
   acknowledgeInputFrame(
     transport.safeSocketSend,
     transport.socket,
@@ -234,6 +252,13 @@ export function acknowledgeAdmissionDuplicate(
     undefined,
     disposition,
     "refresh",
-    liveAcceptedInputOwnerProof(runtime, identity),
+    () =>
+      terminalConsumerId
+        ? attachTerminalConsumerToLiveAcceptedInput(
+            runtime,
+            identity,
+            terminalConsumerId,
+          )
+        : hasLiveAcceptedInputOwner(runtime, identity),
   );
 }

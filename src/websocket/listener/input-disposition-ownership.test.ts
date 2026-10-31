@@ -15,8 +15,10 @@ import {
   reserveInputDisposition,
 } from "./input-disposition";
 import {
+  attachTerminalConsumerToLiveAcceptedInput,
   hasLiveAcceptedInputOwner,
   hasLiveAcceptedInputOwnerWithOriginatorRetirement,
+  lateTerminalConsumersForAcceptedInputs,
 } from "./input-disposition-ownership";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
@@ -230,4 +232,52 @@ test("originator retirement proof: pre-owner-id records fail closed (evil-shub r
   expect(
     hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, unknownId),
   ).toBe(false);
+});
+
+test("a live duplicate durably attaches its recovery terminal consumer", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-disposition-consumer-"));
+  try {
+    const persistentPath = join(root, "state.json");
+    const runtime = persistentRuntime(persistentPath);
+    const identity = ordinaryInputIdentity("live-duplicate");
+    expect(
+      rememberInputDisposition(runtime, identity, "started", {
+        incoming: {
+          ...durableIncoming("live-duplicate"),
+          terminalConsumerIds: ["slack:original"],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:recovery",
+      ),
+    ).toBe(true);
+    expect(
+      lateTerminalConsumersForAcceptedInputs(
+        runtime,
+        identity ? [identity] : [],
+      ),
+    ).toEqual(["slack:original", "slack:recovery"]);
+    const restartedRuntime = persistentRuntime(persistentPath);
+    expect(
+      lateTerminalConsumersForAcceptedInputs(
+        restartedRuntime,
+        identity ? [identity] : [],
+      ),
+    ).toEqual(["slack:original", "slack:recovery"]);
+
+    completeInputReplay(runtime, identity ? [identity] : []);
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:too-late",
+      ),
+    ).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

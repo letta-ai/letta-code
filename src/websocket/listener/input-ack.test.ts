@@ -15,10 +15,18 @@ import {
   getMcpOriginatorToken,
   mcpOriginatorTokenCount,
 } from "@/agent/mcp-originator-tokens";
+import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  acknowledgeAdmissionDuplicate,
   acknowledgeInputFrame,
   MCP_ORIGINATOR_DENIED_PERMANENT_ABORT_REASON,
 } from "./input-ack";
+import {
+  ordinaryInputIdentity,
+  rememberInputDisposition,
+} from "./input-disposition";
+import { lateTerminalConsumersForAcceptedInputs } from "./input-disposition-ownership";
+import { createRuntime } from "./lifecycle";
 
 function withDegradedFile(run: (path: string) => void): void {
   const root = mkdtempSync(join(tmpdir(), "letta-ack-authority-"));
@@ -172,6 +180,78 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
     );
     expect(sent).toHaveLength(1);
     expect(sent[0]?.payload).toMatchObject({ accepted: true });
+  });
+
+  test.each([true, false])(
+    "a duplicate ACK carries the single evaluated live-owner proof: %s",
+    (live) => {
+      const { send, sent } = makeSend();
+      let evaluations = 0;
+      acknowledgeInputFrame(
+        send,
+        SOCKET,
+        { request_id: "req-duplicate", runtime: undefined } as never,
+        true,
+        undefined,
+        "started",
+        "refresh",
+        () => {
+          evaluations += 1;
+          return live;
+        },
+      );
+      expect(evaluations).toBe(1);
+      expect(sent).toHaveLength(1);
+      expect(sent[0]?.payload).toMatchObject({
+        accepted: true,
+        duplicate_owner_live: live,
+      });
+    },
+  );
+
+  test("the duplicate fast path attaches and proves the exact terminal consumer", () => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      "agent-1",
+      "conversation-1",
+    );
+    const identity = ordinaryInputIdentity("cm-fast-path");
+    expect(
+      rememberInputDisposition(runtime, identity, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          messages: [],
+        },
+      }),
+    ).toBe(true);
+    const { send, sent } = makeSend();
+    acknowledgeAdmissionDuplicate(
+      {
+        safeSocketSend: send,
+        socket: SOCKET,
+        frame: {
+          request_id: "req-fast-path",
+          runtime: undefined,
+          terminal_consumer_id: "slack:recovery",
+        },
+      },
+      runtime,
+      identity,
+      "started",
+    );
+    expect(sent[0]?.payload).toMatchObject({
+      accepted: true,
+      duplicate_owner_live: true,
+    });
+    expect(
+      lateTerminalConsumersForAcceptedInputs(
+        runtime,
+        identity ? [identity] : [],
+      ),
+    ).toEqual(["slack:recovery"]);
   });
 
   test("a rejected input acks accepted:false without touching the store", () => {

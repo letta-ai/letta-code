@@ -17,6 +17,21 @@ import type {
   InputIdentity,
 } from "./types";
 
+function entryHasLiveAcceptedInputOwner(
+  entry: AcceptedInputDispositionEntry | undefined,
+): entry is AcceptedInputDispositionEntry {
+  if (!entry || entry.expiresAt <= Date.now()) return false;
+  if (entry.disposition !== "started" && entry.disposition !== "queued") {
+    return false;
+  }
+  return (
+    !entry.replayCompleted &&
+    !entry.preparedTerminal &&
+    !entry.completedTerminalRevision &&
+    !entry.completedTerminalAuthority
+  );
+}
+
 /**
  * Read the full durable disposition entry for one identity, following the
  * same durable-first / in-memory fallback pattern as getInputDisposition.
@@ -59,18 +74,67 @@ export function hasLiveAcceptedInputOwner(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
 ): boolean {
-  const entry = readInputDispositionEntry(runtime, identity);
-  if (!entry) return false;
-  if (entry.expiresAt <= Date.now()) return false;
-  if (entry.disposition !== "started" && entry.disposition !== "queued") {
-    return false;
-  }
-  return (
-    !entry.replayCompleted &&
-    !entry.preparedTerminal &&
-    !entry.completedTerminalRevision &&
-    !entry.completedTerminalAuthority
+  return entryHasLiveAcceptedInputOwner(
+    readInputDispositionEntry(runtime, identity),
   );
+}
+
+/**
+ * Atomically prove a duplicate input still has a live owner and attach the
+ * caller's durable terminal consumer before acknowledging it. The finalizer
+ * rereads these consumer IDs from the ledger, so a started turn and a queued
+ * turn both publish the recovery consumer even though the duplicate creates
+ * no new work.
+ */
+export function attachTerminalConsumerToLiveAcceptedInput(
+  runtime: ConversationRuntime,
+  identity: InputIdentity | undefined,
+  terminalConsumerId: string | undefined,
+): boolean {
+  if (!identity || !terminalConsumerId) return false;
+  const ledger = getLedger(runtime.listener);
+  const key = dispositionKey(runtime.key, identity);
+  const attach = (
+    entry: AcceptedInputDispositionEntry | undefined,
+  ): boolean => {
+    if (!entryHasLiveAcceptedInputOwner(entry) || !entry.queuedInput) {
+      return false;
+    }
+    const incoming = entry.queuedInput.incoming;
+    incoming.terminalConsumerIds = [
+      ...new Set([...(incoming.terminalConsumerIds ?? []), terminalConsumerId]),
+    ];
+    return true;
+  };
+  if (ledger.persistentPath) {
+    try {
+      return durableTransaction(ledger.persistentPath, (store) => {
+        const attached = attach(store.entries[key]);
+        syncMemoryFromDurable(ledger, store);
+        return { result: attached, changed: attached };
+      });
+    } catch {
+      return false;
+    }
+  }
+  expireAcceptedInputDispositions(ledger, Date.now());
+  return attach(ledger.entries.get(key));
+}
+
+/** Consumer IDs attached after a turn started, read immediately before terminal. */
+export function lateTerminalConsumersForAcceptedInputs(
+  runtime: ConversationRuntime,
+  identities: readonly InputIdentity[],
+): string[] {
+  const consumers = new Set<string>();
+  for (const identity of identities) {
+    const entry = readInputDispositionEntry(runtime, identity);
+    for (const consumer of entry?.queuedInput?.incoming.terminalConsumerIds ??
+      []) {
+      consumers.add(consumer);
+    }
+  }
+  return [...consumers];
 }
 
 /**
