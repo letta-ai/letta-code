@@ -17,13 +17,17 @@ import {
   reserveInputDisposition,
 } from "./input-disposition";
 import { attachTerminalConsumerToLiveAcceptedInput } from "./input-disposition-ownership";
-import { prepareInputTerminal } from "./input-terminal-journal";
+import {
+  loadPreparedInputTerminals,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
   recordListenerWork,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { handleTeleportRequest } from "./teleport";
+import { TeleportTerminalPreparedError } from "./teleport-terminal-transfer";
 import { createTurnCorrelation } from "./turn-correlation";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createTurnFinalizer } from "./turn-finalizer";
@@ -71,6 +75,7 @@ function yieldSourceTurnToTeleport(
   drained: boolean,
   lateDuplicate = false,
   durableListener = true,
+  forceTerminalStoreFailure = false,
 ) {
   const listener = createRuntime();
   listener.connectionId = durableListener ? "conn-source" : "source";
@@ -158,6 +163,34 @@ function yieldSourceTurnToTeleport(
     conversationId: CONVERSATION_ID,
     interruptedRevisionRef: { current: revision },
   });
+  if (forceTerminalStoreFailure) {
+    const store = createTurnFinishedStore();
+    for (let index = 0; index < 64; index += 1) {
+      store.put(
+        AGENT_ID,
+        CONVERSATION_ID,
+        {
+          type: "turn_finished",
+          turn_id: `capacity-${index}`,
+          stop_reason: "end_turn",
+          terminal_consumer_ids: [`capacity:${index}`],
+        },
+        {
+          connectionId: `capacity-${index}`,
+          canRotate: false,
+          lineageId: `capacity-${index}`,
+        },
+      );
+    }
+    expect(() =>
+      finalizer.finishTurn({
+        stopReason: "cancelled",
+        agentId: AGENT_ID,
+        conversationId: CONVERSATION_ID,
+      }),
+    ).toThrow(TeleportTerminalPreparedError);
+    return { listener, runtime, socket };
+  }
   const transition = finalizer.finishTurn({
     stopReason: drained ? "end_turn" : "cancelled",
     agentId: AGENT_ID,
@@ -167,6 +200,24 @@ function yieldSourceTurnToTeleport(
   expect(runtime.turnLifecycle.kind).toBe("idle");
   return { listener, runtime, socket };
 }
+
+test("a post-prepare terminal-store failure preserves transferred ownership", () => {
+  withTemporaryHome(() => {
+    const { listener } = yieldSourceTurnToTeleport(false, true, true, true);
+    const interrupted = createInterruptedTurnStore().read(
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    expect(interrupted?.teleport?.teleportId).toBe("teleport-1");
+    expect(interrupted?.teleport?.continuation?.terminal_consumer_ids).toEqual([
+      SLACK_CONSUMER,
+      "slack:recovery",
+    ]);
+    expect(
+      loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
+    ).toBeUndefined();
+  });
+});
 
 function withTemporaryHome(run: () => void): void {
   const oldHome = process.env.HOME;

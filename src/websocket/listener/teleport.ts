@@ -34,6 +34,7 @@ import { getConversationRuntime, getConversationRuntimeKey } from "./runtime";
 import {
   commitActiveTeleportTerminalTransfer,
   journalTeleportIntent,
+  TeleportTerminalPreparedError,
 } from "./teleport-terminal-transfer";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { createTurnFinishedStore } from "./turn-finished-replay";
@@ -465,8 +466,6 @@ export function handleTeleportRequest(params: {
   );
   const existing = pendingTeleports.get(key);
   if (existing) {
-    // A retry belongs to the physical connection that issued it, never the
-    // transport that happened to create or reconstruct the durable intent.
     existing.connectionId = connectionId;
     if (existing.readyAt !== undefined) {
       sendTeleportReady(listener, existing, {
@@ -735,7 +734,9 @@ export function finishClaimedTeleport(
       });
     }
   } catch (error) {
-    abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    if (!(error instanceof TeleportTerminalPreparedError)) {
+      abandonTeleportIntent(runtime.listener, pending, intentRevision);
+    }
     throw error;
   }
   if (!transition.finished) {
@@ -913,7 +914,6 @@ export function handleTeleportFailure(params: {
     conversationId: params.command.runtime.conversation_id,
     connectionId: params.connectionId,
   });
-  // Rejected requests never yielded, so their source turn needs no recovery.
   if (!pending || pending.error) return;
 
   const runtime = params.getOrCreateScopedRuntime(

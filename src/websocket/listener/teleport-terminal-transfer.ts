@@ -1,3 +1,4 @@
+import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
 import { recordListenerWork } from "./interrupted-turn-record";
 import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
@@ -9,6 +10,12 @@ import type {
 export class TeleportTerminalConsumerRaceError extends Error {}
 
 export class TeleportIntentUnavailableError extends Error {}
+
+export class TeleportTerminalPreparedError extends Error {
+  constructor(readonly terminalCause: unknown) {
+    super("Teleport terminal is durable and awaiting recovery");
+  }
+}
 
 export function terminalConsumersMatch(
   terminal: DurablePreparedInputTerminal,
@@ -133,6 +140,19 @@ export function commitActiveTeleportTerminalTransfer(params: {
         continue;
       }
       if (error instanceof TeleportTerminalConsumerRaceError) return fallback();
+      if (
+        revision &&
+        hasPreparedInputTerminalRevision(
+          params.runtime.listener,
+          {
+            agentId: params.pending.agentId,
+            conversationId: params.pending.conversationId,
+          },
+          revision,
+        )
+      ) {
+        throw new TeleportTerminalPreparedError(error);
+      }
       params.onUnavailable(revision);
       throw error;
     }
