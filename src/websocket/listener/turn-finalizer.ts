@@ -4,7 +4,6 @@ import {
 } from "@/agent/mcp-originator-tokens";
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
-import { lateTerminalConsumersForAcceptedInputs } from "./input-disposition-ownership";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
 import type {
@@ -130,23 +129,13 @@ export function createTurnFinalizer(params: {
     return transition;
   };
   const commitTurn = (options: Parameters<typeof finishListenerTurn>[2]) => {
-    const durableInputIdentities = params.ownership.durableInputIdentities;
-    const terminalConsumerIds = [
-      ...new Set([
-        ...params.ownership.terminalConsumerIds,
-        ...lateTerminalConsumersForAcceptedInputs(
-          params.runtime,
-          durableInputIdentities,
-        ),
-      ]),
-    ];
     const transition = noteFinalization(
       finishListenerTurn(params.runtime, params.turnLease, {
         ...options,
         socket: options.socket ?? params.socket,
         turnId: params.ownership.terminalTurnId,
-        terminalConsumerIds,
-        durableInputIdentities,
+        terminalConsumerIds: params.ownership.terminalConsumerIds,
+        durableInputIdentities: params.ownership.durableInputIdentities,
         expectedInterruptedRevision:
           options.expectedInterruptedRevision ??
           params.recoveryTerminalRevision ??

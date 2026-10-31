@@ -9,6 +9,7 @@ import {
   durableTransaction,
   expireAcceptedInputDispositions,
   getLedger,
+  MAX_DURABLE_QUEUED_INPUT_BYTES,
   syncMemoryFromDurable,
 } from "./input-disposition";
 import type {
@@ -16,6 +17,8 @@ import type {
   ConversationRuntime,
   InputIdentity,
 } from "./types";
+
+const MAX_LATE_TERMINAL_CONSUMERS_PER_INPUT = 64;
 
 function entryHasLiveAcceptedInputOwner(
   entry: AcceptedInputDispositionEntry | undefined,
@@ -101,9 +104,21 @@ export function attachTerminalConsumerToLiveAcceptedInput(
       return false;
     }
     const incoming = entry.queuedInput.incoming;
-    incoming.terminalConsumerIds = [
+    const previousConsumers = incoming.terminalConsumerIds;
+    const nextConsumers = [
       ...new Set([...(incoming.terminalConsumerIds ?? []), terminalConsumerId]),
     ];
+    if (nextConsumers.length > MAX_LATE_TERMINAL_CONSUMERS_PER_INPUT) {
+      return false;
+    }
+    incoming.terminalConsumerIds = nextConsumers;
+    if (
+      Buffer.byteLength(JSON.stringify(entry.queuedInput)) >
+      MAX_DURABLE_QUEUED_INPUT_BYTES
+    ) {
+      incoming.terminalConsumerIds = previousConsumers;
+      return false;
+    }
     return true;
   };
   if (ledger.persistentPath) {
@@ -119,22 +134,6 @@ export function attachTerminalConsumerToLiveAcceptedInput(
   }
   expireAcceptedInputDispositions(ledger, Date.now());
   return attach(ledger.entries.get(key));
-}
-
-/** Consumer IDs attached after a turn started, read immediately before terminal. */
-export function lateTerminalConsumersForAcceptedInputs(
-  runtime: ConversationRuntime,
-  identities: readonly InputIdentity[],
-): string[] {
-  const consumers = new Set<string>();
-  for (const identity of identities) {
-    const entry = readInputDispositionEntry(runtime, identity);
-    for (const consumer of entry?.queuedInput?.incoming.terminalConsumerIds ??
-      []) {
-      consumers.add(consumer);
-    }
-  }
-  return [...consumers];
 }
 
 /**

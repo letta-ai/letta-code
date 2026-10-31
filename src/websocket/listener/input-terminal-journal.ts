@@ -108,11 +108,28 @@ export function prepareInputTerminal(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
   terminal: DurablePreparedInputTerminal,
+  options?: { mergeTerminalConsumerIds?: boolean },
 ): boolean {
   if (identities.length === 0) return true;
   const ledger = getLedger(runtime.listener);
   const keys = identityKeys(runtime, identities);
-  const preparedBase = structuredClone(terminal);
+  const mergeTerminalConsumers = (
+    entries: Readonly<Record<string, AcceptedInputDispositionEntry>>,
+  ): DurablePreparedInputTerminal => {
+    if (options?.mergeTerminalConsumerIds !== false) {
+      const consumers = new Set(terminal.message.terminal_consumer_ids ?? []);
+      for (const key of keys) {
+        for (const consumer of entries[key]?.queuedInput?.incoming
+          .terminalConsumerIds ?? []) {
+          consumers.add(consumer);
+        }
+      }
+      if (consumers.size > 0) {
+        terminal.message.terminal_consumer_ids = [...consumers];
+      }
+    }
+    return structuredClone(terminal);
+  };
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
@@ -136,6 +153,7 @@ export function prepareInputTerminal(
         }
         const preparationSequence =
           terminal.preparationSequence ?? ++store.nextGeneration;
+        const preparedBase = mergeTerminalConsumers(store.entries);
         const prepared = {
           ...preparedBase,
           preparedAt: terminal.preparedAt ?? Date.now(),
@@ -174,6 +192,9 @@ export function prepareInputTerminal(
   }
   const preparationSequence =
     terminal.preparationSequence ?? ++ledger.nextGeneration;
+  const preparedBase = mergeTerminalConsumers(
+    Object.fromEntries(ledger.entries.entries()),
+  );
   const prepared = {
     ...preparedBase,
     preparedAt: terminal.preparedAt ?? Date.now(),

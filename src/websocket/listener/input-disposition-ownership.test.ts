@@ -10,6 +10,7 @@ import {
   getInputDisposition,
   inputDispositionPersistentPath,
   loadDurableQueuedInputs,
+  MAX_DURABLE_QUEUED_INPUT_BYTES,
   ordinaryInputIdentity,
   rememberInputDisposition,
   reserveInputDisposition,
@@ -18,7 +19,6 @@ import {
   attachTerminalConsumerToLiveAcceptedInput,
   hasLiveAcceptedInputOwner,
   hasLiveAcceptedInputOwnerWithOriginatorRetirement,
-  lateTerminalConsumersForAcceptedInputs,
 } from "./input-disposition-ownership";
 import { completeInputReplay } from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
@@ -256,17 +256,13 @@ test("a live duplicate durably attaches its recovery terminal consumer", () => {
       ),
     ).toBe(true);
     expect(
-      lateTerminalConsumersForAcceptedInputs(
-        runtime,
-        identity ? [identity] : [],
-      ),
+      loadDurableQueuedInputs(runtime.listener)[0]?.incoming
+        .terminalConsumerIds,
     ).toEqual(["slack:original", "slack:recovery"]);
     const restartedRuntime = persistentRuntime(persistentPath);
     expect(
-      lateTerminalConsumersForAcceptedInputs(
-        restartedRuntime,
-        identity ? [identity] : [],
-      ),
+      loadDurableQueuedInputs(restartedRuntime.listener)[0]?.incoming
+        .terminalConsumerIds,
     ).toEqual(["slack:original", "slack:recovery"]);
 
     completeInputReplay(runtime, identity ? [identity] : []);
@@ -280,4 +276,72 @@ test("a live duplicate durably attaches its recovery terminal consumer", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("duplicate consumer attachment preserves the durable input size bound", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-durable",
+    "conversation-durable",
+  );
+  const identity = ordinaryInputIdentity("near-size-limit");
+  expect(
+    rememberInputDisposition(runtime, identity, "started", {
+      incoming: durableIncoming("near-size-limit"),
+    }),
+  ).toBe(true);
+  if (!identity) throw new Error("expected stable identity");
+  const entry = listener.acceptedInputDispositionLedger.entries.get(
+    dispositionKey(runtime.key, identity),
+  );
+  const queued = entry?.queuedInput;
+  const message = queued?.incoming.messages[0];
+  if (!queued || !message || !("content" in message)) {
+    throw new Error("expected durable queued message");
+  }
+  const currentSize = Buffer.byteLength(JSON.stringify(queued));
+  message.content = `${message.content}${"x".repeat(
+    MAX_DURABLE_QUEUED_INPUT_BYTES - currentSize - 64,
+  )}`;
+  expect(Buffer.byteLength(JSON.stringify(queued))).toBeLessThanOrEqual(
+    MAX_DURABLE_QUEUED_INPUT_BYTES,
+  );
+
+  expect(
+    attachTerminalConsumerToLiveAcceptedInput(
+      runtime,
+      identity,
+      "c".repeat(256),
+    ),
+  ).toBe(false);
+  expect(queued.incoming.terminalConsumerIds).toBeUndefined();
+});
+
+test("duplicate consumer attachment stays bounded by consumer count", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-durable",
+    "conversation-durable",
+  );
+  const identity = ordinaryInputIdentity("consumer-count-limit");
+  expect(
+    rememberInputDisposition(runtime, identity, "started", {
+      incoming: {
+        ...durableIncoming("consumer-count-limit"),
+        terminalConsumerIds: Array.from(
+          { length: 64 },
+          (_, index) => `consumer-${index}`,
+        ),
+      },
+    }),
+  ).toBe(true);
+  expect(
+    attachTerminalConsumerToLiveAcceptedInput(
+      runtime,
+      identity,
+      "consumer-overflow",
+    ),
+  ).toBe(false);
 });

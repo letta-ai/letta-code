@@ -124,13 +124,12 @@ export function acknowledgeInputFrame(
   mayRecreateOwner?: () => boolean,
   extras?: InputAckExtras,
 ): void {
-  // Evaluate once before token admission and response serialization. Duplicate
-  // recovery callbacks also attach the terminal consumer atomically, so this
-  // boolean proves both the live owner and the consumer Cloud can await.
+  // Evaluate once for the explicit duplicate proof. Keep passing the original
+  // predicate to the token store so its recreation decision retains the live
+  // owner check instead of relying on a frozen earlier result; attachment is
+  // idempotent when both checks run.
   const duplicateOwnerLive =
     accepted && mayRecreateOwner ? mayRecreateOwner() : undefined;
-  const recreateOwnerProof =
-    duplicateOwnerLive === undefined ? undefined : () => duplicateOwnerLive;
   if (accepted) {
     const allowCreate =
       (deliveryHandling ?? (disposition ? "create" : "refresh")) === "create";
@@ -144,12 +143,12 @@ export function acknowledgeInputFrame(
       // authority recheck on every token use.
       installPreGatedMcpOriginatorDelivery(extras.preGated, {
         allowCreate,
-        mayRecreateOwner: recreateOwnerProof,
+        mayRecreateOwner,
       });
     } else {
       const verdict = recordMcpOriginatorDelivery(frame, {
         allowCreate,
-        mayRecreateOwner: recreateOwnerProof,
+        mayRecreateOwner,
       });
       if (verdict === "denied_retryable") {
         // Durable admission could not be evaluated at all (degraded authority

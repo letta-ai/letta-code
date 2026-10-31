@@ -9,6 +9,14 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
+  commitInputDisposition,
+  createAcceptedInputDispositionLedger,
+  ordinaryInputIdentity,
+  reserveInputDisposition,
+} from "./input-disposition";
+import { attachTerminalConsumerToLiveAcceptedInput } from "./input-disposition-ownership";
+import { loadPreparedInputTerminals } from "./input-terminal-journal";
+import {
   createInterruptedTurnStore,
   recordListenerWork,
 } from "./interrupted-turn-record";
@@ -58,6 +66,10 @@ test("recovered finalization fences against the latest evidence revision", () =>
   process.env.HOME = directory.path;
   try {
     const listener = createRuntime();
+    listener.acceptedInputDispositionLedger =
+      createAcceptedInputDispositionLedger({
+        persistentPath: `${directory.path}/input-dispositions.json`,
+      });
     listener.connectionId = "conn-recovered-finalizer";
     const runtime = getOrCreateScopedRuntime(
       listener,
@@ -68,6 +80,27 @@ test("recovered finalization fences against the latest evidence revision", () =>
       origin: "approval_recovery",
       workingDirectory: process.cwd(),
     });
+    const identity = ordinaryInputIdentity("cm-recovered-late-consumer");
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: "agent-1",
+          conversationId: "conversation-1",
+          messages: [],
+          terminalConsumerIds: ["slack:original"],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:recovery",
+      ),
+    ).toBe(true);
     const initialRevision = recordListenerWork(
       runtime,
       { runId: "run-recovered" },
@@ -89,20 +122,26 @@ test("recovered finalization fences against the latest evidence revision", () =>
         agentId: "agent-1",
         conversationId: "conversation-1",
         interruptedRevision: initialRevision,
+        terminalConsumerIds: ["slack:original"],
+        durableInputIdentities: identity ? [identity] : [],
       },
       getInterruptedRevision: () => latestRevision,
       canCommit: () => true,
     });
 
+    const socket = new MockSocket();
     const transition = finalizer({
       stopReason: "end_turn",
-      socket: new MockSocket() as never,
+      socket: socket as never,
       agentId: "agent-1",
       conversationId: "conversation-1",
       turnId: "recovered-finalizer",
     });
 
     expect(transition.finished).toBe(true);
+    expect(
+      loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
+    ).toEqual(["slack:original", "slack:recovery"]);
     expect(runtime.turnLifecycle.kind).toBe("idle");
     expect(
       createInterruptedTurnStore().read("agent-1", "conversation-1"),

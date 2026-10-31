@@ -183,6 +183,7 @@ export function finishListenerTurn(
           ? { persistWithoutConsumers: true }
           : {}),
       },
+      { mergeTerminalConsumerIds: !options.teleportHandoff },
     )
   ) {
     // No state transition is safe: the accepted input is still replayable.

@@ -25,7 +25,6 @@ import {
   ordinaryInputIdentity,
   rememberInputDisposition,
 } from "./input-disposition";
-import { lateTerminalConsumersForAcceptedInputs } from "./input-disposition-ownership";
 import { createRuntime } from "./lifecycle";
 
 function withDegradedFile(run: (path: string) => void): void {
@@ -247,10 +246,8 @@ describe("acknowledgeInputFrame originator delivery gate", () => {
       duplicate_owner_live: true,
     });
     expect(
-      lateTerminalConsumersForAcceptedInputs(
-        runtime,
-        identity ? [identity] : [],
-      ),
+      [...listener.acceptedInputDispositionLedger.entries.values()][0]
+        ?.queuedInput?.incoming.terminalConsumerIds,
     ).toEqual(["slack:recovery"]);
   });
 
