@@ -1,9 +1,5 @@
 import { expect, spyOn, test } from "bun:test";
-import type {
-  Message,
-  Run,
-} from "@letta-ai/letta-client/resources/agents/messages";
-import type { AgentRuntimeStatusEntry } from "@/backend/api/agents";
+import type { Run } from "@letta-ai/letta-client/resources/agents/messages";
 import type {
   EnqueueReceipt,
   ExactSuperRun,
@@ -152,6 +148,54 @@ test("ignores an early end_turn while the child's Super Run still owns workers",
   );
   expect(reads).toEqual(["run-final"]);
   expect(result.text).toBe("All workers finished.");
+});
+
+test("returns the helper's final reply from a turn not linked to the Super Run", async () => {
+  // A task notification starts a new turn whose runs are never linked to the
+  // Super Run, so run_ids holds only the interim reply's run.
+  const result = await waitForAcceptedSuperRun(
+    receipt,
+    new AbortController().signal,
+    deps({
+      exact: async () => ({
+        ...exact(),
+        completed_at: "2026-10-31T19:47:02.927Z",
+        run_ids: ["run-interim"],
+      }),
+      messages: async () => [
+        {
+          id: "message-interim",
+          date: "2026-10-31T19:46:10.000Z",
+          message_type: "assistant_message",
+          content: "INTERIM: waiting for the notification.",
+        },
+      ],
+      conversationMessages: async (accepted) => {
+        expect(accepted).toBe(receipt);
+        return [
+          {
+            id: "message-unrelated-later",
+            date: "2026-10-31T19:48:00.000Z",
+            message_type: "assistant_message",
+            content: "A later, unrelated turn.",
+          },
+          {
+            id: "message-final",
+            date: "2026-10-31T19:47:02.713Z",
+            message_type: "assistant_message",
+            content: "FINAL: the answer.",
+          },
+          {
+            id: "message-interim",
+            date: "2026-10-31T19:46:10.000Z",
+            message_type: "assistant_message",
+            content: "INTERIM: waiting for the notification.",
+          },
+        ];
+      },
+    }),
+  );
+  expect(result.text).toBe("FINAL: the answer.");
 });
 
 test("a recovered child error does not fail the successful accepted send", async () => {
@@ -352,212 +396,4 @@ test("abort interrupts background retries", async () => {
       }),
     ),
   ).rejects.toThrow();
-});
-
-function runtimeStatus(
-  overrides: Partial<AgentRuntimeStatusEntry> = {},
-): AgentRuntimeStatusEntry {
-  return {
-    conversation_id: "conv-1",
-    state: "ACTIVE",
-    loop_state: { status: "WAITING_ON_INPUT" },
-    active_run_ids: [],
-    last_activity_at: 1,
-    ...overrides,
-  };
-}
-
-const firstTurnMessages: Message[] = [
-  {
-    id: "msg-input",
-    date: "now",
-    message_type: "user_message",
-    content: "Run the check and report the result.",
-    run_id: "run-1",
-    seq_id: 1,
-  },
-  {
-    id: "msg-waiting",
-    date: "now",
-    message_type: "assistant_message",
-    content: "Still running, I'll wait for the notification.",
-    run_id: "run-1",
-    seq_id: 2,
-  },
-];
-
-test("returns the answer written after the remote helper's background work finishes", async () => {
-  // Turn 1 ends while a background Bash runs; its completion notification
-  // starts turn 2 (run-2), which is not linked to the accepted Super Run.
-  const statuses = [
-    runtimeStatus({ active_bash_count: 1 }),
-    runtimeStatus({
-      loop_state: { status: "PROCESSING_API_RESPONSE" },
-      active_run_ids: ["run-2"],
-      last_activity_at: 2,
-    }),
-    runtimeStatus({ state: "IDLE", loop_state: null, last_activity_at: 3 }),
-  ];
-  let statusReads = 0;
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      messages: async () => firstTurnMessages,
-      sleep: async () => {},
-      settle: {
-        status: async () =>
-          statuses[Math.min(statusReads++, statuses.length - 1)] ?? null,
-        messages: async () => [
-          {
-            id: "msg-final",
-            date: "now",
-            message_type: "assistant_message",
-            content: "The check passed: 42 tests, 0 failures.",
-            run_id: "run-2",
-            seq_id: 4,
-          },
-          {
-            id: "msg-notification",
-            date: "now",
-            message_type: "user_message",
-            content: "<task-notification>...</task-notification>",
-            run_id: "run-2",
-            seq_id: 3,
-          },
-          ...[...firstTurnMessages].reverse(),
-        ],
-      },
-    }),
-  );
-  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
-  expect(result.runIds).toEqual(["run-1"]);
-});
-
-const finalAnswerMessages: Message[] = [
-  {
-    id: "msg-final",
-    date: "now",
-    message_type: "assistant_message",
-    content: "The check passed: 42 tests, 0 failures.",
-    run_id: "run-2",
-    seq_id: 4,
-  },
-  {
-    id: "msg-notification",
-    date: "now",
-    message_type: "user_message",
-    content: "<task-notification>...</task-notification>",
-    run_id: "run-2",
-    seq_id: 3,
-  },
-  ...[...firstTurnMessages].reverse(),
-];
-
-test("ignores a persistent Monitor and returns the helper's later answer", async () => {
-  // A persistent Monitor never ends, so it must not hold the parent forever.
-  const persistentMonitor = {
-    process_id: "monitor-1",
-    description: "watch deploy logs",
-    persistent: true,
-  };
-  const statuses = [
-    runtimeStatus({
-      active_bash_count: 1,
-      active_monitor_count: 1,
-      active_monitors: [persistentMonitor],
-    }),
-    runtimeStatus({
-      state: "IDLE",
-      loop_state: null,
-      last_activity_at: 3,
-      active_monitor_count: 1,
-      active_monitors: [persistentMonitor],
-    }),
-  ];
-  let statusReads = 0;
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      messages: async () => firstTurnMessages,
-      sleep: async () => {},
-      settle: {
-        status: async () =>
-          statuses[Math.min(statusReads++, statuses.length - 1)] ?? null,
-        messages: async () => finalAnswerMessages,
-      },
-    }),
-  );
-  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
-});
-
-test("waits for a non-persistent Monitor to finish, with no deadline", async () => {
-  const monitor = {
-    process_id: "monitor-1",
-    description: "wait for CI",
-    persistent: false,
-  };
-  // Many polls with the Monitor still running: there is no cap on the wait.
-  const runningPolls = 500;
-  let statusReads = 0;
-  let messageReadsWhileRunning = 0;
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      messages: async () => firstTurnMessages,
-      sleep: async () => {},
-      settle: {
-        status: async () =>
-          ++statusReads <= runningPolls
-            ? runtimeStatus({
-                active_monitor_count: 1,
-                active_monitors: [monitor],
-              })
-            : runtimeStatus({
-                state: "IDLE",
-                loop_state: null,
-                last_activity_at: 3,
-                active_monitor_count: 0,
-                active_monitors: [],
-              }),
-        messages: async () => {
-          if (statusReads <= runningPolls) messageReadsWhileRunning++;
-          return finalAnswerMessages;
-        },
-      },
-    }),
-  );
-  expect(statusReads).toBeGreaterThan(runningPolls);
-  expect(messageReadsWhileRunning).toBe(0);
-  expect(result.text).toBe("The check passed: 42 tests, 0 failures.");
-});
-
-test("counts every Monitor when the server does not list them", async () => {
-  const controller = new AbortController();
-  let statusReads = 0;
-  await expect(
-    waitForAcceptedSuperRun(
-      receipt,
-      controller.signal,
-      deps({
-        messages: async () => firstTurnMessages,
-        sleep: async () => {},
-        settle: {
-          status: async () => {
-            // Stop the parent (TaskStop) after a few polls.
-            if (++statusReads === 5) controller.abort();
-            return runtimeStatus({
-              state: "IDLE",
-              loop_state: null,
-              active_monitor_count: 1,
-            });
-          },
-          messages: async () => finalAnswerMessages,
-        },
-      }),
-    ),
-  ).rejects.toThrow();
-  expect(statusReads).toBe(5);
 });

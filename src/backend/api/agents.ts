@@ -44,22 +44,6 @@ export interface AgentRuntimeStatusEntry {
   has_conflicting_listeners?: boolean;
   active_run_ids: string[];
   last_activity_at: number;
-  /** Inputs waiting for the owning listener, e.g. a task notification. */
-  queue?: unknown[];
-  /** Background work the owning listener reports for this conversation. */
-  active_bash_count?: number;
-  active_monitor_count?: number;
-  /**
-   * Running Monitors, when the server lists them. Persistent Monitors never
-   * end on their own. Absent on older servers; use active_monitor_count.
-   */
-  active_monitors?: {
-    process_id: string;
-    description: string;
-    persistent?: boolean;
-  }[];
-  active_workflow_count?: number;
-  has_active_background_subagents?: boolean;
 }
 
 export interface AgentRuntimeStatusSnapshot {

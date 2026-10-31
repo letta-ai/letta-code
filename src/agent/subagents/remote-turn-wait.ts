@@ -1,14 +1,13 @@
+import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
-import { getAgentRuntimeStatus } from "@/backend/api/agents";
 import {
   type EnqueueReceipt,
   getEnqueueAgentId,
   getExactSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { ApiRequestError } from "@/backend/api/request";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
@@ -33,49 +32,7 @@ export async function collectRemoteTurnResult(
   });
   try {
     const backend = getBackend();
-    const agentId = getEnqueueAgentId(receipt);
-    const conversationId = receipt.conversation_id;
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
-      settle: {
-        status: async (readSignal) => {
-          try {
-            const snapshot = await getAgentRuntimeStatus(
-              agentId,
-              [conversationId],
-              readSignal,
-            );
-            return (
-              snapshot.statuses.find(
-                (status) => status.conversation_id === conversationId,
-              ) ?? {
-                conversation_id: conversationId,
-                state: "IDLE",
-                loop_state: null,
-                active_run_ids: [],
-                last_activity_at: 0,
-              }
-            );
-          } catch (error) {
-            if (error instanceof ApiRequestError && error.status === 404)
-              return null;
-            throw error;
-          }
-        },
-        messages: async (readSignal) => {
-          const query = { limit: 50, order: "desc" } as const;
-          const page =
-            conversationId === "default"
-              ? await backend.listAgentMessages(
-                  agentId,
-                  { ...query, conversation_id: "default" },
-                  { signal: readSignal },
-                )
-              : await backend.listConversationMessages(conversationId, query, {
-                  signal: readSignal,
-                });
-          return page.getPaginatedItems();
-        },
-      },
       exact: getExactSuperRun,
       run: (runId, readSignal) =>
         backend.retrieveRun(runId, { signal: readSignal }),
@@ -91,6 +48,25 @@ export async function collectRemoteTurnResult(
           }
         }
         return messages;
+      },
+      conversationMessages: async (accepted, readSignal) => {
+        const body = { limit: 50, order: "desc" as const };
+        if (accepted.conversation_id !== "default") {
+          const page = await backend.listConversationMessages(
+            accepted.conversation_id,
+            body,
+            { signal: readSignal },
+          );
+          return page.getPaginatedItems() as Message[];
+        }
+        // The parent id is never the owner of a helper's history.
+        if (!accepted.agent_id) return [];
+        const page = await backend.listAgentMessages(
+          accepted.agent_id,
+          { ...body, conversation_id: "default" },
+          { signal: readSignal },
+        );
+        return page.getPaginatedItems() as Message[];
       },
     });
     return {
