@@ -227,6 +227,10 @@ test("active and drained teleport intent is journaled before terminal commit", (
               expect(
                 options.onBeforePrepareInputTerminal?.({
                   message: { terminal_consumer_ids: ["consumer-1"] },
+                  owner: {
+                    interruptedRevision: "before-teleport",
+                    terminalIdentity: "terminal-teleport",
+                  },
                 } as never),
               ).toBeTruthy();
             }

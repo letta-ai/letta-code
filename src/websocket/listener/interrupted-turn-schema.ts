@@ -28,6 +28,16 @@ export function isTeleportIntent(
       typeof teleport.intentRevision === "string") &&
     (teleport.committedRevision === undefined ||
       typeof teleport.committedRevision === "string") &&
+    (teleport.terminalAuthority === undefined ||
+      (typeof teleport.terminalAuthority.interruptedRevision === "string" &&
+        typeof teleport.terminalAuthority.authorityRevision === "string" &&
+        (teleport.terminalAuthority.recoveryLineageId === undefined ||
+          typeof teleport.terminalAuthority.recoveryLineageId === "string") &&
+        (teleport.terminalAuthority.terminalIdentity === undefined ||
+          typeof teleport.terminalAuthority.terminalIdentity === "string") &&
+        (teleport.terminalAuthority.preparationSequence === undefined ||
+          typeof teleport.terminalAuthority.preparationSequence ===
+            "number"))) &&
     (teleport.readyRevision === undefined ||
       typeof teleport.readyRevision === "string") &&
     (teleport.continuation === undefined ||

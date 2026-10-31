@@ -65,7 +65,6 @@ export function expectInboundTeleport(
   runtime.expectedTeleportExpiresAt =
     Date.now() + INBOUND_TELEPORT_CONTINUE_TTL_MS;
 }
-
 export function isInboundTeleportExpected(
   runtime: ConversationRuntime,
 ): boolean {
@@ -79,14 +78,12 @@ export function isInboundTeleportExpected(
   }
   return true;
 }
-
 export function clearExpectedInboundTeleport(
   runtime: ConversationRuntime,
 ): void {
   runtime.expectedTeleportId = null;
   runtime.expectedTeleportExpiresAt = null;
 }
-
 export function buildTeleportContinuationMessages(params: {
   teleportId: string;
   approvals?: TeleportContinuation["approvals"];
@@ -107,14 +104,12 @@ export function buildTeleportContinuationMessages(params: {
   });
   return messages;
 }
-
 function escapeSystemReminderText(value: string): string {
   return value
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
-
 function buildTeleportFailureMessages(params: {
   teleportId: string;
   error: string;
@@ -135,14 +130,12 @@ function buildTeleportFailureMessages(params: {
   });
   return messages;
 }
-
 function getPendingTeleports(
   runtime: ListenerRuntime,
 ): Map<string, PendingTeleport> {
   runtime.pendingTeleports ??= new Map();
   return runtime.pendingTeleports;
 }
-
 function pendingTeleportKey(
   agentId: string,
   conversationId: string,
@@ -150,7 +143,6 @@ function pendingTeleportKey(
 ): string {
   return JSON.stringify([agentId, conversationId, teleportId]);
 }
-
 function persistedTeleportRecord(
   agentId: string,
   conversationId: string,
@@ -159,7 +151,6 @@ function persistedTeleportRecord(
   const record = createInterruptedTurnStore().read(agentId, conversationId);
   return record?.teleport?.teleportId === teleportId ? record : null;
 }
-
 function retireTeleportTerminalProof(
   record: InterruptedTurnRecord,
   committedRevision: string | undefined,
@@ -193,6 +184,8 @@ function authorizePersistedTeleportReady(
     return true;
   }
   const store = createInterruptedTurnStore();
+  const committedRevision = intent.committedRevision ?? intent.intentRevision;
+  if (!committedRevision) return false;
   try {
     const readyRecord = store.write(
       {
@@ -201,13 +194,13 @@ function authorizePersistedTeleportReady(
           ...intent,
           connectionId: pending.connectionId,
           ready: true,
-          committedRevision: record.revision,
+          committedRevision,
         },
       },
       record.revision,
     );
     pending.interruptedRevision = readyRecord.revision;
-    retireTeleportTerminalProof(readyRecord, record.revision);
+    retireTeleportTerminalProof(readyRecord, committedRevision);
     return true;
   } catch {
     return false;
@@ -292,7 +285,6 @@ function findPendingTeleportForRuntime(
   }
   return null;
 }
-
 export function isRuntimeTeleportPending(
   runtime: ListenerRuntime,
   agentId: string | null,
@@ -306,7 +298,6 @@ export function isRuntimeTeleportPending(
       pending.conversationId === conversationId,
   );
 }
-
 export function clearPriorReadyTeleports(params: {
   listener: ListenerRuntime;
   agentId: string;
@@ -401,7 +392,6 @@ function retainTeleportForRecovery(
   }, TELEPORT_RECOVERY_TTL_MS);
   timeout.unref?.();
 }
-
 export function handleTeleportProbe(
   command: TeleportProbeCommand,
   socket: WebSocket,
@@ -730,12 +720,28 @@ export function finishClaimedTeleport(
     return transition;
   }
   const store = createInterruptedTurnStore();
-  const record = store.read(pending.agentId, pending.conversationId);
-  if (!record) {
+  let record: InterruptedTurnRecord | null;
+  try {
+    record = store.read(pending.agentId, pending.conversationId);
+  } catch {
     runtime.listener.scheduleRecordedRecovery?.();
     return transition;
   }
+  if (!record) {
+    pending.readyAt = Date.now();
+    pending.error = "Teleport intent disappeared after source terminal commit";
+    sendTeleportReady(runtime.listener, pending, {
+      success: false,
+      error: pending.error,
+    });
+    retainTeleportForRecovery(runtime.listener, pending);
+    return transition;
+  }
   if (record.revision !== intentRevision) {
+    if (options.canCommit?.() === false) {
+      runtime.listener.scheduleRecordedRecovery?.();
+      return transition;
+    }
     const readyRecord = persistSuccessorTeleportReady(
       runtime,
       pending,

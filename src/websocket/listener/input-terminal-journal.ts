@@ -830,15 +830,10 @@ export function hasPreparedInputTerminalRevision(
       prepared.owner.interruptedRevision === interruptedRevision,
   );
 }
-
 export function hasPreparedInputTerminalAuthority(
   listener: ListenerRuntime,
   scope: DurablePreparedInputTerminal["scope"],
-  authority: {
-    interruptedRevision: string;
-    authorityRevision: string;
-    recoveryLineageId?: string;
-  },
+  authority: InterruptedTerminalAuthority,
 ): boolean {
   return loadPreparedInputTerminals(listener).some(
     (prepared) =>
@@ -847,7 +842,11 @@ export function hasPreparedInputTerminalAuthority(
       prepared.owner.interruptedRevision === authority.interruptedRevision &&
       (prepared.owner.interruptedAuthorityRevision ??
         prepared.owner.interruptedRevision) === authority.authorityRevision &&
-      prepared.owner.recoveryLineageId === authority.recoveryLineageId,
+      prepared.owner.recoveryLineageId === authority.recoveryLineageId &&
+      (authority.terminalIdentity === undefined ||
+        prepared.owner.terminalIdentity === authority.terminalIdentity) &&
+      (authority.preparationSequence === undefined ||
+        prepared.owner.preparationSequence === authority.preparationSequence),
   );
 }
 

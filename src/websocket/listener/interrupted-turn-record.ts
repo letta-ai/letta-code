@@ -283,6 +283,19 @@ export function createInterruptedTurnStore(
                 teleport: {
                   ...record.teleport,
                   intentRevision: record.teleport.intentRevision ?? revision,
+                  ...(record.teleport.terminalAuthority
+                    ? {
+                        terminalAuthority: {
+                          ...record.teleport.terminalAuthority,
+                          interruptedRevision:
+                            record.teleport.terminalAuthority
+                              .interruptedRevision || revision,
+                          authorityRevision:
+                            record.teleport.terminalAuthority
+                              .authorityRevision || revision,
+                        },
+                      }
+                    : {}),
                   readyRevision: record.teleport.ready
                     ? (record.teleport.readyRevision ?? revision)
                     : record.teleport.readyRevision,

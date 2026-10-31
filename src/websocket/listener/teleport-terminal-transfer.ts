@@ -1,11 +1,20 @@
-import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
-import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
+import {
+  hasCompletedInputTerminalAuthority,
+  hasCompletedInputTerminalRevision,
+} from "./input-terminal-evidence";
+import {
+  hasPreparedInputTerminalAuthority,
+  hasPreparedInputTerminalRevision,
+} from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
   type InterruptedTurnRecord,
   recordListenerWork,
 } from "./interrupted-turn-record";
-import { createTurnFinishedStore } from "./turn-finished-replay";
+import {
+  createTurnFinishedStore,
+  isInterruptedTerminalAuthorityCurrent,
+} from "./turn-finished-replay";
 import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -35,44 +44,88 @@ export function terminalConsumersMatch(
   );
 }
 
+type TeleportTerminalProof = "present" | "absent" | "ambiguous";
+
+function classifyTeleportTerminal(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  record: InterruptedTurnRecord,
+  revision: string | undefined,
+): TeleportTerminalProof {
+  if (!revision) return "absent";
+  try {
+    const scope = {
+      agentId: pending.agentId,
+      conversationId: pending.conversationId,
+    };
+    const authority = record.teleport?.terminalAuthority;
+    if (authority) {
+      const status = isInterruptedTerminalAuthorityCurrent(runtime, authority);
+      if (status === "unknown") return "ambiguous";
+      if (status === "stale") return "absent";
+    }
+    if (
+      authority
+        ? hasPreparedInputTerminalAuthority(runtime.listener, scope, authority)
+        : hasPreparedInputTerminalRevision(runtime.listener, scope, revision)
+    ) {
+      return "present";
+    }
+    const identities = record.durableInputIdentities ?? [];
+    if (
+      authority
+        ? hasCompletedInputTerminalAuthority(
+            runtime.listener,
+            runtime.key,
+            identities,
+            authority,
+          )
+        : hasCompletedInputTerminalRevision(
+            runtime.listener,
+            runtime.key,
+            identities,
+            revision,
+          )
+    ) {
+      return "present";
+    }
+    const terminals = createTurnFinishedStore().readOrThrow(
+      pending.agentId,
+      pending.conversationId,
+    );
+    return terminals?.terminals.some((terminal) =>
+      authority
+        ? terminal.owner.interruptedRevision ===
+            authority.interruptedRevision &&
+          (terminal.owner.interruptedAuthorityRevision ??
+            terminal.owner.interruptedRevision) ===
+            authority.authorityRevision &&
+          terminal.owner.recoveryLineageId === authority.recoveryLineageId &&
+          terminal.owner.terminalIdentity === authority.terminalIdentity
+        : terminal.owner.interruptedRevision === revision,
+    )
+      ? "present"
+      : "absent";
+  } catch {
+    return "ambiguous";
+  }
+}
+
 export function hasDurableTeleportTerminal(
   runtime: ConversationRuntime,
   pending: PendingTeleport,
   revision: string,
 ): boolean {
   try {
-    const scope = {
-      agentId: pending.agentId,
-      conversationId: pending.conversationId,
-    };
-    if (hasPreparedInputTerminalRevision(runtime.listener, scope, revision)) {
-      return true;
-    }
-    const interrupted = createInterruptedTurnStore().read(
+    const record = createInterruptedTurnStore().read(
       pending.agentId,
       pending.conversationId,
     );
-    if (
-      interrupted?.revision === revision &&
-      hasCompletedInputTerminalRevision(
-        runtime.listener,
-        runtime.key,
-        interrupted.durableInputIdentities ?? [],
-        revision,
-      )
-    ) {
-      return true;
-    }
-    return Boolean(
-      createTurnFinishedStore()
-        .readOrThrow(pending.agentId, pending.conversationId)
-        ?.terminals.some(
-          (terminal) => terminal.owner.interruptedRevision === revision,
-        ),
-    );
+    return record
+      ? classifyTeleportTerminal(runtime, pending, record, revision) !==
+          "absent"
+      : false;
   } catch {
-    // A failed durable read cannot prove the terminal was absent. Preserve the
-    // exact intent so restart recovery can classify it after storage recovers.
     return true;
   }
 }
@@ -97,26 +150,25 @@ export function persistedTeleportTerminalIsDurable(
   runtime: ConversationRuntime,
   record: InterruptedTurnRecord,
 ): boolean {
-  const revision = record.revision;
-  if (!revision) return false;
-  const scope = {
+  const pending: PendingTeleport = {
+    teleportId: record.teleport?.teleportId ?? "",
+    connectionId: record.teleport?.connectionId ?? "",
     agentId: record.agentId,
     conversationId: record.conversationId,
+    requestedAt: 0,
+    drainAcceptedInputs: false,
+    activeTurn: record.teleport?.activeTurn ?? false,
   };
-  return (
-    hasPreparedInputTerminalRevision(runtime.listener, scope, revision) ||
-    hasCompletedInputTerminalRevision(
-      runtime.listener,
-      runtime.key,
-      record.durableInputIdentities ?? [],
-      revision,
-    ) ||
-    createTurnFinishedStore()
-      .readOrThrow(record.agentId, record.conversationId)
-      ?.terminals.some(
-        (terminal) => terminal.owner.interruptedRevision === revision,
-      ) === true
+  const proof = classifyTeleportTerminal(
+    runtime,
+    pending,
+    record,
+    record.teleport?.committedRevision ??
+      record.teleport?.intentRevision ??
+      record.revision,
   );
+  if (proof === "ambiguous") runtime.listener.scheduleRecordedRecovery?.();
+  return proof === "present";
 }
 
 export function persistSuccessorTeleportReady(
@@ -127,7 +179,8 @@ export function persistSuccessorTeleportReady(
 ): InterruptedTurnRecord | undefined {
   if (
     record.teleport?.teleportId !== pending.teleportId ||
-    !hasDurableTeleportTerminal(runtime, pending, committedRevision)
+    classifyTeleportTerminal(runtime, pending, record, committedRevision) !==
+      "present"
   ) {
     runtime.listener.scheduleRecordedRecovery?.();
     return undefined;
@@ -154,6 +207,7 @@ export function journalTeleportIntent(
   runtime: ConversationRuntime,
   pending: PendingTeleport,
   expectedRevision?: string,
+  terminal?: DurablePreparedInputTerminal,
 ): string | undefined {
   return recordListenerWork(
     runtime,
@@ -165,6 +219,28 @@ export function journalTeleportIntent(
           runtime.listener.connectionGeneration ?? undefined,
         activeTurn: pending.activeTurn,
         continuation: pending.continuation,
+        ...(terminal
+          ? {
+              terminalAuthority: {
+                interruptedRevision: "",
+                authorityRevision:
+                  terminal.owner.interruptedAuthorityRevision ?? "",
+                ...(terminal.owner.recoveryLineageId
+                  ? {
+                      recoveryLineageId: terminal.owner.recoveryLineageId,
+                    }
+                  : {}),
+                ...(terminal.owner.terminalIdentity
+                  ? { terminalIdentity: terminal.owner.terminalIdentity }
+                  : {}),
+                ...(terminal.owner.preparationSequence !== undefined
+                  ? {
+                      preparationSequence: terminal.owner.preparationSequence,
+                    }
+                  : {}),
+              },
+            }
+          : {}),
         ready: false,
       },
     },
@@ -186,7 +262,7 @@ export function journalTeleportIntentWithTerminalConsumers(
       ? { terminal_consumer_ids: [...new Set(consumers)] }
       : {}),
   };
-  return journalTeleportIntent(runtime, pending, expectedRevision);
+  return journalTeleportIntent(runtime, pending, expectedRevision, terminal);
 }
 
 type TerminalTransferCommit = (options: {

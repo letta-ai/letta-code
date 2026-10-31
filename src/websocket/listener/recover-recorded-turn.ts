@@ -353,10 +353,6 @@ export async function recoverRecordedTurns(
               deferred = true;
             }
           } else if (teleport.status === "failed") {
-            // Once teleport_failed durably admits its continuation, that payload
-            // contains the original Cloud error text and is the idempotent proof
-            // that this stale intent was consumed. Restart may clear it without
-            // waiting for event redelivery; otherwise retain it fail-closed.
             const failureWasAdmitted =
               loadDurableQueuedInputEntries(listener).some(
                 ({ disposition, payload }) =>
@@ -396,9 +392,6 @@ export async function recoverRecordedTurns(
             } else if (
               recoveryRecord.teleport.readyRevision === record.revision
             ) {
-              // Only the revision which first published readiness may be
-              // deleted wholesale. A successor can inherit the metadata while
-              // carrying unrelated run/result/effect evidence.
               if (
                 !store.remove(
                   record.agentId,
@@ -410,8 +403,6 @@ export async function recoverRecordedTurns(
               }
             } else {
               try {
-                // Legacy or inherited metadata is retired by CAS while every
-                // other successor field is preserved. CAS loss rearms recovery.
                 store.write(
                   { ...record, teleportId: undefined, teleport: undefined },
                   record.revision,
@@ -426,6 +417,17 @@ export async function recoverRecordedTurns(
             record.revision
           ) {
             const teleportIntent = recoveryRecord.teleport;
+            const intentAuthority = teleportIntent.terminalAuthority;
+            if (
+              intentAuthority?.recoveryLineageId &&
+              (terminalAuthority?.lineageId !==
+                intentAuthority.recoveryLineageId ||
+                terminalAuthority.revisionToken !==
+                  intentAuthority.authorityRevision)
+            ) {
+              deferred = true;
+              continue;
+            }
             const eligibility = await resolveRecoveryEligibility(
               runtime,
               deps.canRecover,
@@ -465,6 +467,11 @@ export async function recoverRecordedTurns(
               continue;
             }
             try {
+              const committedRevision =
+                teleportIntent.committedRevision ??
+                teleportIntent.intentRevision ??
+                runningCompletion?.effectRevision ??
+                record.revision;
               if (runningCompletion?.independentSuccessor) {
                 store.writeRecoveryLineageSnapshot({
                   agentId: record.agentId,
@@ -474,8 +481,7 @@ export async function recoverRecordedTurns(
                     teleport: {
                       ...teleportIntent,
                       ready: true,
-                      committedRevision:
-                        runningCompletion.effectRevision ?? record.revision,
+                      committedRevision,
                     },
                   },
                 });
@@ -486,7 +492,7 @@ export async function recoverRecordedTurns(
                     teleport: {
                       ...teleportIntent,
                       ready: true,
-                      committedRevision: record.revision,
+                      committedRevision,
                     },
                   },
                   record.revision,
@@ -732,9 +738,6 @@ export async function recoverRecordedTurns(
         recoveryClaim = await (deps.acquireClaim ?? acquireRecoveryClaim)(
           runtime,
           () => {
-            // Do not abort an effect which may already be committing. The
-            // authority guard fences transport and terminal publication; a
-            // successor starts only after this detached predecessor settles.
             scheduleRecordedTurnRecovery(listener, () =>
               recoverRecordedTurns(listener, deps),
             );
@@ -754,9 +757,6 @@ export async function recoverRecordedTurns(
           recoveryRecord.unstartedToolCallIds?.includes(approval.toolCallId),
         );
         if (hasProvablyUnstartedApproval) {
-          // Connection sync reconstructs these as executable approvals. Never
-          // turn missing local evidence into a stale denial in the generic
-          // completion path while that exact replay remains available.
           await recoveryClaim?.release();
           recoveryClaim = undefined;
           deferred = true;
@@ -806,7 +806,6 @@ export async function recoverRecordedTurns(
               },
               record.revision ?? null,
             );
-        // An observer sync may have parked generic stale denials. The saved
         // results below replace those, rather than appending a second result.
         runtime.pendingInterruptedResults = null;
         runtime.pendingInterruptedContext = null;

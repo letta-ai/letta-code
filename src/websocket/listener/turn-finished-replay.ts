@@ -25,7 +25,10 @@ import {
 } from "./protocol-outbound";
 import { getConversationRuntimeKey } from "./runtime";
 import type { ListenerTransport } from "./transport";
-import type { ConversationRuntime } from "./types";
+import type {
+  ConversationRuntime,
+  InterruptedTerminalAuthority,
+} from "./types";
 
 export type ReplayableTurnFinished = Omit<
   TurnFinishedMessage,
@@ -123,6 +126,43 @@ function terminalAuthorityStatus(
     return snapshot.record.recoveryClaimCompletion?.state === "pending"
       ? "unknown"
       : "stale";
+  } catch {
+    return "unknown";
+  }
+}
+
+export function isInterruptedTerminalAuthorityCurrent(
+  runtime: ConversationRuntime,
+  authority: InterruptedTerminalAuthority,
+): "current" | "stale" | "unknown" {
+  if (!authority.recoveryLineageId) return "current";
+  if (!runtime.agentId) return "unknown";
+  try {
+    const store = createInterruptedTurnStore();
+    const snapshot = store.readRecoverySnapshot(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    if (snapshot) {
+      return snapshot.record.revision === authority.interruptedRevision &&
+        snapshot.revisionToken === authority.authorityRevision
+        ? "current"
+        : snapshot.record.recoveryClaimCompletion?.state === "pending"
+          ? "unknown"
+          : "stale";
+    }
+    const retired = store.readRetiredRecoveryAuthority(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    return retired?.interruptedRevision === authority.interruptedRevision &&
+      retired.authorityRevision === authority.authorityRevision
+      ? "current"
+      : retired
+        ? "stale"
+        : "unknown";
   } catch {
     return "unknown";
   }
