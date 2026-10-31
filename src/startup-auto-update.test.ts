@@ -17,7 +17,9 @@ describe("startStartupAutoUpdateCheck", () => {
 
     expect(logs.length).toBe(2);
     expect(logs[0]).toContain("ENOTEMPTY");
-    expect(logs[1]).toContain("npm i -g @letta-ai/letta-code");
+    expect(logs[1]).toBe(
+      "Fix: npm uninstall -g @letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
+    );
   });
 
   test("does not throw when updater rejects", async () => {
