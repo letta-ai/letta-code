@@ -10,6 +10,7 @@ import {
   bindOrgCredentials,
   getOrgAccessToken,
 } from "@/auth/org-credentials-session";
+import { getRuntimeActingUserAttribution } from "@/runtime-context";
 import { type Settings, settingsManager } from "@/settings-manager";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { isDebugEnabled } from "@/utils/debug";
@@ -31,6 +32,30 @@ let lastSDKDiagnostic: SDKDiagnostic | null = null;
 // transient keychain failures don't crash the process mid-session.
 let _cachedApiKey: string | undefined;
 let _testClientOverride: (() => Promise<unknown>) | null = null;
+
+type AttributedRequestOptions = Parameters<Letta["buildRequest"]>[0] & {
+  actingUserId?: string | null;
+};
+
+class ActingUserClient extends Letta {
+  protected override async prepareOptions(options: AttributedRequestOptions) {
+    // Capture before the first attempt, not per retained client or retry.
+    // The SDK preserves these options for retries and subsequent pages.
+    if (options.actingUserId === undefined) {
+      options.actingUserId = getRuntimeActingUserAttribution() ?? null;
+    }
+  }
+
+  protected override async authHeaders(options: AttributedRequestOptions) {
+    // Explicit request headers (including null) still win in the SDK merge.
+    const actingUserId = options.actingUserId?.trim();
+    const headers = await super.authHeaders(options);
+    if (actingUserId) {
+      headers?.values.set("X-Letta-Acting-User-Id", actingUserId);
+    }
+    return headers;
+  }
+}
 
 export function __testOverrideGetClient(
   factory: (() => Promise<unknown>) | null,
@@ -147,7 +172,7 @@ export function getClientDefaultHeaders(): Record<string, string> {
   };
 }
 
-export async function getClient() {
+export async function getClient(): Promise<Letta> {
   if (_testClientOverride) {
     return (await _testClientOverride()) as Letta;
   }
@@ -267,7 +292,7 @@ export async function getClient() {
 
   // Note: ChatGPT OAuth token refresh is handled by the Letta backend
   // when using the chatgpt_oauth provider type
-  const client = new Letta({
+  const client = new ActingUserClient({
     apiKey,
     baseURL,
     logger: sdkLogger,
