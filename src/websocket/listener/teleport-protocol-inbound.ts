@@ -3,6 +3,7 @@ import type {
   InputTeleportContinuePayload,
   TeleportProtocolCommand,
 } from "@/types/teleport-protocol";
+import { isTerminalConsumerId } from "@/types/turn-finished-protocol";
 import { isObjectRecord, isRuntimeScope } from "./protocol-validation";
 
 function isOptionalStringOrNull(value: unknown): boolean {
@@ -63,6 +64,13 @@ function isToolReturnContent(value: unknown): boolean {
 
 export function isTeleportContinuation(value: unknown): boolean {
   if (!isObjectRecord(value) || !Array.isArray(value.approvals)) return false;
+  if (
+    value.terminal_consumer_ids !== undefined &&
+    (!Array.isArray(value.terminal_consumer_ids) ||
+      !value.terminal_consumer_ids.every(isTerminalConsumerId))
+  ) {
+    return false;
+  }
   return value.approvals.every((approval) => {
     if (
       !isObjectRecord(approval) ||
@@ -130,6 +138,7 @@ export function parseTeleportCommand(
   }
   if (
     value.type === "teleport_failed" &&
+    (value.request_id === undefined || typeof value.request_id === "string") &&
     typeof value.teleport_id === "string" &&
     typeof value.error === "string"
   ) {

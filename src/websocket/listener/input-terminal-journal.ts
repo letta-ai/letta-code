@@ -99,6 +99,13 @@ function terminalAuthorityMatches(
   );
 }
 
+export function terminalMessageWithoutConsumers(
+  message: DurablePreparedInputTerminal["message"],
+): DurablePreparedInputTerminal["message"] {
+  const { terminal_consumer_ids: _, ...withoutConsumers } = message;
+  return withoutConsumers;
+}
+
 /**
  * Atomically replace replayable input with its terminal intent. A restart may
  * promote this journal entry to the terminal replay store, but must never run
@@ -108,11 +115,37 @@ export function prepareInputTerminal(
   runtime: ConversationRuntime,
   identities: readonly InputIdentity[],
   terminal: DurablePreparedInputTerminal,
+  options?: {
+    mergeTerminalConsumerIds?: boolean;
+    /** Runs under the disposition lock after consumer merge, before retirement. */
+    onPrepared?: (terminal: DurablePreparedInputTerminal) => boolean;
+  },
 ): boolean {
-  if (identities.length === 0) return true;
+  if (identities.length === 0) {
+    return options?.onPrepared?.(structuredClone(terminal)) !== false;
+  }
   const ledger = getLedger(runtime.listener);
   const keys = identityKeys(runtime, identities);
-  const preparedBase = structuredClone(terminal);
+  const mergeTerminalConsumers = (
+    entries: Readonly<Record<string, AcceptedInputDispositionEntry>>,
+  ): DurablePreparedInputTerminal => {
+    if (options?.mergeTerminalConsumerIds !== false) {
+      const consumers = new Set(terminal.message.terminal_consumer_ids ?? []);
+      for (const key of keys) {
+        for (const consumer of entries[key]?.queuedInput?.incoming
+          .terminalConsumerIds ?? []) {
+          consumers.add(consumer);
+        }
+      }
+      if (consumers.size > 0) {
+        terminal.message.terminal_consumer_ids = [...consumers];
+      }
+    }
+    if (options?.onPrepared?.(terminal) === false) {
+      throw new Error("Prepared terminal side effect was rejected");
+    }
+    return structuredClone(terminal);
+  };
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
@@ -136,19 +169,27 @@ export function prepareInputTerminal(
         }
         const preparationSequence =
           terminal.preparationSequence ?? ++store.nextGeneration;
+        const preparedBase = mergeTerminalConsumers(store.entries);
         const prepared = {
           ...preparedBase,
+          inputDispositionKeys: keys,
           preparedAt: terminal.preparedAt ?? Date.now(),
           preparationSequence,
           owner: { ...preparedBase.owner, preparationSequence },
         };
         let changed = false;
+        let storedCanonicalTerminal = false;
         for (const key of keys) {
           const entry = store.entries[key];
           if (!entry) continue;
           delete entry.queuedInput;
           entry.replayCompleted = true;
-          entry.preparedTerminal = prepared;
+          if (!storedCanonicalTerminal) {
+            entry.preparedTerminal = prepared;
+            storedCanonicalTerminal = true;
+          } else {
+            delete entry.preparedTerminal;
+          }
           changed = true;
         }
         syncMemoryFromDurable(ledger, store);
@@ -174,18 +215,28 @@ export function prepareInputTerminal(
   }
   const preparationSequence =
     terminal.preparationSequence ?? ++ledger.nextGeneration;
+  const preparedBase = mergeTerminalConsumers(
+    Object.fromEntries(ledger.entries.entries()),
+  );
   const prepared = {
     ...preparedBase,
+    inputDispositionKeys: keys,
     preparedAt: terminal.preparedAt ?? Date.now(),
     preparationSequence,
     owner: { ...preparedBase.owner, preparationSequence },
   };
+  let storedCanonicalTerminal = false;
   for (const key of keys) {
     const entry = ledger.entries.get(key);
     if (!entry) continue;
     delete entry.queuedInput;
     entry.replayCompleted = true;
-    entry.preparedTerminal = prepared;
+    if (!storedCanonicalTerminal) {
+      entry.preparedTerminal = prepared;
+      storedCanonicalTerminal = true;
+    } else {
+      delete entry.preparedTerminal;
+    }
   }
   return true;
 }
@@ -202,14 +253,18 @@ export function completePreparedInputTerminal(
   if (ledger.persistentPath) {
     try {
       return durableTransaction(ledger.persistentPath, (store) => {
+        const prepared = keys
+          .map((key) => store.entries[key]?.preparedTerminal)
+          .find((terminal) => terminal?.message.turn_id === turnId);
         let changed = false;
-        for (const key of keys) {
-          const entry = store.entries[key];
-          if (entry?.preparedTerminal?.message.turn_id === turnId) {
+        if (prepared) {
+          for (const key of keys) {
+            const entry = store.entries[key];
+            if (!entry) continue;
             recordCompletedTerminalAuthority(
               entry,
-              entry.preparedTerminal.owner,
-              entry.preparedTerminal.publicationClaimed,
+              prepared.owner,
+              prepared.publicationClaimed,
             );
             delete entry.preparedTerminal;
             changed = true;
@@ -222,13 +277,17 @@ export function completePreparedInputTerminal(
       return false;
     }
   }
-  for (const key of keys) {
-    const entry = ledger.entries.get(key);
-    if (entry?.preparedTerminal?.message.turn_id === turnId) {
+  const prepared = keys
+    .map((key) => ledger.entries.get(key)?.preparedTerminal)
+    .find((terminal) => terminal?.message.turn_id === turnId);
+  if (prepared) {
+    for (const key of keys) {
+      const entry = ledger.entries.get(key);
+      if (!entry) continue;
       recordCompletedTerminalAuthority(
         entry,
-        entry.preparedTerminal.owner,
-        entry.preparedTerminal.publicationClaimed,
+        prepared.owner,
+        prepared.publicationClaimed,
       );
       delete entry.preparedTerminal;
     }
@@ -275,9 +334,9 @@ export function loadPreparedInputTerminals(
       if (prepared) {
         const ordered = {
           ...prepared,
-          // Pre-sequence journals can only use their durable reservation
-          // generation as a stable upgrade order. New writes always carry the
-          // exact monotonic preparation sequence.
+          message: prepared.suppressConsumerPublication
+            ? terminalMessageWithoutConsumers(prepared.message)
+            : prepared.message,
           preparationSequence: prepared.preparationSequence ?? entry.generation,
           owner: {
             ...prepared.owner,
@@ -358,7 +417,12 @@ export function loadPreparedInputTerminals(
 
 function preparedTerminalWithoutClaim(candidate: DurablePreparedInputTerminal) {
   const { publicationClaimed: _, ...durable } = candidate;
-  return durable;
+  return {
+    ...durable,
+    message: durable.suppressConsumerPublication
+      ? terminalMessageWithoutConsumers(durable.message)
+      : durable.message,
+  };
 }
 
 function completedAuthorityKey(
@@ -557,9 +621,9 @@ export function publishPreparedInputTerminalIfCurrent(
   const ledger = getLedger(listener);
   const expected = preparedTerminalWithoutClaim(terminal);
   const publishAndRetire = (
-    entries: Iterable<AcceptedInputDispositionEntry>,
+    entries: Map<string, AcceptedInputDispositionEntry>,
   ) => {
-    const values = [...entries];
+    const values = [...entries.values()];
     const quarantines = buildLegacyAuthorityQuarantineIndex(values);
     const matches = values.filter(
       (entry) =>
@@ -581,9 +645,12 @@ export function publishPreparedInputTerminalIfCurrent(
         (matches.includes(entry) || terminalAuthorityMatches(prepared, winner))
       );
     });
-    for (const entry of resolvedEntries) {
-      const prepared = entry.preparedTerminal;
-      if (!prepared) continue;
+    const completedEntries = new Set(resolvedEntries);
+    for (const key of winner.inputDispositionKeys ?? []) {
+      const entry = entries.get(key);
+      if (entry) completedEntries.add(entry);
+    }
+    for (const entry of completedEntries) {
       recordCompletedTerminalAuthority(
         entry,
         winner.owner,
@@ -594,10 +661,10 @@ export function publishPreparedInputTerminalIfCurrent(
     return true;
   };
   if (!ledger.persistentPath) {
-    return publishAndRetire(ledger.entries.values());
+    return publishAndRetire(ledger.entries);
   }
   return durableTransaction(ledger.persistentPath, (store) => {
-    const result = publishAndRetire(Object.values(store.entries));
+    const result = publishAndRetire(new Map(Object.entries(store.entries)));
     syncMemoryFromDurable(ledger, store);
     return { result, changed: result };
   });
@@ -763,15 +830,10 @@ export function hasPreparedInputTerminalRevision(
       prepared.owner.interruptedRevision === interruptedRevision,
   );
 }
-
 export function hasPreparedInputTerminalAuthority(
   listener: ListenerRuntime,
   scope: DurablePreparedInputTerminal["scope"],
-  authority: {
-    interruptedRevision: string;
-    authorityRevision: string;
-    recoveryLineageId?: string;
-  },
+  authority: InterruptedTerminalAuthority,
 ): boolean {
   return loadPreparedInputTerminals(listener).some(
     (prepared) =>
@@ -780,7 +842,11 @@ export function hasPreparedInputTerminalAuthority(
       prepared.owner.interruptedRevision === authority.interruptedRevision &&
       (prepared.owner.interruptedAuthorityRevision ??
         prepared.owner.interruptedRevision) === authority.authorityRevision &&
-      prepared.owner.recoveryLineageId === authority.recoveryLineageId,
+      prepared.owner.recoveryLineageId === authority.recoveryLineageId &&
+      (authority.terminalIdentity === undefined ||
+        prepared.owner.terminalIdentity === authority.terminalIdentity) &&
+      (authority.preparationSequence === undefined ||
+        prepared.owner.preparationSequence === authority.preparationSequence),
   );
 }
 
