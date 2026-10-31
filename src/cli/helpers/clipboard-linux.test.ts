@@ -197,6 +197,17 @@ describe("readLinuxClipboardImage", () => {
     ).rejects.toThrow("wl-paste timed out");
   });
 
+  test("throws the wl-paste stderr when every tool fails", async () => {
+    const runner = fakeRunner({
+      [WL_LIST]: failed("Failed to connect to a Wayland server"),
+      [XCLIP_LIST]: failed("Error: Can't open display: :0"),
+    });
+
+    await expect(
+      readLinuxClipboardImage({ env: WAYLAND_ENV, ...runner }),
+    ).rejects.toThrow("wl-paste failed: Failed to connect to a Wayland server");
+  });
+
   test("throws when the image exceeds the size cap", async () => {
     const runner = fakeRunner({
       [WL_LIST]: "image/png\n",

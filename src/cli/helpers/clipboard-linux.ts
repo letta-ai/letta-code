@@ -102,7 +102,7 @@ export async function readLinuxClipboardImage({
         throw new Error("clipboard image is too large");
       }
       if (EMPTY_CLIPBOARD.test(stderr)) return null;
-      failure = new Error(
+      failure ??= new Error(
         `${tool.list[0]} ${e.killed ? "timed out" : `failed: ${stderr || `exit ${e.code}`}`}`,
       );
     }
