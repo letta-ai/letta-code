@@ -202,19 +202,11 @@ function validateQueuedInput(value: unknown): value is DurableQueuedInput {
   );
 }
 
-function validateDurableStore(value: unknown): DurableStore {
-  if (
-    !isRecord(value) ||
-    (value.version !== 2 && value.version !== 3 && value.version !== 4) ||
-    !Number.isSafeInteger(value.nextGeneration) ||
-    (value.nextGeneration as number) < 0 ||
-    !isRecord(value.entries) ||
-    !isRecord(value.reservations)
-  ) {
-    throw new Error("Invalid accepted-input disposition store");
-  }
-  for (const [key, rawEntry] of Object.entries(value.entries)) {
-    const [runtimeKey, domain, identityId] = parseDispositionKey(key);
+function validateEntry(key: string, rawEntry: unknown, version: unknown) {
+  let runtimeKey: string | undefined;
+  try {
+    const [parsedRuntimeKey, domain, identityId] = parseDispositionKey(key);
+    runtimeKey = parsedRuntimeKey;
     if (
       !isRecord(rawEntry) ||
       (rawEntry.disposition !== "started" &&
@@ -227,7 +219,7 @@ function validateDurableStore(value: unknown): DurableStore {
       throw new Error("Invalid accepted-input disposition entry");
     }
     // Upgrade v2 namespace-free tombstones; v4 requires replay or completion.
-    if (value.version === 2) {
+    if (version === 2) {
       if (
         rawEntry.queuedInput !== undefined &&
         isRecord(rawEntry.queuedInput)
@@ -365,6 +357,46 @@ function validateDurableStore(value: unknown): DurableStore {
     ) {
       throw new Error("Completed terminal authority is invalid");
     }
+    return rawEntry;
+  } catch (error) {
+    console.warn(
+      `Ignoring invalid input disposition ${key}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    if (
+      runtimeKey !== undefined &&
+      isRecord(rawEntry) &&
+      rawEntry.disposition === "started"
+    ) {
+      return {
+        disposition: "started",
+        replayCompleted: true,
+        runtimeKey,
+        generation: 0,
+        acceptedAt: 0,
+        expiresAt:
+          typeof rawEntry.expiresAt === "number"
+            ? rawEntry.expiresAt
+            : Date.now() + ACCEPTED_INPUT_DISPOSITION_TTL_MS,
+      };
+    }
+    return undefined;
+  }
+}
+function validateDurableStore(value: unknown): DurableStore {
+  if (
+    !isRecord(value) ||
+    (value.version !== 2 && value.version !== 3 && value.version !== 4) ||
+    !Number.isSafeInteger(value.nextGeneration) ||
+    (value.nextGeneration as number) < 0 ||
+    !isRecord(value.entries) ||
+    !isRecord(value.reservations)
+  ) {
+    throw new Error("Invalid accepted-input disposition store");
+  }
+  for (const [key, rawEntry] of Object.entries(value.entries)) {
+    const entry = validateEntry(key, rawEntry, value.version);
+    if (entry) value.entries[key] = entry;
+    else delete value.entries[key];
   }
   for (const [key, rawReservation] of Object.entries(value.reservations)) {
     const [runtimeKey] = parseDispositionKey(key);
@@ -384,7 +416,6 @@ function validateDurableStore(value: unknown): DurableStore {
   value.version = 4;
   return value as DurableStore;
 }
-
 function readDurableStore(path: string): DurableStore {
   if (!existsSync(path)) return emptyDurableStore();
   const size = statSync(path).size;
@@ -393,13 +424,11 @@ function readDurableStore(path: string): DurableStore {
   }
   return validateDurableStore(JSON.parse(readFileSync(path, "utf8")));
 }
-
 function prepareStateDirectory(path: string): void {
   const dir = dirname(path);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
 }
-
 function writeDurableStore(path: string, store: DurableStore): void {
   prepareStateDirectory(path);
   const serialized = JSON.stringify(store);
@@ -426,20 +455,16 @@ function writeDurableStore(path: string, store: DurableStore): void {
     throw error;
   }
 }
-
 function currentProcessOwner(): ProcessOwner {
   return currentDurableLockOwner();
 }
-
 function isOwnerAlive(owner: ProcessOwner): boolean {
   return durableLockOwnerIsAlive(owner);
 }
-
 function acquireLock(path: string, waitMs = LOCK_WAIT_MS): () => void {
   prepareStateDirectory(path);
   return acquireDurableFileLock(path, { waitMs });
 }
-
 function pruneDurableStore(store: DurableStore, now: number): boolean {
   let changed = false;
   changed =
@@ -469,7 +494,6 @@ function pruneDurableStore(store: DurableStore, now: number): boolean {
   }
   return changed;
 }
-
 export function durableTransaction<T>(
   path: string,
   transaction: (store: DurableStore) => { result: T; changed: boolean },
@@ -485,7 +509,6 @@ export function durableTransaction<T>(
     release();
   }
 }
-
 export function syncMemoryFromDurable(
   ledger: AcceptedInputDispositionLedger,
   store: DurableStore,
@@ -515,7 +538,6 @@ export function syncMemoryFromDurable(
   rebuildDispositionCapacityCounts(ledger);
   ledger.expiryQueue.sort((left, right) => left.expiresAt - right.expiresAt);
 }
-
 export type InputDispositionAdmission =
   | { kind: "untracked" }
   | { kind: "duplicate"; disposition: AcceptedInputDisposition }
@@ -598,7 +620,6 @@ function reserveDurably(
     return { kind: "full" };
   }
 }
-
 export function reserveInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -641,7 +662,6 @@ export function reserveInputDisposition(
     reservation: { key, generation, runtimeKey: runtime.key },
   };
 }
-
 function serializeQueuedInput(
   runtime: ConversationRuntime,
   identity: InputIdentity,
@@ -665,7 +685,6 @@ function serializeQueuedInput(
   }
   return JSON.parse(serialized) as DurableQueuedInput;
 }
-
 export function commitInputDisposition(
   runtime: ConversationRuntime,
   reservation: InputDispositionReservation | undefined,
@@ -745,7 +764,6 @@ export function commitInputDisposition(
   });
   return true;
 }
-
 export function getInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -769,7 +787,6 @@ export function getInputDisposition(
   expireAcceptedInputDispositions(ledger, Date.now());
   return ledger.entries.get(key)?.disposition ?? undefined;
 }
-
 export function rememberInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
@@ -789,14 +806,12 @@ export function rememberInputDisposition(
   }
   return true;
 }
-
 export function forgetQueuedInputDisposition(
   runtime: ConversationRuntime,
   identity: InputIdentity | undefined,
 ): boolean {
   return forgetQueuedInputDispositions(runtime, identity ? [identity] : []);
 }
-
 /** Atomically discard a queue mutation's complete set of durable payloads. */
 export function forgetQueuedInputDispositions(
   runtime: ConversationRuntime,
@@ -849,7 +864,6 @@ export function forgetQueuedInputDispositions(
   }
   return true;
 }
-
 /** Atomically transition queued dispositions while retaining crash-replay payloads. */
 export function markQueuedInputDispositionsStarted(
   runtime: ConversationRuntime,
@@ -894,7 +908,6 @@ export function markQueuedInputDispositionsStarted(
   }
   return true;
 }
-
 /** Return a destructively dequeued input to durable queued ownership. */
 export function requeueStartedInputDispositions(
   runtime: ConversationRuntime,
@@ -936,7 +949,6 @@ export function requeueStartedInputDispositions(
   }
   return true;
 }
-
 /** Read every replay payload under the store lock for startup restore. */
 export function loadDurableQueuedInputs(
   listener: ListenerRuntime,
