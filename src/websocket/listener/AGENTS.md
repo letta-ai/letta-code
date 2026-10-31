@@ -79,7 +79,12 @@ continuations) and sends them with that request. There is deliberately no mode
 that holds input until the turn ends. A batch only splits at real boundaries: a
 different conversation, connection, model selection, or image policy, or a
 `noCoalesce` input (the OpenAI-compatible App Server path, where each HTTP
-request needs its own turn). Who sent an input is never a boundary.
+request needs its own turn). Who sent an input is never a boundary, with one
+exception: process-owned items (cron prompts, task notifications, mod
+continuations) never share a turn with a client message that carries an MCP
+originator token. They vote unattributed, so merging would either strip the
+sender's token or let untrusted content use it. Each side runs as its own turn,
+in queue order.
 
 **Don't make the queue decide what gets through.** If a feature needs to
 restrict something (MCP access, identity, permissions), enforce it where that
