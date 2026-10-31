@@ -140,6 +140,7 @@ async function deliverTeleportFailure(params: {
     Buffer.from(
       JSON.stringify({
         type: "teleport_failed",
+        request_id: "request-failed",
         teleport_id: "teleport-1",
         runtime: {
           agent_id: "agent-1",
@@ -219,32 +220,40 @@ test("active and drained teleport intent is journaled before terminal commit", (
         });
         if (!pending) throw new Error("expected pending teleport");
 
+        const lease =
+          runtime.turnLifecycle.currentLease ??
+          runtime.turnLifecycle.begin({
+            origin: "message",
+            workingDirectory: process.cwd(),
+          });
         finishClaimedTeleport(
           runtime,
           pending,
           (options) => {
-            if (activeTurn) {
-              expect(
-                options.onBeforePrepareInputTerminal?.({
-                  message: { terminal_consumer_ids: ["consumer-1"] },
-                  owner: {
-                    interruptedRevision: "before-teleport",
-                    terminalIdentity: "terminal-teleport",
-                  },
-                } as never),
-              ).toBeTruthy();
-            }
-            const beforeCommit = createInterruptedTurnStore().read(
+            const transition = finishListenerTurn(runtime, lease, {
+              ...options,
+              socket: socket as never,
+              turnId: `turn-${activeTurn}`,
+              ...(activeTurn ? { terminalConsumerIds: ["consumer-1"] } : {}),
+            });
+            const beforeReady = createInterruptedTurnStore().read(
               "agent-1",
               "conversation-1",
             );
-            expect(beforeCommit?.teleport).toMatchObject({
+            expect(beforeReady?.teleport).toMatchObject({
               teleportId: `teleport-${activeTurn}`,
               activeTurn,
               ...(continuation ? { continuation } : {}),
+              ...(activeTurn
+                ? {
+                    continuation: expect.objectContaining({
+                      terminal_consumer_ids: ["consumer-1"],
+                    }),
+                  }
+                : {}),
               ready: false,
             });
-            return { finished: true } as never;
+            return transition;
           },
           { stopReason: activeTurn ? "cancelled" : "end_turn" },
         );
@@ -253,6 +262,11 @@ test("active and drained teleport intent is journaled before terminal commit", (
           "conversation-1",
         );
         expect(readyRecord?.teleport).toMatchObject({ ready: true });
+        if (activeTurn) {
+          expect(readyRecord?.teleport?.continuation).toMatchObject({
+            terminal_consumer_ids: ["consumer-1"],
+          });
+        }
         expect(pending.interruptedRevision).toBe(readyRecord?.revision);
 
         const restarted = createRuntime();

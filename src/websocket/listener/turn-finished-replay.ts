@@ -145,7 +145,9 @@ export function isInterruptedTerminalAuthorityCurrent(
       authority.recoveryLineageId,
     );
     if (snapshot) {
-      return snapshot.record.revision === authority.interruptedRevision &&
+      return snapshot.record.revision ===
+        (authority.recoveryAuthorityBaseRevision ??
+          authority.interruptedRevision) &&
         snapshot.revisionToken === authority.authorityRevision
         ? "current"
         : snapshot.record.recoveryClaimCompletion?.state === "pending"
@@ -157,7 +159,9 @@ export function isInterruptedTerminalAuthorityCurrent(
       runtime.conversationId,
       authority.recoveryLineageId,
     );
-    return retired?.interruptedRevision === authority.interruptedRevision &&
+    return retired?.interruptedRevision ===
+      (authority.recoveryAuthorityBaseRevision ??
+        authority.interruptedRevision) &&
       retired.authorityRevision === authority.authorityRevision
       ? "current"
       : retired

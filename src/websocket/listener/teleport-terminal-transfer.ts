@@ -117,7 +117,7 @@ export function hasDurableTeleportTerminal(
   revision: string,
 ): boolean {
   try {
-    const record = createInterruptedTurnStore().read(
+    const record = createInterruptedTurnStore().readOrThrow(
       pending.agentId,
       pending.conversationId,
     );
@@ -146,10 +146,26 @@ export function retainDurableTeleportTerminal(
   return true;
 }
 
-export function persistedTeleportTerminalIsDurable(
+export function retireTeleportTerminalProof(
+  record: InterruptedTurnRecord,
+  committedRevision: string | undefined,
+): void {
+  if (!committedRevision) return;
+  const store = createTurnFinishedStore();
+  const proof = store
+    .read(record.agentId, record.conversationId)
+    ?.terminals.find(
+      (terminal) =>
+        terminal.requiredConsumerIds.length === 0 &&
+        terminal.owner.interruptedRevision === committedRevision,
+    );
+  if (proof) store.remove(record.agentId, record.conversationId, proof.id);
+}
+
+export function classifyPersistedTeleportTerminal(
   runtime: ConversationRuntime,
   record: InterruptedTurnRecord,
-): boolean {
+): TeleportTerminalProof {
   const pending: PendingTeleport = {
     teleportId: record.teleport?.teleportId ?? "",
     connectionId: record.teleport?.connectionId ?? "",
@@ -168,7 +184,7 @@ export function persistedTeleportTerminalIsDurable(
       record.revision,
   );
   if (proof === "ambiguous") runtime.listener.scheduleRecordedRecovery?.();
-  return proof === "present";
+  return proof;
 }
 
 export function persistSuccessorTeleportReady(
@@ -186,17 +202,25 @@ export function persistSuccessorTeleportReady(
     return undefined;
   }
   try {
-    return createInterruptedTurnStore().write(
-      {
-        ...record,
-        teleport: {
-          ...record.teleport,
-          ready: true,
-          committedRevision,
-        },
+    const store = createInterruptedTurnStore();
+    const readyRecord = {
+      ...record,
+      teleport: {
+        ...record.teleport,
+        ready: true,
+        committedRevision,
+        preserveSuccessorWork: true,
       },
-      record.revision,
-    );
+    };
+    const authority = record.teleport.terminalAuthority;
+    return authority?.recoveryLineageId
+      ? (store.writeWithRecoveryAuthority({
+          record: readyRecord,
+          expectedRevision: record.revision ?? "",
+          lineageId: authority.recoveryLineageId,
+          expectedAuthorityRevision: authority.authorityRevision,
+        }) ?? undefined)
+      : store.write(readyRecord, record.revision);
   } catch {
     runtime.listener.scheduleRecordedRecovery?.();
     return undefined;
@@ -228,6 +252,8 @@ export function journalTeleportIntent(
                 ...(terminal.owner.recoveryLineageId
                   ? {
                       recoveryLineageId: terminal.owner.recoveryLineageId,
+                      recoveryAuthorityBaseRevision:
+                        terminal.owner.interruptedRevision,
                     }
                   : {}),
                 ...(terminal.owner.terminalIdentity

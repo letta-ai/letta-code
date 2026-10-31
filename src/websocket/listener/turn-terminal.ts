@@ -215,7 +215,10 @@ export function finishListenerTurn(
     if (nextRevision === false) throw new TeleportIntentUnavailableError();
     if (nextRevision) {
       terminalOwner.interruptedRevision = nextRevision;
-      if (!options.readInterruptedAuthorityRevision) {
+      if (
+        !options.readInterruptedAuthorityRevision ||
+        readAuthorityRevision() === nextRevision
+      ) {
         expectedAuthorityRevision = nextRevision;
         terminalOwner.interruptedAuthorityRevision = nextRevision;
       }

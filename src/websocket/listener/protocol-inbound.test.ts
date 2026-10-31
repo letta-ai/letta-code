@@ -407,6 +407,7 @@ describe("teleport protocol-inbound validators", () => {
     },
     {
       type: "teleport_failed",
+      request_id: "request-failed",
       teleport_id: "teleport-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
       error: "Target failed to start",

@@ -29,15 +29,16 @@ import { getOrCreateConversationPermissionModeStateRef } from "./permission-mode
 import { emitProtocolV2Message } from "./protocol-outbound";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getConversationRuntime } from "./runtime";
+import { emitTeleportFailedAck } from "./teleport-failed-ack";
 import {
+  classifyPersistedTeleportTerminal,
   commitActiveTeleportTerminalTransfer,
   journalTeleportIntent,
-  persistedTeleportTerminalIsDurable,
   persistSuccessorTeleportReady,
   retainDurableTeleportTerminal,
+  retireTeleportTerminalProof,
 } from "./teleport-terminal-transfer";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
-import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
   ConversationRuntime,
@@ -151,22 +152,6 @@ function persistedTeleportRecord(
   const record = createInterruptedTurnStore().read(agentId, conversationId);
   return record?.teleport?.teleportId === teleportId ? record : null;
 }
-function retireTeleportTerminalProof(
-  record: InterruptedTurnRecord,
-  committedRevision: string | undefined,
-): void {
-  if (!committedRevision) return;
-  const store = createTurnFinishedStore();
-  const proof = store
-    .read(record.agentId, record.conversationId)
-    ?.terminals.find(
-      (terminal) =>
-        terminal.requiredConsumerIds.length === 0 &&
-        terminal.owner.interruptedRevision === committedRevision,
-    );
-  if (proof) store.remove(record.agentId, record.conversationId, proof.id);
-}
-
 function authorizePersistedTeleportReady(
   runtime: ConversationRuntime,
   pending: PendingTeleport,
@@ -174,7 +159,10 @@ function authorizePersistedTeleportReady(
 ): boolean {
   const intent = record.teleport;
   if (!intent || !record.revision) return false;
-  if (!intent.ready && !persistedTeleportTerminalIsDurable(runtime, record)) {
+  if (
+    !intent.ready &&
+    classifyPersistedTeleportTerminal(runtime, record) !== "present"
+  ) {
     return false;
   }
   pending.activeTurn = intent.activeTurn;
@@ -195,6 +183,9 @@ function authorizePersistedTeleportReady(
           connectionId: pending.connectionId,
           ready: true,
           committedRevision,
+          ...(record.revision !== committedRevision
+            ? { preserveSuccessorWork: true }
+            : {}),
         },
       },
       record.revision,
@@ -206,7 +197,6 @@ function authorizePersistedTeleportReady(
     return false;
   }
 }
-
 function persistIdleTeleportReady(
   pending: PendingTeleport,
   intentRevision: string,
@@ -412,7 +402,6 @@ export function handleTeleportProbe(
     "teleport_probe",
   );
 }
-
 export function handleTeleportRequest(params: {
   listener: ListenerRuntime;
   command: TeleportRequestCommand;
@@ -722,7 +711,7 @@ export function finishClaimedTeleport(
   const store = createInterruptedTurnStore();
   let record: InterruptedTurnRecord | null;
   try {
-    record = store.read(pending.agentId, pending.conversationId);
+    record = store.readOrThrow(pending.agentId, pending.conversationId);
   } catch {
     runtime.listener.scheduleRecordedRecovery?.();
     return transition;
@@ -756,19 +745,17 @@ export function finishClaimedTeleport(
     return transition;
   }
   if (!record.teleport) return transition;
-  let terminalIsDurable: boolean;
-  try {
-    terminalIsDurable = persistedTeleportTerminalIsDurable(runtime, record);
-  } catch {
-    runtime.listener.scheduleRecordedRecovery?.();
-    return transition;
-  }
+  const terminalProof = classifyPersistedTeleportTerminal(runtime, record);
   if (options.canCommit?.() === false) {
-    if (!terminalIsDurable) {
+    if (terminalProof === "absent") {
       abandonTeleportIntent(runtime.listener, pending, intentRevision);
     } else {
       runtime.listener.scheduleRecordedRecovery?.();
     }
+    return transition;
+  }
+  if (terminalProof !== "present") {
+    runtime.listener.scheduleRecordedRecovery?.();
     return transition;
   }
   try {
@@ -950,6 +937,7 @@ export function handleTeleportFailure(params: {
         pending.teleportId,
       ),
     );
+    emitTeleportFailedAck(params);
     return;
   }
   const reservation =
@@ -976,6 +964,7 @@ export function handleTeleportFailure(params: {
       pending.teleportId,
     ),
   );
+  emitTeleportFailedAck(params);
   emitLoopErrorNotice(params.socket, runtime, {
     message: `Teleport failed: ${params.command.error}`,
     stopReason: "error",

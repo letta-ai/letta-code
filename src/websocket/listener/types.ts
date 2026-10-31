@@ -334,6 +334,7 @@ export type DurablePreparedInputTerminal = {
 export type InterruptedTerminalAuthority = {
   interruptedRevision: string;
   authorityRevision: string;
+  recoveryAuthorityBaseRevision?: string;
   recoveryLineageId?: string;
   terminalIdentity?: string;
   preparationSequence?: number;

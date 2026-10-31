@@ -37,6 +37,8 @@ import {
   resolveRecoveryEligibility,
 } from "./recovery-ownership";
 import { getActiveRuntime, getConversationRuntimeKey } from "./runtime";
+import { retireReadyTeleportRecord } from "./teleport-ready-cleanup";
+import { retireTeleportTerminalProof } from "./teleport-terminal-transfer";
 import { handleIncomingMessage } from "./turn";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { TurnLease } from "./turn-lifecycle";
@@ -343,15 +345,7 @@ export async function recoverRecordedTurns(
               deferred = true;
               continue;
             }
-            if (
-              !store.remove(
-                record.agentId,
-                record.conversationId,
-                record.revision ?? null,
-              )
-            ) {
-              deferred = true;
-            }
+            if (!retireReadyTeleportRecord(store, record)) deferred = true;
           } else if (teleport.status === "failed") {
             const failureWasAdmitted =
               loadDurableQueuedInputEntries(listener).some(
@@ -392,15 +386,7 @@ export async function recoverRecordedTurns(
             } else if (
               recoveryRecord.teleport.readyRevision === record.revision
             ) {
-              if (
-                !store.remove(
-                  record.agentId,
-                  record.conversationId,
-                  record.revision,
-                )
-              ) {
-                deferred = true;
-              }
+              if (!retireReadyTeleportRecord(store, record)) deferred = true;
             } else {
               try {
                 store.write(
@@ -482,21 +468,27 @@ export async function recoverRecordedTurns(
                       ...teleportIntent,
                       ready: true,
                       committedRevision,
+                      preserveSuccessorWork: true,
                     },
                   },
                 });
+                retireTeleportTerminalProof(recoveryRecord, committedRevision);
               } else {
-                store.write(
+                const readyRecord = store.write(
                   {
                     ...record,
                     teleport: {
                       ...teleportIntent,
                       ready: true,
                       committedRevision,
+                      ...(record.revision !== committedRevision
+                        ? { preserveSuccessorWork: true }
+                        : {}),
                     },
                   },
                   record.revision,
                 );
+                retireTeleportTerminalProof(readyRecord, committedRevision);
               }
             } catch {
               deferred = true;

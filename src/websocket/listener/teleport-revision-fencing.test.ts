@@ -342,6 +342,7 @@ test("failure admission cleanup never retargets an inherited successor revision"
       listener,
       command: {
         type: "teleport_failed",
+        request_id: "request-failed",
         teleport_id: "teleport-cleanup-race",
         runtime: {
           agent_id: "agent-cleanup",

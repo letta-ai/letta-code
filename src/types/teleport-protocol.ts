@@ -39,9 +39,18 @@ export interface TeleportRequestCommand {
 
 export interface TeleportFailedCommand {
   type: "teleport_failed";
+  request_id: string;
   teleport_id: string;
   runtime: RuntimeScope;
   error: string;
+}
+
+export interface TeleportFailedAckMessage {
+  type: "teleport_failed_ack";
+  request_id: string;
+  teleport_id: string;
+  runtime: RuntimeScope;
+  accepted: true;
 }
 
 export type TeleportProtocolCommand =
@@ -73,4 +82,5 @@ export interface TeleportReadyMessage {
 
 export type TeleportProtocolMessage =
   | TeleportProbeResponseMessage
+  | TeleportFailedAckMessage
   | TeleportReadyMessage;

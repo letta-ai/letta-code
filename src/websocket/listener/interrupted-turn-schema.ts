@@ -31,6 +31,10 @@ export function isTeleportIntent(
     (teleport.terminalAuthority === undefined ||
       (typeof teleport.terminalAuthority.interruptedRevision === "string" &&
         typeof teleport.terminalAuthority.authorityRevision === "string" &&
+        (teleport.terminalAuthority.recoveryAuthorityBaseRevision ===
+          undefined ||
+          typeof teleport.terminalAuthority.recoveryAuthorityBaseRevision ===
+            "string") &&
         (teleport.terminalAuthority.recoveryLineageId === undefined ||
           typeof teleport.terminalAuthority.recoveryLineageId === "string") &&
         (teleport.terminalAuthority.terminalIdentity === undefined ||
@@ -38,6 +42,8 @@ export function isTeleportIntent(
         (teleport.terminalAuthority.preparationSequence === undefined ||
           typeof teleport.terminalAuthority.preparationSequence ===
             "number"))) &&
+    (teleport.preserveSuccessorWork === undefined ||
+      typeof teleport.preserveSuccessorWork === "boolean") &&
     (teleport.readyRevision === undefined ||
       typeof teleport.readyRevision === "string") &&
     (teleport.continuation === undefined ||

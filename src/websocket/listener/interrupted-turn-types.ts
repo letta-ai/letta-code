@@ -18,6 +18,8 @@ export interface InterruptedTurnRecord {
     committedRevision?: string;
     /** Exact terminal authority whose proof may authorize destination ownership. */
     terminalAuthority?: InterruptedTerminalAuthority;
+    /** Ready was CASed onto a record that already contained successor work. */
+    preserveSuccessorWork?: boolean;
     /** Exact record revision which first published this ready handoff. */
     readyRevision?: string;
   };
