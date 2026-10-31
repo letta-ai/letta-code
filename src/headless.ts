@@ -167,10 +167,7 @@ import {
   prependReminderPartsToContent,
 } from "./reminders/engine";
 import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
-import {
-  createSharedReminderState,
-  enqueueMemoryGitSyncReminder,
-} from "./reminders/state";
+import { createSharedReminderState } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -4802,12 +4799,6 @@ async function runBidirectionalMode(
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
-          enqueueReminder: (text) => {
-            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
-          },
-          emitWarning: (text) => {
-            debugWarn("memfs-git", text);
-          },
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;
