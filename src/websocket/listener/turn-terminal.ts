@@ -214,9 +214,11 @@ export function finishListenerTurn(
     const nextRevision = options.onBeforePrepareInputTerminal(inputTerminal);
     if (nextRevision === false) throw new TeleportIntentUnavailableError();
     if (nextRevision) {
-      expectedAuthorityRevision = nextRevision;
       terminalOwner.interruptedRevision = nextRevision;
-      terminalOwner.interruptedAuthorityRevision = nextRevision;
+      if (!options.readInterruptedAuthorityRevision) {
+        expectedAuthorityRevision = nextRevision;
+        terminalOwner.interruptedAuthorityRevision = nextRevision;
+      }
     }
   }
   let preparedValidationRejected = false;

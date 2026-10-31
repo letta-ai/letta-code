@@ -1,5 +1,10 @@
+import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
 import { hasPreparedInputTerminalRevision } from "./input-terminal-journal";
-import { recordListenerWork } from "./interrupted-turn-record";
+import {
+  createInterruptedTurnStore,
+  type InterruptedTurnRecord,
+  recordListenerWork,
+} from "./interrupted-turn-record";
 import { createTurnFinishedStore } from "./turn-finished-replay";
 import type { TurnFinishTransition } from "./turn-lifecycle";
 import type {
@@ -43,9 +48,24 @@ export function hasDurableTeleportTerminal(
     if (hasPreparedInputTerminalRevision(runtime.listener, scope, revision)) {
       return true;
     }
+    const interrupted = createInterruptedTurnStore().read(
+      pending.agentId,
+      pending.conversationId,
+    );
+    if (
+      interrupted?.revision === revision &&
+      hasCompletedInputTerminalRevision(
+        runtime.listener,
+        runtime.key,
+        interrupted.durableInputIdentities ?? [],
+        revision,
+      )
+    ) {
+      return true;
+    }
     return Boolean(
       createTurnFinishedStore()
-        .read(pending.agentId, pending.conversationId)
+        .readOrThrow(pending.agentId, pending.conversationId)
         ?.terminals.some(
           (terminal) => terminal.owner.interruptedRevision === revision,
         ),
@@ -71,6 +91,63 @@ export function retainDurableTeleportTerminal(
   }
   runtime.listener.scheduleRecordedRecovery?.();
   return true;
+}
+
+export function persistedTeleportTerminalIsDurable(
+  runtime: ConversationRuntime,
+  record: InterruptedTurnRecord,
+): boolean {
+  const revision = record.revision;
+  if (!revision) return false;
+  const scope = {
+    agentId: record.agentId,
+    conversationId: record.conversationId,
+  };
+  return (
+    hasPreparedInputTerminalRevision(runtime.listener, scope, revision) ||
+    hasCompletedInputTerminalRevision(
+      runtime.listener,
+      runtime.key,
+      record.durableInputIdentities ?? [],
+      revision,
+    ) ||
+    createTurnFinishedStore()
+      .readOrThrow(record.agentId, record.conversationId)
+      ?.terminals.some(
+        (terminal) => terminal.owner.interruptedRevision === revision,
+      ) === true
+  );
+}
+
+export function persistSuccessorTeleportReady(
+  runtime: ConversationRuntime,
+  pending: PendingTeleport,
+  record: InterruptedTurnRecord,
+  committedRevision: string,
+): string | undefined {
+  if (
+    record.teleport?.teleportId !== pending.teleportId ||
+    !hasDurableTeleportTerminal(runtime, pending, committedRevision)
+  ) {
+    runtime.listener.scheduleRecordedRecovery?.();
+    return undefined;
+  }
+  try {
+    return createInterruptedTurnStore().write(
+      {
+        ...record,
+        teleport: {
+          ...record.teleport,
+          ready: true,
+          committedRevision,
+        },
+      },
+      record.revision,
+    ).revision;
+  } catch {
+    runtime.listener.scheduleRecordedRecovery?.();
+    return undefined;
+  }
 }
 
 export function journalTeleportIntent(
