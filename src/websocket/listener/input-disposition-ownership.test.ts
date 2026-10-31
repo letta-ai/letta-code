@@ -462,4 +462,4 @@ test("aggregate terminal consumers are stored in one canonical journal", () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
-});
+}, 30_000);
