@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.316:docs:0cbe017ec92e78747c029b0f06df468694c74b2319097b5ad7a909fc90b4004e:runtime:c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c",
+  "candidate_id": "claude@2.1.316:docs:0cbe017ec92e78747c029b0f06df468694c74b2319097b5ad7a909fc90b4004e:runtime:fab7db3a2a6068e648943b3072644dd412d45ec0eadce978f70a8f0a854f47bd",
   "package_version": "2.1.316",
   "npm_integrity": "sha512-i3BpzyDkcCPnsa0CSkWgxGPs7WMsyqDkxkqT0SDxyEC5XMIxEmcUmluWRHG9VSeBY8Vyv+l9X34JvJ/Bj54nBQ==",
   "npm_published_at": "2026-10-31T00:42:05.743Z",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "173e13fd948351b8541918d56e7d0fa6ac931ff2c2b5dbf9b1c231cf11e1024f",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-10-31T02:21:28.991Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
@@ -1538,7 +1538,6 @@
         "ListAgents",
         "Monitor",
         "NotebookEdit",
-        "PushNotification",
         "Read",
         "ReportFindings",
         "ScheduleWakeup",
@@ -1583,45 +1582,46 @@
     ],
     "probes": [
       {
-        "name": "read-lines-9-10-tab-prefix",
-        "status": "passed",
-        "attempts": 1,
         "assertions": {
-          "exact_line_9": true,
           "exact_line_10": true,
-          "no_line_9_padding": true,
+          "exact_line_9": true,
           "no_arrow_separator": true,
+          "no_line_9_padding": true,
           "result_not_error": true
         },
+        "attempts": 1,
+        "error": null,
+        "filesystem_changes": [],
+        "name": "read-lines-9-10-tab-prefix",
+        "status": "passed",
         "tool_calls": [
           {
-            "name": "Read",
             "input": {
               "file_path": "/watch/repo/read-fixture.txt",
               "limit": 2,
               "offset": 9
-            }
+            },
+            "name": "Read"
           }
         ],
         "tool_results": [
           "9\tline9\n10\tline10"
-        ],
-        "filesystem_changes": [],
-        "error": null
+        ]
       },
       {
+        "assertions": {
+          "deleted_task_absent": true,
+          "deleted_task_get_errors": true,
+          "metadata_arbitrary_values_accepted": true,
+          "metadata_null_update_accepted": true
+        },
+        "attempts": 1,
+        "error": null,
+        "filesystem_changes": [],
         "name": "task-metadata-delete-contract",
         "status": "passed",
-        "attempts": 1,
-        "assertions": {
-          "metadata_arbitrary_values_accepted": true,
-          "metadata_null_update_accepted": true,
-          "deleted_task_get_errors": true,
-          "deleted_task_absent": true
-        },
         "tool_calls": [
           {
-            "name": "TaskCreate",
             "input": {
               "description": "Probe task for exercising task tools",
               "metadata": {
@@ -1629,10 +1629,10 @@
                 "probe": "remove"
               },
               "subject": "probe-task"
-            }
+            },
+            "name": "TaskCreate"
           },
           {
-            "name": "TaskUpdate",
             "input": {
               "metadata": {
                 "count": 3,
@@ -1645,30 +1645,31 @@
                 "probe": null
               },
               "taskId": "1"
-            }
+            },
+            "name": "TaskUpdate"
           },
           {
-            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            }
+            },
+            "name": "TaskGet"
           },
           {
-            "name": "TaskUpdate",
             "input": {
               "status": "deleted",
               "taskId": "1"
-            }
+            },
+            "name": "TaskUpdate"
           },
           {
-            "name": "TaskGet",
             "input": {
               "taskId": "1"
-            }
+            },
+            "name": "TaskGet"
           },
           {
-            "name": "TaskList",
-            "input": {}
+            "input": {},
+            "name": "TaskList"
           }
         ],
         "tool_results": [
@@ -1678,15 +1679,13 @@
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
-        ],
-        "filesystem_changes": [],
-        "error": null
+        ]
       }
     ],
-    "digest": "c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c"
+    "digest": "fab7db3a2a6068e648943b3072644dd412d45ec0eadce978f70a8f0a854f47bd"
   },
-  "fetched_at": "2026-10-31T02:22:22.815Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41159595709",
-  "state_commit_parent": "c7dc40abbdc17f95d23909b6607cd5ba4edfd5ca",
-  "analysis_parent_sha": "c7dc40abbdc17f95d23909b6607cd5ba4edfd5ca"
+  "fetched_at": "2026-10-31T14:18:45.370Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41209467425",
+  "state_commit_parent": "6c463d68c398ce793d5d24633e01eed155f10f46",
+  "analysis_parent_sha": "6c463d68c398ce793d5d24633e01eed155f10f46"
 }
