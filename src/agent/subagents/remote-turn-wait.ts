@@ -1,4 +1,3 @@
-import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
@@ -48,25 +47,6 @@ export async function collectRemoteTurnResult(
           }
         }
         return messages;
-      },
-      conversationMessages: async (accepted, readSignal) => {
-        const body = { limit: 50, order: "desc" as const };
-        if (accepted.conversation_id !== "default") {
-          const page = await backend.listConversationMessages(
-            accepted.conversation_id,
-            body,
-            { signal: readSignal },
-          );
-          return page.getPaginatedItems() as Message[];
-        }
-        // The parent id is never the owner of a helper's history.
-        if (!accepted.agent_id) return [];
-        const page = await backend.listAgentMessages(
-          accepted.agent_id,
-          { ...body, conversation_id: "default" },
-          { signal: readSignal },
-        );
-        return page.getPaginatedItems() as Message[];
       },
     });
     return {

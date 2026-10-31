@@ -501,6 +501,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 
@@ -588,6 +589,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 

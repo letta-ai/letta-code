@@ -150,54 +150,6 @@ test("ignores an early end_turn while the child's Super Run still owns workers",
   expect(result.text).toBe("All workers finished.");
 });
 
-test("returns the helper's final reply from a turn not linked to the Super Run", async () => {
-  // A task notification starts a new turn whose runs are never linked to the
-  // Super Run, so run_ids holds only the interim reply's run.
-  const result = await waitForAcceptedSuperRun(
-    receipt,
-    new AbortController().signal,
-    deps({
-      exact: async () => ({
-        ...exact(),
-        completed_at: "2026-10-31T19:47:02.927Z",
-        run_ids: ["run-interim"],
-      }),
-      messages: async () => [
-        {
-          id: "message-interim",
-          date: "2026-10-31T19:46:10.000Z",
-          message_type: "assistant_message",
-          content: "INTERIM: waiting for the notification.",
-        },
-      ],
-      conversationMessages: async (accepted) => {
-        expect(accepted).toBe(receipt);
-        return [
-          {
-            id: "message-unrelated-later",
-            date: "2026-10-31T19:48:00.000Z",
-            message_type: "assistant_message",
-            content: "A later, unrelated turn.",
-          },
-          {
-            id: "message-final",
-            date: "2026-10-31T19:47:02.713Z",
-            message_type: "assistant_message",
-            content: "FINAL: the answer.",
-          },
-          {
-            id: "message-interim",
-            date: "2026-10-31T19:46:10.000Z",
-            message_type: "assistant_message",
-            content: "INTERIM: waiting for the notification.",
-          },
-        ];
-      },
-    }),
-  );
-  expect(result.text).toBe("FINAL: the answer.");
-});
-
 test("a recovered child error does not fail the successful accepted send", async () => {
   const result = await waitForAcceptedSuperRun(
     receipt,

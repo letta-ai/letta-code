@@ -614,6 +614,7 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       agentId: scope?.agentId,
       conversationId: scope?.conversationId,
       actingUserId: scope?.actingUserId,
+      clientMessageIds: scope?.clientMessageIds,
     });
   };
 

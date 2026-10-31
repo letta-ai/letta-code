@@ -20,15 +20,6 @@ export interface SuperRunWaitDeps {
   ) => Promise<ExactSuperRun>;
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
-  /**
-   * Newest messages in the receipt's conversation. A turn started by a task
-   * notification is not linked to the Super Run, so the final reply can be
-   * missing from `run_ids`; when set, the reply is read from here instead.
-   */
-  conversationMessages?: (
-    receipt: EnqueueReceipt,
-    signal: AbortSignal,
-  ) => Promise<Message[]>;
   pollMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
@@ -91,30 +82,6 @@ function assistantText(messages: Message[]): string | null {
   const assistant = messages
     .filter((message) => message.message_type === "assistant_message")
     .sort((left, right) => (right.seq_id ?? 0) - (left.seq_id ?? 0))[0];
-  return textOf(assistant);
-}
-
-/** Newest assistant message written at or before the Super Run completed. */
-function conversationAssistantText(
-  messages: Message[],
-  completedAt: string | null,
-): string | null {
-  const cutoff = completedAt ? Date.parse(completedAt) : Number.NaN;
-  const time = (message: Message) => Date.parse(message.date);
-  const assistant = messages
-    .filter(
-      (message) =>
-        message.message_type === "assistant_message" &&
-        (Number.isNaN(cutoff) || time(message) <= cutoff),
-    )
-    .sort(
-      (left, right) =>
-        time(right) - time(left) || (right.seq_id ?? 0) - (left.seq_id ?? 0),
-    )[0];
-  return textOf(assistant);
-}
-
-function textOf(assistant: Message | undefined): string | null {
   if (assistant?.message_type !== "assistant_message") return null;
   const text =
     typeof assistant.content === "string"
@@ -203,22 +170,8 @@ export async function waitForAcceptedSuperRun(
     } catch {
       signal.throwIfAborted();
     }
-    let latest: string | null = null;
-    if (deps.conversationMessages) {
-      try {
-        latest = conversationAssistantText(
-          await deps.conversationMessages(
-            receipt,
-            AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
-          ),
-          exact.completed_at,
-        );
-      } catch {
-        signal.throwIfAborted();
-      }
-    }
     return {
-      text: latest ?? assistantText(messages) ?? noReplyMessage(receipt),
+      text: assistantText(messages) ?? noReplyMessage(receipt),
       runIds: exact.run_ids,
       stopReason: run.stop_reason ?? null,
     };
