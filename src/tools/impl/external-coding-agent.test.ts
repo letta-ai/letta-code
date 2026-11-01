@@ -1,12 +1,8 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
-import { buildParentMemoryNote } from "@/agent/parent-memory-note";
-import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
@@ -16,11 +12,23 @@ import {
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
   resolveExternalCodingAgentMcpReminder,
-  runExternalCodingAgent,
+  runExternalCodingAgent as runExternalCodingAgentImpl,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 import { clearNativeSessionCaptureForTests } from "./native-session-capture";
+
+// Existing lifecycle tests use synthetic parent IDs; keep discovery local to
+// the dedicated skill tests rather than querying real attached repositories.
+function runExternalCodingAgent(
+  options: Parameters<typeof runExternalCodingAgentImpl>[0],
+  deps: Parameters<typeof runExternalCodingAgentImpl>[1] = {},
+) {
+  return runExternalCodingAgentImpl(options, {
+    resolveSkillsReminder: async () => undefined,
+    ...deps,
+  });
+}
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -589,70 +597,86 @@ describe("external coding agent vault secrets", () => {
   });
 });
 
-describe("parent memory launch instructions", () => {
-  test.each(["claude-code", "codex"] as const)(
-    "composes instructions before the %s launch",
+describe("external coding agent reminder composition", () => {
+  test.each(["opencode", "cursor"] as const)(
+    "%s forwards MCP without discovering or forwarding skills",
     async (type) => {
-      const parentAgentId = `agent-worker-parent-${randomUUID()}`;
-      const directory = getScopedMemoryFilesystemRoot(parentAgentId);
-      for (const [hasMemory, mcpReminder] of [
-        [true, "MCP discovery"],
-        [true, undefined],
-        [false, undefined],
-        [false, "MCP discovery"],
-      ] as const) {
-        if (hasMemory) mkdirSync(directory, { recursive: true });
-        let received: string | undefined;
-        try {
-          const resolvedMcpReminder =
-            mcpReminder ??
-            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
-              inherit: false,
-            }));
-          await runExternalCodingAgent(
-            {
-              type,
-              parentAgentId,
-              prompt: "task",
-              mcpReminder: resolvedMcpReminder,
+      let discovered = false;
+      let received: string | undefined;
+      const result = await runExternalCodingAgent(
+        {
+          type,
+          parentAgentId: "parent",
+          prompt: "test",
+          mcpReminder: "MCP",
+        },
+        {
+          resolveSkillsReminder: async () => {
+            discovered = true;
+            return "skills";
+          },
+          resolveSecretEnv: async () => ({}),
+          [type === "cursor" ? "runCursorTurn" : "runOpenCodeTurn"]:
+            async (options: { mcpReminder?: string }) => {
+              received = options.mcpReminder;
+              return { agentId: "parent", report: "done", success: true };
             },
-            {
-              resolveSecretEnv: async () => ({}),
-              runPreflight: async () => ({
-                exitCode: 0,
-                stdout: '{"loggedIn":true}',
-                stderr: "",
-              }),
-              runProcess: async (command) => {
-                const index = command.args.indexOf("--append-system-prompt");
-                received = index >= 0 ? command.args[index + 1] : undefined;
-                return {
-                  exitCode: 0,
-                  stdout: '{"result":"done","session_id":"c1"}',
-                  stderr: "",
-                };
-              },
-              runCodexTurn: async (options) => {
-                received = options.mcpReminder;
-                throw new Error("captured launch instructions");
-              },
-            },
-          );
-          const note = buildParentMemoryNote(parentAgentId);
-          expect(received).toBe(
-            [
-              note
-                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
-                : undefined,
-              mcpReminder,
-            ]
-              .filter(Boolean)
-              .join("\n\n") || undefined,
-          );
-        } finally {
-          rmSync(directory, { recursive: true, force: true });
-        }
-      }
+        },
+      );
+      expect(result.success).toBe(true);
+      expect(discovered).toBe(false);
+      expect(received).toBe("MCP");
     },
   );
+
+  for (const type of ["claude-code", "codex"] as const) {
+    test.each([
+      ["skills", "MCP", "skills\n\nMCP"],
+      ["skills", undefined, "skills"],
+      [undefined, "MCP", "MCP"],
+      [undefined, undefined, undefined],
+    ])(
+      `${type} forwards skills and MCP independently (%s, %s)`,
+      async (skills, mcp, expected) => {
+        let received: string | undefined;
+        const result = await runExternalCodingAgent(
+          {
+            type,
+            parentAgentId: "parent",
+            cwd: "/repo",
+            prompt: "test",
+            mcpReminder: mcp,
+          },
+          {
+            resolveSkillsReminder: async (parent, cwd) => {
+              expect(parent).toBe("parent");
+              expect(cwd).toBe("/repo");
+              return skills;
+            },
+            resolveSecretEnv: async () => ({}),
+            runPreflight: async () => ({
+              exitCode: 0,
+              stdout: '{"loggedIn":true}',
+              stderr: "",
+            }),
+            runProcess: async (command) => {
+              const index = command.args.indexOf("--append-system-prompt");
+              received = index < 0 ? undefined : command.args[index + 1];
+              return {
+                exitCode: 0,
+                stdout: '{"result":"done","session_id":"c1"}',
+                stderr: "",
+              };
+            },
+            runCodexTurn: async (options) => {
+              received = options.mcpReminder;
+              return { agentId: "parent", report: "done", success: true };
+            },
+          },
+        );
+        expect(result.success).toBe(true);
+        expect(received).toBe(expected);
+      },
+    );
+  }
 });

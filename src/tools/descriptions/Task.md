@@ -32,6 +32,8 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 Use `subagent_type: "claude-code"`, `"codex"`, or `"cursor"` to start an external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
 
+Subagents like Claude Code/Codex are forwarded the same skills and MCP servers that you have (when launched with the `Agent` tool), but lack long-term memory and context. Forward any relevant memory files or other context in the task specification or via steering if additional context is required post-launch.
+
 Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
 
 Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.
