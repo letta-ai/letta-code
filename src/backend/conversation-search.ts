@@ -11,6 +11,7 @@ export type ConversationSearchBody = {
   search_target?: unknown;
   limit?: unknown;
   agent_id?: unknown;
+  archive_status?: unknown;
 };
 
 export type ConversationSearchResult = {
@@ -64,6 +65,9 @@ async function localSearchConversations(
   const conversations = pageItems<Conversation>(
     await backend.listConversations({
       ...(agentId ? { agent_id: agentId } : {}),
+      ...(body.archive_status !== undefined
+        ? { archive_status: body.archive_status }
+        : {}),
       limit,
       order: "desc",
       order_by: "last_message_at",
