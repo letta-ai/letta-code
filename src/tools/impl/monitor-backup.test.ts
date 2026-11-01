@@ -176,11 +176,11 @@ describe("Monitor backup wake", () => {
     await waitFor(() => calls.length >= 3);
     expect(calls.map((call) => call.action)).toEqual([
       "create",
-      "cancel",
       "create",
+      "cancel",
     ]);
-    expect(calls[1]?.id).toBe("wake-1");
-    expect(calls[2]?.after_seconds).toBe(600);
+    expect(calls[2]?.id).toBe("wake-1");
+    expect(calls[1]?.after_seconds).toBe(600);
     await waitFor(
       () => __getMonitorBackupWakeIdForTests(result.taskId) === "wake-2",
     );
