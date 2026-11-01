@@ -700,8 +700,9 @@ async function waitForSettledExit(
     const exitedInTime = await Promise.race([
       session.exit.then(() => true),
       new Promise<boolean>((resolve) => {
+        // Not unref'd: the caller is awaiting this, and an unref'd timer is
+        // not guaranteed to fire (observed on Windows). Cleared below.
         timer = setTimeout(() => resolve(false), graceMs);
-        timer.unref?.();
       }),
       cancelled,
     ]);
