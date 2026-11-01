@@ -550,6 +550,91 @@ describe("launchRemoteExternalCodingAgent", () => {
     await notified();
   });
 
+  test("keeps the launch response's native ID when status updates lag", async () => {
+    // No status update arrives within the wait window.
+    const computer = new FakeComputer(() => ({
+      ...accepted,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111",
+    }));
+    const result = await launch([computer], {}, true, true);
+    expect(result).toMatchObject({
+      success: true,
+      agent_id: "claude_11111111-1111-4111-8111-111111111111@device-1",
+    });
+    computer.snapshot({ status: "completed", result: "Done" });
+    await notified();
+  });
+
+  test.each([
+    ["launch response", true, undefined],
+    ["status update", false, "claude_11111111-1111-4111-8111-111111111111"],
+  ] as const)(
+    "the final result names the worker from its %s, not the parent",
+    async (_source, steering, snapshotAgentId) => {
+      const stopHookAgentIds: Array<string | undefined> = [];
+      const computer = new FakeComputer(() => ({
+        ...accepted,
+        agent_id: snapshotAgentId
+          ? null
+          : "claude_11111111-1111-4111-8111-111111111111",
+      }));
+      const result = await launchRemoteExternalCodingAgent(
+        {
+          type: "claude-code",
+          computer: "brad-box",
+          prompt: "Fix the bug",
+          description: "Fix the bug",
+          toolCallId: "call-1",
+          parentScope: scope,
+        },
+        {
+          spawn: (args) =>
+            spawnBackgroundSubagentTask({
+              ...args,
+              deps: {
+                ...args.deps,
+                addToMessageQueueImpl: (message) => queued.push(message),
+                copyGitHubPullRequestTagsImpl: async () => {},
+                runSubagentStopHooksImpl: async (
+                  _type,
+                  _subagentId,
+                  _success,
+                  _error,
+                  agentId,
+                ) => {
+                  stopHookAgentIds.push(agentId);
+                  return {
+                    blocked: false,
+                    errored: false,
+                    feedback: [],
+                    results: [],
+                  };
+                },
+              },
+            }),
+          resolveComputer: async () => ({
+            connectionId: "conn-1",
+            environment: environment(true, steering),
+          }),
+          connect: async () => computer.asClient(),
+          agentIdWaitMs: 20,
+        },
+      );
+      if (!result.success) throw new Error(result.error);
+      computer.snapshot({
+        status: "completed",
+        result: "Done",
+        ...(snapshotAgentId ? { agent_id: snapshotAgentId } : {}),
+      });
+      await notified();
+      for (let i = 0; i < 200 && stopHookAgentIds.length === 0; i++)
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      expect(stopHookAgentIds).toEqual([
+        "claude_11111111-1111-4111-8111-111111111111@device-1",
+      ]);
+    },
+  );
+
   test("an older computer without steering support still returns a null ID", async () => {
     const computer = new FakeComputer(() => accepted);
     const result = await launch([computer]);
