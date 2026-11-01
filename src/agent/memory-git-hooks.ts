@@ -220,17 +220,22 @@ export function installPreCommitHook(
   );
 }
 
-/** Refresh validation for a local-only repository without changing its layout. */
-export function installLocalMemoryPreCommitHook(dir: string): void {
-  const hasRootMarker =
+/** True when the repo uses the MemFS v2 root layout (root `MEMORY.md` marker). */
+export function hasRootMemoryMarker(dir: string): boolean {
+  return (
     existsSync(join(dir, "MEMORY.md")) ||
     spawnSync("git", ["cat-file", "-e", "HEAD:MEMORY.md"], {
       cwd: dir,
       stdio: "ignore",
-    }).status === 0;
+    }).status === 0
+  );
+}
+
+/** Refresh validation for a local-only repository without changing its layout. */
+export function installLocalMemoryPreCommitHook(dir: string): void {
   installPreCommitHookWithPolicy(
     dir,
-    hasRootMarker ? "root-marker" : "legacy-only",
+    hasRootMemoryMarker(dir) ? "root-marker" : "legacy-only",
   );
 }
 
