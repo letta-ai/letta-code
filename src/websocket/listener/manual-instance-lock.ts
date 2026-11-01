@@ -11,9 +11,10 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { uptime } from "node:os";
 import path from "node:path";
+import { publishExclusive } from "@/utils/exclusive-publish";
 import {
   getProcessCommand,
   isPidReusedByNonLetta,
@@ -198,7 +199,10 @@ async function publishInitializedFile(
   let publicationError: unknown;
   try {
     await writeFile(candidatePath, contents, { flag: "wx" });
-    await link(candidatePath, targetPath);
+    // Hard link, or an exclusive-create copy on volumes without hard links.
+    // A copy can be read half-written; readers fail closed on an unparsable
+    // record and never reap it.
+    await publishExclusive(candidatePath, targetPath);
   } catch (error) {
     publicationError = error;
   }

@@ -504,8 +504,12 @@ export function handleListenerSocketOpenFailure({
     error,
     "listener_socket_open",
   );
-  if (isDebugEnabled()) {
-    console.error("[Listen] WebSocket open handler failed:", error);
-  }
+  // Without this, a startup failure (for example a lock that cannot be
+  // created) looks like a silent 1006 reconnect loop. Show the cause always;
+  // the full stack stays behind --debug.
+  console.error(
+    "[Listen] WebSocket open handler failed:",
+    isDebugEnabled() ? error : error instanceof Error ? error.message : error,
+  );
   terminateCurrentSocketPair(runtime, controlSocket, streamSocket);
 }
