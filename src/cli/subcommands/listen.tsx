@@ -2,6 +2,7 @@ import { hostname } from "node:os";
 import { parseArgs } from "node:util";
 import { render } from "ink";
 import { configureBackendMode } from "@/backend";
+import { reportEnvironmentDiskPressure } from "@/backend/api/environments";
 import { isLocalBackendEnvEnabled } from "@/backend/local/paths";
 import type { ChannelGatewaySupervisor } from "@/channels/gateway-supervisor";
 import { resolveChannelGatewayTelemetryTypes } from "@/channels/gateway-telemetry-types";
@@ -28,6 +29,7 @@ import {
   createRuntimeBoundGatewayStarter,
 } from "@/cli/subcommands/listener-readiness";
 import { applyStartupPermissionMode } from "@/permissions/startup";
+import { setCriticalDiskSpaceReporter } from "@/reminders/disk-space";
 import { settingsManager } from "@/settings-manager";
 import { getListenerTelemetrySurface, telemetry } from "@/telemetry";
 import { cancelBackgroundMemoryTasks } from "@/tools/impl/memory-task-lifecycle";
@@ -709,6 +711,10 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     }
 
     const { startListenerClient } = await import("@/websocket/listen-client");
+    // Tell Cloud when this sandbox's disk crosses critical mid-turn.
+    setCriticalDiskSpaceReporter((scope) =>
+      reportEnvironmentDiskPressure({ ...scope, connectionName }),
+    );
 
     const reregister = async (): Promise<RegisterResult> => {
       sessionLog.log("Re-registering with retry...");

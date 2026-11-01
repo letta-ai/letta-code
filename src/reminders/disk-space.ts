@@ -99,15 +99,51 @@ function formatBytes(bytes: number): string {
   return `${Math.max(0, Math.round(bytes / 1024 ** 2))} MB`;
 }
 
-export function formatLowDiskSpaceReminder(sample: DiskSpaceSample): string {
+export function formatLowDiskSpaceReminder(
+  sample: DiskSpaceSample,
+  options: { cloudNotified?: boolean } = {},
+): string {
   const usedPercent = Math.round(
     (1 - sample.availableBytes / sample.totalBytes) * 100,
   );
   return `${SYSTEM_REMINDER_OPEN}
 LOW DISK SPACE: The sandbox volume holding ${sample.path} is ${usedPercent}% full (${formatBytes(sample.availableBytes)} available of ${formatBytes(sample.totalBytes)}). When it fills, file writes, installs, builds, and memory git commits start failing.
 
-Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <dir> | sort -h\` to find large directories, then delete regenerable data such as package manager caches, build outputs, old worktrees you created, and temporary files. Do not delete the user's source files, uncommitted work, or memory without asking.
+Before continuing with disk-heavy work, free space: use \`du -xh --max-depth=2 <dir> | sort -h\` to find large directories, then delete regenerable data such as package manager caches, build outputs, old worktrees you created, and temporary files. Do not delete the user's source files, uncommitted work, or memory without asking.${options.cloudNotified ? CLOUD_NOTIFIED_NOTE : ""}
 ${SYSTEM_REMINDER_CLOSE}`;
+}
+
+const CLOUD_NOTIFIED_NOTE =
+  "\n\nLetta Cloud was told: the owner is being notified, and more disk was requested for the next time this sandbox is idle and stopped. That will not help this turn, so free space now.";
+
+type DiskSpaceScope = { agentId: string; conversationId: string };
+
+// Tells someone outside the agent that the disk crossed critical. The
+// listener sets it to report to Letta Cloud; other processes leave it unset.
+let criticalDiskSpaceReporter:
+  | ((scope: DiskSpaceScope) => Promise<unknown>)
+  | null = null;
+
+export function setCriticalDiskSpaceReporter(
+  reporter: ((scope: DiskSpaceScope) => Promise<unknown>) | null,
+): void {
+  criticalDiskSpaceReporter = reporter;
+}
+
+/** Fire-and-forget: a failed report must never reach the tool batch. */
+function reportCriticalDiskSpace(scope?: DiskSpaceScope): boolean {
+  const reporter = criticalDiskSpaceReporter;
+  const resolved = resolveNotificationScope(scope);
+  if (!reporter || !resolved) return false;
+  try {
+    void reporter({
+      agentId: resolved.agentId,
+      conversationId: resolved.conversationId,
+    }).catch(() => {});
+  } catch {
+    return false;
+  }
+  return true;
 }
 
 /** Escalate a second time once the volume is this full. */
@@ -134,7 +170,12 @@ let pushedLevel: AlertLevel = 0;
  */
 export async function checkDiskSpaceNow(
   path: string,
-  options: { env?: NodeJS.ProcessEnv; statfsFn?: StatfsFn } = {},
+  options: {
+    env?: NodeJS.ProcessEnv;
+    statfsFn?: StatfsFn;
+    /** Agent and conversation whose tools are running, for the report. */
+    scope?: DiskSpaceScope;
+  } = {},
 ): Promise<string | null> {
   try {
     if (!isManagedCloudRuntime(options.env)) return null;
@@ -151,7 +192,8 @@ export async function checkDiskSpaceNow(
       return null;
     }
     pushedLevel = level;
-    return formatLowDiskSpaceReminder(sample);
+    const cloudNotified = level === 2 && reportCriticalDiskSpace(options.scope);
+    return formatLowDiskSpaceReminder(sample, { cloudNotified });
   } catch {
     return null;
   }
@@ -170,6 +212,7 @@ export async function watchDiskSpaceDuring<T>(
     env?: NodeJS.ProcessEnv;
     statfsFn?: StatfsFn;
     intervalMs?: number;
+    scope?: DiskSpaceScope;
   } = {},
 ): Promise<T> {
   if (!isManagedCloudRuntime(options.env)) return work();
