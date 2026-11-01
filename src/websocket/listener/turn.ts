@@ -227,6 +227,8 @@ async function handleIncomingMessageInner(
       turnLease,
       onStatusChange,
       connectionId,
+      // Background work started this turn reports back under these ids.
+      resolveClientMessageIds: () => turnCorrelation.clientMessageIds,
     });
     if (setup.kind === "interrupted") {
       finishTurn({

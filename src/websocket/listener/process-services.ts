@@ -119,6 +119,7 @@ export function installProcessEventRouting(params: {
       text: queuedMessage.text,
       content: queuedMessage.content,
       actingUserId: queuedMessage.actingUserId,
+      clientMessageIds: queuedMessage.clientMessageIds,
       agentId: queuedMessage.agentId ?? targetRuntime.agentId ?? undefined,
       conversationId:
         queuedMessage.conversationId ?? targetRuntime.conversationId,

@@ -39,6 +39,12 @@ export interface RuntimeContextSnapshot {
    * Internal-only function reference; never exported to child environments.
    */
   resolveMcpOriginatorSuperRunId?: () => string | null | undefined;
+  /**
+   * Resolve the client message ids that started the current listener turn,
+   * so background work can tag its later notification turns with them.
+   * Internal-only function reference; never exported to child environments.
+   */
+  resolveClientMessageIds?: () => string[];
   /** Explicitly disable inherited process/runtime acting-user attribution. */
   suppressActingUserFallback?: boolean;
   skillsDirectory?: string | null;
