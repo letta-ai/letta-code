@@ -9,7 +9,10 @@ import {
 } from "./monitor-timeout";
 
 const previous = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+const previousMs = process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
 afterEach(() => {
+  if (previousMs === undefined) delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
+  else process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = previousMs;
   if (previous === undefined)
     delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   else process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = previous;
@@ -36,6 +39,19 @@ test.each([
   ["99999999999999999999", 3_600_000],
 ])("normalizes %s to %d ms", (value, expected) => {
   process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = value;
+  expect(getMonitorMaxTimeoutMs()).toBe(expected);
+});
+
+test.each([
+  [undefined, "604800000", 604_800_000],
+  [undefined, "1000", 3_600_000],
+  ["86400", "604800000", 86_400_000],
+  ["", "86400000", 86_400_000],
+])("seconds %s takes precedence over legacy ms %s", (seconds, ms, expected) => {
+  if (seconds === undefined)
+    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  else process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = seconds;
+  process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = ms;
   expect(getMonitorMaxTimeoutMs()).toBe(expected);
 });
 

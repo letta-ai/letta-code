@@ -6,11 +6,14 @@ const SEVEN_DAYS_MS = 7 * DAY_MS;
 /**
  * Per-sandbox cap from LETTA_MONITOR_MAX_TIMEOUT_SECONDS, with a one-hour
  * default and a seven-day ceiling. Returned in milliseconds for timers.
+ * Launchers that still set only the earlier LETTA_MONITOR_MAX_TIMEOUT_MS keep
+ * their cap.
  */
 export function getMonitorMaxTimeoutMs(): number {
-  const value = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  const seconds = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  const value = seconds || process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
   if (!value || !/^\d+$/.test(value)) return DEFAULT_MAX_TIMEOUT_MS;
-  const parsed = Number(value) * 1000;
+  const parsed = seconds ? Number(value) * 1000 : Number(value);
   if (!Number.isSafeInteger(parsed) || parsed <= 0) {
     return DEFAULT_MAX_TIMEOUT_MS;
   }
