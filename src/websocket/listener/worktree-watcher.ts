@@ -222,6 +222,8 @@ async function handleNewWorktree(params: {
   });
 }
 
+export const __worktreeWatcherTestUtils = { handleNewWorktree };
+
 /**
  * Wait for a specific subdirectory to appear inside `parentDir`.
  * Resolves once the directory is created, or rejects on abort.
