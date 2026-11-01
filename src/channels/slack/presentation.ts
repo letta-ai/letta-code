@@ -17,6 +17,18 @@ import {
 } from "./progress";
 import { isNonEmptyString } from "./utils";
 export const SLACK_APPROVAL_ACTION_ID = "letta_channel_approval";
+// Slack rejects a message with `invalid_blocks` when two elements in one
+// actions block share an action_id, so each button needs its own id.
+export const SLACK_APPROVAL_ALLOW_ACTION_ID = `${SLACK_APPROVAL_ACTION_ID}_allow`;
+export const SLACK_APPROVAL_DENY_ACTION_ID = `${SLACK_APPROVAL_ACTION_ID}_deny`;
+// Every action_id the approval handler answers to; the decision itself comes
+// from the button value. The legacy shared id stays registered for prompts
+// posted by older builds.
+export const SLACK_APPROVAL_ACTION_IDS = [
+  SLACK_APPROVAL_ALLOW_ACTION_ID,
+  SLACK_APPROVAL_DENY_ACTION_ID,
+  SLACK_APPROVAL_ACTION_ID,
+] as const;
 
 const SLACK_MARKDOWN_BLOCK_TEXT_MAX = 12_000;
 const SLACK_LIFECYCLE_ERROR_TEXT_MAX = 3_000;
@@ -102,7 +114,7 @@ export function formatSlackControlRequestBlocks(
       elements: [
         {
           type: "button",
-          action_id: SLACK_APPROVAL_ACTION_ID,
+          action_id: SLACK_APPROVAL_ALLOW_ACTION_ID,
           text: { type: "plain_text", text: "Approve", emoji: true },
           style: "primary",
           value: JSON.stringify({
@@ -112,7 +124,7 @@ export function formatSlackControlRequestBlocks(
         },
         {
           type: "button",
-          action_id: SLACK_APPROVAL_ACTION_ID,
+          action_id: SLACK_APPROVAL_DENY_ACTION_ID,
           text: { type: "plain_text", text: "Deny", emoji: true },
           style: "danger",
           value: JSON.stringify({
