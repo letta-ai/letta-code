@@ -412,6 +412,83 @@ describe("Claude stream sessions", () => {
   );
 
   test(
+    "reports an errored held result as failed when the cap fires",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          {
+            createTransport: () => fixture.transport,
+            backgroundTaskWaitCapMs: 20,
+          },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: true, result: "BROKE" });
+        const result = await awaitWithLiveLoop(running);
+        expect(result.success).toBe(false);
+        expect(result.report).toStartWith("BROKE");
+        expect(result.report).toContain("background tasks were still running");
+        expect(result.error).toStartWith("BROKE");
+        expect(fixture.ended()).toBe(true);
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "ignores a result that arrives after the session settled",
+    async () => {
+      const fixture = transportFixture();
+      const capMs = 4_321;
+      const realSetTimeout = globalThis.setTimeout;
+      let capTimersArmed = 0;
+      globalThis.setTimeout = ((
+        handler: Parameters<typeof setTimeout>[0],
+        delay?: number,
+        ...rest: unknown[]
+      ) => {
+        if (delay === capMs) capTimersArmed++;
+        return realSetTimeout(handler, delay, ...rest);
+      }) as typeof setTimeout;
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          {
+            createTransport: () => fixture.transport,
+            backgroundTaskWaitCapMs: capMs,
+          },
+        );
+        await Bun.sleep(0);
+        fixture.emit({ type: "result", is_error: false, result: "DONE" });
+        const result = await running;
+        expect(result).toMatchObject({ success: true, report: "DONE" });
+        // Late lines flushed after settle must not re-arm the cap.
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "LATE" });
+        await Bun.sleep(10);
+        expect(capTimersArmed).toBe(0);
+        expect(result.report).toBe("DONE");
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
     "cancellation while waiting on background tasks settles failed",
     async () => {
       const fixture = transportFixture();

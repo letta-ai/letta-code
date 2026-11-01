@@ -405,6 +405,9 @@ function holdResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
+  // A result flushed after settle (around exit, or via a steer fallback) must
+  // not re-arm the cap or mutate a finished session.
+  if (session.settled) return;
   const capMs = session.backgroundCapMs;
   if (typeof value.result === "string") session.report = value.result;
   session.provisionalResult = value;
@@ -416,9 +419,13 @@ function holdResult(
     if (session.settled) return;
     const minutes = Math.round(capMs / 60_000);
     const note = `[Claude Code background tasks were still running ${minutes} minute(s) after its last result; reporting that result.]`;
-    session.report = session.report ? `${session.report}\n\n${note}` : note;
-    closeInput(session);
-    settle(session, successResult(session));
+    const text =
+      typeof value.result === "string" ? value.result : session.report;
+    // Same settle path as a final result, so an errored turn reports as failed.
+    settleResult(session, {
+      ...value,
+      result: text ? `${text}\n\n${note}` : note,
+    });
   }, capMs);
   // Deliberately not unref'd: a held session always has a live child process,
   // so unref saves nothing, and an unref'd timer is not guaranteed to fire
