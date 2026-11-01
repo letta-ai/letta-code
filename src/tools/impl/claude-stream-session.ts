@@ -46,6 +46,14 @@ interface ClaudeSession {
   awaitingReplacementStart: boolean;
   suppressedResult?: Record<string, unknown>;
   resultCount: number;
+  /** Latest `background_tasks_changed.tasks` list; empty until one is seen. */
+  backgroundTasks: unknown[];
+  /** Last result held back while background tasks were still listed. */
+  provisionalResult?: Record<string, unknown>;
+  /** True while Claude is idle between turns, waiting on background tasks. */
+  idleOnBackgroundTasks: boolean;
+  backgroundCapMs: number;
+  backgroundCapTimer?: ReturnType<typeof setTimeout>;
   turnWaiters: Set<TurnWaiter>;
   writeLock: Promise<void>;
   completion: Promise<SubagentResult>;
@@ -88,11 +96,18 @@ export interface ClaudeSessionDependencies {
   }) => ClaudeSessionTransport;
   env?: NodeJS.ProcessEnv;
   createSessionId?: () => string;
+  /** Override for {@link BACKGROUND_TASK_WAIT_CAP_MS} (tests). */
+  backgroundTaskWaitCapMs?: number;
 }
 
 const sessions = new Map<string, ClaudeSession>();
 const CONTROL_RESPONSE_TIMEOUT_MS = 30_000;
 const TURN_START_TIMEOUT_MS = 60_000;
+/**
+ * How long to keep waiting after a result while background tasks are still
+ * listed. Claude Code's own background-task limit is 30 minutes.
+ */
+export const BACKGROUND_TASK_WAIT_CAP_MS = 35 * 60_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -185,22 +200,35 @@ function rejectTurnWaiters(session: ClaudeSession, error: Error): void {
   session.turnWaiters.clear();
 }
 
+function clearBackgroundCap(session: ClaudeSession): void {
+  if (session.backgroundCapTimer) clearTimeout(session.backgroundCapTimer);
+  session.backgroundCapTimer = undefined;
+}
+
 function markTurnStarted(session: ClaudeSession): void {
   session.interruptible = true;
+  session.idleOnBackgroundTasks = false;
+  clearBackgroundCap(session);
   if (session.awaitingReplacementStart) {
     session.awaitingReplacementStart = false;
     session.pendingSteers = 0;
     session.suppressedResult = undefined;
   }
+  resolveTurnWaiters(session);
+}
+
+function resolveTurnWaiters(session: ClaudeSession): void {
   for (const waiter of session.turnWaiters) waiter.resolve();
   session.turnWaiters.clear();
 }
 
+/** Resolves once a turn can be interrupted or Claude is idle on background tasks. */
 function waitForTurnStart(
   session: ClaudeSession,
   signal?: AbortSignal,
 ): Promise<void> {
-  if (session.interruptible) return Promise.resolve();
+  if (session.interruptible || session.idleOnBackgroundTasks)
+    return Promise.resolve();
   if (session.settled) {
     return Promise.reject(new Error("Claude Code session is no longer active"));
   }
@@ -239,6 +267,8 @@ function waitForTurnStart(
 function settle(session: ClaudeSession, result: SubagentResult): void {
   if (session.settled) return;
   session.settled = true;
+  session.idleOnBackgroundTasks = false;
+  clearBackgroundCap(session);
   session.removeUpstreamAbort();
   if (sessions.get(session.sessionId) === session)
     sessions.delete(session.sessionId);
@@ -359,6 +389,59 @@ function settleResult(
   }
 }
 
+function handleBackgroundTasksChanged(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (Array.isArray(value.tasks)) session.backgroundTasks = value.tasks;
+}
+
+/**
+ * Claude ended its turn while background tasks are still running, so it will
+ * wake itself up for another turn once they finish. Keep the result as the
+ * provisional report and keep reading instead of settling.
+ */
+function holdResult(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  // A result flushed after settle (around exit, or via a steer fallback) must
+  // not re-arm the cap or mutate a finished session.
+  if (session.settled) return;
+  const capMs = session.backgroundCapMs;
+  if (typeof value.result === "string") session.report = value.result;
+  session.provisionalResult = value;
+  session.idleOnBackgroundTasks = true;
+  resolveTurnWaiters(session);
+  clearBackgroundCap(session);
+  session.backgroundCapTimer = setTimeout(() => {
+    session.backgroundCapTimer = undefined;
+    if (session.settled) return;
+    const minutes = Math.round(capMs / 60_000);
+    const note = `[Claude Code background tasks were still running ${minutes} minute(s) after its last result; reporting that result.]`;
+    const text =
+      typeof value.result === "string" ? value.result : session.report;
+    // Same settle path as a final result, so an errored turn reports as failed.
+    settleResult(session, {
+      ...value,
+      result: text ? `${text}\n\n${note}` : note,
+    });
+  }, capMs);
+  // Deliberately not unref'd: a held session always has a live child process,
+  // so unref saves nothing, and an unref'd timer is not guaranteed to fire
+  // (observed on Windows), which would leave the session unsettled forever.
+  // settle() and the next turn start clear it, so it never outlives the session.
+}
+
+/** Settle on a final result unless Claude is still waiting on background tasks. */
+function finishResult(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  if (session.backgroundTasks.length > 0) holdResult(session, value);
+  else settleResult(session, value);
+}
+
 function handleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
@@ -370,7 +453,7 @@ function handleResult(
     session.suppressedResult = value;
     return;
   }
-  settleResult(session, value);
+  finishResult(session, value);
 }
 
 async function launchSession(
@@ -433,6 +516,12 @@ async function launchSession(
     awaitingReplacementStart: false,
     suppressedResult: undefined,
     resultCount: 0,
+    backgroundTasks: [],
+    provisionalResult: undefined,
+    idleOnBackgroundTasks: false,
+    backgroundCapMs:
+      deps.backgroundTaskWaitCapMs ?? BACKGROUND_TASK_WAIT_CAP_MS,
+    backgroundCapTimer: undefined,
     turnWaiters: new Set(),
     writeLock: Promise.resolve(),
     completion,
@@ -457,6 +546,11 @@ async function launchSession(
         handleControlResponse(session, value);
       } else if (value.type === "result") {
         handleResult(session, value);
+      } else if (
+        value.type === "system" &&
+        value.subtype === "background_tasks_changed"
+      ) {
+        handleBackgroundTasksChanged(session, value);
       } else if (value.type === "assistant") {
         handleAssistant(session, value);
       } else if (
@@ -472,6 +566,14 @@ async function launchSession(
   transport.completion
     .then(({ exitCode, exitSignal }) => {
       if (session.settled) return;
+      if (
+        session.provisionalResult &&
+        exitCode === 0 &&
+        !transport.wasAborted()
+      ) {
+        settleResult(session, session.provisionalResult);
+        return;
+      }
       const detail = session.stderr.trim();
       const protocolDetail = session.protocolError
         ? `; protocol error: ${session.protocolError}`
@@ -550,6 +652,16 @@ async function steerSession(
   await withWriteLock(session, async () => {
     signal?.throwIfAborted();
     await waitForTurnStart(session, signal);
+    if (session.idleOnBackgroundTasks) {
+      // No turn is running to interrupt: Claude is idle until its background
+      // tasks finish, so the message simply starts the next turn.
+      if (session.settled || sessions.get(session.sessionId) !== session) {
+        throw new Error("Claude Code session is no longer active");
+      }
+      session.idleOnBackgroundTasks = false;
+      await writeInput(session.transport.process.stdin, prompt);
+      return;
+    }
     if (session.settled || sessions.get(session.sessionId) !== session) {
       throw new Error("Claude Code session is no longer active");
     }
@@ -596,7 +708,7 @@ async function steerSession(
       } else if (session.suppressedResult) {
         const suppressed = session.suppressedResult;
         session.suppressedResult = undefined;
-        settleResult(session, suppressed);
+        finishResult(session, suppressed);
       } else if (
         session.resultCount === resultCount &&
         !session.settled &&
