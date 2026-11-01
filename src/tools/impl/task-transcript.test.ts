@@ -3,8 +3,16 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  addProgressText,
+  clearAllSubagents,
+  getSnapshot,
+  MAX_PROGRESS_TEXTS,
+  registerSubagent,
+} from "@/agent/subagent-state";
+import {
   closeTaskProgressLog,
   openTaskProgressLog,
+  recordTaskProgressRemoteText,
   recordTaskProgressText,
   recordTaskProgressToolCall,
   TASK_PROGRESS_MAX_LINES,
@@ -29,6 +37,7 @@ function lines(file: string): string[] {
 
 afterEach(() => {
   closeTaskProgressLog(SUBAGENT);
+  clearAllSubagents();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true });
 });
 
@@ -78,5 +87,52 @@ describe("task progress log", () => {
     recordTaskProgressText(SUBAGENT, "late");
     recordTaskProgressToolCall(SUBAGENT, { id: "t", name: "Bash", args: "" });
     expect(lines(file)).toEqual([]);
+  });
+});
+
+describe("remote worker progress texts", () => {
+  test("worker state keeps the latest capped texts with stable IDs", () => {
+    registerSubagent(SUBAGENT, "claude-code", "Fix the bug");
+    const at = () => new Date(0);
+    addProgressText(SUBAGENT, "first", at);
+    addProgressText(SUBAGENT, "first", at);
+    addProgressText(SUBAGENT, " ", at);
+    addProgressText(SUBAGENT, "y".repeat(5_000), at);
+    for (let i = 0; i < MAX_PROGRESS_TEXTS; i++)
+      addProgressText(SUBAGENT, `step ${i}`, at);
+    const texts =
+      getSnapshot().agents.find((agent) => agent.id === SUBAGENT)
+        ?.progressTexts ?? [];
+    expect(texts).toHaveLength(MAX_PROGRESS_TEXTS);
+    // Two texts were recorded before the steps, so IDs keep counting past them.
+    expect(texts[0]).toEqual({
+      id: "text-3",
+      at: "1970-01-01T00:00:00.000Z",
+      text: "step 0",
+    });
+    expect(texts.at(-1)?.id).toBe(`text-${MAX_PROGRESS_TEXTS + 2}`);
+
+    registerSubagent("capped", "claude-code", "Cap");
+    addProgressText("capped", "y".repeat(5_000), at);
+    const [capped] =
+      getSnapshot().agents.find((agent) => agent.id === "capped")
+        ?.progressTexts ?? [];
+    expect(capped?.text).toBe(`${"y".repeat(300)}…`);
+  });
+
+  test("the parent log writes each remote text once at the worker's time", () => {
+    const file = outputFile();
+    const entry = { id: "text-1", at: "2026-11-01T21:14:40.833Z", text: "Hi" };
+    recordTaskProgressRemoteText(SUBAGENT, entry);
+    recordTaskProgressRemoteText(SUBAGENT, entry);
+    recordTaskProgressRemoteText(SUBAGENT, {
+      id: "text-2",
+      at: "",
+      text: "Ok",
+    });
+    expect(lines(file)).toEqual([
+      "[2026-11-01T21:14:40.833Z] text: Hi",
+      "[1970-01-01T00:00:00.000Z] text: Ok",
+    ]);
   });
 });

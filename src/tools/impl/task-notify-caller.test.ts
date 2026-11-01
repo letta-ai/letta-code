@@ -249,6 +249,19 @@ rl.on("close", () => process.exit(0));`,
           'tool: Bash {"command":"bun test"}',
         ]);
         expect(output).toContain("All green");
+        // The worker publishes its text so a parent on another computer can log it.
+        const runtime = getOrCreateScopedRuntime(
+          createRuntime(),
+          parentScope.agentId,
+          parentScope.conversationId,
+        );
+        expect(buildSubagentSnapshot(runtime)[0]?.progress_texts).toEqual([
+          {
+            id: "text-1",
+            at: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
+            text: "Chat suite finished; running the integration suite.",
+          },
+        ]);
       } finally {
         process.env.HOME = originalHome;
         await settingsManager.reset();

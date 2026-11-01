@@ -492,6 +492,46 @@ describe("launchRemoteExternalCodingAgent", () => {
     );
   });
 
+  test("appends each remote progress text to the task output file once", async () => {
+    const computer = new FakeComputer(() => accepted);
+    const result = await launch([computer]);
+    if (!result.success) throw new Error(result.error);
+    const first = {
+      id: "text-1",
+      at: "2026-11-01T21:14:40.833Z",
+      text: "Chat suite finished; cloud-api-integration is running.",
+    };
+    const second = {
+      id: "text-2",
+      at: "2026-11-01T21:47:03.554Z",
+      text: "All suites passed.",
+    };
+    // An older listener sends no progress_texts at all.
+    computer.snapshot({ status: "running" }, 1);
+    await Bun.sleep(0);
+    computer.snapshot({ progress_texts: [first] }, 2);
+    await Bun.sleep(0);
+    // Snapshots repeat the latest texts; only new IDs are appended.
+    computer.snapshot({ progress_texts: [first] }, 3);
+    await Bun.sleep(0);
+    computer.snapshot(
+      { status: "completed", result: "Done", progress_texts: [first, second] },
+      4,
+    );
+    await notified();
+
+    const output = readFileSync(result.output_file, "utf8");
+    expect(
+      output.split("\n").filter((line) => line.includes("] text: ")),
+    ).toEqual([
+      "[2026-11-01T21:14:40.833Z] text: Chat suite finished; cloud-api-integration is running.",
+      "[2026-11-01T21:47:03.554Z] text: All suites passed.",
+    ]);
+    expect(output.indexOf("text: All suites passed.")).toBeLessThan(
+      output.indexOf("subagent_status=success"),
+    );
+  });
+
   test("returns a computer-qualified native ID when steering is supported", async () => {
     const computer = new FakeComputer(() => {
       queueMicrotask(() =>

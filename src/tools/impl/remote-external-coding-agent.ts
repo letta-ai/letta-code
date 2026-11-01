@@ -35,7 +35,10 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
-import { recordTaskProgressToolCall } from "./task-transcript";
+import {
+  recordTaskProgressRemoteText,
+  recordTaskProgressToolCall,
+} from "./task-transcript";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
@@ -406,10 +409,22 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
-        // Snapshots carry the full list; the task log appends each ID once.
-        const recordToolCalls = (snapshot: SubagentSnapshot) => {
+        // Snapshots carry full lists; the task log appends each ID once.
+        // Older listeners send no progress_texts, which reads as empty.
+        const recordProgress = (snapshot: SubagentSnapshot) => {
           for (const call of snapshot.tool_calls ?? [])
             recordTaskProgressToolCall(subagentId, call);
+          const texts = Array.isArray(snapshot.progress_texts)
+            ? snapshot.progress_texts
+            : [];
+          for (const entry of texts) {
+            if (typeof entry?.id === "string" && typeof entry.text === "string")
+              recordTaskProgressRemoteText(subagentId, {
+                id: entry.id,
+                at: typeof entry.at === "string" ? entry.at : "",
+                text: entry.text,
+              });
+          }
         };
         try {
           const final = await follower.waitForTerminal(signal, (snapshot) => {
@@ -417,10 +432,10 @@ export async function launchRemoteExternalCodingAgent(
               toolCalls: snapshot.tool_calls,
               totalTokens: snapshot.total_tokens,
             });
-            recordToolCalls(snapshot);
+            recordProgress(snapshot);
           });
-          // The terminal snapshot can carry calls no progress update showed.
-          recordToolCalls(final);
+          // The terminal snapshot can carry progress no earlier update showed.
+          recordProgress(final);
           return {
             agentId: qualifiedAgentId ?? parentScope.agentId,
             model: final.model ?? model,

@@ -1,6 +1,12 @@
 // Output-file transcript lines and result headers shared by Agent task paths.
 
-import { addToolCall } from "@/agent/subagent-state";
+import {
+  addProgressText,
+  addToolCall,
+  excerptProgressText as excerpt,
+  PROGRESS_TEXT_CHARS,
+  type ProgressText,
+} from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import type {
   ExternalTextListener,
@@ -64,7 +70,7 @@ export function writeTaskTranscriptResult(
 }
 
 /** Longest `text:` excerpt written per progress line. */
-export const TASK_PROGRESS_TEXT_CHARS = 300;
+export const TASK_PROGRESS_TEXT_CHARS = PROGRESS_TEXT_CHARS;
 /** Longest tool-argument excerpt written per progress line. */
 export const TASK_PROGRESS_ARGS_CHARS = 200;
 /** Progress lines written per task, including the final omission notice. */
@@ -74,26 +80,26 @@ interface TaskProgressLog {
   outputFile: string;
   lines: number;
   seenToolCallIds: Set<string>;
+  /** IDs of remote worker texts already written. */
+  seenTextIds: Set<string>;
   lastText?: string;
   now: () => Date;
 }
 
 const progressLogs = new Map<string, TaskProgressLog>();
 
-/** Collapse whitespace and cap a progress excerpt to one short line. */
-function excerpt(value: string, max: number): string {
-  const line = value.replace(/\s+/g, " ").trim();
-  return line.length > max ? `${line.slice(0, max)}…` : line;
-}
-
-function appendProgress(log: TaskProgressLog, entry: string): void {
+function appendProgress(
+  log: TaskProgressLog,
+  entry: string,
+  at?: string,
+): void {
   if (log.lines >= TASK_PROGRESS_MAX_LINES) return;
   log.lines++;
   // The last line the cap allows is a notice that the log stops here.
   const line =
     log.lines === TASK_PROGRESS_MAX_LINES
       ? `[progress log reached ${TASK_PROGRESS_MAX_LINES} lines; further progress omitted]`
-      : `[${log.now().toISOString()}] ${entry}`;
+      : `[${at ?? log.now().toISOString()}] ${entry}`;
   appendToOutputFile(log.outputFile, `${line}\n`);
 }
 
@@ -110,6 +116,7 @@ export function openTaskProgressLog(
     outputFile,
     lines: 0,
     seenToolCallIds: new Set(),
+    seenTextIds: new Set(),
     now,
   });
 }
@@ -143,8 +150,29 @@ export function recordTaskProgressText(subagentId: string, text: string): void {
 }
 
 /**
- * Progress listeners for an external worker: each tool call updates the live
- * subagent display and, with assistant text, the task's output file.
+ * Append `text: <excerpt>` for a remote worker's text, once per ID, stamped
+ * with the time the worker emitted it.
+ */
+export function recordTaskProgressRemoteText(
+  subagentId: string,
+  entry: ProgressText,
+): void {
+  const log = progressLogs.get(subagentId);
+  if (!log || log.seenTextIds.has(entry.id)) return;
+  log.seenTextIds.add(entry.id);
+  const line = excerpt(entry.text, TASK_PROGRESS_TEXT_CHARS);
+  if (!line) return;
+  log.lastText = line;
+  const at = Number.isNaN(Date.parse(entry.at))
+    ? undefined
+    : new Date(entry.at).toISOString();
+  appendProgress(log, `text: ${line}`, at);
+}
+
+/**
+ * Progress listeners for an external worker: tool calls and assistant text
+ * update the subagent state (the live display, and the snapshots a parent on
+ * another computer reads) and the task's output file.
  */
 export function externalWorkerProgressListeners(subagentId: string): {
   onToolCall: ExternalToolCallListener;
@@ -155,6 +183,9 @@ export function externalWorkerProgressListeners(subagentId: string): {
       addToolCall(subagentId, call.id, call.name, call.args);
       recordTaskProgressToolCall(subagentId, call);
     },
-    onText: (text) => recordTaskProgressText(subagentId, text),
+    onText: (text) => {
+      addProgressText(subagentId, text);
+      recordTaskProgressText(subagentId, text);
+    },
   };
 }
