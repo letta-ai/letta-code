@@ -202,6 +202,166 @@ describe("Claude stream sessions", () => {
     expect(fixture.ended()).toBe(true);
   });
 
+  test("keeps reading past a result while background tasks are running", async () => {
+    const fixture = transportFixture();
+    let completed = false;
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      { createTransport: () => fixture.transport },
+    ).then((result) => {
+      completed = true;
+      return result;
+    });
+    await Bun.sleep(0);
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        {
+          task_id: "bg1",
+          run_id: "run1",
+          task_type: "local_bash",
+          description: "run tests",
+        },
+      ],
+    });
+    fixture.emit({ type: "system", subtype: "task_started", task_id: "bg1" });
+    fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+    await Bun.sleep(10);
+    expect(completed).toBe(false);
+    expect(fixture.ended()).toBe(false);
+
+    fixture.emit({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "bg1",
+      patch: { status: "completed" },
+    });
+    fixture.emit({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "bg1",
+      status: "completed",
+    });
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({ type: "result", is_error: false, result: "FINISHED" });
+    expect(await running).toMatchObject({ success: true, report: "FINISHED" });
+    expect(fixture.ended()).toBe(true);
+  });
+
+  test("uses the provisional result when Claude exits cleanly after background work", async () => {
+    const fixture = transportFixture();
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+    });
+    fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+    await Bun.sleep(0);
+    fixture.finish({ exitCode: 0, exitSignal: null });
+    expect(await running).toMatchObject({ success: true, report: "WAITING" });
+  });
+
+  test("steers directly while Claude is idle on background tasks", async () => {
+    const fixture = transportFixture();
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+    });
+    fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+    await Bun.sleep(0);
+    const receipt = await sendClaudeMessage({
+      ...base,
+      prompt: "STEERED",
+      sessionId: SESSION_ID,
+    });
+    expect(receipt.mode).toBe("steered");
+    const steered = parseWrite(fixture, 1);
+    expect(steered.type).toBe("user");
+    expect(fixture.ended()).toBe(false);
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [],
+    });
+    fixture.emit({ type: "stream_event", event: { type: "message_start" } });
+    fixture.emit({ type: "result", is_error: false, result: "STEERED" });
+    expect(await running).toMatchObject({ success: true, report: "STEERED" });
+  });
+
+  test("settles with the provisional report after the background wait cap", async () => {
+    const fixture = transportFixture();
+    const running = runClaudeTurn(
+      { ...base, prompt: "work", sessionId: SESSION_ID },
+      {
+        createTransport: () => fixture.transport,
+        backgroundTaskWaitCapMs: 20,
+      },
+    );
+    await Bun.sleep(0);
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+    });
+    fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+    const result = await running;
+    expect(result.success).toBe(true);
+    expect(result.report).toStartWith("WAITING");
+    expect(result.report).toContain("background tasks were still running");
+    expect(fixture.ended()).toBe(true);
+  });
+
+  test("cancellation while waiting on background tasks settles failed", async () => {
+    const fixture = transportFixture();
+    let aborted = false;
+    fixture.transport.wasAborted = () => aborted;
+    const controller = new AbortController();
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        signal: controller.signal,
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+    });
+    fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+    await Bun.sleep(0);
+    aborted = true;
+    controller.abort(new Error("cancelled"));
+    fixture.finish({ exitCode: null, exitSignal: "SIGTERM" });
+    expect(await running).toMatchObject({
+      success: false,
+      error: "cancelled",
+      report: "WAITING",
+    });
+  });
+
   test("idle concurrent sends start one resume and serialize the second steer", async () => {
     const fixture = transportFixture();
     let creates = 0;
