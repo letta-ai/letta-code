@@ -222,6 +222,11 @@ class RemoteSubagentFollower {
     this.launched = true;
   }
 
+  /** The worker's native ID from the most recent status update, if any. */
+  latestAgentId(): string | undefined {
+    return this.latest?.agent_id ?? undefined;
+  }
+
   async waitForAgentId(timeoutMs: number): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -378,20 +383,27 @@ export async function launchRemoteExternalCodingAgent(
   }
 
   follower.markLaunched();
-  const nativeAgentId = supportsSteering
-    ? await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)
-    : null;
-  const parsedNativeAgentId = nativeAgentId
-    ? parseExternalCodingAgentId(nativeAgentId)
-    : null;
-  const qualifiedAgentId =
-    parsedNativeAgentId && !parsedNativeAgentId.computer
-      ? formatExternalCodingAgentId(
-          parsedNativeAgentId.type,
-          parsedNativeAgentId.sessionId,
-          deviceId,
-        )
+  const qualify = (nativeAgentId: string | null | undefined) => {
+    const parsed = nativeAgentId
+      ? parseExternalCodingAgentId(nativeAgentId)
       : null;
+    return parsed && !parsed.computer
+      ? formatExternalCodingAgentId(parsed.type, parsed.sessionId, deviceId)
+      : null;
+  };
+  // The computer waits for the native session before answering the launch,
+  // so prefer the ID it returned; status updates can lag behind it.
+  const launchedAgentId = qualify(launched.agent_id);
+  const qualifiedAgentId = supportsSteering
+    ? (launchedAgentId ??
+      qualify(await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)))
+    : null;
+  // The final result names the worker, never the parent.
+  const workerAgentId = () =>
+    qualify(follower.latestAgentId()) ??
+    qualifiedAgentId ??
+    launchedAgentId ??
+    "";
 
   const { taskId, outputFile, subagentId } = deps.spawn({
     subagentType: type,
@@ -413,7 +425,7 @@ export async function launchRemoteExternalCodingAgent(
             }),
           );
           return {
-            agentId: qualifiedAgentId ?? parentScope.agentId,
+            agentId: workerAgentId(),
             model: final.model ?? model,
             report: final.result ?? "",
             success: final.status === "completed",
@@ -427,7 +439,7 @@ export async function launchRemoteExternalCodingAgent(
           const remoteWorkerStopped =
             signal?.reason === REMOTE_EXTERNAL_WORKER_STOPPED;
           return {
-            agentId: parentScope.agentId,
+            agentId: workerAgentId(),
             model,
             report: "",
             success: false,
