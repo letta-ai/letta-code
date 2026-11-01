@@ -346,6 +346,8 @@ function applyPersonalityFiles(
     templatePromptAssetName: string;
     content: string;
     description?: string;
+    /** Only write when the file is missing or its body is blank. */
+    onlyIfBlank?: boolean;
   }>,
   undoLog: PersonalityFileUndo[],
 ): string[] {
@@ -355,6 +357,13 @@ function applyPersonalityFiles(
     const existingContent = existsSync(file.absolutePath)
       ? readFileSync(file.absolutePath, "utf-8")
       : null;
+    if (
+      file.onlyIfBlank &&
+      existingContent !== null &&
+      existingContent.replace(FRONTMATTER_REGEX, "").trim()
+    ) {
+      continue;
+    }
     const nextContent = existingContent
       ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
           description: file.description,
@@ -485,6 +494,8 @@ export async function applyPersonalityToMemory(
       templatePromptAssetName: blockDefinitions.human.templatePromptAssetName,
       content: blockDefinitions.human.value,
       description: blockDefinitions.human.description,
+      // Never overwrite what the agent already knows about the user.
+      onlyIfBlank: true,
     },
   ];
 

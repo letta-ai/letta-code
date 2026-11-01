@@ -11,7 +11,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { initializeLocalMemoryRepo } from "@/agent/memory-git";
 import { applyPersonalityToMemory } from "@/agent/personality";
-import { getPersonalityContent } from "@/agent/personality-presets";
+import {
+  getPersonalityContent,
+  getPersonalityHumanContent,
+} from "@/agent/personality-presets";
 import { configureBackendMode } from "@/backend";
 
 /**
@@ -105,6 +108,7 @@ describe("applyPersonalityToMemory", () => {
       getPersonalityContent("linus").trim().split("\n")[0] ?? "",
     );
     expect(read("persona.md")).not.toContain("Old persona.");
+    expect(read("human.md")).toBe(ROOT_HUMAN);
     expect(git("rev-parse", "HEAD").trim()).not.toBe(headBefore);
     expect(git("status", "--porcelain")).toBe("");
   });
@@ -125,7 +129,39 @@ describe("applyPersonalityToMemory", () => {
     expect(read("human.md")).toMatch(
       /^---\n(?:name: Human\ndescription: .+|description: .+\nname: Human)\n---\n/,
     );
+    expect(read("human.md")).toContain(
+      getPersonalityHumanContent("linus").trim(),
+    );
     expect(existsSync(join(memoryDir, "system"))).toBe(false);
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  test("populated human.md is left byte-identical; blank one gets the template", async () => {
+    const blankHuman =
+      "---\nname: Human\ndescription: Who the user is\n---\n\n  \n";
+    await initRepo([
+      { relativePath: "MEMORY.md", content: MEMORY_INDEX },
+      { relativePath: "persona.md", content: ROOT_PERSONA },
+      { relativePath: "human.md", content: ROOT_HUMAN },
+    ]);
+
+    await applyPersonalityToMemory({
+      agentId: AGENT_ID,
+      personalityId: "tutorial",
+    });
+    expect(read("human.md")).toBe(ROOT_HUMAN);
+    expect(read("persona.md")).not.toContain("Old persona.");
+
+    writeFileSync(join(memoryDir, "human.md"), blankHuman, "utf8");
+    git("commit", "-q", "-am", "test: blank human");
+    await applyPersonalityToMemory({
+      agentId: AGENT_ID,
+      personalityId: "tutorial",
+    });
+    expect(read("human.md")).toContain("name: Human");
+    expect(read("human.md")).toContain(
+      getPersonalityHumanContent("tutorial").trim(),
+    );
     expect(git("status", "--porcelain")).toBe("");
   });
 
@@ -151,6 +187,9 @@ describe("applyPersonalityToMemory", () => {
     expect(result.humanRelativePath).toBe("system/human.md");
     expect(existsSync(join(memoryDir, "persona.md"))).toBe(false);
     expect(read("system/persona.md")).not.toContain("Old persona.");
+    expect(read("system/human.md")).toBe(
+      "---\ndescription: Who the user is\n---\n\nOld human.\n",
+    );
     expect(git("status", "--porcelain")).toBe("");
   });
 
