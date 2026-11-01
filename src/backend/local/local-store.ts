@@ -487,29 +487,7 @@ export class LocalStore {
     this.agentRecordMtimeMsById.delete(agentId);
     this.loadConversationRecordsFromStorage();
     for (const [key, conversation] of [...this.conversations.entries()]) {
-      if (conversation.agent_id === agentId) {
-        this.conversations.delete(key);
-        this.localMessagesByConversationKey.delete(key);
-        this.loadedConversationKeys.delete(key);
-        this.tailResidentConversationKeys.delete(key);
-        this.residentTailStartIndexByConversationKey.delete(key);
-        this.loadRepairedConversationKeys.delete(key);
-        this.transcriptMetadataByConversationKey.delete(key);
-        this.conversationRecordJsonByKey.delete(key);
-        this.sessionEntryIdsByConversationKey.delete(key);
-        this.sessionEntryIdByMessageIdByConversationKey.delete(key);
-        this.persistedMessageByMessageIdByConversationKey.delete(key);
-        this.lastSessionEntryIdByConversationKey.delete(key);
-        if (this.storageDir) {
-          rmSync(
-            join(this.storageDir, "conversations", encodePathSegment(key)),
-            {
-              recursive: true,
-              force: true,
-            },
-          );
-        }
-      }
+      if (conversation.agent_id === agentId) this.removeConversationKey(key);
     }
     if (this.storageDir) {
       rmSync(
@@ -517,6 +495,28 @@ export class LocalStore {
         { force: true },
       );
     }
+  }
+
+  deleteConversation(conversationId: string): void {
+    const { id, agent_id } = this.retrieveConversation(conversationId);
+    this.removeConversationKey(this.conversationKey(id, agent_id));
+  }
+
+  private removeConversationKey(key: string): void {
+    this.conversations.delete(key);
+    this.localMessagesByConversationKey.delete(key);
+    this.loadedConversationKeys.delete(key);
+    this.tailResidentConversationKeys.delete(key);
+    this.residentTailStartIndexByConversationKey.delete(key);
+    this.loadRepairedConversationKeys.delete(key);
+    this.transcriptMetadataByConversationKey.delete(key);
+    this.conversationRecordJsonByKey.delete(key);
+    this.sessionEntryIdsByConversationKey.delete(key);
+    this.sessionEntryIdByMessageIdByConversationKey.delete(key);
+    this.persistedMessageByMessageIdByConversationKey.delete(key);
+    this.lastSessionEntryIdByConversationKey.delete(key);
+    const dir = this.conversationDirForKey(key);
+    if (dir) rmSync(dir, { recursive: true, force: true });
   }
 
   retrieveAgentRecord(agentId: string): LocalAgentRecord {
