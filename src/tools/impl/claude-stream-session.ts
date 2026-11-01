@@ -424,6 +424,9 @@ function settleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
+  // The session stays registered until its process exits, so a result line
+  // can still arrive after settle; it must not rewrite the finished report.
+  if (session.settled) return;
   if (typeof value.result === "string") session.report = value.result;
   closeInput(session);
   if (value.is_error === true) {

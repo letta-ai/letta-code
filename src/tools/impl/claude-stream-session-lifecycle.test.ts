@@ -296,4 +296,23 @@ describe("Claude stream session lifecycle", () => {
     },
     BACKGROUND_TEST_TIMEOUT_MS,
   );
+  test(
+    "a result after settle does not rewrite the settled report",
+    async () => {
+      const fixture = trackedFixture({ exitOnStdinEnd: false });
+      const running = runClaudeTurn(
+        { ...base, prompt: "work", sessionId: SESSION_ID },
+        { createTransport: () => fixture.transport },
+      );
+      await Bun.sleep(0);
+      fixture.emit({ type: "result", is_error: false, result: "done" });
+      const result = await running;
+      fixture.emit({ type: "result", is_error: true, result: "late" });
+      await Bun.sleep(10);
+      expect(result).toMatchObject({ success: true, report: "done" });
+      fixture.finish({ exitCode: 0, exitSignal: null });
+      expect(await running).toMatchObject({ success: true, report: "done" });
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
 });
