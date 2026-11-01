@@ -13,8 +13,8 @@ const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
 let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
-  previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
-  delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
+  previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
@@ -42,8 +42,9 @@ function snapshot(
 
 afterEach(() => {
   if (previousMonitorMaxTimeout === undefined)
-    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
-  else process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = previousMonitorMaxTimeout;
+    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  else
+    process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = previousMonitorMaxTimeout;
   if (previousManagedCloud === undefined)
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
@@ -64,7 +65,7 @@ afterEach(() => {
 describe("WatchPR background lifecycle", () => {
   test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
-    process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = "86400000";
+    process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = "86400";
     const realSetTimeout = globalThis.setTimeout;
     const timers = spyOn(globalThis, "setTimeout").mockImplementation(
       Object.assign(
