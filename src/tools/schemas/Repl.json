@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "code": {
+      "type": "string",
+      "description": "JavaScript cell body (top-level await allowed) run in this conversation's persistent session; `return` a value to see it."
+    },
+    "args": {
+      "description": "Optional input data exposed as the args global for this cell."
+    },
+    "reset": {
+      "type": "boolean",
+      "description": "Stop every worker and discard the session's variables before running code (code may be omitted)."
+    },
+    "run_in_background": {
+      "type": "boolean",
+      "description": "Set to true only when the cell should return a task ID immediately. Ordinary cells already yield automatically if they are still running after a brief wait, and completion is delivered without polling."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
