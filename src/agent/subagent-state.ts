@@ -117,7 +117,7 @@ const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
 // A published result is how a caller on another computer receives the outcome,
 // and it may reconnect after an outage to read it, so keep those entries longer.
-const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
+export const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
 let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 
