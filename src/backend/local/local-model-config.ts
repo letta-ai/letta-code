@@ -145,10 +145,14 @@ export function localModelSettingsForHandle(
     ? runtime.getModels(runtimeProviderId).find((entry) => entry.id === modelId)
     : undefined;
   if (!model) return undefined;
+  const providerType = localProviderTypeForModelConfig(provider);
   return {
-    provider_type: localProviderTypeForModelConfig(provider),
+    provider_type: providerType,
     context_window_limit: model.contextWindow,
-    max_tokens: model.maxTokens,
+    // OpenRouter's catalog maxTokens is a capability ceiling. Persisting it as
+    // the ordinary request limit makes every request reserve the full ceiling
+    // and can trigger credit checks before generation starts.
+    ...(providerType === "openrouter" ? {} : { max_tokens: model.maxTokens }),
   };
 }
 
@@ -301,16 +305,6 @@ export async function listLocalModels(
         : localModelHandle(provider as PiProvider, model));
     if (models.some((entry) => entry.handle === handle)) return;
     const modelSettings = localModelSettingsForHandle(handle, modelsRuntime);
-    const maxContextWindow =
-      options.maxContextWindow ??
-      (typeof modelSettings?.context_window_limit === "number"
-        ? modelSettings.context_window_limit
-        : undefined);
-    const maxOutputTokens =
-      options.maxOutputTokens ??
-      (typeof modelSettings?.max_tokens === "number"
-        ? modelSettings.max_tokens
-        : undefined);
     const modelId =
       typeof provider === "string" && isPiProvider(provider)
         ? (stripProviderHandlePrefix(handle, provider) ?? model)
@@ -323,6 +317,16 @@ export async function listLocalModels(
           .getModels(providerSpec.piProvider)
           .find((entry) => entry.id === modelId)
       : undefined;
+    const maxContextWindow =
+      options.maxContextWindow ??
+      (typeof modelSettings?.context_window_limit === "number"
+        ? modelSettings.context_window_limit
+        : undefined);
+    const maxOutputTokens =
+      options.maxOutputTokens ??
+      (typeof modelSettings?.max_tokens === "number"
+        ? modelSettings.max_tokens
+        : catalogModel?.maxTokens);
     const providerType =
       options.modelEndpointType ?? localProviderTypeForModelConfig(provider);
     const name = options.name ?? catalogModel?.name ?? modelId;

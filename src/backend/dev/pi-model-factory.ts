@@ -178,6 +178,8 @@ export interface PiModelFactoryOptions {
 export interface ResolvedPiModel {
   provider: PiProvider;
   model: Model<Api>;
+  /** Published capability ceiling before any persisted request override. */
+  catalogMaxTokens: number;
   apiKey?: string;
   timeout: LocalProviderTimeout;
   headers?: Record<string, string>;
@@ -686,6 +688,7 @@ export async function resolvePiModelForAgent(
   return {
     provider,
     model,
+    catalogMaxTokens: hookedModel.maxTokens,
     apiKey: connection.apiKey,
     timeout: connection.timeout,
     headers,

@@ -28,6 +28,7 @@ import {
   localProviderRetryMessage,
   normalizeLocalProviderError,
 } from "./local-provider-errors";
+import { withOpenRouterDefaultMaxTokensSanitizer } from "./openrouter-payload";
 import {
   elideImagePayloadsForProviderRetry,
   isOversizedPayloadTransportFailure,
@@ -612,7 +613,19 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       conversationId: input.conversationId,
       requestKind: "turn",
     });
-    const maxTokens = finiteNumberValue(input.agent.model_settings.max_tokens);
+    const configuredMaxTokens =
+      finiteNumberValue(input.agent.model_settings.max_output_tokens) ??
+      finiteNumberValue(input.agent.model_settings.max_tokens);
+    const isOpenRouterOpenAI =
+      resolved.model.provider === "openrouter" &&
+      resolved.model.api === "openai-completions";
+    const usesImplicitOpenRouterMaxTokens =
+      isOpenRouterOpenAI &&
+      (configuredMaxTokens === undefined ||
+        configuredMaxTokens === resolved.catalogMaxTokens);
+    const maxTokens = usesImplicitOpenRouterMaxTokens
+      ? undefined
+      : configuredMaxTokens;
     const temperature = finiteNumberValue(
       input.agent.model_settings.temperature,
     );
@@ -649,6 +662,10 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    options.onPayload = withOpenRouterDefaultMaxTokensSanitizer(
+      options.onPayload,
+      usesImplicitOpenRouterMaxTokens,
+    );
     const verbosity = input.agent.model_settings.verbosity;
     if (
       (resolved.model.api === "openai-responses" ||

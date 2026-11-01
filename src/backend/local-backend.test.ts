@@ -1322,7 +1322,7 @@ describe("local backend pi transcript", () => {
     ).toBe(8192);
   });
 
-  test("resets persisted output-token settings when switching local models", async () => {
+  test("does not persist OpenRouter capability ceilings as request defaults", async () => {
     const storageDir = await mkdtemp(
       join(tmpdir(), "local-backend-pi-model-token-reset-"),
     );
@@ -1358,7 +1358,7 @@ describe("local backend pi transcript", () => {
     expect(
       (updated as { llm_config?: { max_tokens?: number } }).llm_config
         ?.max_tokens,
-    ).toBe(kimi?.maxTokens);
+    ).toBeUndefined();
     expect(
       (updated as { llm_config?: { context_window?: number } }).llm_config
         ?.context_window,

@@ -187,7 +187,7 @@ describe("local model updates", () => {
         expect(conversationModelSettings?.context_window_limit).toBe(
           kimi?.contextWindow,
         );
-        expect(conversationModelSettings?.max_tokens).toBe(kimi?.maxTokens);
+        expect(conversationModelSettings?.max_tokens).toBeUndefined();
         expect(conversationModelSettings?.max_output_tokens).toBeUndefined();
 
         const customizedConversation = await backend.updateConversation(
@@ -223,7 +223,7 @@ describe("local model updates", () => {
 
         expect(updated.model).toBe("openrouter/moonshotai/kimi-k2.6");
         expect(updated.llm_config?.context_window).toBe(kimi?.contextWindow);
-        expect(updated.llm_config?.max_tokens).toBe(kimi?.maxTokens);
+        expect(updated.llm_config?.max_tokens).toBeUndefined();
         expect(updated.llm_config?.max_tokens).not.toBe(384000);
         expect(updated.llm_config?.max_tokens).not.toBe(64000);
         expect(
