@@ -8,9 +8,13 @@ import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import { sendCodexMessage } from "@/tools/impl/codex-app-server";
 import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
+  buildExternalWorkerResumeEnv,
+  type ExternalWorkerLaunchEnv,
+  type ExternalWorkerResumeEnvDependencies,
   isExternalCodingAgentType,
   parseExternalCodingAgentId,
   resolveExternalCodingAgentSecretEnv,
+  scrubExternalWorkerResult,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
@@ -101,6 +105,7 @@ export async function handleSubagentMessageCommand(
     sendCodex?: typeof sendCodexMessage;
     track?: typeof trackExternalFollowupCompletion;
     reserveCapture?: typeof reserveNativeSessionCapture;
+    workerEnv?: ExternalWorkerResumeEnvDependencies;
     now?: () => number;
   } = {},
 ): Promise<SubagentMessageResponse> {
@@ -141,9 +146,19 @@ export async function handleSubagentMessageCommand(
         target.type === "cursor"
           ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
           : {};
+      // A resumed worker process needs the same environment as a launch.
+      let worker: ExternalWorkerLaunchEnv | undefined;
       const receipt = await runOutsideRuntimeContext(() =>
-        runWithRuntimeContext(runtimeContext(parent, command), () =>
-          target.type === "cursor"
+        runWithRuntimeContext(runtimeContext(parent, command), async () => {
+          if (target.type !== "cursor")
+            worker = await buildExternalWorkerResumeEnv(
+              {
+                parentAgentId: command.runtime.agent_id,
+                actingUserId: command.runtime.acting_user_id,
+              },
+              deps.workerEnv,
+            );
+          return target.type === "cursor"
             ? sendCursorMessage(
                 {
                   sessionId,
@@ -155,42 +170,56 @@ export async function handleSubagentMessageCommand(
                 secrets,
               )
             : target.type === "claude-code"
-              ? (deps.sendClaude ?? sendClaudeMessage)({
-                  sessionId: target.sessionId,
-                  prompt: command.message,
-                  parentAgentId: command.runtime.agent_id,
-                  cwd: getCurrentWorkingDirectory(),
-                  beforeStart: async () => {
-                    captureReservation = await (
-                      deps.reserveCapture ?? reserveNativeSessionCapture
-                    )(source, sessionId, {
-                      agentId: command.runtime.agent_id,
-                      conversationId: command.runtime.conversation_id,
-                      actingUserId: command.runtime.acting_user_id,
-                    });
+              ? (deps.sendClaude ?? sendClaudeMessage)(
+                  {
+                    sessionId: target.sessionId,
+                    prompt: command.message,
+                    parentAgentId: command.runtime.agent_id,
+                    cwd: getCurrentWorkingDirectory(),
+                    mcpReminder: worker?.mcpReminder,
+                    beforeStart: async () => {
+                      captureReservation = await (
+                        deps.reserveCapture ?? reserveNativeSessionCapture
+                      )(source, sessionId, {
+                        agentId: command.runtime.agent_id,
+                        conversationId: command.runtime.conversation_id,
+                        actingUserId: command.runtime.acting_user_id,
+                      });
+                    },
                   },
-                })
-              : (deps.sendCodex ?? sendCodexMessage)({
-                  threadId: target.sessionId,
-                  prompt: command.message,
-                  parentAgentId: command.runtime.agent_id,
-                  cwd: getCurrentWorkingDirectory(),
-                  beforeStart: async () => {
-                    captureReservation = await (
-                      deps.reserveCapture ?? reserveNativeSessionCapture
-                    )(source, sessionId, {
-                      agentId: command.runtime.agent_id,
-                      conversationId: command.runtime.conversation_id,
-                      actingUserId: command.runtime.acting_user_id,
-                    });
+                  { env: worker?.env },
+                )
+              : (deps.sendCodex ?? sendCodexMessage)(
+                  {
+                    threadId: target.sessionId,
+                    prompt: command.message,
+                    parentAgentId: command.runtime.agent_id,
+                    cwd: getCurrentWorkingDirectory(),
+                    mcpReminder: worker?.mcpReminder,
+                    beforeStart: async () => {
+                      captureReservation = await (
+                        deps.reserveCapture ?? reserveNativeSessionCapture
+                      )(source, sessionId, {
+                        agentId: command.runtime.agent_id,
+                        conversationId: command.runtime.conversation_id,
+                        actingUserId: command.runtime.acting_user_id,
+                      });
+                    },
                   },
-                }),
-        ),
+                  { env: worker?.env },
+                );
+        }),
       );
       if (receipt.mode === "steered")
         return { ...base, success: true, delivery: "steered" };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
+      const secretEnv = worker?.secretEnv;
+      const completion = secretEnv
+        ? receipt.completion.then((result) =>
+            scrubExternalWorkerResult(result, secretEnv),
+          )
+        : receipt.completion;
       try {
         (deps.track ?? trackExternalFollowupCompletion)({
           type: target.type,
@@ -201,7 +230,7 @@ export async function handleSubagentMessageCommand(
             conversationId: parent.conversationId,
             actingUserId: command.runtime.acting_user_id,
           },
-          completion: receipt.completion,
+          completion,
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
@@ -219,7 +248,7 @@ export async function handleSubagentMessageCommand(
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);
         finishUntrackedNativeCapture(
-          receipt.completion,
+          completion,
           captureReservation,
           source,
           sessionId,
