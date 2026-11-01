@@ -68,6 +68,7 @@ import {
   resolveScopedConversationId,
 } from "./scope";
 import { notifyStreamObservers } from "./stream-observers";
+import { shouldEmitSubagentSnapshot } from "./subagent-state-cache";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import { buildTurnCorrelationSnapshot } from "./turn-correlation";
 import type {
@@ -872,29 +873,18 @@ export function emitSubagentStateUpdate(
     conversation_id?: string | null;
   },
   routing: ListenerMessageRouting = TO_SUBSCRIBERS,
+  options?: { onlyIfChanged?: boolean },
 ): void {
+  const subagents = buildSubagentSnapshot(runtime, scope);
+  const cacheScope = resolveSubagentScopeForSnapshot(runtime, scope);
+  const cacheOwner = getListenerRuntime(runtime) ?? socket;
+  if (!shouldEmitSubagentSnapshot(cacheOwner, cacheScope, subagents, options))
+    return;
   const message: Omit<
     SubagentStateUpdateMessage,
     "runtime" | "event_seq" | "emitted_at" | "idempotency_key"
-  > = {
-    type: "update_subagent_state",
-    subagents: buildSubagentSnapshot(runtime, scope),
-  };
+  > = { type: "update_subagent_state", subagents };
   emitProtocolV2Message(socket, runtime, message, scope, routing);
-}
-
-export function emitSubagentStateIfOpen(
-  runtime: RuntimeCarrier,
-  scope?: {
-    agent_id?: string | null;
-    conversation_id?: string | null;
-  },
-): void {
-  const listener = getListenerRuntime(runtime);
-  const transport = listener?.transport ?? listener?.socket;
-  if (transport && isListenerTransportOpen(transport)) {
-    emitSubagentStateUpdate(transport, runtime, scope);
-  }
 }
 
 export function emitCanonicalMessageDelta(
