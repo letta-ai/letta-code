@@ -18,6 +18,30 @@ export interface ToolCall {
   args: string;
 }
 
+/**
+ * An assistant text block from an external coding worker. Sent to a parent on
+ * another computer as `SubagentSnapshot.progress_texts` (latest
+ * {@link MAX_PROGRESS_TEXTS}, oldest first); older listeners omit the field.
+ */
+export interface ProgressText {
+  /** Stable per subagent, so a parent appends each text to its log once. */
+  id: string;
+  /** ISO timestamp of when the text was recorded. */
+  at: string;
+  text: string;
+}
+
+/** Longest progress text excerpt kept per entry. */
+export const PROGRESS_TEXT_CHARS = 300;
+/** Most recent progress texts kept per subagent (and sent in snapshots). */
+export const MAX_PROGRESS_TEXTS = 20;
+
+/** Collapse whitespace and cap a progress excerpt to one short line. */
+export function excerptProgressText(value: string, max: number): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
 export interface SubagentState {
   id: string;
   type: string; // "General-purpose", "Recall", "code-reviewer", etc.
@@ -33,6 +57,10 @@ export interface SubagentState {
   /** Exact accepted Super Run for a remotely executing child send. */
   superRunId?: string;
   toolCalls: ToolCall[];
+  /** Latest assistant text blocks from an external worker, oldest first. */
+  progressTexts?: ProgressText[];
+  /** Texts recorded so far; numbers progress text IDs so they stay stable. */
+  progressTextCount?: number;
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
   totalTokens: number;
@@ -352,6 +380,32 @@ export function addToolCall(
     ),
   };
   store.agents.set(subagentId, updatedAgent);
+  notifyListeners();
+}
+
+/**
+ * Record an assistant text block from an external worker, keeping the latest
+ * {@link MAX_PROGRESS_TEXTS}. Skips blanks and a repeat of the previous text.
+ */
+export function addProgressText(
+  subagentId: string,
+  text: string,
+  now: () => Date = () => new Date(),
+): void {
+  const agent = store.agents.get(subagentId);
+  if (!agent) return;
+  const excerpt = excerptProgressText(text, PROGRESS_TEXT_CHARS);
+  const previous = agent.progressTexts?.at(-1);
+  if (!excerpt || previous?.text === excerpt) return;
+  const count = (agent.progressTextCount ?? 0) + 1;
+  store.agents.set(subagentId, {
+    ...agent,
+    progressTexts: [
+      ...(agent.progressTexts ?? []),
+      { id: `text-${count}`, at: now().toISOString(), text: excerpt },
+    ].slice(-MAX_PROGRESS_TEXTS),
+    progressTextCount: count,
+  });
   notifyListeners();
 }
 

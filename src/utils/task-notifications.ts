@@ -18,6 +18,8 @@ export interface NotificationScope {
   agentId: string;
   conversationId: string;
   actingUserId?: string | null;
+  /** Client message ids of the listener turn that started the work. */
+  clientMessageIds?: string[];
 }
 
 export interface TaskNotification {
@@ -70,11 +72,15 @@ export function resolveNotificationScope(parentScope?: {
   const actingUserId = runtime?.suppressActingUserFallback
     ? null
     : runtime?.actingUserId;
+  // Lets the notification turn join the send that started this work.
+  const clientMessageIds = runtime?.resolveClientMessageIds?.() ?? [];
+  const correlation = clientMessageIds.length > 0 ? { clientMessageIds } : {};
   if (parentScope?.agentId) {
     return {
       agentId: parentScope.agentId,
       conversationId: parentScope.conversationId || "default",
       actingUserId,
+      ...correlation,
     };
   }
 
@@ -83,6 +89,7 @@ export function resolveNotificationScope(parentScope?: {
       agentId: getCurrentAgentId(),
       conversationId: getConversationId() ?? "default",
       actingUserId,
+      ...correlation,
     };
   } catch {
     return undefined;

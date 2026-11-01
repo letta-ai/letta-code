@@ -243,6 +243,12 @@ function getDequeuedClientMessageIds(
         : []) {
       clientMessageIds.add(clientMessageId);
     }
+    // A background-work notification continues the send that started it.
+    if (item.kind === "task_notification") {
+      for (const clientMessageId of item.clientMessageIds ?? []) {
+        clientMessageIds.add(clientMessageId);
+      }
+    }
   }
   return [...clientMessageIds];
 }

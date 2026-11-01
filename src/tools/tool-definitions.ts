@@ -47,6 +47,7 @@ import { grep } from "./impl/grep";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { monitor } from "./impl/monitor";
+import { applyMonitorMaxTimeout } from "./impl/monitor-timeout";
 import { read } from "./impl/read";
 import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
@@ -174,13 +175,15 @@ const toolDefinitions = {
     impl: task_stop,
   }),
   Monitor: defineTool({
-    schema: MonitorSchema,
-    description: MonitorDescription.trim(),
+    schema: JSON.parse(
+      applyMonitorMaxTimeout(JSON.stringify(MonitorSchema)),
+    ) as typeof MonitorSchema,
+    description: applyMonitorMaxTimeout(MonitorDescription.trim()),
     impl: monitor,
   }),
   WatchPR: defineTool({
     schema: WatchPRSchema,
-    description: WatchPRDescription.trim(),
+    description: applyMonitorMaxTimeout(WatchPRDescription.trim()),
     impl: watch_pr,
   }),
   Read: defineTool({

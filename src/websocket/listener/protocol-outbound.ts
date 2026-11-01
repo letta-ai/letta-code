@@ -830,9 +830,8 @@ export function buildSubagentSnapshot(
         return true;
       }
 
-      // Scope listener-mode snapshots to the parent runtime that launched
-      // the subagent so active reflection/task state does not bleed across
-      // other agent/conversation tabs.
+      // Scope listener-mode snapshots to the launching parent runtime so
+      // reflection/task state does not bleed across agent/conversation tabs.
       if (!a.parentAgentId || a.parentAgentId !== runtimeScope.agent_id) {
         return false;
       }
@@ -858,6 +857,7 @@ export function buildSubagentSnapshot(
       parent_conversation_id: a.parentConversationId,
       start_time: a.startTime,
       tool_calls: a.toolCalls,
+      ...(a.progressTexts?.length ? { progress_texts: a.progressTexts } : {}),
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,

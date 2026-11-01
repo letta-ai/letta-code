@@ -8,7 +8,6 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
-  addToolCall,
   clearSubagentAbortHook,
   completeSubagent,
   generateSubagentId,
@@ -73,6 +72,9 @@ import { resolveLaunchComputer } from "./subagent-computer";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
   buildTaskResultHeader,
+  closeTaskProgressLog,
+  externalWorkerProgressListeners,
+  openTaskProgressLog,
   writeTaskTranscriptResult,
   writeTaskTranscriptStart,
 } from "./task-transcript";
@@ -330,6 +332,7 @@ export function spawnBackgroundSubagentTask(
     buildBackgroundTaskAbortHook(taskId, abortController),
   );
   writeTaskTranscriptStart(outputFile, description, subagentType);
+  openTaskProgressLog(subagentId, outputFile);
 
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
@@ -402,6 +405,7 @@ export function spawnBackgroundSubagentTask(
       : execute());
   const taskLifecycle = subagentExecution
     .then(async (result) => {
+      closeTaskProgressLog(subagentId);
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
         resolvedParentScope?.conversationId,
@@ -501,6 +505,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 
@@ -516,6 +521,7 @@ export function spawnBackgroundSubagentTask(
       });
     })
     .catch(async (error) => {
+      closeTaskProgressLog(subagentId);
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       bgTask.status = "failed";
@@ -588,6 +594,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 
@@ -808,7 +815,7 @@ export async function launchSubagent(
           _type,
           prompt,
           model,
-          _subagentId,
+          workerSubagentId,
           childSignal,
         ) =>
           runExternalCodingAgent({
@@ -823,7 +830,7 @@ export async function launchSubagent(
             signal: childSignal,
             onStarted: (agentId) =>
               updateSubagent(subagentId, { agentId, status: "running" }),
-            onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
+            ...externalWorkerProgressListeners(workerSubagentId),
           }),
       },
     });

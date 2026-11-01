@@ -84,6 +84,7 @@ export async function prepareListenerTurn(params: {
   turnLease: TurnLease;
   onStatusChange?: StartListenerOptions["onStatusChange"];
   connectionId?: string;
+  resolveClientMessageIds?: () => string[];
 }): Promise<ListenerTurnSetupResult> {
   const {
     msg,
@@ -96,6 +97,7 @@ export async function prepareListenerTurn(params: {
     turnLease,
     onStatusChange,
     connectionId,
+    resolveClientMessageIds,
   } = params;
   const isInterrupted = () =>
     turnLease.signal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
@@ -338,6 +340,7 @@ export async function prepareListenerTurn(params: {
     actingUserId: msg.actingUserId,
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
+    resolveClientMessageIds,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.
