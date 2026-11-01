@@ -23,8 +23,9 @@ export function buildAgentSendContent(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,
   message: string,
+  recipientAgentId?: string,
 ): MessageCreate["content"] {
-  const reminder = buildAgentSendReminder(sender, noWait);
+  const reminder = buildAgentSendReminder(sender, noWait, recipientAgentId);
   return [
     ...(reminder ? [{ type: "text" as const, text: reminder }] : []),
     { type: "text", text: message },
@@ -34,11 +35,16 @@ export function buildAgentSendContent(
 export function buildAgentSendReminder(
   sender: { agentId?: string; conversationId?: string },
   noWait: boolean,
+  recipientAgentId?: string,
 ): string {
   if (!sender.agentId) return "";
   const address = sender.conversationId
     ? `, conversation ${sender.conversationId}`
     : "";
+  // Between two conversations of the same agent, an unconditional "To reply…"
+  // turns one update into a ping-pong that keeps both conversations busy.
+  const sameAgent =
+    noWait && !!recipientAgentId && recipientAgentId === sender.agentId;
   // `--agent` with a conv-... ID is rejected by startup validation.
   const isDefault = sender.conversationId === "default";
   const cliTarget = isDefault
@@ -52,6 +58,14 @@ export function buildAgentSendReminder(
     : sender.conversationId
       ? `To reply, call SendAgentMessage with ${toolTarget}. Only if that tool is unavailable, run letta -p ${cliTarget} --no-wait "your reply". Ordinary assistant output is not forwarded to the sender.`
       : "Ordinary assistant output is not forwarded to the sender. No return conversation was supplied.";
+  if (sameAgent) {
+    // State the return address as a fact, not an imperative: the unconditional
+    // "To reply, call SendAgentMessage" is what produced the ping-pong.
+    const replyHint = sender.conversationId
+      ? ` If it asks you something only this conversation can answer, you can reply with SendAgentMessage to ${toolTarget}.`
+      : "";
+    return `<system-reminder>\nThis message is from another of your own conversations (agent ${sender.agentId}${address}).\nTreat it as context. Do not send acknowledgments or status updates back.${replyHint}\n</system-reminder>\n\n`;
+  }
   return `<system-reminder>\nThis message is from agent ${sender.agentId}${address}.\n${instruction}\n</system-reminder>\n\n`;
 }
 
