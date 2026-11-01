@@ -183,3 +183,17 @@ describe("PasteAwareTextInput multi-read input commits (#4493)", () => {
     expect(observed.renderedCaret).toBe(3);
   });
 });
+
+describe("PasteAwareTextInput Ctrl+H (#4566)", () => {
+  test("deletes the previous character when Ctrl+H arrives as legacy BS", async () => {
+    const observed = await typeInReads([["abc"], ["\b"]]);
+    expect(observed.value).toBe("ab");
+  });
+
+  test("deletes the previous character when Ctrl+H arrives as Kitty CSI-u", async () => {
+    // Letta enables the Kitty keyboard protocol, so Kitty, Ghostty and iTerm2
+    // send Ctrl+H as ESC [ 104 ; 5 u instead of BS.
+    const observed = await typeInReads([["abc"], ["\x1b[104;5u"]]);
+    expect(observed.value).toBe("ab");
+  });
+});
