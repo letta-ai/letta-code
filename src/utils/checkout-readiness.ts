@@ -158,6 +158,7 @@ export async function waitForToolCheckouts(
   args: unknown,
   cwd: string,
   arbitraryCode = false,
+  memoryDir?: string | null,
 ): Promise<void> {
   // Provider toolsets expose both PascalCase and snake_case spellings.
   const tool = name.replaceAll("_", "").toLowerCase();
@@ -170,7 +171,7 @@ export async function waitForToolCheckouts(
       tool,
     )
   ) {
-    await waitForCommandCheckouts(agentId, args, cwd);
+    await waitForCommandCheckouts(agentId, args, cwd, memoryDir);
     return;
   }
   if (
@@ -208,6 +209,7 @@ async function waitForCommandCheckouts(
   agentId: string | undefined,
   args: unknown,
   cwd: string,
+  memoryDir?: string | null,
 ): Promise<void> {
   const text: string[] = [];
   const visit = (value: unknown): void => {
@@ -216,14 +218,18 @@ async function waitForCommandCheckouts(
       Object.values(value).forEach(visit);
   };
   visit(args);
-  if (text.some((value) => /MEMORY_DIR|\.letta\b/.test(value))) {
-    await waitForCheckouts(agentId);
-    return;
-  }
   const paths = text
     .flatMap((value) => value.split(/[\s"'`;|&()<>=,]+/))
     .filter((token) => /[/\\~$]|^\.\.?$/.test(token))
-    .map((token) => expandFilePath(token, cwd));
+    .map((token) => {
+      const resolvedToken = memoryDir
+        ? token.replace(
+            /\$(?:\{(?:LETTA_)?MEMORY_DIR\}|(?:LETTA_)?MEMORY_DIR\b)/g,
+            memoryDir,
+          )
+        : token;
+      return expandFilePath(resolvedToken, cwd);
+    });
   // A command running inside a pending checkout can write into it directly.
   await waitForCheckouts(agentId, paths, cwd);
 }
