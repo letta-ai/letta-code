@@ -63,6 +63,7 @@ import {
 import {
   getCurrentBillingTier,
   getPrimaryAgentModelHandle,
+  resolveParentBaseTools,
   resolveSubagentModel,
 } from "./subagent-model";
 import { spawnSubagentProcess } from "./subagent-process";
@@ -115,6 +116,7 @@ interface BuildSubagentArgsOptions {
   platform?: NodeJS.Platform;
   extraTools?: string[];
   parentAgentId?: string | null;
+  baseTools?: string[]; // new agents only; [] means none, omitted = default
   /**
    * Replace the subagent's configured persona: pass `--system-custom <text>`
    * to the child instead of `--system <type>`. Only applies to new agents.
@@ -205,11 +207,10 @@ export function buildSubagentArgs(
       args.push("--no-skills");
     }
 
-    // Skip server-side base tools (web_search, fetch_webpage) for subagents
-    // that operate purely on local memory/git state.
-    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
-      args.push("--base-tools", "none");
-    }
+    // Memory subagents get no server-side base tools (web_search,
+    // fetch_webpage); the rest get only the ones their parent has.
+    const base = NO_BASE_TOOL_SUBAGENT_TYPES.has(type) ? [] : options.baseTools;
+    if (base) args.push("--base-tools", base.join(",") || "none");
   }
 
   if (options.promptTransport !== "stdin") {
@@ -335,6 +336,7 @@ async function executeSubagent(
         promptTransport: "stdin",
         extraTools: resolveSubagentHarnessTools(type, config),
         parentAgentId,
+        baseTools: await resolveParentBaseTools(backendMode, parentAgentId),
         systemPromptOverride,
         environment,
         clientMessageId,
