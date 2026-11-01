@@ -3558,6 +3558,9 @@ export function useSubmitHandler(ctx: SubmitHandlerContext) {
       // which doesn't auto-batch async state updates, so we do this synchronously
       // while still inside the React event handler to get a single render cycle.
       const userOtid = createClientOtid();
+      // The turn's transcript rows start here: the user line when there is
+      // text, otherwise the task notification events appended further down.
+      const transcriptTurnFirstLineIndex = toLines(buffersRef.current).length;
       const optimisticUserLineId = appendOptimisticUserLine(
         buffersRef.current,
         userTextForInput,
@@ -3677,9 +3680,10 @@ ${SYSTEM_REMINDER_CLOSE}
       // Append task notifications (if any) as event lines before the user message
       appendTaskNotificationEvents(taskNotifications);
 
-      const transcriptStartLineIndex = userTextForInput
-        ? Math.max(0, toLines(buffersRef.current).length - 1)
-        : null;
+      // A notification-only turn (a background task, a subagent or a monitor
+      // finishing) is a turn too: append its rows like a typed message's.
+      const transcriptStartLineIndex =
+        userTextForInput || isSystemOnly ? transcriptTurnFirstLineIndex : null;
 
       // Check for pending approvals before sending message (skip if we already have
       // a queued approval response to send first).
