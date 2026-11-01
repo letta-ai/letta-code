@@ -5,7 +5,10 @@
  */
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { updateSubagent } from "@/agent/subagent-state";
+import {
+  DEFAULT_PUBLISHED_RESULT_RETENTION_MS,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import type { spawnSubagent } from "@/agent/subagents/manager";
 import {
@@ -171,6 +174,9 @@ function errorMessage(error: unknown): string {
  */
 class RemoteWorkerLostError extends Error {}
 
+/** Longest wait between reconnect attempts while the computer is unreachable. */
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
 /** Follows the computer's snapshot for one launch, reconnecting if the socket drops. */
 class RemoteSubagentFollower {
   private latest: SubagentSnapshot | undefined;
@@ -256,6 +262,10 @@ class RemoteSubagentFollower {
     const onAbort = () => this.wake.resolve();
     signal?.addEventListener("abort", onAbort, { once: true });
     let failedReconnects = 0;
+    // The worker reports only to this caller (`notify: "caller"`), and the
+    // computer keeps its final result for the published-result retention
+    // window. Keep reconnecting until that window could have passed.
+    let disconnectedSince: number | undefined;
     try {
       while (true) {
         signal?.throwIfAborted();
@@ -266,10 +276,26 @@ class RemoteSubagentFollower {
         if (this.lost) throw new RemoteWorkerLostError();
         if (latest) onProgress(latest);
         if (this.disconnected) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, this.reconnectDelayMs * (failedReconnects + 1)),
-          );
+          disconnectedSince ??= Date.now();
+          const offlineSince = disconnectedSince;
+          // Abort and close resolve `wake`, so a long backoff stays interruptible.
+          this.wake = Promise.withResolvers<void>();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            this.wake.promise,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(
+                resolve,
+                Math.min(
+                  this.reconnectDelayMs * (failedReconnects + 1),
+                  MAX_RECONNECT_DELAY_MS,
+                ),
+              );
+            }),
+          ]);
+          clearTimeout(timer);
           signal?.throwIfAborted();
+          if (this.closed) throw new Error("Stopped following the subagent");
           try {
             const client = await this.connect();
             this.attach(client);
@@ -282,8 +308,13 @@ class RemoteSubagentFollower {
               recover_approvals: false,
             });
             failedReconnects = 0;
+            disconnectedSince = undefined;
           } catch (error) {
-            if (++failedReconnects >= 5)
+            failedReconnects++;
+            if (
+              Date.now() - offlineSince >=
+              DEFAULT_PUBLISHED_RESULT_RETENTION_MS
+            )
               throw new Error(`Lost connection: ${errorMessage(error)}`);
           }
           continue;

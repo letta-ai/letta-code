@@ -617,6 +617,91 @@ describe("launchRemoteExternalCodingAgent", () => {
     expect(message.text).toContain("Done after drop");
   });
 
+  /** Advances Date.now by `stepMs` on each refused reconnect to simulate an outage. */
+  function outage(stepMs: number, outageMs: number, recovered: FakeComputer) {
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    spyOn(Date, "now").mockImplementation(() => realNow() + offset);
+    let attempts = 0;
+    return {
+      get attempts() {
+        return attempts;
+      },
+      connect: async () => {
+        attempts++;
+        if (offset >= outageMs) return recovered.asClient();
+        offset += stepMs;
+        throw new Error("connect ECONNREFUSED");
+      },
+    };
+  }
+
+  function launchWithConnect(
+    first: FakeComputer,
+    reconnect: () => Promise<AppServerClient>,
+  ) {
+    let connects = 0;
+    return launchRemoteExternalCodingAgent(
+      {
+        type: "claude-code",
+        computer: "brad-box",
+        prompt: "Fix the bug",
+        description: "Fix the bug",
+        toolCallId: "call-1",
+        parentScope: scope,
+      },
+      {
+        spawn,
+        reconnectDelayMs: 1,
+        resolveComputer: async () => ({
+          connectionId: "conn-1",
+          environment: environment(true),
+        }),
+        connect: async () =>
+          connects++ === 0 ? first.asClient() : reconnect(),
+        agentIdWaitMs: 20,
+      },
+    );
+  }
+
+  test("keeps following through a two-minute disconnect and reports the final result", async () => {
+    const first = new FakeComputer(() => accepted);
+    const second = new FakeComputer(
+      () => accepted,
+      (computer) =>
+        computer.snapshot({
+          status: "completed",
+          result: "Finished during the outage",
+        }),
+    );
+    const network = outage(10_000, 120_000, second);
+    const result = await launchWithConnect(first, network.connect);
+    if (!result.success) throw new Error(result.error);
+    first.snapshot({ status: "running" });
+    first.drop();
+    const message = await notified();
+    expect(network.attempts).toBeGreaterThan(5);
+    expect(second.syncs).toBe(1);
+    expect(message.text).toContain("<status>completed</status>");
+    expect(message.text).toContain("Finished during the outage");
+    expect(message.text).not.toContain("Lost connection");
+  });
+
+  test("gives up once the computer's result retention window has passed", async () => {
+    const first = new FakeComputer(() => accepted);
+    const never = new FakeComputer(() => accepted);
+    const network = outage(10 * 60_000, Number.POSITIVE_INFINITY, never);
+    const result = await launchWithConnect(first, network.connect);
+    if (!result.success) throw new Error(result.error);
+    first.snapshot({ status: "running" });
+    first.drop();
+    const message = await notified();
+    expect(network.attempts).toBe(3);
+    expect(message.text).toContain("<status>failed</status>");
+    expect(message.text).toContain("Lost connection: connect ECONNREFUSED");
+    expect(message.text).toContain("may still be running on brad-box");
+  });
+
   test("says the worker is no longer listed when the listener lacks it", async () => {
     const first = new FakeComputer(() => accepted);
     // The replacement listener is a new process with no record of the worker.
