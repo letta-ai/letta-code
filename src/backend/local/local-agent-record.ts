@@ -7,6 +7,7 @@ import {
   localLlmConfigModelPatch,
   modelHandleFromLegacyLlmConfig,
   normalizeLocalModelHandle,
+  normalizeStoredLocalModelHandle,
   supportedModelSettingsFromBody,
 } from "./local-model-normalization";
 import type { LocalAgentRecord } from "./local-types";
@@ -145,7 +146,11 @@ export function normalizeAgentRecord(
   const storedModel = optionalString(value.model);
   const legacyModel = modelHandleFromLegacyLlmConfig(legacyLlmConfig);
   const model = storedModel
-    ? normalizeLocalModelHandle(storedModel, modelSettings, legacyLlmConfig)
+    ? normalizeStoredLocalModelHandle(
+        storedModel,
+        modelSettings,
+        legacyLlmConfig,
+      )
     : (legacyModel ?? defaultAgentModel);
   return {
     id: value.id,
