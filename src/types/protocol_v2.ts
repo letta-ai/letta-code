@@ -566,11 +566,11 @@ export interface SubagentSnapshot {
   parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
+  progress_texts?: { id: string; at: string; text: string }[]; // Absent = none
   total_tokens: number;
   duration_ms: number;
   error?: string;
-  /** Truncated final report, set for `notify: "caller"` launches. */
-  result?: string;
+  result?: string; // Truncated final report for `notify: "caller"` launches.
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {

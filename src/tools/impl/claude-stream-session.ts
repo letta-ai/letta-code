@@ -9,6 +9,7 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
+  type ExternalTextListener,
   type ExternalToolCallListener,
   formatExternalToolCallArgs,
 } from "./external-tool-call";
@@ -63,6 +64,9 @@ interface ClaudeSession {
   removeUpstreamAbort: () => void;
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
+  onText?: ExternalTextListener;
+  /** Message ID + text of blocks already reported, since messages can repeat. */
+  seenTextBlocks: Set<string>;
 }
 
 export interface ClaudeTurnOptions {
@@ -77,6 +81,8 @@ export interface ClaudeTurnOptions {
   onStarted?: (sessionId: string) => void;
   /** Called once per `tool_use` block the worker emits. */
   onToolCall?: ExternalToolCallListener;
+  /** Called once per non-empty assistant `text` block the worker emits. */
+  onText?: ExternalTextListener;
   beforeStart?: () => Promise<void>;
 }
 
@@ -346,17 +352,41 @@ function handleControlResponse(
   }
 }
 
-/** Emit each `tool_use` block of a stream-json `assistant` message once. */
+/** Report an assistant `text` block once, even if Claude repeats the message. */
+function reportText(
+  session: ClaudeSession,
+  messageId: unknown,
+  text: unknown,
+): void {
+  if (!session.onText || typeof text !== "string" || !text.trim()) return;
+  // Cap the key so a long session does not retain every full text block.
+  const key = `${typeof messageId === "string" ? messageId : ""}\u0000${text.slice(0, 1_000)}`;
+  if (session.seenTextBlocks.has(key)) return;
+  session.seenTextBlocks.add(key);
+  try {
+    session.onText(text);
+  } catch {
+    // Progress display must not break the session.
+  }
+}
+
+/** Emit each `text` and `tool_use` block of a stream-json `assistant` message once. */
 function handleAssistant(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
-  if (!session.onToolCall) return;
-  const content = readRecord(value.message)?.content;
+  if (!session.onToolCall && !session.onText) return;
+  const message = readRecord(value.message);
+  const content = message?.content;
   if (!Array.isArray(content)) return;
   for (const entry of content) {
     const block = readRecord(entry);
+    if (block?.type === "text") {
+      reportText(session, message?.id, block.text);
+      continue;
+    }
     if (
+      !session.onToolCall ||
       block?.type !== "tool_use" ||
       typeof block.id !== "string" ||
       typeof block.name !== "string" ||
@@ -531,6 +561,8 @@ async function launchSession(
     removeUpstreamAbort,
     onToolCall: options.onToolCall,
     seenToolCallIds: new Set(),
+    onText: options.onText,
+    seenTextBlocks: new Set(),
   };
   sessions.set(sessionId, session);
   transport.process.stderr.setEncoding("utf8");
