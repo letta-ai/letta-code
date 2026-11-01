@@ -420,7 +420,10 @@ function holdResult(
     closeInput(session);
     settle(session, successResult(session));
   }, capMs);
-  session.backgroundCapTimer.unref?.();
+  // Deliberately not unref'd: a held session always has a live child process,
+  // so unref saves nothing, and an unref'd timer is not guaranteed to fire
+  // (observed on Windows), which would leave the session unsettled forever.
+  // settle() and the next turn start clear it, so it never outlives the session.
 }
 
 /** Settle on a final result unless Claude is still waiting on background tasks. */
