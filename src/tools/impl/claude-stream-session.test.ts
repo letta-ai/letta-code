@@ -1,91 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PassThrough } from "node:stream";
 import {
   __resetClaudeSessionsForTests,
   buildClaudeStreamArgs,
-  type ClaudeSessionTransport,
   runClaudeTurn,
   sendClaudeMessage,
 } from "./claude-stream-session";
+import {
+  awaitWithLiveLoop,
+  BACKGROUND_TEST_TIMEOUT_MS,
+  base,
+  parseWrite,
+  SESSION_ID,
+  teardownFixture,
+  teardownOpenFixtures,
+  transportFixture,
+} from "./claude-stream-session.test-helpers";
 
-const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-
-function transportFixture() {
-  const stdin = new PassThrough();
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  let finish!: (value: {
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-  }) => void;
-  const completion = new Promise<{
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-  }>((resolve) => {
-    finish = resolve;
-  });
-  const writes: string[] = [];
-  stdin.on("data", (chunk) => writes.push(chunk.toString()));
-  let ended = false;
-  const originalEnd = stdin.end.bind(stdin);
-  stdin.end = ((...args: Parameters<typeof stdin.end>) => {
-    ended = true;
-    return originalEnd(...args);
-  }) as typeof stdin.end;
-  stdin.on("finish", () => finish({ exitCode: 0, exitSignal: null }));
-  const transport: ClaudeSessionTransport = {
-    process: { stdin, stdout, stderr } as ClaudeSessionTransport["process"],
-    completion,
-    wasAborted: () => false,
-  };
-  const emit = (value: Record<string, unknown>) =>
-    stdout.write(`${JSON.stringify(value)}\n`);
-  return {
-    transport,
-    writes,
-    stdout,
-    stderr,
-    finish,
-    stdin,
-    emit,
-    ended: () => ended,
-  };
-}
-
-function parseWrite(
-  fixture: ReturnType<typeof transportFixture>,
-  index: number,
-) {
-  return JSON.parse(fixture.writes[index] ?? "") as Record<string, unknown>;
-}
-
-const base = { parentAgentId: "parent", cwd: "/repo" };
-
-/** Background-wait tests must fail fast instead of hanging the shard. */
-const BACKGROUND_TEST_TIMEOUT_MS = 5_000;
-
-/**
- * Keep a ref'd handle alive while awaiting, so the test never depends on
- * whether the runtime keeps the loop alive for the session's own timers.
- */
-async function awaitWithLiveLoop<T>(promise: Promise<T>): Promise<T> {
-  const keepAlive = setInterval(() => undefined, 5);
-  try {
-    return await promise;
-  } finally {
-    clearInterval(keepAlive);
-  }
-}
-
-/** End the fake process so no stream or timer leaks into the next test. */
-function teardownFixture(fixture: ReturnType<typeof transportFixture>): void {
-  if (!fixture.stdin.writableEnded) fixture.stdin.end();
-  fixture.stdout.end();
-  fixture.stderr.end();
-  fixture.finish({ exitCode: 0, exitSignal: null });
-}
-
-afterEach(() => __resetClaudeSessionsForTests());
+afterEach(() => {
+  teardownOpenFixtures();
+  __resetClaudeSessionsForTests();
+});
 
 describe("Claude stream sessions", () => {
   test("launches unattended subagents with bypassed permissions", async () => {
@@ -95,6 +29,7 @@ describe("Claude stream sessions", () => {
       "bypassPermissions",
     );
     expect(args).not.toContain("--allowed-tools");
+    expect(args).toContain("--replay-user-messages");
 
     const fixture = transportFixture();
     let spawnedEnv: NodeJS.ProcessEnv | undefined;

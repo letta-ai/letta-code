@@ -42,6 +42,16 @@ interface ClaudeSession {
   report: string;
   protocolError?: string;
   settled: boolean;
+  /** True once the transport's process has exited. */
+  exited: boolean;
+  /** Resolves when the transport's process has exited. */
+  exit: Promise<void>;
+  /** UUID of the most recent user input written to stdin. */
+  latestInputUuid?: string;
+  /** True once Claude has picked up {@link latestInputUuid}. */
+  latestInputStarted: boolean;
+  /** True once Claude has acknowledged any of our inputs by UUID. */
+  acknowledgesInputs: boolean;
   pendingSteers: number;
   interruptible: boolean;
   awaitingReplacementStart: boolean;
@@ -104,6 +114,8 @@ export interface ClaudeSessionDependencies {
   createSessionId?: () => string;
   /** Override for {@link BACKGROUND_TASK_WAIT_CAP_MS} (tests). */
   backgroundTaskWaitCapMs?: number;
+  /** Override for {@link SETTLED_EXIT_GRACE_MS} (tests). */
+  settledExitGraceMs?: number;
 }
 
 const sessions = new Map<string, ClaudeSession>();
@@ -114,14 +126,21 @@ const TURN_START_TIMEOUT_MS = 60_000;
  * listed. Claude Code's own background-task limit is 30 minutes.
  */
 export const BACKGROUND_TASK_WAIT_CAP_MS = 35 * 60_000;
+/**
+ * How long a new turn waits for a settled session's process to exit on its
+ * own before stopping it. Its stdin is already closed, so it cannot take the
+ * turn, and a second process must not run on the same session ID.
+ */
+export const SETTLED_EXIT_GRACE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function userInput(prompt: string): string {
+function userInput(prompt: string, uuid: string): string {
   return `${JSON.stringify({
     type: "user",
+    uuid,
     message: {
       role: "user",
       content: [{ type: "text", text: prompt }],
@@ -151,6 +170,9 @@ export function buildClaudeStreamArgs(options: {
     "--output-format",
     "stream-json",
     "--include-partial-messages",
+    // Echo each input back once Claude picks it up, so results can be matched
+    // to the input they answer.
+    "--replay-user-messages",
     // Subagents run unattended and nothing relays Claude Code permission
     // prompts back to the parent, so a gated tool call can only stall.
     "--permission-mode",
@@ -270,14 +292,15 @@ function waitForTurnStart(
   });
 }
 
+/**
+ * Resolves the turn's result. The session stays registered, and cancellation
+ * still reaches its process, until that process exits.
+ */
 function settle(session: ClaudeSession, result: SubagentResult): void {
   if (session.settled) return;
   session.settled = true;
   session.idleOnBackgroundTasks = false;
   clearBackgroundCap(session);
-  session.removeUpstreamAbort();
-  if (sessions.get(session.sessionId) === session)
-    sessions.delete(session.sessionId);
   const completedError = new Error("Claude Code session completed");
   rejectControls(session, completedError);
   rejectTurnWaiters(session, completedError);
@@ -295,8 +318,29 @@ function writeRaw(stdin: Writable, data: string): Promise<void> {
   });
 }
 
-function writeInput(stdin: Writable, prompt: string): Promise<void> {
-  return writeRaw(stdin, userInput(prompt));
+/** Writes a user turn and records it as the input the next result must answer. */
+function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
+  const uuid = randomUUID();
+  session.latestInputUuid = uuid;
+  session.latestInputStarted = false;
+  return writeRaw(session.transport.process.stdin, userInput(prompt, uuid));
+}
+
+/** Marks an input as picked up when Claude echoes or starts it by UUID. */
+function acknowledgeInput(session: ClaudeSession, uuid: unknown): void {
+  if (typeof uuid !== "string" || !session.latestInputUuid) return;
+  session.acknowledgesInputs = true;
+  if (uuid === session.latestInputUuid) session.latestInputStarted = true;
+}
+
+/**
+ * True for a result that cannot answer our latest input because Claude has
+ * not picked that input up yet, e.g. a turn Claude started itself after a
+ * background task finished. Claude versions that never acknowledge inputs
+ * fall back to treating every result as current.
+ */
+function isStaleResult(session: ClaudeSession): boolean {
+  return session.acknowledgesInputs && !session.latestInputStarted;
 }
 
 function closeInput(session: ClaudeSession): void {
@@ -410,6 +454,9 @@ function settleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
+  // The session stays registered until its process exits, so a result line
+  // can still arrive after settle; it must not rewrite the finished report.
+  if (session.settled) return;
   if (typeof value.result === "string") session.report = value.result;
   closeInput(session);
   if (value.is_error === true) {
@@ -483,6 +530,7 @@ function handleResult(
     session.suppressedResult = value;
     return;
   }
+  if (isStaleResult(session)) return;
   finishResult(session, value);
 }
 
@@ -532,6 +580,10 @@ async function launchSession(
   const completion = new Promise<SubagentResult>((done) => {
     resolve = done;
   });
+  let resolveExit!: () => void;
+  const exit = new Promise<void>((done) => {
+    resolveExit = done;
+  });
   const session: ClaudeSession = {
     sessionId,
     transport,
@@ -541,6 +593,11 @@ async function launchSession(
     report: "",
     protocolError: undefined,
     settled: false,
+    exited: false,
+    exit,
+    latestInputUuid: undefined,
+    latestInputStarted: false,
+    acknowledgesInputs: false,
     pendingSteers: 0,
     interruptible: false,
     awaitingReplacementStart: false,
@@ -576,6 +633,13 @@ async function launchSession(
       const value = JSON.parse(line) as Record<string, unknown>;
       if (value.type === "control_response") {
         handleControlResponse(session, value);
+      } else if (value.type === "user" && value.isReplay === true) {
+        acknowledgeInput(session, value.uuid);
+      } else if (
+        value.type === "command_lifecycle" &&
+        (value.state === "started" || value.state === "completed")
+      ) {
+        acknowledgeInput(session, value.command_uuid);
       } else if (value.type === "result") {
         handleResult(session, value);
       } else if (
@@ -623,9 +687,15 @@ async function launchSession(
     .catch((error) => {
       rejectControls(session, new Error(errorMessage(error)));
       settle(session, failResult(session, error));
+    })
+    .finally(() => {
+      session.exited = true;
+      removeUpstreamAbort();
+      if (sessions.get(sessionId) === session) sessions.delete(sessionId);
+      resolveExit();
     });
   try {
-    await writeInput(transport.process.stdin, options.prompt);
+    await writeInput(session, options.prompt);
   } catch (error) {
     settle(session, failResult(session, error));
     abortController.abort(error);
@@ -636,14 +706,65 @@ async function launchSession(
   return session;
 }
 
+/**
+ * Waits for a settled session's process to exit, stopping it after a grace
+ * period. Its stdin is closed, so it can't take another turn, and starting a
+ * second `claude --resume` beside it would run two processes on one session.
+ */
+async function waitForSettledExit(
+  session: ClaudeSession,
+  deps: ClaudeSessionDependencies,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (session.exited) return;
+  const graceMs = deps.settledExitGraceMs ?? SETTLED_EXIT_GRACE_MS;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const cancelled = new Promise<never>((_, reject) => {
+    onAbort = () =>
+      reject(
+        signal?.reason instanceof Error
+          ? signal.reason
+          : new Error("Claude Code turn cancelled"),
+      );
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+  cancelled.catch(() => undefined);
+  try {
+    const exitedInTime = await Promise.race([
+      session.exit.then(() => true),
+      new Promise<boolean>((resolve) => {
+        // Not unref'd: the caller is awaiting this, and an unref'd timer is
+        // not guaranteed to fire (observed on Windows). Cleared below.
+        timer = setTimeout(() => resolve(false), graceMs);
+      }),
+      cancelled,
+    ]);
+    if (!exitedInTime) {
+      session.abortController.abort(
+        new Error("Claude Code process replaced by a new turn"),
+      );
+      await Promise.race([session.exit, cancelled]);
+    }
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 async function startSession(
   options: ClaudeTurnOptions,
   deps: ClaudeSessionDependencies,
 ): Promise<ClaudeSession> {
   const key = options.resumeSessionId ?? options.sessionId;
   if (key) {
-    const active = sessions.get(key);
-    if (active && !active.settled) return active;
+    for (;;) {
+      const existing = sessions.get(key);
+      if (!existing) break;
+      if (!existing.settled) return existing;
+      await waitForSettledExit(existing, deps, options.signal);
+    }
   }
   return launchSession(options, deps);
 }
@@ -691,7 +812,7 @@ async function steerSession(
         throw new Error("Claude Code session is no longer active");
       }
       session.idleOnBackgroundTasks = false;
-      await writeInput(session.transport.process.stdin, prompt);
+      await writeInput(session, prompt);
       return;
     }
     if (session.settled || sessions.get(session.sessionId) !== session) {
@@ -729,7 +850,7 @@ async function steerSession(
       await response;
       interruptAcknowledged = true;
       signal?.throwIfAborted();
-      await writeInput(session.transport.process.stdin, prompt);
+      await writeInput(session, prompt);
       session.awaitingReplacementStart = true;
       session.suppressedResult = undefined;
     } catch (error) {
@@ -757,6 +878,53 @@ async function steerSession(
   });
 }
 
+/**
+ * Steers the live process for this session, waiting out a settled one that
+ * hasn't exited yet. With no process left, calls `launch` in the same
+ * continuation so concurrent senders can't both start a `claude --resume`.
+ */
+async function deliverClaudeMessage(
+  options: { sessionId: string; prompt: string; signal?: AbortSignal },
+  deps: ClaudeSessionDependencies,
+  launch?: () => Promise<ClaudeSession>,
+): Promise<
+  { mode: "steered" | "resumed"; session: ClaudeSession } | undefined
+> {
+  for (;;) {
+    const existing = sessions.get(options.sessionId);
+    if (!existing) break;
+    if (existing.settled) {
+      await waitForSettledExit(existing, deps, options.signal);
+      continue;
+    }
+    try {
+      await steerSession(existing, options.prompt, options.signal);
+      return { mode: "steered", session: existing };
+    } catch (error) {
+      if (sessions.get(options.sessionId) === existing && !existing.settled)
+        throw error;
+      // Settled while acquiring the write lock; wait for its exit, then retry.
+    }
+  }
+  if (!launch) return undefined;
+  const session = await launch();
+  if (session.sessionId !== options.sessionId) {
+    throw new Error("Claude Code resumed with an unexpected session ID");
+  }
+  return { mode: "resumed", session };
+}
+
+function trackedReceipt(session: ClaudeSession): ClaudeMessageReceipt {
+  return {
+    mode: "resumed",
+    sessionId: session.sessionId,
+    completion: session.completion,
+    interrupt: async () => {
+      session.abortController.abort(new Error("Claude Code turn cancelled"));
+    },
+  };
+}
+
 export async function sendClaudeMessage(
   options: Omit<
     ClaudeTurnOptions,
@@ -767,33 +935,19 @@ export async function sendClaudeMessage(
   deps: ClaudeSessionDependencies = {},
 ): Promise<ClaudeMessageReceipt> {
   options.signal?.throwIfAborted();
-  const active = sessions.get(options.sessionId);
-  if (active && !active.settled) {
-    try {
-      await steerSession(active, options.prompt, options.signal);
-      return { mode: "steered", sessionId: options.sessionId };
-    } catch (error) {
-      if (sessions.get(options.sessionId) === active && !active.settled)
-        throw error;
-      // Process completed while acquiring the write lock; resume exactly once below.
-    }
-  }
+  const steered = await deliverClaudeMessage(options, deps);
+  if (steered) return { mode: "steered", sessionId: options.sessionId };
   if (options.beforeStart) await options.beforeStart();
-  const session = await startSession(
-    { ...options, resumeSessionId: options.sessionId },
-    deps,
+  // Another send may have started a process while beforeStart ran. If so,
+  // steer it, but still hand back its completion so the caller can release
+  // whatever beforeStart reserved.
+  const delivered = await deliverClaudeMessage(options, deps, () =>
+    launchSession({ ...options, resumeSessionId: options.sessionId }, deps),
   );
-  if (session.sessionId !== options.sessionId) {
-    throw new Error("Claude Code resumed with an unexpected session ID");
-  }
-  return {
-    mode: "resumed",
-    sessionId: options.sessionId,
-    completion: session.completion,
-    interrupt: async () => {
-      session.abortController.abort(new Error("Claude Code turn cancelled"));
-    },
-  };
+  if (!delivered) throw new Error("Claude Code session did not start");
+  if (delivered.mode === "steered" && !options.beforeStart)
+    return { mode: "steered", sessionId: options.sessionId };
+  return trackedReceipt(delivered.session);
 }
 
 export function hasActiveClaudeTurn(sessionId: string): boolean {
