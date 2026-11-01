@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import {
   chmodSync,
   mkdtempSync,
@@ -46,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  jest.useRealTimers();
   process.env.PATH = originalPath;
   setMessageQueueAdder(null);
   queued.length = 0;
@@ -112,6 +113,43 @@ describe("notify caller on the launching computer", () => {
     ).not.toHaveProperty("claims_parent_runtime");
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(queued).toHaveLength(0);
+  });
+
+  test("keeps a failed published run for a reconnecting caller", async () => {
+    jest.useFakeTimers();
+    const { subagentId } = spawnBackgroundSubagentTask({
+      subagentType: "claude-code",
+      prompt: "Fix the bug",
+      description: "Fix the bug",
+      toolCallId: "call-1",
+      parentScope,
+      emitCompletionNotification: false,
+      publishResult: true,
+      deps: {
+        spawnSubagentImpl: async () => ({
+          agentId: "claude_session",
+          report: "",
+          success: false,
+          error: "Claude Code exited with code 1",
+        }),
+        copyGitHubPullRequestTagsImpl: async () => {},
+      },
+    });
+    const entry = () =>
+      getSubagentSnapshot().agents.find((agent) => agent.id === subagentId);
+    for (let i = 0; i < 100 && entry()?.status !== "error"; i++) {
+      await Promise.resolve();
+    }
+    expect(entry()).toMatchObject({
+      status: "error",
+      error: "Claude Code exited with code 1",
+    });
+    // Ordinary rows are dropped after 30 seconds; the caller is told it has
+    // 30 minutes to reconnect and read the outcome.
+    jest.advanceTimersByTime(30_000 + 1);
+    expect(entry()?.status).toBe("error");
+    jest.advanceTimersByTime(30 * 60_000);
+    expect(entry()).toBeUndefined();
   });
 
   test.each(["claude-code", "codex"] as const)(

@@ -430,6 +430,7 @@ export function spawnBackgroundSubagentTask(
         success: result.success,
         error: result.error,
         totalTokens: result.totalTokens,
+        ...(publishResult ? { published: true } : {}),
         ...(publishResult && result.success
           ? {
               result: truncateByChars(
@@ -532,7 +533,11 @@ export function spawnBackgroundSubagentTask(
       );
       scheduleBackgroundTaskCleanup(taskId);
       clearSubagentAbortHook(subagentId);
-      completeSubagentFn(subagentId, { success: false, error: errorMessage });
+      completeSubagentFn(subagentId, {
+        success: false,
+        error: errorMessage,
+        ...(publishResult ? { published: true } : {}),
+      });
 
       try {
         await onComplete?.({
