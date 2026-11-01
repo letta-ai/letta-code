@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
@@ -10,15 +10,26 @@ import {
   getInputDisposition,
   inputDispositionPersistentPath,
   loadDurableQueuedInputs,
+  MAX_DURABLE_QUEUED_INPUT_BYTES,
   ordinaryInputIdentity,
   rememberInputDisposition,
   reserveInputDisposition,
 } from "./input-disposition";
 import {
+  attachTerminalConsumerToLiveAcceptedInput,
   hasLiveAcceptedInputOwner,
   hasLiveAcceptedInputOwnerWithOriginatorRetirement,
 } from "./input-disposition-ownership";
-import { completeInputReplay } from "./input-terminal-journal";
+import {
+  hasCompletedInputTerminalAuthority,
+  hasCompletedInputTerminalRevision,
+} from "./input-terminal-evidence";
+import {
+  completeInputReplay,
+  loadPreparedInputTerminals,
+  prepareInputTerminal,
+  publishPreparedInputTerminalIfCurrent,
+} from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import type { IncomingMessage } from "./types";
 
@@ -231,3 +242,224 @@ test("originator retirement proof: pre-owner-id records fail closed (evil-shub r
     hasLiveAcceptedInputOwnerWithOriginatorRetirement(runtime, unknownId),
   ).toBe(false);
 });
+
+test("a live duplicate durably attaches its recovery terminal consumer", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-disposition-consumer-"));
+  try {
+    const persistentPath = join(root, "state.json");
+    const runtime = persistentRuntime(persistentPath);
+    const identity = ordinaryInputIdentity("live-duplicate");
+    expect(
+      rememberInputDisposition(runtime, identity, "started", {
+        incoming: {
+          ...durableIncoming("live-duplicate"),
+          terminalConsumerIds: ["slack:original"],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:recovery",
+      ),
+    ).toBe(true);
+    expect(
+      loadDurableQueuedInputs(runtime.listener)[0]?.incoming
+        .terminalConsumerIds,
+    ).toEqual(["slack:original", "slack:recovery"]);
+    const restartedRuntime = persistentRuntime(persistentPath);
+    expect(
+      loadDurableQueuedInputs(restartedRuntime.listener)[0]?.incoming
+        .terminalConsumerIds,
+    ).toEqual(["slack:original", "slack:recovery"]);
+
+    completeInputReplay(runtime, identity ? [identity] : []);
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:too-late",
+      ),
+    ).toBe(false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("duplicate consumer attachment preserves the durable input size bound", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-durable",
+    "conversation-durable",
+  );
+  const identity = ordinaryInputIdentity("near-size-limit");
+  expect(
+    rememberInputDisposition(runtime, identity, "started", {
+      incoming: durableIncoming("near-size-limit"),
+    }),
+  ).toBe(true);
+  if (!identity) throw new Error("expected stable identity");
+  const entry = listener.acceptedInputDispositionLedger.entries.get(
+    dispositionKey(runtime.key, identity),
+  );
+  const queued = entry?.queuedInput;
+  const message = queued?.incoming.messages[0];
+  if (!queued || !message || !("content" in message)) {
+    throw new Error("expected durable queued message");
+  }
+  const currentSize = Buffer.byteLength(JSON.stringify(queued));
+  message.content = `${message.content}${"x".repeat(
+    MAX_DURABLE_QUEUED_INPUT_BYTES - currentSize - 64,
+  )}`;
+  expect(Buffer.byteLength(JSON.stringify(queued))).toBeLessThanOrEqual(
+    MAX_DURABLE_QUEUED_INPUT_BYTES,
+  );
+
+  expect(
+    attachTerminalConsumerToLiveAcceptedInput(
+      runtime,
+      identity,
+      "c".repeat(256),
+    ),
+  ).toBe(false);
+  expect(queued.incoming.terminalConsumerIds).toBeUndefined();
+});
+
+test("duplicate consumer attachment stays bounded by consumer count", () => {
+  const listener = createRuntime();
+  const runtime = getOrCreateScopedRuntime(
+    listener,
+    "agent-durable",
+    "conversation-durable",
+  );
+  const identity = ordinaryInputIdentity("consumer-count-limit");
+  expect(
+    rememberInputDisposition(runtime, identity, "started", {
+      incoming: {
+        ...durableIncoming("consumer-count-limit"),
+        terminalConsumerIds: Array.from(
+          { length: 64 },
+          (_, index) => `consumer-${index}`,
+        ),
+      },
+    }),
+  ).toBe(true);
+  expect(
+    attachTerminalConsumerToLiveAcceptedInput(
+      runtime,
+      identity,
+      "consumer-overflow",
+    ),
+  ).toBe(false);
+});
+
+test("aggregate terminal consumers are stored in one canonical journal", () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-aggregate-terminal-"));
+  try {
+    const path = join(root, "state.json");
+    const runtime = persistentRuntime(path);
+    const listener = runtime.listener;
+    const identities = Array.from({ length: 64 }, (_, index) => {
+      const identity = ordinaryInputIdentity(`aggregate-${index}`);
+      expect(
+        rememberInputDisposition(runtime, identity, "started", {
+          incoming: {
+            ...durableIncoming(`aggregate-${index}`),
+            terminalConsumerIds: [`slack:${index}`],
+          },
+        }),
+      ).toBe(true);
+      if (!identity) throw new Error("expected stable identity");
+      return identity;
+    });
+
+    expect(
+      prepareInputTerminal(runtime, identities, {
+        scope: {
+          agentId: "agent-durable",
+          conversationId: "conversation-durable",
+        },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-aggregate",
+          stop_reason: "end_turn",
+        },
+        owner: {
+          connectionId: "conn-owner",
+          canRotate: false,
+          lineageId: "lineage-owner",
+          interruptedRevision: "revision-aggregate",
+          interruptedAuthorityRevision: "authority-aggregate",
+          recoveryLineageId: "recovery-aggregate",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      [...listener.acceptedInputDispositionLedger.entries.values()].filter(
+        (entry) => entry.preparedTerminal,
+      ),
+    ).toHaveLength(1);
+    expect(
+      loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
+    ).toHaveLength(64);
+    const prepared = loadPreparedInputTerminals(listener)[0];
+    if (!prepared) throw new Error("expected canonical prepared terminal");
+    const durable = JSON.parse(readFileSync(path, "utf8")) as {
+      entries: Record<string, { expiresAt: number }>;
+    };
+    for (const entry of Object.values(durable.entries)) entry.expiresAt = 0;
+    writeFileSync(path, JSON.stringify(durable));
+    const deferred = persistentRuntime(path);
+    const deferredPrepared = loadPreparedInputTerminals(deferred.listener)[0];
+    if (!deferredPrepared) throw new Error("expected deferred terminal");
+    expect(deferred.listener.acceptedInputDispositionLedger.entries.size).toBe(
+      64,
+    );
+    expect(
+      publishPreparedInputTerminalIfCurrent(
+        deferred.listener,
+        deferredPrepared,
+        () => {},
+      ),
+    ).toBe(true);
+    expect(
+      [
+        ...deferred.listener.acceptedInputDispositionLedger.entries.values(),
+      ].filter(
+        (entry) => entry.completedTerminalRevision === "revision-aggregate",
+      ),
+    ).toHaveLength(64);
+
+    const restarted = persistentRuntime(path);
+    expect(
+      hasCompletedInputTerminalRevision(
+        restarted.listener,
+        restarted.key,
+        identities,
+        "revision-aggregate",
+      ),
+    ).toBe(true);
+    expect(
+      hasCompletedInputTerminalAuthority(
+        restarted.listener,
+        restarted.key,
+        identities,
+        {
+          interruptedRevision: "revision-aggregate",
+          authorityRevision: "authority-aggregate",
+          recoveryLineageId: "recovery-aggregate",
+        },
+      ),
+    ).toBe(true);
+    expect(reserveInputDisposition(restarted, identities[0]).kind).toBe(
+      "duplicate",
+    );
+    expect(reserveInputDisposition(restarted, identities[63]).kind).toBe(
+      "duplicate",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);

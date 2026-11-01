@@ -8,6 +8,7 @@ import {
 } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { routeInputFrame } from "./input-frame-router";
+import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { setActiveRuntime } from "./runtime";
 import { handleTeleportRequest } from "./teleport";
@@ -17,7 +18,10 @@ import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createTurnFinalizer } from "./turn-finalizer";
 import type { ProcessQueuedTurn, StartListenerOptions } from "./types";
 
-afterEach(() => setActiveRuntime(null));
+afterEach(() => {
+  setActiveRuntime(null);
+  createInterruptedTurnStore().remove("agent-1", "conv-1");
+});
 
 // Exercise admission and the real queue pump, rather than setting pump flags
 // on a manually constructed active turn. Only turn setup, tool execution and
@@ -26,6 +30,7 @@ test.each(["tool return", "end turn"] as const)(
   "an input started by the queue hands off at its next %s boundary",
   async (boundary) => {
     const listener = createRuntime();
+    listener.connectionId = "conn-source";
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
     const frames: Array<Record<string, unknown>> = [];
     const socket = {
