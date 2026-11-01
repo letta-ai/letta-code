@@ -68,6 +68,9 @@ export interface SubagentState {
   error?: string;
   /** Final report published for a caller-notified launch. */
   result?: string;
+  /** The outcome is published to a caller on another computer, which may
+   * reconnect later to read it. Set for failures too, which carry no result. */
+  published?: boolean;
   model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
@@ -143,8 +146,9 @@ let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
-// A published result is how a caller on another computer receives the outcome,
-// and it may reconnect after an outage to read it, so keep those entries longer.
+// A published outcome is how a caller on another computer receives the result
+// or the failure, and it may reconnect after an outage to read it, so keep
+// those entries longer.
 export const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
 let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
@@ -193,6 +197,10 @@ function unrefTimer(timer: TimerHandle): void {
   }
 }
 
+function isPublished(agent: SubagentState): boolean {
+  return agent.published === true || agent.result !== undefined;
+}
+
 function scheduleCompletedSubagentCleanup(id: string): void {
   const agent = store.agents.get(id);
   if (!agent || (agent.status !== "completed" && agent.status !== "error")) {
@@ -228,7 +236,7 @@ function armCompletedSubagentCleanup(id: string): void {
       store.agents.delete(id);
       notifyListeners();
     },
-    agent.result !== undefined
+    isPublished(agent)
       ? publishedResultRetentionMs
       : completedSubagentRetentionMs,
   );
@@ -419,6 +427,7 @@ export function completeSubagent(
     error?: string;
     totalTokens?: number;
     result?: string;
+    published?: boolean;
   },
 ): void {
   const agent = store.agents.get(id);
@@ -432,6 +441,7 @@ export function completeSubagent(
     // The run settled on its own: no failed stop remains to retry.
     stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
+    ...(result.published ? { published: true } : {}),
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
@@ -553,8 +563,8 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
-    // A published result waits for its remote caller; its own timer removes it.
-    if (agent.result !== undefined) continue;
+    // A published outcome waits for its remote caller; its own timer removes it.
+    if (isPublished(agent)) continue;
     // A cancel is still in flight for this row: deleting it would lose a
     // live remote run's only retry handle. The abort hook clears the flag
     // once the cancel settles.

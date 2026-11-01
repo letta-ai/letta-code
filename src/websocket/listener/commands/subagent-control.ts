@@ -18,6 +18,7 @@ import {
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
+  getNativeSessionOwner,
   type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
@@ -77,6 +78,28 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   );
 }
 
+/**
+ * Completed background tasks and their subagent rows are evicted within
+ * minutes, but the native session stays resumable on disk. Fall back to the
+ * record of which conversation launched it.
+ */
+function ownsNativeSession(
+  runtime: ConversationRuntime,
+  agentId: string,
+): boolean {
+  const target = parseExternalCodingAgentId(agentId);
+  if (!target || target.computer) return false;
+  if (target.type !== "claude-code" && target.type !== "codex") return false;
+  const owner = getNativeSessionOwner(
+    target.type === "claude-code" ? "claude_code" : "codex",
+    target.sessionId,
+  );
+  return (
+    owner?.agentId === runtime.agentId &&
+    owner.conversationId === runtime.conversationId
+  );
+}
+
 function runtimeContext(
   parent: ConversationRuntime,
   command: SubagentMessageCommand,
@@ -129,7 +152,10 @@ export async function handleSubagentMessageCommand(
         parent.conversationId !== command.runtime.conversation_id
       )
         throw new Error("Parent runtime does not match the message request");
-      if (!findOwnedTask(parent, command.agent_id))
+      if (
+        !findOwnedTask(parent, command.agent_id) &&
+        !ownsNativeSession(parent, command.agent_id)
+      )
         throw new Error("Subagent does not belong to this conversation");
       const target = parseExternalCodingAgentId(command.agent_id);
       if (!target || target.computer || !isExternalCodingAgentType(target.type))
@@ -292,8 +318,12 @@ export async function handleSubagentStopCommand(
   )
     return { ...base, error: "Parent runtime does not match the stop request" };
   const owned = findOwnedTask(parent, command.agent_id);
-  if (!owned)
+  if (!owned) {
+    // Its task was evicted after it finished: nothing is left to stop.
+    if (ownsNativeSession(parent, command.agent_id))
+      return { ...base, success: true };
     return { ...base, error: "Subagent does not belong to this conversation" };
+  }
   const [, task] = owned;
   if (task.status !== "running") return { ...base, success: true };
   if (!task.abortController)
