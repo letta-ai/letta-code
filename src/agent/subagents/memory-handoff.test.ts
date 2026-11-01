@@ -54,6 +54,51 @@ test("local backend handoff includes history beyond the first page", async () =>
   expect(handoff.prompt).not.toContain("Parent fact");
 });
 
+test("long conversations keep only the most recent history under the size cap", async () => {
+  root = await mkdtemp(join(tmpdir(), "memory-handoff-cap-"));
+  process.env.LETTA_TRANSCRIPT_ROOT = root;
+  const backend = new LocalBackend({
+    storageDir: join(root, "store"),
+    executor: new DeterministicPongExecutor(),
+    memfsEnabled: false,
+  });
+  __testSetBackend(backend);
+  const agent = await backend.createAgent({ name: "Handoff cap test" });
+  const conversation = await backend.createConversation({ agent_id: agent.id });
+  const stream = await backend.createConversationMessageStream(
+    conversation.id,
+    {
+      agent_id: agent.id,
+      messages: Array.from({ length: 250 }, (_, i) => ({
+        role: "user" as const,
+        content: `Parent fact ${i} ${"x".repeat(200)}`,
+      })),
+    },
+  );
+  for await (const _chunk of stream) {
+    // Persist the real local transcript before preparing the worker handoff.
+  }
+  const handoff = await prepareMemoryHandoff({
+    agentId: agent.id,
+    conversationId: conversation.id,
+    memoryDir: join(root, "memory"),
+    assignment: "Remember the latest fact.",
+    maxTranscriptBytes: 20_000,
+  });
+  if (!handoff.transcriptPath) throw new Error("Missing transcript");
+  const snapshot = await readFile(handoff.transcriptPath, "utf8");
+  const parsed = JSON.parse(snapshot) as unknown[];
+  expect(Buffer.byteLength(snapshot)).toBeLessThanOrEqual(20_000 + 4);
+  expect(parsed.length).toBeGreaterThan(0);
+  expect(parsed.length).toBeLessThan(250);
+  expect(snapshot).toContain("Parent fact 249 ");
+  expect(snapshot).not.toContain("Parent fact 0 ");
+  expect(snapshot.indexOf("Parent fact 248 ")).toBeLessThan(
+    snapshot.indexOf("Parent fact 249 "),
+  );
+  expect(handoff.prompt).toContain("only the most recent part");
+});
+
 test("repeated launches preserve separate read-only snapshots without inlining history", async () => {
   root = await mkdtemp(join(tmpdir(), "memory-handoff-"));
   process.env.LETTA_TRANSCRIPT_ROOT = root;
