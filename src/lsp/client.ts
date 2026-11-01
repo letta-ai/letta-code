@@ -38,6 +38,8 @@ export class LSPClient extends EventEmitter {
   >();
   private buffer = "";
   private initialized = false;
+  private disposed = false;
+  private terminalError: Error | undefined;
 
   constructor(options: LSPClientOptions) {
     super();
@@ -63,12 +65,43 @@ export class LSPClient extends EventEmitter {
     });
 
     this.stdout.on("error", (err) => {
-      this.emit("error", err);
+      this.disposed = true;
+      this.terminalError = new Error(`LSP stdout stream error: ${err.message}`);
+      this.rejectAllPending(this.terminalError);
+      try {
+        this.emit("error", err);
+      } finally {
+        this.process.process.kill();
+      }
     });
 
     this.process.process.on("exit", (code) => {
+      this.disposed = true;
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
+      );
       this.emit("exit", code);
     });
+
+    this.process.process.on("close", (code) => {
+      this.disposed = true;
+      this.terminalError ??= new Error(
+        `LSP server exited (code ${code ?? "null"})`,
+      );
+      this.rejectAllPending(this.terminalError);
+    });
+  }
+
+  /**
+   * Reject every outstanding request with the given error and clear the table.
+   * Safe to call multiple times — once the pending map is empty it's a no-op.
+   */
+  private rejectAllPending(error: Error): void {
+    if (this.pendingRequests.size === 0) return;
+    for (const [, pending] of this.pendingRequests) {
+      pending.reject(error);
+    }
+    this.pendingRequests.clear();
   }
 
   private processBuffer(): void {
@@ -131,6 +164,12 @@ export class LSPClient extends EventEmitter {
 
   private sendRequest<T>(method: string, params?: unknown): Promise<T> {
     return new Promise((resolve, reject) => {
+      // If the server is already gone, fail fast instead of enqueueing a
+      // request that can never be written or answered.
+      if (this.disposed) {
+        reject(this.terminalError ?? new Error("LSP server has exited"));
+        return;
+      }
       const id = ++this.requestId;
       const request: JsonRpcRequest = {
         jsonrpc: "2.0",
@@ -158,6 +197,12 @@ export class LSPClient extends EventEmitter {
   }
 
   private sendMessage(message: JsonRpcRequest | JsonRpcNotification): void {
+    if (this.disposed) {
+      // Server process is gone — writing to its stdin would throw. Drop the
+      // message; any request waiting on a response was already rejected by
+      // the exit/error handler.
+      return;
+    }
     const content = JSON.stringify(message);
     const header = `Content-Length: ${content.length}\r\n\r\n`;
     this.stdin.write(header + content);
@@ -250,10 +295,13 @@ export class LSPClient extends EventEmitter {
    * Shutdown the LSP server gracefully
    */
   async shutdown(): Promise<void> {
-    if (this.initialized) {
-      await this.sendRequest("shutdown");
-      this.sendNotification("exit");
+    try {
+      if (this.initialized) {
+        await this.sendRequest("shutdown");
+        this.sendNotification("exit");
+      }
+    } finally {
+      this.process.process.kill();
     }
-    this.process.process.kill();
   }
 }
