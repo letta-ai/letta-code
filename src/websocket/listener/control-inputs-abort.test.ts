@@ -245,3 +245,160 @@ test("conversation-scoped run cancellation cannot select another conversation's 
     directory.cleanup();
   }
 });
+
+async function abortWithoutTurn(
+  listener: ReturnType<typeof createRuntime>,
+  runtime: { agent_id: string | null; conversation_id: string },
+  runId?: string,
+): Promise<boolean> {
+  return handleAbortMessageInput(listener, {
+    command: {
+      type: "abort_message",
+      runtime,
+      ...(runId ? { run_id: runId } : {}),
+    },
+    socket,
+    opts: {} as StartListenerOptions,
+    processQueuedTurn: async () => {},
+  });
+}
+
+test("abort with no listener turn cancels an orphaned local run so the next send succeeds", async () => {
+  const directory = new TestDirectory();
+  const executor = new PendingThenSuccessfulExecutor();
+  const backend = new LocalBackend({
+    storageDir: directory.path,
+    memfsEnabled: false,
+    executor,
+  });
+  __testSetBackend(backend);
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  let conversationId: string | null = null;
+  try {
+    const agent = await backend.createAgent({
+      name: "orphaned run",
+      model: "openai/gpt-5.6-luna",
+      system: "Orphaned run test",
+      tools: [],
+      include_base_tools: false,
+    } as never);
+    const conversation = await backend.createConversation({
+      agent_id: agent.id,
+    } as never);
+    conversationId = conversation.id;
+    // Started but never consumed to a stop reason, with no listener turn.
+    await backend.createConversationMessageStream(conversation.id, {
+      messages: [{ role: "user", content: "never consumed" }],
+    } as never);
+    await expect(
+      backend.createConversationMessageStream(conversation.id, {
+        messages: [{ role: "user", content: "blocked" }],
+      } as never),
+    ).rejects.toThrow("already has an active run (local-run-1)");
+
+    const runtime = { agent_id: agent.id, conversation_id: conversation.id };
+    expect(await abortWithoutTurn(listener, runtime)).toBe(true);
+    expect(await backend.retrieveRun("local-run-1")).toMatchObject({
+      status: "cancelled",
+    });
+    // Nothing left to cancel.
+    expect(await abortWithoutTurn(listener, runtime)).toBe(false);
+
+    const followUp = await backend.createConversationMessageStream(
+      conversation.id,
+      { messages: [{ role: "user", content: "continue" }] } as never,
+    );
+    for await (const _chunk of followUp) {
+      // Drain the deterministic follow-up.
+    }
+    expect(await backend.retrieveRun("local-run-2")).toMatchObject({
+      status: "completed",
+    });
+  } finally {
+    if (conversationId) await backend.cancelConversation(conversationId);
+    setActiveRuntime(null);
+    __testSetBackend(null);
+    directory.cleanup();
+  }
+});
+
+test("abort with no listener turn cancels only the requested orphaned run", async () => {
+  const directory = new TestDirectory();
+  const backend = new LocalBackend({
+    storageDir: directory.path,
+    memfsEnabled: false,
+    executor: new PendingThenSuccessfulExecutor(),
+  });
+  __testSetBackend(backend);
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const conversationIds: string[] = [];
+  try {
+    const first = await backend.createEphemeralConversation({
+      model: "openai/gpt-5.6-luna",
+      system: "First",
+    });
+    const second = await backend.createEphemeralConversation({
+      model: "openai/gpt-5.6-luna",
+      system: "Second",
+    });
+    conversationIds.push(first.id, second.id);
+    await backend.createConversationMessageStream(first.id, {
+      messages: [{ role: "user", content: "wait" }],
+    } as never);
+    await backend.createConversationMessageStream(second.id, {
+      messages: [{ role: "user", content: "wait" }],
+    } as never);
+
+    const runtime = { agent_id: null, conversation_id: first.id };
+    // Another conversation's run id is not this conversation's to cancel.
+    expect(await abortWithoutTurn(listener, runtime, "local-run-2")).toBe(
+      false,
+    );
+    expect(await abortWithoutTurn(listener, runtime, "local-run-1")).toBe(true);
+    expect(await backend.retrieveRun("local-run-1")).toMatchObject({
+      status: "cancelled",
+    });
+    expect(await backend.retrieveRun("local-run-2")).toMatchObject({
+      status: "running",
+    });
+  } finally {
+    for (const id of conversationIds) await backend.cancelConversation(id);
+    setActiveRuntime(null);
+    __testSetBackend(null);
+    directory.cleanup();
+  }
+});
+
+test("abort with no listener turn leaves API backend runs alone", async () => {
+  const calls: string[] = [];
+  const record =
+    (name: string) =>
+    async (..._args: unknown[]) => {
+      calls.push(name);
+      return {};
+    };
+  __testSetBackend({
+    capabilities: { localModelCatalog: false },
+    latestConversationRun: async () => {
+      calls.push("latestConversationRun");
+      return { id: "run-remote", status: "running" };
+    },
+    retrieveRun: record("retrieveRun"),
+    cancelRun: record("cancelRun"),
+    cancelConversation: record("cancelConversation"),
+    cancelConversationRun: record("cancelConversationRun"),
+  } as never);
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  try {
+    const runtime = { agent_id: "agent-remote", conversation_id: "conv-1" };
+    expect(await abortWithoutTurn(listener, runtime)).toBe(false);
+    expect(await abortWithoutTurn(listener, runtime, "run-remote")).toBe(false);
+    expect(calls).toEqual([]);
+  } finally {
+    setActiveRuntime(null);
+    __testSetBackend(null);
+  }
+});
