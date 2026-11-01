@@ -483,25 +483,36 @@ export async function resolveExternalCodingAgentSecretEnv(
   return { ...inherited, ...loadSecrets(parentAgentId) };
 }
 
-export async function runExternalCodingAgent(
-  options: ExternalCodingAgentRunOptions,
-  deps: ExternalCodingAgentDependencies = {},
-): Promise<SubagentResult> {
+export interface ExternalWorkerLaunchEnv {
+  env: NodeJS.ProcessEnv;
+  /** Vault values exported into `env`; scrub them from returned reports. */
+  secretEnv: Record<string, string>;
+  /** Parent memory note plus the MCP reminder, for the worker's prompt. */
+  mcpReminder?: string;
+}
+
+/**
+ * The environment and prompt note a worker process starts with. Launch and
+ * resume both build them here so a resumed worker matches a fresh one.
+ */
+export async function buildExternalWorkerLaunchEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "actingUserId" | "mcpReminder"
+  >,
+  deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
+): Promise<ExternalWorkerLaunchEnv> {
   const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
   // Compose once for both providers, independently of MCP inheritance.
-  options = {
-    ...options,
-    mcpReminder:
-      [
-        parentMemoryNote
-          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
-          : undefined,
-        options.mcpReminder,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined,
-  };
-  const startedAt = Date.now();
+  const mcpReminder =
+    [
+      parentMemoryNote
+        ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+        : undefined,
+      options.mcpReminder,
+    ]
+      .filter(Boolean)
+      .join("\n\n") || undefined;
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
   )(options.parentAgentId);
@@ -523,6 +534,58 @@ export async function runExternalCodingAgent(
   ) {
     delete env[ACTING_USER_ID_ENV];
   }
+  return { env, secretEnv, mcpReminder };
+}
+
+export interface ExternalWorkerResumeEnvDependencies
+  extends Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> {
+  resolveMcpReminder?: (parentAgentId: string) => Promise<string | undefined>;
+}
+
+/**
+ * Prepare a resumed Claude Code or Codex worker the same way as a launch.
+ * The launch's MCP selection is not persisted, so a resume lists the parent's
+ * default MCP inventory; an unreadable inventory drops the list, not the turn.
+ */
+export async function buildExternalWorkerResumeEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "actingUserId"
+  >,
+  deps: ExternalWorkerResumeEnvDependencies = {},
+): Promise<ExternalWorkerLaunchEnv> {
+  const mcpReminder = await (
+    deps.resolveMcpReminder ??
+    ((parentAgentId: string) =>
+      resolveExternalCodingAgentMcpReminder(parentAgentId, undefined))
+  )(options.parentAgentId).catch(() => undefined);
+  return buildExternalWorkerLaunchEnv({ ...options, mcpReminder }, deps);
+}
+
+/** Keep exported vault values out of a report returned to the parent. */
+export function scrubExternalWorkerResult(
+  result: SubagentResult,
+  secretEnv: Record<string, string>,
+): SubagentResult {
+  return {
+    ...result,
+    report: scrubSecretsFromString(result.report, secretEnv),
+    ...(result.error !== undefined && {
+      error: scrubSecretsFromString(result.error, secretEnv),
+    }),
+  };
+}
+
+export async function runExternalCodingAgent(
+  options: ExternalCodingAgentRunOptions,
+  deps: ExternalCodingAgentDependencies = {},
+): Promise<SubagentResult> {
+  const startedAt = Date.now();
+  const { env, secretEnv, mcpReminder } = await buildExternalWorkerLaunchEnv(
+    options,
+    deps,
+  );
+  options = { ...options, mcpReminder };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -553,13 +616,7 @@ export async function runExternalCodingAgent(
   ): Promise<SubagentResult> => {
     // The worker had the vault in its environment; keep exported values out
     // of the report that returns to the parent's context.
-    const result: SubagentResult = {
-      ...rawResult,
-      report: scrubSecretsFromString(rawResult.report, secretEnv),
-      ...(rawResult.error !== undefined && {
-        error: scrubSecretsFromString(rawResult.error, secretEnv),
-      }),
-    };
+    const result = scrubExternalWorkerResult(rawResult, secretEnv);
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {

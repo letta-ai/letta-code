@@ -5,7 +5,9 @@ import {
   updateSubagent,
 } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
+import type { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import { backgroundTasks } from "@/tools/impl/process_manager";
+import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { createConversationRuntime } from "@/websocket/listener/runtime";
 import {
@@ -40,6 +42,12 @@ function fixture() {
   });
   return { parent, abortController };
 }
+
+// Keep worker resumes off the real vault and MCP inventory.
+const workerEnv = {
+  resolveSecretEnv: async () => ({}),
+  resolveMcpReminder: async () => undefined,
+};
 
 afterEach(() => {
   clearAllSubagents();
@@ -76,6 +84,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async (options) => {
           signal = options.signal;
           return { mode: "steered", sessionId: nativeId };
@@ -97,6 +106,7 @@ describe("remote external subagent control", () => {
       message: "Only once",
     };
     const deps = {
+      workerEnv,
       sendClaude: async () => {
         calls += 1;
         return { mode: "steered" as const, sessionId: nativeId };
@@ -154,12 +164,13 @@ describe("remote external subagent control", () => {
 
     const [first, second] = await Promise.all([
       handleSubagentMessageCommand({ ...command, runtime }, firstParent, {
+        workerEnv,
         sendClaude,
       }),
       handleSubagentMessageCommand(
         { ...command, runtime: secondRuntime },
         secondParent,
-        { sendClaude },
+        { workerEnv, sendClaude },
       ),
     ]);
 
@@ -187,6 +198,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async () => ({
           mode: "resumed",
           sessionId: nativeId,
@@ -228,6 +240,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async () => ({
           mode: "resumed",
           sessionId: nativeId,
@@ -270,6 +283,7 @@ describe("remote external subagent control", () => {
     const deps: NonNullable<
       Parameters<typeof handleSubagentMessageCommand>[2]
     > = {
+      workerEnv,
       sendClaude: async (options) => {
         sends += 1;
         await options.beforeStart?.();
@@ -305,6 +319,61 @@ describe("remote external subagent control", () => {
     expect(interrupts).toBe(2);
     expect(sends).toBe(2);
     expect(captures).toBe(2);
+  });
+
+  test("resumes Claude Code with the same environment as a launch", async () => {
+    const { parent } = fixture();
+    let sent: Parameters<typeof sendClaudeMessage> | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const response = await handleSubagentMessageCommand(
+      {
+        type: "subagent_message",
+        request_id: "resume-env",
+        runtime: { ...runtime, acting_user_id: "user-a" },
+        agent_id: nativeId,
+        message: "Continue",
+      },
+      parent,
+      {
+        workerEnv: {
+          env: { PATH: process.env.PATH },
+          resolveSecretEnv: async () => ({ GITHUB_TOKEN: "vault-token-123" }),
+          resolveMcpReminder: async () => "MCP servers available: github",
+        },
+        sendClaude: async (...args) => {
+          sent = args;
+          return {
+            mode: "resumed",
+            sessionId: nativeId,
+            completion: Promise.resolve({
+              agentId: nativeId,
+              success: true,
+              report: "pushed with vault-token-123",
+            }),
+            interrupt: async () => {},
+          };
+        },
+        track: ((args: { completion: Promise<SubagentResult> }) => {
+          tracked = args.completion;
+          return {
+            taskId: "task-follow",
+            outputFile: "/tmp/follow",
+            subagentId: "subagent-follow",
+          };
+        }) as never,
+      },
+    );
+    expect(response).toMatchObject({ success: true, delivery: "resumed" });
+    expect(sent?.[1]?.env).toMatchObject({
+      GITHUB_TOKEN: "vault-token-123",
+      LETTA_PARENT_AGENT_ID: "agent-a",
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      // One below the listener's own depth, as on launch.
+      LETTA_SUBAGENT_DEPTH: String(readSubagentDepth(process.env) + 1),
+      LETTA_ACTING_USER_ID: "user-a",
+    });
+    expect(sent?.[0].mcpReminder).toContain("MCP servers available: github");
+    expect((await tracked)?.report).not.toContain("vault-token-123");
   });
 
   test("stops the owning background task", async () => {
