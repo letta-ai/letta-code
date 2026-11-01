@@ -249,6 +249,35 @@ describe("Codex app-server lifecycle", () => {
     ]);
   });
 
+  test("reports each completed agent message once as text", async () => {
+    const fake = new FakeCodexTransport();
+    const events: string[] = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onText: (text) => events.push(`text:${text}`),
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const message = { type: "agentMessage", id: "m-1", text: "Running tests." };
+    // Started items carry no text yet; only the completed message counts.
+    fake.item("item/started", { ...message, text: "" });
+    fake.item("item/completed", message);
+    fake.item("item/completed", message);
+    fake.item("item/started", {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "bun test",
+      status: "inProgress",
+    });
+    fake.complete("done");
+    await handle.completion;
+    expect(events).toEqual(["text:Running tests.", "tool:Bash"]);
+  });
+
   test("replays completion that arrives before turn/start settles", async () => {
     const fake = new FakeCodexTransport();
     fake.completeBeforeTurnStartSettles = true;

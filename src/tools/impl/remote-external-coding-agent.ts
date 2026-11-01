@@ -35,6 +35,7 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import { recordTaskProgressToolCall } from "./task-transcript";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
@@ -405,13 +406,21 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
+        // Snapshots carry the full list; the task log appends each ID once.
+        const recordToolCalls = (snapshot: SubagentSnapshot) => {
+          for (const call of snapshot.tool_calls ?? [])
+            recordTaskProgressToolCall(subagentId, call);
+        };
         try {
-          const final = await follower.waitForTerminal(signal, (snapshot) =>
+          const final = await follower.waitForTerminal(signal, (snapshot) => {
             updateSubagent(subagentId, {
               toolCalls: snapshot.tool_calls,
               totalTokens: snapshot.total_tokens,
-            }),
-          );
+            });
+            recordToolCalls(snapshot);
+          });
+          // The terminal snapshot can carry calls no progress update showed.
+          recordToolCalls(final);
           return {
             agentId: qualifiedAgentId ?? parentScope.agentId,
             model: final.model ?? model,

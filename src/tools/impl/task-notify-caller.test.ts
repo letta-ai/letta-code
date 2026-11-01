@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -210,4 +216,116 @@ rl.on("line", (line) => {
       }
     },
   );
+
+  test.skipIf(isWindows)(
+    "streams Claude Code text and tool calls into the task output file before the result",
+    async () => {
+      fakeExecutable(
+        "claude",
+        `if (process.argv.includes("auth")) { process.stdout.write(JSON.stringify({ loggedIn: true })); process.exit(0); }
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const rl = require("node:readline").createInterface({ input: process.stdin });
+let started = false;
+rl.on("line", () => {
+  if (started) return;
+  started = true;
+  send({ type: "stream_event", event: { type: "message_start" } });
+  send({ type: "assistant", message: { id: "msg-1", role: "assistant", content: [{ type: "text", text: "Chat suite finished; running the integration suite." }] } });
+  send({ type: "assistant", message: { id: "msg-2", role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "Bash", input: { command: "bun test" } }] } });
+  send({ type: "result", is_error: false, result: "All green" });
 });
+rl.on("close", () => process.exit(0));`,
+      );
+      const originalHome = process.env.HOME;
+      process.env.HOME = bin;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+      try {
+        const result = await launch("claude-code");
+        if (!result.success) throw new Error(result.error);
+        const output = await completedOutput(result.output_file);
+        expectProgressBeforeResult(output, [
+          "text: Chat suite finished; running the integration suite.",
+          'tool: Bash {"command":"bun test"}',
+        ]);
+        expect(output).toContain("All green");
+      } finally {
+        process.env.HOME = originalHome;
+        await settingsManager.reset();
+      }
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "streams Codex agent messages and tool items into the task output file before the result",
+    async () => {
+      fakeExecutable(
+        "codex",
+        `if (process.argv[2] === "--version") { console.log("codex-cli 0.0.0"); process.exit(0); }
+const send = (value) => process.stdout.write(JSON.stringify(value) + "\\n");
+const rl = require("node:readline").createInterface({ input: process.stdin });
+rl.on("line", (line) => {
+  const request = JSON.parse(line);
+  if (typeof request.id !== "number") return;
+  if (request.method === "account/read") return send({ id: request.id, result: { account: { type: "chatgpt" } } });
+  if (request.method === "thread/start") return send({ id: request.id, result: { thread: { id: "thread-1" } } });
+  if (request.method !== "turn/start") return send({ id: request.id, result: {} });
+  send({ id: request.id, result: { turn: { id: "turn-1" } } });
+  const params = (item) => ({ threadId: "thread-1", turnId: "turn-1", item });
+  const message = { type: "agentMessage", id: "msg-1", text: "Running the test suite now." };
+  send({ method: "item/started", params: params({ ...message, text: "" }) });
+  send({ method: "item/completed", params: params(message) });
+  const item = { type: "commandExecution", id: "cmd-1", command: "bun test", status: "inProgress" };
+  send({ method: "item/started", params: params(item) });
+  send({ method: "item/completed", params: params({ ...item, status: "completed" }) });
+  send({ method: "turn/completed", params: { threadId: "thread-1", turn: { id: "turn-1", status: "completed", items: [{ type: "agentMessage", text: "Done" }] } } });
+});`,
+      );
+      const originalHome = process.env.HOME;
+      process.env.HOME = bin;
+      await settingsManager.reset();
+      await settingsManager.initialize();
+      try {
+        const result = await launch("codex");
+        if (!result.success) throw new Error(result.error);
+        const output = await completedOutput(result.output_file);
+        expectProgressBeforeResult(output, [
+          "text: Running the test suite now.",
+          'tool: Bash {"command":"bun test"}',
+        ]);
+      } finally {
+        process.env.HOME = originalHome;
+        await settingsManager.reset();
+      }
+    },
+  );
+});
+
+/** Waits for the task's final result to land in its output file. */
+async function completedOutput(outputFile: string): Promise<string> {
+  for (let i = 0; i < 400; i++) {
+    const output = readFileSync(outputFile, "utf8");
+    if (output.includes("[Task completed]") || output.includes("[Task failed]"))
+      return output;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Task never finished: ${readFileSync(outputFile, "utf8")}`);
+}
+
+/** Each entry appears once, as a timestamped line, in order, before the result. */
+function expectProgressBeforeResult(output: string, entries: string[]): void {
+  expect(output).toContain("[Task completed]");
+  expect(output.startsWith("[Task started: Fix the bug]")).toBe(true);
+  const result = output.indexOf("subagent_status=success");
+  let previous = -1;
+  for (const entry of entries) {
+    const index = output.indexOf(`] ${entry}\n`);
+    expect(index).toBeGreaterThan(previous);
+    expect(index).toBeLessThan(result);
+    expect(output.split(entry).length).toBe(2);
+    previous = index;
+  }
+  expect(output).toMatch(
+    /\n\[\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z\] (text|tool): /,
+  );
+}

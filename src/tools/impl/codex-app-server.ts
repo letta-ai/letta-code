@@ -10,6 +10,7 @@ import { withNativeCliPath } from "@/utils/native-cli-env";
 import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
+  type ExternalTextListener,
   type ExternalToolCall,
   type ExternalToolCallListener,
   formatExternalToolCallArgs,
@@ -46,6 +47,8 @@ interface TurnWaiter {
   latestAgentMessage?: string;
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
+  onText?: ExternalTextListener;
+  seenTextItemIds: Set<string>;
 }
 
 interface CodexSession {
@@ -73,6 +76,8 @@ export interface CodexTurnOptions {
   onStarted?: (threadId: string, turnId: string) => void;
   /** Called once per tool-like thread item (command, patch, MCP, search). */
   onToolCall?: ExternalToolCallListener;
+  /** Called once per completed `agentMessage` item with non-empty text. */
+  onText?: ExternalTextListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
 
@@ -423,6 +428,23 @@ function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
   }
 }
 
+function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  const id = readString(item, "id");
+  if (
+    !waiter.onText ||
+    typeof item.text !== "string" ||
+    !item.text.trim() ||
+    (id && waiter.seenTextItemIds.has(id))
+  )
+    return;
+  if (id) waiter.seenTextItemIds.add(id);
+  try {
+    waiter.onText(item.text);
+  } catch {
+    // Progress display must not break the turn.
+  }
+}
+
 function recordItem(
   session: CodexSession,
   params: Record<string, unknown>,
@@ -439,6 +461,7 @@ function recordItem(
     typeof item.text === "string"
   ) {
     session.activeWaiter.latestAgentMessage = item.text;
+    recordTextItem(session.activeWaiter, item);
   }
   return true;
 }
@@ -639,7 +662,7 @@ async function startTurnUnlocked(
   prompt: string,
   signal?: AbortSignal,
   onStarted?: (threadId: string, turnId: string) => void,
-  onToolCall?: ExternalToolCallListener,
+  listeners: Pick<CodexTurnOptions, "onToolCall" | "onText"> = {},
 ): Promise<CodexTurnHandle> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
@@ -665,8 +688,10 @@ async function startTurnUnlocked(
       resolve,
       startedAt: Date.now(),
       model: session.model,
-      onToolCall,
+      onToolCall: listeners.onToolCall,
       seenToolCallIds: new Set(),
+      onText: listeners.onText,
+      seenTextItemIds: new Set(),
     };
   });
   onStarted?.(session.threadId, turnId);
@@ -686,7 +711,7 @@ function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "onToolCall" | "beforeStart"
+    "prompt" | "signal" | "onStarted" | "onToolCall" | "onText" | "beforeStart"
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
@@ -696,7 +721,7 @@ function startTurn(
       options.prompt,
       options.signal,
       options.onStarted,
-      options.onToolCall,
+      options,
     );
   });
 }
@@ -767,7 +792,7 @@ export async function sendCodexMessage(
         options.prompt,
         undefined,
         options.onStarted,
-        options.onToolCall,
+        options,
       );
       if (options.signal?.aborted) {
         await session.client.request("turn/interrupt", {

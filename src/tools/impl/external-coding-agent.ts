@@ -28,7 +28,10 @@ import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import type { ExternalToolCallListener } from "./external-tool-call";
+import type {
+  ExternalTextListener,
+  ExternalToolCallListener,
+} from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -71,6 +74,8 @@ export interface ExternalCodingAgentRunOptions {
   onStarted?: (agentId: string) => void;
   /** Live progress: called once per tool call the worker makes. */
   onToolCall?: ExternalToolCallListener;
+  /** Live progress: called with each assistant text block (Claude Code, Codex). */
+  onText?: ExternalTextListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -637,6 +642,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -693,6 +699,7 @@ export async function runExternalCodingAgent(
             resumeSessionId: options.resumeSessionId,
             sessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
           },
           { env },
         ),

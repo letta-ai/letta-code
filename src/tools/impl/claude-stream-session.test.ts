@@ -874,6 +874,54 @@ describe("Claude stream sessions", () => {
     expect(calls[1]?.args.endsWith("…")).toBe(true);
   });
 
+  test("reports assistant text and tool_use blocks in stream order", async () => {
+    const fixture = transportFixture();
+    const events: string[] = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onText: (text) => events.push(`text:${text}`),
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    const text = {
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        role: "assistant",
+        content: [
+          { type: "text", text: "Chat suite finished; continuing to wait." },
+          { type: "text", text: "  " },
+        ],
+      },
+    };
+    fixture.emit(text);
+    // A repeated message reports its text once.
+    fixture.emit(text);
+    fixture.emit({
+      type: "assistant",
+      message: {
+        id: "msg_2",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
+          { type: "text", text: "Tests passed." },
+        ],
+      },
+    });
+    fixture.emit({ type: "result", is_error: false, result: "done" });
+    expect(await running).toMatchObject({ success: true });
+    expect(events).toEqual([
+      "text:Chat suite finished; continuing to wait.",
+      "tool:Bash",
+      "text:Tests passed.",
+    ]);
+  });
+
   test("cancellation settles failed and evicts the session", async () => {
     const fixture = transportFixture();
     let aborted = false;
