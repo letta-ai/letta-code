@@ -92,6 +92,8 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   notifyCaller?: boolean;
 }
 
+const BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS = 60_000;
+
 // Valid subagent_types when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 
@@ -630,6 +632,7 @@ export function spawnBackgroundSubagentTask(
 /** Launch through the same task lifecycle for tools and App Server commands. */
 export async function launchSubagent(
   args: TaskArgs,
+  timeoutMs = BACKGROUND_SUBAGENT_STARTUP_TIMEOUT_MS,
 ): Promise<SubagentLaunchResult> {
   if (args.subagent_type === "memory") {
     return {
@@ -650,7 +653,6 @@ export async function launchSubagent(
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
-  // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const requestedType = args.subagent_type;
   const externalCodingAgentType =
@@ -687,7 +689,6 @@ export async function launchSubagent(
     );
   }
 
-  // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
@@ -850,7 +851,7 @@ export async function launchSubagent(
         if (signal?.aborted) abortStartup();
         agentId = await waitForBackgroundSubagentAgentId(
           subagentId,
-          null,
+          timeoutMs,
           signal,
         );
         signal?.throwIfAborted();
@@ -952,13 +953,12 @@ export async function launchSubagent(
   signal?.addEventListener("abort", abortStartup, { once: true });
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    await waitForBackgroundSubagentLink(subagentId, timeoutMs, signal);
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);
   }
 
-  // Extract Letta agent ID from subagent state (available after link resolves)
   const linkedAgent = getSubagentSnapshot().agents.find(
     (a) => a.id === subagentId,
   );
