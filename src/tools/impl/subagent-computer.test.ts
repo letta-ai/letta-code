@@ -164,10 +164,12 @@ describe("resolveLaunchComputer", () => {
       routing?: boolean;
       subagentType?: string;
       config?: Parameters<typeof resolveLaunchComputer>[0]["config"];
+      repos?: unknown;
     } = {},
   ) {
     return resolveLaunchComputer({
       requested,
+      repos: options.repos,
       subagentType: options.subagentType ?? "general-purpose",
       config: options.config ?? implementation,
       hasEnvironmentRouting: () => options.routing ?? true,
@@ -207,6 +209,39 @@ describe("resolveLaunchComputer", () => {
     expect(
       launch(undefined, { value: "cloud", subagentType: "memory" }),
     ).toEqual({});
+  });
+
+  test("repos route only to a fresh Cloud sandbox", () => {
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+    const repos = ["letta-ai/letta-code", `letta-ai/letta@${sha}`];
+    const selector = `cloud:letta-ai/letta-code,letta-ai/letta@${sha}`;
+    expect(launch("cloud", { repos })).toEqual({ computer: selector });
+    expect(launch(undefined, { value: "cloud", repos })).toEqual({
+      computer: selector,
+    });
+    expect(launch("cloud", { repos: [] })).toEqual({ computer: "cloud" });
+
+    for (const result of [
+      launch(undefined, { repos }),
+      launch("local", { value: "cloud", repos }),
+      launch("office-mac", { repos }),
+      launch(undefined, { value: "cloud", config: forked, repos }),
+    ])
+      expect(result.error).toContain('pass computer: "cloud"');
+    expect(
+      launch(undefined, { value: "cloud", routing: false, repos }),
+    ).toEqual({
+      error: expect.stringContaining("requires a Letta Cloud backend"),
+    });
+    expect(launch("cloud", { repos: ["letta-code"] }).error).toContain(
+      'Invalid repo "letta-code"',
+    );
+    expect(
+      launch("cloud", { repos: ["letta-ai/letta-code@main"] }).error,
+    ).toContain("40-character commit SHA");
+    expect(
+      launch("cloud", { repos: Array(11).fill("letta-ai/letta-code") }).error,
+    ).toContain("at most 10");
   });
 
   test("stays local without consulting the backend", () => {

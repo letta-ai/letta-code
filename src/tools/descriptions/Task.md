@@ -162,6 +162,8 @@ Pass `computer` to run the subagent's turn on another connected computer instead
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
+A fresh Cloud sandbox starts with an empty workspace. Pass `repos` (e.g. `["owner/repo", "owner/other@<commit SHA>"]`, at most 10) to list the repositories the subagent needs; the sandbox clones each to `/root/workspace/<repo>` as it starts, so tell the subagent where to find them (a large repository may still be cloning during its first steps).
+
 External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).

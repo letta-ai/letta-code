@@ -4,6 +4,7 @@ import type {
   listEnvironments,
 } from "@/backend/api/environments";
 import {
+  cloudSandboxSelectorRepositories,
   createAgentSandbox,
   getTeleportStatus,
   resolveDesktopEnvironmentConnectionId,
@@ -185,6 +186,47 @@ describe("Cloud sandbox environment resolution", () => {
         path: "/v1/agents/agent-1/sandboxes",
         body: { conversationId: "conv-1" },
       },
+    ]);
+  });
+
+  test("sends a cloud selector's repositories as githubRepositories", async () => {
+    const bodies: Array<Record<string, unknown> | undefined> = [];
+    const request = (async (
+      _method: string,
+      _path: string,
+      body?: Record<string, unknown>,
+    ) => {
+      bodies.push(body);
+      return {
+        sandboxId: "sandbox-1",
+        deviceId: "device-1",
+        connectionName: "Cloud",
+      };
+    }) as typeof apiRequest;
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+
+    for (const selector of [
+      `cloud:letta-ai/letta-code,letta-ai/letta@${sha}`,
+      "cloud",
+    ])
+      await createAgentSandbox(
+        "agent-1",
+        {
+          conversationId: "conv-1",
+          githubRepositories: cloudSandboxSelectorRepositories(selector),
+        },
+        request,
+      );
+
+    expect(bodies).toEqual([
+      {
+        conversationId: "conv-1",
+        githubRepositories: [
+          { owner: "letta-ai", repo: "letta-code" },
+          { owner: "letta-ai", repo: "letta", commit: sha },
+        ],
+      },
+      { conversationId: "conv-1" },
     ]);
   });
 

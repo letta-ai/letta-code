@@ -10,11 +10,13 @@ import {
 } from "@/backend/api/agents";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
+  cloudSandboxSelectorRepositories,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
+  type SandboxGithubRepository,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
@@ -110,7 +112,11 @@ export function isCloudEnvironmentSelector(
 ): boolean {
   if (typeof selector !== "string") return false;
   const normalized = selector.trim().toLowerCase();
-  return normalized === "cloud" || normalized === "cloud-sandbox";
+  return (
+    normalized === "cloud" ||
+    normalized === "cloud-sandbox" ||
+    normalized.startsWith("cloud:")
+  );
 }
 
 type EnvironmentRouting = {
@@ -133,7 +139,10 @@ export async function resolveListenerLaunchTarget(input: {
   resolveComputer?: (selector: string) => Promise<EnvironmentRouting>;
   resolveCloudSandbox?: (
     agentId: string,
-    options: { conversationId: string },
+    options: {
+      conversationId: string;
+      githubRepositories: SandboxGithubRepository[];
+    },
   ) => Promise<EnvironmentRouting>;
 }): Promise<
   | { connectionId: string; responseEnvironment: ReplyEnvironmentMetadata }
@@ -152,7 +161,10 @@ export async function resolveListenerLaunchTarget(input: {
       routing = useCloudSandbox
         ? await (input.resolveCloudSandbox ?? resolveAgentSandboxConnectionId)(
             agentId,
-            { conversationId: input.conversationId },
+            {
+              conversationId: input.conversationId,
+              githubRepositories: cloudSandboxSelectorRepositories(selector),
+            },
           )
         : await (input.resolveComputer ?? resolveEnvironmentConnectionId)(
             selector,

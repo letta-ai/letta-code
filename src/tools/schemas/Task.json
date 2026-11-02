@@ -29,6 +29,12 @@
       "type": "string",
       "description": "Run the subagent on another connected computer instead of this machine. Prefer a stable device ID or computer name; ephemeral connection IDs are also supported to pin a specific listener. Pass \"cloud\" to provision a Cloud sandbox for the subagent's conversation. Fails fast if the device is offline or does not support routing. Omit this field to run on the current machine (the default) — only set it when the task specifically needs to run elsewhere."
     },
+    "repos": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "maxItems": 10,
+      "description": "GitHub repositories to clone into a fresh Cloud sandbox, as \"owner/repo\" or \"owner/repo@<40-character commit SHA>\". Each lands in /root/workspace/<repo>. Only valid when the subagent runs on a new Cloud sandbox (computer: \"cloud\", or a host default of cloud)."
+    },
     "mcp": {
       "type": "object",
       "description": "External coding workers automatically inherit parent MCP discovery. Use this to opt out or advertise a subset; it does not change authorization.",

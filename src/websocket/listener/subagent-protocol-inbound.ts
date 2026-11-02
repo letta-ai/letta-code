@@ -15,6 +15,7 @@ const ARGUMENTS = new Set([
   "conversation_id",
   "client_message_id",
   "computer",
+  "repos",
   "max_turns",
   "mcp",
 ]);
@@ -64,7 +65,8 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
-  // launchSubagent validates the MCP selection's contents.
+  // launchSubagent validates the MCP selection's and repos' contents.
+  if (args.repos !== undefined && !Array.isArray(args.repos)) return false;
   if (
     args.mcp !== undefined &&
     (!args.mcp || typeof args.mcp !== "object" || Array.isArray(args.mcp))

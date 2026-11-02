@@ -50,6 +50,84 @@ export interface SendEnvironmentMessageResponse {
   message: string;
 }
 
+/** A repository the Cloud sandbox clones to `/root/workspace/<repo>`. */
+export interface SandboxGithubRepository {
+  owner: string;
+  repo: string;
+  /** Full 40-character commit SHA to check out. */
+  commit?: string;
+}
+
+/** Cloud accepts at most this many repositories per sandbox request. */
+export const MAX_SANDBOX_GITHUB_REPOSITORIES = 10;
+
+const SANDBOX_REPOSITORY_SPEC =
+  /^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)(?:@([0-9a-fA-F]{40}))?$/;
+
+/**
+ * Parse `owner/repo` or `owner/repo@<commit>` specs into the sandbox request
+ * shape. The patterns mirror what the Cloud sandbox endpoint accepts, so a bad
+ * spec fails here with a readable message instead of as a 400.
+ */
+export function parseSandboxRepositorySpecs(
+  specs: unknown,
+): { repositories: SandboxGithubRepository[] } | { error: string } {
+  if (specs === undefined) return { repositories: [] };
+  if (!Array.isArray(specs) || specs.length > MAX_SANDBOX_GITHUB_REPOSITORIES)
+    return {
+      error: `repos must be a list of at most ${MAX_SANDBOX_GITHUB_REPOSITORIES} repositories`,
+    };
+  const repositories: SandboxGithubRepository[] = [];
+  for (const spec of specs) {
+    const match =
+      typeof spec === "string"
+        ? SANDBOX_REPOSITORY_SPEC.exec(spec.trim())
+        : null;
+    if (!match?.[1] || !match[2])
+      return {
+        error: `Invalid repo ${JSON.stringify(spec)}: use "owner/repo" or "owner/repo@<40-character commit SHA>"`,
+      };
+    repositories.push({
+      owner: match[1],
+      repo: match[2],
+      ...(match[3] ? { commit: match[3] } : {}),
+    });
+  }
+  return { repositories };
+}
+
+const CLOUD_SANDBOX_REPOSITORIES_PREFIX = "cloud:";
+
+/**
+ * Selector for a fresh Cloud sandbox that clones `repositories`. A Letta
+ * subagent receives its computer as one `--computer` value, so the requested
+ * repositories travel inside it: `cloud:owner/repo,owner/repo@<commit>`.
+ */
+export function cloudSandboxSelector(
+  repositories: SandboxGithubRepository[],
+): string {
+  if (repositories.length === 0) return "cloud";
+  const specs = repositories.map(
+    ({ owner, repo, commit }) =>
+      `${owner}/${repo}${commit ? `@${commit}` : ""}`,
+  );
+  return `${CLOUD_SANDBOX_REPOSITORIES_PREFIX}${specs.join(",")}`;
+}
+
+/** Repositories carried by a `cloud:` selector; plain `cloud` has none. */
+export function cloudSandboxSelectorRepositories(
+  selector: string,
+): SandboxGithubRepository[] {
+  const value = selector.trim();
+  if (!value.toLowerCase().startsWith(CLOUD_SANDBOX_REPOSITORIES_PREFIX))
+    return [];
+  const parsed = parseSandboxRepositorySpecs(
+    value.slice(CLOUD_SANDBOX_REPOSITORIES_PREFIX.length).split(","),
+  );
+  if ("error" in parsed) throw new Error(parsed.error);
+  return parsed.repositories;
+}
+
 export interface CreateAgentSandboxResponse {
   sandboxId: string;
   deviceId: string;
@@ -95,15 +173,22 @@ export async function getEnvironmentConnection(
 
 export async function createAgentSandbox(
   agentId: string,
-  options: { conversationId?: string } = {},
+  options: {
+    conversationId?: string;
+    githubRepositories?: SandboxGithubRepository[];
+  } = {},
   request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
   const conversationId =
     options.conversationId === "default" ? undefined : options.conversationId;
+  const githubRepositories = options.githubRepositories ?? [];
   return request<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    conversationId ? { conversationId } : {},
+    {
+      ...(conversationId ? { conversationId } : {}),
+      ...(githubRepositories.length > 0 ? { githubRepositories } : {}),
+    },
   );
 }
 
@@ -228,6 +313,7 @@ export async function resolveAgentSandboxConnectionId(
   agentId: string,
   options: {
     conversationId?: string;
+    githubRepositories?: SandboxGithubRepository[];
     timeoutMs?: number;
     pollIntervalMs?: number;
   } = {},
@@ -236,6 +322,7 @@ export async function resolveAgentSandboxConnectionId(
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
   const sandbox = await createAgentSandbox(agentId, {
     conversationId: options.conversationId,
+    githubRepositories: options.githubRepositories,
   });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;

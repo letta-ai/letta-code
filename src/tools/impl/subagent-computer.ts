@@ -1,5 +1,10 @@
 import type { SubagentConfig } from "@/agent/subagents";
 import { getBackend } from "@/backend";
+import {
+  cloudSandboxSelector,
+  parseSandboxRepositorySpecs,
+} from "@/backend/api/environments";
+import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 
 /**
  * Supplies the `computer` an Agent launch gets when the caller omits one, so a
@@ -96,6 +101,8 @@ export function resolveSubagentComputer(input: {
 
 const MEMORY_IS_LOCAL_ERROR =
   "Memory workers must run on the current machine; omit computer.";
+const REPOS_NEED_CLOUD_ERROR =
+  'repos only applies to a fresh Cloud sandbox; pass computer: "cloud".';
 const NO_ROUTING_ERROR =
   "The computer option requires a Letta Cloud backend. This backend has no connected computers; omit the computer field to run the subagent on the current machine.";
 
@@ -115,20 +122,41 @@ function backendSupportsEnvironmentRouting(): boolean {
  * failed launch. A backend that cannot route rejects an explicit selector —
  * the caller chose that machine — but silently drops the env default, so one
  * misconfigured host does not fail every launch on it.
+ *
+ * `repos` only applies when the launch lands on a fresh Cloud sandbox, which
+ * clones them as it starts. The repositories travel inside the
+ * returned selector (see `cloudSandboxSelector`).
  */
 export function resolveLaunchComputer(input: {
   requested: unknown;
+  repos?: unknown;
   subagentType: string;
   config: Pick<SubagentConfig, "fork" | "launchProfile">;
   hasEnvironmentRouting?: () => boolean;
   env?: NodeJS.ProcessEnv;
 }): { computer?: string; error?: string } {
+  const parsedRepos = parseSandboxRepositorySpecs(input.repos);
+  if ("error" in parsedRepos) return { error: parsedRepos.error };
+  const repositories = parsedRepos.repositories;
   const resolved = resolveSubagentComputer(input);
+  if (
+    repositories.length > 0 &&
+    !(resolved.computer && isCloudEnvironmentSelector(resolved.computer))
+  )
+    return { error: REPOS_NEED_CLOUD_ERROR };
   if (!resolved.computer) return {};
   if (input.subagentType === "memory") return { error: MEMORY_IS_LOCAL_ERROR };
 
   const hasRouting =
     input.hasEnvironmentRouting ?? backendSupportsEnvironmentRouting;
-  if (hasRouting()) return { computer: resolved.computer };
-  return resolved.source === "explicit" ? { error: NO_ROUTING_ERROR } : {};
+  if (hasRouting())
+    return {
+      computer:
+        repositories.length > 0
+          ? cloudSandboxSelector(repositories)
+          : resolved.computer,
+    };
+  return resolved.source === "explicit" || repositories.length > 0
+    ? { error: NO_ROUTING_ERROR }
+    : {};
 }

@@ -11,6 +11,8 @@ export interface SubagentLaunchArgs {
   agent_id?: string;
   conversation_id?: string;
   computer?: string;
+  /** `owner/repo` or `owner/repo@<commit>` to clone into a fresh Cloud sandbox. */
+  repos?: string[];
   mcp?: {
     inherit: boolean;
     servers?: string[];

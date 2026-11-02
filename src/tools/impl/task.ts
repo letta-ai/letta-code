@@ -751,12 +751,12 @@ export async function launchSubagent(
   }
   const resolvedComputer = resolveLaunchComputer({
     requested: args.computer,
+    repos: args.repos,
     subagentType: subagent_type,
     config,
   });
-  if (resolvedComputer.error) {
+  if (resolvedComputer.error)
     return { success: false, error: resolvedComputer.error };
-  }
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;

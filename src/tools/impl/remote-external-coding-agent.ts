@@ -17,6 +17,7 @@ import {
 } from "@/app-server-client";
 import { getClient } from "@/backend/api/client";
 import {
+  cloudSandboxSelectorRepositories,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
@@ -121,11 +122,13 @@ async function defaultResolveComputer(computer: string, scope: ParentScope) {
   if (!isCloudEnvironmentSelector(computer))
     return resolveEnvironmentConnectionId(computer);
 
+  const githubRepositories = cloudSandboxSelectorRepositories(computer);
   const client = await getClient();
   const createParams = { agent_id: scope.agentId, hidden: true };
   const conversation = await client.conversations.create(createParams);
   return resolveAgentSandboxConnectionId(scope.agentId, {
     conversationId: conversation.id,
+    githubRepositories,
   });
 }
 
