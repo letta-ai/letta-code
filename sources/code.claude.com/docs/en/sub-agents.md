@@ -1048,7 +1048,7 @@ Use **subagents** when:
 
 Consider [Skills](https://code.claude.com/docs/en/skills.md) instead when you want reusable prompts or workflows that run in the main conversation context rather than isolated subagent context.
 
-For a question about something already in your conversation, use [`/btw`](https://code.claude.com/docs/en/interactive-mode#side-questions-with-%2Fbtw) instead of a subagent. It sees your full context but has no tool access, and the answer isn't added to history.
+For a question about something already in your conversation, use [`/btw`](https://code.claude.com/docs/en/interactive-mode#side-questions-with-%2Fbtw) instead of a subagent. It has no tool access, and the answer isn't added to history.
 
 ### Let subagents spawn their own subagents
 
@@ -1242,7 +1242,7 @@ Use these keys to interact with the panel:
 | `x` | Stop the selected fork if it's running, or dismiss its row if it's no longer running. On the main session row, or on the row of the fork whose transcript you opened with `Enter`, `x` types into the prompt instead |
 | `Esc` | Return focus to the prompt input |
 
-With a fork's or subagent's transcript open, follow-up messages and [skills](https://code.claude.com/docs/en/skills.md) go to that agent, and built-in commands go to your main conversation, with these safeguards:
+With a fork's or subagent's transcript open, follow-up messages and [skills](https://code.claude.com/docs/en/skills.md) go to that agent. On Claude Code v2.1.314 or later, [`/btw`](https://code.claude.com/docs/en/interactive-mode#ask-btw-about-a-subagent) answers from the open transcript. Other built-in commands go to your main conversation, with these safeguards:
 
 * `/compact`, `/clear`, and `/rewind` act on the main conversation, so Claude Code asks you to confirm before running one of them from this view.
 * `/model` and `/fast` set the main conversation's model and fast mode, not the viewed agent's, so they don't run from this view. A notice tells you why.

@@ -20,7 +20,7 @@ For complete API documentation, see the [TypeScript SDK reference](https://code.
 >
 > One billing rule the SDK does model is [data residency pricing](https://platform.claude.com/docs/en/about-claude/pricing#data-residency-pricing). When a response's `usage` reports `inference_geo: "us"`, the SDK multiplies the list price of that response's tokens by 1.1. Per-request fees such as web search aren't multiplied. Requires TypeScript Agent SDK v0.3.239 or later, or Python Agent SDK v0.2.144 or later.
 >
-> Use these fields for development insight and approximate budgeting. For authoritative billing, use the [Usage and Cost API](https://platform.claude.com/docs/en/build-with-claude/usage-cost-api) or the Usage page in the [Claude Console](https://platform.claude.com/usage). Do not bill end users or trigger financial decisions from these fields.
+> Use these fields for development insight and approximate budgeting. For authoritative billing, see [Manage costs for your organization](https://code.claude.com/docs/en/costs.md#manage-costs-for-your-organization). Don't bill end users or trigger financial decisions from these fields.
 
 ## Understand token usage
 

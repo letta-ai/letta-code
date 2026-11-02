@@ -1063,11 +1063,11 @@ Claude Code also writes `true` here when you choose to block such reads on [auto
 }
 ```
 
+To lift the block, remove the key from every settings file that sets it, then restart each running session.
+
 Directories you add with `--add-dir`, `/add-dir`, or `additionalDirectories` in your user or managed settings count as working directories for the block. Directories added only in repository settings don't count: those in `.claude/settings.json`, and those in `.claude/settings.local.json` unless git reports that file as untracked. In a directory that isn't a git repository, or when git tracks the file, Claude Code treats `.claude/settings.local.json` as repository settings, so put directories you want to keep readable in your user settings instead.
 
 When [`autoMemoryDirectory`](#automemorydirectory) comes from the project's `.claude/settings.json`, or from a `.claude/settings.local.json` [treated as repository-supplied](https://code.claude.com/docs/en/permissions.md#when-your-local-settings-file-needs-trust), Claude Code loads no [auto memory](https://code.claude.com/docs/en/memory.md#storage-location) from that directory and saves none to it.
-
-To lift the block, remove the key from every settings file that sets it, then start a new session.
 
 #### Sandboxed commands under the block
 
@@ -2469,7 +2469,6 @@ Idle compaction is on by default for conversations that meet all of these condit
 * **Session**: you're in an interactive terminal session, in the VS Code extension's chat panel, or in the desktop app's Code tab when the session runs on your machine or over SSH
 * **Auto-compaction**: [`autoCompactEnabled`](#autocompactenabled) is on
 * **Prompt cache**: the conversation is on the [one-hour prompt cache TTL](https://code.claude.com/docs/en/prompt-caching.md#which-ttl-each-request-gets)
-* **Feature flags**: Claude Code can [fetch feature flags from Anthropic](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching)
 * **Size**: the conversation's context has reached the token threshold, which you can [change](#change-the-idle-compaction-threshold) from its default of 200,000
 * **Idle time**: about an hour has passed since the last request, and your computer stays awake until then
 
@@ -2491,7 +2490,7 @@ To turn idle compaction off, set this key to `false`.
 To turn idle compaction off or on from inside a terminal session, run `/config` and change the **Idle compaction** row. Your choice is saved to your user settings and applies right away. The row requires Claude Code v2.1.302 or later. If you run one of those versions and `/config` doesn't show the row, check for these causes:
 
 * **Another settings source sets the key**: a value in managed settings, the `--settings` flag, or a project or local settings file overrides your user settings. Change the key in that source instead
-* **Feature flags are unavailable**: where Claude Code can't [fetch feature flags from Anthropic](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching), idle compaction doesn't run, so there is nothing to turn off
+* **Feature flags are unavailable on a version before v2.1.314**: where Claude Code can't [fetch feature flags from Anthropic](https://code.claude.com/docs/en/env-vars.md#features-that-need-feature-flag-fetching), idle compaction doesn't run, so there is nothing to turn off
 
 The key requires Claude Code v2.1.290 or later. On an earlier version, which ignores this key, turn off [`autoCompactEnabled`](#autocompactenabled) to stop idle compaction.
 

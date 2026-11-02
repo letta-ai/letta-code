@@ -184,6 +184,8 @@ Claude Code reads some keys only once, at session start, so an edit to one of th
 * [`model`](https://code.claude.com/docs/en/settings-reference#model): use [`/model`](https://code.claude.com/docs/en/model-config#setting-your-model) to switch mid-session. Each model has its own prompt cache, so the first request after a switch re-reads the whole conversation uncached; see [Switching models](https://code.claude.com/docs/en/prompt-caching.md#switching-models)
 * [`effortLevel`](https://code.claude.com/docs/en/settings-reference#effortlevel) and [`modelSettings`](https://code.claude.com/docs/en/settings-reference#modelsettings): use [`/effort`](https://code.claude.com/docs/en/model-config#adjust-effort-level) to change effort mid-session
 
+If you remove [`permissions.blockReadsOutsideWorkingDirectories`](https://code.claude.com/docs/en/settings-reference#permissions-blockreadsoutsideworkingdirectories) mid-session, the file tools keep the block in the running session. To lift it, remove the key from every settings file that sets it, then restart each running session.
+
 ### Confirm what loaded
 
 Run `/status` inside Claude Code to see which settings sources are active. The **Status** tab includes a `Setting sources` line that lists each settings file Claude Code loaded for the current session, such as `User settings` or `Project local settings`. When [managed settings](https://code.claude.com/docs/en/admin-setup.md#decide-how-settings-reach-devices) are in effect, the managed settings entry shows in parentheses how they reached your machine.

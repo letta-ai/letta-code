@@ -52,7 +52,10 @@ Each compiled executable embeds a single platform's binary. Match the platform p
 
 If your application bundles the Agent SDK together with its own dependencies, import from `@anthropic-ai/claude-agent-sdk/core` instead of the package root. The `/core` entry requires TypeScript Agent SDK v0.3.282 or later, and its types require TypeScript 5.0 or later.
 
-The `/core` entry exports the same `query()`, `startup()`, `tool()`, `createSdkMcpServer()`, and `resolveSettings()` as the root entry, along with the functions that rename, tag, and delete sessions, `AbortError`, the runtime constants, and every type. It adds no names of its own. To keep the code your application loads small, `/core` leaves out some root exports, including `prewarm()`, the `InMemorySessionStore` class, and the helpers that list, read, fork, import, and summarize sessions. If you need one of them, use the root entry instead.
+To keep the code your application loads small, the `/core` entry leaves out some root exports:
+
+* **Exported**: the same `query()`, `startup()`, [`prewarm()`](#prewarm), `tool()`, `createSdkMcpServer()`, and `resolveSettings()` as the root entry, along with the functions that rename, tag, and delete sessions, `AbortError`, the runtime constants, and every type. Importing the alpha `prewarm()` from `/core` requires Agent SDK v0.3.314 or later.
+* **Left out**: root exports including the `InMemorySessionStore` class and the helpers that list, read, fork, import, and summarize sessions. If you need one of them, use the root entry instead.
 
 The root entry inlines its own copies of `zod` and `@modelcontextprotocol/sdk`. The `/core` entry imports them from your `node_modules` at the ranges the Agent SDK's `peerDependencies` declare, so a bundle that already includes them doesn't carry a second copy. Import from either the root or `/core` in a given process, not both: they are separate bundles, and loading both gives you two copies of the Agent SDK's classes and state.
 
@@ -2002,6 +2005,9 @@ Set `CLAUDE_CODE_STARTUP_FAILURE_RESULTS` to `1` in [`env`](#options) to receive
 
 * A resume that Claude Code stops because it [can't return the session to its worktree](https://code.claude.com/docs/en/worktrees.md#the-session-resumes-outside-its-worktree), with `worktree_unverified` or `worktree_resume_refused`. That section says which error carries which value.
 * A refused [`continue`](#options) of a conversation that a background session holds, with `session_held_by_background`. For a refused [`resume`](#options) of such a conversation, Claude Code writes the result only when the variable is set.
+* A start that Claude Code refuses because [`failIfUnavailable`](#sandboxsettings) is on and the sandbox can't start, with `sandbox_required_unavailable`.
+
+The `SDKStartupFailureReason` type lists the values `startup_failure_reason` can hold:
 
 ```typescript theme={null}
 type SDKStartupFailureReason =
@@ -2023,7 +2029,8 @@ type SDKStartupFailureReason =
   | "cli_version_too_old"
   | "bypass_root"
   | "org_config_required_unavailable"
-  | "org_config_refused";
+  | "org_config_refused"
+  | "sandbox_required_unavailable";
 ```
 
 Each value names one refusal:
@@ -2049,6 +2056,7 @@ Each value names one refusal:
 | `bypass_root` | Bypass permissions mode was requested while running as root |
 | `org_config_required_unavailable` | The session needs the organization's policies and managed settings before it can start, and they couldn't be loaded, for example because of a network failure or an Anthropic server error. Requires Agent SDK v0.3.293 or later |
 | `org_config_refused` | Anthropic refused to provide the organization's policies and managed settings for this sign-in, for example because the sign-in expired or was revoked, or the organization doesn't allow Claude Code for this account. Requires Agent SDK v0.3.293 or later |
+| `sandbox_required_unavailable` | [`failIfUnavailable`](#sandboxsettings) is on and the sandbox can't start. The text in `errors` ends with `Set sandbox.failIfUnavailable=false to allow unsandboxed execution.` Requires Agent SDK v0.3.314 or later |
 
 ### `SDKSystemMessage`
 

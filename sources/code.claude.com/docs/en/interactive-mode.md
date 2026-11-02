@@ -708,7 +708,13 @@ Once the answer appears, the overlay accepts these keys.
 
 In an attached [background session](https://code.claude.com/docs/en/agent-view.md#attach-to-a-session), `Left` detaches and returns you to agent view, even while the answer is still arriving. The side question keeps running while you're away. The next time you attach to the session, the overlay reopens with the side question, or with its answer. Before v2.1.257, `Left` didn't detach there.
 
-`/btw` sees your full conversation but has no tools. A [subagent](https://code.claude.com/docs/en/sub-agents.md) has tools and starts from the prompt it receives, or, for a [fork](https://code.claude.com/docs/en/sub-agents.md#fork-the-current-conversation), from a copy of this conversation. Use `/btw` to ask about what Claude already knows from this session; use a subagent to go find out something new.
+`/btw` sees your full conversation, or the [subagent transcript you have open](#ask-btw-about-a-subagent), but has no tools. A [subagent](https://code.claude.com/docs/en/sub-agents.md) has tools and starts from the prompt it receives. A [fork](https://code.claude.com/docs/en/sub-agents.md#fork-the-current-conversation) starts from a copy of this conversation. Use `/btw` to ask about what Claude already knows from this session; use a subagent to go find out something new.
+
+### Ask /btw about a subagent
+
+With a [subagent's transcript open](https://code.claude.com/docs/en/sub-agents.md#observe-and-steer-running-forks), Claude answers `/btw` from that transcript instead of the main conversation, so you can ask what the subagent did. A later `/btw` from that transcript sees only the side questions you asked from it. Requires Claude Code v2.1.314 or later.
+
+From an [agent team](https://code.claude.com/docs/en/agent-teams.md) teammate's transcript, Claude answers from the main conversation.
 
 ## Task list
 
@@ -749,7 +755,9 @@ Keep the session open. What happens next depends on how the wait ends:
 * **After your computer slept**: if it slept for more than about 30 minutes and the limit reset while it slept, the first line reads `Your usage limit has reset` and the second reads `Press enter to continue`. Press `Enter` to continue. After a shorter sleep, or one that ended before the reset, Claude Code continues on its own.
 * **Early**: when you finish adding [usage credits](https://code.claude.com/docs/en/costs.md#add-usage-credits-to-your-subscription) with `/usage-credits`, sign back in after `/upgrade`, or switch models with `/model` during the wait, Claude Code checks whether usage is available again and continues right away if it is. It doesn't check after an upgrade or purchase you make in a browser on your own. Under [`opusplan`](https://code.claude.com/docs/en/model-config#opusplan-model-setting) and other model settings that run plan mode on a different model, Claude Code waits for the reset instead.
 
-The continued task runs like any other turn. Claude Code still asks for [permissions](https://code.claude.com/docs/en/permissions.md) as usual, so the task can stop on a prompt while you're away. If it hits the limit again, Claude Code re-arms the wait on its own at most twice in a row, then stops and shows `Automatic continue stopped after repeated usage-limit hits · /rate-limit-options to try again`.
+In the continued task, Claude Code still asks for [permissions](https://code.claude.com/docs/en/permissions.md) as usual, so the task can stop on a prompt while you're away. If the task hits the limit again, the wait starts again.
+
+After three automatic continuations, automatic continue stops and the `Automatic continue stopped after repeated usage-limit hits` notification appears. Run `/rate-limit-options` to choose what to do next. When you send another prompt, or pick a wait from that menu, the count starts over. Automatic continue also stops after three continuations for a [`/goal`](https://code.claude.com/docs/en/goal) or [session-scoped scheduled task](https://code.claude.com/docs/en/scheduled-tasks.md) that runs through several reset windows.
 
 ### Cancel the wait
 
