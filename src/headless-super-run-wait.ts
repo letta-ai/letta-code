@@ -20,6 +20,13 @@ export interface SuperRunWaitDeps {
   ) => Promise<ExactSuperRun>;
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
+  /**
+   * Called with the Super Run's child runs (newest first) while it executes,
+   * at most every `progressMs`, and once more when it completes. Failures are
+   * ignored: progress is best effort and never ends the wait.
+   */
+  onProgress?: (runIds: string[], signal: AbortSignal) => Promise<void>;
+  progressMs?: number;
   pollMs?: number;
   /** How long a completed Super Run may report no linked child run. */
   runLinkGraceMs?: number;
@@ -111,6 +118,28 @@ export async function waitForAcceptedSuperRun(
   const pollMs = deps.pollMs ?? 1_000;
   const runLinkGraceMs = deps.runLinkGraceMs ?? DEFAULT_RUN_LINK_GRACE_MS;
   let completedWithoutRunSince: number | undefined;
+  const progressMs = deps.progressMs ?? 3_000;
+  let lastProgressAt: number | undefined;
+  const reportProgress = async (runIds: string[], force: boolean) => {
+    if (!deps.onProgress || runIds.length === 0) return;
+    const now = Date.now();
+    if (
+      !force &&
+      lastProgressAt !== undefined &&
+      now - lastProgressAt < progressMs
+    ) {
+      return;
+    }
+    lastProgressAt = now;
+    try {
+      await deps.onProgress(
+        runIds,
+        AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      );
+    } catch {
+      signal.throwIfAborted();
+    }
+  };
   const sleep =
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
@@ -137,6 +166,7 @@ export async function waitForAcceptedSuperRun(
     throwIfSuperRunFailed(exact);
     const terminal = exact.status === "COM" || exact.completed_at !== null;
     if (!terminal) {
+      await reportProgress(exact.run_ids, false);
       await sleep(pollMs, signal);
       continue;
     }
@@ -174,6 +204,7 @@ export async function waitForAcceptedSuperRun(
       continue;
     }
 
+    await reportProgress(exact.run_ids, true);
     let messages: Message[] = [];
     try {
       messages = await deps.messages(

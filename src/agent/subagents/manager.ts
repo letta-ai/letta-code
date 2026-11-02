@@ -69,6 +69,7 @@ import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
+  flushPendingProgressText,
   hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -518,6 +519,7 @@ async function executeSubagent(
     if (stdoutBuffer.length > 0) {
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
+    flushPendingProgressText(state, subagentId);
 
     // Check if process was aborted by user
     if (runningProcess.wasAborted()) {
