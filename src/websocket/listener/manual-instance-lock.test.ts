@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  unlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -183,7 +191,7 @@ describe("manual listener instance lock", () => {
     await replacement.release();
   });
 
-  test("fails closed on a corrupt incumbent record", async () => {
+  test("does not reap a freshly written unparsable incumbent record", async () => {
     const scopeHash = getManualListenerScopeHash(SCOPE);
     const listenersDir = path.join(lockRoot, "listeners");
     await acquireManualListenerLock(SCOPE, {
@@ -205,6 +213,36 @@ describe("manual listener instance lock", () => {
         "utf-8",
       ),
     ).toBe("not-json");
+  });
+
+  test("fails closed on an aged valid record for another version or scope", async () => {
+    const lockPath = path.join(
+      lockRoot,
+      "listeners",
+      `manual-${getManualListenerScopeHash(SCOPE)}.lock`,
+    );
+    const base = {
+      version: 1,
+      pid: 101,
+      ownerToken: "owner-foreign",
+      acquiredAt: new Date(0).toISOString(),
+      scopeHash: getManualListenerScopeHash(SCOPE),
+    };
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    for (const foreign of [
+      { ...base, version: 2 },
+      { ...base, scopeHash: "f".repeat(64) },
+    ]) {
+      const contents = JSON.stringify(foreign);
+      await writeFile(lockPath, contents, "utf-8");
+      const old = new Date(Date.now() - 60_000);
+      await utimes(lockPath, old, old);
+
+      await expect(acquire(SCOPE, 202, "owner-202")).rejects.toThrow(
+        /incompatible version/,
+      );
+      expect(await readFile(lockPath, "utf-8")).toBe(contents);
+    }
   });
 
   test("fails closed when the lock root cannot be created", async () => {

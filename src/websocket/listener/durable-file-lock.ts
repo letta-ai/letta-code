@@ -12,12 +12,19 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  renameSync,
   rmdirSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import {
+  isWithinPartialPublishGrace,
+  type PublishMethod,
+  publishExclusiveSync,
+} from "@/utils/exclusive-publish";
 
 const MAX_OWNER_BYTES = 4096;
 const WAIT_SLICE_MS = 5;
@@ -88,11 +95,13 @@ function installCandidateDirectory(
   const installingOwnerPath = join(lockPath, INSTALLING_OWNER_NAME);
   const installedOwnerPath = join(lockPath, names[0] as string);
   hooks.afterInstallMkdir?.(lockPath);
+  let method: PublishMethod;
   try {
     // The fixed installation name elects at most one installer in a directory.
     // In particular, a delayed installer cannot add its unique owner alongside
-    // an owner that already populated a replacement directory.
-    linkSync(candidateOwnerPath, installingOwnerPath);
+    // an owner that already populated a replacement directory. Volumes without
+    // hard links elect with an exclusive-create copy instead.
+    method = publishExclusiveSync(candidateOwnerPath, installingOwnerPath);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "EEXIST") return false;
@@ -108,18 +117,24 @@ function installCandidateDirectory(
     installingNames.length !== 1 ||
     installingNames[0] !== INSTALLING_OWNER_NAME
   ) {
-    if (sameFile(candidateOwnerPath, installingOwnerPath)) {
+    if (sameOwnerFile(candidateOwnerPath, installingOwnerPath)) {
       unlinkSync(installingOwnerPath);
       fsyncDirectory(lockPath);
     }
     return false;
   }
 
-  linkSync(candidateOwnerPath, installedOwnerPath);
+  if (method === "link") {
+    linkSync(candidateOwnerPath, installedOwnerPath);
+  } else {
+    // A copy shares no inode with `.installing`, so readers could not match
+    // the two names. Move the complete elected record to its stable name.
+    renameSync(installingOwnerPath, installedOwnerPath);
+  }
   hooks.afterCanonicalOwnerLink?.(lockPath);
   fsyncDirectory(lockPath);
   hooks.afterCanonicalDirectorySync?.(lockPath);
-  unlinkSync(installingOwnerPath);
+  if (method === "link") unlinkSync(installingOwnerPath);
   hooks.afterInstallingOwnerUnlink?.(lockPath);
   fsyncDirectory(lockPath);
   unlinkSync(candidateOwnerPath);
@@ -352,6 +367,37 @@ function sameFile(first: string, second: string): boolean {
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
     throw error;
+  }
+}
+
+/**
+ * Same owner record: one inode, or (after a copy publish on a volume without
+ * hard links) identical bytes. Records embed a random token, so equal
+ * contents identify the same owner.
+ */
+function sameOwnerFile(first: string, second: string): boolean {
+  if (sameFile(first, second)) return true;
+  try {
+    const left = readFileSync(first);
+    return left.length > 0 && left.equals(readFileSync(second));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * An exclusive-create copy of `.installing` can be read before it is fully
+ * written. A fresh, lone `.installing` is a live election, not corruption.
+ */
+function isInstallingOwnerBeingWritten(lockPath: string): boolean {
+  try {
+    const names = readdirSync(lockPath);
+    if (names.length !== 1 || names[0] !== INSTALLING_OWNER_NAME) return false;
+    const mtimeMs = statSync(join(lockPath, INSTALLING_OWNER_NAME)).mtimeMs;
+    return isWithinPartialPublishGrace(mtimeMs);
+  } catch {
+    return false;
   }
 }
 
@@ -614,10 +660,15 @@ export function acquireDurableFileLock(
       marked = readOwnerFile(legacyMarkerPath);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "absent";
+      // A copy-published marker may still be being written.
+      try {
+        if (isWithinPartialPublishGrace(statSync(legacyMarkerPath).mtimeMs))
+          return "blocked";
+      } catch {}
       throw error;
     }
     if (isAlive(marked)) return "blocked";
-    if (sameFile(lockPath, legacyMarkerPath)) {
+    if (sameOwnerFile(lockPath, legacyMarkerPath)) {
       unlinkSync(lockPath);
       fsyncDirectory(parent);
     }
@@ -625,7 +676,7 @@ export function acquireDurableFileLock(
       legacyOwnersPath,
       `${marked.pid}-${marked.token}.json`,
     );
-    if (sameFile(legacyOwnerPath, legacyMarkerPath)) {
+    if (sameOwnerFile(legacyOwnerPath, legacyMarkerPath)) {
       unlinkSync(legacyOwnerPath);
       fsyncDirectory(legacyOwnersPath);
     }
@@ -697,7 +748,7 @@ export function acquireDurableFileLock(
             continue;
           }
           try {
-            linkSync(lockPath, legacyMarkerPath);
+            publishExclusiveSync(lockPath, legacyMarkerPath);
             fsyncDirectory(parent);
           } catch (linkError) {
             const linkCode = (linkError as NodeJS.ErrnoException).code;
@@ -705,6 +756,10 @@ export function acquireDurableFileLock(
               throw linkError;
             }
           }
+          waitOrThrow();
+          continue;
+        }
+        if (isInstallingOwnerBeingWritten(lockPath)) {
           waitOrThrow();
           continue;
         }
@@ -751,7 +806,7 @@ export function acquireDurableFileLock(
     const candidateOwner = join(candidatePath, ownerFileName(owner));
     const installingOwner = join(lockPath, INSTALLING_OWNER_NAME);
     try {
-      if (sameFile(candidateOwner, installingOwner)) {
+      if (sameOwnerFile(candidateOwner, installingOwner)) {
         unlinkSync(installingOwner);
         fsyncDirectory(lockPath);
       }
