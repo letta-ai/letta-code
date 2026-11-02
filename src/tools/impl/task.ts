@@ -749,7 +749,7 @@ export async function launchSubagent(
   ) {
     return { success: false, error: "max_turns must be a positive integer" };
   }
-  const resolvedComputer = resolveLaunchComputer({
+  const resolvedComputer = await resolveLaunchComputer({
     requested: args.computer,
     repos: args.repos,
     subagentType: subagent_type,

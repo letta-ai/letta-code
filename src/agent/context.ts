@@ -145,6 +145,14 @@ export function getSkillsDirectory(): string | null {
 }
 
 /**
+ * Extra project skill roots for the current runtime scope, from its launch
+ * settings (for example, the other repositories cloned into a Cloud sandbox).
+ */
+export function getAdditionalSkillsDirectories(): string[] {
+  return [...(getRuntimeContext()?.executionSettings?.skill_directories ?? [])];
+}
+
+/**
  * Bundled skill IDs exposed by the current runtime scope when its skill
  * sources omit "bundled". Undefined means no allowlist.
  */

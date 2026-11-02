@@ -710,3 +710,89 @@ test("subagent identity does not make an ordinary CLI launch return early", asyn
   );
   expect(result).toMatchObject({ status: "completed", text: "Done" });
 });
+
+test("a sandbox launch with repos waits for the clones, then starts in the first repo", async () => {
+  const wire = transport();
+  const order: string[] = [];
+  const repositories = [
+    { owner: "owner", repo: "app" },
+    { owner: "owner", repo: "lib" },
+  ];
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope,
+      content: "work",
+      backend,
+      settings,
+      mode: "standard",
+      sandboxRepositories: repositories,
+      noWait: true,
+    },
+    {
+      client: wire.client,
+      waitForClones: async (_client, waited) => {
+        expect(waited).toEqual(repositories);
+        order.push("wait");
+        return {};
+      },
+      enqueue: async (input) => {
+        order.push("enqueue");
+        expect(input.content).toBe("work");
+        return receipt(input.clientMessageId);
+      },
+    },
+  );
+  const start = wire.commands.find(
+    (command) => command.type === "runtime_start",
+  );
+  expect(order).toEqual(["wait", "enqueue"]);
+  expect(start).toMatchObject({
+    cwd: "/root/workspace/app",
+    execution_settings: {
+      ...settings,
+      skill_directories: ["/root/workspace/lib/.agents/skills"],
+    },
+  });
+  expect(result).not.toHaveProperty("warnings");
+});
+
+test("a clone that outlasts the wait warns the subagent and the result", async () => {
+  const wire = transport();
+  const warning = "Repository clone still in progress after 240s";
+  let sent: unknown;
+  const result = await launchListenerConversation(
+    {
+      connectionId: "conn-target",
+      scope,
+      content: "work",
+      backend,
+      settings,
+      mode: "standard",
+      sandboxRepositories: [{ owner: "owner", repo: "app" }],
+      noWait: true,
+    },
+    {
+      client: wire.client,
+      waitForClones: async () => ({ warning }),
+      enqueue: async (input) => {
+        sent = input.content;
+        return receipt(input.clientMessageId);
+      },
+    },
+  );
+  const start = wire.commands.find(
+    (command) => command.type === "runtime_start",
+  );
+  expect(start).toMatchObject({ cwd: "/root/workspace/app" });
+  // One repo: no extra skill roots.
+  expect(start).toMatchObject({ execution_settings: settings });
+  expect(
+    (start as { execution_settings?: object }).execution_settings,
+  ).not.toHaveProperty("skill_directories");
+  expect(sent).toEqual([
+    { type: "text", text: `<system-reminder>\n${warning}\n</system-reminder>` },
+    { type: "text", text: "work" },
+  ]);
+  expect(result).toMatchObject({ status: "queued", warnings: [warning] });
+});

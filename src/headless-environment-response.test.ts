@@ -67,7 +67,11 @@ test("a cloud selector's repositories reach the sandbox request", async () => {
       return { connectionId: "conn-1", environment };
     },
   });
-  expect("error" in result).toBe(false);
+  expect(result).toMatchObject({
+    connectionId: "conn-1",
+    // The launch waits for these clones and starts in the first.
+    sandboxRepositories: [{ owner: "letta-ai", repo: "letta-code" }],
+  });
   expect(calls).toEqual([
     [
       "agent-1",

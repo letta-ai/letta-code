@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import type {
   LaunchSubagentCommand,
   ReadSubagentEventsCommand,
@@ -37,6 +38,8 @@ export function isLaunchSubagentCommand(
     (c.tool_call_id !== undefined &&
       (typeof c.tool_call_id !== "string" || !c.tool_call_id.trim())) ||
     (c.notify !== undefined && c.notify !== "caller") ||
+    (c.cwd !== undefined &&
+      (typeof c.cwd !== "string" || !isAbsolute(c.cwd))) ||
     !c.args ||
     typeof c.args !== "object" ||
     Array.isArray(c.args)

@@ -11,7 +11,7 @@ export interface SubagentLaunchArgs {
   agent_id?: string;
   conversation_id?: string;
   computer?: string;
-  /** `owner/repo` or `owner/repo@<commit>` to clone into a fresh Cloud sandbox. */
+  /** `owner/repo`, `owner/repo@<branch>`, or `owner/repo@<commit>` to clone into a fresh Cloud sandbox. */
   repos?: string[];
   mcp?: {
     inherit: boolean;
@@ -54,6 +54,12 @@ export interface LaunchSubagentCommand {
   tool_call_id?: string;
   /** Requires the `launch_subagent_notify_caller` capability. */
   notify?: SubagentLaunchNotify;
+  /**
+   * Absolute working directory for the subagent, instead of the parent
+   * conversation's. Listeners that predate this field ignore it and use the
+   * parent's.
+   */
+  cwd?: string;
 }
 
 export type LaunchSubagentResponse = SubagentLaunchResult & {

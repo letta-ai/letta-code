@@ -22,6 +22,35 @@ const args = {
 };
 
 describe("subagent command context", () => {
+  test("a launch cwd replaces the parent conversation's working directory", async () => {
+    const listener = createRuntime();
+    const parent = createConversationRuntime(listener, "agent-a", "conv-a");
+    listener.workingDirectoryByConversation.set(
+      getWorkingDirectoryScopeKey("agent-a", "conv-a"),
+      cwdA,
+    );
+    const seen: Array<string | null | undefined> = [];
+    const launch: Parameters<typeof handleLaunchSubagentCommand>[3] =
+      async () => {
+        seen.push(getRuntimeContext()?.workingDirectory);
+        return { success: false, error: "stop" };
+      };
+    const runtime = { agent_id: "agent-a", conversation_id: "conv-a" };
+    await handleLaunchSubagentCommand(
+      { type: "launch_subagent", request_id: "r1", runtime, args, cwd: cwdB },
+      parent,
+      undefined,
+      launch,
+    );
+    await handleLaunchSubagentCommand(
+      { type: "launch_subagent", request_id: "r2", runtime, args },
+      parent,
+      undefined,
+      launch,
+    );
+    expect(seen).toEqual([cwdB, cwdA]);
+  });
+
   test("times out startup without changing the parent turn", async () => {
     const parent = createConversationRuntime(
       createRuntime(),

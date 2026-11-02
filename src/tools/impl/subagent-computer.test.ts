@@ -165,11 +165,15 @@ describe("resolveLaunchComputer", () => {
       subagentType?: string;
       config?: Parameters<typeof resolveLaunchComputer>[0]["config"];
       repos?: unknown;
+      resolveBranches?: Parameters<
+        typeof resolveLaunchComputer
+      >[0]["resolveBranches"];
     } = {},
   ) {
     return resolveLaunchComputer({
       requested,
       repos: options.repos,
+      resolveBranches: options.resolveBranches,
       subagentType: options.subagentType ?? "general-purpose",
       config: options.config ?? implementation,
       hasEnvironmentRouting: () => options.routing ?? true,
@@ -180,76 +184,114 @@ describe("resolveLaunchComputer", () => {
     });
   }
 
-  test("passes the env default through on a routing backend", () => {
-    expect(launch(undefined, { value: "cloud" })).toEqual({
+  test("passes the env default through on a routing backend", async () => {
+    expect(await launch(undefined, { value: "cloud" })).toEqual({
       computer: "cloud",
     });
   });
 
-  test("drops the env default on a backend that cannot route", () => {
-    expect(launch(undefined, { value: "cloud", routing: false })).toEqual({});
+  test("drops the env default on a backend that cannot route", async () => {
+    expect(await launch(undefined, { value: "cloud", routing: false })).toEqual(
+      {},
+    );
   });
 
-  test("rejects an explicit computer on a backend that cannot route", () => {
-    const result = launch("office-mac", { routing: false });
+  test("rejects an explicit computer on a backend that cannot route", async () => {
+    const result = await launch("office-mac", { routing: false });
     expect(result.computer).toBeUndefined();
     expect(result.error).toContain(
       "The computer option requires a Letta Cloud backend",
     );
   });
 
-  test("rejects an explicit computer for a memory worker", () => {
-    const result = launch("office-mac", { subagentType: "memory" });
+  test("rejects an explicit computer for a memory worker", async () => {
+    const result = await launch("office-mac", { subagentType: "memory" });
     expect(result.error).toContain(
       "Memory workers must run on the current machine",
     );
   });
 
-  test("never turns the env default into a memory worker error", () => {
+  test("never turns the env default into a memory worker error", async () => {
     expect(
-      launch(undefined, { value: "cloud", subagentType: "memory" }),
+      await launch(undefined, { value: "cloud", subagentType: "memory" }),
     ).toEqual({});
   });
 
-  test("repos route only to a fresh Cloud sandbox", () => {
+  test("repos route only to a fresh Cloud sandbox", async () => {
     const sha = "0123456789abcdef0123456789abcdef01234567";
     const repos = ["letta-ai/letta-code", `letta-ai/letta@${sha}`];
     const selector = `cloud:letta-ai/letta-code,letta-ai/letta@${sha}`;
-    expect(launch("cloud", { repos })).toEqual({ computer: selector });
-    expect(launch(undefined, { value: "cloud", repos })).toEqual({
+    expect(await launch("cloud", { repos })).toEqual({ computer: selector });
+    expect(await launch(undefined, { value: "cloud", repos })).toEqual({
       computer: selector,
     });
-    expect(launch("cloud", { repos: [] })).toEqual({ computer: "cloud" });
+    expect(await launch("cloud", { repos: [] })).toEqual({ computer: "cloud" });
 
-    for (const result of [
+    for (const result of await Promise.all([
       launch(undefined, { repos }),
       launch("local", { value: "cloud", repos }),
       launch("office-mac", { repos }),
       launch(undefined, { value: "cloud", config: forked, repos }),
-    ])
+    ]))
       expect(result.error).toContain('pass computer: "cloud"');
     expect(
-      launch(undefined, { value: "cloud", routing: false, repos }),
+      await launch(undefined, { value: "cloud", routing: false, repos }),
     ).toEqual({
       error: expect.stringContaining("requires a Letta Cloud backend"),
     });
-    expect(launch("cloud", { repos: ["letta-code"] }).error).toContain(
+    expect((await launch("cloud", { repos: ["letta-code"] })).error).toContain(
       'Invalid repo "letta-code"',
     );
     expect(
-      launch("cloud", { repos: ["letta-ai/letta-code@main"] }).error,
-    ).toContain("40-character commit SHA");
+      (await launch("cloud", { repos: ["letta-ai/letta-code@-x"] })).error,
+    ).toContain("owner/repo@<branch>");
     expect(
-      launch("cloud", { repos: Array(11).fill("letta-ai/letta-code") }).error,
+      (await launch("cloud", { repos: Array(11).fill("letta-ai/letta-code") }))
+        .error,
     ).toContain("at most 10");
   });
 
-  test("stays local without consulting the backend", () => {
+  test("resolves a branch to its commit before building the selector", async () => {
+    const sha = "89abcdef0123456789abcdef0123456789abcdef";
+    const seen: unknown[] = [];
+    const result = await launch("cloud", {
+      repos: ["owner/repo@feature/wip", "owner/other"],
+      resolveBranches: async (specs) => {
+        seen.push(specs);
+        return specs.map(({ branch, ...repository }) =>
+          branch ? { ...repository, commit: sha } : repository,
+        );
+      },
+    });
+    expect(seen).toEqual([
+      [
+        { owner: "owner", repo: "repo", branch: "feature/wip" },
+        { owner: "owner", repo: "other" },
+      ],
+    ]);
+    expect(result).toEqual({
+      computer: `cloud:owner/repo@${sha},owner/other`,
+    });
+  });
+
+  test("fails the launch when a branch cannot be resolved", async () => {
+    const result = await launch("cloud", {
+      repos: ["owner/repo@missing"],
+      resolveBranches: async () => {
+        throw new Error('Branch "missing" not found in owner/repo.');
+      },
+    });
+    expect(result).toEqual({
+      error: 'Branch "missing" not found in owner/repo.',
+    });
+  });
+
+  test("stays local without consulting the backend", async () => {
     const hasEnvironmentRouting = () => {
       throw new Error("backend should not be probed");
     };
     expect(
-      resolveLaunchComputer({
+      await resolveLaunchComputer({
         requested: undefined,
         subagentType: "general-purpose",
         config: implementation,

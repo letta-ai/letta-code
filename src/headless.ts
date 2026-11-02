@@ -1538,7 +1538,6 @@ export async function handleHeadlessCommand(
   }
   markMilestone("HEADLESS_CONVERSATION_READY");
 
-  // Set conversation ID in context for tools (e.g., Skill tool) to access
   setConversationId(conversationId);
 
   // Only foreground agent sessions belong in the project/global LRU.
@@ -1941,7 +1940,7 @@ export async function handleHeadlessCommand(
         "headless_environment_routing",
         outputFormat,
       );
-    const { connectionId, responseEnvironment } = target;
+    const { connectionId, responseEnvironment, sandboxRepositories } = target;
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: isAgentLaunch || Boolean(values["no-wait"]),
       clientMessageId: values["client-message-id"],
@@ -1974,6 +1973,7 @@ export async function handleHeadlessCommand(
             }
           : undefined,
       cwd: environmentSelector ? undefined : getCurrentWorkingDirectory(),
+      sandboxRepositories,
       mode: headlessPermissionMode,
       skillSources: resolvedSkillSources,
       settings: {

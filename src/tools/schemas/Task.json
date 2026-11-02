@@ -33,7 +33,7 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
       "maxItems": 10,
-      "description": "GitHub repositories to clone into a fresh Cloud sandbox, as \"owner/repo\" or \"owner/repo@<40-character commit SHA>\". Each lands in /root/workspace/<repo>. Only valid when the subagent runs on a new Cloud sandbox (computer: \"cloud\", or a host default of cloud)."
+      "description": "GitHub repositories to clone into a fresh Cloud sandbox, as \"owner/repo\", \"owner/repo@<branch>\" (pinned to the branch's current commit at launch), or \"owner/repo@<40-character commit SHA>\". Each lands in /root/workspace/<repo>; the subagent starts in the first one once the clones finish. Only valid when the subagent runs on a new Cloud sandbox (computer: \"cloud\", or a host default of cloud)."
     },
     "mcp": {
       "type": "object",

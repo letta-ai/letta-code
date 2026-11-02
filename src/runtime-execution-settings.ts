@@ -17,6 +17,11 @@ export interface RuntimeExecutionSettings {
   subagent_depth?: number;
   transcript_path?: string;
   memory_directory?: string;
+  /**
+   * Extra project skill roots (each laid out like `.agents/skills`), found
+   * alongside the working directory's own. Older listeners ignore it.
+   */
+  skill_directories?: string[];
   disable_memory_guard: boolean;
 }
 
@@ -33,6 +38,8 @@ export function isRuntimeExecutionSettings(
     (settings.tools === undefined || strings(settings.tools)) &&
     (settings.preload_skills === undefined ||
       strings(settings.preload_skills)) &&
+    (settings.skill_directories === undefined ||
+      strings(settings.skill_directories)) &&
     typeof settings.disable_memory_guard === "boolean" &&
     (settings.max_turns === undefined ||
       (typeof settings.max_turns === "number" &&

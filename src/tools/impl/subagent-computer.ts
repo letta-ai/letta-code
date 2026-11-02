@@ -4,6 +4,7 @@ import {
   cloudSandboxSelector,
   parseSandboxRepositorySpecs,
 } from "@/backend/api/environments";
+import { resolveSandboxRepositoryBranches } from "@/backend/api/github-branch-commit";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 
 /**
@@ -124,17 +125,20 @@ function backendSupportsEnvironmentRouting(): boolean {
  * misconfigured host does not fail every launch on it.
  *
  * `repos` only applies when the launch lands on a fresh Cloud sandbox, which
- * clones them as it starts. The repositories travel inside the
- * returned selector (see `cloudSandboxSelector`).
+ * clones them as it starts. A `owner/repo@<branch>` entry is resolved to the
+ * branch's current commit here, with this machine's credentials, because the
+ * sandbox endpoint only accepts a commit SHA. The resolved repositories travel
+ * inside the returned selector (see `cloudSandboxSelector`).
  */
-export function resolveLaunchComputer(input: {
+export async function resolveLaunchComputer(input: {
   requested: unknown;
   repos?: unknown;
   subagentType: string;
   config: Pick<SubagentConfig, "fork" | "launchProfile">;
   hasEnvironmentRouting?: () => boolean;
   env?: NodeJS.ProcessEnv;
-}): { computer?: string; error?: string } {
+  resolveBranches?: typeof resolveSandboxRepositoryBranches;
+}): Promise<{ computer?: string; error?: string }> {
   const parsedRepos = parseSandboxRepositorySpecs(input.repos);
   if ("error" in parsedRepos) return { error: parsedRepos.error };
   const repositories = parsedRepos.repositories;
@@ -149,13 +153,18 @@ export function resolveLaunchComputer(input: {
 
   const hasRouting =
     input.hasEnvironmentRouting ?? backendSupportsEnvironmentRouting;
-  if (hasRouting())
-    return {
-      computer:
-        repositories.length > 0
-          ? cloudSandboxSelector(repositories)
-          : resolved.computer,
-    };
+  if (hasRouting()) {
+    if (repositories.length === 0) return { computer: resolved.computer };
+    try {
+      const resolveBranches =
+        input.resolveBranches ?? resolveSandboxRepositoryBranches;
+      return {
+        computer: cloudSandboxSelector(await resolveBranches(repositories)),
+      };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) };
+    }
+  }
   return resolved.source === "explicit" || repositories.length > 0
     ? { error: NO_ROUTING_ERROR }
     : {};

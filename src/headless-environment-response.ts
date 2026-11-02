@@ -23,7 +23,7 @@ import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
 import type { ResultMessage, UsageStatistics } from "@/types/protocol";
 
-export type ListenerLaunchResult =
+export type ListenerLaunchResult = (
   | {
       status: "completed";
       text: string;
@@ -31,7 +31,11 @@ export type ListenerLaunchResult =
       runIds: string[];
       usage: UsageStatistics;
     }
-  | { status: "queued"; receipt: EnqueueReceipt };
+  | { status: "queued"; receipt: EnqueueReceipt }
+) & {
+  /** Non-fatal launch problems, such as a repository still cloning. */
+  warnings?: string[];
+};
 
 export type ReplyEnvironmentMetadata =
   | {
@@ -98,6 +102,9 @@ export function buildEnvironmentLaunchResult(
     usage: reply?.usage ?? null,
     uuid: `result-${base.internalAgentId}-${Date.now()}`,
     ...(outcome.status === "queued" ? outcome.receipt : {}),
+    ...("warnings" in outcome && outcome.warnings?.length
+      ? { warnings: outcome.warnings }
+      : {}),
     ...(outcome.status === "error"
       ? { error: outcome.error, stop_reason: "error" as const }
       : {}),
@@ -145,7 +152,12 @@ export async function resolveListenerLaunchTarget(input: {
     },
   ) => Promise<EnvironmentRouting>;
 }): Promise<
-  | { connectionId: string; responseEnvironment: ReplyEnvironmentMetadata }
+  | {
+      connectionId: string;
+      responseEnvironment: ReplyEnvironmentMetadata;
+      /** Repositories the fresh Cloud sandbox is cloning, if any. */
+      sandboxRepositories: SandboxGithubRepository[];
+    }
   | { error: string }
 > {
   const { selector, agentId } = input;
@@ -156,14 +168,17 @@ export async function resolveListenerLaunchTarget(input: {
     };
   const useCloudSandbox = isCloudEnvironmentSelector(selector);
   let routing: EnvironmentRouting | null = null;
+  let sandboxRepositories: SandboxGithubRepository[] = [];
   try {
+    if (useCloudSandbox)
+      sandboxRepositories = cloudSandboxSelectorRepositories(selector);
     if (selector)
       routing = useCloudSandbox
         ? await (input.resolveCloudSandbox ?? resolveAgentSandboxConnectionId)(
             agentId,
             {
               conversationId: input.conversationId,
-              githubRepositories: cloudSandboxSelectorRepositories(selector),
+              githubRepositories: sandboxRepositories,
             },
           )
         : await (input.resolveComputer ?? resolveEnvironmentConnectionId)(
@@ -177,6 +192,7 @@ export async function resolveListenerLaunchTarget(input: {
     return { error: "No listener connection was resolved for this launch" };
   return {
     connectionId,
+    sandboxRepositories,
     responseEnvironment: routing
       ? buildEnvironmentResponseMetadata({
           source: useCloudSandbox ? "cloud-sandbox" : "explicit",
