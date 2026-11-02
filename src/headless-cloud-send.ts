@@ -240,10 +240,6 @@ export async function tryCloudHeadlessSend(
           "Could not determine the conversation's agent to wait for a reply; pass --agent or use --no-wait.",
         );
     }
-    const recovery = buildAgentMessageRecoveryCommands({
-      agentId,
-      conversationId,
-    });
     // Subscribe and receive the initial snapshot BEFORE submitting. A status
     // stream opened only after 202 can miss a fast run's exact send mapping.
     const events =
@@ -272,6 +268,12 @@ export async function tryCloudHeadlessSend(
       AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
     );
     clearTimeout(submissionTimeout);
+    // The receipt names the conversation's agent; older servers omit it.
+    agentId = receipt.agent_id ?? agentId;
+    const recovery = buildAgentMessageRecoveryCommands({
+      agentId,
+      conversationId,
+    });
     if (noWait) {
       await writeObject({ ...receipt, ...recovery });
       return 0;

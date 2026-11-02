@@ -120,16 +120,19 @@ test("an explicit agent_id is passed through for an unreadable conversation", as
       f.backend,
     ),
   ).toEqual({ agentId: "agent-explicit", conversationId: TARGET_CONV });
+  expect(f.reads).toEqual([]);
 });
 
-test("a readable conversation of another agent is rejected early", async () => {
+test("an explicit agent_id with a conversation is forwarded without a read", async () => {
+  // The server reports the conversation's real agent in the enqueue receipt.
   const f = recordingBackend("agent-owner");
-  await expect(
-    resolveAgentMessageDestination(
+  expect(
+    await resolveAgentMessageDestination(
       { agentId: "agent-requested", conversationId: TARGET_CONV },
       f.backend,
     ),
-  ).rejects.toThrow("The conversation does not belong to the requested agent.");
+  ).toEqual({ agentId: "agent-requested", conversationId: TARGET_CONV });
+  expect(f.reads).toEqual([]);
 });
 
 test("the default conversation still requires agent_id", async () => {
