@@ -665,7 +665,7 @@ describe("Startup Flow - Integration", () => {
   );
 
   test(
-    "--conversation resolves the agent and submits to the selected conversation",
+    "--conversation submits by conversation ID alone",
     async () => {
       if (!testAgentId || !testConversationId) {
         console.log("Skipping: no test conversation available");
@@ -691,11 +691,13 @@ describe("Startup Flow - Integration", () => {
         },
       );
 
+      // The server derives the agent from the conversation and its receipt
+      // does not echo it, so the CLI reports no agent it was not given.
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.status).toBe("queued");
-      expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(testConversationId);
+      expect(output.agent_id).toBeNull();
     },
     { timeout: 70000 },
   );

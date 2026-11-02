@@ -68,7 +68,25 @@ export function validateAddress(
   return value;
 }
 
-/** Shared destination lookup for CLI sends and the SendAgentMessage tool. */
+/** Recovery commands for a send; `--agent` is only needed for `default`. */
+export function buildAgentMessageRecoveryCommands(destination: {
+  agentId?: string | null;
+  conversationId: string;
+}): { status_command: string; messages_command: string } {
+  const target = `${destination.agentId ? `--agent ${destination.agentId} ` : ""}--conversation ${destination.conversationId}`;
+  return {
+    status_command: `letta messages status ${target}`,
+    messages_command: `letta messages list ${target}`,
+  };
+}
+
+/**
+ * Shared destination lookup for CLI sends and the SendAgentMessage tool.
+ *
+ * A non-default conversation ID is a complete address: the enqueue endpoint
+ * derives the agent from it, so the conversation is not read and `agentId` is
+ * returned only when the caller supplied it.
+ */
 export async function resolveAgentMessageDestination(
   input: {
     agentId?: string;
@@ -80,40 +98,62 @@ export async function resolveAgentMessageDestination(
   },
   backend: Pick<Backend, "retrieveConversation" | "createConversation">,
   signal?: AbortSignal,
-): Promise<{ agentId: string; conversationId: string }> {
-  let agentId = validateAddress(input.agentId, "agent");
+): Promise<{ agentId?: string; conversationId: string }> {
+  const agentId = validateAddress(input.agentId, "agent");
   let conversationId = validateAddress(input.conversationId, "conversation");
   if (!agentId && !conversationId) {
     throw new Error("Choose a destination with agent_id or conversation_id.");
   }
   const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
   if (conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(
-      conversationId,
-      options,
-    );
-    if (agentId && agentId !== conversation.agent_id) {
-      throw new Error(
-        "The conversation does not belong to the requested agent.",
-      );
+    if (agentId) await assertConversationAgent(conversationId, agentId);
+  } else {
+    if (!agentId) {
+      throw new Error("The default conversation requires agent_id.");
     }
-    agentId = conversation.agent_id ?? undefined;
+    if (!conversationId) {
+      const conversation = await backend.createConversation(
+        {
+          agent_id: agentId,
+          ...(input.senderAgentId ? { hidden: true } : {}),
+        },
+        options,
+      );
+      conversationId = conversation.id;
+    }
   }
-  if (!agentId) throw new Error("The default conversation requires agent_id.");
-  if (!conversationId) {
-    const conversation = await backend.createConversation(
-      { agent_id: agentId, ...(input.senderAgentId ? { hidden: true } : {}) },
-      options,
-    );
-    conversationId = conversation.id;
-  }
-  if (
-    agentId === input.currentConversation?.agentId &&
-    conversationId === input.currentConversation?.conversationId
-  ) {
+  const current = input.currentConversation;
+  // Conversation IDs are unique except `default`, which is scoped by agent.
+  const isCurrent =
+    conversationId === current?.conversationId &&
+    (conversationId !== "default" || agentId === current?.agentId);
+  if (isCurrent) {
     throw new Error(
       "Cannot message the current conversation. Use Monitor for external events or Wake for timed self-invocation.",
     );
   }
-  return { agentId, conversationId };
+  return agentId ? { agentId, conversationId } : { conversationId };
+
+  /**
+   * Best-effort: catch an explicit agent/conversation mismatch early when the
+   * conversation is readable. Unreadable conversations (e.g. enqueue-only) go
+   * straight to the enqueue, which owns the authorization decision.
+   */
+  async function assertConversationAgent(
+    id: string,
+    expectedAgentId: string,
+  ): Promise<void> {
+    let owner: string | null | undefined;
+    try {
+      owner = (await backend.retrieveConversation(id, options)).agent_id;
+    } catch {
+      signal?.throwIfAborted();
+      return;
+    }
+    if (owner && owner !== expectedAgentId) {
+      throw new Error(
+        "The conversation does not belong to the requested agent.",
+      );
+    }
+  }
 }

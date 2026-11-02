@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client";
 import type { SubagentResult } from "@/agent/subagents";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
 import type { AgentRetrieveOptions, Backend } from "@/backend";
@@ -38,7 +39,7 @@ function fixture(targetTags: readonly string[] = []) {
     submissions.push(input);
     return {
       status: "queued" as const,
-      agent_id: input.agentId,
+      agent_id: input.agentId ?? null,
       conversation_id: input.conversationId,
       client_message_id: input.clientMessageId,
       workflow_id: "wf-1",
@@ -498,6 +499,18 @@ test.each(["conv-44444444-4444-4444-8444-444444444444", "default"])(
   },
 );
 
+test("rejects the tool's current conversation by conversation ID alone", async () => {
+  const f = fixture();
+  const self = await runWithRuntimeContext(
+    { ...caller, conversationId: TARGET_CONV },
+    () => send_agent_message(message, f),
+  );
+  expect(JSON.parse(self.content).error).toContain(
+    "Cannot message the current conversation.",
+  );
+  expect(f.submissions).toHaveLength(0);
+});
+
 test.each(["conv-55555555-5555-4555-8555-555555555555", "default", undefined])(
   "allows the same agent in another tool destination %s",
   async (conversationId) => {
@@ -530,7 +543,7 @@ test("returns acceptance and an explicit return address, with no task or answer"
   const receipt = JSON.parse(result.content);
   expect(receipt).toMatchObject({
     status: "queued",
-    agent_id: "agent-target",
+    agent_id: null,
     conversation_id: TARGET_CONV,
     super_run_id: "sr-1",
   });
@@ -855,10 +868,41 @@ test("cancelling an in-flight submission preserves uncertain acceptance without 
   expect(attempts).toBe(1);
 });
 
+test("a conversation-ID send reads nothing and enqueues without agent_id", async () => {
+  const f = fixture(["parent:agent-caller"]);
+  const reads: string[] = [];
+  f.backend.retrieveConversation = async (id) => {
+    reads.push(`conversation:${id}`);
+    throw APIError.generate(403, {}, undefined, new Headers());
+  };
+  f.backend.retrieveAgent = async (id) => {
+    reads.push(`agent:${id}`);
+    throw new Error("unexpected agent read");
+  };
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(reads).toEqual([]);
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.conversationId).toBe(TARGET_CONV);
+  expect(f.submissions[0]?.agentId).toBeUndefined();
+  expect(f.tracked).toHaveLength(0);
+  expect(JSON.parse(result.content)).toMatchObject({
+    status: "queued",
+    agent_id: null,
+    conversation_id: TARGET_CONV,
+    status_command: `letta messages status --conversation ${TARGET_CONV}`,
+    messages_command: `letta messages list --conversation ${TARGET_CONV}`,
+  });
+});
+
+const childMessage = { ...message, agent_id: "agent-target" };
+
 test("a send to this agent's own subagent is tracked against the receipt", async () => {
   const f = fixture(["type:code-reviewer", "parent:agent-caller"]);
   const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, f),
+    send_agent_message(childMessage, f),
   );
   expect(result.status).toBe("success");
   expect(f.tracked).toHaveLength(1);
@@ -878,7 +922,7 @@ test.each([
   async ({ tags }) => {
     const f = fixture(tags);
     const result = await runWithRuntimeContext(caller, () =>
-      send_agent_message(message, f),
+      send_agent_message(childMessage, f),
     );
     expect(result.status).toBe("success");
     expect(f.submissions).toHaveLength(1);
@@ -892,7 +936,7 @@ test("a failed child lookup still delivers and skips tracking", async () => {
     throw new ApiRequestError("gone", 404, "gone");
   };
   const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, f),
+    send_agent_message(childMessage, f),
   );
   expect(result.status).toBe("success");
   expect(f.submissions).toHaveLength(1);
@@ -902,7 +946,7 @@ test("a failed child lookup still delivers and skips tracking", async () => {
 test("a rejected enqueue to a child is not tracked", async () => {
   const f = fixture(["parent:agent-caller"]);
   const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, {
+    send_agent_message(childMessage, {
       ...f,
       enqueue: async () => {
         throw new ApiRequestError("refused", 403, "refused");
