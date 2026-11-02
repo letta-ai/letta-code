@@ -272,7 +272,9 @@ describe("task progress log", () => {
   test("writes each tool call and whole assistant message as it streams", () => {
     const dir = mkdtempSync(join(tmpdir(), "subagent-stream-progress-"));
     const outputFile = join(dir, "task.log");
-    openTaskProgressLog("subagent-1", outputFile, () => new Date(0));
+    openTaskProgressLog("subagent-1", outputFile, undefined, {
+      now: () => new Date(0),
+    });
     try {
       const state = createState();
       const text = (id: string, content: string) =>

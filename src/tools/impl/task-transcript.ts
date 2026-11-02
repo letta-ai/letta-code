@@ -189,15 +189,18 @@ function readableLine(event: TaskEvent): string | null {
  * Start recording live worker progress into a task's output file, between
  * `[Task started…]` and the final result: one readable line per tool call,
  * tool result, and message. Every event also goes, in full, to a JSONL event
- * log next to the output file. Values in `redactions` (by default the
- * ambient runtime credentials and the current agent's vault) are scrubbed
- * from each event first.
+ * log next to the output file. The runtime credentials and the parent
+ * agent's vault values (or `redactions`, in tests) are scrubbed from each
+ * event first.
  */
 export function openTaskProgressLog(
   subagentId: string,
   outputFile: string,
-  now: () => Date = () => new Date(),
-  redactions: Record<string, string> = captureSecretRedactions(),
+  parentAgentId?: string,
+  {
+    now = () => new Date(),
+    redactions = captureSecretRedactions(parentAgentId),
+  }: { now?: () => Date; redactions?: Record<string, string> } = {},
 ): void {
   const eventsFile = taskEventsFileFor(outputFile);
   try {
