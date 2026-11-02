@@ -165,7 +165,7 @@ describe("manual listener lock without hard links", () => {
     expect(existsSync(second.lockPath)).toBe(false);
   });
 
-  test("a half-written record fails closed and is never reaped", async () => {
+  test("a fresh half-written record is treated as still being written", async () => {
     const first = await acquireManualListenerLock(scope, {
       lockRoot: root,
       processId: 111,
@@ -181,6 +181,81 @@ describe("manual listener lock without hard links", () => {
       }),
     ).rejects.toThrow(ManualListenerLockUnavailableError);
     expect(readFileSync(first.lockPath, "utf-8")).toBe('{"version":1,"pid":');
+  });
+
+  test("an aged half-written record is reaped through the recovery claim", async () => {
+    const first = await acquireManualListenerLock(scope, {
+      lockRoot: root,
+      processId: 111,
+    });
+    await first.release();
+
+    for (const partial of ['{"version":1,"pid":', ""]) {
+      writeFileSync(first.lockPath, partial);
+      age(first.lockPath);
+
+      const next = await acquireManualListenerLock(scope, {
+        lockRoot: root,
+        processId: 222,
+        isProcessAlive: () => false,
+      });
+      expect(JSON.parse(readFileSync(next.lockPath, "utf-8")).pid).toBe(222);
+      // Recovery claims are cleaned up after the reap.
+      expect(
+        readdirSync(join(root, "listeners")).filter((name) =>
+          name.includes(".recover."),
+        ),
+      ).toEqual([]);
+      await next.release();
+    }
+  });
+
+  test("an aged half-written record has exactly one recoverer", async () => {
+    const first = await acquireManualListenerLock(scope, {
+      lockRoot: root,
+      processId: 111,
+    });
+    await first.release();
+    writeFileSync(first.lockPath, '{"version":1,"pid":');
+    age(first.lockPath);
+
+    const claims = await Promise.allSettled(
+      Array.from({ length: 6 }, (_, index) =>
+        acquireManualListenerLock(scope, {
+          lockRoot: root,
+          processId: 300 + index,
+          isProcessAlive: (pid) => pid >= 300,
+        }),
+      ),
+    );
+    const winners = claims.filter((claim) => claim.status === "fulfilled");
+    expect(winners).toHaveLength(1);
+    if (winners[0]?.status === "fulfilled") await winners[0].value.release();
+  });
+
+  test("a valid record from an incompatible version still fails closed", async () => {
+    const first = await acquireManualListenerLock(scope, {
+      lockRoot: root,
+      processId: 111,
+    });
+    await first.release();
+    const foreign = JSON.stringify({
+      version: 2,
+      pid: 111,
+      ownerToken: "owner-from-a-newer-release",
+      acquiredAt: new Date(0).toISOString(),
+    });
+    writeFileSync(first.lockPath, foreign);
+    age(first.lockPath);
+
+    await expect(
+      acquireManualListenerLock(scope, {
+        lockRoot: root,
+        processId: 222,
+        isProcessAlive: () => false,
+      }),
+    ).rejects.toThrow(/incompatible version/);
+    expect(readFileSync(first.lockPath, "utf-8")).toBe(foreign);
   });
 });
 
