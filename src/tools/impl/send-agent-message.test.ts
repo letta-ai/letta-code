@@ -1,4 +1,5 @@
 import { describe, expect, spyOn, test } from "bun:test";
+import { APIError } from "@letta-ai/letta-client";
 import type { SubagentResult } from "@/agent/subagents";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
 import type { AgentRetrieveOptions, Backend } from "@/backend";
@@ -853,6 +854,33 @@ test("cancelling an in-flight submission preserves uncertain acceptance without 
   expect(outcome.status).toBe("error");
   expect(JSON.parse(outcome.content).status).toBe("acceptance_unknown");
   expect(attempts).toBe(1);
+});
+
+test("an enqueue-only conversation is sent through the sender's agent", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async () => {
+    throw APIError.generate(
+      403,
+      { detail: "can only enqueue a message to the DM itself" },
+      undefined,
+      new Headers(),
+    );
+  };
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]).toMatchObject({
+    agentId: caller.agentId,
+    conversationId: TARGET_CONV,
+  });
+  expect(JSON.parse(result.content)).toMatchObject({
+    status: "queued",
+    agent_id: caller.agentId,
+    conversation_id: TARGET_CONV,
+    super_run_id: "sr-1",
+  });
 });
 
 test("a send to this agent's own subagent is tracked against the receipt", async () => {

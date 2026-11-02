@@ -68,6 +68,14 @@ export function validateAddress(
   return value;
 }
 
+function isForbidden(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { status?: unknown }).status === 403
+  );
+}
+
 /** Shared destination lookup for CLI sends and the SendAgentMessage tool. */
 export async function resolveAgentMessageDestination(
   input: {
@@ -88,16 +96,24 @@ export async function resolveAgentMessageDestination(
   }
   const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
   if (conversationId && conversationId !== "default") {
-    const conversation = await backend.retrieveConversation(
-      conversationId,
-      options,
-    );
-    if (agentId && agentId !== conversation.agent_id) {
-      throw new Error(
-        "The conversation does not belong to the requested agent.",
+    try {
+      const conversation = await backend.retrieveConversation(
+        conversationId,
+        options,
       );
+      if (agentId && agentId !== conversation.agent_id) {
+        throw new Error(
+          "The conversation does not belong to the requested agent.",
+        );
+      }
+      agentId = conversation.agent_id ?? undefined;
+    } catch (error) {
+      // Some conversations accept enqueues from the caller but refuse reads.
+      // Address the sender's own agent and let the enqueue decide ownership.
+      const fallbackAgentId = agentId ?? input.senderAgentId;
+      if (!isForbidden(error) || !fallbackAgentId) throw error;
+      agentId = fallbackAgentId;
     }
-    agentId = conversation.agent_id ?? undefined;
   }
   if (!agentId) throw new Error("The default conversation requires agent_id.");
   if (!conversationId) {
