@@ -203,6 +203,9 @@ export function createMcpSubprocessBroker(options: {
   getScope: () => McpBrokerScope | null;
   getClient: () => Promise<BrokerUpstreamClient>;
 }): McpSubprocessBroker {
+  // A retained shell capability must never upgrade to a later caller's
+  // private-secret authority. MCP's existing dynamic scope is unchanged.
+  const secretOriginatorToken = options.getScope()?.originatorToken;
   const socket = socketPath();
   const endpoint =
     process.platform === "win32" ? `${TCP_RENDEZVOUS_PREFIX}${socket}` : socket;
@@ -284,7 +287,8 @@ export function createMcpSubprocessBroker(options: {
           !initialScope ||
           initialScope.agentId !== options.agentId ||
           (parsed.operation === "secrets"
-            ? parsed.agentId !== options.agentId
+            ? parsed.agentId !== options.agentId ||
+              initialScope.originatorToken !== secretOriginatorToken
             : !allowedAgents?.has(parsed.agentId))
         ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
