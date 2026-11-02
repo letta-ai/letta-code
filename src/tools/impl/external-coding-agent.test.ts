@@ -17,6 +17,7 @@ import {
   parseExternalCodingAgentOutput,
   resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
+  scrubWorkerListeners,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
@@ -586,6 +587,31 @@ describe("external coding agent vault secrets", () => {
     expect(result.success).toBe(true);
     expect(result.report).not.toContain(token);
     expect(result.report).toContain("the token is");
+  });
+
+  test("scrubs exported vault values from live progress events", () => {
+    const token = "ghp_exported_vault_value_123";
+    const seen: unknown[] = [];
+    const listeners = scrubWorkerListeners(
+      {
+        onToolCall: (call) => seen.push(call),
+        onToolResult: (result) => seen.push(result),
+        onText: (text) => seen.push(text),
+        onReasoning: (text) => seen.push(text),
+      },
+      { GITHUB_TOKEN: token },
+    );
+    listeners.onToolCall?.({
+      id: "c1",
+      name: "Bash",
+      args: `{"command":"echo ${token}"}`,
+      input: { command: `echo ${token}` },
+    });
+    listeners.onToolResult?.({ id: "c1", isError: false, output: token });
+    listeners.onText?.(`token ${token}`);
+    listeners.onReasoning?.(`token ${token}`);
+    expect(JSON.stringify(seen)).not.toContain(token);
+    expect(seen).toHaveLength(4);
   });
 });
 

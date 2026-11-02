@@ -56,7 +56,25 @@ test("streams a remote Letta subagent's progress into the output file while it r
       tool_call: { tool_call_id: "c1", name: "Bash", arguments: '{"cmd":1}' },
     } as Message,
   ];
-  const run2 = [say("m2", 3, "Build is running.")];
+  const run2 = [
+    {
+      id: "m1r",
+      date: "2026-11-01T10:00:02.000Z",
+      message_type: "tool_return_message",
+      tool_call_id: "c1",
+      status: "success",
+      tool_return: "a.txt",
+    } as Message,
+    say("m2", 3, "Build is running."),
+    // A background command's output arrives only as a notification turn.
+    {
+      id: "m2n",
+      date: "2026-11-01T10:00:04.000Z",
+      message_type: "user_message",
+      content:
+        "<task-notification><summary>Build failed</summary>error: x</task-notification>",
+    } as Message,
+  ];
   const polls = [
     superRun(["run-1"]),
     superRun(["run-2", "run-1"]),
@@ -102,7 +120,9 @@ test("streams a remote Letta subagent's progress into the output file while it r
     expect(midRun[3]).toBe(
       "[2026-11-01T10:00:01.000Z] text: Listing the checkout first.\n" +
         '[2026-11-01T10:00:01.000Z] tool: Bash {"cmd":1}\n' +
-        "[2026-11-01T10:00:03.000Z] text: Build is running.\n",
+        "[2026-11-01T10:00:02.000Z] result: Bash ok, 5 B\n" +
+        "[2026-11-01T10:00:03.000Z] text: Build is running.\n" +
+        "[2026-11-01T10:00:04.000Z] notification: Build failed\n",
     );
     // Each entry is written once, however often its run is re-read.
     expect(readFileSync(outputFile, "utf8")).toBe(

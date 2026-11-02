@@ -28,9 +28,9 @@ import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import type {
-  ExternalTextListener,
-  ExternalToolCallListener,
+import {
+  type ExternalWorkerListeners,
+  parseToolInput,
 } from "./external-tool-call";
 import {
   captureNativeSession,
@@ -60,7 +60,8 @@ export interface ExternalCodingAgentMcpEntry {
   toolCount: number | null;
 }
 
-export interface ExternalCodingAgentRunOptions {
+/** Live progress: tool calls, their results, text, and reasoning. */
+export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
   model?: string;
@@ -72,10 +73,6 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
-  /** Live progress: called once per tool call the worker makes. */
-  onToolCall?: ExternalToolCallListener;
-  /** Live progress: called with each assistant text block (Claude Code, Codex). */
-  onText?: ExternalTextListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -576,6 +573,36 @@ export function scrubExternalWorkerResult(
   };
 }
 
+/**
+ * Wrap progress listeners so values exported from the vault never reach the
+ * task's logs in tool arguments, outputs, or text.
+ */
+export function scrubWorkerListeners(
+  listeners: ExternalWorkerListeners,
+  secretEnv: Record<string, string>,
+): ExternalWorkerListeners {
+  if (Object.keys(secretEnv).length === 0) return listeners;
+  const scrub = (text: string) => scrubSecretsFromString(text, secretEnv);
+  const { onToolCall, onText, onToolResult, onReasoning } = listeners;
+  return {
+    onToolCall:
+      onToolCall &&
+      ((call) => {
+        const input = JSON.stringify(call.input);
+        onToolCall({
+          ...call,
+          args: scrub(call.args),
+          input: input === undefined ? undefined : parseToolInput(scrub(input)),
+        });
+      }),
+    onText: onText && ((text) => onText(scrub(text))),
+    onToolResult:
+      onToolResult &&
+      ((result) => onToolResult({ ...result, output: scrub(result.output) })),
+    onReasoning: onReasoning && ((text) => onReasoning(scrub(text))),
+  };
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
@@ -585,7 +612,11 @@ export async function runExternalCodingAgent(
     options,
     deps,
   );
-  options = { ...options, mcpReminder };
+  options = {
+    ...options,
+    ...scrubWorkerListeners(options, secretEnv),
+    mcpReminder,
+  };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -700,6 +731,8 @@ export async function runExternalCodingAgent(
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -757,6 +790,8 @@ export async function runExternalCodingAgent(
             sessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
           },
           { env },
         ),

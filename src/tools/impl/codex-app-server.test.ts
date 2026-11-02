@@ -256,7 +256,7 @@ describe("Codex app-server lifecycle", () => {
         prompt: "Work",
         parentAgentId: "parent",
         cwd: "/repo",
-        onToolCall: (call) => calls.push(call),
+        onToolCall: ({ input: _, ...call }) => calls.push(call),
       },
       { createTransport: () => fake.transport() },
     );
@@ -328,6 +328,40 @@ describe("Codex app-server lifecycle", () => {
     fake.complete("done");
     await handle.completion;
     expect(events).toEqual(["text:Running tests.", "tool:Bash"]);
+  });
+
+  test("reports completed command output, exit code, and reasoning", async () => {
+    const fake = new FakeCodexTransport();
+    const events: unknown[] = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onToolResult: (result) => events.push(result),
+        onReasoning: (text) => events.push(`reasoning:${text}`),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const command = { type: "commandExecution", id: "cmd-1", command: "t" };
+    fake.item("item/started", { ...command, status: "inProgress" });
+    fake.item("item/completed", {
+      ...command,
+      status: "failed",
+      exitCode: 1,
+      aggregatedOutput: "FAIL test_parse_hours",
+    });
+    fake.item("item/completed", { type: "reasoning", summary: ["Check 3."] });
+    fake.complete("done");
+    await handle.completion;
+    expect(events).toEqual([
+      {
+        id: "cmd-1",
+        isError: true,
+        output: "FAIL test_parse_hours\n[exit code 1]",
+      },
+      "reasoning:Check 3.",
+    ]);
   });
 
   test("replays completion that arrives before turn/start settles", async () => {

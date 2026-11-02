@@ -15,9 +15,13 @@ import {
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
-import { recordTaskProgressRemoteText } from "@/tools/impl/task-transcript";
+import { recordTaskEvent } from "@/tools/impl/task-transcript";
 import { getErrorMessage } from "@/utils/error";
-import { type ExecutionState, processStreamEvent } from "./subagent-stream";
+import {
+  type ExecutionState,
+  processStreamEvent,
+  recordToolReturnProgress,
+} from "./subagent-stream";
 
 export interface RemoteTurnWaitDeps
   extends Partial<
@@ -26,10 +30,18 @@ export interface RemoteTurnWaitDeps
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => (part?.type === "text" ? String(part.text ?? "") : ""))
+    .join("");
+}
+
 /**
- * Record a remote run's tool calls and assistant text like a local child's
- * stream events, so they reach the subagent state and the task output file.
- * Client-side tools appear as approval requests in a run's messages.
+ * Record a remote run's tool calls, results, reasoning, and assistant text
+ * like a local child's stream events, so they reach the subagent state and
+ * the task's logs. Client-side tools appear as approval requests.
  */
 function recordRemoteRunProgress(
   messages: Message[],
@@ -50,18 +62,31 @@ function recordRemoteRunProgress(
         state,
         subagentId,
       );
+    } else if (message.message_type === "tool_return_message") {
+      recordToolReturnProgress(message, subagentId);
+    } else if (message.message_type === "reasoning_message") {
+      recordTaskEvent(
+        subagentId,
+        { type: "reasoning", text: message.reasoning },
+        { at: message.date, key: `${message.id}:reasoning` },
+      );
+    } else if (message.message_type === "user_message") {
+      // A background command the child started reports back as a new turn;
+      // its output is often only there.
+      const text = messageText(message.content);
+      if (text.includes("<task-notification>")) {
+        recordTaskEvent(
+          subagentId,
+          { type: "notification", text },
+          { at: message.date, key: `${message.id}:notification` },
+        );
+      }
     } else if (message.message_type === "assistant_message") {
-      const text =
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .map((part) => (part.type === "text" ? part.text : ""))
-              .join("");
-      recordTaskProgressRemoteText(subagentId, {
-        id: `${message.id}:assistant`,
-        at: message.date,
-        text,
-      });
+      recordTaskEvent(
+        subagentId,
+        { type: "text", text: messageText(message.content) },
+        { at: message.date, key: `${message.id}:assistant` },
+      );
     }
   }
 }
