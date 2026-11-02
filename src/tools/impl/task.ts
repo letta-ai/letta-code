@@ -75,6 +75,7 @@ import {
   closeTaskProgressLog,
   externalWorkerProgressListeners,
   openTaskProgressLog,
+  serveTaskEvents,
   taskEventsFileFor,
   writeTaskTranscriptResult,
   writeTaskTranscriptStart,
@@ -334,7 +335,7 @@ export function spawnBackgroundSubagentTask(
   );
   writeTaskTranscriptStart(outputFile, description, subagentType);
   openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
-
+  if (publishResult) serveTaskEvents(subagentId);
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;

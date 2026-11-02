@@ -2,17 +2,23 @@
 
 import { writeFileSync } from "node:fs";
 import {
+  serveSubagentEvents,
+  storeSubagentEvent,
+} from "@/agent/subagent-events";
+import {
   addProgressText,
   addToolCall,
   excerptProgressText as excerpt,
   PROGRESS_TEXT_CHARS,
   type ProgressText,
+  updateSubagent,
 } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import {
   captureSecretRedactions,
   scrubSecretsDeep,
 } from "@/tools/secret-substitution";
+import type { SubagentEventRecord } from "@/types/subagent-protocol";
 import {
   type ExternalToolCall,
   type ExternalWorkerListeners,
@@ -115,6 +121,8 @@ interface TaskProgressLog {
   now: () => Date;
   /** Secret values scrubbed from every event before it is written. */
   redactions: Record<string, string>;
+  /** Keep events for a parent on another computer to read. */
+  serve: boolean;
 }
 
 const progressLogs = new Map<string, TaskProgressLog>();
@@ -130,7 +138,7 @@ function appendProgress(log: TaskProgressLog, entry: string, at: string) {
   appendToOutputFile(log.outputFile, `${line}\n`);
 }
 
-function appendEvent(log: TaskProgressLog, record: object): void {
+function appendEvent(log: TaskProgressLog, record: SubagentEventRecord) {
   if (log.eventBytes >= TASK_EVENTS_MAX_BYTES) return;
   let json = JSON.stringify(record);
   log.eventBytes += json.length + 1;
@@ -218,7 +226,20 @@ export function openTaskProgressLog(
     toolNames: new Map(),
     now,
     redactions,
+    serve: false,
   });
+}
+
+/**
+ * Also keep a task's events for a parent on another computer to read, and
+ * announce the latest `event_seq` in its snapshots.
+ */
+export function serveTaskEvents(subagentId: string): void {
+  const log = progressLogs.get(subagentId);
+  if (!log) return;
+  log.serve = true;
+  serveSubagentEvents(subagentId);
+  updateSubagent(subagentId, { eventSeq: log.seq });
 }
 
 /** Stop recording progress, so nothing lands after the final result. */
@@ -247,14 +268,15 @@ export function recordTaskEvent(
   if (!log) return;
   // Scrub raw values before anything is serialized or excerpted.
   event = scrubSecretsDeep(event, log.redactions);
-  const key =
-    options.key ??
-    (event.type === "tool_call"
-      ? `call:${event.id}`
-      : event.type === "tool_result"
-        ? `result:${event.tool_call_id}`
-        : undefined);
-  if (key !== undefined && log.seen.has(key)) return;
+  // A remote event's own key and its tool-call ID both dedupe it, so a call
+  // also reported in an older snapshot field is written once.
+  const keys = [
+    options.key,
+    event.type === "tool_call" ? `call:${event.id}` : undefined,
+    event.type === "tool_result" ? `result:${event.tool_call_id}` : undefined,
+  ].filter((value) => value !== undefined);
+  if (keys.some((value) => log.seen.has(value))) return;
+  const key = keys[0];
   if (event.type === "tool_call") {
     log.lastText = undefined;
     log.toolNames.set(event.id, event.name);
@@ -271,11 +293,39 @@ export function recordTaskEvent(
       log.lastText = event.text;
     }
   }
-  if (key !== undefined) log.seen.add(key);
+  for (const value of keys) log.seen.add(value);
   const at = isoOrUndefined(options.at) ?? log.now().toISOString();
-  appendEvent(log, { seq: ++log.seq, at, ...event });
+  const record = { seq: ++log.seq, at, ...event };
+  appendEvent(log, record);
   const line = readableLine(event);
   if (line !== null) appendProgress(log, line, at);
+  if (log.serve) {
+    storeSubagentEvent(subagentId, record);
+    updateSubagent(subagentId, { eventSeq: log.seq });
+  }
+}
+
+/**
+ * Record an event read from the worker's computer: it keeps the worker's
+ * time and is written once per remote seq.
+ */
+export function recordRemoteTaskEvent(
+  subagentId: string,
+  { seq, at, ...event }: SubagentEventRecord,
+): void {
+  recordTaskEvent(subagentId, event as TaskEvent, {
+    at,
+    key: `remote:${seq}`,
+  });
+}
+
+/** Note in both logs that the worker's computer dropped unread events. */
+export function recordMissedRemoteEvents(subagentId: string, missed: number) {
+  const log = progressLogs.get(subagentId);
+  if (!log || missed <= 0) return;
+  const at = log.now().toISOString();
+  appendEvent(log, { seq: ++log.seq, at, type: "events_missed", missed });
+  appendProgress(log, `[${missed} earlier events were not received]`, at);
 }
 
 /**
