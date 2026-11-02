@@ -30,7 +30,7 @@ function outputFile(): string {
   dirs.push(dir);
   const file = join(dir, "task.log");
   writeFileSync(file, "");
-  openTaskProgressLog(SUBAGENT, file, () => new Date(0));
+  openTaskProgressLog(SUBAGENT, file, undefined, { now: () => new Date(0) });
   return file;
 }
 
@@ -148,8 +148,9 @@ describe("task log secret scrubbing", () => {
     dirs.push(dir);
     const file = join(dir, "task.log");
     writeFileSync(file, "");
-    openTaskProgressLog(SUBAGENT, file, () => new Date(0), {
-      DEPLOY_KEY: secret,
+    openTaskProgressLog(SUBAGENT, file, undefined, {
+      now: () => new Date(0),
+      redactions: { DEPLOY_KEY: secret },
     });
     // Letta and remote events arrive without any worker-side scrubbing.
     recordTaskProgressToolCall(SUBAGENT, {

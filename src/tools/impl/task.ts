@@ -36,7 +36,6 @@ import {
   getCurrentWorkingDirectory,
   getRuntimeActingUserAttribution,
 } from "@/runtime-context";
-import { captureSecretRedactions } from "@/tools/secret-substitution";
 import type {
   SubagentLaunchArgs,
   SubagentLaunchResult,
@@ -334,12 +333,7 @@ export function spawnBackgroundSubagentTask(
     buildBackgroundTaskAbortHook(taskId, abortController),
   );
   writeTaskTranscriptStart(outputFile, description, subagentType);
-  openTaskProgressLog(
-    subagentId,
-    outputFile,
-    undefined,
-    captureSecretRedactions(resolvedParentScope?.agentId),
-  );
+  openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
 
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
