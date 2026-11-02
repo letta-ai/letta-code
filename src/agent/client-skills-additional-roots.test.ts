@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   buildClientSkillsPayload,
   invalidateClientSkillsPayloadCache,
@@ -60,8 +60,9 @@ async function twoRepositories() {
 
 test("a second repository's .agents/skills joins the first repository's", async () => {
   const repos = await twoRepositories();
-  expect(repos.skillDirectories).toEqual([
-    join(repos.app, "..", "lib", ".agents", "skills"),
+  // The sandbox layout uses POSIX paths; resolve() normalizes separators on Windows.
+  expect(repos.skillDirectories.map((dir) => resolve(dir))).toEqual([
+    resolve(repos.app, "..", "lib", ".agents", "skills"),
   ]);
 
   const result = await buildClientSkillsPayload({
