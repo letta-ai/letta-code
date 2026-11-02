@@ -52,6 +52,7 @@ import {
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
+import { prepareExternalWorkerPrompt } from "./external-fork-context";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
@@ -656,7 +657,6 @@ export async function launchSubagent(
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
 
-  // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const configName =
     selection.kind === "external" ? selection.type : selection.subagentType;
@@ -678,12 +678,6 @@ export async function launchSubagent(
       error: `${requestedType} does not accept agent_id or conversation_id at launch; use SendAgentMessage with the synthetic agent ID for follow-up work`,
     };
   }
-  if (isExternalCodingAgent && args.fork_context) {
-    return {
-      success: false,
-      error: `fork_context is not supported for ${requestedType} yet; put the context it needs in the prompt`,
-    };
-  }
   if (args.mcp && !isExternalCodingAgent) {
     return {
       success: false,
@@ -703,7 +697,10 @@ export async function launchSubagent(
       ? {}
       : await getAllSubagentConfigs(getCurrentWorkingDirectory());
   const config: SubagentConfig | undefined = isExternalCodingAgent
-    ? createExternalCodingAgentConfig(externalCodingAgentType)
+    ? createExternalCodingAgentConfig(
+        externalCodingAgentType,
+        args.fork_context === true,
+      )
     : prepared
       ? preparedConversationConfig()
       : allConfigs[configName];
@@ -758,12 +755,21 @@ export async function launchSubagent(
         error: `${configName} requires a parent agent identity`,
       };
     }
+    const worker = await prepareExternalWorkerPrompt({
+      prompt: inputPrompt,
+      forkContext: args.fork_context === true,
+      parentAgentId,
+      parentConversationId: resolvedParentScope?.conversationId,
+      remote: Boolean(resolvedComputer.computer),
+      signal,
+    });
+    if ("error" in worker) return { success: false, error: worker.error };
     if (resolvedComputer.computer) {
       return launchRemoteExternalCodingAgent(
         {
           type: externalCodingAgentType,
           computer: resolvedComputer.computer,
-          prompt: inputPrompt,
+          prompt: worker.prompt,
           description,
           model,
           mcp: args.mcp,
@@ -793,7 +799,7 @@ export async function launchSubagent(
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: configName,
       config,
-      prompt: inputPrompt,
+      prompt: worker.prompt,
       description,
       model,
       toolCallId,
@@ -875,13 +881,8 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
+  // Deploys were rejected above: fork_context and non-letta types can't deploy.
   if (config.fork) {
-    if (args.agent_id || args.conversation_id) {
-      return {
-        success: false,
-        error: `${requestedType} forks context and cannot be combined with agent_id or conversation_id`,
-      };
-    }
     try {
       const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
       const parentConvId =

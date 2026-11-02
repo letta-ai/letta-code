@@ -8,7 +8,7 @@ Choose a preset or configure the launch yourself:
 
 - `subagent_type` selects a preset from Available Agents (for example `recall`, or a custom agent in `.letta/agents/`). Only `description` and `prompt` are required alongside it. The preset determines the launch settings; all other optional Agent fields are ignored.
 - Without `subagent_type`, `harness` selects the runner: `letta` (the default), `claude-code`, `codex`, `cursor`, or `opencode`. The default Letta agent can research, plan, and implement.
-- Without `subagent_type`, `fork_context: true` gives the default Letta agent this conversation's history. Otherwise it starts fresh with your prompt.
+- Without `subagent_type`, `fork_context: true` gives the default Letta agent, or an external coding worker, this conversation's history. Otherwise it starts fresh with your prompt.
 
 ```typescript
 // Default Letta agent
@@ -49,7 +49,7 @@ Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
 
 ## External Coding Agents
 
-Omit `subagent_type` and use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. `fork_context` is not yet supported for them, so put the context they need in the prompt. When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+Omit `subagent_type` and use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. With `fork_context: true` they receive this conversation as a rendered transcript: the full text in a file under `.letta/parent-transcripts/` in their checkout, plus the latest turns inline in their prompt (tool results are clipped and reasoning is omitted). When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
 
 ```typescript
 Agent({
