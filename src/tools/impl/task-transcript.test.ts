@@ -11,12 +11,15 @@ import {
 } from "@/agent/subagent-state";
 import {
   closeTaskProgressLog,
+  externalWorkerProgressListeners,
   openTaskProgressLog,
+  recordTaskEvent,
   recordTaskProgressRemoteText,
   recordTaskProgressText,
   recordTaskProgressToolCall,
   TASK_PROGRESS_MAX_LINES,
   TASK_PROGRESS_TEXT_CHARS,
+  taskEventsFileFor,
 } from "./task-transcript";
 
 const SUBAGENT = "subagent-progress-test";
@@ -27,7 +30,7 @@ function outputFile(): string {
   dirs.push(dir);
   const file = join(dir, "task.log");
   writeFileSync(file, "");
-  openTaskProgressLog(SUBAGENT, file, () => new Date(0));
+  openTaskProgressLog(SUBAGENT, file, undefined, { now: () => new Date(0) });
   return file;
 }
 
@@ -87,6 +90,90 @@ describe("task progress log", () => {
     recordTaskProgressText(SUBAGENT, "late");
     recordTaskProgressToolCall(SUBAGENT, { id: "t", name: "Bash", args: "" });
     expect(lines(file)).toEqual([]);
+  });
+});
+
+describe("task event log", () => {
+  test("keeps every event in full next to a one-line-per-result output file", () => {
+    const file = outputFile();
+    const worker = externalWorkerProgressListeners(SUBAGENT);
+    const command = `pytest ${"-k x ".repeat(100)}`;
+    const output = `${"PASS test_ok\n".repeat(2_000)}FAIL test_parse_hours\nAssertionError: 6000 != 5400\n1 failed`;
+    worker.onToolCall({
+      id: "c1",
+      name: "Bash",
+      args: "{}",
+      input: { command },
+    });
+    worker.onReasoning("Suite 3 may be slow.");
+    worker.onToolResult({ id: "c1", isError: true, output });
+    worker.onToolResult({ id: "c1", isError: true, output: "replayed" });
+
+    expect(lines(file).slice(1)).toEqual([
+      "[1970-01-01T00:00:00.000Z] result: Bash error, 25.4 KB: FAIL test_parse_hours",
+    ]);
+    const events = lines(taskEventsFileFor(file)).map((line) =>
+      JSON.parse(line),
+    );
+    const at = "1970-01-01T00:00:00.000Z";
+    expect(events).toEqual([
+      {
+        seq: 1,
+        at,
+        type: "tool_call",
+        id: "c1",
+        name: "Bash",
+        input: { command },
+      },
+      { seq: 2, at, type: "reasoning", text: "Suite 3 may be slow." },
+      {
+        seq: 3,
+        at,
+        type: "tool_result",
+        tool_call_id: "c1",
+        name: "Bash",
+        is_error: true,
+        output,
+      },
+    ]);
+  });
+});
+
+describe("task log secret scrubbing", () => {
+  test.each([
+    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----",
+    'p@ss"word\\with\\slashes"9f3k',
+  ])("scrubs %j from the event log and output file", (secret) => {
+    const dir = mkdtempSync(join(tmpdir(), "task-secrets-"));
+    dirs.push(dir);
+    const file = join(dir, "task.log");
+    writeFileSync(file, "");
+    openTaskProgressLog(SUBAGENT, file, undefined, {
+      now: () => new Date(0),
+      redactions: { DEPLOY_KEY: secret },
+    });
+    // Letta and remote events arrive without any worker-side scrubbing.
+    recordTaskProgressToolCall(SUBAGENT, {
+      id: "c1",
+      name: "Bash",
+      args: JSON.stringify({ command: `cat ${secret}` }),
+    });
+    recordTaskEvent(SUBAGENT, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      is_error: true,
+      output: `error: bad key ${secret}`,
+    });
+    recordTaskEvent(SUBAGENT, { type: "reasoning", text: secret });
+    const tail = secret.slice(-16);
+    for (const written of [
+      readFileSync(file, "utf8"),
+      readFileSync(taskEventsFileFor(file), "utf8"),
+    ]) {
+      expect(written).toContain("DEPLOY_KEY=<REDACTED>");
+      expect(written).not.toContain(tail);
+      expect(written).not.toContain(JSON.stringify(tail).slice(1, -1));
+    }
   });
 });
 

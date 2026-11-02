@@ -11,7 +11,10 @@ import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
   type ExternalTextListener,
   type ExternalToolCallListener,
+  type ExternalWorkerListeners,
+  emitProgress,
   formatExternalToolCallArgs,
+  toolOutputText,
 } from "./external-tool-call";
 
 export interface ClaudeSessionTransport {
@@ -77,9 +80,14 @@ interface ClaudeSession {
   onText?: ExternalTextListener;
   /** Message ID + text of blocks already reported, since messages can repeat. */
   seenTextBlocks: Set<string>;
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
+  onReasoning?: ExternalWorkerListeners["onReasoning"];
+  /** Tool names by `tool_use` ID; an ID leaves once its result is reported. */
+  toolNames: Map<string, string>;
 }
 
-export interface ClaudeTurnOptions {
+export interface ClaudeTurnOptions
+  extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -407,19 +415,14 @@ function reportText(
   const key = `${typeof messageId === "string" ? messageId : ""}\u0000${text.slice(0, 1_000)}`;
   if (session.seenTextBlocks.has(key)) return;
   session.seenTextBlocks.add(key);
-  try {
-    session.onText(text);
-  } catch {
-    // Progress display must not break the session.
-  }
+  emitProgress(session.onText, text);
 }
 
-/** Emit each `text` and `tool_use` block of a stream-json `assistant` message once. */
+/** Emit each text, thinking, and `tool_use` block of an `assistant` message once. */
 function handleAssistant(
   session: ClaudeSession,
   value: Record<string, unknown>,
 ): void {
-  if (!session.onToolCall && !session.onText) return;
   const message = readRecord(value.message);
   const content = message?.content;
   if (!Array.isArray(content)) return;
@@ -429,8 +432,12 @@ function handleAssistant(
       reportText(session, message?.id, block.text);
       continue;
     }
+    if (block?.type === "thinking" && typeof block.thinking === "string") {
+      if (block.thinking.trim())
+        emitProgress(session.onReasoning, block.thinking);
+      continue;
+    }
     if (
-      !session.onToolCall ||
       block?.type !== "tool_use" ||
       typeof block.id !== "string" ||
       typeof block.name !== "string" ||
@@ -438,15 +445,35 @@ function handleAssistant(
     )
       continue;
     session.seenToolCallIds.add(block.id);
-    try {
-      session.onToolCall({
-        id: block.id,
-        name: block.name,
-        args: formatExternalToolCallArgs(block.input),
-      });
-    } catch {
-      // Progress display must not break the session.
-    }
+    session.toolNames.set(block.id, block.name);
+    emitProgress(session.onToolCall, {
+      id: block.id,
+      name: block.name,
+      args: formatExternalToolCallArgs(block.input),
+      input: block.input,
+    });
+  }
+}
+
+/** Report each `tool_result` block of a `user` message once, in full. */
+function handleToolResults(
+  session: ClaudeSession,
+  value: Record<string, unknown>,
+): void {
+  const content = readRecord(value.message)?.content;
+  if (!Array.isArray(content)) return;
+  for (const entry of content) {
+    const block = readRecord(entry);
+    const id = block?.tool_use_id;
+    if (block?.type !== "tool_result" || typeof id !== "string") continue;
+    const name = session.toolNames.get(id);
+    if (!session.toolNames.delete(id)) continue;
+    emitProgress(session.onToolResult, {
+      id,
+      name,
+      isError: block.is_error === true,
+      output: toolOutputText(block.content),
+    });
   }
 }
 
@@ -620,6 +647,9 @@ async function launchSession(
     seenToolCallIds: new Set(),
     onText: options.onText,
     seenTextBlocks: new Set(),
+    onToolResult: options.onToolResult,
+    onReasoning: options.onReasoning,
+    toolNames: new Map(),
   };
   sessions.set(sessionId, session);
   transport.process.stderr.setEncoding("utf8");
@@ -635,6 +665,8 @@ async function launchSession(
         handleControlResponse(session, value);
       } else if (value.type === "user" && value.isReplay === true) {
         acknowledgeInput(session, value.uuid);
+      } else if (value.type === "user") {
+        handleToolResults(session, value);
       } else if (
         value.type === "command_lifecycle" &&
         (value.state === "started" || value.state === "completed")

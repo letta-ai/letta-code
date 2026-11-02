@@ -14,16 +14,20 @@ import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
   capacityResult,
+  codexReasoningText,
   describeCodexToolItem,
+  describeCodexToolResult,
   isCapacityError,
   readString,
   TOOL_ITEM_TYPES,
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
-import type {
-  ExternalTextListener,
-  ExternalToolCallListener,
+import {
+  type ExternalTextListener,
+  type ExternalToolCallListener,
+  type ExternalWorkerListeners,
+  emitProgress,
 } from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
@@ -65,6 +69,8 @@ interface TurnWaiter {
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
   onText?: ExternalTextListener;
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
+  onReasoning?: ExternalWorkerListeners["onReasoning"];
   /** Text already reported to `onText`, shared across capacity retries. */
   reportedText: ReportedText;
   /** Texts reported by earlier attempts of this prompt; not re-reported. */
@@ -102,7 +108,8 @@ interface CodexSession {
   sleep: (ms: number) => Promise<unknown>;
 }
 
-export interface CodexTurnOptions {
+export interface CodexTurnOptions
+  extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -446,6 +453,13 @@ function recordItem(
     session.activeWaiter.latestAgentMessage = item.text;
     recordTextItem(session.activeWaiter, item);
   }
+  if (completed) {
+    // Completed tool items carry their full output; reasoning its summary.
+    const result = describeCodexToolResult(item);
+    if (result) emitProgress(session.activeWaiter.onToolResult, result);
+    const reasoning = codexReasoningText(item);
+    if (reasoning) emitProgress(session.activeWaiter.onReasoning, reasoning);
+  }
   return true;
 }
 
@@ -676,7 +690,12 @@ interface TurnAttempt {
   outcome: Promise<TurnOutcome>;
 }
 
-type TurnListeners = Pick<CodexTurnOptions, "onToolCall" | "onText"> & {
+type TurnListenerOptions = Pick<
+  CodexTurnOptions,
+  "onToolCall" | "onText" | "onToolResult" | "onReasoning"
+>;
+
+type TurnListeners = TurnListenerOptions & {
   reportedText: ReportedText;
 };
 
@@ -713,6 +732,8 @@ async function startTurnAttempt(
       onToolCall: listeners.onToolCall,
       seenToolCallIds: new Set(),
       onText: listeners.onText,
+      onToolResult: listeners.onToolResult,
+      onReasoning: listeners.onReasoning,
       reportedText: listeners.reportedText,
       textFromEarlierAttempts: new Set(listeners.reportedText.texts),
       ranTool: false,
@@ -728,12 +749,14 @@ async function startTurnUnlocked(
   prompt: string,
   signal?: AbortSignal,
   onStarted?: (threadId: string, turnId: string) => void,
-  { onToolCall, onText }: Pick<CodexTurnOptions, "onToolCall" | "onText"> = {},
+  { onToolCall, onText, onToolResult, onReasoning }: TurnListenerOptions = {},
 ): Promise<CodexTurnHandle> {
   const startedAt = Date.now();
   const listeners: TurnListeners = {
     onToolCall,
     onText,
+    onToolResult,
+    onReasoning,
     reportedText: { itemIds: new Set(), texts: new Set() },
   };
   const first = await startTurnAttempt(session, prompt, startedAt, listeners);
@@ -801,7 +824,11 @@ function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "onToolCall" | "onText" | "beforeStart"
+    | "prompt"
+    | "signal"
+    | "onStarted"
+    | "beforeStart"
+    | keyof TurnListenerOptions
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {

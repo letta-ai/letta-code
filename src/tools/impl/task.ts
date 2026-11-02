@@ -75,6 +75,8 @@ import {
   closeTaskProgressLog,
   externalWorkerProgressListeners,
   openTaskProgressLog,
+  serveTaskEvents,
+  taskEventsFileFor,
   writeTaskTranscriptResult,
   writeTaskTranscriptStart,
 } from "./task-transcript";
@@ -332,8 +334,8 @@ export function spawnBackgroundSubagentTask(
     buildBackgroundTaskAbortHook(taskId, abortController),
   );
   writeTaskTranscriptStart(outputFile, description, subagentType);
-  openTaskProgressLog(subagentId, outputFile);
-
+  openTaskProgressLog(subagentId, outputFile, resolvedParentScope?.agentId);
+  if (publishResult) serveTaskEvents(subagentId);
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
   const parentAgentIdForSpawn = resolvedParentScope?.agentId;
@@ -994,5 +996,5 @@ export async function task(args: TaskArgs): Promise<string> {
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`
     : "";
-  return `Task running in background with task ID: ${result.task_id}${agentIdLine}${conversationIdLine}\nOutput file: ${result.output_file}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: it logs each tool call and message live.`;
+  return `Task running in background with task ID: ${result.task_id}${agentIdLine}${conversationIdLine}\nOutput file: ${result.output_file}\nEvent log: ${taskEventsFileFor(result.output_file)}\n\nYou will be notified automatically when this task completes — a <task-notification> message will be delivered with the result. No need to poll or sleep-wait; continue with your current work. To see what it is doing meanwhile, Read the output file: one line per tool call, tool result, and message, live. For exact details (full tool arguments and outputs, such as a command's error), read the event log.`;
 }

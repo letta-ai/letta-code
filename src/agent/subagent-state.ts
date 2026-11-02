@@ -7,6 +7,7 @@
  */
 
 import { subagentScopeMatches } from "@/utils/subagent-scope.js";
+import { clearSubagentEvents } from "./subagent-events";
 
 // ============================================================================
 // Types
@@ -61,6 +62,12 @@ export interface SubagentState {
   progressTexts?: ProgressText[];
   /** Texts recorded so far; numbers progress text IDs so they stay stable. */
   progressTextCount?: number;
+  /**
+   * Seq of the latest event in the task's event log. Sent in snapshots as
+   * `event_seq` so a parent on another computer knows there are events to
+   * read with `read_subagent_events`; absent for older listeners.
+   */
+  eventSeq?: number;
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
   totalTokens: number;
@@ -234,6 +241,7 @@ function armCompletedSubagentCleanup(id: string): void {
       }
 
       store.agents.delete(id);
+      clearSubagentEvents(id);
       notifyListeners();
     },
     isPublished(agent)
@@ -572,6 +580,7 @@ export function clearCompletedSubagents(): void {
     if (agent.status === "completed" || agent.status === "error") {
       clearCompletedSubagentCleanup(id);
       store.agents.delete(id);
+      clearSubagentEvents(id);
       removedAny = true;
     }
   }
@@ -597,6 +606,7 @@ export function clearSubagentsByIds(ids: string[]): void {
       continue;
     }
     clearCompletedSubagentCleanup(id);
+    clearSubagentEvents(id);
     removedAny = store.agents.delete(id) || removedAny;
   }
   if (removedAny) {
@@ -611,6 +621,7 @@ export function clearAllSubagents(): void {
   for (const id of Array.from(completedSubagentCleanupTimers.keys())) {
     clearCompletedSubagentCleanup(id);
   }
+  for (const id of store.agents.keys()) clearSubagentEvents(id);
   store.agents.clear();
   notifyListeners();
 }

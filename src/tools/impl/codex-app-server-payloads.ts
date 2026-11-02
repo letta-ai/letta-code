@@ -1,7 +1,9 @@
 import type { SubagentResult } from "@/agent/subagents";
 import {
   type ExternalToolCall,
+  type ExternalToolResult,
   formatExternalToolCallArgs,
+  toolOutputText,
 } from "./external-tool-call";
 
 // Pure readers for Codex app-server notification payloads: turn results,
@@ -75,6 +77,7 @@ export function describeCodexToolItem(
     id,
     name,
     args: formatExternalToolCallArgs(args),
+    input: args,
   });
   switch (item.type) {
     case "commandExecution":
@@ -100,6 +103,49 @@ export function describeCodexToolItem(
     default:
       return undefined;
   }
+}
+
+/** The outcome of a completed tool-like ThreadItem, with its full output. */
+export function describeCodexToolResult(
+  item: Record<string, unknown>,
+): ExternalToolResult | undefined {
+  const id = readString(item, "id");
+  if (!id || !TOOL_ITEM_TYPES.has(String(item.type))) return undefined;
+  const status = readString(item, "status");
+  const exitCode = typeof item.exitCode === "number" ? item.exitCode : 0;
+  const error = asRecord(item.error);
+  const output =
+    item.type === "commandExecution"
+      ? `${toolOutputText(item.aggregatedOutput)}${exitCode ? `\n[exit code ${exitCode}]` : ""}`
+      : item.type === "fileChange"
+        ? toolOutputText(item.changes)
+        : item.type === "mcpToolCall"
+          ? error
+            ? (readString(error, "message") ?? toolOutputText(error))
+            : toolOutputText(asRecord(item.result)?.content ?? item.result)
+          : toolOutputText(item.contentItems);
+  return {
+    id,
+    isError:
+      status === "failed" ||
+      status === "declined" ||
+      exitCode !== 0 ||
+      Boolean(error) ||
+      item.success === false,
+    output,
+  };
+}
+
+/** The text of a completed `reasoning` ThreadItem (summary, else content). */
+export function codexReasoningText(item: Record<string, unknown>): string {
+  if (item.type !== "reasoning") return "";
+  for (const parts of [item.summary, item.content]) {
+    const text = Array.isArray(parts)
+      ? parts.filter((part) => typeof part === "string").join("\n\n")
+      : "";
+    if (text.trim()) return text;
+  }
+  return "";
 }
 
 export const TOOL_ITEM_TYPES = new Set([

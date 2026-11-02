@@ -15,7 +15,10 @@ import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import type { CursorWorkerEvent, CursorWorkerStart } from "./cursor-worker";
-import type { ExternalToolCallListener } from "./external-tool-call";
+import {
+  type ExternalToolCallListener,
+  parseToolInput,
+} from "./external-tool-call";
 
 interface CursorTurnOptions {
   prompt: string;
@@ -145,13 +148,15 @@ export async function runCursorTurn(
           line.slice("letta-cursor:".length),
         ) as CursorWorkerEvent;
         if (event.type === "started") options.onStarted?.(id);
-        else if (event.type === "tool")
+        else if (event.type === "tool") {
+          const args = redact(JSON.stringify(event.args ?? {}));
           options.onToolCall?.({
             id: event.id,
             name: event.name,
-            args: redact(JSON.stringify(event.args ?? {})).slice(0, 1000),
+            args: args.slice(0, 1000),
+            input: parseToolInput(args),
           });
-        else if (event.type === "steer") {
+        } else if (event.type === "steer") {
           const waiter = pending.get(event.id);
           pending.delete(event.id);
           if (event.error) waiter?.reject(new Error(redact(event.error)));

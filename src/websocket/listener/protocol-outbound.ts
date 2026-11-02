@@ -858,6 +858,7 @@ export function buildSubagentSnapshot(
       start_time: a.startTime,
       tool_calls: a.toolCalls,
       ...(a.progressTexts?.length ? { progress_texts: a.progressTexts } : {}),
+      ...(a.eventSeq !== undefined ? { event_seq: a.eventSeq } : {}),
       total_tokens: a.totalTokens,
       duration_ms: a.durationMs,
       error: a.error,

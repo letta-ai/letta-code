@@ -21,17 +21,18 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  captureSecretRedactions,
+  scrubSecretsDeep,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import type {
-  ExternalTextListener,
-  ExternalToolCallListener,
-} from "./external-tool-call";
+import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -60,7 +61,8 @@ export interface ExternalCodingAgentMcpEntry {
   toolCount: number | null;
 }
 
-export interface ExternalCodingAgentRunOptions {
+/** Live progress: tool calls, their results, text, and reasoning. */
+export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
   model?: string;
@@ -72,10 +74,6 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
-  /** Live progress: called once per tool call the worker makes. */
-  onToolCall?: ExternalToolCallListener;
-  /** Live progress: called with each assistant text block (Claude Code, Codex). */
-  onText?: ExternalTextListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -576,6 +574,28 @@ export function scrubExternalWorkerResult(
   };
 }
 
+/**
+ * Wrap progress listeners so values exported from the vault never reach the
+ * task's logs in tool arguments, outputs, or text. Every string field is
+ * scrubbed raw (and in its JSON-escaped form, as in `args`), so a value with
+ * quotes, backslashes, or newlines is caught too.
+ */
+export function scrubWorkerListeners(
+  listeners: ExternalWorkerListeners,
+  secretEnv: Record<string, string>,
+): ExternalWorkerListeners {
+  if (Object.keys(secretEnv).length === 0) return listeners;
+  const redactions = captureSecretRedactions(undefined, secretEnv);
+  const scrub = <T>(value: T) => scrubSecretsDeep(value, redactions);
+  const { onToolCall, onText, onToolResult, onReasoning } = listeners;
+  return {
+    onToolCall: onToolCall && ((call) => onToolCall(scrub(call))),
+    onText: onText && ((text) => onText(scrub(text))),
+    onToolResult: onToolResult && ((result) => onToolResult(scrub(result))),
+    onReasoning: onReasoning && ((text) => onReasoning(scrub(text))),
+  };
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
@@ -585,7 +605,11 @@ export async function runExternalCodingAgent(
     options,
     deps,
   );
-  options = { ...options, mcpReminder };
+  options = {
+    ...options,
+    ...scrubWorkerListeners(options, secretEnv),
+    mcpReminder,
+  };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -700,6 +724,8 @@ export async function runExternalCodingAgent(
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -757,6 +783,8 @@ export async function runExternalCodingAgent(
             sessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
           },
           { env },
         ),

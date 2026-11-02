@@ -1,5 +1,6 @@
 import type {
   LaunchSubagentCommand,
+  ReadSubagentEventsCommand,
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
@@ -116,4 +117,28 @@ export function isSubagentStopCommand(
   value: unknown,
 ): value is SubagentStopCommand {
   return hasValidControlBase(value) && value.type === "subagent_stop";
+}
+
+export function isReadSubagentEventsCommand(
+  value: unknown,
+): value is ReadSubagentEventsCommand {
+  if (!value || typeof value !== "object") return false;
+  const c = value as Partial<ReadSubagentEventsCommand>;
+  return (
+    c.type === "read_subagent_events" &&
+    typeof c.request_id === "string" &&
+    c.request_id.trim().length > 0 &&
+    isAgentRuntimeScope(c.runtime) &&
+    c.runtime.agent_id.trim().length > 0 &&
+    c.runtime.conversation_id.trim().length > 0 &&
+    typeof c.subagent_id === "string" &&
+    c.subagent_id.trim().length > 0 &&
+    typeof c.after_seq === "number" &&
+    Number.isSafeInteger(c.after_seq) &&
+    c.after_seq >= 0 &&
+    (c.max_bytes === undefined ||
+      (typeof c.max_bytes === "number" &&
+        Number.isSafeInteger(c.max_bytes) &&
+        c.max_bytes > 0))
+  );
 }

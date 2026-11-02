@@ -38,10 +38,7 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
-import {
-  recordTaskProgressRemoteText,
-  recordTaskProgressToolCall,
-} from "./task-transcript";
+import { followRemoteSubagentEvents } from "./remote-subagent-events";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
@@ -230,6 +227,23 @@ class RemoteSubagentFollower {
   /** Call once the launch succeeds; the entry is registered before the response. */
   markLaunched(): void {
     this.launched = true;
+  }
+
+  /** Read the worker's events after `afterSeq` over the current connection. */
+  async readEvents(afterSeq: number) {
+    const subagentId = this.latest?.subagent_id;
+    if (!this.client || this.disconnected || !subagentId)
+      throw new Error("Not connected");
+    const page = await this.client.readSubagentEvents({
+      runtime: {
+        agent_id: this.scope.agentId,
+        conversation_id: this.scope.conversationId,
+      },
+      subagent_id: subagentId,
+      after_seq: afterSeq,
+    });
+    if (!page.success) throw new Error(page.error);
+    return page;
   }
 
   /** The worker's native ID from the most recent status update, if any. */
@@ -452,33 +466,19 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
-        // Snapshots carry full lists; the task log appends each ID once.
-        // Older listeners send no progress_texts, which reads as empty.
-        const recordProgress = (snapshot: SubagentSnapshot) => {
-          for (const call of snapshot.tool_calls ?? [])
-            recordTaskProgressToolCall(subagentId, call);
-          const texts = Array.isArray(snapshot.progress_texts)
-            ? snapshot.progress_texts
-            : [];
-          for (const entry of texts) {
-            if (typeof entry?.id === "string" && typeof entry.text === "string")
-              recordTaskProgressRemoteText(subagentId, {
-                id: entry.id,
-                at: typeof entry.at === "string" ? entry.at : "",
-                text: entry.text,
-              });
-          }
-        };
+        const progress = followRemoteSubagentEvents(subagentId, (afterSeq) =>
+          follower.readEvents(afterSeq),
+        );
         try {
           const final = await follower.waitForTerminal(signal, (snapshot) => {
             updateSubagent(subagentId, {
               toolCalls: snapshot.tool_calls,
               totalTokens: snapshot.total_tokens,
             });
-            recordProgress(snapshot);
+            progress.recordSnapshot(snapshot);
           });
           // The terminal snapshot can carry progress no earlier update showed.
-          recordProgress(final);
+          await progress.finish(final);
           return {
             agentId: workerAgentId(),
             model: final.model ?? model,

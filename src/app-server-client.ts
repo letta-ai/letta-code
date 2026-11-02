@@ -20,6 +20,8 @@ import type {
   LaunchSubagentResponse,
   MonitorStopCommand,
   MonitorStopResponse,
+  ReadSubagentEventsCommand,
+  ReadSubagentEventsResponse,
   ResumeQueueCommand,
   ResumeQueueResponseMessage,
   RuntimeExternalToolsUpdateCommand,
@@ -596,6 +598,28 @@ export class AppServerClient {
         ...options,
         predicate: (message): message is SubagentMessageResponse =>
           message.type === "subagent_message_response",
+      },
+    );
+  }
+
+  readSubagentEvents(
+    command: Omit<ReadSubagentEventsCommand, "type" | "request_id"> & {
+      request_id?: string;
+    },
+    options: Omit<
+      AppServerRequestOptions<ReadSubagentEventsResponse>,
+      "predicate"
+    > = {},
+  ): Promise<ReadSubagentEventsResponse> {
+    const requestId =
+      command.request_id ?? this.nextRequestId("read-subagent-events");
+    return this.request(
+      { ...command, type: "read_subagent_events", request_id: requestId },
+      {
+        ...options,
+        predicate: (message): message is ReadSubagentEventsResponse =>
+          message.type === "read_subagent_events_response" &&
+          message.request_id === requestId,
       },
     );
   }
