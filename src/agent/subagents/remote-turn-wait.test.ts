@@ -71,6 +71,17 @@ function assistant(id: string, date: string, content: string): Message {
   } as Message;
 }
 
+function toolReturn(id: string, date: string, output: string): Message {
+  return {
+    id: `${id}-return`,
+    date,
+    message_type: "tool_return_message",
+    tool_call_id: `call-${id}`,
+    status: "error",
+    tool_return: output,
+  } as Message;
+}
+
 function approval(id: string, date: string, command: string): Message {
   return {
     id,
@@ -88,7 +99,7 @@ test("streams a remote Letta subagent's progress into the output file while it r
   dir = mkdtempSync(join(tmpdir(), "remote-turn-progress-"));
   const outputFile = join(dir, "task.log");
   writeFileSync(outputFile, "[Task started: remote]\n\n");
-  openTaskProgressLog(SUBAGENT, outputFile);
+  openTaskProgressLog(SUBAGENT, outputFile, { now: () => new Date(0) });
 
   // run-1 asks to run Bash; run-2 (after approval) says it is waiting, then
   // later finishes with the reply.
@@ -97,6 +108,31 @@ test("streams a remote Letta subagent's progress into the output file while it r
     approval("m1", "2026-11-01T10:00:01.000Z", "ls"),
   ];
   const run2Partial = [
+    toolReturn(
+      "m1",
+      "2026-11-01T10:00:02.000Z",
+      "error: build.ts:3 missing semicolon",
+    ),
+    {
+      id: "n1",
+      date: "2026-11-01T10:00:02.500Z",
+      message_type: "user_message",
+      content:
+        "<task-notification>\n<task-id>bash_1</task-id>\n<summary>Command exited with code 1</summary>\n<result>FAIL test_sum: expected 2, got 3</result>\n</task-notification>",
+    } as Message,
+    // An ordinary user message is not progress.
+    {
+      id: "u1",
+      date: "2026-11-01T10:00:02.600Z",
+      message_type: "user_message",
+      content: "keep going",
+    } as Message,
+    {
+      id: "m2",
+      date: "2026-11-01T10:00:03.000Z",
+      message_type: "reasoning_message",
+      reasoning: "Fix the semicolon, then rebuild.",
+    } as Message,
     assistant("m2", "2026-11-01T10:00:03.000Z", "Build is running, waiting."),
   ];
   const run2Done = [
@@ -143,10 +179,35 @@ test("streams a remote Letta subagent's progress into the output file while it r
   const midRun = snapshots[4] ?? "";
   expect(midRun).toBe(
     "[Task started: remote]\n\n" +
+      "[1970-01-01T00:00:00.000Z] session: agent agent-child, conversation conv-child\n" +
       "[2026-11-01T10:00:01.000Z] text: Listing the checkout first.\n" +
       '[2026-11-01T10:00:01.000Z] tool: Bash {"command":"ls"}\n' +
+      "[2026-11-01T10:00:02.000Z] result: Bash error, 35 B: error: build.ts:3 missing semicolon\n" +
+      "[2026-11-01T10:00:02.500Z] notification: Command exited with code 1\n" +
       "[2026-11-01T10:00:03.000Z] text: Build is running, waiting.\n",
   );
+  // The event log has the reasoning and the tool's full output.
+  const events = readFileSync(join(dir, "task.jsonl"), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  expect(events.map((event) => event.type)).toEqual([
+    "session",
+    "text",
+    "tool_call",
+    "tool_result",
+    "notification",
+    "reasoning",
+    "text",
+    "text",
+  ]);
+  expect(events[4]?.text).toContain("FAIL test_sum: expected 2, got 3");
+  expect(events[3]).toMatchObject({
+    tool_call_id: "call-m1",
+    name: "Bash",
+    is_error: true,
+    output: "error: build.ts:3 missing semicolon",
+  });
   // Each entry is written once, however many times its run is read.
   expect(readFileSync(outputFile, "utf8")).toBe(
     `${midRun}[2026-11-01T10:00:08.000Z] text: Build passed.\n`,
@@ -158,7 +219,7 @@ test("streams a remote Letta subagent's progress into the output file while it r
 test("a failed progress read does not end the wait", async () => {
   dir = mkdtempSync(join(tmpdir(), "remote-turn-progress-"));
   const outputFile = join(dir, "task.log");
-  openTaskProgressLog(SUBAGENT, outputFile);
+  openTaskProgressLog(SUBAGENT, outputFile, { now: () => new Date(0) });
   let poll = 0;
   let reads = 0;
 
@@ -182,6 +243,7 @@ test("a failed progress read does not end the wait", async () => {
 
   expect(result).toMatchObject({ success: true, report: "Done." });
   expect(readFileSync(outputFile, "utf8")).toBe(
-    "[2026-11-01T10:00:01.000Z] text: Done.\n",
+    "[1970-01-01T00:00:00.000Z] session: agent agent-child, conversation conv-child\n" +
+      "[2026-11-01T10:00:01.000Z] text: Done.\n",
   );
 });

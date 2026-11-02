@@ -15,9 +15,13 @@ import {
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
-import { recordTaskProgressRemoteText } from "@/tools/impl/task-transcript";
+import { recordTaskEvent } from "@/tools/impl/task-transcript";
 import { getErrorMessage } from "@/utils/error";
-import { type ExecutionState, processStreamEvent } from "./subagent-stream";
+import {
+  type ExecutionState,
+  processStreamEvent,
+  recordToolReturnProgress,
+} from "./subagent-stream";
 
 export interface RemoteTurnWaitDeps
   extends Partial<
@@ -26,10 +30,23 @@ export interface RemoteTurnWaitDeps
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) =>
+      part && typeof part === "object" && part.type === "text"
+        ? String(part.text ?? "")
+        : "",
+    )
+    .join("");
+}
+
 /**
- * Record a remote run's tool calls and assistant text like a local child's
- * stream events, so they reach the subagent state and the task output file.
- * Client-side tools appear as approval requests in a run's messages.
+ * Record a remote run's tool calls, tool results, reasoning, and assistant
+ * text like a local child's stream events, so they reach the subagent state
+ * and the task's logs. Each is written once, though runs are re-read while
+ * they execute. Client-side tools appear as approval requests.
  */
 function recordRemoteRunProgress(
   messages: Message[],
@@ -50,18 +67,31 @@ function recordRemoteRunProgress(
         state,
         subagentId,
       );
+    } else if (message.message_type === "tool_return_message") {
+      recordToolReturnProgress(message, subagentId);
+    } else if (message.message_type === "reasoning_message") {
+      recordTaskEvent(
+        subagentId,
+        { type: "reasoning", text: message.reasoning },
+        { at: message.date, key: `${message.id}:reasoning` },
+      );
+    } else if (message.message_type === "user_message") {
+      // A background task the child started (e.g. a long Bash command)
+      // reports back as a new turn; its output is often only here.
+      const text = messageText(message.content);
+      if (text.includes("<task-notification>"))
+        recordTaskEvent(
+          subagentId,
+          { type: "notification", text },
+          { at: message.date, key: `${message.id}:notification` },
+        );
     } else if (message.message_type === "assistant_message") {
-      const text =
-        typeof message.content === "string"
-          ? message.content
-          : message.content
-              .map((part) => (part.type === "text" ? part.text : ""))
-              .join("");
-      recordTaskProgressRemoteText(subagentId, {
-        id: `${message.id}:assistant`,
-        at: message.date,
-        text,
-      });
+      const text = messageText(message.content);
+      recordTaskEvent(
+        subagentId,
+        { type: "text", text },
+        { at: message.date, key: `${message.id}:assistant` },
+      );
     }
   }
 }
@@ -82,6 +112,16 @@ export async function collectRemoteTurnResult(
       conversationId: receipt.conversation_id,
     }),
   });
+  const agentId = getEnqueueAgentId(receipt);
+  recordTaskEvent(
+    subagentId,
+    {
+      type: "session",
+      ...(agentId ? { agent_id: agentId } : {}),
+      conversation_id: receipt.conversation_id,
+    },
+    { key: `session:${agentId}:${receipt.conversation_id}` },
+  );
   try {
     const backend = getBackend();
     const listMessages = deps.listMessages ?? listEnqueuedRunMessages;

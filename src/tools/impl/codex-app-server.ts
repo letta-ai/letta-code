@@ -14,16 +14,20 @@ import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
   capacityResult,
+  codexReasoningText,
   describeCodexToolItem,
+  describeCodexToolResult,
   isCapacityError,
   readString,
   TOOL_ITEM_TYPES,
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
-import type {
-  ExternalTextListener,
-  ExternalToolCallListener,
+import {
+  type ExternalTextListener,
+  type ExternalToolCallListener,
+  type ExternalWorkerListeners,
+  emitProgress,
 } from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
@@ -65,6 +69,9 @@ interface TurnWaiter {
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
   onText?: ExternalTextListener;
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
+  seenToolResultIds: Set<string>;
+  onReasoning?: ExternalWorkerListeners["onReasoning"];
   /** Text already reported to `onText`, shared across capacity retries. */
   reportedText: ReportedText;
   /** Texts reported by earlier attempts of this prompt; not re-reported. */
@@ -100,9 +107,15 @@ interface CodexSession {
   idleTimer?: ReturnType<typeof setTimeout>;
   idleTimeoutMs: number;
   sleep: (ms: number) => Promise<unknown>;
+  /** Codex's own rollout file for this thread, when the app-server reports it. */
+  transcriptPath?: string;
 }
 
-export interface CodexTurnOptions {
+export interface CodexTurnOptions
+  extends Pick<
+    ExternalWorkerListeners,
+    "onToolResult" | "onReasoning" | "onTranscript"
+  > {
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -428,6 +441,20 @@ function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
   }
 }
 
+/** Report a completed tool item's output and a completed reasoning item. */
+function recordCompletedItem(
+  waiter: TurnWaiter,
+  item: Record<string, unknown>,
+): void {
+  const reasoning = codexReasoningText(item);
+  if (reasoning) emitProgress(waiter.onReasoning, reasoning);
+  if (!waiter.onToolResult) return;
+  const result = describeCodexToolResult(item);
+  if (!result || waiter.seenToolResultIds.has(result.id)) return;
+  waiter.seenToolResultIds.add(result.id);
+  emitProgress(waiter.onToolResult, result);
+}
+
 function recordItem(
   session: CodexSession,
   params: Record<string, unknown>,
@@ -446,6 +473,7 @@ function recordItem(
     session.activeWaiter.latestAgentMessage = item.text;
     recordTextItem(session.activeWaiter, item);
   }
+  if (completed) recordCompletedItem(session.activeWaiter, item);
   return true;
 }
 
@@ -649,6 +677,7 @@ async function createSession(
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
     sleep: deps.sleep ?? sleep,
+    transcriptPath: readString(thread, "path"),
   };
   sessions.set(threadId, session);
   return session;
@@ -676,7 +705,12 @@ interface TurnAttempt {
   outcome: Promise<TurnOutcome>;
 }
 
-type TurnListeners = Pick<CodexTurnOptions, "onToolCall" | "onText"> & {
+type TurnListenerOptions = Pick<
+  CodexTurnOptions,
+  "onToolCall" | "onText" | "onToolResult" | "onReasoning" | "onTranscript"
+>;
+
+type TurnListeners = TurnListenerOptions & {
   reportedText: ReportedText;
 };
 
@@ -713,6 +747,9 @@ async function startTurnAttempt(
       onToolCall: listeners.onToolCall,
       seenToolCallIds: new Set(),
       onText: listeners.onText,
+      onToolResult: listeners.onToolResult,
+      seenToolResultIds: new Set(),
+      onReasoning: listeners.onReasoning,
       reportedText: listeners.reportedText,
       textFromEarlierAttempts: new Set(listeners.reportedText.texts),
       ranTool: false,
@@ -728,18 +765,28 @@ async function startTurnUnlocked(
   prompt: string,
   signal?: AbortSignal,
   onStarted?: (threadId: string, turnId: string) => void,
-  { onToolCall, onText }: Pick<CodexTurnOptions, "onToolCall" | "onText"> = {},
+  {
+    onToolCall,
+    onText,
+    onToolResult,
+    onReasoning,
+    onTranscript,
+  }: TurnListenerOptions = {},
 ): Promise<CodexTurnHandle> {
   const startedAt = Date.now();
   const listeners: TurnListeners = {
     onToolCall,
     onText,
+    onToolResult,
+    onReasoning,
     reportedText: { itemIds: new Set(), texts: new Set() },
   };
   const first = await startTurnAttempt(session, prompt, startedAt, listeners);
   let currentTurnId = first.turnId;
   let interrupted = false;
   onStarted?.(session.threadId, first.turnId);
+  if (session.transcriptPath)
+    emitProgress(onTranscript, session.transcriptPath);
   replayPendingNotifications(session);
   const interrupt = async () => {
     interrupted = true;
@@ -801,7 +848,11 @@ function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "onToolCall" | "onText" | "beforeStart"
+    | "prompt"
+    | "signal"
+    | "onStarted"
+    | "beforeStart"
+    | keyof TurnListenerOptions
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {

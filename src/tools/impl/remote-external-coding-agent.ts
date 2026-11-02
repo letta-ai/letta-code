@@ -39,6 +39,8 @@ import {
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
 import {
+  recordMissedRemoteEvents,
+  recordRemoteTaskEvent,
   recordTaskProgressRemoteText,
   recordTaskProgressToolCall,
 } from "./task-transcript";
@@ -230,6 +232,22 @@ class RemoteSubagentFollower {
   /** Call once the launch succeeds; the entry is registered before the response. */
   markLaunched(): void {
     this.launched = true;
+  }
+
+  /** Read the worker's events after `afterSeq` over the current connection. */
+  async readEvents(subagentId: string, afterSeq: number) {
+    const client = this.client;
+    if (!client || this.disconnected) throw new Error("Not connected");
+    const page = await client.readSubagentEvents({
+      runtime: {
+        agent_id: this.scope.agentId,
+        conversation_id: this.scope.conversationId,
+      },
+      subagent_id: subagentId,
+      after_seq: afterSeq,
+    });
+    if (!page.success) throw new Error(page.error);
+    return page;
   }
 
   /** The worker's native ID from the most recent status update, if any. */
@@ -452,9 +470,42 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
-        // Snapshots carry full lists; the task log appends each ID once.
-        // Older listeners send no progress_texts, which reads as empty.
+        // A computer that keeps events announces the latest as `event_seq`;
+        // each is read once, in full, and appended to both task logs. After
+        // repeated read failures (or from an older computer), fall back to
+        // the snapshot's own short tool-call and text lists.
+        let cursor = 0;
+        let requested = 0;
+        let failures = 0;
+        let draining: Promise<void> = Promise.resolve();
+        const readEvents = (remoteId: string, target: number) => {
+          requested = target;
+          draining = draining.then(async () => {
+            try {
+              while (cursor < requested) {
+                const page = await follower.readEvents(remoteId, cursor);
+                recordMissedRemoteEvents(subagentId, page.missed);
+                for (const event of page.events)
+                  recordRemoteTaskEvent(subagentId, event);
+                if (page.next_seq <= cursor) break;
+                cursor = page.next_seq;
+                if (!page.has_more && page.events.length === 0) break;
+              }
+              failures = 0;
+            } catch {
+              failures++;
+              requested = cursor;
+            }
+          });
+        };
         const recordProgress = (snapshot: SubagentSnapshot) => {
+          if (typeof snapshot.event_seq === "number" && failures < 2) {
+            if (snapshot.event_seq > requested)
+              readEvents(snapshot.subagent_id, snapshot.event_seq);
+            return;
+          }
+          // Snapshots carry full lists; the task log appends each ID once.
+          // Older listeners send no progress_texts, which reads as empty.
           for (const call of snapshot.tool_calls ?? [])
             recordTaskProgressToolCall(subagentId, call);
           const texts = Array.isArray(snapshot.progress_texts)
@@ -479,6 +530,12 @@ export async function launchRemoteExternalCodingAgent(
           });
           // The terminal snapshot can carry progress no earlier update showed.
           recordProgress(final);
+          await draining;
+          // Reads failed after the final event_seq: keep what the snapshot has.
+          if (failures > 0 && cursor < (final.event_seq ?? 0)) {
+            failures = 2;
+            recordProgress(final);
+          }
           return {
             agentId: workerAgentId(),
             model: final.model ?? model,

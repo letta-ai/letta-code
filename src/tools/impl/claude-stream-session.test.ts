@@ -807,6 +807,68 @@ describe("Claude stream sessions", () => {
     expect(calls[0]?.args).toBe('{"command":"ls"}');
     expect(calls[1]?.args.length).toBeLessThanOrEqual(1_001);
     expect(calls[1]?.args.endsWith("…")).toBe(true);
+    // The display args are short; the event log gets the full input.
+    expect((calls[1] as { input?: unknown }).input).toEqual({
+      file_path: "a.txt",
+      content: "x".repeat(2_000),
+    });
+  });
+
+  test("reports each tool_result once, in full, and thinking blocks", async () => {
+    const fixture = transportFixture();
+    const events: unknown[] = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+        onToolResult: (result) => events.push(result),
+        onReasoning: (text) => events.push(`reasoning:${text}`),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Run the suite first." },
+          {
+            type: "tool_use",
+            id: "toolu_1",
+            name: "Bash",
+            input: { command: "bun test" },
+          },
+        ],
+      },
+    });
+    const output = `FAIL sum.test.ts\n${"x".repeat(5_000)}\nexpected 2, got 3`;
+    const result = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            is_error: true,
+            content: [{ type: "text", text: output }],
+          },
+        ],
+      },
+    };
+    fixture.emit(result);
+    fixture.emit(result);
+    fixture.emit({ type: "result", is_error: false, result: "done" });
+    expect(await running).toMatchObject({ success: true });
+    expect(events).toEqual([
+      "reasoning:Run the suite first.",
+      "tool:Bash",
+      { id: "toolu_1", name: "Bash", isError: true, output },
+    ]);
   });
 
   test("reports assistant text and tool_use blocks in stream order", async () => {

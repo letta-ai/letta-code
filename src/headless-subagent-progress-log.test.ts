@@ -1,6 +1,7 @@
-// End-to-end: a Letta subagent's tool calls and assistant messages reach the
-// background task's output file while the subagent is still running, so a
-// parent can Read the file to check on it.
+// End-to-end: a Letta subagent's tool calls, tool results, reasoning and
+// assistant messages reach the background task's output file (one readable
+// line each) and its JSONL event log (in full) while the subagent is still
+// running, so a parent can check on it.
 //
 // The harness runs the real CLI headless against an in-process mock
 // OpenAI-compatible provider that forces one Agent tool call. The subagent
@@ -14,6 +15,7 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -39,25 +41,81 @@ afterAll(async () => {
 const TIMESTAMP = String.raw`\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z\]`;
 
 describe("headless Letta subagent progress log", () => {
-  test("writes tool calls and assistant messages to the output file while the subagent runs", async () => {
+  test("writes tool calls, results and assistant messages to the task logs while the subagent runs", async () => {
     const run = await runScenario();
-    const detail = `exit=${run.code}\nmid-run:\n${run.midRun}\nfinal:\n${run.taskOutput}\nstderr:\n${run.stderrTail}`;
+    const detail = `exit=${run.code}\nreceipt:\n${run.receipt}\nmid-run:\n${run.midRun}\nevents:\n${run.midRunEvents}\nfinal:\n${run.taskOutput}\nstderr:\n${run.stderrTail}`;
 
     expect(run.code, detail).toBe(0);
+    // The receipt and the output file's header both name the event log.
+    expect(run.eventsFile, detail).toBe(
+      run.outputFile?.replace(/\.log$/, ".jsonl"),
+    );
+    expect(run.taskOutput, detail).toContain(`[event log: ${run.eventsFile} `);
     // Read while the child was holding its result: progress is already there.
     expect(run.midRun, detail).not.toContain("[Task completed]");
     expect(run.midRun, detail).toMatch(
       new RegExp(
-        `${TIMESTAMP} text: I'll check the repo layout first\\.\\n` +
+        `${TIMESTAMP} session: agent agent-mock-child, conversation conv-mock-child\\n` +
+          `${TIMESTAMP} text: I'll check the repo layout first\\.\\n` +
           `${TIMESTAMP} tool: Bash \\{"command":"ls -la","description":"List files"\\}\\n` +
+          `${TIMESTAMP} result: Bash ok, 6 B\\n` +
           `${TIMESTAMP} text: Found the files; now waiting on the slow step\\.\\n` +
           `${TIMESTAMP} tool: Bash \\{"command":"sleep 600"\\}\\n$`,
       ),
     );
-    // Reasoning, tool returns and usage lines are not logged, and the
+    // Reasoning and full tool output stay out of the readable log, and the
     // streamed chunks of one message become one `text:` line.
     expect(run.midRun, detail).not.toContain("thinking about it");
     expect(run.midRun, detail).not.toContain("file-a");
+
+    // The event log has every event, in order and in full.
+    const events = run.midRunEvents
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(
+      events.map(({ at, ...rest }) => {
+        expect(typeof at, detail).toBe("string");
+        return rest;
+      }),
+      detail,
+    ).toEqual([
+      {
+        seq: 1,
+        type: "session",
+        agent_id: "agent-mock-child",
+        conversation_id: "conv-mock-child",
+      },
+      { seq: 2, type: "reasoning", text: "thinking about it" },
+      { seq: 3, type: "text", text: "I'll check the repo layout first." },
+      {
+        seq: 4,
+        type: "tool_call",
+        id: "call-1",
+        name: "Bash",
+        input: { command: "ls -la", description: "List files" },
+      },
+      {
+        seq: 5,
+        type: "tool_result",
+        tool_call_id: "call-1",
+        name: "Bash",
+        is_error: false,
+        output: "file-a",
+      },
+      {
+        seq: 6,
+        type: "text",
+        text: "Found the files; now waiting on the slow step.",
+      },
+      {
+        seq: 7,
+        type: "tool_call",
+        id: "call-2",
+        name: "Bash",
+        input: { command: "sleep 600" },
+      },
+    ]);
 
     // The final message lands as progress before the result block.
     const progressEnd = run.taskOutput.indexOf("text: All done.");
@@ -73,7 +131,11 @@ describe("headless Letta subagent progress log", () => {
 
 async function runScenario(): Promise<{
   code: number | null;
+  receipt: string;
+  outputFile: string | undefined;
+  eventsFile: string | undefined;
   midRun: string;
+  midRunEvents: string;
   taskOutput: string;
   stderrTail: string;
 }> {
@@ -156,7 +218,11 @@ async function runScenario(): Promise<{
     : "";
   return {
     code,
+    receipt: provider.receipt,
+    outputFile: provider.outputFile,
+    eventsFile: provider.eventsFile,
     midRun: provider.midRun,
+    midRunEvents: provider.midRunEvents,
     taskOutput,
     stderrTail: stderr.slice(-4_000),
   };
@@ -236,10 +302,16 @@ function startMockProvider(releaseFile: string): {
   server: ReturnType<typeof Bun.serve>;
   port: number;
   outputFile: string | undefined;
+  eventsFile: string | undefined;
+  receipt: string;
   midRun: string;
+  midRunEvents: string;
 } {
   const state = {
     outputFile: undefined as string | undefined,
+    eventsFile: undefined as string | undefined,
+    receipt: "",
+    midRunEvents: "",
     midRun: "",
   };
   let chatRequests = 0;
@@ -269,15 +341,22 @@ function startMockProvider(releaseFile: string): {
         .find((name) => name === "Agent" || name === "Task");
       for (const message of body.messages ?? []) {
         if (message.role !== "tool") continue;
-        const text =
-          typeof message.content === "string"
-            ? message.content
-            : JSON.stringify(message.content);
-        state.outputFile ??= text.match(/Output file: ([^\r\n"\\]+)/)?.[1];
+        // Read the receipt as plain text: JSON-encoding it would double the
+        // backslashes of a Windows path.
+        const text = messageText(message.content);
+        if (!text.includes("Output file:")) continue;
+        state.receipt = text;
+        state.outputFile ??= text.match(/Output file: ([^\r\n]+)/)?.[1]?.trim();
+        state.eventsFile ??= text.match(/Event log: ([^\r\n]+)/)?.[1]?.trim();
       }
 
       if (round === 2 && state.outputFile) {
         state.midRun = await waitForContent(state.outputFile, "sleep 600");
+        if (state.eventsFile)
+          state.midRunEvents = await waitForContent(
+            state.eventsFile,
+            "sleep 600",
+          );
         writeFileSync(releaseFile, "1");
         await waitForContent(state.outputFile, "[Task completed]");
       }
@@ -371,17 +450,41 @@ function startMockProvider(releaseFile: string): {
     get outputFile() {
       return state.outputFile;
     },
+    get eventsFile() {
+      return state.eventsFile;
+    },
+    get receipt() {
+      return state.receipt;
+    },
+    get midRunEvents() {
+      return state.midRunEvents;
+    },
     get midRun() {
       return state.midRun;
     },
   };
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("");
+}
+
 async function waitForContent(path: string, needle: string): Promise<string> {
   const deadline = Date.now() + 20_000;
   let content = "";
   while (Date.now() < deadline) {
-    content = existsSync(path) ? readFileSync(path, "utf-8") : "";
+    content =
+      existsSync(path) && statSync(path).isFile()
+        ? readFileSync(path, "utf-8")
+        : "";
     if (content.includes(needle)) return content;
     await Bun.sleep(20);
   }

@@ -1,7 +1,9 @@
 import type { SubagentResult } from "@/agent/subagents";
 import {
   type ExternalToolCall,
+  type ExternalToolResult,
   formatExternalToolCallArgs,
+  toolOutputText,
 } from "./external-tool-call";
 
 // Pure readers for Codex app-server notification payloads: turn results,
@@ -71,19 +73,29 @@ export function describeCodexToolItem(
 ): ExternalToolCall | undefined {
   const id = readString(item, "id");
   if (!item || !id) return undefined;
-  const call = (name: string, args: unknown) => ({
+  const call = (name: string, args: unknown, input: unknown = args) => ({
     id,
     name,
     args: formatExternalToolCallArgs(args),
+    input,
   });
   switch (item.type) {
     case "commandExecution":
-      return call("Bash", { command: item.command });
+      return call(
+        "Bash",
+        { command: item.command },
+        {
+          command: item.command,
+          ...(typeof item.cwd === "string" ? { cwd: item.cwd } : {}),
+        },
+      );
     case "fileChange": {
       const changes = Array.isArray(item.changes) ? item.changes : [];
-      return call("Edit", {
-        files: changes.map((change) => readString(change, "path")),
-      });
+      return call(
+        "Edit",
+        { files: changes.map((change) => readString(change, "path")) },
+        { changes },
+      );
     }
     case "mcpToolCall":
       return call(
@@ -100,6 +112,74 @@ export function describeCodexToolItem(
     default:
       return undefined;
   }
+}
+
+/** The outcome of a completed tool-like ThreadItem, with its full output. */
+export function describeCodexToolResult(
+  item: Record<string, unknown> | undefined,
+): ExternalToolResult | undefined {
+  const id = readString(item, "id");
+  if (!item || !id || typeof item.type !== "string") return undefined;
+  if (!TOOL_ITEM_TYPES.has(item.type)) return undefined;
+  const status = readString(item, "status");
+  const failed = status === "failed" || status === "declined";
+  switch (item.type) {
+    case "commandExecution": {
+      const exitCode = typeof item.exitCode === "number" ? item.exitCode : null;
+      const output = toolOutputText(item.aggregatedOutput);
+      return {
+        id,
+        name: "Bash",
+        isError: failed || (exitCode !== null && exitCode !== 0),
+        output:
+          exitCode !== null && exitCode !== 0
+            ? `${output}${output.endsWith("\n") || !output ? "" : "\n"}[exit code ${exitCode}]`
+            : output,
+      };
+    }
+    case "fileChange":
+      return {
+        id,
+        name: "Edit",
+        isError: failed,
+        output: toolOutputText(item.changes),
+      };
+    case "mcpToolCall": {
+      const error = asRecord(item.error);
+      return {
+        id,
+        isError: failed || Boolean(error),
+        output: error
+          ? (readString(error, "message") ?? toolOutputText(error))
+          : toolOutputText(asRecord(item.result)?.content ?? item.result),
+      };
+    }
+    case "dynamicToolCall":
+      return {
+        id,
+        isError: failed || item.success === false,
+        output: toolOutputText(item.contentItems),
+      };
+    default:
+      return { id, isError: failed, output: "" };
+  }
+}
+
+/** The text of a completed `reasoning` ThreadItem (summary, else content). */
+export function codexReasoningText(
+  item: Record<string, unknown> | undefined,
+): string {
+  if (item?.type !== "reasoning") return "";
+  for (const key of ["summary", "content"]) {
+    const parts = item[key];
+    if (Array.isArray(parts)) {
+      const text = parts
+        .filter((part): part is string => typeof part === "string")
+        .join("\n\n");
+      if (text.trim()) return text;
+    }
+  }
+  return "";
 }
 
 export const TOOL_ITEM_TYPES = new Set([

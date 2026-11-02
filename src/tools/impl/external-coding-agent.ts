@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
@@ -28,10 +30,7 @@ import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import type {
-  ExternalTextListener,
-  ExternalToolCallListener,
-} from "./external-tool-call";
+import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -60,7 +59,8 @@ export interface ExternalCodingAgentMcpEntry {
   toolCount: number | null;
 }
 
-export interface ExternalCodingAgentRunOptions {
+/** Live progress callbacks: tool calls, results, text, reasoning, transcript. */
+export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
   model?: string;
@@ -72,10 +72,6 @@ export interface ExternalCodingAgentRunOptions {
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
-  /** Live progress: called once per tool call the worker makes. */
-  onToolCall?: ExternalToolCallListener;
-  /** Live progress: called with each assistant text block (Claude Code, Codex). */
-  onText?: ExternalTextListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -576,6 +572,65 @@ export function scrubExternalWorkerResult(
   };
 }
 
+/**
+ * Where Claude Code keeps a session's transcript: one directory per working
+ * directory (every non-alphanumeric character replaced by `-`).
+ */
+export function claudeTranscriptPath(
+  cwd: string,
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const configDir = env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude");
+  return join(
+    configDir,
+    "projects",
+    cwd.replace(/[^a-zA-Z0-9]/g, "-"),
+    `${sessionId}.jsonl`,
+  );
+}
+
+/**
+ * Wrap progress listeners so values exported from the vault never reach the
+ * task's logs (or a parent on another computer) in tool arguments or output.
+ */
+export function scrubWorkerListeners(
+  listeners: ExternalWorkerListeners,
+  secretEnv: Record<string, string>,
+): ExternalWorkerListeners {
+  if (Object.keys(secretEnv).length === 0) return listeners;
+  const scrub = (text: string) => scrubSecretsFromString(text, secretEnv);
+  const scrubValue = (value: unknown): unknown => {
+    if (value === undefined) return value;
+    if (typeof value === "string") return scrub(value);
+    try {
+      const json = JSON.stringify(value);
+      const scrubbed = scrub(json);
+      return scrubbed === json ? value : JSON.parse(scrubbed);
+    } catch {
+      return value;
+    }
+  };
+  const { onToolCall, onText, onToolResult, onReasoning } = listeners;
+  return {
+    ...listeners,
+    ...(onToolCall && {
+      onToolCall: (call) =>
+        onToolCall({
+          ...call,
+          args: scrub(call.args),
+          ...(call.input !== undefined && { input: scrubValue(call.input) }),
+        }),
+    }),
+    ...(onText && { onText: (text) => onText(scrub(text)) }),
+    ...(onToolResult && {
+      onToolResult: (result) =>
+        onToolResult({ ...result, output: scrub(result.output) }),
+    }),
+    ...(onReasoning && { onReasoning: (text) => onReasoning(scrub(text)) }),
+  };
+}
+
 export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
@@ -585,7 +640,11 @@ export async function runExternalCodingAgent(
     options,
     deps,
   );
-  options = { ...options, mcpReminder };
+  options = {
+    ...options,
+    ...scrubWorkerListeners(options, secretEnv),
+    mcpReminder,
+  };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -700,6 +759,9 @@ export async function runExternalCodingAgent(
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
+            onTranscript: options.onTranscript,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -744,6 +806,7 @@ export async function runExternalCodingAgent(
       options.onStarted?.(
         formatExternalCodingAgentId("claude-code", sessionId),
       );
+      options.onTranscript?.(claudeTranscriptPath(cwd, sessionId, env));
       return capture(
         await runClaudeTurn(
           {
@@ -757,6 +820,8 @@ export async function runExternalCodingAgent(
             sessionId,
             onToolCall: options.onToolCall,
             onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
           },
           { env },
         ),

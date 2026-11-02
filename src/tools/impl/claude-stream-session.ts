@@ -9,9 +9,15 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import {
-  type ExternalTextListener,
-  type ExternalToolCallListener,
-  formatExternalToolCallArgs,
+  type ClaudeProgress,
+  createClaudeProgress,
+  handleClaudeAssistant,
+  handleClaudeToolResults,
+} from "./claude-stream-progress";
+import type {
+  ExternalTextListener,
+  ExternalToolCallListener,
+  ExternalWorkerListeners,
 } from "./external-tool-call";
 
 export interface ClaudeSessionTransport {
@@ -72,14 +78,11 @@ interface ClaudeSession {
   pendingControls: Map<string, PendingControl>;
   abortController: AbortController;
   removeUpstreamAbort: () => void;
-  onToolCall?: ExternalToolCallListener;
-  seenToolCallIds: Set<string>;
-  onText?: ExternalTextListener;
-  /** Message ID + text of blocks already reported, since messages can repeat. */
-  seenTextBlocks: Set<string>;
+  progress: ClaudeProgress;
 }
 
-export interface ClaudeTurnOptions {
+export interface ClaudeTurnOptions
+  extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -397,59 +400,6 @@ function handleControlResponse(
 }
 
 /** Report an assistant `text` block once, even if Claude repeats the message. */
-function reportText(
-  session: ClaudeSession,
-  messageId: unknown,
-  text: unknown,
-): void {
-  if (!session.onText || typeof text !== "string" || !text.trim()) return;
-  // Cap the key so a long session does not retain every full text block.
-  const key = `${typeof messageId === "string" ? messageId : ""}\u0000${text.slice(0, 1_000)}`;
-  if (session.seenTextBlocks.has(key)) return;
-  session.seenTextBlocks.add(key);
-  try {
-    session.onText(text);
-  } catch {
-    // Progress display must not break the session.
-  }
-}
-
-/** Emit each `text` and `tool_use` block of a stream-json `assistant` message once. */
-function handleAssistant(
-  session: ClaudeSession,
-  value: Record<string, unknown>,
-): void {
-  if (!session.onToolCall && !session.onText) return;
-  const message = readRecord(value.message);
-  const content = message?.content;
-  if (!Array.isArray(content)) return;
-  for (const entry of content) {
-    const block = readRecord(entry);
-    if (block?.type === "text") {
-      reportText(session, message?.id, block.text);
-      continue;
-    }
-    if (
-      !session.onToolCall ||
-      block?.type !== "tool_use" ||
-      typeof block.id !== "string" ||
-      typeof block.name !== "string" ||
-      session.seenToolCallIds.has(block.id)
-    )
-      continue;
-    session.seenToolCallIds.add(block.id);
-    try {
-      session.onToolCall({
-        id: block.id,
-        name: block.name,
-        args: formatExternalToolCallArgs(block.input),
-      });
-    } catch {
-      // Progress display must not break the session.
-    }
-  }
-}
-
 function settleResult(
   session: ClaudeSession,
   value: Record<string, unknown>,
@@ -616,10 +566,7 @@ async function launchSession(
     pendingControls: new Map(),
     abortController,
     removeUpstreamAbort,
-    onToolCall: options.onToolCall,
-    seenToolCallIds: new Set(),
-    onText: options.onText,
-    seenTextBlocks: new Set(),
+    progress: createClaudeProgress(options),
   };
   sessions.set(sessionId, session);
   transport.process.stderr.setEncoding("utf8");
@@ -635,6 +582,8 @@ async function launchSession(
         handleControlResponse(session, value);
       } else if (value.type === "user" && value.isReplay === true) {
         acknowledgeInput(session, value.uuid);
+      } else if (value.type === "user") {
+        handleClaudeToolResults(session.progress, value);
       } else if (
         value.type === "command_lifecycle" &&
         (value.state === "started" || value.state === "completed")
@@ -648,7 +597,7 @@ async function launchSession(
       ) {
         handleBackgroundTasksChanged(session, value);
       } else if (value.type === "assistant") {
-        handleAssistant(session, value);
+        handleClaudeAssistant(session.progress, value);
       } else if (
         value.type === "stream_event" &&
         readRecord(value.event)?.type === "message_start"

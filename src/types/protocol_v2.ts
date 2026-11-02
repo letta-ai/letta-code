@@ -547,7 +547,7 @@ export interface SubagentSnapshotToolCall {
   args: string;
 }
 
-export interface SubagentSnapshot {
+export interface SubagentSnapshot extends SubagentProtocol.SubagentEvents {
   subagent_id: string;
   subagent_type: string;
   description: string;

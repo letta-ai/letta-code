@@ -12,6 +12,7 @@ import {
   startCodexTurn,
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
+import type { ExternalToolCall } from "./external-tool-call";
 
 const CAPACITY_MESSAGE =
   'unexpected status 409 Conflict: {"error":{"message":"No account capacity is available."}}';
@@ -250,7 +251,7 @@ describe("Codex app-server lifecycle", () => {
 
   test("emits each tool-like item once as a tool call", async () => {
     const fake = new FakeCodexTransport();
-    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const calls: ExternalToolCall[] = [];
     const handle = await startCodexTurn(
       {
         prompt: "Work",
@@ -294,10 +295,89 @@ describe("Codex app-server lifecycle", () => {
     fake.complete("done");
     await handle.completion;
     expect(calls).toEqual([
-      { id: "cmd-1", name: "Bash", args: '{"command":"bun test"}' },
-      { id: "patch-1", name: "Edit", args: '{"files":["src/a.ts"]}' },
-      { id: "mcp-1", name: "linear/get_issue", args: '{"id":"LET-1"}' },
-      { id: "ws-1", name: "WebSearch", args: '{"query":"bun test"}' },
+      {
+        id: "cmd-1",
+        name: "Bash",
+        args: '{"command":"bun test"}',
+        input: { command: "bun test" },
+      },
+      {
+        id: "patch-1",
+        name: "Edit",
+        args: '{"files":["src/a.ts"]}',
+        // The full patch, not just the file list, goes to the event log.
+        input: {
+          changes: [{ path: "src/a.ts", kind: { type: "update" }, diff: "" }],
+        },
+      },
+      {
+        id: "mcp-1",
+        name: "linear/get_issue",
+        args: '{"id":"LET-1"}',
+        input: { id: "LET-1" },
+      },
+      {
+        id: "ws-1",
+        name: "WebSearch",
+        args: '{"query":"bun test"}',
+        input: { query: "bun test" },
+      },
+    ]);
+  });
+
+  test("reports each completed tool item's full output and reasoning once", async () => {
+    const fake = new FakeCodexTransport();
+    const events: unknown[] = [];
+    const handle = await startCodexTurn(
+      {
+        prompt: "Work",
+        parentAgentId: "parent",
+        cwd: "/repo",
+        onToolResult: (result) => events.push(result),
+        onReasoning: (text) => events.push(`reasoning:${text}`),
+      },
+      { createTransport: () => fake.transport() },
+    );
+    const output = `FAIL sum.test.ts\n${"x".repeat(5_000)}\nexpected 2, got 3\n`;
+    const command = {
+      type: "commandExecution",
+      id: "cmd-1",
+      command: "bun test",
+      status: "inProgress",
+    };
+    fake.item("item/started", command);
+    const done = {
+      ...command,
+      status: "failed",
+      exitCode: 1,
+      aggregatedOutput: output,
+    };
+    fake.item("item/completed", done);
+    fake.item("item/completed", done);
+    fake.item("item/completed", {
+      type: "mcpToolCall",
+      id: "mcp-1",
+      server: "linear",
+      tool: "get_issue",
+      status: "completed",
+      result: { content: [{ type: "text", text: "LET-1: Fix sum" }] },
+    });
+    fake.item("item/completed", {
+      type: "reasoning",
+      id: "r-1",
+      summary: ["Check the failing assertion."],
+    });
+    fake.complete("done");
+    await handle.completion;
+    expect(events).toEqual([
+      {
+        id: "cmd-1",
+        name: "Bash",
+        isError: true,
+        output: `${output}[exit code 1]`,
+      },
+      { id: "mcp-1", isError: false, output: "LET-1: Fix sum" },
+      "reasoning:Check the failing assertion.",
     ]);
   });
 
