@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.36",
+  "version": "0.34.37",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -2993,9 +2993,9 @@
       }
     },
     "node_modules/cron-parser": {
-      "version": "5.10.2",
-      "resolved": "https://registry.npmjs.org/cron-parser/-/cron-parser-5.10.2.tgz",
-      "integrity": "sha512-JfAYMY0LZaWQTuict8PhtF/ksSnq8xefSDmQUnnoqvkPYkU/y3UP0DTWzJKFBz0P1IXsDG8q0vY3zHkoFZOhvw==",
+      "version": "5.10.3",
+      "resolved": "https://registry.npmjs.org/cron-parser/-/cron-parser-5.10.3.tgz",
+      "integrity": "sha512-Fwlmlgiyoj5e7XDCy5T3ueFd3imgt714k7xjAzhkOBUrUgQxWtsjS7kWSEN3efDX34bebxBJAmPoCSisHvjlpw==",
       "license": "MIT",
       "dependencies": {
         "luxon": "^3.7.2"
@@ -3696,9 +3696,9 @@
       }
     },
     "node_modules/hono": {
-      "version": "4.13.14",
-      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.14.tgz",
-      "integrity": "sha512-yhRLQ21U6qa9Hsu2N7Qcbh8tE+WKEcoErjIo56LeSGiGXGp9sA7UpE86Ui9uexb61KakiGwuHMn2QdV7w6i6kQ==",
+      "version": "4.13.16",
+      "resolved": "https://registry.npmjs.org/hono/-/hono-4.13.16.tgz",
+      "integrity": "sha512-AOLOEhvrV+iH92xXCnFr/5+3KjPKcI3xP63XJtX5spAnkznPdHijlIsUTpi7/9EhWqrTCekw5c5zh1K+YsVw7A==",
       "license": "MIT",
       "engines": {
         "node": ">=16.9.0"
@@ -3969,9 +3969,9 @@
       "license": "ISC"
     },
     "node_modules/jose": {
-      "version": "6.2.14",
-      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.14.tgz",
-      "integrity": "sha512-3JasLuki1NRLQvY4wCoC37KZk4qxoBx2k2aFqLxT84IezqW0bkJKnNtxnZj/Fu1xsQivoc/lytxaRHJoGLjJ1A==",
+      "version": "6.2.15",
+      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.15.tgz",
+      "integrity": "sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/panva"
@@ -5562,9 +5562,9 @@
       "license": "ISC"
     },
     "node_modules/ws": {
-      "version": "8.22.0",
-      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
-      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==",
+      "version": "8.22.1",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz",
+      "integrity": "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==",
       "license": "MIT",
       "engines": {
         "node": ">=10.0.0"
@@ -5633,7 +5633,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.36",
+      "version": "0.34.37",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^0.99.1",
