@@ -24,7 +24,15 @@ export function createTuiQueueRuntime(
           `enqueued item_id=${item.id} kind=${item.kind} queue_len=${queueLen}`,
         );
         if (item.kind === "message" || item.kind === "task_notification") {
-          setQueueDisplay((prev) => [...prev, toQueuedMsg(item)]);
+          setQueueDisplay(
+            queue.items
+              .filter(
+                (queued) =>
+                  queued.kind === "message" ||
+                  queued.kind === "task_notification",
+              )
+              .map(toQueuedMsg),
+          );
         }
       },
       onDequeued: (batch) => {

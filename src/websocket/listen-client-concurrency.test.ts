@@ -330,6 +330,22 @@ function createDeferredDrain() {
   return { promise, resolve, reject };
 }
 
+function accelerateRetryDelays(): typeof setTimeout {
+  const original = globalThis.setTimeout;
+  // Accelerate polling/backoff, not the five-minute cancellation deadline.
+  globalThis.setTimeout = ((
+    handler: Parameters<typeof setTimeout>[0],
+    delay = 0,
+    ...args: unknown[]
+  ) =>
+    original(
+      handler,
+      delay <= 40_000 ? 0 : delay,
+      ...args,
+    )) as typeof setTimeout;
+  return original;
+}
+
 async function waitFor(
   predicate: () => boolean,
   timeoutMs: number = 5_000,
@@ -2293,13 +2309,7 @@ describe("listen-client multi-worker concurrency", () => {
       new Error("resume unavailable"),
     );
 
-    const originalSetTimeout = globalThis.setTimeout;
-    type SetTimeoutParams = Parameters<typeof setTimeout>;
-    globalThis.setTimeout = ((
-      handler: SetTimeoutParams[0],
-      _timeout?: SetTimeoutParams[1],
-      ...args: unknown[]
-    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    const originalSetTimeout = accelerateRetryDelays();
     try {
       const stream = await sendApprovalContinuationWithRetry(
         "conv-approval-busy",
@@ -2393,13 +2403,7 @@ describe("listen-client multi-worker concurrency", () => {
       };
     });
 
-    const originalSetTimeout = globalThis.setTimeout;
-    type SetTimeoutParams = Parameters<typeof setTimeout>;
-    globalThis.setTimeout = ((
-      handler: SetTimeoutParams[0],
-      _timeout?: SetTimeoutParams[1],
-      ...args: unknown[]
-    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    const originalSetTimeout = accelerateRetryDelays();
     try {
       const stream = await sendApprovalContinuationWithRetry(
         "conv-blocking-run",
@@ -2475,13 +2479,7 @@ describe("listen-client multi-worker concurrency", () => {
       };
     });
 
-    const originalSetTimeout = globalThis.setTimeout;
-    type SetTimeoutParams = Parameters<typeof setTimeout>;
-    globalThis.setTimeout = ((
-      handler: SetTimeoutParams[0],
-      _timeout?: SetTimeoutParams[1],
-      ...args: unknown[]
-    ) => originalSetTimeout(handler, 0, ...args)) as typeof setTimeout;
+    const originalSetTimeout = accelerateRetryDelays();
     try {
       const stream = await sendMessageStreamWithRetry(
         "conv-message-blocking-run",

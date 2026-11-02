@@ -124,9 +124,10 @@ import {
   isShellTool,
 } from "@/cli/helpers/tool-name-mapping";
 import { isTaskTool } from "@/cli/helpers/tool-name-mapping.js";
+import { hasTuiBusyInput } from "@/cli/helpers/tui-busy-input";
 import { getTuiBlockedReason } from "@/cli/helpers/tui-queue-adapter";
 import {
-  prepareTuiQueueSubmit,
+  submitTuiQueuedInput,
   toTuiQueuedMessage,
 } from "@/cli/helpers/tui-queue-input";
 import { createTuiQueueRuntime } from "@/cli/helpers/tui-queue-runtime";
@@ -4272,43 +4273,29 @@ export function App({
       // - last stop reason was end_turn (not requires_approval or error)
       // - processingConversationRef === 0 (no nested processConversation calls outstanding)
       (queueMode === "immediate" ||
+        hasTuiBusyInput(tuiQueueRef.current) ||
         (lastStopReasonRef.current === "end_turn" &&
           processingConversationRef.current === 0))
     ) {
-      // consumeItems(n) fires onDequeued → setQueueDisplay(prev => prev.slice(n)).
-      const batch = tuiQueueRef.current?.consumeItems(queueLen);
-      if (!batch) return;
-
-      const {
-        text: concatenatedMessage,
-        content: queuedContentParts,
-        submitOptions,
-      } = prepareTuiQueueSubmit(batch);
-
-      debugLog(
-        "queue",
-        `Dequeuing ${batch.mergedCount} message(s): "${concatenatedMessage.slice(0, 50)}${concatenatedMessage.length > 50 ? "..." : ""}"`,
-      );
-
-      // Store before submit — allows restoration on error (ESC path).
-      lastDequeuedMessageRef.current = concatenatedMessage;
-
-      // Submit via normal flow — overrideContentPartsRef carries rich content parts.
-      overrideContentPartsRef.current = queuedContentParts;
-      // Lock prevents re-entrant dequeue if deps churn before processConversation
-      // sets abortControllerRef (which is the normal long-term gate).
+      const queue = tuiQueueRef.current;
+      if (!queue) return;
       dequeueInFlightRef.current = true;
-      // Reset to immediate mode after each dequeue — defer is opt-in per batch.
       setQueueMode("immediate");
-      void onSubmitRef
-        .current(concatenatedMessage, submitOptions)
-        .finally(() => {
-          dequeueInFlightRef.current = false;
-          // If more items arrived while in-flight, bump epoch so the effect re-runs.
-          if ((tuiQueueRef.current?.length ?? 0) > 0) {
-            setDequeueEpoch((e) => e + 1);
-          }
-        });
+      void submitTuiQueuedInput(queue, {
+        retry: (input) =>
+          processConversationRef.current(input, { preserveBusyInput: true }),
+        submit: ({ text, content, submitOptions }) => {
+          lastDequeuedMessageRef.current = text;
+          overrideContentPartsRef.current = content;
+          return onSubmitRef.current(text, submitOptions);
+        },
+      }).finally(() => {
+        dequeueInFlightRef.current = false;
+        // If more items arrived while in-flight, bump epoch so the effect re-runs.
+        if ((tuiQueueRef.current?.length ?? 0) > 0) {
+          setDequeueEpoch((e) => e + 1);
+        }
+      });
     } else if (hasAnythingQueued) {
       // Log why dequeue was blocked (useful for debugging stuck queues)
       debugLog(

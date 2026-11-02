@@ -10,6 +10,8 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
+import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
+import { waitForBusyRunRetry } from "@/agent/busy-run-wait";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
@@ -78,7 +80,6 @@ import { SessionStats } from "./agent/stats";
 import {
   type BackendMode,
   type ConversationCreateBody,
-  type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
 import type { ParsedCliArgs } from "./cli/args";
@@ -2102,6 +2103,7 @@ export async function handleHeadlessCommand(
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
+  let retryingBusyInput = false;
   let chatgptPlanSwaps = 0;
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
@@ -2167,7 +2169,9 @@ export async function handleHeadlessCommand(
         const { consumeQueuedSkillContent } = await import(
           "@/tools/impl/skill-content-registry"
         );
-        const skillContents = consumeQueuedSkillContent();
+        const skillContents = retryingBusyInput
+          ? []
+          : consumeQueuedSkillContent();
         if (skillContents.length > 0) {
           currentInput = [
             ...currentInput,
@@ -2184,7 +2188,7 @@ export async function handleHeadlessCommand(
       }
 
       // Wrap sendMessageStream in try-catch to handle pre-stream errors (e.g., 409)
-      let stream: Awaited<ReturnType<typeof sendMessageStream>>;
+      let stream: Awaited<ReturnType<typeof sendMessageStream>> | undefined;
       let turnToolContextId: string | null = null;
       try {
         const turnToolContext = await prepareHeadlessToolExecutionContext({
@@ -2213,6 +2217,7 @@ export async function handleHeadlessCommand(
           },
           { maxRetries: 0, signal: sigintSignal },
         );
+        retryingBusyInput = false;
         turnToolContextId = getStreamToolContextId(stream);
       } catch (preStreamError) {
         if (sigintSignal.aborted) {
@@ -2259,30 +2264,15 @@ export async function handleHeadlessCommand(
           continue;
         }
 
-        // 409 "conversation busy": resume via the conversation stream
-        // endpoint. Server resolves otid lookup then active-run fallback;
-        // falls back to exponential backoff retry if the endpoint fails.
         if (preStreamAction === "retry_conversation_busy") {
-          const messageOtid = currentInput
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((v): v is string => typeof v === "string");
-
           try {
-            stream = (await getBackend().streamConversationMessages(
+            stream = await resumeBusyRequestStream(
               conversationId,
-              // Cast needed until SDK MessageStreamParams includes otid field
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (agent?.id ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-            )) as Awaited<ReturnType<typeof sendMessageStream>>;
-            conversationBusyRetries = 0;
-            // Fall through to drain
+              agent.id,
+              currentInput,
+              sigintSignal,
+            );
+            retryingBusyInput = false;
           } catch {
             conversationBusyRetries += 1;
             const retryDelayMs = getRetryDelayMs({
@@ -2307,7 +2297,9 @@ export async function handleHeadlessCommand(
               );
             }
 
-            await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+            await waitForBusyRunRetry(errorDetail, retryDelayMs, sigintSignal);
+            if (sigintSignal.aborted) await exitInterrupted();
+            retryingBusyInput = true;
             continue;
           }
         }
@@ -2352,11 +2344,7 @@ export async function handleHeadlessCommand(
           continue;
         }
 
-        // Reset conversation busy retry counter on other errors
-        conversationBusyRetries = 0;
-
-        // Re-throw to outer catch for other errors
-        throw preStreamError;
+        if (!stream) throw preStreamError;
       }
 
       let approvalPendingRecovery = false;

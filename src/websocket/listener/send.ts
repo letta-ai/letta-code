@@ -6,6 +6,11 @@ import type {
   LettaStreamingResponse,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { fetchRunErrorInfo } from "@/agent/approval-recovery";
+import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
+import {
+  BUSY_RUN_POLL_INTERVAL_MS,
+  waitForBusyRunRetry,
+} from "@/agent/busy-run-wait";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
 import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { sendMessageStream } from "@/agent/message";
@@ -18,12 +23,11 @@ import {
   parseRetryAfterHeaderMs,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "@/agent/turn-recovery-policy";
-import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getBackend } from "@/backend";
 import { getRetryStatusMessage } from "@/cli/helpers/error-formatter";
 import { prepareToolExecutionContextForScope } from "@/tools/toolset";
 import { shouldEmitRetryNotice } from "@/utils/cloud-api-shutdown";
 import { isDebugEnabled } from "@/utils/debug";
-import { createStreamAbortRelay } from "@/utils/stream-abort-relay";
 import {
   clearPendingApprovalBatchIds,
   rememberPendingApprovalBatchIds,
@@ -59,10 +63,6 @@ import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
 import type { ConversationRuntime } from "./types";
 
-const ACTIVE_BLOCKING_RUN_STATUSES = new Set(["created", "running"]);
-const BUSY_RUN_WAIT_TIMEOUT_MS = 5 * 60 * 1000;
-const BUSY_RUN_POLL_INTERVAL_MS = 5000;
-
 type MessageStreamResult = Awaited<ReturnType<typeof sendMessageStream>>;
 type RecoveryDrainResult = Awaited<
   ReturnType<typeof drainRecoveryStreamWithEmission>
@@ -71,7 +71,6 @@ type RetrieveAgent = ReturnType<typeof getBackend>["retrieveAgent"];
 export type ApprovalContinuationSendResult =
   | { kind: "stream"; stream: NonNullable<MessageStreamResult> }
   | { kind: "terminal"; drainResult: RecoveryDrainResult };
-type BlockingRunWaitResult = "settled" | "timed_out" | "unavailable";
 
 export function isApprovalOnlyInput(
   input: Array<MessageCreate | ApprovalCreate>,
@@ -99,111 +98,6 @@ function isBackendNotFoundError(err: unknown): boolean {
     (err instanceof APIError && (err.status === 404 || err.status === 422)) ||
     (err instanceof Error && err.name === "LocalBackendNotFoundError")
   );
-}
-
-function isBlockingRunActive(status: unknown): boolean {
-  return typeof status === "string" && ACTIVE_BLOCKING_RUN_STATUSES.has(status);
-}
-
-async function sleepWithAbort(
-  delayMs: number,
-  abortSignal?: AbortSignal,
-): Promise<void> {
-  if (delayMs <= 0) {
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | null = null;
-
-    function cleanup() {
-      if (timeout) {
-        clearTimeout(timeout);
-        timeout = null;
-      }
-      abortSignal?.removeEventListener("abort", onAbort);
-    }
-
-    function onAbort() {
-      cleanup();
-      reject(new Error("Cancelled by user"));
-    }
-
-    if (abortSignal?.aborted) {
-      onAbort();
-      return;
-    }
-
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-    timeout = setTimeout(() => {
-      cleanup();
-      resolve();
-    }, delayMs);
-  });
-}
-
-async function waitForBlockingRunToSettle(
-  runId: string,
-  abortSignal?: AbortSignal,
-): Promise<BlockingRunWaitResult> {
-  const timeoutMs = BUSY_RUN_WAIT_TIMEOUT_MS;
-  const startedAt = Date.now();
-
-  while (true) {
-    if (abortSignal?.aborted) {
-      throw new Error("Cancelled by user");
-    }
-
-    let run: Awaited<ReturnType<ReturnType<typeof getBackend>["retrieveRun"]>>;
-    try {
-      run = await getBackend().retrieveRun(runId);
-    } catch {
-      return "unavailable";
-    }
-
-    if (!isBlockingRunActive(run.status)) {
-      return "settled";
-    }
-
-    const elapsedMs = Date.now() - startedAt;
-    if (elapsedMs >= timeoutMs) {
-      return "timed_out";
-    }
-
-    await sleepWithAbort(
-      Math.min(BUSY_RUN_POLL_INTERVAL_MS, timeoutMs - elapsedMs),
-      abortSignal,
-    );
-  }
-}
-
-async function maybeWaitForBlockingRun(params: {
-  runId: string | null;
-  retriedAfterSettled: Set<string>;
-  abortSignal?: AbortSignal;
-}): Promise<"retry_now" | "fall_back"> {
-  const { runId, retriedAfterSettled, abortSignal } = params;
-  if (!runId) {
-    return "fall_back";
-  }
-
-  const waitResult = await waitForBlockingRunToSettle(runId, abortSignal);
-
-  if (waitResult === "settled") {
-    if (retriedAfterSettled.has(runId)) {
-      return "fall_back";
-    }
-    retriedAfterSettled.add(runId);
-    return "retry_now";
-  }
-
-  if (waitResult === "timed_out") {
-    throw new Error(
-      `Conversation is still busy because run ${runId} remained active after ${BUSY_RUN_WAIT_TIMEOUT_MS}ms`,
-    );
-  }
-
-  return "fall_back";
 }
 
 function getConversationBusyRetryNotice(
@@ -234,36 +128,12 @@ async function tryResumeBusyConversationStream(params: {
     params;
 
   try {
-    const backend = getBackend();
-    const messageOtid = messages
-      .map((item) => (item as Record<string, unknown>).otid)
-      .find((value): value is string => typeof value === "string");
-    const resumeAbortRelay = createStreamAbortRelay(abortSignal);
-
-    if (abortSignal?.aborted) {
-      throw new Error("Cancelled by user");
-    }
-
-    try {
-      const resumeStream = await backend.streamConversationMessages(
-        conversationId,
-        {
-          agent_id:
-            conversationId === "default"
-              ? (runtime.agentId ?? undefined)
-              : undefined,
-          otid: messageOtid ?? undefined,
-          starting_after: 0,
-          batch_size: 1000,
-        } as unknown as ConversationMessageStreamBody,
-        resumeAbortRelay ? { signal: resumeAbortRelay.signal } : undefined,
-      );
-      resumeAbortRelay?.attach(resumeStream as object);
-      return resumeStream;
-    } catch (resumeError) {
-      resumeAbortRelay?.cleanup();
-      throw resumeError;
-    }
+    return await resumeBusyRequestStream(
+      conversationId,
+      runtime.agentId,
+      messages,
+      abortSignal,
+    );
   } catch (resumeError) {
     if (abortSignal?.aborted) {
       throw new Error("Cancelled by user");
@@ -574,7 +444,6 @@ export async function sendMessageStreamWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -756,19 +625,15 @@ export async function sendMessageStreamWithRetry(
           conversationId,
         });
 
-        const blockingRunDisposition = await maybeWaitForBlockingRun({
-          runId: blockingRunId,
-          retriedAfterSettled: retriedAfterBlockingRunSettled,
-          abortSignal,
-        });
-        if (blockingRunDisposition === "retry_now") {
-          continue;
+        if (!retryBudgetAvailable) throw preStreamError;
+        await waitForBusyRunRetry(errorDetail, delayMs, abortSignal);
+        if (
+          !runtime.turnLifecycle.isCurrent(turnLease) ||
+          retryOptions.authorityGuard?.() === false
+        ) {
+          throw new Error("Recovery ownership lost");
         }
-        if (!retryBudgetAvailable) {
-          throw preStreamError;
-        }
-
-        await sleepWithAbort(delayMs, abortSignal);
+        if (abortSignal.aborted) throw new Error("Cancelled by user");
         continue;
       }
 
@@ -795,7 +660,6 @@ export async function sendApprovalContinuationWithRetry(
   let conversationBusyRetries = 0;
   let preStreamRecoveryAttempts = 0;
   const MAX_CONVERSATION_BUSY_RETRIES = 3;
-  const retriedAfterBlockingRunSettled = new Set<string>();
 
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -977,19 +841,15 @@ export async function sendApprovalContinuationWithRetry(
           conversationId,
         });
 
-        const blockingRunDisposition = await maybeWaitForBlockingRun({
-          runId: blockingRunId,
-          retriedAfterSettled: retriedAfterBlockingRunSettled,
-          abortSignal,
-        });
-        if (blockingRunDisposition === "retry_now") {
-          continue;
+        if (!retryBudgetAvailable) throw preStreamError;
+        await waitForBusyRunRetry(errorDetail, retryDelayMs, abortSignal);
+        if (
+          !runtime.turnLifecycle.isCurrent(turnLease) ||
+          retryOptions.authorityGuard?.() === false
+        ) {
+          throw new Error("Recovery ownership lost");
         }
-        if (!retryBudgetAvailable) {
-          throw preStreamError;
-        }
-
-        await sleepWithAbort(retryDelayMs, abortSignal);
+        if (abortSignal.aborted) throw new Error("Cancelled by user");
         continue;
       }
 
