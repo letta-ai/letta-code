@@ -194,7 +194,7 @@ generic instincts. Read the local guide before changing code there:
 - `src/cli/AGENTS.md` — Ink rendering, approvals, and interactive input rules
   for the TUI.
 - `src/websocket/listener/AGENTS.md` — turn lifecycle, leases, approvals, queue
-  gating, and where listener tests belong.
+  gating, conversation↔listener scoping, and where listener tests belong.
 - `src/channels/AGENTS.md` — gateway policy placement and the pure-logic
   package subpaths shared with remote hosts.
 - `src/channels/slack/AGENTS.md` — Slack module ownership, the progress
