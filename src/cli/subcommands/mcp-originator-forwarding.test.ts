@@ -159,36 +159,66 @@ describe("MCP originator token forwarding", () => {
     if (!upstreamClient) throw new Error("Missing MCP test client");
     setMcpOriginatorToken("sr-1", "mst_one.secret-a");
     let activeSuperRunId: string | null = "sr-1";
-    const broker = createMcpSubprocessBroker({
-      agentId: "agent-child",
-      getAllowedAgentIds: async () => {
-        const inheritedAgentId = await getMcpScopeAgentId(
-          "agent-child",
-          {
-            LETTA_CODE_AGENT_ROLE: "subagent",
-            LETTA_PARENT_AGENT_ID: "agent-cloud",
-          },
-          async (agentId) =>
-            agentId === "agent-child" ? "agent-cloud" : undefined,
-        );
-        return new Set(["agent-child", inheritedAgentId]);
-      },
-      getScope: () => ({
+    let changeOriginatorWhileResolvingClient = false;
+    const secretRequests: Array<{
+      path: string;
+      headers?: Record<string, string>;
+    }> = [];
+    const brokers: ReturnType<typeof createMcpSubprocessBroker>[] = [];
+    const createBroker = () => {
+      const broker = createMcpSubprocessBroker({
         agentId: "agent-child",
-        ...(activeSuperRunId
-          ? {
-              originatorToken:
-                activeSuperRunId === "sr-1" ? "mst_one.secret-a" : undefined,
-            }
-          : {}),
-      }),
-      getClient: async () => upstreamClient,
-    });
+        getAllowedAgentIds: async () => {
+          const inheritedAgentId = await getMcpScopeAgentId(
+            "agent-child",
+            {
+              LETTA_CODE_AGENT_ROLE: "subagent",
+              LETTA_PARENT_AGENT_ID: "agent-cloud",
+            },
+            async (agentId) =>
+              agentId === "agent-child" ? "agent-cloud" : undefined,
+          );
+          return new Set(["agent-child", inheritedAgentId]);
+        },
+        getScope: () => {
+          let originatorToken: string | undefined;
+          if (activeSuperRunId === "sr-1") originatorToken = "mst_one.secret-a";
+          if (activeSuperRunId === "sr-2") originatorToken = "mst_two.secret-b";
+          return { agentId: "agent-child", originatorToken };
+        },
+        getClient: async () => {
+          if (changeOriginatorWhileResolvingClient) activeSuperRunId = "sr-2";
+          return {
+            ...upstreamClient,
+            get: async (
+              path: string,
+              options?: { headers?: Record<string, string> },
+            ) => {
+              if (path.endsWith("/secrets")) {
+                secretRequests.push({ path, headers: options?.headers });
+                return [];
+              }
+              return upstreamClient.get(path);
+            },
+          };
+        },
+      });
+      brokers.push(broker);
+      return broker;
+    };
+    function clientFor(broker: ReturnType<typeof createMcpSubprocessBroker>) {
+      const client = createMcpSubprocessBrokerClient(broker.env);
+      if (!client) throw new Error("Missing broker client");
+      return client;
+    }
+    const broker = createBroker();
+    // This capability is retained under A without making its first request.
+    const delayedClient = clientFor(createBroker());
+    const secretPath = "/v1/agents/agent-child/secrets";
 
     try {
       expect(JSON.stringify(broker.env)).not.toContain("mst_one.secret-a");
-      const childClient = createMcpSubprocessBrokerClient(broker.env);
-      expect(childClient).not.toBeNull();
+      const childClient = clientFor(broker);
       const { getClient: _parentClient, ...childBaseDeps } = deps;
       const childDeps: McpSubcommandDependencies = {
         ...childBaseDeps,
@@ -201,13 +231,56 @@ describe("MCP originator token forwarding", () => {
         { title: "First" },
         childDeps,
       );
-      activeSuperRunId = null;
+      await childClient.get(secretPath);
+      expect(secretRequests).toEqual([
+        {
+          path: secretPath,
+          headers: {
+            "x-letta-mcp-originator-token": "mst_one.secret-a",
+            "x-letta-mcp-originator-isolation": "1",
+            "x-letta-secret-isolation": "1",
+          },
+        },
+      ]);
+
+      activeSuperRunId = "sr-2";
+      await expect(delayedClient.get(secretPath)).rejects.toThrow("Forbidden");
+      expect(secretRequests).toHaveLength(1);
+      const freshClient = clientFor(createBroker());
+      await freshClient.get(secretPath);
+      expect(secretRequests[1]?.headers?.["x-letta-mcp-originator-token"]).toBe(
+        "mst_two.secret-b",
+      );
+      await expect(
+        freshClient.get("/v1/agents/agent-cloud/secrets"),
+      ).rejects.toThrow("Forbidden");
+      // MCP deliberately retains its existing dynamic authority under B.
       await callAgentMcpTool(
         "agent-cloud",
         "mcp__github__create_issue",
         { title: "Second" },
         childDeps,
       );
+      activeSuperRunId = null;
+      await expect(childClient.get(secretPath)).rejects.toThrow("Forbidden");
+      await expect(freshClient.get(secretPath)).rejects.toThrow("Forbidden");
+      await callAgentMcpTool(
+        "agent-cloud",
+        "mcp__github__create_issue",
+        { title: "Third" },
+        childDeps,
+      );
+
+      const unattributedClient = clientFor(createBroker());
+      activeSuperRunId = "sr-2";
+      await expect(unattributedClient.get(secretPath)).rejects.toThrow(
+        "Forbidden",
+      );
+      activeSuperRunId = "sr-1";
+      const driftingClient = clientFor(createBroker());
+      changeOriginatorWhileResolvingClient = true;
+      await expect(driftingClient.get(secretPath)).rejects.toThrow("Forbidden");
+      expect(secretRequests).toHaveLength(2);
 
       expect(requests).toEqual([
         {
@@ -221,11 +294,19 @@ describe("MCP originator token forwarding", () => {
         {
           path: runPath,
           body: { args: { title: "Second" } },
+          headers: {
+            "x-letta-mcp-originator-token": "mst_two.secret-b",
+            "x-letta-mcp-originator-isolation": "1",
+          },
+        },
+        {
+          path: runPath,
+          body: { args: { title: "Third" } },
           headers: undefined,
         },
       ]);
     } finally {
-      broker.close();
+      for (const activeBroker of brokers) activeBroker.close();
     }
   });
 });
