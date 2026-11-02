@@ -13,6 +13,7 @@ import {
   closeTaskProgressLog,
   externalWorkerProgressListeners,
   openTaskProgressLog,
+  recordTaskEvent,
   recordTaskProgressRemoteText,
   recordTaskProgressText,
   recordTaskProgressToolCall,
@@ -135,6 +136,43 @@ describe("task event log", () => {
         output,
       },
     ]);
+  });
+});
+
+describe("task log secret scrubbing", () => {
+  test.each([
+    "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----",
+    'p@ss"word\\with\\slashes"9f3k',
+  ])("scrubs %j from the event log and output file", (secret) => {
+    const dir = mkdtempSync(join(tmpdir(), "task-secrets-"));
+    dirs.push(dir);
+    const file = join(dir, "task.log");
+    writeFileSync(file, "");
+    openTaskProgressLog(SUBAGENT, file, () => new Date(0), {
+      DEPLOY_KEY: secret,
+    });
+    // Letta and remote events arrive without any worker-side scrubbing.
+    recordTaskProgressToolCall(SUBAGENT, {
+      id: "c1",
+      name: "Bash",
+      args: JSON.stringify({ command: `cat ${secret}` }),
+    });
+    recordTaskEvent(SUBAGENT, {
+      type: "tool_result",
+      tool_call_id: "c1",
+      is_error: true,
+      output: `error: bad key ${secret}`,
+    });
+    recordTaskEvent(SUBAGENT, { type: "reasoning", text: secret });
+    const tail = secret.slice(-16);
+    for (const written of [
+      readFileSync(file, "utf8"),
+      readFileSync(taskEventsFileFor(file), "utf8"),
+    ]) {
+      expect(written).toContain("DEPLOY_KEY=<REDACTED>");
+      expect(written).not.toContain(tail);
+      expect(written).not.toContain(JSON.stringify(tail).slice(1, -1));
+    }
   });
 });
 

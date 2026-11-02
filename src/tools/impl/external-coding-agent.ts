@@ -21,17 +21,18 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  captureSecretRedactions,
+  scrubSecretsDeep,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import {
-  type ExternalWorkerListeners,
-  parseToolInput,
-} from "./external-tool-call";
+import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -575,30 +576,22 @@ export function scrubExternalWorkerResult(
 
 /**
  * Wrap progress listeners so values exported from the vault never reach the
- * task's logs in tool arguments, outputs, or text.
+ * task's logs in tool arguments, outputs, or text. Every string field is
+ * scrubbed raw (and in its JSON-escaped form, as in `args`), so a value with
+ * quotes, backslashes, or newlines is caught too.
  */
 export function scrubWorkerListeners(
   listeners: ExternalWorkerListeners,
   secretEnv: Record<string, string>,
 ): ExternalWorkerListeners {
   if (Object.keys(secretEnv).length === 0) return listeners;
-  const scrub = (text: string) => scrubSecretsFromString(text, secretEnv);
+  const redactions = captureSecretRedactions(undefined, secretEnv);
+  const scrub = <T>(value: T) => scrubSecretsDeep(value, redactions);
   const { onToolCall, onText, onToolResult, onReasoning } = listeners;
   return {
-    onToolCall:
-      onToolCall &&
-      ((call) => {
-        const input = JSON.stringify(call.input);
-        onToolCall({
-          ...call,
-          args: scrub(call.args),
-          input: input === undefined ? undefined : parseToolInput(scrub(input)),
-        });
-      }),
+    onToolCall: onToolCall && ((call) => onToolCall(scrub(call))),
     onText: onText && ((text) => onText(scrub(text))),
-    onToolResult:
-      onToolResult &&
-      ((result) => onToolResult({ ...result, output: scrub(result.output) })),
+    onToolResult: onToolResult && ((result) => onToolResult(scrub(result))),
     onReasoning: onReasoning && ((text) => onReasoning(scrub(text))),
   };
 }

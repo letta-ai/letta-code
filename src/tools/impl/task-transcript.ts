@@ -10,6 +10,10 @@ import {
 } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import {
+  captureSecretRedactions,
+  scrubSecretsDeep,
+} from "@/tools/secret-substitution";
+import {
   type ExternalToolCall,
   type ExternalWorkerListeners,
   parseToolInput,
@@ -109,6 +113,8 @@ interface TaskProgressLog {
   toolNames: Map<string, string>;
   lastText?: string;
   now: () => Date;
+  /** Secret values scrubbed from every event before it is written. */
+  redactions: Record<string, string>;
 }
 
 const progressLogs = new Map<string, TaskProgressLog>();
@@ -183,12 +189,15 @@ function readableLine(event: TaskEvent): string | null {
  * Start recording live worker progress into a task's output file, between
  * `[Task started…]` and the final result: one readable line per tool call,
  * tool result, and message. Every event also goes, in full, to a JSONL event
- * log next to the output file.
+ * log next to the output file. Values in `redactions` (by default the
+ * ambient runtime credentials and the current agent's vault) are scrubbed
+ * from each event first.
  */
 export function openTaskProgressLog(
   subagentId: string,
   outputFile: string,
   now: () => Date = () => new Date(),
+  redactions: Record<string, string> = captureSecretRedactions(),
 ): void {
   const eventsFile = taskEventsFileFor(outputFile);
   try {
@@ -205,6 +214,7 @@ export function openTaskProgressLog(
     seen: new Set(),
     toolNames: new Map(),
     now,
+    redactions,
   });
 }
 
@@ -232,6 +242,8 @@ export function recordTaskEvent(
 ): void {
   const log = progressLogs.get(subagentId);
   if (!log) return;
+  // Scrub raw values before anything is serialized or excerpted.
+  event = scrubSecretsDeep(event, log.redactions);
   const key =
     options.key ??
     (event.type === "tool_call"
