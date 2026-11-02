@@ -165,6 +165,7 @@ function runRipgrep(rgArgs: string[]): Promise<string> {
         // JSON mode emits one object per line; matches can be long.
         // 50MB covers even pathological repos before we truncate.
         maxBuffer: 50 * 1024 * 1024,
+        windowsHide: true,
       },
       (error, stdout, _stderr) => {
         // ripgrep exits 1 when there are no matches — that's not an

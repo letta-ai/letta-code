@@ -23,10 +23,15 @@ import {
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
+import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
-import type { ExternalToolCallListener } from "./external-tool-call";
+import { runCursorTurn } from "./cursor-session";
+import type {
+  ExternalTextListener,
+  ExternalToolCallListener,
+} from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -40,6 +45,7 @@ export const EXTERNAL_CODING_AGENT_TYPES = [
   "claude-code",
   "codex",
   "opencode",
+  "cursor",
 ] as const;
 export type ExternalCodingAgentType =
   (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
@@ -68,6 +74,8 @@ export interface ExternalCodingAgentRunOptions {
   onStarted?: (agentId: string) => void;
   /** Live progress: called once per tool call the worker makes. */
   onToolCall?: ExternalToolCallListener;
+  /** Live progress: called with each assistant text block (Claude Code, Codex). */
+  onText?: ExternalTextListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -127,6 +135,7 @@ const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
   opencode: "opencode_",
+  cursor: "cursor_",
 };
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -356,7 +365,8 @@ export function classifyExternalCodingAgentStartupError(
     return "not_installed";
   if (
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
-    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR)
+    error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
+    error.startsWith("Cursor is not signed in:")
   )
     return "not_signed_in";
   return undefined;
@@ -473,29 +483,40 @@ export async function resolveExternalCodingAgentSecretEnv(
   return { ...inherited, ...loadSecrets(parentAgentId) };
 }
 
-export async function runExternalCodingAgent(
-  options: ExternalCodingAgentRunOptions,
-  deps: ExternalCodingAgentDependencies = {},
-): Promise<SubagentResult> {
+export interface ExternalWorkerLaunchEnv {
+  env: NodeJS.ProcessEnv;
+  /** Vault values exported into `env`; scrub them from returned reports. */
+  secretEnv: Record<string, string>;
+  /** Parent memory note plus the MCP reminder, for the worker's prompt. */
+  mcpReminder?: string;
+}
+
+/**
+ * The environment and prompt note a worker process starts with. Launch and
+ * resume both build them here so a resumed worker matches a fresh one.
+ */
+export async function buildExternalWorkerLaunchEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "actingUserId" | "mcpReminder"
+  >,
+  deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
+): Promise<ExternalWorkerLaunchEnv> {
   const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
   // Compose once for both providers, independently of MCP inheritance.
-  options = {
-    ...options,
-    mcpReminder:
-      [
-        parentMemoryNote
-          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
-          : undefined,
-        options.mcpReminder,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined,
-  };
-  const startedAt = Date.now();
+  const mcpReminder =
+    [
+      parentMemoryNote
+        ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+        : undefined,
+      options.mcpReminder,
+    ]
+      .filter(Boolean)
+      .join("\n\n") || undefined;
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
   )(options.parentAgentId);
-  const env: NodeJS.ProcessEnv = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     ...secretEnv,
     AGENT_ID: options.parentAgentId,
@@ -504,7 +525,7 @@ export async function runExternalCodingAgent(
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
-  };
+  });
   if (typeof options.actingUserId === "string") {
     env[ACTING_USER_ID_ENV] = options.actingUserId;
   } else if (
@@ -513,6 +534,58 @@ export async function runExternalCodingAgent(
   ) {
     delete env[ACTING_USER_ID_ENV];
   }
+  return { env, secretEnv, mcpReminder };
+}
+
+export interface ExternalWorkerResumeEnvDependencies
+  extends Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> {
+  resolveMcpReminder?: (parentAgentId: string) => Promise<string | undefined>;
+}
+
+/**
+ * Prepare a resumed Claude Code or Codex worker the same way as a launch.
+ * The launch's MCP selection is not persisted, so a resume lists the parent's
+ * default MCP inventory; an unreadable inventory drops the list, not the turn.
+ */
+export async function buildExternalWorkerResumeEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "actingUserId"
+  >,
+  deps: ExternalWorkerResumeEnvDependencies = {},
+): Promise<ExternalWorkerLaunchEnv> {
+  const mcpReminder = await (
+    deps.resolveMcpReminder ??
+    ((parentAgentId: string) =>
+      resolveExternalCodingAgentMcpReminder(parentAgentId, undefined))
+  )(options.parentAgentId).catch(() => undefined);
+  return buildExternalWorkerLaunchEnv({ ...options, mcpReminder }, deps);
+}
+
+/** Keep exported vault values out of a report returned to the parent. */
+export function scrubExternalWorkerResult(
+  result: SubagentResult,
+  secretEnv: Record<string, string>,
+): SubagentResult {
+  return {
+    ...result,
+    report: scrubSecretsFromString(result.report, secretEnv),
+    ...(result.error !== undefined && {
+      error: scrubSecretsFromString(result.error, secretEnv),
+    }),
+  };
+}
+
+export async function runExternalCodingAgent(
+  options: ExternalCodingAgentRunOptions,
+  deps: ExternalCodingAgentDependencies = {},
+): Promise<SubagentResult> {
+  const startedAt = Date.now();
+  const { env, secretEnv, mcpReminder } = await buildExternalWorkerLaunchEnv(
+    options,
+    deps,
+  );
+  options = { ...options, mcpReminder };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -543,13 +616,7 @@ export async function runExternalCodingAgent(
   ): Promise<SubagentResult> => {
     // The worker had the vault in its environment; keep exported values out
     // of the report that returns to the parent's context.
-    const result: SubagentResult = {
-      ...rawResult,
-      report: scrubSecretsFromString(rawResult.report, secretEnv),
-      ...(rawResult.error !== undefined && {
-        error: scrubSecretsFromString(rawResult.error, secretEnv),
-      }),
-    };
+    const result = scrubExternalWorkerResult(rawResult, secretEnv);
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
@@ -594,6 +661,18 @@ export async function runExternalCodingAgent(
       env,
     );
   }
+  if (options.type === "cursor") {
+    return runCursorTurn(
+      {
+        ...options,
+        cwd,
+        onStarted: (sessionId) =>
+          options.onStarted?.(formatExternalCodingAgentId("cursor", sessionId)),
+      },
+      env,
+      secretEnv,
+    );
+  }
   if (options.type === "codex") {
     try {
       const preflight = await (deps.runPreflight ?? defaultRunPreflight)(
@@ -620,6 +699,7 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -676,6 +756,7 @@ export async function runExternalCodingAgent(
             resumeSessionId: options.resumeSessionId,
             sessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
           },
           { env },
         ),

@@ -6,9 +6,9 @@
 
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 /**
  * Configuration options for tool output overflow behavior.
@@ -24,14 +24,13 @@ export const OVERFLOW_CONFIG = {
 
 /**
  * Get the overflow directory for the current project.
- * Pattern: ~/.letta/projects/<project-path>/agent-tools/
+ * Pattern: <product-config>/projects/<project-path>/agent-tools/
  *
  * @param workingDirectory - Current working directory (project root)
  * @returns Absolute path to the overflow directory
  */
 export function getOverflowDirectory(workingDirectory: string): string {
-  const homeDir = os.homedir();
-  const lettaDir = path.join(homeDir, ".letta");
+  const configDir = resolveGlobalConfigDir();
 
   // Normalize and sanitize the working directory path for use in the file system
   const normalizedPath = path.normalize(workingDirectory);
@@ -42,7 +41,7 @@ export function getOverflowDirectory(workingDirectory: string): string {
     .replace(/\s+/g, "_"); // Replace spaces with underscores
 
   const overflowDir = path.join(
-    lettaDir,
+    configDir,
     "projects",
     sanitizedPath,
     "agent-tools",

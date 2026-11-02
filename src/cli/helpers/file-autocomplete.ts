@@ -13,6 +13,7 @@ import { arch, homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 // Ported from Pi TUI packages/tui/src/autocomplete.ts.
 // Keep behavior aligned with Pi's fd-backed @ file autocomplete.
@@ -273,7 +274,7 @@ export interface AppliedFileCompletion {
   cursorPosition: number;
 }
 
-const FD_TOOLS_DIR = join(homedir(), ".letta", "bin");
+const FD_TOOLS_DIR = join(resolveGlobalConfigDir(), "bin");
 const FD_BINARY_NAME = platform() === "win32" ? "fd.exe" : "fd";
 const FD_LOCAL_PATH = join(FD_TOOLS_DIR, FD_BINARY_NAME);
 const FD_DOWNLOAD_REPO = "sharkdp/fd";

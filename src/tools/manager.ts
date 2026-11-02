@@ -60,6 +60,7 @@ import type {
   ExternalToolDefinition,
   ExternalToolExecutor,
 } from "@/tools/external-tool-types";
+import * as contextRetention from "@/tools/tool-context-retention";
 
 export type {
   ClientTool,
@@ -125,7 +126,6 @@ const STREAMING_SHELL_TOOLS = new Set([
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
 const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
-
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
 
@@ -406,13 +406,10 @@ function saveExecutionContext(snapshot: ToolExecutionContextSnapshot): string {
   const contextId = `ctx-${Date.now()}-${toolExecutionContextCounter++}`;
   contexts.set(contextId, snapshot);
 
-  // Keep memory bounded; stale turns won't need old snapshots.
-  const MAX_CONTEXTS = 4096;
-  if (contexts.size > MAX_CONTEXTS) {
-    const oldestContextId = contexts.keys().next().value;
-    if (oldestContextId) {
-      contexts.delete(oldestContextId);
-    }
+  // Keep memory bounded; stale turns won't need old snapshots unless retained.
+  for (const id of contexts.keys()) {
+    if (contexts.size <= 4096) break;
+    if (!contextRetention.isToolContextRetained(id)) contexts.delete(id);
   }
 
   return contextId;
@@ -492,7 +489,8 @@ export function clearCapturedToolExecutionContexts(): void {
 }
 
 export function releaseToolExecutionContext(contextId: string): void {
-  getExecutionContexts().delete(contextId);
+  if (!contextRetention.deferToolContextRelease(contextId))
+    getExecutionContexts().delete(contextId);
 }
 
 /**
@@ -822,7 +820,8 @@ function capturePreparedToolExecutionContext(
   );
   const contextId = saveExecutionContext(executionSnapshot);
   executionSnapshot.runtimeContext.toolContextId = contextId;
-
+  executionSnapshot.runtimeContext.resolveMcpOriginatorSuperRunId = () =>
+    executionSnapshot.runtimeContext.mcpOriginatorSuperRunId;
   return {
     contextId,
     clientTools,

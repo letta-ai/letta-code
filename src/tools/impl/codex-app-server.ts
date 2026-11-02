@@ -1,12 +1,29 @@
-import { spawn as nodeSpawn } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
 import type { SubagentResult } from "@/agent/subagents";
+import {
+  killWindowsProcessTree,
+  spawnManagedWorkloadProcess,
+} from "@/agent/subagents/subagent-process";
+import { withNativeCliPath } from "@/utils/native-cli-env";
+import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
 import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
-  type ExternalToolCall,
-  type ExternalToolCallListener,
-  formatExternalToolCallArgs,
+  asRecord,
+  CAPACITY_RETRY_DELAYS_MS,
+  capacityResult,
+  describeCodexToolItem,
+  isCapacityError,
+  readString,
+  TOOL_ITEM_TYPES,
+  turnFailureMessage,
+  turnReport,
+} from "./codex-app-server-payloads";
+import type {
+  ExternalTextListener,
+  ExternalToolCallListener,
 } from "./external-tool-call";
 
 declare const LETTA_VERSION: string | undefined;
@@ -32,14 +49,42 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+interface TurnOutcome {
+  result: SubagentResult;
+  capacityFailure: boolean;
+  ranTool: boolean;
+  steered: boolean;
+}
+
 interface TurnWaiter {
   turnId: string;
-  resolve: (value: SubagentResult) => void;
+  resolve: (value: TurnOutcome) => void;
   startedAt: number;
   model?: string;
   latestAgentMessage?: string;
   onToolCall?: ExternalToolCallListener;
   seenToolCallIds: Set<string>;
+  onText?: ExternalTextListener;
+  /** Text already reported to `onText`, shared across capacity retries. */
+  reportedText: ReportedText;
+  /** Texts reported by earlier attempts of this prompt; not re-reported. */
+  textFromEarlierAttempts: ReadonlySet<string>;
+  /** A tool-like item started, so replaying the prompt could repeat side effects. */
+  ranTool: boolean;
+  /** Steered input went into this turn and would be lost by a replay. */
+  steered: boolean;
+  /** Final (non-retrying) `error` notifications for this turn. */
+  errors: Array<Record<string, unknown>>;
+}
+
+/**
+ * A capacity retry replays the prompt as a new turn with new item IDs, so
+ * text is also deduplicated by content to keep `onText` from repeating
+ * a message an earlier attempt already reported.
+ */
+interface ReportedText {
+  itemIds: Set<string>;
+  texts: Set<string>;
 }
 
 interface CodexSession {
@@ -54,6 +99,7 @@ interface CodexSession {
   pendingNotifications: JsonRpcMessage[];
   idleTimer?: ReturnType<typeof setTimeout>;
   idleTimeoutMs: number;
+  sleep: (ms: number) => Promise<unknown>;
 }
 
 export interface CodexTurnOptions {
@@ -67,6 +113,8 @@ export interface CodexTurnOptions {
   onStarted?: (threadId: string, turnId: string) => void;
   /** Called once per tool-like thread item (command, patch, MCP, search). */
   onToolCall?: ExternalToolCallListener;
+  /** Called once per completed `agentMessage` item with non-empty text. */
+  onText?: ExternalTextListener;
   beforeStart?: (threadId: string) => Promise<void>;
 }
 
@@ -74,6 +122,8 @@ export interface CodexTurnHandle {
   threadId: string;
   turnId: string;
   completion: Promise<SubagentResult>;
+  /** Interrupt the current attempt and stop capacity retries. */
+  interrupt: () => Promise<void>;
 }
 
 export interface CodexMessageReceipt {
@@ -91,11 +141,82 @@ export interface CodexAppServerDependencies {
   }) => CodexAppServerTransport;
   env?: NodeJS.ProcessEnv;
   idleTimeoutMs?: number;
+  /** Backoff timer between capacity retries (injectable for tests). */
+  sleep?: (ms: number) => Promise<unknown>;
 }
 
 const sessions = new Map<string, CodexSession>();
 const sessionCreations = new Map<string, Promise<CodexSession>>();
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60_000;
+/** Read the native catalog without creating a thread or starting a turn. */
+export async function listCodexModels(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): Promise<unknown[]> {
+  const controller = new AbortController();
+  const running = spawnManagedWorkloadProcess(
+    "codex",
+    ["app-server", "--stdio"],
+    {
+      cwd,
+      env,
+      signal: controller.signal,
+    },
+  );
+  running.process.stdin.on("error", () => {});
+  const transport: CodexAppServerTransport = {
+    stdin: running.process.stdin,
+    stdout: running.process.stdout,
+    stderr: running.process.stderr,
+    kill: () => controller.abort(),
+    exited: running.completion.then(({ exitCode, exitSignal }) => ({
+      code: exitCode,
+      signal: exitSignal,
+    })),
+  };
+  const client = new CodexAppServerClient(
+    transport,
+    () => {},
+    () => {},
+  );
+  // A failed start (e.g. ENOENT) otherwise surfaces as EPIPE on the first
+  // stdin write, hiding the real cause.
+  let startError: Error | undefined;
+  running.process.once("error", (error: NodeJS.ErrnoException) => {
+    startError =
+      error.code === "ENOENT"
+        ? new Error("Required executable 'codex' was not found on PATH")
+        : error;
+    client.dispose();
+  });
+  const timer = setTimeout(() => client.dispose(), 30_000);
+  try {
+    await client.initialize();
+    const models: unknown[] = [];
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await client.request("model/list", { cursor, limit: 100 });
+      if (!Array.isArray(page.data))
+        throw new Error("Codex did not return a model catalog");
+      models.push(...page.data);
+      cursor =
+        typeof page.nextCursor === "string" ? page.nextCursor : undefined;
+      if (cursor && cursors.has(cursor))
+        throw new Error("Codex repeated a model catalog cursor");
+      if (cursor) cursors.add(cursor);
+    } while (cursor);
+    return models;
+  } catch (error) {
+    client.dispose();
+    await running.completion;
+    throw startError ?? error;
+  } finally {
+    clearTimeout(timer);
+    client.dispose();
+    await running.completion;
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -113,52 +234,25 @@ function spawnTransport(options: {
     ["codex", "app-server", "--stdio"],
     { env: options.env },
   );
-  const child = nodeSpawn(command, args, {
+  const child = getCommandProcessFactory()(command, args, {
     cwd: options.cwd,
     env: options.env,
     stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true,
-  });
+  }) as ChildProcessWithoutNullStreams;
   return {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
-    kill: () => child.kill(),
+    // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
+    kill: () =>
+      process.platform === "win32"
+        ? void killWindowsProcessTree(child)
+        : child.kill(),
     exited: new Promise((resolve) => {
       child.once("close", (code, signal) => resolve({ code, signal }));
     }),
   };
-}
-
-function asRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function readString(value: unknown, key: string): string | undefined {
-  const record = asRecord(value);
-  return typeof record?.[key] === "string"
-    ? (record[key] as string)
-    : undefined;
-}
-
-function turnError(params: Record<string, unknown>): string | undefined {
-  const turn = asRecord(params.turn);
-  const error = asRecord(turn?.error);
-  return typeof error?.message === "string" ? error.message : undefined;
-}
-
-function turnReport(params: Record<string, unknown>): string {
-  const turn = asRecord(params.turn);
-  const items = Array.isArray(turn?.items) ? turn.items : [];
-  for (let index = items.length - 1; index >= 0; index--) {
-    const item = asRecord(items[index]);
-    if (item?.type === "agentMessage" && typeof item.text === "string") {
-      return item.text;
-    }
-  }
-  return "";
 }
 
 class CodexAppServerClient {
@@ -284,60 +378,51 @@ function failSession(session: CodexSession, error: Error): void {
   session.activeWaiter = undefined;
   if (!waiter) return;
   waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: waiter.latestAgentMessage ?? "",
-    success: false,
-    error: error.message,
-    durationMs: Date.now() - waiter.startedAt,
+    result: {
+      agentId: `codex_${session.threadId}`,
+      runtimeSessionId: session.threadId,
+      model: waiter.model,
+      report: waiter.latestAgentMessage ?? "",
+      success: false,
+      error: error.message,
+      durationMs: Date.now() - waiter.startedAt,
+    },
+    capacityFailure: false,
+    ranTool: waiter.ranTool,
+    steered: waiter.steered,
   });
-}
-
-/** Map a tool-like app-server ThreadItem to a display tool call. */
-export function describeCodexToolItem(
-  item: Record<string, unknown> | undefined,
-): ExternalToolCall | undefined {
-  const id = readString(item, "id");
-  if (!item || !id) return undefined;
-  const call = (name: string, args: unknown) => ({
-    id,
-    name,
-    args: formatExternalToolCallArgs(args),
-  });
-  switch (item.type) {
-    case "commandExecution":
-      return call("Bash", { command: item.command });
-    case "fileChange": {
-      const changes = Array.isArray(item.changes) ? item.changes : [];
-      return call("Edit", {
-        files: changes.map((change) => readString(change, "path")),
-      });
-    }
-    case "mcpToolCall":
-      return call(
-        `${readString(item, "server") ?? "mcp"}/${readString(item, "tool") ?? "tool"}`,
-        item.arguments,
-      );
-    case "dynamicToolCall":
-      return call(readString(item, "tool") ?? "tool", item.arguments);
-    case "webSearch": {
-      // The query is often filled in only when the search completes.
-      const query = readString(item, "query");
-      return query ? call("WebSearch", { query }) : undefined;
-    }
-    default:
-      return undefined;
-  }
 }
 
 function recordToolItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  if (typeof item.type === "string" && TOOL_ITEM_TYPES.has(item.type)) {
+    waiter.ranTool = true;
+  }
   if (!waiter.onToolCall) return;
   const call = describeCodexToolItem(item);
   if (!call || waiter.seenToolCallIds.has(call.id)) return;
   waiter.seenToolCallIds.add(call.id);
   try {
     waiter.onToolCall(call);
+  } catch {
+    // Progress display must not break the turn.
+  }
+}
+
+function recordTextItem(waiter: TurnWaiter, item: Record<string, unknown>) {
+  const id = readString(item, "id");
+  const { reportedText } = waiter;
+  if (
+    !waiter.onText ||
+    typeof item.text !== "string" ||
+    !item.text.trim() ||
+    (id && reportedText.itemIds.has(id)) ||
+    waiter.textFromEarlierAttempts.has(item.text.trim())
+  )
+    return;
+  if (id) reportedText.itemIds.add(id);
+  reportedText.texts.add(item.text.trim());
+  try {
+    waiter.onText(item.text);
   } catch {
     // Progress display must not break the turn.
   }
@@ -359,6 +444,7 @@ function recordItem(
     typeof item.text === "string"
   ) {
     session.activeWaiter.latestAgentMessage = item.text;
+    recordTextItem(session.activeWaiter, item);
   }
   return true;
 }
@@ -376,19 +462,44 @@ function settleTurn(
   session.activeTurnId = undefined;
   session.activeWaiter = undefined;
   const status = readString(turn, "status");
-  const failure = turnError(params);
+  const completed = status === "completed";
+  const turnError = asRecord(turn?.error);
+  const failure = turnFailureMessage(turnError, waiter.errors);
   waiter.resolve({
-    agentId: `codex_${session.threadId}`,
-    runtimeSessionId: session.threadId,
-    model: waiter.model,
-    report: turnReport(params) || waiter.latestAgentMessage || "",
-    success: status === "completed",
-    ...(status === "completed"
-      ? {}
-      : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
-    durationMs: Date.now() - waiter.startedAt,
+    result: {
+      agentId: `codex_${session.threadId}`,
+      runtimeSessionId: session.threadId,
+      model: waiter.model,
+      report: turnReport(params) || waiter.latestAgentMessage || "",
+      success: completed,
+      ...(completed
+        ? {}
+        : { error: failure ?? `Codex turn ${status ?? "failed"}` }),
+      durationMs: Date.now() - waiter.startedAt,
+    },
+    capacityFailure:
+      !completed &&
+      [turnError, ...waiter.errors].some(
+        (error) => error !== undefined && isCapacityError(error),
+      ),
+    ranTool: waiter.ranTool,
+    steered: waiter.steered,
   });
   scheduleIdleSessionCleanup(session);
+  return true;
+}
+
+function recordError(
+  session: CodexSession,
+  params: Record<string, unknown>,
+): boolean {
+  const turnId = readString(params, "turnId");
+  if (turnId !== session.activeTurnId || !session.activeWaiter) return false;
+  const error = asRecord(params.error);
+  // `willRetry` notices are progress ("Reconnecting... 1/5"), not the failure.
+  if (error && params.willRetry !== true) {
+    session.activeWaiter.errors.push(error);
+  }
   return true;
 }
 
@@ -405,6 +516,9 @@ function handleNotification(
   }
   if (message.method === "turn/completed") {
     return settleTurn(session, message.params);
+  }
+  if (message.method === "error") {
+    return recordError(session, message.params);
   }
   return true;
 }
@@ -471,11 +585,11 @@ async function createSession(
   options: CodexTurnOptions,
   deps: CodexAppServerDependencies,
 ): Promise<CodexSession> {
-  const env = {
+  const env = withNativeCliPath({
     ...(deps.env ?? process.env),
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
-  };
+  });
   const transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
@@ -485,8 +599,10 @@ async function createSession(
   const client = new CodexAppServerClient(
     transport,
     (message) => {
-      if (!session || !handleNotification(session, message)) {
-        pendingNotifications.push(message);
+      if (!session) pendingNotifications.push(message);
+      // Replay swaps in a new queue, so always push to the current one.
+      else if (!handleNotification(session, message)) {
+        session.pendingNotifications.push(message);
       }
     },
     (error) => {
@@ -532,6 +648,7 @@ async function createSession(
     startLock: Promise.resolve(),
     pendingNotifications,
     idleTimeoutMs: deps.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS,
+    sleep: deps.sleep ?? sleep,
   };
   sessions.set(threadId, session);
   return session;
@@ -554,13 +671,21 @@ async function withSessionLock<T>(
   }
 }
 
-async function startTurnUnlocked(
+interface TurnAttempt {
+  turnId: string;
+  outcome: Promise<TurnOutcome>;
+}
+
+type TurnListeners = Pick<CodexTurnOptions, "onToolCall" | "onText"> & {
+  reportedText: ReportedText;
+};
+
+async function startTurnAttempt(
   session: CodexSession,
   prompt: string,
-  signal?: AbortSignal,
-  onStarted?: (threadId: string, turnId: string) => void,
-  onToolCall?: ExternalToolCallListener,
-): Promise<CodexTurnHandle> {
+  startedAt: number,
+  listeners: TurnListeners,
+): Promise<TurnAttempt> {
   if (session.activeTurnId) {
     throw new Error("Codex thread already has an active turn");
   }
@@ -578,35 +703,105 @@ async function startTurnUnlocked(
   const turn = asRecord(response.turn);
   const turnId = readString(turn, "id");
   if (!turnId) throw new Error("Codex app-server returned no native turn ID");
-  const completion = new Promise<SubagentResult>((resolve) => {
+  const outcome = new Promise<TurnOutcome>((resolve) => {
     session.activeTurnId = turnId;
     session.activeWaiter = {
       turnId,
       resolve,
-      startedAt: Date.now(),
+      startedAt,
       model: session.model,
-      onToolCall,
+      onToolCall: listeners.onToolCall,
       seenToolCallIds: new Set(),
+      onText: listeners.onText,
+      reportedText: listeners.reportedText,
+      textFromEarlierAttempts: new Set(listeners.reportedText.texts),
+      ranTool: false,
+      steered: false,
+      errors: [],
     };
   });
-  onStarted?.(session.threadId, turnId);
-  replayPendingNotifications(session);
-  const abort = () => {
-    void session.client
-      .request("turn/interrupt", { threadId: session.threadId, turnId })
-      .catch(() => undefined);
+  return { turnId, outcome };
+}
+
+async function startTurnUnlocked(
+  session: CodexSession,
+  prompt: string,
+  signal?: AbortSignal,
+  onStarted?: (threadId: string, turnId: string) => void,
+  { onToolCall, onText }: Pick<CodexTurnOptions, "onToolCall" | "onText"> = {},
+): Promise<CodexTurnHandle> {
+  const startedAt = Date.now();
+  const listeners: TurnListeners = {
+    onToolCall,
+    onText,
+    reportedText: { itemIds: new Set(), texts: new Set() },
   };
+  const first = await startTurnAttempt(session, prompt, startedAt, listeners);
+  let currentTurnId = first.turnId;
+  let interrupted = false;
+  onStarted?.(session.threadId, first.turnId);
+  replayPendingNotifications(session);
+  const interrupt = async () => {
+    interrupted = true;
+    await session.client.request("turn/interrupt", {
+      threadId: session.threadId,
+      turnId: currentTurnId,
+    });
+  };
+  const abort = () => void interrupt().catch(() => undefined);
   signal?.addEventListener("abort", abort, { once: true });
   if (signal?.aborted) abort();
+  // A 409 means the provider had no capacity for this request. Replay the same
+  // prompt on the same thread only while doing so cannot repeat side effects.
+  const completion = (async (): Promise<SubagentResult> => {
+    let attempt = first;
+    for (let retry = 0; ; retry++) {
+      const outcome = await attempt.outcome;
+      if (!outcome.capacityFailure) return outcome.result;
+      const delay = CAPACITY_RETRY_DELAYS_MS[retry];
+      const canRetry = () =>
+        !interrupted &&
+        !signal?.aborted &&
+        !outcome.ranTool &&
+        !outcome.steered;
+      if (delay === undefined || !canRetry()) {
+        return capacityResult(outcome.result);
+      }
+      await session.sleep(delay);
+      if (!canRetry()) return capacityResult(outcome.result);
+      try {
+        attempt = await withSessionLock(session, async () => {
+          const next = await startTurnAttempt(
+            session,
+            prompt,
+            startedAt,
+            listeners,
+          );
+          currentTurnId = next.turnId;
+          replayPendingNotifications(session);
+          return next;
+        });
+      } catch {
+        // The session closed or another turn started during backoff.
+        return capacityResult(outcome.result);
+      }
+      if (interrupted || signal?.aborted) abort();
+    }
+  })();
   completion.finally(() => signal?.removeEventListener("abort", abort));
-  return { threadId: session.threadId, turnId, completion };
+  return {
+    threadId: session.threadId,
+    turnId: first.turnId,
+    completion,
+    interrupt,
+  };
 }
 
 function startTurn(
   session: CodexSession,
   options: Pick<
     CodexTurnOptions,
-    "prompt" | "signal" | "onStarted" | "onToolCall" | "beforeStart"
+    "prompt" | "signal" | "onStarted" | "onToolCall" | "onText" | "beforeStart"
   >,
 ): Promise<CodexTurnHandle> {
   return withSessionLock(session, async () => {
@@ -616,7 +811,7 @@ function startTurn(
       options.prompt,
       options.signal,
       options.onStarted,
-      options.onToolCall,
+      options,
     );
   });
 }
@@ -670,6 +865,9 @@ export async function sendCodexMessage(
             expectedTurnId: activeTurnId,
             input: textInput(options.prompt),
           });
+          if (session.activeWaiter?.turnId === activeTurnId) {
+            session.activeWaiter.steered = true;
+          }
           return {
             mode: "steered",
             threadId: session.threadId,
@@ -687,13 +885,10 @@ export async function sendCodexMessage(
         options.prompt,
         undefined,
         options.onStarted,
-        options.onToolCall,
+        options,
       );
       if (options.signal?.aborted) {
-        await session.client.request("turn/interrupt", {
-          threadId: handle.threadId,
-          turnId: handle.turnId,
-        });
+        await handle.interrupt();
         options.signal.throwIfAborted();
       }
       return {
@@ -701,12 +896,7 @@ export async function sendCodexMessage(
         threadId: handle.threadId,
         turnId: handle.turnId,
         completion: handle.completion,
-        interrupt: async () => {
-          await session.client.request("turn/interrupt", {
-            threadId: handle.threadId,
-            turnId: handle.turnId,
-          });
-        },
+        interrupt: handle.interrupt,
       };
     });
   } catch (error) {

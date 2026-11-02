@@ -455,6 +455,7 @@ function scheduleRemoteRestart(
         detached: true,
         env: process.env,
         stdio: "ignore",
+        windowsHide: true,
       },
     );
     log(

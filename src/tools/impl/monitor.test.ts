@@ -124,12 +124,12 @@ describe("Monitor", () => {
       minimum: 1000,
       default: 300000,
       description:
-        "Kill the monitor after this deadline. Default 300000ms, max 3600000ms. Ignored when persistent is true.",
+        "Kill the monitor after this deadline. Default 300000ms. Maximum {{MONITOR_MAX_TIMEOUT}}. Ignored when persistent is true.",
     });
     expect(MonitorSchema.properties.persistent).toMatchObject({
       default: false,
       description:
-        "Run until TaskStop or session end. In managed Cloud sandboxes, a hard 1-hour limit still applies; elsewhere there is no timeout. For longer waits in Cloud, use Wake/cron rather than keeping a monitor running.",
+        "Run until TaskStop or session end. In managed Cloud sandboxes, it still stops after {{MONITOR_MAX_TIMEOUT}} (this sandbox's monitor cap); elsewhere there is no timeout. Call Monitor again to re-arm it. For much longer waits in Cloud, use Wake/cron.",
     });
     expect(MonitorSchema.properties.ws.properties.protocols).not.toHaveProperty(
       "uniqueItems",

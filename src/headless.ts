@@ -14,6 +14,7 @@ import { resumeBusyRequestStream } from "@/agent/busy-request-resume";
 import { waitForBusyRunRetry } from "@/agent/busy-run-wait";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
+import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { buildHeadlessSenderReminder } from "@/headless-message-sender";
 import { createHeadlessResponseState } from "@/headless-response-state";
@@ -81,10 +82,6 @@ import {
   type ConversationCreateBody,
   getBackend,
 } from "./backend";
-import {
-  resolveAgentSandboxConnectionId,
-  resolveEnvironmentConnectionId,
-} from "./backend/api/environments";
 import type { ParsedCliArgs } from "./cli/args";
 import {
   normalizeConversationShorthandFlags,
@@ -123,10 +120,9 @@ import {
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
-  buildEnvironmentResponseMetadata,
-  isCloudEnvironmentSelector,
   type ListenerLaunchResult,
   type ReplyEnvironmentMetadata,
+  resolveListenerLaunchTarget,
 } from "./headless-environment-response";
 import {
   clearHeadlessClientToolRules,
@@ -172,10 +168,7 @@ import {
   prependReminderPartsToContent,
 } from "./reminders/engine";
 import { runPostTurnMemorySync } from "./reminders/memory-git-sync";
-import {
-  createSharedReminderState,
-  enqueueMemoryGitSyncReminder,
-} from "./reminders/state";
+import { createSharedReminderState } from "./reminders/state";
 import { getCurrentWorkingDirectory } from "./runtime-context";
 import { subagentExecutionSettings } from "./runtime-execution-settings";
 import { settingsManager, shouldPersistSessionState } from "./settings-manager";
@@ -829,24 +822,20 @@ export async function handleHeadlessCommand(
   const skillSourcesRaw = values["skill-sources"];
   const memfsFlag = values.memfs;
   const statelessFlag = values.stateless;
-  const isSubagentRole = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
-  // Fresh subagents are stateless by role; --stateless only extends that to
-  // an existing --agent/--conversation launch — model, prompt, tools, and
-  // sampling config are unchanged.
-  const memfsPolicy = resolveHeadlessMemfsPolicy({
-    statelessRequested: Boolean(statelessFlag),
-    isSubagentRole,
-    newAgentRequested: Boolean(forceNew),
-  });
-  const { isFreshStatelessSubagent } = memfsPolicy;
-  const isStatelessSession =
+  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  // Fresh or resumed subagents, and --stateless launches, never enable MemFS.
+  const memfsPolicyFor = (agentTags?: string[] | null) =>
+    resolveHeadlessMemfsPolicy({
+      statelessRequested: Boolean(statelessFlag),
+      isSubagentRole: isSubagent,
+      newAgentRequested: Boolean(forceNew),
+      agentTags,
+    });
+  const memfsPolicy = memfsPolicyFor();
+  let isStatelessSession =
     Boolean(ephemeralFlag) || memfsPolicy.isStatelessSession;
-  if (isStatelessSession && backend.capabilities.localMemfs) {
-    const { disableLocalBackendMemfsForProcess } = await import(
-      "@/backend/local/paths"
-    );
+  if (isStatelessSession && backend.capabilities.localMemfs)
     disableLocalBackendMemfsForProcess();
-  }
   // MemFS startup: block (default), pull in background, or skip this session.
   const memfsStartupRaw = values["memfs-startup"];
   const memfsStartupPolicy: "blocking" | "background" | "skip" =
@@ -1156,7 +1145,7 @@ export async function handleHeadlessCommand(
       (await isLettaCloud());
     const effectiveMemoryMode: MemoryPromptMode | undefined = backend
       .capabilities.localMemfs
-      ? isFreshStatelessSubagent
+      ? memfsPolicy.isFreshStatelessSubagent
         ? "standard"
         : "local-memfs"
       : (requestedMemoryPromptMode ??
@@ -1296,7 +1285,9 @@ export async function handleHeadlessCommand(
   let conversationOpenReason: ModConversationOpenReason = "startup";
   let effectiveReflectionSettings: ReflectionSettings;
 
-  const isSubagent = process.env.LETTA_CODE_AGENT_ROLE === "subagent";
+  isStatelessSession ||= memfsPolicyFor(agent.tags).isStatelessSession;
+  if (isStatelessSession && backend.capabilities.localMemfs)
+    disableLocalBackendMemfsForProcess();
   let startupMemfsFlag: boolean | undefined = autoEnableMemfsForFreshAgent
     ? true
     : memfsFlag;
@@ -1937,30 +1928,21 @@ export async function handleHeadlessCommand(
   telemetry.trackUserInput(prompt, "user", reportModel ?? "unknown");
 
   if (usesRemoteEnvironment) {
-    const agentId = publicAgentId ?? parentAgentId;
-    if (!agentId)
-      throw new Error(
-        "Listener delivery requires a conversation with an agent or parent agent.",
-      );
     const environmentSelector = explicitEnvironmentSelector ?? "";
-    const useCloudSandbox = isCloudEnvironmentSelector(environmentSelector);
-    const environmentRouting = environmentSelector
-      ? useCloudSandbox
-        ? await resolveAgentSandboxConnectionId(agentId, { conversationId })
-        : await resolveEnvironmentConnectionId(environmentSelector)
-      : null;
-    const connectionId =
-      environmentRouting?.connectionId ?? inheritedListenerConnectionId;
-    if (!connectionId)
-      throw new Error("No listener connection was resolved for this launch");
-    const responseEnvironment: ReplyEnvironmentMetadata = environmentRouting
-      ? buildEnvironmentResponseMetadata({
-          source: useCloudSandbox ? "cloud-sandbox" : "explicit",
-          input: environmentSelector,
-          connectionId,
-          environment: environmentRouting.environment,
-        })
-      : { source: "same-environment" };
+    const target = await resolveListenerLaunchTarget({
+      selector: environmentSelector,
+      agentId: publicAgentId ?? parentAgentId,
+      conversationId,
+      inheritedConnectionId: inheritedListenerConnectionId,
+    });
+    if ("error" in target)
+      return reportStartupErrorAndExit(
+        "headless_environment_routing_failed",
+        new Error(target.error),
+        "headless_environment_routing",
+        outputFormat,
+      );
+    const { connectionId, responseEnvironment } = target;
     const launchParams: Parameters<typeof launchListenerConversation>[0] = {
       noWait: isAgentLaunch || Boolean(values["no-wait"]),
       clientMessageId: values["client-message-id"],
@@ -4805,12 +4787,6 @@ async function runBidirectionalMode(
           agentId: agent.id,
           isEnabled: (id) => settingsManager.isMemfsEnabled(id),
           debugLabel: "Post-turn headless memory sync",
-          enqueueReminder: (text) => {
-            enqueueMemoryGitSyncReminder(sharedReminderState, { text });
-          },
-          emitWarning: (text) => {
-            debugWarn("memfs-git", text);
-          },
         });
         turnInProgress = false;
         blockedEmittedThisTurn = false;

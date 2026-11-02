@@ -1,6 +1,6 @@
 Watch one open github.com pull request until it merges, closes, is stopped with TaskStop, or the session ends.
 
-In managed Cloud sandboxes, WatchPR also stops after a hard 1-hour limit and sends a timeout notification. For checks beyond that window, use Wake or cron (which does not keep the sandbox running between turns) and combine it with shorter watches. Local watches have no duration limit.
+In managed Cloud sandboxes, WatchPR also stops after {{MONITOR_MAX_TIMEOUT}} (this sandbox's monitor cap) and sends a timeout notification. Call WatchPR again to re-arm it if you still need to watch. For much longer waits, use Wake or cron (which does not keep the sandbox running between turns) and combine it with shorter watches. Local watches have no duration limit.
 
 Use WatchPR instead of writing a Monitor or shell polling loop when you need ongoing notifications about a PR. Start at most one watch per PR. It reports:
 

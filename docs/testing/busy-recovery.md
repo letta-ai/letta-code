@@ -43,8 +43,9 @@ Copy-Item scripts/verify-busy-recovery.cjs .letta/busy-repro/verify.cjs
 
 ## Compare baseline and fix
 
-Run from the clone root. Dependencies are unchanged between these revisions;
-install once. Run commands individually and inspect their exit codes
+Run from the clone root. Install the locked dependencies after each revision
+switch: current `main` has dependency updates absent from the failing baseline.
+Run commands individually and inspect their exit codes
 (`$LASTEXITCODE` on PowerShell), especially the intentional failures below.
 
 ```sh
@@ -52,6 +53,7 @@ bun install --frozen-lockfile
 node --test scripts/verify-busy-recovery.test.cjs
 
 git switch --detach f5447302
+bun install --frozen-lockfile
 bun test src/cli/app/BusyRunRetry.test.tsx
 # EXPECT: exit 1; one passing control and two failing recovery cases.
 node .letta/busy-repro/verify.cjs --expect broken
@@ -60,6 +62,7 @@ node .letta/busy-repro/verify.cjs --expect fixed
 # EXPECT: exit 1; baseline must not satisfy the fixed contract.
 
 git switch --detach "$CORRECTED"
+bun install --frozen-lockfile
 bun test src/cli/app/BusyRunRetry.test.tsx
 # EXPECT: exit 0; original scenarios and review regressions pass.
 node .letta/busy-repro/verify.cjs --expect fixed
@@ -128,9 +131,11 @@ also be run with `node .letta/busy-repro/scenario.mjs <scenario>`. Inspect its
 expected recovery failures appear in `errors` and are not a fixture crash.
 The seven review scenarios were additionally checked under Node 22.23.4 for
 payload equality, queue retention, admission count and zero foreign approval reads.
-The final focused run passed 154 tests: 80 TUI/queue/lifecycle tests plus 74
-isolated helper/headless/listener tests. All 13 repository checks passed, as did
-the seven verifier unit tests and its three baseline-compatible Node scenarios.
+The original follow-up run passed 154 tests. After integrating `main` at
+`3b7e3ffc`, the same 11-file focused suite passed 147 tests, including all 33
+listener concurrency tests. The difference reflects queue/listener tests moved
+or removed upstream, not skipped failures. All 13 repository checks passed, as
+did the seven verifier unit tests and its three baseline-compatible Node scenarios.
 
 Focused coverage measures the new approval guard and retry-envelope helper at
 100% lines, the queue dispatch helper above 95%, and `QueueRuntime` at 100%.

@@ -1,7 +1,8 @@
 import { afterEach, expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 const projectRoot = process.cwd();
 const tempDirs: string[] = [];
@@ -57,17 +58,14 @@ console.log(auth.apiKey);
   });
   expect(result.success).toBe(true);
 
-  const execution = spawnSync("node", [outputPath], {
+  // The full Windows suite reports spawnSync ETIMEDOUT in about 25ms despite
+  // a 10s timeout. Keep the same bound while awaiting the child asynchronously.
+  const execution = await promisify(execFile)("node", [outputPath], {
     cwd: tempDir,
     encoding: "utf8",
     timeout: 10_000,
   });
 
-  if (execution.status !== 0) {
-    throw new Error(
-      `Standalone OAuth probe failed with status ${execution.status}\nstdout:\n${execution.stdout}\nstderr:\n${execution.stderr}`,
-    );
-  }
   expect(execution.stderr).toBe("");
   expect(execution.stdout.trim()).toBe("standalone-oauth-token");
 });

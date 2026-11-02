@@ -33,11 +33,7 @@ import {
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import type { MessageRouterParams } from "./message-router-types";
 import { logV2Command } from "./protocol-logging";
-import {
-  scheduleQueuePump,
-  shouldProcessInboundMessageDirectly,
-  shouldQueueInboundMessage,
-} from "./queue";
+import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import { emitLoopErrorNotice } from "./recoverable-notices";
 import { getActiveRuntime } from "./runtime";
 import { validateResponseFormat } from "./structured-output";
@@ -243,13 +239,13 @@ export async function routeInputFrame(
     incoming.conversationId,
   );
 
-  const processIncomingMessageDirectly = (
-    directIncoming: IncomingMessage,
+  const dispatchNonContentMessage = (
+    nonContentIncoming: IncomingMessage,
   ): void => {
     dispatchInboundMessageWhenReady({
       listener: runtime,
       runtime: scopedRuntime,
-      incoming: directIncoming,
+      incoming: nonContentIncoming,
       socket,
       options: opts,
       processQueuedTurn,
@@ -288,11 +284,6 @@ export async function routeInputFrame(
     if (!gateInputOriginatorAdmission()) {
       return;
     }
-    if (shouldProcessInboundMessageDirectly(scopedRuntime, stampedIncoming)) {
-      processIncomingMessageDirectly(stampedIncoming);
-      return;
-    }
-
     const admission = reserveInputDisposition(scopedRuntime, identity);
     if (admission.kind === "duplicate") {
       acknowledgeAdmissionDuplicate(
@@ -360,6 +351,6 @@ export async function routeInputFrame(
   if (!gateInputOriginatorAdmission()) {
     return;
   }
-  processIncomingMessageDirectly(incoming);
+  dispatchNonContentMessage(incoming);
   return;
 }

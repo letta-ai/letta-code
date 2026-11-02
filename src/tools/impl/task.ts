@@ -8,7 +8,6 @@
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import {
-  addToolCall,
   clearSubagentAbortHook,
   completeSubagent,
   generateSubagentId,
@@ -73,6 +72,9 @@ import { resolveLaunchComputer } from "./subagent-computer";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
   buildTaskResultHeader,
+  closeTaskProgressLog,
+  externalWorkerProgressListeners,
+  openTaskProgressLog,
   writeTaskTranscriptResult,
   writeTaskTranscriptStart,
 } from "./task-transcript";
@@ -236,6 +238,9 @@ export function spawnBackgroundSubagentTask(
       "Memory workers must run on the current machine; omit computer.",
     );
   }
+  if (args.subagentType === "memory" && !args.memoryRepairToken) {
+    throw new Error("Memory repair requires an attempt token");
+  }
   assertBackgroundTaskCapacity();
 
   const {
@@ -327,6 +332,7 @@ export function spawnBackgroundSubagentTask(
     buildBackgroundTaskAbortHook(taskId, abortController),
   );
   writeTaskTranscriptStart(outputFile, description, subagentType);
+  openTaskProgressLog(subagentId, outputFile);
 
   // Fire-and-forget: tasks own their lifecycle. Capture parentAgentId
   // synchronously (spawnSubagent runs after async yields): scope.agentId wins.
@@ -373,7 +379,7 @@ export function spawnBackgroundSubagentTask(
           ...resolvedParentScope,
           memoryDir: workerMemoryDir,
           assignment: prompt,
-          repairToken: args.memoryRepairToken,
+          repairToken: args.memoryRepairToken as string,
           signal: abortController.signal,
           subagentId,
           outputFile,
@@ -399,6 +405,7 @@ export function spawnBackgroundSubagentTask(
       : execute());
   const taskLifecycle = subagentExecution
     .then(async (result) => {
+      closeTaskProgressLog(subagentId);
       await copyGitHubPullRequestTagsFn(
         result.conversationId,
         resolvedParentScope?.conversationId,
@@ -423,6 +430,7 @@ export function spawnBackgroundSubagentTask(
         success: result.success,
         error: result.error,
         totalTokens: result.totalTokens,
+        ...(publishResult ? { published: true } : {}),
         ...(publishResult && result.success
           ? {
               result: truncateByChars(
@@ -498,6 +506,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 
@@ -513,6 +522,7 @@ export function spawnBackgroundSubagentTask(
       });
     })
     .catch(async (error) => {
+      closeTaskProgressLog(subagentId);
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       bgTask.status = "failed";
@@ -523,7 +533,11 @@ export function spawnBackgroundSubagentTask(
       );
       scheduleBackgroundTaskCleanup(taskId);
       clearSubagentAbortHook(subagentId);
-      completeSubagentFn(subagentId, { success: false, error: errorMessage });
+      completeSubagentFn(subagentId, {
+        success: false,
+        error: errorMessage,
+        ...(publishResult ? { published: true } : {}),
+      });
 
       try {
         await onComplete?.({
@@ -585,6 +599,7 @@ export function spawnBackgroundSubagentTask(
           agentId: resolvedParentScope?.agentId,
           conversationId: resolvedParentScope?.conversationId,
           actingUserId: bgTask.actingUserId,
+          clientMessageIds: resolvedParentScope?.clientMessageIds,
         });
       }
 
@@ -614,6 +629,12 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
+  if (args.subagent_type === "memory") {
+    return {
+      success: false,
+      error: "Memory edits belong in the parent agent; memory is harness-only.",
+    };
+  }
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -799,7 +820,7 @@ export async function launchSubagent(
           _type,
           prompt,
           model,
-          _subagentId,
+          workerSubagentId,
           childSignal,
         ) =>
           runExternalCodingAgent({
@@ -814,7 +835,7 @@ export async function launchSubagent(
             signal: childSignal,
             onStarted: (agentId) =>
               updateSubagent(subagentId, { agentId, status: "running" }),
-            onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
+            ...externalWorkerProgressListeners(workerSubagentId),
           }),
       },
     });
@@ -872,7 +893,7 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
-  if (config.fork && subagent_type !== "memory") {
+  if (config.fork) {
     if (args.agent_id || args.conversation_id) {
       return {
         success: false,
@@ -918,21 +939,11 @@ export async function launchSubagent(
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
     clientMessageId: args.client_message_id,
-    forkedContext: subagent_type !== "memory" && config.fork,
+    forkedContext: config.fork,
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
   });
-
-  if (subagent_type === "memory") {
-    return {
-      success: true,
-      task_id: taskId,
-      output_file: outputFile,
-      agent_id: null,
-      conversation_id: null,
-    };
-  }
 
   const abortStartup = () =>
     backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
@@ -979,9 +990,6 @@ export async function task(args: TaskArgs): Promise<string> {
   }
   const result = await launchSubagent(args);
   if (!result.success) return `Error: ${result.error}`;
-  if (args.subagent_type === "memory") {
-    return `Memory task running in background (${result.task_id}). No completion notification will be sent. Output file: ${result.output_file}`;
-  }
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`

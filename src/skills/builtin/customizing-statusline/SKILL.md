@@ -8,7 +8,7 @@ description: Creates, edits, and migrates Letta Code statusline mods. Use when h
 Use this skill to create or update the global Letta Code statusline mod:
 
 ```text
-~/.letta/mods/statusline.tsx
+${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/statusline.tsx
 ```
 
 The statusline is a panel registered at `order: 0` — the primary line just below the input. It overrides the built-in `agent · model` line. Host UI can still temporarily preempt it for safety confirmations and transient hints.
@@ -26,14 +26,14 @@ The order-0 panel owns the whole primary row. It renders text (not React) and ow
 
 ## Workflow
 
-1. Check whether `~/.letta/mods/statusline.tsx` exists.
+1. Check whether `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/statusline.tsx` exists.
 2. If it exists, read it before editing and preserve unrelated code.
 3. If it does not exist, synthesize a focused starter for the user's request.
 4. If the user asks to migrate, import a `.sh` file, or match a shell prompt, read `references/migration.md`.
 5. If API details or concrete patterns are needed, read `references/api.md` and `references/examples.md`.
 6. If the request combines statusline work with commands, tools, events, other panels, or stateful mod behavior, also use `creating-mods` and its `references/architecture.md`.
 7. Guard panel work with `letta.capabilities.ui.panels` when writing new files.
-8. Edit `~/.letta/mods/statusline.tsx`.
+8. Edit `${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/statusline.tsx`.
 9. Summarize the absolute file path changed and tell the user to run `/reload` unless the command can reload automatically.
 
 ## Bare `/statusline` behavior

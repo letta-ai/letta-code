@@ -62,8 +62,10 @@ import {
   installExternalToolBridge,
   rejectPendingExternalToolCalls,
   rejectPendingExternalToolCallsForConnection,
+  resendPendingExternalToolCallsForConnection,
 } from "./external-tools";
 import { createFileCommandSession } from "./file-commands";
+import { createListenerSocket } from "./handshake-deadline";
 import { recordListenerPong, startListenerPongHeartbeat } from "./heartbeat";
 import {
   getParsedRuntimeScope,
@@ -113,6 +115,8 @@ import {
   preparePairedListenerTransport,
   prepareSplitStreamTransport,
   shouldHandleControlSocketClose,
+  shouldRecoverOrphanedControlClose,
+  trackReconnectInFlight,
 } from "./split-stream-lifecycle";
 import { startListenerStartupDeadline } from "./startup-deadline";
 import { StartupFrameBuffer } from "./startup-frame-buffer";
@@ -311,6 +315,7 @@ export async function startConnectedListenerRuntime(
     startupConnection.ingressReady = true;
     await opts.onConnectionReady?.(startupConnection);
     if (!isExactOpenConnection() || !startupConnection.ingressReady) return;
+    resendPendingExternalToolCallsForConnection(runtime, startupConnection);
     startupComplete = true;
   } finally {
     clearStartupDeadline();
@@ -718,12 +723,9 @@ async function connectWithRetry(
 
   const streamUrl = supportsSplitStatusChannels ? new URL(url) : null;
   if (streamUrl) streamUrl.searchParams.set("channel", "stream");
-  const headers = { Authorization: `Bearer ${apiKey}` };
-  const socket = new WebSocket(url.toString(), { headers });
+  const socket = createListenerSocket(url, apiKey);
   let streamSocket =
-    streamUrl && !pairIdentity
-      ? new WebSocket(streamUrl.toString(), { headers })
-      : null;
+    streamUrl && !pairIdentity ? createListenerSocket(streamUrl, apiKey) : null;
 
   const lifecycleLog = createListenerLifecycleLog(opts);
   const fileCommandSession = createFileCommandSession({
@@ -789,7 +791,7 @@ async function connectWithRetry(
             identity: pairIdentity,
             createStreamSocket: () => {
               if (!streamUrl) throw new Error("Paired stream URL is missing");
-              streamSocket = new WebSocket(streamUrl.toString(), { headers });
+              streamSocket = createListenerSocket(streamUrl, apiKey);
               return streamSocket;
             },
             trackListenerError,
@@ -870,16 +872,17 @@ async function connectWithRetry(
   socket.on("close", (code: number, reason: Buffer) => {
     lifecycleLog(formatListenerSocketClose("control", code, reason));
     abortStartupIngress();
-    if (!shouldHandleControlSocketClose(runtime, socket, opts.connectionId)) {
+    if (
+      !shouldHandleControlSocketClose(runtime, socket, opts.connectionId) &&
+      !shouldRecoverOrphanedControlClose(runtime)
+    ) {
       return;
     }
-
     safeEmitWsEvent("recv", "lifecycle", {
       type: "_ws_close",
       code,
       reason: reason.toString(),
     });
-
     fileCommandSession.dispose();
     const reasonText = reason.toString();
     // Fencing 1008s can supersede us without a prior replacement close.
@@ -888,13 +891,10 @@ async function connectWithRetry(
       (code === 1008 &&
         reasonText !== CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON) ||
       (code === 1000 && reasonText === "Replaced by new connection");
-
     if (!terminalClose && runtime.hasSuccessfulConnection) {
       opts.onRetrying?.(0, MAX_RETRY_ATTEMPTS, 0, opts.connectionId);
     }
-
     clearRuntimeTimers(runtime);
-
     if (!terminalClose) {
       for (const conversationRuntime of runtime.conversationRuntimes.values()) {
         rejectPendingApprovalResolversForConnection(
@@ -949,21 +949,19 @@ async function connectWithRetry(
       else opts.onDisconnected();
       return;
     }
-
     // If we had connected before, restart backoff from zero for this outage window.
     const nextAttempt = runtime.hasSuccessfulConnection ? 0 : attempt + 1;
     const nextStartTime = runtime.hasSuccessfulConnection
       ? Date.now()
       : startTime;
     runtime.hasSuccessfulConnection = false;
-
-    connectWithRetry(runtime, opts, nextAttempt, nextStartTime).catch(
-      (error) => {
-        opts.onError(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
+    trackReconnectInFlight(
+      runtime,
+      connectWithRetry(runtime, opts, nextAttempt, nextStartTime),
+    ).catch((error) => {
+      opts.onError(error instanceof Error ? error : new Error(String(error)));
+    });
   });
-
   socket.on("error", (error: Error) => {
     if (runtime.socket !== socket) return;
     trackListenerError("listener_websocket_error", error, "listener_socket");

@@ -1,11 +1,22 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
 import {
   clearAllSubagents,
+  completeSubagent,
+  getSubagents,
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
-import { backgroundTasks } from "@/tools/impl/process_manager";
+import type { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
+import {
+  clearNativeSessionCaptureForTests,
+  rememberNativeSession,
+} from "@/tools/impl/native-session-capture";
+import {
+  backgroundTasks,
+  scheduleBackgroundTaskCleanup,
+} from "@/tools/impl/process_manager";
+import { readSubagentDepth } from "@/utils/subagent-depth-env";
 import { createRuntime } from "@/websocket/listener/lifecycle";
 import { createConversationRuntime } from "@/websocket/listener/runtime";
 import {
@@ -41,11 +52,40 @@ function fixture() {
   return { parent, abortController };
 }
 
-afterEach(() => {
+// Keep worker resumes off the real vault and MCP inventory.
+const workerEnv = {
+  resolveSecretEnv: async () => ({}),
+  resolveMcpReminder: async () => undefined,
+};
+
+afterEach(async () => {
+  jest.useRealTimers();
   clearAllSubagents();
   backgroundTasks.clear();
   __resetSubagentControlDedupeForTests();
+  await clearNativeSessionCaptureForTests();
 });
+
+/** Launch and finish a published run, then let its background task expire. */
+function evictedFixture() {
+  jest.useFakeTimers();
+  const { parent } = fixture();
+  // Recorded by the launch on this computer; not a Cloud URL, so no capture.
+  rememberNativeSession(
+    "claude_code",
+    nativeId.slice("claude_".length),
+    { agentId: runtime.agent_id, conversationId: runtime.conversation_id },
+    "http://localhost:8283",
+  );
+  const task = backgroundTasks.get("task-1");
+  if (task) task.status = "completed";
+  scheduleBackgroundTaskCleanup("task-1");
+  completeSubagent("subagent-1", { success: true, result: "Done" });
+  jest.advanceTimersByTime(5 * 60_000 + 1);
+  expect(backgroundTasks.has("task-1")).toBe(false);
+  expect(getSubagents()[0]?.status).toBe("completed");
+  return { parent };
+}
 
 describe("remote external subagent control", () => {
   test("rejects a subagent owned by another runtime", async () => {
@@ -76,6 +116,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async (options) => {
           signal = options.signal;
           return { mode: "steered", sessionId: nativeId };
@@ -97,6 +138,7 @@ describe("remote external subagent control", () => {
       message: "Only once",
     };
     const deps = {
+      workerEnv,
       sendClaude: async () => {
         calls += 1;
         return { mode: "steered" as const, sessionId: nativeId };
@@ -154,12 +196,13 @@ describe("remote external subagent control", () => {
 
     const [first, second] = await Promise.all([
       handleSubagentMessageCommand({ ...command, runtime }, firstParent, {
+        workerEnv,
         sendClaude,
       }),
       handleSubagentMessageCommand(
         { ...command, runtime: secondRuntime },
         secondParent,
-        { sendClaude },
+        { workerEnv, sendClaude },
       ),
     ]);
 
@@ -187,6 +230,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async () => ({
           mode: "resumed",
           sessionId: nativeId,
@@ -228,6 +272,7 @@ describe("remote external subagent control", () => {
       },
       parent,
       {
+        workerEnv,
         sendClaude: async () => ({
           mode: "resumed",
           sessionId: nativeId,
@@ -270,6 +315,7 @@ describe("remote external subagent control", () => {
     const deps: NonNullable<
       Parameters<typeof handleSubagentMessageCommand>[2]
     > = {
+      workerEnv,
       sendClaude: async (options) => {
         sends += 1;
         await options.beforeStart?.();
@@ -307,6 +353,61 @@ describe("remote external subagent control", () => {
     expect(captures).toBe(2);
   });
 
+  test("resumes Claude Code with the same environment as a launch", async () => {
+    const { parent } = fixture();
+    let sent: Parameters<typeof sendClaudeMessage> | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const response = await handleSubagentMessageCommand(
+      {
+        type: "subagent_message",
+        request_id: "resume-env",
+        runtime: { ...runtime, acting_user_id: "user-a" },
+        agent_id: nativeId,
+        message: "Continue",
+      },
+      parent,
+      {
+        workerEnv: {
+          env: { PATH: process.env.PATH },
+          resolveSecretEnv: async () => ({ GITHUB_TOKEN: "vault-token-123" }),
+          resolveMcpReminder: async () => "MCP servers available: github",
+        },
+        sendClaude: async (...args) => {
+          sent = args;
+          return {
+            mode: "resumed",
+            sessionId: nativeId,
+            completion: Promise.resolve({
+              agentId: nativeId,
+              success: true,
+              report: "pushed with vault-token-123",
+            }),
+            interrupt: async () => {},
+          };
+        },
+        track: ((args: { completion: Promise<SubagentResult> }) => {
+          tracked = args.completion;
+          return {
+            taskId: "task-follow",
+            outputFile: "/tmp/follow",
+            subagentId: "subagent-follow",
+          };
+        }) as never,
+      },
+    );
+    expect(response).toMatchObject({ success: true, delivery: "resumed" });
+    expect(sent?.[1]?.env).toMatchObject({
+      GITHUB_TOKEN: "vault-token-123",
+      LETTA_PARENT_AGENT_ID: "agent-a",
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      // One below the listener's own depth, as on launch.
+      LETTA_SUBAGENT_DEPTH: String(readSubagentDepth(process.env) + 1),
+      LETTA_ACTING_USER_ID: "user-a",
+    });
+    expect(sent?.[0].mcpReminder).toContain("MCP servers available: github");
+    expect((await tracked)?.report).not.toContain("vault-token-123");
+  });
+
   test("stops the owning background task", async () => {
     const { parent, abortController } = fixture();
     const response = await handleSubagentStopCommand(
@@ -320,5 +421,123 @@ describe("remote external subagent control", () => {
     );
     expect(response).toMatchObject({ success: true, stopped: true });
     expect(abortController.signal.aborted).toBe(true);
+  });
+
+  describe("after the finished task is evicted", () => {
+    test("steers for the launching conversation", async () => {
+      const { parent } = evictedFixture();
+      const response = await handleSubagentMessageCommand(
+        {
+          type: "subagent_message",
+          request_id: "steer-evicted",
+          runtime,
+          agent_id: nativeId,
+          message: "One more thing",
+        },
+        parent,
+        {
+          workerEnv,
+          sendClaude: async () => ({ mode: "steered", sessionId: nativeId }),
+        },
+      );
+      expect(response).toMatchObject({ success: true, delivery: "steered" });
+    });
+
+    test("resumes for the launching conversation", async () => {
+      const { parent } = evictedFixture();
+      let tracked = false;
+      const response = await handleSubagentMessageCommand(
+        {
+          type: "subagent_message",
+          request_id: "resume-evicted",
+          runtime,
+          agent_id: nativeId,
+          message: "Continue",
+        },
+        parent,
+        {
+          workerEnv,
+          sendClaude: async () => ({
+            mode: "resumed",
+            sessionId: nativeId,
+            completion: Promise.resolve({
+              agentId: nativeId,
+              success: true,
+              report: "Done",
+            } satisfies SubagentResult),
+            interrupt: async () => {},
+          }),
+          track: (() => {
+            tracked = true;
+            return {
+              taskId: "task-follow",
+              outputFile: "/tmp/follow",
+              subagentId: "subagent-follow",
+            };
+          }) as never,
+        },
+      );
+      expect(response).toMatchObject({ success: true, delivery: "resumed" });
+      expect(tracked).toBe(true);
+    });
+
+    test("rejects another conversation", async () => {
+      evictedFixture();
+      const other = { agent_id: "agent-a", conversation_id: "conv-other" };
+      const otherParent = createConversationRuntime(
+        createRuntime(),
+        other.agent_id,
+        other.conversation_id,
+      );
+      let sends = 0;
+      const response = await handleSubagentMessageCommand(
+        {
+          type: "subagent_message",
+          request_id: "steer-other",
+          runtime: other,
+          agent_id: nativeId,
+          message: "Not yours",
+        },
+        otherParent,
+        {
+          workerEnv,
+          sendClaude: async () => {
+            sends += 1;
+            return { mode: "steered", sessionId: nativeId };
+          },
+        },
+      );
+      expect(response).toMatchObject({
+        success: false,
+        error: "Subagent does not belong to this conversation",
+      });
+      expect(sends).toBe(0);
+      expect(
+        await handleSubagentStopCommand(
+          {
+            type: "subagent_stop",
+            request_id: "stop-other",
+            runtime: other,
+            agent_id: nativeId,
+          },
+          otherParent,
+        ),
+      ).toMatchObject({ success: false });
+    });
+
+    test("reports nothing left to stop for the launching conversation", async () => {
+      const { parent } = evictedFixture();
+      expect(
+        await handleSubagentStopCommand(
+          {
+            type: "subagent_stop",
+            request_id: "stop-evicted",
+            runtime,
+            agent_id: nativeId,
+          },
+          parent,
+        ),
+      ).toMatchObject({ success: true, stopped: false });
+    });
   });
 });

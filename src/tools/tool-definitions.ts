@@ -1,3 +1,4 @@
+import { applyCommitTrailer } from "./commit-trailer";
 import { defineTool, type ToolAssets } from "./define-tool";
 import ApplyPatchDescription from "./descriptions/ApplyPatch.md";
 import AskUserQuestionDescription from "./descriptions/AskUserQuestion.md";
@@ -46,6 +47,7 @@ import { grep } from "./impl/grep";
 import { ls } from "./impl/ls";
 import { memory } from "./impl/memory";
 import { monitor } from "./impl/monitor";
+import { applyMonitorMaxTimeout } from "./impl/monitor-timeout";
 import { read } from "./impl/read";
 import { read_lsp } from "./impl/read-lsp";
 import { send_agent_message } from "./impl/send-agent-message";
@@ -112,14 +114,14 @@ ${WINDOWS_UNIFIED_EXEC_GUIDANCE}`;
 export function buildBashDescriptionForPlatform(
   platform: NodeJS.Platform = process.platform,
 ): string {
-  const baseDescription = BashDescription.trim();
+  const baseDescription = applyCommitTrailer(BashDescription.trim());
   return platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_BASH_EXECUTION_GUIDANCE}`
     : baseDescription;
 }
 
 function execCommandDescription(): string {
-  const baseDescription = ExecCommandDescription.trim();
+  const baseDescription = applyCommitTrailer(ExecCommandDescription.trim());
   return process.platform === "win32"
     ? `${baseDescription}\n\n${WINDOWS_UNIFIED_EXEC_GUIDANCE}`
     : baseDescription;
@@ -173,13 +175,15 @@ const toolDefinitions = {
     impl: task_stop,
   }),
   Monitor: defineTool({
-    schema: MonitorSchema,
-    description: MonitorDescription.trim(),
+    schema: JSON.parse(
+      applyMonitorMaxTimeout(JSON.stringify(MonitorSchema)),
+    ) as typeof MonitorSchema,
+    description: applyMonitorMaxTimeout(MonitorDescription.trim()),
     impl: monitor,
   }),
   WatchPR: defineTool({
     schema: WatchPRSchema,
-    description: WatchPRDescription.trim(),
+    description: applyMonitorMaxTimeout(WatchPRDescription.trim()),
     impl: watch_pr,
   }),
   Read: defineTool({

@@ -3,7 +3,6 @@
  * Desktop may proxy transport through localhost but never persists that URL.
  */
 
-import { execFile as execFileCb } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,11 +11,11 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir, platform } from "node:os";
+import { platform } from "node:os";
 import { dirname, join } from "node:path";
-import { promisify } from "node:util";
 import { invalidPendingMemory } from "@/agent/memory-constraints-audit";
 import { getMemoryGitDir } from "@/agent/memory-git-dir";
+import { execGit } from "@/agent/memory-git-process";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
 import {
   getMemfsGitProxyRewriteConfig,
@@ -29,6 +28,7 @@ import {
 } from "@/utils/checkout-readiness";
 import { debugLog, debugWarn } from "@/utils/debug";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { GIT_MEMORY_ENABLED_TAG } from "./agent-tags";
 import { listAttachedAgentRepositories } from "./attached-repositories";
 import { getAuthToken } from "./memory-auth";
@@ -42,8 +42,6 @@ import {
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
-
-const execFile = promisify(execFileCb);
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
@@ -84,13 +82,12 @@ export interface CommitMemoryWriteResult {
   committed: boolean;
   sha?: string;
 }
-
-/** Get the agent root directory (~/.letta/agents/{id}/) */
+/** Get the agent root directory below the active product config root. */
 export function getAgentRootDir(agentId: string): string {
-  return join(homedir(), ".letta", "agents", agentId);
+  return join(resolveGlobalConfigDir(), "agents", agentId);
 }
 
-/** Get the git repo directory for memory (now ~/.letta/agents/{id}/memory/) */
+/** Get the git repo directory for memory. */
 export function getMemoryRepoDir(agentId: string): string {
   return join(getAgentRootDir(agentId), "memory");
 }
@@ -576,13 +573,12 @@ export async function runGit(
   debugLog("memfs-git", `git ${loggableCommand} (in ${cwd})`);
 
   const timeoutMs = options?.timeoutMs ?? GIT_DEFAULT_TIMEOUT_MS;
-  let result: Awaited<ReturnType<typeof execFile>>;
+  let result: Awaited<ReturnType<typeof execGit>>;
   try {
-    result = await execFile("git", allArgs, {
+    result = await execGit(allArgs, {
       cwd,
       env: buildNonInteractiveGitEnv(),
-      maxBuffer: 10 * 1024 * 1024, // 10MB
-      timeout: timeoutMs,
+      timeoutMs,
     });
   } catch (error) {
     throw redactGitAuthError(error);

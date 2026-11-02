@@ -6,6 +6,8 @@ Wake is always self-bound. It cannot target another agent, conversation, or comp
 - `list`: list active and paused wakes for this conversation.
 - `cancel`: provide the `id` returned by create or list.
 
+Write `prompt` as a note to your future self, not a script: what you are waiting on, what you planned and why, and what to check before acting. When the wake fires, the situation or people's wishes may have changed since you wrote it.
+
 Use `after_seconds` for ordinary follow-ups such as checking again in five minutes. `scheduled_at` must be RFC 3339 with `Z` or an explicit UTC offset. `cron` is a recurring five-field UTC expression and cannot run more often than hourly.
 
 For calendar requests such as “tomorrow at 9am,” resolve the date in the user's timezone and pass `scheduled_at` with an explicit offset. Infer a reasonable timezone from available context instead of asking a redundant follow-up. State the timezone you used in the confirmation (for example, “Scheduled for 9:00 AM PT”) so the user can correct the assumption.

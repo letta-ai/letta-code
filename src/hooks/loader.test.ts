@@ -35,6 +35,7 @@ function asCommand(
 describe("Hooks Loader", () => {
   let tempDir: string;
   let fakeHome: string;
+  let originalConfigDir: string | undefined;
   let originalHome: string | undefined;
 
   beforeEach(async () => {
@@ -49,7 +50,9 @@ describe("Hooks Loader", () => {
     mkdirSync(tempDir, { recursive: true });
     // Override HOME to isolate from real global hooks
     originalHome = process.env.HOME;
+    originalConfigDir = process.env.LETTA_CONFIG_DIR;
     process.env.HOME = fakeHome;
+    delete process.env.LETTA_CONFIG_DIR;
 
     // Initialize settings manager with new HOME
     await settingsManager.initialize();
@@ -61,6 +64,8 @@ describe("Hooks Loader", () => {
 
     // Restore HOME
     process.env.HOME = originalHome;
+    if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = originalConfigDir;
     try {
       // Clean up the parent directory
       const baseDir = join(tempDir, "..");
@@ -719,6 +724,65 @@ describe("Hooks Loader", () => {
       // Project hooks should be treated as empty to avoid duplicate merging.
       const projectHooks = await loadProjectHooks(fakeHome);
       expect(projectHooks).toEqual({});
+    });
+
+    test("does not load ~/.letta project hooks from HOME with an explicit config directory", async () => {
+      const dreamSettingsDir = join(fakeHome, ".dream");
+      const lettaSettingsDir = join(fakeHome, ".letta");
+      mkdirSync(dreamSettingsDir, { recursive: true });
+      mkdirSync(lettaSettingsDir, { recursive: true });
+      writeFileSync(
+        join(dreamSettingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            Notification: [
+              {
+                hooks: [{ type: "command", command: "echo dream-global" }],
+              },
+            ],
+          },
+        }),
+      );
+      writeFileSync(
+        join(lettaSettingsDir, "settings.json"),
+        JSON.stringify({
+          hooks: {
+            Notification: [
+              {
+                hooks: [{ type: "command", command: "echo letta-project" }],
+              },
+            ],
+          },
+        }),
+      );
+      writeFileSync(
+        join(lettaSettingsDir, "settings.local.json"),
+        JSON.stringify({
+          hooks: {
+            Notification: [
+              {
+                hooks: [{ type: "command", command: "echo letta-local" }],
+              },
+            ],
+          },
+        }),
+      );
+      await settingsManager.reset();
+      process.env.LETTA_CONFIG_DIR = dreamSettingsDir;
+      await settingsManager.initialize();
+
+      const hooks = await loadHooks(fakeHome);
+      const notificationHooks = getMatchingHooks(hooks, "Notification");
+
+      expect(notificationHooks).toHaveLength(1);
+      expect(asCommand(notificationHooks[0])?.command).toBe(
+        "echo dream-global",
+      );
+      expect(await loadProjectHooks(fakeHome)).toEqual({});
+      expect(await loadProjectLocalHooks(fakeHome)).toEqual({});
+      expect(() =>
+        settingsManager.updateLocalProjectSettings({ hooks: {} }, fakeHome),
+      ).toThrow(/LETTA_CONFIG_DIR/);
     });
   });
 });

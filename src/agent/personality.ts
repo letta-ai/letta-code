@@ -7,8 +7,16 @@
  */
 
 import { execFile as execFileCb } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   GIT_MEMORY_ENABLED_TAG,
@@ -16,6 +24,7 @@ import {
 } from "@/agent/agent-tags";
 import { getBackend } from "@/backend";
 import { isCloudServerUrl } from "@/backend/api/server-url";
+import { memoryNameFromPath } from "@/backend/local/initial-memory";
 import { settingsManager } from "@/settings-manager";
 import type { CreateAgentOptions } from "./create";
 import { getDefaultMemoryBlocks, parseMdxFrontmatter } from "./memory";
@@ -24,6 +33,7 @@ import {
   isLettaCloud,
 } from "./memory-filesystem";
 import { commitMemoryWrite, getMemoryRepoDir, pullMemory } from "./memory-git";
+import { hasRootMemoryMarker } from "./memory-git-hooks";
 import {
   buildDefaultMemoryFile,
   buildPersonalityMemoryBlocks,
@@ -47,6 +57,9 @@ const PRIMARY_PERSONA_RELATIVE_PATH = "system/persona.md";
 const LEGACY_PERSONA_RELATIVE_PATH = "memory/system/persona.md";
 const PRIMARY_HUMAN_RELATIVE_PATH = "system/human.md";
 const LEGACY_HUMAN_RELATIVE_PATH = "memory/system/human.md";
+// MemFS v2 root layout (root MEMORY.md marker): persona/human live at the root.
+const ROOT_PERSONA_RELATIVE_PATH = "persona.md";
+const ROOT_HUMAN_RELATIVE_PATH = "human.md";
 
 export interface ApplyPersonalityToMemoryParams {
   agentId: string;
@@ -68,9 +81,17 @@ function ensureTrailingNewline(content: string): string {
 
 function getMemoryFileRelativePathForRepo(
   repoDir: string,
+  rootRelativePath: string,
   primaryRelativePath: string,
   legacyRelativePath: string,
 ): string {
+  if (
+    existsSync(join(repoDir, rootRelativePath)) ||
+    hasRootMemoryMarker(repoDir)
+  ) {
+    return rootRelativePath;
+  }
+
   const primaryPath = join(repoDir, primaryRelativePath);
   if (existsSync(primaryPath)) {
     return primaryRelativePath;
@@ -92,6 +113,7 @@ function getMemoryFileRelativePathForRepo(
 function getPersonaRelativePathForRepo(repoDir: string): string {
   return getMemoryFileRelativePathForRepo(
     repoDir,
+    ROOT_PERSONA_RELATIVE_PATH,
     PRIMARY_PERSONA_RELATIVE_PATH,
     LEGACY_PERSONA_RELATIVE_PATH,
   );
@@ -100,6 +122,7 @@ function getPersonaRelativePathForRepo(repoDir: string): string {
 function getHumanRelativePathForRepo(repoDir: string): string {
   return getMemoryFileRelativePathForRepo(
     repoDir,
+    ROOT_HUMAN_RELATIVE_PATH,
     PRIMARY_HUMAN_RELATIVE_PATH,
     LEGACY_HUMAN_RELATIVE_PATH,
   );
@@ -289,6 +312,33 @@ async function getMemoryCommitAuthor(agentId: string): Promise<{
   };
 }
 
+/**
+ * New root-layout (MemFS v2) files may only carry `name` and `description`
+ * frontmatter, and both are required by the pre-commit validator.
+ */
+function buildRootMemoryFile(
+  relativePath: string,
+  templatePromptAssetName: string,
+  body: string,
+  description?: string,
+): string {
+  const { frontmatter, body: normalizedBody } = parseMdxFrontmatter(
+    buildDefaultMemoryFile(templatePromptAssetName, body, description),
+  );
+  const name = memoryNameFromPath(basename(relativePath));
+  return `${serializeFrontmatter({
+    name,
+    description: frontmatter.description?.trim() || name,
+  })}\n\n${ensureTrailingNewline(normalizedBody.trim())}`;
+}
+
+/** What a personality switch changed, so a failed switch can be undone. */
+interface PersonalityFileUndo {
+  absolutePath: string;
+  previousContent: string | null;
+  createdDirs: string[];
+}
+
 function applyPersonalityFiles(
   filesToUpdate: Array<{
     relativePath: string;
@@ -296,7 +346,10 @@ function applyPersonalityFiles(
     templatePromptAssetName: string;
     content: string;
     description?: string;
+    /** Only write when the file is missing or its body is blank. */
+    onlyIfBlank?: boolean;
   }>,
+  undoLog: PersonalityFileUndo[],
 ): string[] {
   const changedPaths: string[] = [];
 
@@ -304,15 +357,29 @@ function applyPersonalityFiles(
     const existingContent = existsSync(file.absolutePath)
       ? readFileSync(file.absolutePath, "utf-8")
       : null;
+    if (
+      file.onlyIfBlank &&
+      existingContent !== null &&
+      existingContent.replace(FRONTMATTER_REGEX, "").trim()
+    ) {
+      continue;
+    }
     const nextContent = existingContent
       ? replaceBodyPreservingFrontmatter(existingContent, file.content, {
           description: file.description,
         })
-      : buildDefaultMemoryFile(
-          file.templatePromptAssetName,
-          file.content,
-          file.description,
-        );
+      : file.relativePath.includes("/")
+        ? buildDefaultMemoryFile(
+            file.templatePromptAssetName,
+            file.content,
+            file.description,
+          )
+        : buildRootMemoryFile(
+            file.relativePath,
+            file.templatePromptAssetName,
+            file.content,
+            file.description,
+          );
 
     if (
       existingContent !== null &&
@@ -322,12 +389,61 @@ function applyPersonalityFiles(
       continue;
     }
 
+    const createdDirs: string[] = [];
+    for (
+      let dir = dirname(file.absolutePath);
+      !existsSync(dir);
+      dir = dirname(dir)
+    ) {
+      createdDirs.push(dir);
+    }
+    undoLog.push({
+      absolutePath: file.absolutePath,
+      previousContent: existingContent,
+      createdDirs,
+    });
     mkdirSync(dirname(file.absolutePath), { recursive: true });
     writeFileSync(file.absolutePath, nextContent, "utf-8");
     changedPaths.push(file.relativePath);
   }
 
   return changedPaths;
+}
+
+/**
+ * Restore files touched by a switch that did not commit, so the memory repo
+ * is clean again and later switches are not blocked by uncommitted changes.
+ */
+async function undoPersonalityFiles(
+  repoDir: string,
+  undoLog: PersonalityFileUndo[],
+): Promise<void> {
+  if (undoLog.length === 0) return;
+  for (const entry of [...undoLog].reverse()) {
+    try {
+      if (entry.previousContent === null) {
+        rmSync(entry.absolutePath, { force: true });
+      } else {
+        writeFileSync(entry.absolutePath, entry.previousContent, "utf-8");
+      }
+      // createdDirs is ordered deepest first.
+      for (const dir of entry.createdDirs) {
+        if (existsSync(dir) && readdirSync(dir).length === 0) rmdirSync(dir);
+      }
+    } catch {
+      // Best-effort restore; keep undoing the remaining files.
+    }
+  }
+  // The commit path already unstages on failure; this is a safety net.
+  try {
+    await execFile(
+      "git",
+      ["reset", "-q", "--", ...undoLog.map((entry) => entry.absolutePath)],
+      { cwd: repoDir, timeout: 10_000 },
+    );
+  } catch {
+    // Best-effort only.
+  }
 }
 
 export async function applyPersonalityToMemory(
@@ -378,12 +494,35 @@ export async function applyPersonalityToMemory(
       templatePromptAssetName: blockDefinitions.human.templatePromptAssetName,
       content: blockDefinitions.human.value,
       description: blockDefinitions.human.description,
+      // Never overwrite what the agent already knows about the user.
+      onlyIfBlank: true,
     },
   ];
 
-  const changedPaths = applyPersonalityFiles(filesToUpdate);
+  const commitMessage =
+    params.commitMessage ??
+    `chore(personality): switch to ${personality.label}`;
 
-  if (changedPaths.length === 0) {
+  const undoLog: PersonalityFileUndo[] = [];
+  let commitResult: Awaited<ReturnType<typeof commitMemoryWrite>> | null = null;
+  try {
+    const changedPaths = applyPersonalityFiles(filesToUpdate, undoLog);
+    if (changedPaths.length > 0) {
+      const author = await getMemoryCommitAuthor(params.agentId);
+      commitResult = await commitMemoryWrite({
+        memoryDir: repoDir,
+        pathspecs: changedPaths,
+        reason: commitMessage,
+        author,
+        syncMode: isLocalMemfs ? "local" : "remote",
+      });
+    }
+  } catch (error) {
+    await undoPersonalityFiles(repoDir, undoLog);
+    throw error;
+  }
+
+  if (!commitResult) {
     return {
       changed: false,
       personality,
@@ -392,20 +531,8 @@ export async function applyPersonalityToMemory(
     };
   }
 
-  const commitMessage =
-    params.commitMessage ??
-    `chore(personality): switch to ${personality.label}`;
-
-  const author = await getMemoryCommitAuthor(params.agentId);
-  const commitResult = await commitMemoryWrite({
-    memoryDir: repoDir,
-    pathspecs: changedPaths,
-    reason: commitMessage,
-    author,
-    syncMode: isLocalMemfs ? "local" : "remote",
-  });
-
   if (!commitResult.committed) {
+    await undoPersonalityFiles(repoDir, undoLog);
     return {
       changed: false,
       personality,

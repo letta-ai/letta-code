@@ -5,7 +5,10 @@
  */
 import { randomUUID } from "node:crypto";
 import WebSocket from "ws";
-import { updateSubagent } from "@/agent/subagent-state";
+import {
+  DEFAULT_PUBLISHED_RESULT_RETENTION_MS,
+  updateSubagent,
+} from "@/agent/subagent-state";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import type { spawnSubagent } from "@/agent/subagents/manager";
 import {
@@ -35,6 +38,10 @@ import {
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import {
+  recordTaskProgressRemoteText,
+  recordTaskProgressToolCall,
+} from "./task-transcript";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
   "remote external worker stopped",
@@ -88,6 +95,7 @@ const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   opencode: "OpenCode",
+  cursor: "Cursor",
 };
 
 export function formatRemoteStartupError(
@@ -97,7 +105,7 @@ export function formatRemoteStartupError(
 ): string {
   const name = DISPLAY_NAMES[type];
   return code === "not_installed"
-    ? `${name} isn't installed on ${computer}. Install it there, or run a Letta subagent on that computer instead.`
+    ? `The Letta process on ${computer} couldn't find or start ${name}. Check its PATH and the CLI installation on that computer.`
     : `${name} is installed on ${computer} but not signed in. Sign in there, or run a Letta subagent on that computer instead.`;
 }
 
@@ -166,6 +174,9 @@ function errorMessage(error: unknown): string {
  */
 class RemoteWorkerLostError extends Error {}
 
+/** Longest wait between reconnect attempts while the computer is unreachable. */
+const MAX_RECONNECT_DELAY_MS = 30_000;
+
 /** Follows the computer's snapshot for one launch, reconnecting if the socket drops. */
 class RemoteSubagentFollower {
   private latest: SubagentSnapshot | undefined;
@@ -221,6 +232,11 @@ class RemoteSubagentFollower {
     this.launched = true;
   }
 
+  /** The worker's native ID from the most recent status update, if any. */
+  latestAgentId(): string | undefined {
+    return this.latest?.agent_id ?? undefined;
+  }
+
   async waitForAgentId(timeoutMs: number): Promise<string | null> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -251,6 +267,10 @@ class RemoteSubagentFollower {
     const onAbort = () => this.wake.resolve();
     signal?.addEventListener("abort", onAbort, { once: true });
     let failedReconnects = 0;
+    // The worker reports only to this caller (`notify: "caller"`), and the
+    // computer keeps its final result for the published-result retention
+    // window. Keep reconnecting until that window could have passed.
+    let disconnectedSince: number | undefined;
     try {
       while (true) {
         signal?.throwIfAborted();
@@ -261,10 +281,26 @@ class RemoteSubagentFollower {
         if (this.lost) throw new RemoteWorkerLostError();
         if (latest) onProgress(latest);
         if (this.disconnected) {
-          await new Promise((resolve) =>
-            setTimeout(resolve, this.reconnectDelayMs * (failedReconnects + 1)),
-          );
+          disconnectedSince ??= Date.now();
+          const offlineSince = disconnectedSince;
+          // Abort and close resolve `wake`, so a long backoff stays interruptible.
+          this.wake = Promise.withResolvers<void>();
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            this.wake.promise,
+            new Promise<void>((resolve) => {
+              timer = setTimeout(
+                resolve,
+                Math.min(
+                  this.reconnectDelayMs * (failedReconnects + 1),
+                  MAX_RECONNECT_DELAY_MS,
+                ),
+              );
+            }),
+          ]);
+          clearTimeout(timer);
           signal?.throwIfAborted();
+          if (this.closed) throw new Error("Stopped following the subagent");
           try {
             const client = await this.connect();
             this.attach(client);
@@ -277,8 +313,13 @@ class RemoteSubagentFollower {
               recover_approvals: false,
             });
             failedReconnects = 0;
+            disconnectedSince = undefined;
           } catch (error) {
-            if (++failedReconnects >= 5)
+            failedReconnects++;
+            if (
+              Date.now() - offlineSince >=
+              DEFAULT_PUBLISHED_RESULT_RETENTION_MS
+            )
               throw new Error(`Lost connection: ${errorMessage(error)}`);
           }
           continue;
@@ -377,20 +418,27 @@ export async function launchRemoteExternalCodingAgent(
   }
 
   follower.markLaunched();
-  const nativeAgentId = supportsSteering
-    ? await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)
-    : null;
-  const parsedNativeAgentId = nativeAgentId
-    ? parseExternalCodingAgentId(nativeAgentId)
-    : null;
-  const qualifiedAgentId =
-    parsedNativeAgentId && !parsedNativeAgentId.computer
-      ? formatExternalCodingAgentId(
-          parsedNativeAgentId.type,
-          parsedNativeAgentId.sessionId,
-          deviceId,
-        )
+  const qualify = (nativeAgentId: string | null | undefined) => {
+    const parsed = nativeAgentId
+      ? parseExternalCodingAgentId(nativeAgentId)
       : null;
+    return parsed && !parsed.computer
+      ? formatExternalCodingAgentId(parsed.type, parsed.sessionId, deviceId)
+      : null;
+  };
+  // The computer waits for the native session before answering the launch,
+  // so prefer the ID it returned; status updates can lag behind it.
+  const launchedAgentId = qualify(launched.agent_id);
+  const qualifiedAgentId = supportsSteering
+    ? (launchedAgentId ??
+      qualify(await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)))
+    : null;
+  // The final result names the worker, never the parent.
+  const workerAgentId = () =>
+    qualify(follower.latestAgentId()) ??
+    qualifiedAgentId ??
+    launchedAgentId ??
+    "";
 
   const { taskId, outputFile, subagentId } = deps.spawn({
     subagentType: type,
@@ -404,15 +452,35 @@ export async function launchRemoteExternalCodingAgent(
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
         updateSubagent(subagentId, { status: "running" });
+        // Snapshots carry full lists; the task log appends each ID once.
+        // Older listeners send no progress_texts, which reads as empty.
+        const recordProgress = (snapshot: SubagentSnapshot) => {
+          for (const call of snapshot.tool_calls ?? [])
+            recordTaskProgressToolCall(subagentId, call);
+          const texts = Array.isArray(snapshot.progress_texts)
+            ? snapshot.progress_texts
+            : [];
+          for (const entry of texts) {
+            if (typeof entry?.id === "string" && typeof entry.text === "string")
+              recordTaskProgressRemoteText(subagentId, {
+                id: entry.id,
+                at: typeof entry.at === "string" ? entry.at : "",
+                text: entry.text,
+              });
+          }
+        };
         try {
-          const final = await follower.waitForTerminal(signal, (snapshot) =>
+          const final = await follower.waitForTerminal(signal, (snapshot) => {
             updateSubagent(subagentId, {
               toolCalls: snapshot.tool_calls,
               totalTokens: snapshot.total_tokens,
-            }),
-          );
+            });
+            recordProgress(snapshot);
+          });
+          // The terminal snapshot can carry progress no earlier update showed.
+          recordProgress(final);
           return {
-            agentId: qualifiedAgentId ?? parentScope.agentId,
+            agentId: workerAgentId(),
             model: final.model ?? model,
             report: final.result ?? "",
             success: final.status === "completed",
@@ -426,7 +494,7 @@ export async function launchRemoteExternalCodingAgent(
           const remoteWorkerStopped =
             signal?.reason === REMOTE_EXTERNAL_WORKER_STOPPED;
           return {
-            agentId: parentScope.agentId,
+            agentId: workerAgentId(),
             model,
             report: "",
             success: false,

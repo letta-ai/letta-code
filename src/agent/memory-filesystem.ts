@@ -18,10 +18,15 @@ import {
   getLocalBackendStorageDir,
   isLocalBackendEnvEnabled,
 } from "@/backend/local/paths";
+import { debugLog } from "@/utils/debug";
 import {
   DIRECTORY_LIMIT_DEFAULTS,
   getDirectoryLimits,
 } from "@/utils/directory-limits";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 import { getCurrentAgentId } from "./context";
 import { DEFAULT_ROOT_MEMORY_BLOCK } from "./create-agent-request";
 import { installMemoryGitHooks } from "./memory-git-hooks";
@@ -45,22 +50,25 @@ export interface MemoryTreeRenderOptions {
 
 export function getMemoryFilesystemRoot(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(
-    homeDir,
-    MEMORY_FS_ROOT,
-    MEMORY_FS_AGENTS_DIR,
-    agentId,
-    MEMORY_FS_MEMORY_DIR,
-  );
+  const configDir =
+    homeDir === undefined || hasGlobalConfigDirOverride(env)
+      ? resolveGlobalConfigDir(env, homeDir)
+      : join(homeDir, MEMORY_FS_ROOT);
+  return join(configDir, MEMORY_FS_AGENTS_DIR, agentId, MEMORY_FS_MEMORY_DIR);
 }
 
 export function getMemorySystemDir(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return join(getMemoryFilesystemRoot(agentId, homeDir), MEMORY_SYSTEM_DIR);
+  return join(
+    getMemoryFilesystemRoot(agentId, homeDir, env),
+    MEMORY_SYSTEM_DIR,
+  );
 }
 
 export function getScopedMemoryFilesystemRoot(
@@ -76,10 +84,10 @@ export function getScopedMemoryFilesystemRoot(
     const storageDir =
       options.localBackendStorageDir ??
       env.LETTA_LOCAL_BACKEND_DIR ??
-      getLocalBackendStorageDir(options.homeDir ?? homedir());
+      getLocalBackendStorageDir(options.homeDir, env);
     return getLocalBackendMemoryFilesystemRoot(agentId, storageDir);
   }
-  return getMemoryFilesystemRoot(agentId, options.homeDir ?? homedir());
+  return getMemoryFilesystemRoot(agentId, options.homeDir, env);
 }
 
 export interface ResolveScopedMemoryDirOptions {
@@ -132,10 +140,11 @@ export function resolveScopedMemoryDir(
 
 export function ensureMemoryFilesystemDirs(
   agentId: string,
-  homeDir: string = homedir(),
+  homeDir?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): void {
-  const root = getMemoryFilesystemRoot(agentId, homeDir);
-  const systemDir = getMemorySystemDir(agentId, homeDir);
+  const root = getMemoryFilesystemRoot(agentId, homeDir, env);
+  const systemDir = getMemorySystemDir(agentId, homeDir, env);
 
   if (!existsSync(root)) {
     mkdirSync(root, { recursive: true });
@@ -514,6 +523,19 @@ export async function applyMemfsFlags(
   const { getBackend } = await import("@/backend");
   const backend = getBackend();
 
+  // Choke point for every launch path: a subagent without its own MemFS stays
+  // stateless. Memory subagents use the parent's MEMORY_DIR and never get here.
+  const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
+    "@/agent/agent-tags"
+  );
+  const tags =
+    options?.agentTags ??
+    (await backend.retrieveAgent(agentId, { include: ["agent.tags"] })).tags;
+  if (isStatelessSubagentTags(tags)) {
+    debugLog("memfs", `Not enabling MemFS for stateless subagent ${agentId}`);
+    return { action: "unchanged" };
+  }
+
   if (backend.capabilities.localMemfs) {
     const memoryDir = getScopedMemoryFilesystemRoot(agentId);
     const { initializeLocalMemoryRepo } = await import("@/agent/memory-git");
@@ -546,7 +568,6 @@ export async function applyMemfsFlags(
   }
 
   const localMemfsEnabled = settingsManager.isMemfsEnabled(agentId);
-  const { GIT_MEMORY_ENABLED_TAG } = await import("@/agent/agent-tags");
   const shouldAutoEnableFromTag =
     !memfsFlag &&
     !localMemfsEnabled &&

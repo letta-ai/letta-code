@@ -18,6 +18,7 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
@@ -83,6 +84,7 @@ export async function prepareListenerTurn(params: {
   turnLease: TurnLease;
   onStatusChange?: StartListenerOptions["onStatusChange"];
   connectionId?: string;
+  resolveClientMessageIds?: () => string[];
 }): Promise<ListenerTurnSetupResult> {
   const {
     msg,
@@ -95,6 +97,7 @@ export async function prepareListenerTurn(params: {
     turnLease,
     onStatusChange,
     connectionId,
+    resolveClientMessageIds,
   } = params;
   const isInterrupted = () =>
     turnLease.signal.aborted || !runtime.turnLifecycle.isCurrent(turnLease);
@@ -212,17 +215,21 @@ export async function prepareListenerTurn(params: {
       setCurrentAgentName(
         listenAgentMetadata?.name ?? cachedAgent?.name ?? null,
       );
-      const { parts: reminderParts } = await buildSharedReminderParts(
-        buildListenReminderContext({
-          agentId,
-          conversationId,
-          agentName: listenAgentMetadata?.name ?? null,
-          agentDescription: listenAgentMetadata?.description ?? null,
-          agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
-          state: runtime.reminderState,
-          workingDirectory,
-          shellContext: detectShellContext(),
-        }),
+      const { parts: reminderParts } = await runWithRuntimeContext(
+        { executionSettings: runtime.executionSettings },
+        () =>
+          buildSharedReminderParts(
+            buildListenReminderContext({
+              agentId,
+              conversationId,
+              agentName: listenAgentMetadata?.name ?? null,
+              agentDescription: listenAgentMetadata?.description ?? null,
+              agentLastRunAt: listenAgentMetadata?.lastRunAt ?? null,
+              state: runtime.reminderState,
+              workingDirectory,
+              shellContext: detectShellContext(),
+            }),
+          ),
       );
       if (isInterrupted()) {
         return { kind: "interrupted" };
@@ -333,6 +340,7 @@ export async function prepareListenerTurn(params: {
     actingUserId: msg.actingUserId,
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
+    resolveClientMessageIds,
     clientToolset: msg.clientToolset,
     clientToolAllowlist: msg.clientToolAllowlist,
     // Honor explicit client exclusions; headless execution does not block questions.
