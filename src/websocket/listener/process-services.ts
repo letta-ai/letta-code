@@ -4,6 +4,11 @@ import {
   subscribeToStreamEvents as subscribeToSubagentStreamEvents,
 } from "@/agent/subagent-state";
 import { stopScheduler as stopCronScheduler } from "@/cron/scheduler";
+import {
+  deliverDiskSpaceReminder,
+  watchSandboxDiskSpace,
+} from "@/reminders/disk-space";
+import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
 import { TO_SUBSCRIBERS } from "./connection";
@@ -20,6 +25,7 @@ import { clearSubagentSnapshotCache } from "./subagent-state-cache";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
+  ConversationRuntime,
   ListenerRuntime,
   ProcessQueuedTurn,
   StartListenerOptions,
@@ -147,6 +153,48 @@ export function installProcessEventRouting(params: {
     >);
     scheduleQueuePump(targetRuntime, processTransport, opts, processQueuedTurn);
   });
+
+  // One disk watcher per sandbox. Alert only the most recently active
+  // conversation so idle agents don't all wake to free space at once; the
+  // rest see the between-turns reminder on their next turn.
+  runtime._stopDiskSpaceWatch?.();
+  runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
+    getCurrentWorkingDirectory,
+    (text) => deliverSandboxDiskAlert(runtime, text),
+  );
+}
+
+export function deliverSandboxDiskAlert(
+  runtime: ListenerRuntime,
+  text: string,
+): void {
+  const target = getMostRecentlyActiveConversation(runtime);
+  deliverDiskSpaceReminder(
+    text,
+    target?.agentId
+      ? { agentId: target.agentId, conversationId: target.conversationId }
+      : undefined,
+  );
+}
+
+/** A running turn counts as now; otherwise the last model response time. */
+function getMostRecentlyActiveConversation(
+  runtime: ListenerRuntime,
+): ConversationRuntime | null {
+  let latest: ConversationRuntime | null = null;
+  let latestAt = -1;
+  for (const conversationRuntime of runtime.conversationRuntimes.values()) {
+    if (!conversationRuntime.agentId) continue;
+    const activeAt = conversationRuntime.isProcessing
+      ? Number.POSITIVE_INFINITY
+      : (conversationRuntime.contextTracker.contextTokensHistory.at(-1)
+          ?.timestamp ?? 0);
+    if (activeAt > latestAt) {
+      latest = conversationRuntime;
+      latestAt = activeAt;
+    }
+  }
+  return latest;
 }
 
 export function clearProcessServices(runtime: ListenerRuntime): void {
@@ -156,6 +204,8 @@ export function clearProcessServices(runtime: ListenerRuntime): void {
   runtime._unsubscribeSubagentStreamEvents = undefined;
   runtime._unsubscribeBackgroundProcessState?.();
   runtime._unsubscribeBackgroundProcessState = undefined;
+  runtime._stopDiskSpaceWatch?.();
+  runtime._stopDiskSpaceWatch = undefined;
   setMessageQueueAdder(null);
   stopCronScheduler();
   clearRuntimeTimers(runtime);
