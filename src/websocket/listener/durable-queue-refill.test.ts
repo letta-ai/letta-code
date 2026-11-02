@@ -28,7 +28,12 @@ import { consumeQueuedTurn } from "./queue";
 import { setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { createTurnCorrelation } from "./turn-correlation";
-import type { IncomingMessage, StartListenerOptions } from "./types";
+import { finishListenerTurn } from "./turn-terminal";
+import type {
+  IncomingMessage,
+  ProcessQueuedTurn,
+  StartListenerOptions,
+} from "./types";
 
 function createDurableRuntime(persistentPath: string | null = null) {
   const listener = createRuntime();
@@ -225,6 +230,8 @@ function admitQueuedInputs(
 
 async function installLifecycleRefill(
   runtime: ReturnType<typeof createDurableRuntime>,
+  startProcessServices = false,
+  processQueuedTurn: ProcessQueuedTurn = async () => {},
 ) {
   const transport = {
     kind: "local" as const,
@@ -256,17 +263,17 @@ async function installLifecycleRefill(
     runtime.listener,
     transport,
     options,
-    async () => {},
+    processQueuedTurn,
     {
       startHeartbeat: false,
       startCronScheduler: false,
-      startProcessServices: false,
+      startProcessServices,
       emitInitialState: false,
       recoverRecordedWork: async () => {},
       restoreDurableQueuedInputs: restore,
     },
   );
-  runtime.listener.restoreDurableQueuedInputs?.();
+  if (!startProcessServices) runtime.listener.restoreDurableQueuedInputs?.();
   return restore;
 }
 
@@ -652,5 +659,87 @@ test("lifecycle refill drains a full queue's overflow without duplicates or forg
   } finally {
     stopRuntime(runtime.listener, true);
     setActiveRuntime(null);
+  }
+});
+
+test.each(["stale lease", "rejected commit"] as const)(
+  "dequeue refill does not replay delivered input after a %s",
+  async (exit) => {
+    const root = mkdtempSync(join(tmpdir(), "letta-delivered-refill-"));
+    const runtime = createDurableRuntime(join(root, "inputs.json"));
+    try {
+      await installLifecycleRefill(runtime);
+      const identity = ordinaryInputIdentity("cm-delivered");
+      if (!identity) throw new Error("expected identity");
+      const admission = reserveInputDisposition(runtime, identity);
+      if (admission.kind !== "reserved")
+        throw new Error("expected reservation");
+      // Direct dispatch persists the payload before entering the turn.
+      expect(
+        commitInputDisposition(runtime, admission.reservation, "started", {
+          incoming: durableIncoming(identity.id),
+        }),
+      ).toBe(true);
+      const lease = runtime.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: process.cwd(),
+      });
+      if (exit === "stale lease") runtime.turnLifecycle.reset();
+      expect(
+        finishListenerTurn(runtime, lease, {
+          stopReason: "end_turn",
+          conversationId: runtime.conversationId,
+          durableInputIdentities: [identity],
+          canCommit: () => exit !== "rejected commit",
+        }).finished,
+      ).toBe(false);
+      expect(loadDurableQueuedInputEntries(runtime.listener)).toMatchObject([
+        { disposition: "started", payload: { identity } },
+      ]);
+
+      // Releasing queue capacity must refill only pending inputs, even when
+      // the previous finalizer left a started payload without a live owner.
+      runtime.queueRuntime.enqueue(systemFiller("wake refill"));
+      admitQueuedInputs(runtime, 1, "cm-new");
+      expect(runtime.queueRuntime.consumeItems(1)).not.toBeNull();
+      await Promise.resolve();
+      const next = consumeQueuedTurn(runtime);
+      expect(next?.queuedTurn.durableInputIdentities).toEqual([
+        { domain: "input", id: "cm-new-0" },
+      ]);
+    } finally {
+      stopRuntime(runtime.listener, true);
+      setActiveRuntime(null);
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test("listener startup recovers a started input whose turn never ran", async () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-unstarted-recovery-"));
+  const path = join(root, "inputs.json");
+  const runtime = createDurableRuntime(path);
+  const identity = ordinaryInputIdentity("cm-before-crash");
+  if (!identity) throw new Error("expected identity");
+  const admission = reserveInputDisposition(runtime, identity);
+  if (admission.kind !== "reserved") throw new Error("expected reservation");
+  expect(
+    commitInputDisposition(runtime, admission.reservation, "started", {
+      incoming: durableIncoming(identity.id),
+    }),
+  ).toBe(true);
+  // Crash between durable admission and entering processIncomingMessage.
+  const restarted = createDurableRuntime(path);
+  try {
+    const delivered: IncomingMessage[] = [];
+    await installLifecycleRefill(restarted, true, async (incoming) => {
+      delivered.push(incoming);
+    });
+    await waitFor(() => expect(delivered).toHaveLength(1));
+    expect(delivered[0]?.durableInputIdentities).toEqual([identity]);
+  } finally {
+    stopRuntime(restarted.listener, true);
+    setActiveRuntime(null);
+    rmSync(root, { recursive: true, force: true });
   }
 });
