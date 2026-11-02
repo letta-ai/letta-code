@@ -11,10 +11,13 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { uptime } from "node:os";
 import path from "node:path";
-import { publishExclusive } from "@/utils/exclusive-publish";
+import {
+  isWithinPartialPublishGrace,
+  publishExclusive,
+} from "@/utils/exclusive-publish";
 import {
   getProcessCommand,
   isPidReusedByNonLetta,
@@ -165,27 +168,64 @@ export function getManualListenerScopeHash(
     .digest("hex");
 }
 
-function parseLockRecord(
+/**
+ * `partial`: empty or not JSON, as left by an interrupted exclusive-create
+ * copy (the fallback publish on volumes without hard links). `incompatible`:
+ * well-formed JSON that is not a current record for this scope, e.g. another
+ * version; it is never reaped.
+ */
+type ParsedLockRecord =
+  | { kind: "record"; record: ManualListenerLockRecord }
+  | { kind: "partial" }
+  | { kind: "incompatible" };
+
+function classifyLockRecord(
   raw: string,
   expectedScopeHash: string,
-): ManualListenerLockRecord | null {
+): ParsedLockRecord {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw) as Partial<ManualListenerLockRecord>;
-    if (
-      parsed.version !== 1 ||
-      !Number.isSafeInteger(parsed.pid) ||
-      (parsed.pid ?? 0) <= 0 ||
-      typeof parsed.ownerToken !== "string" ||
-      parsed.ownerToken.length === 0 ||
-      typeof parsed.acquiredAt !== "string" ||
-      parsed.scopeHash !== expectedScopeHash
-    ) {
-      return null;
-    }
-    return parsed as ManualListenerLockRecord;
+    parsed = JSON.parse(raw);
   } catch {
+    return { kind: "partial" };
+  }
+  const record = validateLockRecord(parsed, expectedScopeHash);
+  return record ? { kind: "record", record } : { kind: "incompatible" };
+}
+
+/**
+ * True when a partial record is old enough that its writer must have died
+ * mid-copy; false while it may still be being written. Null when it is gone.
+ */
+async function isAbandonedPartialRecord(
+  filePath: string,
+): Promise<boolean | null> {
+  try {
+    return !isWithinPartialPublishGrace((await stat(filePath)).mtimeMs);
+  } catch (error) {
+    if (hasErrorCode(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
+function validateLockRecord(
+  parsed: unknown,
+  expectedScopeHash: string,
+): ManualListenerLockRecord | null {
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const record = parsed as Partial<ManualListenerLockRecord>;
+  if (
+    record.version !== 1 ||
+    !Number.isSafeInteger(record.pid) ||
+    (record.pid ?? 0) <= 0 ||
+    typeof record.ownerToken !== "string" ||
+    record.ownerToken.length === 0 ||
+    typeof record.acquiredAt !== "string" ||
+    record.scopeHash !== expectedScopeHash
+  ) {
     return null;
   }
+  return record as ManualListenerLockRecord;
 }
 
 async function publishInitializedFile(
@@ -200,8 +240,8 @@ async function publishInitializedFile(
   try {
     await writeFile(candidatePath, contents, { flag: "wx" });
     // Hard link, or an exclusive-create copy on volumes without hard links.
-    // A copy can be read half-written; readers fail closed on an unparsable
-    // record and never reap it.
+    // A copy can be read half-written; readers treat an unparsable record as
+    // still being written for PARTIAL_PUBLISH_GRACE_MS, then as abandoned.
     await publishExclusive(candidatePath, targetPath);
   } catch (error) {
     publicationError = error;
@@ -237,6 +277,7 @@ async function recoverDeadOwner(
   recoveryOwnerContents: string,
   scopeHash: string,
   deps: ManualListenerLockDeps,
+  staleIsPartial = false,
 ): Promise<boolean> {
   let ownedClaimDepth = -1;
   try {
@@ -273,14 +314,23 @@ async function recoverDeadOwner(
           lockPath,
         );
       }
-      const claimOwner = parseLockRecord(claimContents, scopeHash);
-      if (!claimOwner) {
+      const claimOwner = classifyLockRecord(claimContents, scopeHash);
+      if (claimOwner.kind === "incompatible") {
         throw new ManualListenerLockUnavailableError(
           `Listener lock recovery record is invalid: ${claimPath}`,
           lockPath,
         );
       }
-      if (isOwnerAlive(claimOwner, deps)) {
+      if (claimOwner.kind === "partial") {
+        // A claim interrupted mid-copy: wait out the grace, then treat its
+        // recoverer as dead and move on to the next depth.
+        const abandoned = await isAbandonedPartialRecord(claimPath).catch(
+          () => false,
+        );
+        if (abandoned === false) return false;
+        continue;
+      }
+      if (isOwnerAlive(claimOwner.record, deps)) {
         return false;
       }
     }
@@ -299,6 +349,14 @@ async function recoverDeadOwner(
       return hasErrorCode(error, "ENOENT");
     }
     if (currentContents !== staleContents) {
+      return true;
+    }
+    // Partial records carry no owner token, so equal bytes can belong to a
+    // newer owner whose copy is in progress. Only unlink one that is still old.
+    if (
+      staleIsPartial &&
+      (await isAbandonedPartialRecord(lockPath).catch(() => false)) !== true
+    ) {
       return true;
     }
     await unlink(lockPath);
@@ -404,15 +462,37 @@ export async function acquireManualListenerLock(
         lockPath,
       );
     }
-    const incumbent = parseLockRecord(incumbentContents, scopeHash);
-    if (!incumbent) {
+    const incumbent = classifyLockRecord(incumbentContents, scopeHash);
+    if (incumbent.kind === "incompatible") {
       throw new ManualListenerLockUnavailableError(
         `Listener lock is corrupt or belongs to an incompatible version: ${lockPath}`,
         lockPath,
       );
     }
-    if (isOwnerAlive(incumbent, deps)) {
-      throw new ManualListenerAlreadyRunningError(incumbent.pid, lockPath);
+    if (incumbent.kind === "partial") {
+      // Only the copy fallback can leave one. Fresh: the owner is still
+      // writing it. Aged: the owner died mid-copy, so reap it like a dead pid.
+      let abandoned: boolean | null;
+      try {
+        abandoned = await isAbandonedPartialRecord(lockPath);
+      } catch {
+        throw new ManualListenerLockUnavailableError(
+          "Could not inspect the existing listener lock.",
+          lockPath,
+        );
+      }
+      if (abandoned === null) continue;
+      if (!abandoned) {
+        throw new ManualListenerLockUnavailableError(
+          `Listener lock is being written by another process: ${lockPath}`,
+          lockPath,
+        );
+      }
+    } else if (isOwnerAlive(incumbent.record, deps)) {
+      throw new ManualListenerAlreadyRunningError(
+        incumbent.record.pid,
+        lockPath,
+      );
     }
 
     const recovered = await recoverDeadOwner(
@@ -421,6 +501,7 @@ export async function acquireManualListenerLock(
       ownerContents,
       scopeHash,
       deps,
+      incumbent.kind === "partial",
     );
     if (!recovered) {
       throw new ManualListenerLockUnavailableError(
