@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.316:docs:ed34855330488f85250cf80ceff2157354e60f9bd143c0b29ad9d5972b670356:runtime:c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c",
+  "candidate_id": "claude@2.1.316:docs:7c167dbc7b9aebb8d1df0035d1ab21cd455684be85679a1abef836198147ac3f:runtime:c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c",
   "package_version": "2.1.316",
   "npm_integrity": "sha512-i3BpzyDkcCPnsa0CSkWgxGPs7WMsyqDkxkqT0SDxyEC5XMIxEmcUmluWRHG9VSeBY8Vyv+l9X34JvJ/Bj54nBQ==",
   "npm_published_at": "2026-10-31T00:42:05.743Z",
@@ -16,7 +16,7 @@
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "173e13fd948351b8541918d56e7d0fa6ac931ff2c2b5dbf9b1c231cf11e1024f",
     "full_scan": true,
-    "scanned_at": "2026-11-01T02:22:33.532Z",
+    "scanned_at": "2026-11-02T02:22:58.662Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
         "url": "https://code.claude.com/docs/en/accessibility.md",
@@ -392,7 +392,7 @@
       },
       "https://code.claude.com/docs/en/claude-tag.md": {
         "url": "https://code.claude.com/docs/en/claude-tag.md",
-        "hash": "9dbe0f9fc117fc56c4bdcbdae85c26a4c370356f93e29822b8bbb00387bf5c5c",
+        "hash": "4f3f8bd50b130a986dd9250a76adeadb06fa238a9e913476d47c6170a139de50",
         "watched": false,
         "source_path": null
       },
@@ -548,7 +548,7 @@
       },
       "https://code.claude.com/docs/en/desktop.md": {
         "url": "https://code.claude.com/docs/en/desktop.md",
-        "hash": "0b9c66683c20346bccce5edf45162f1945d19b7db29ee115626819e17dfdfe67",
+        "hash": "cac6a537e446076c84954dd7264ca62a5ffff40928db1cfa608adaf8c6e564d4",
         "watched": false,
         "source_path": null
       },
@@ -1136,7 +1136,7 @@
       },
       "https://code.claude.com/docs/en/setup.md": {
         "url": "https://code.claude.com/docs/en/setup.md",
-        "hash": "34cdae9fb70e93f7fd144efad9e4ec503e6ea0b80f707ea27a9f88217e832c40",
+        "hash": "652872f26cfd711c4f92351b1ef8338d3f0b6140024c246c42edcbcbdfea172d",
         "watched": false,
         "source_path": null
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "ed34855330488f85250cf80ceff2157354e60f9bd143c0b29ad9d5972b670356"
+    "digest": "7c167dbc7b9aebb8d1df0035d1ab21cd455684be85679a1abef836198147ac3f"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c"
   },
-  "fetched_at": "2026-11-01T02:23:18.976Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41264911710",
-  "state_commit_parent": "28b35c6c71dbe54c0a3856d1e724b45ab6f6c396",
-  "analysis_parent_sha": "28b35c6c71dbe54c0a3856d1e724b45ab6f6c396"
+  "fetched_at": "2026-11-02T02:23:46.886Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41377391288",
+  "state_commit_parent": "c2dfef2ddffee0fdce11d57362a5e5c97fa86c26",
+  "analysis_parent_sha": "c2dfef2ddffee0fdce11d57362a5e5c97fa86c26"
 }
