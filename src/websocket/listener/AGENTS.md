@@ -3,6 +3,27 @@
 This directory owns local listener orchestration. Read this file before changing
 turns, approvals, cancellation, recovery, queue gating, or status projection.
 
+## Listener ↔ Conversation Scoping
+
+A listener is per registered connection/sandbox, not per conversation. One
+`ListenerRuntime` serves every conversation attached to that connection as a
+separate `ConversationRuntime` in `listener.conversationRuntimes`, keyed by
+agent + conversation (`getConversationRuntimeKey`; a missing conversation id
+normalizes to `"default"`). Conversation runtimes are created lazily and
+evicted when idle; per-conversation overrides (skill sources, reminders,
+context tracker) survive eviction in per-conversation maps on the listener.
+
+Whether a conversation actually shares a listener is decided by sandbox scope:
+conversation-scoped sandboxes run one listener per conversation, while a shared
+agent-scoped sandbox (for example some Cloud billing tiers) serves several of
+that agent's conversations from one listener. Never assume exactly one
+conversation per listener — `getOnlyConversationRuntime` returns null unless
+the map holds exactly one entry. Turns, queues, and setup work carry an
+explicit `(agent_id, conversation_id)` scope; on the Cloud side the
+per-connection setup lane is shared by every conversation on that connection,
+so a conversation missing its tool registration can wait behind another
+conversation's setup on the same listener.
+
 ## Canonical Ownership
 
 `TurnLifecycle` in `turn-lifecycle.ts` is the only owner of active-turn state.
