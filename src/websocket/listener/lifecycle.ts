@@ -82,7 +82,7 @@ import {
   disposeListenerModAdapter,
   reloadListenerModAdapter,
 } from "./mod-adapter";
-import { loadPersistedPermissionModeMap } from "./permission-mode";
+import { loadPersistedPermissionModeMapWithTelemetry } from "./permission-mode";
 import {
   clearProcessServices,
   installProcessEventRouting,
@@ -181,7 +181,7 @@ export function createRuntime(): ListenerRuntime {
     bootWorkingDirectory,
     workingDirectoryByConversation: loadPersistedCwdMap(),
     worktreeWatcherByConversation: new Map(),
-    permissionModeByConversation: loadPersistedPermissionModeMap(),
+    permissionModeByConversation: loadPersistedPermissionModeMapWithTelemetry(),
     skillSourcesByConversation: new Map(),
     reminderStateByConversation: new Map(),
     contextTrackerByConversation: new Map(),

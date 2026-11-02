@@ -321,6 +321,7 @@ export async function handleApprovalStop(params: {
     user_input_tool_call_ids: needsUserInput.map(
       (entry) => entry.approval.toolCallId,
     ),
+    permission_mode: turnPermissionModeState.mode,
   };
   emitCanonicalMessageDelta(
     socket,
@@ -591,7 +592,6 @@ export async function handleApprovalStop(params: {
   );
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-
   // Only relay-owned output waits for client reconnect (#3522).
   if (approvedDecisions.length > 0 && !processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(

@@ -19,6 +19,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import {
   getOrCreateProcessTransport,
@@ -436,9 +437,18 @@ async function applyRuntimeStartState(
     // A default-only mode (e.g. a channel account's default) must not
     // override a mode explicitly chosen for this conversation.
     if (!(parsed.mode_is_default && state.explicit)) {
+      const previousMode = state.mode;
       state.mode = mode;
       if (!parsed.mode_is_default) state.explicit = true;
       persistPermissionModeMapForRuntime(context.runtime);
+      telemetry.trackPermissionModeChanged({
+        agent_id: scope.agent_id,
+        conversation_id: scope.conversation_id,
+        prev_mode: previousMode,
+        new_mode: mode,
+        source: "runtime_start",
+        mode_is_default: parsed.mode_is_default === true,
+      });
     }
   }
 
