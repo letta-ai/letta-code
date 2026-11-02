@@ -35,6 +35,11 @@ export interface RuntimeStartCommand {
   cwd?: string | null;
   /** Initial permission mode for this runtime scope. */
   mode?: DevicePermissionMode;
+  /**
+   * Treat `mode` as a default: apply it only when the conversation has no
+   * explicitly chosen mode, and do not mark it as explicit.
+   */
+  mode_is_default?: boolean;
   /** CLI launch options for this conversation. Omission preserves its current options. */
   execution_settings?: RuntimeExecutionSettings;
   workspace_sandbox?: { root: string; isolation_root: string };
