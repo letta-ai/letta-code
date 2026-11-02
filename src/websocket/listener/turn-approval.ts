@@ -46,7 +46,6 @@ import {
   emitToolExecutionStartedEvents,
   normalizeExecutionResultsForInterruptParity,
 } from "./interrupts";
-import type { McpOriginatorScope } from "./mcp-originator-scope";
 import { awaitOrderedOutboundDeliveries } from "./outbound-delivery";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import {
@@ -143,6 +142,7 @@ export async function handleApprovalStop(params: {
     toolName: string;
     toolArgs: string;
   }>;
+  onChunk?: Parameters<typeof executeApprovalBatch>[1];
   runtime: ConversationRuntime;
   socket: ListenerTransport;
   agentId?: string | null;
@@ -157,7 +157,6 @@ export async function handleApprovalStop(params: {
   turnToolContextId: string | null;
   turnLease: TurnLease;
   turnCorrelation?: TurnCorrelation;
-  activeOriginatorScope?: McpOriginatorScope;
   allowQueuedContinuation?: boolean;
   onConsumeQueuedTurn?: (queuedTurn: IncomingMessage) => void | Promise<void>;
   /** This turn's output is owned by an in-process caller, not a relay client. */
@@ -175,6 +174,8 @@ export async function handleApprovalStop(params: {
   buildSendOptions: () => Parameters<
     typeof sendApprovalContinuationWithRetry
   >[2];
+  /** Receives this batch's unsent results when the continuation send throws. */
+  onContinuationSendError?: (progress: ApprovalBranchProgress) => void;
   dependencies?: {
     classifyApprovals?: typeof classifyApprovalsWithSuggestions;
     executeApprovalBatch?: typeof executeApprovalBatch;
@@ -421,7 +422,7 @@ export async function handleApprovalStop(params: {
   const interruptTermination = (
     interruptedTurnInput: TurnInputState = turnInput,
     interruptedBatchId: string = dequeuedBatchId,
-  ): ApprovalBranchResult => {
+  ): ApprovalBranchProgress & { kind: "interrupted" } => {
     return {
       kind: "interrupted",
       turnInput: interruptedTurnInput,
@@ -699,7 +700,7 @@ export async function handleApprovalStop(params: {
     if (shouldInterrupt()) {
       return interruptTermination();
     }
-    executionResults = await executeApprovals(decisions, undefined, {
+    executionResults = await executeApprovals(decisions, params.onChunk, {
       toolContextId: turnToolContextId ?? undefined,
       abortSignal,
       onStreamingOutput: emitToolExecutionOutput,
@@ -873,7 +874,7 @@ export async function handleApprovalStop(params: {
   const consumedQueuedTurn =
     params.allowQueuedContinuation === false
       ? null
-      : consumeQueuedTurn(runtime, params.activeOriginatorScope ?? null);
+      : consumeQueuedTurn(runtime);
   if (consumedQueuedTurn) {
     const { dequeuedBatch, queuedTurn } = consumedQueuedTurn;
     await params.onConsumeQueuedTurn?.(queuedTurn);
@@ -930,6 +931,7 @@ export async function handleApprovalStop(params: {
     if (shouldInterrupt()) {
       return interruptTermination(nextTurnInput, continuationBatchId);
     }
+    params.onContinuationSendError?.(interruptTermination());
     throw error;
   }
   if (sendResult.kind === "terminal") {
@@ -977,7 +979,6 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   });
-
   runtime.turnLifecycle.setExecutingToolCallIds(turnLease, []);
   emitRuntimeStateUpdates(runtime, {
     agent_id: agentId,

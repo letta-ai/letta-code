@@ -1,3 +1,4 @@
+import type { ClientRequest, IncomingMessage } from "node:http";
 import { isAppServerInfoResponseMessage } from "./types/app-server-info";
 
 export type { AppServerInfoResponseMessage } from "./types/app-server-info";
@@ -219,14 +220,61 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
   return new Promise((resolve, reject) => {
     let detachOpen = () => {};
     let detachError = () => {};
+    let detachResponse = () => {};
+    let detachBody = () => {};
     const cleanup = () => {
       detachOpen();
       detachError();
+      detachResponse();
+      detachBody();
     };
     detachOpen = onceSocketEvent(socket, "open", () => {
       cleanup();
       resolve();
     });
+    if (socket.on) {
+      const onResponse = (_request: unknown, response?: IncomingMessage) => {
+        if (!response) return;
+        const request = _request as ClientRequest;
+        let body = Buffer.alloc(0);
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          detachBody();
+          const detail = body.toString("utf8").trim();
+          reject(
+            new Error(
+              `App-server WebSocket failed to open: HTTP ${response.statusCode}${detail ? `: ${detail}` : ""}`,
+            ),
+          );
+          detachOpen();
+          detachResponse();
+          // Aborting can emit a socket error before the request closes.
+          request.once("close", cleanup);
+          request.abort();
+        };
+        const onData = (chunk: Buffer | string) => {
+          const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+          body = Buffer.concat([body, bytes.subarray(0, 2048 - body.length)]);
+          if (body.length >= 2048) finish();
+        };
+        const timeout = setTimeout(finish, 1000);
+        detachBody = () => {
+          finished = true;
+          clearTimeout(timeout);
+          response.off("data", onData);
+          response.off("end", finish);
+          response.off("error", finish);
+          response.off("close", finish);
+        };
+        response.on("data", onData);
+        response.on("end", finish);
+        response.on("error", finish);
+        response.on("close", finish);
+      };
+      socket.on("unexpected-response", onResponse);
+      detachResponse = () => socket.off?.("unexpected-response", onResponse);
+    }
     detachError = onceSocketEvent(socket, "error", (event) => {
       cleanup();
       reject(

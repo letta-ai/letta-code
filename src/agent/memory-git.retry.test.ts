@@ -7,6 +7,7 @@ import { join } from "node:path";
 import {
   isMissingCwdGitError,
   isRetryableGitTransientError,
+  runGit,
   runGitWithRetry,
 } from "@/agent/memory-git";
 
@@ -128,6 +129,59 @@ describe("runGitWithRetry HTTP failures", () => {
       }
       expect(attempts).toBe(scenario.attempts);
     } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runGit HTTP timeout cleanup", () => {
+  test("reaps the HTTP helper before rejecting a timed-out clone", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "memfs-git-timeout-"));
+    let requests = 0;
+    const sockets = new Set<import("node:net").Socket>();
+    const server = createServer(() => {
+      requests += 1;
+    });
+    server.on("connection", (socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    try {
+      await new Promise<void>((resolve) =>
+        server.listen(0, "127.0.0.1", resolve),
+      );
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw new Error("Expected TCP address");
+      const clone = runGit(
+        cwd,
+        ["clone", `http://127.0.0.1:${address.port}/repo.git`, "."],
+        undefined,
+        { timeoutMs: 2000 },
+      );
+      await expect(clone).rejects.toThrow();
+      expect(requests).toBeGreaterThan(0);
+      // Observe FIN/close from the real git-remote-http process, without
+      // forcibly closing server sockets to hide an orphaned helper.
+      await new Promise<void>((resolve, reject) => {
+        const deadline = setTimeout(
+          () =>
+            reject(new Error("git HTTP helper still connected after timeout")),
+          1000,
+        );
+        Promise.all(
+          [...sockets].map(
+            (socket) =>
+              new Promise<void>((closed) => socket.once("close", closed)),
+          ),
+        ).then(() => {
+          clearTimeout(deadline);
+          resolve();
+        });
+      });
+    } finally {
+      server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       await rm(cwd, { recursive: true, force: true });
     }

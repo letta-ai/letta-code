@@ -1,4 +1,3 @@
-import { addToolCall } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -16,6 +15,7 @@ import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
 } from "./task";
+import { externalWorkerProgressListeners } from "./task-transcript";
 
 export function trackExternalFollowupCompletion(args: {
   type: ExternalCodingAgentType;
@@ -76,7 +76,10 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (target && target.type !== "opencode") {
+        if (
+          target &&
+          (target.type === "claude-code" || target.type === "codex")
+        ) {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {
@@ -133,7 +136,7 @@ export function spawnExternalCodingAgentFollowup(args: {
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,
-          onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
+          ...externalWorkerProgressListeners(subagentId),
         }),
     },
   });

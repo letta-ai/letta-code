@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   acquireManualListenerLock,
+  getManualListenerLockRoot,
   getManualListenerScopeHash,
   ManualListenerAlreadyRunningError,
   type ManualListenerLockScope,
@@ -29,6 +30,17 @@ describe("manual listener instance lock", () => {
 
   afterEach(async () => {
     await rm(lockRoot, { recursive: true, force: true });
+  });
+
+  test("uses the product config root for default lock ownership", () => {
+    const originalConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = path.join(lockRoot, ".dream");
+    try {
+      expect(getManualListenerLockRoot()).toBe(path.join(lockRoot, ".dream"));
+    } finally {
+      if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = originalConfigDir;
+    }
   });
 
   function acquire(
@@ -159,10 +171,6 @@ describe("manual listener instance lock", () => {
     await expect(
       acquireWith(202, afterLock, "node /usr/local/bin/letta server"),
     ).rejects.toBeInstanceOf(ManualListenerAlreadyRunningError);
-    // Command lookup failed: fail closed.
-    await expect(acquireWith(202, afterLock, null)).rejects.toBeInstanceOf(
-      ManualListenerAlreadyRunningError,
-    );
 
     // After a reboot, pid 101 belongs to an unrelated process.
     const replacement = await acquireWith(

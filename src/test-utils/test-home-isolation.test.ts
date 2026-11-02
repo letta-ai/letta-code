@@ -21,6 +21,7 @@ test("unit tests write home-relative state under a disposable home", () => {
   expect(process.env.USERPROFILE).toBe(testHome);
 
   for (const key of [
+    "LETTA_CONFIG_DIR",
     "LETTA_HOME",
     "LETTA_LOCAL_BACKEND_DIR",
     "LETTA_MEMORY_DIR",

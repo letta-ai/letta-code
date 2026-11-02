@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import type { AgentListParams } from "@letta-ai/letta-client/resources/agents/agents";
 import { type CreateAgentOptions, createAgent } from "@/agent/create";
@@ -8,9 +9,11 @@ import {
 } from "@/agent/personality";
 import { resolvePersonalityId } from "@/agent/personality-presets";
 import { getBackend } from "@/backend";
+import type { AgentCreateBody } from "@/backend/backend";
 import { listSharedAgentsForCurrentUser } from "@/cli/helpers/shared-agent-listing";
 import { getRuntimeActingUserId } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import { readStdin } from "@/utils/stdin";
 
 function printUsage(): void {
   console.log(
@@ -35,8 +38,12 @@ Create Options:
   --description <text>  Agent description
   --tags <tag1,tag2>    Tags (comma-separated)
   --pinned              Pin the created agent globally
+  --body <path>         Create from a JSON agent create request instead of the
+                        options above ("-" reads stdin)
 
-  Creates a memfs-enabled agent with persona.md pre-populated.
+  Creates a memfs-enabled agent with persona.md pre-populated. With --body, the
+  request's system prompt, model settings, compaction settings, memory blocks,
+  and tags are used as given.
 
 Notes:
   - Output is JSON only.
@@ -74,7 +81,17 @@ const AGENTS_OPTIONS = {
   personality: { type: "string" },
   description: { type: "string" },
   pinned: { type: "boolean" },
+  body: { type: "string" },
 } as const;
+
+// Create options that --body replaces.
+const BODY_EXCLUSIVE_OPTIONS = [
+  "name",
+  "model",
+  "personality",
+  "description",
+  "tags",
+] as const;
 
 function parseAgentsArgs(argv: string[]) {
   return parseArgs({
@@ -115,10 +132,67 @@ export async function runAgentsSubcommand(argv: string[]): Promise<number> {
   return 1;
 }
 
+async function readCreateBody(source: string): Promise<AgentCreateBody> {
+  const text =
+    source === "-" ? await readStdin() : await readFile(source, "utf8");
+  const body: unknown = JSON.parse(text);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("--body must contain a JSON object");
+  }
+  return body as AgentCreateBody;
+}
+
+async function createAgentFromBody(source: string): Promise<string> {
+  const { prepareRawCreateAgentBodyForMemfs, enableMemfsIfCloud } =
+    await import("@/agent/memory-filesystem");
+  const body = await prepareRawCreateAgentBodyForMemfs(
+    await readCreateBody(source),
+  );
+  const agent = await getBackend().createAgent(body);
+  await enableMemfsIfCloud(agent.id, { agentTags: agent.tags });
+  return agent.id;
+}
+
+async function printCreatedAgent(
+  agentId: string,
+  pinned: boolean,
+): Promise<number> {
+  if (pinned) {
+    settingsManager.pinAgent(agentId);
+  }
+
+  // Re-fetch agent through the active backend to get updated output.
+  const updatedAgent = await getBackend().retrieveAgent(agentId);
+
+  console.log(JSON.stringify(updatedAgent, null, 2));
+  return 0;
+}
+
 async function runCreateAction(
   values: ReturnType<typeof parseAgentsArgs>["values"],
 ): Promise<number> {
   await settingsManager.initialize();
+
+  if (typeof values.body === "string") {
+    const conflicting = BODY_EXCLUSIVE_OPTIONS.filter(
+      (option) => values[option] !== undefined,
+    );
+    if (conflicting.length > 0) {
+      console.error(
+        `--body cannot be combined with ${conflicting.map((option) => `--${option}`).join(", ")}`,
+      );
+      return 1;
+    }
+    try {
+      return await printCreatedAgent(
+        await createAgentFromBody(values.body),
+        Boolean(values.pinned),
+      );
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      return 1;
+    }
+  }
 
   const personalityInput = values.personality as string | undefined;
   const personality = personalityInput
@@ -176,15 +250,7 @@ async function runCreateAction(
       });
     }
 
-    if (values.pinned) {
-      settingsManager.pinAgent(agentId);
-    }
-
-    // Re-fetch agent through the active backend to get updated output.
-    const updatedAgent = await getBackend().retrieveAgent(agentId);
-
-    console.log(JSON.stringify(updatedAgent, null, 2));
-    return 0;
+    return await printCreatedAgent(agentId, Boolean(values.pinned));
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     return 1;

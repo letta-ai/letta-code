@@ -10,11 +10,15 @@
  * listener identities and owns their lifecycle.
  */
 
-import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { link, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { homedir, uptime } from "node:os";
+import { uptime } from "node:os";
 import path from "node:path";
+import {
+  getProcessCommand,
+  isPidReusedByNonLetta,
+} from "@/utils/process-liveness";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 export interface ManualListenerLockScope {
   serverUrl: string;
@@ -96,19 +100,6 @@ function getDefaultBootTimeMs(): number {
   return Date.now() - uptime() * 1000;
 }
 
-function defaultGetProcessCommand(pid: number): string | null {
-  if (process.platform === "win32") return null;
-  try {
-    return execFileSync("ps", ["-p", String(pid), "-o", "command="], {
-      encoding: "utf-8",
-      timeout: 1000,
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-
 /**
  * A live pid recorded before the current boot may have been reused by an
  * unrelated process after a reboot. The boot estimate moves with the wall
@@ -127,15 +118,14 @@ function isOwnerAlive(
   ) {
     return true;
   }
-  const command = deps.getProcessCommand(record.pid);
-  return !command || /letta/i.test(command);
+  return !isPidReusedByNonLetta(record.pid, deps.getProcessCommand);
 }
 
-function getDefaultLockRoot(): string {
+export function getManualListenerLockRoot(): string {
   // The device id used in the registration key is stored under this same
-  // HOME-scoped `.letta` directory. An unrelated LETTA_HOME override must not
+  // product-scoped config directory. An unrelated LETTA_HOME override must not
   // split locks for processes that still share that device identity.
-  return path.join(process.env.HOME || homedir(), ".letta");
+  return resolveGlobalConfigDir();
 }
 
 export function normalizeManualListenerServerUrl(serverUrl: string): string {
@@ -329,12 +319,12 @@ export async function acquireManualListenerLock(
 ): Promise<ManualListenerLockHandle> {
   const scopeHash = getManualListenerScopeHash(scope);
   const deps: ManualListenerLockDeps = {
-    lockRoot: getDefaultLockRoot(),
+    lockRoot: getManualListenerLockRoot(),
     processId: process.pid,
     ownerToken: randomUUID(),
     isProcessAlive: defaultIsProcessAlive,
     bootTimeMs: getDefaultBootTimeMs(),
-    getProcessCommand: defaultGetProcessCommand,
+    getProcessCommand,
     ...overrides,
   };
   const listenerLockDir = path.join(deps.lockRoot, "listeners");

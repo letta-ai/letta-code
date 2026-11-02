@@ -263,7 +263,9 @@ also rejects staged parent-relative imports (`../`); use the `@/` alias.
 | `LETTA_DEBUG=0` | Suppress debug output even in dev mode |
 | `LETTA_LOCAL_BACKEND_EXPERIMENTAL=1` | Enable local in-process backend |
 | `LETTA_LOCAL_BACKEND_EXECUTOR=deterministic` | Use fake deterministic executor (for tests) |
-| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `~/.letta/lc-local-backend`) |
+| `LETTA_LOCAL_BACKEND_DIR` | Local-backend storage root (defaults to `<product-config>/lc-local-backend`) |
+| `LETTA_CONFIG_DIR` | Absolute global config directory (defaults to `~/.letta`); product hosts use this to isolate settings, credentials, device identity, schedules, channel accounts/sessions, remote-session state, durable listener control state, global skills, and listener locks without replacing `HOME` |
+| `LETTA_SECRETS_SERVICE_NAME` | OS-keychain service namespace for hosts that isolate credentials (defaults to `letta-code`) |
 | `LETTA_DEFAULT_SUBAGENT_COMPUTER` | `computer` used by Agent launches that omit one (e.g. `cloud`). Explicit `computer` wins; `local`/`self` force the current machine. Ignored by forks and memory-profile subagents. Unset = no change |
 
 When manually smoke-testing the local backend (`letta --backend local` or
@@ -967,3 +969,5 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
+
+- Never reference non-public code, data, or internal systems in commits, pull requests, or code comments in this repository; keep that context in internal tickets and cite only the ticket ID.

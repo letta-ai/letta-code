@@ -15,7 +15,7 @@ import {
   type ProviderConnectionOptions,
   type ProviderField,
   type ProviderStorageTarget,
-  removeProviderByName,
+  removeProviderById,
 } from "@/providers/byok-providers";
 import {
   createOrUpdateOpenAICodexProvider,
@@ -478,7 +478,7 @@ export async function disconnectProvider<TTarget extends ProviderStorageTarget>(
     ? connectedRecords.find((record) => record.name === input.providerName)
     : connectedRecords[0];
   if (connected) {
-    await removeProviderByName(connected.name, { target: input.target });
+    await removeProviderById(connected.id, { target: input.target });
   }
 
   return listConnectProviders(input.target);

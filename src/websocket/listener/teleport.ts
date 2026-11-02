@@ -578,9 +578,11 @@ export function handleTeleportRequest(params: {
     pending.agentId,
     pending.conversationId,
   );
+  // An active pump owns the current turn; it is not waiting input.
+  // Keep its next tool/end-turn boundary eligible for an active handoff.
   pending.drainAcceptedInputs = hasAcceptedInputsWaiting(
     conversationRuntime,
-    true,
+    !conversationRuntime.isProcessing,
   );
   if (!conversationRuntime.isProcessing && !pending.drainAcceptedInputs) {
     const connection = listener.connections.get(pending.connectionId);

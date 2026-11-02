@@ -1,17 +1,18 @@
 /**
- * Custom slash commands - user-defined commands from .commands/ and ~/.letta/commands/
+ * Custom slash commands from the project and active product config roots.
  */
 
 import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { getStringField, parseFrontmatter } from "@/utils/frontmatter.js";
+import { resolveGlobalConfigDir } from "@/utils/settings-path.js";
 
 export const COMMANDS_DIR = ".commands";
-export const GLOBAL_COMMANDS_DIR = join(
-  process.env.HOME || process.env.USERPROFILE || "~",
-  ".letta/commands",
-);
+
+export function getGlobalCommandsDir(): string {
+  return join(resolveGlobalConfigDir(), "commands");
+}
 
 export interface CustomCommand {
   id: string; // Command name without slash (e.g., "review")
@@ -57,7 +58,10 @@ export async function discoverCustomCommands(
   const commandsById = new Map<string, CustomCommand[]>(); // Group by id for collision handling
 
   // 1. Discover user commands first (lower priority)
-  const userCommands = await discoverFromDirectory(GLOBAL_COMMANDS_DIR, "user");
+  const userCommands = await discoverFromDirectory(
+    getGlobalCommandsDir(),
+    "user",
+  );
   for (const cmd of userCommands) {
     const existing = commandsById.get(cmd.id) || [];
     existing.push(cmd);

@@ -2,7 +2,7 @@ import { WebSocket } from "ws";
 import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { LISTENER_STREAM_OPEN_TIMEOUT_MS } from "./constants";
 import { getActiveRuntime } from "./runtime";
-import type { ListenerTransport } from "./transport";
+import { isListenerTransportOpen, type ListenerTransport } from "./transport";
 import type { ListenerRuntime, StartListenerOptions } from "./types";
 
 type TrackListenerError = (
@@ -119,6 +119,33 @@ export function shouldHandleControlSocketClose(
     runtime === getActiveRuntime() &&
     (runtime.socket === controlSocket ||
       runtime.connections.get(connectionId)?.writer === controlSocket)
+  );
+}
+
+// Reconnect chains still awaiting auth or backoff, before a socket is assigned.
+const reconnectsInFlight = new WeakSet<ListenerRuntime>();
+
+export function trackReconnectInFlight(
+  runtime: ListenerRuntime,
+  reconnect: Promise<void>,
+): Promise<void> {
+  reconnectsInFlight.add(runtime);
+  return reconnect.finally(() => reconnectsInFlight.delete(runtime));
+}
+
+/** An orphaned control close must still reconnect when nothing else will. */
+export function shouldRecoverOrphanedControlClose(
+  runtime: ListenerRuntime,
+): boolean {
+  return (
+    runtime === getActiveRuntime() &&
+    !runtime.intentionallyClosed &&
+    (!runtime.socket || runtime.socket.readyState === WebSocket.CLOSED) &&
+    ![...runtime.connections.values()].some(({ writer }) =>
+      isListenerTransportOpen(writer),
+    ) &&
+    !runtime.reconnectTimeout &&
+    !reconnectsInFlight.has(runtime)
   );
 }
 

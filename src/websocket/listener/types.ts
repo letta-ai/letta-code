@@ -183,7 +183,13 @@ export type ListenerStreamObserver = (
 ) => void;
 
 export interface PendingExternalToolCall {
+  /** Captures the owning lease before awaiting the remote response. */
+  isOwningTurnCurrent?: () => boolean;
   connectionId: ListenerConnectionId;
+  /** Serialized request, resent if the socket drops before a response. */
+  requestFrame: string;
+  /** Transport that last carried `requestFrame`. */
+  sentOn: ListenerTransport;
   resolve: (result: ExternalToolCallResult) => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
@@ -720,6 +726,8 @@ export type ListenerRuntime = {
   _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
   /** Unsubscribe from background process state (set on socket open, cleared on close). */
   _unsubscribeBackgroundProcessState?: (() => void) | undefined;
+  /** Stop the sandbox disk watcher (set with process services, cleared with them). */
+  _stopDiskSpaceWatch?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {

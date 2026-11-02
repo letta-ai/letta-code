@@ -1,4 +1,5 @@
-import { expect, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import type { SubagentResult } from "@/agent/subagents";
 import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
 import type { AgentRetrieveOptions, Backend } from "@/backend";
 import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
@@ -48,7 +49,20 @@ function fixture(targetTags: readonly string[] = []) {
     tracked.push(input);
     return "subagent-tracked";
   };
-  return { backend, enqueue, trackChildSend, submissions, created, tracked };
+  // Keep worker resumes off the real vault and MCP inventory.
+  const workerEnv = {
+    resolveSecretEnv: async () => ({}),
+    resolveMcpReminder: async () => undefined,
+  };
+  return {
+    backend,
+    enqueue,
+    trackChildSend,
+    workerEnv,
+    submissions,
+    created,
+    tracked,
+  };
 }
 
 const caller = {
@@ -313,6 +327,126 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
     },
     completion,
     interrupt: expect.any(Function),
+  });
+});
+
+describe("resumed Claude Code and Codex workers get the launch environment", () => {
+  const rootSettings = {
+    allowed_tools: [],
+    disallowed_tools: [],
+    disable_memory_guard: false,
+  };
+  const workerEnv = {
+    env: { PATH: process.env.PATH },
+    resolveSecretEnv: async (parentAgentId: string) => {
+      expect(parentAgentId).toBe("agent-caller");
+      return { GITHUB_TOKEN: "vault-token-123" };
+    },
+    resolveMcpReminder: async () => "MCP servers available: github",
+  };
+
+  function expectLaunchEnv(
+    options: { mcpReminder?: string } | undefined,
+    deps: { env?: NodeJS.ProcessEnv } | undefined,
+  ) {
+    expect(deps?.env).toMatchObject({
+      GITHUB_TOKEN: "vault-token-123",
+      AGENT_ID: "agent-caller",
+      LETTA_PARENT_AGENT_ID: "agent-caller",
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      LETTA_SUBAGENT_DEPTH: "1",
+      LETTA_ACTING_USER_ID: "user-caller",
+    });
+    expect(options?.mcpReminder).toContain("MCP servers available: github");
+  }
+
+  test("Claude Code", async () => {
+    const f = fixture();
+    let sent: [unknown, unknown] | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const result = await runWithRuntimeContext(
+      { ...caller, executionSettings: rootSettings },
+      () =>
+        send_agent_message(
+          { agent_id: CLAUDE_AGENT_ID, message: "Now push it." },
+          {
+            ...f,
+            workerEnv,
+            sendClaudeMessage: async (options, deps) => {
+              sent = [options, deps];
+              return {
+                mode: "resumed",
+                sessionId: CLAUDE_SESSION_ID,
+                completion: Promise.resolve({
+                  agentId: CLAUDE_AGENT_ID,
+                  report: "pushed with vault-token-123",
+                  success: true,
+                }),
+                interrupt: async () => undefined,
+              };
+            },
+            trackExternalFollowup: (input) => {
+              tracked = input.completion;
+              return {
+                taskId: "task-claude",
+                outputFile: "/tmp/task-claude.log",
+                subagentId: "subagent-claude",
+              };
+            },
+          },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expectLaunchEnv(
+      sent?.[0] as { mcpReminder?: string },
+      sent?.[1] as { env?: NodeJS.ProcessEnv },
+    );
+    expect((await tracked)?.report).not.toContain("vault-token-123");
+  });
+
+  test("Codex", async () => {
+    const f = fixture();
+    let sent: [unknown, unknown] | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const result = await runWithRuntimeContext(
+      { ...caller, executionSettings: rootSettings },
+      () =>
+        send_agent_message(
+          { agent_id: CODEX_AGENT_ID, message: "Now push it." },
+          {
+            ...f,
+            workerEnv,
+            sendCodexMessage: async (options, deps) => {
+              sent = [options, deps];
+              return {
+                mode: "new_turn",
+                threadId: CODEX_THREAD_ID,
+                turnId: "turn-3",
+                completion: Promise.resolve({
+                  agentId: CODEX_AGENT_ID,
+                  report: "pushed with vault-token-123",
+                  success: true,
+                }),
+                interrupt: async () => undefined,
+              };
+            },
+            trackExternalFollowup: (input) => {
+              tracked = input.completion;
+              return {
+                taskId: "task-codex",
+                outputFile: "/tmp/task-codex.log",
+                subagentId: "subagent-codex",
+              };
+            },
+          },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expectLaunchEnv(
+      sent?.[0] as { mcpReminder?: string },
+      sent?.[1] as { env?: NodeJS.ProcessEnv },
+    );
+    expect((await tracked)?.report).not.toContain("vault-token-123");
   });
 });
 

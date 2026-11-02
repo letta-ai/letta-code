@@ -1,3 +1,4 @@
+import { validateHeaderValue } from "node:http";
 import {
   type Api,
   clampThinkingLevel,
@@ -605,6 +606,16 @@ export async function resolvePiModelForAgent(
       timeout: zai.timeout,
     };
     baseURL = zai.baseURL;
+  }
+
+  if (connection.apiKey) {
+    try {
+      validateHeaderValue("Authorization", `Bearer ${connection.apiKey}`);
+    } catch {
+      throw new Error(
+        `API key for ${provider} is not a valid header value. Reconnect this provider with /connect.`,
+      );
+    }
   }
 
   if (provider === "amazon-bedrock") {

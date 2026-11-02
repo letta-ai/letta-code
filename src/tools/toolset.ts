@@ -296,6 +296,8 @@ export async function prepareToolExecutionContextForScope(params: {
   suppressActingUserFallback?: boolean;
   /** Cloud super run owning this turn, when the relay delivered one. */
   mcpOriginatorSuperRunId?: string;
+  /** Client message ids that started the listener turn owning this context. */
+  resolveClientMessageIds?: () => string[];
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -323,6 +325,7 @@ export async function prepareToolExecutionContextForScope(params: {
     actingUserId,
     suppressActingUserFallback,
     mcpOriginatorSuperRunId,
+    resolveClientMessageIds,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -440,6 +443,8 @@ export async function prepareToolExecutionContextForScope(params: {
         : {}),
       // A newly scoped execution context must never inherit ambient authority.
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
+      // Nor another turn's client message ids.
+      resolveClientMessageIds,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),

@@ -19,10 +19,27 @@ from pathlib import Path
 from typing import Any
 
 
+def get_user_config_dir() -> Path:
+    """Resolve the product-selected global config directory."""
+    override = os.environ.get("LETTA_CONFIG_DIR", "").strip()
+    if override:
+        path = Path(override)
+        if not path.is_absolute():
+            raise ValueError("LETTA_CONFIG_DIR must be absolute")
+        return path
+    return Path.home() / ".letta"
+
+
 def get_settings_path(scope: str, working_directory: str) -> Path:
     """Get the settings file path for a given scope."""
     if scope == "user":
-        return Path.home() / ".letta" / "settings.json"
+        return get_user_config_dir() / "settings.json"
+    if os.environ.get("LETTA_CONFIG_DIR", "").strip() and (
+        Path(working_directory).resolve() == Path.home().resolve()
+    ):
+        raise ValueError(
+            f"Cannot save {scope} permissions under HOME while LETTA_CONFIG_DIR is set"
+        )
     if scope == "project":
         return Path(working_directory) / ".letta" / "settings.json"
     if scope == "local":
@@ -48,10 +65,14 @@ def load_settings(path: Path) -> dict[str, Any]:
     return parsed
 
 
-def save_settings(path: Path, settings: dict[str, Any]) -> None:
-    """Atomically save settings, preserving an existing file mode where practical."""
+def save_settings(path: Path, settings: dict[str, Any], secure: bool = False) -> None:
+    """Atomically save settings, securing the global config when requested."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else None
+    if secure:
+        os.chmod(path.parent, 0o700)
+    mode = 0o600 if secure else (
+        stat.S_IMODE(path.stat().st_mode) if path.exists() else None
+    )
     temp_path: str | None = None
 
     try:
@@ -194,7 +215,7 @@ def main() -> None:
 
     if added:
         try:
-            save_settings(settings_path, settings)
+            save_settings(settings_path, settings, secure=args.scope == "user")
         except OSError as exc:
             print(f"Could not save {settings_path}: {exc}", file=sys.stderr)
             sys.exit(1)

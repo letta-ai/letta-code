@@ -211,6 +211,91 @@ describe("managing-agent-webhooks helper", () => {
     );
   });
 
+  test("sends and verifies --computer as target_device_id", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const server = createServer((request, response) => {
+      let raw = "";
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => {
+        const body = JSON.parse(raw || "{}") as Record<string, unknown>;
+        bodies.push(body);
+        const address = server.address();
+        const port = address && typeof address !== "string" ? address.port : 0;
+        response.setHeader("Content-Type", "application/json");
+        response.writeHead(200);
+        response.end(
+          JSON.stringify({
+            webhook: {
+              agent_id: "agent-current",
+              authorization_header: null,
+              enabled: true,
+              id: "webhook-agent-1",
+              name: body.name ?? "Build events",
+              preprompt: "Summarize.",
+              requires_authorization_header: false,
+              target_device_id: body.target_device_id ?? null,
+              webhook_slug: "slug",
+              webhook_url: `http://127.0.0.1:${port}/v1/agent-webhooks/slug`,
+            },
+          }),
+        );
+      });
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("Expected server address");
+    }
+    const run = async (args: string[]) => {
+      const child = Bun.spawn(["node", SCRIPT_PATH, ...args], {
+        env: {
+          ...process.env,
+          AGENT_ID: "agent-current",
+          LETTA_API_KEY: "dummy-secret",
+          LETTA_BASE_URL: `http://127.0.0.1:${address.port}`,
+        },
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [exitCode, stdout] = await Promise.all([
+        child.exited,
+        new Response(child.stdout).text(),
+      ]);
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout) as { webhook: Record<string, unknown> };
+    };
+    try {
+      const created = await run([
+        "create",
+        "--name",
+        "Build events",
+        "--preprompt",
+        "Summarize.",
+        "--public",
+        "--computer",
+        "device-laptop",
+      ]);
+      expect(bodies[0]?.target_device_id).toBe("device-laptop");
+      expect(created.webhook.target_device_id).toBe("device-laptop");
+
+      const cleared = await run([
+        "update",
+        "--webhook-id",
+        "webhook-agent-1",
+        "--computer",
+        "cloud",
+      ]);
+      expect(bodies[1]).toEqual({ target_device_id: null });
+      expect(cleared.webhook.target_device_id).toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   test("runs from a packaged node_modules layout with plain Node", async () => {
     const root = await mkdtemp(join(tmpdir(), "agent-webhook-skill-"));
     const packagedScript = join(

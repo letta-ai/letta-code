@@ -120,6 +120,63 @@ describe("listener runtime_start external tool bridge", () => {
     expect(teardownGuard?.isCurrent()).toBe(false);
   });
 
+  test("CodeMode routes nested harness calls to the owning listener controller and runtime", async () => {
+    const { runtime, sent } = createMockRuntime();
+    const otherSent: ExternalToolCallRequestMessage[] = [];
+    addMockConnection(runtime, "client-2", otherSent);
+    installExternalToolBridge(runtime);
+    const scope = { agent_id: "agent-script", conversation_id: "conv-script" };
+    for (const connection of ["client-1", "client-2"]) {
+      registerRuntimeExternalTools(runtime, connection, scope, [
+        {
+          scope_id: "thread-tools",
+          tools: [
+            {
+              name: "fetch_thread",
+              description: "Fetch a thread",
+              parameters: { type: "object" },
+              auto_background: false,
+            },
+          ],
+        },
+      ]);
+    }
+    const prepared = await prepareToolExecutionContextForModel(
+      "anthropic/claude-sonnet-4",
+      {
+        clientToolAllowlist: ["CodeMode", "fetch_thread"],
+        externalToolScopeIds: ["thread-tools"],
+        permissionModeState: { mode: "unrestricted" },
+        runtimeContext: {
+          connectionId: "client-1",
+          agentId: scope.agent_id,
+          conversationId: scope.conversation_id,
+        },
+      },
+    );
+    const result = await executeTool(
+      "CodeMode",
+      {
+        code: "return await tools.fetch_thread({id: '123'});",
+      },
+      { toolContextId: prepared.contextId, toolCallId: "code-mode-listener" },
+    );
+    expect(result.status).toBe("success");
+    expect(JSON.parse(String(result.toolReturn))).toEqual({
+      result: "lookup:123",
+      output: [],
+    });
+    expect(otherSent).toEqual([]);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: "external_tool_call_request",
+      runtime: scope,
+      scope_id: "thread-tools",
+      tool_name: "fetch_thread",
+      input: { id: "123" },
+    });
+  });
+
   test("agent-free turns can see their runtime-owned SDK tools", async () => {
     const { runtime, sent } = createMockRuntime();
     installExternalToolBridge(runtime);

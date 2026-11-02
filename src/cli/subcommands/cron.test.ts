@@ -44,7 +44,14 @@ function withoutConversationArgument(args: string[]): string[] {
   return [...args.slice(0, index), ...args.slice(index + 2)];
 }
 
-function environment(deviceId: string) {
+function environment(
+  deviceId: string,
+  overrides: {
+    connectionName?: string;
+    connectionId?: string | null;
+    lastHeartbeat?: number | null;
+  } = {},
+) {
   const now = Date.now();
   return {
     id: `environment-${deviceId}`,
@@ -52,11 +59,12 @@ function environment(deviceId: string) {
     deviceId,
     connectionName: "external listener",
     organizationId: "org-test",
-    podId: null,
+    podId: null as string | null,
     connectedAt: now,
-    lastHeartbeat: now,
+    lastHeartbeat: now as number | null,
     lastSeenAt: now,
     firstSeenAt: now,
+    ...overrides,
   };
 }
 
@@ -128,6 +136,13 @@ function installScheduleApi(options: {
     ) {
       if (method === "GET") return jsonResponse(legacyCloudSchedule());
       if (method === "DELETE") return jsonResponse({ success: true });
+    }
+
+    if (method === "GET" && url.pathname === "/v1/environments") {
+      return jsonResponse({
+        connections: Object.values(options.environments ?? {}),
+        hasNextPage: false,
+      });
     }
 
     if (method === "GET" && url.pathname.startsWith("/v1/environments/")) {
@@ -413,6 +428,101 @@ describe("cron add execution targeting", () => {
     expect(
       requests.find((request) => request.method === "POST")?.body,
     ).toMatchObject({ target_device_id: "device-explicit" });
+  });
+
+  test("--computer accepts the environment id and sends its deviceId", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      environments: { "device-explicit": environment("device-explicit") },
+    });
+
+    expect(
+      await runCronSubcommand([
+        ...addArgs,
+        "--computer",
+        "environment-device-explicit",
+      ]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ target_device_id: "device-explicit" });
+  });
+
+  test("--computer accepts the computer name and sends its deviceId", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      environments: {
+        "device-named": environment("device-named", {
+          connectionName: "build-box",
+        }),
+        "device-other": environment("device-other"),
+      },
+    });
+
+    expect(
+      await runCronSubcommand([...addArgs, "--computer", "build-box"]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ target_device_id: "device-named" });
+  });
+
+  test("--computer resolves an offline computer", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      environments: {
+        "device-offline": environment("device-offline", {
+          connectionName: "sleeping-laptop",
+          connectionId: null,
+          lastHeartbeat: null,
+        }),
+      },
+    });
+
+    expect(
+      await runCronSubcommand([...addArgs, "--computer", "sleeping-laptop"]),
+    ).toBe(0);
+
+    expect(
+      requests.find((request) => request.method === "POST")?.body,
+    ).toMatchObject({ target_device_id: "device-offline" });
+  });
+
+  test("unknown --computer fails without calling the schedule create API", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      environments: { "device-explicit": environment("device-explicit") },
+    });
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    expect(
+      await runCronSubcommand([...addArgs, "--computer", "device-typo"]),
+    ).toBe(1);
+
+    expect(errors).toContain(
+      'Error: Computer "device-typo" not found. Run `letta computers list` and pass its deviceId (or name).',
+    );
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
+  });
+
+  test("ambiguous --computer fails without calling the schedule create API", async () => {
+    process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
+    const requests = installScheduleApi({
+      environments: {
+        "device-a": environment("device-a", { connectionName: "twin" }),
+        "device-b": environment("device-b", { connectionName: "twin" }),
+      },
+    });
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+
+    expect(await runCronSubcommand([...addArgs, "--computer", "twin"])).toBe(1);
+
+    expect(errors.join("\n")).toContain('Computer "twin" is ambiguous');
+    expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
   test("local execution rejects --computer without touching the schedule API", async () => {

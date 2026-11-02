@@ -29,7 +29,7 @@ import {
   type ProviderField,
   type ProviderResponse,
   type ProviderStorageTarget,
-  removeProviderByName,
+  removeProviderById,
 } from "@/providers/byok-providers";
 import type { ChatGPTRateLimitResetCredit } from "@/providers/chatgpt-reset-credit-service";
 import { normalizeChatGPTOAuthProviderName } from "@/providers/openai-codex-provider";
@@ -325,13 +325,6 @@ export function ProviderSelector({
     (provider: ByokProvider): ProviderResponse[] =>
       connectedRecordsForProvider(provider, connectedProviders, selectedTarget),
     [connectedProviders, selectedTarget],
-  );
-
-  const getConnectedProviderName = useCallback(
-    (provider: ByokProvider): string | undefined => {
-      return getConnectedProviderRecords(provider)[0]?.name;
-    },
-    [getConnectedProviderRecords],
   );
 
   const { load: loadChatGPTRateLimits } = chatGPTRateLimits;
@@ -678,15 +671,14 @@ export function ProviderSelector({
       if (viewState.type !== "options") return;
 
       const { provider } = viewState;
+      const connectedRecords = getConnectedProviderRecords(provider);
+      const connected = providerName
+        ? connectedRecords.find((record) => record.name === providerName)
+        : connectedRecords[0];
       try {
-        await removeProviderByName(
-          providerName ??
-            getConnectedProviderName(provider) ??
-            provider.providerName,
-          {
-            target: selectedTarget,
-          },
-        );
+        if (connected) {
+          await removeProviderById(connected.id, { target: selectedTarget });
+        }
         clearAvailableModelsCache();
         // Refresh connected providers
         const providers = await getConnectedProviders({
@@ -703,7 +695,7 @@ export function ProviderSelector({
     [
       viewState,
       selectedTarget,
-      getConnectedProviderName,
+      getConnectedProviderRecords,
       setConnectedProvidersForTarget,
     ],
   );

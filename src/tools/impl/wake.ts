@@ -5,7 +5,9 @@ import {
   type CloudSchedule,
   createCloudSchedule,
   deleteCloudSchedule,
+  getCloudSchedule,
   listCloudSchedules,
+  listCloudSchedulesByExactMatch,
 } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import {
@@ -13,6 +15,7 @@ import {
   addTask,
   type CronTask,
   deleteTask,
+  getTask,
   isValidCron,
   listTasks,
   parseRfc3339Timestamp,
@@ -57,9 +60,11 @@ interface WakeDeps {
   now?: () => Date;
   resolvePlacement?: typeof resolveCronCreatePlacement;
   createCloud?: typeof createCloudSchedule;
+  getCloud?: typeof getCloudSchedule;
   listCloud?: typeof listCloudSchedules;
   deleteCloud?: typeof deleteCloudSchedule;
   addLocal?: typeof addTask;
+  getLocal?: typeof getTask;
   listLocal?: typeof listTasks;
   deleteLocal?: typeof deleteTask;
 }
@@ -227,21 +232,16 @@ async function listCurrentWakes(
   }
 
   try {
-    let after: string | undefined;
-    do {
-      args.signal?.throwIfAborted();
-      const page = await (deps.listCloud ?? listCloudSchedules)(scope.agentId, {
-        limit: 100,
-        after,
-      });
-      const matching = page.scheduled_messages.filter(
-        (schedule) => schedule.conversation_id === scope.conversationId,
-      );
-      wakes.push(...matching.map(cloudWakeRecord));
-      after = page.has_next_page
-        ? page.scheduled_messages.at(-1)?.id
-        : undefined;
-    } while (after);
+    const listCloud = deps.listCloud ?? listCloudSchedules;
+    const matching = await listCloudSchedulesByExactMatch(
+      scope.agentId,
+      { conversationId: scope.conversationId },
+      async (agentId, options) => {
+        args.signal?.throwIfAborted();
+        return listCloud(agentId, options);
+      },
+    );
+    wakes.push(...matching.map(cloudWakeRecord));
   } catch (error) {
     if (
       error instanceof ApiRequestError &&
@@ -368,26 +368,60 @@ async function cancelWake(
 ): Promise<WakeResult> {
   const id = args.id?.trim();
   if (!id) throw new Error("Wake cancel requires id.");
-  const current = await listCurrentWakes(scope, args, deps);
-  const wake = current.wakes.find((candidate) => candidate.id === id);
-  if (!wake) {
-    if (current.warnings.length > 0) {
-      throw new Error(current.warnings[0]);
+
+  args.signal?.throwIfAborted();
+  const local = (deps.getLocal ?? getTask)(id);
+  if (
+    local?.agent_id === scope.agentId &&
+    local.conversation_id === scope.conversationId &&
+    (local.status === "active" || local.status === "paused")
+  ) {
+    if (!(deps.deleteLocal ?? deleteTask)(id)) {
+      throw new Error(`Wake ${id} was already removed.`);
     }
+    return result("success", {
+      action: "cancelled",
+      id,
+      runner: "local",
+      warnings: [],
+    });
+  }
+
+  if (resolveBackendMode() === "local" || isLocalAgentId(scope.agentId)) {
+    throw new Error(`Wake ${id} was not found in the current conversation.`);
+  }
+
+  let cloud: CloudSchedule;
+  try {
+    cloud = await (deps.getCloud ?? getCloudSchedule)(
+      scope.agentId,
+      id,
+      getRuntimeActingUserId(),
+    );
+  } catch (error) {
+    if (
+      error instanceof ApiRequestError &&
+      (error.status === 404 || error.status === 405)
+    ) {
+      throw new Error(`Wake ${id} was not found in the current conversation.`);
+    }
+    throw error;
+  }
+  if ((cloud.conversation_id ?? "default") !== scope.conversationId) {
     throw new Error(`Wake ${id} was not found in the current conversation.`);
   }
 
   args.signal?.throwIfAborted();
-  if (wake.runner === "cloud") {
-    await (deps.deleteCloud ?? deleteCloudSchedule)(scope.agentId, id);
-  } else if (!(deps.deleteLocal ?? deleteTask)(id)) {
-    throw new Error(`Wake ${id} was already removed.`);
-  }
+  await (deps.deleteCloud ?? deleteCloudSchedule)(
+    scope.agentId,
+    id,
+    getRuntimeActingUserId(),
+  );
   return result("success", {
     action: "cancelled",
     id,
-    runner: wake.runner,
-    warnings: current.warnings,
+    runner: "cloud",
+    warnings: [],
   });
 }
 

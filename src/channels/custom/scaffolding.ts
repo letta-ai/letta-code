@@ -140,7 +140,7 @@ export const channelPlugin = {
 const FIRST_PARTY_SET = new Set<string>(FIRST_PARTY_CHANNEL_IDS);
 
 /**
- * Creates `~/.letta/channels/<slug>/channel.json` and a stub `plugin.mjs`.
+ * Creates `channel.json` and a stub `plugin.mjs` below the product config root.
  *
  * Throws if:
  *  - The slug is already taken by an existing folder (name must be unique)

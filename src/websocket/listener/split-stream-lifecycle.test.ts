@@ -644,7 +644,8 @@ describe("split stream listener lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        onConnected.mock.calls.length === 1,
       "initial split sockets did not open",
     );
     expect(onConnected).toHaveBeenCalledTimes(1);

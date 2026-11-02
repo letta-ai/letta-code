@@ -5,9 +5,9 @@
  * run-input frame (`mcp_originator_token`, alongside `super_run_id` — never
  * inside the user-message payload) when the super run is attributed to a
  * principal. The listener forwards that token as the
- * `x-letta-mcp-originator-token` header on MCP tool-run calls so cloud-api can
- * authorize user-scoped MCP connections on behalf of the originating
- * principal.
+ * `x-letta-mcp-originator-token` header on MCP discovery and tool-run calls so
+ * cloud-api can filter and authorize user-scoped MCP connections on behalf of
+ * the originating principal.
  *
  * Hygiene contract (pinned in the design doc):
  * - Tokens live ONLY in this process-local Map, keyed by super run id.
@@ -46,6 +46,7 @@
  * mixed-batch merge, terminal) can never be re-armed by a duplicate frame.
  */
 
+import { registerMcpOriginatorTokenResolver } from "@/backend/api/mcp-originator-resolver";
 import {
   admitMcpOriginatorDelivery,
   markMcpOriginatorHeaderless,
@@ -90,6 +91,8 @@ export function getMcpOriginatorToken(
   }
   return entry.token;
 }
+
+registerMcpOriginatorTokenResolver(getMcpOriginatorToken);
 
 /**
  * Seed a token directly (tests and local fixtures). Production entries only

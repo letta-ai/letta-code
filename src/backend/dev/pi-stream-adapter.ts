@@ -412,12 +412,9 @@ function anthropicEffortForSettings(
   );
 }
 
-function maxTokensForSettings(
-  modelSettings: Record<string, unknown>,
-): number | undefined {
-  const maxTokens = modelSettings.max_tokens;
-  return typeof maxTokens === "number" && Number.isFinite(maxTokens)
-    ? maxTokens
+function finiteNumberValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
     : undefined;
 }
 
@@ -613,12 +610,17 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
       provider: resolved.model.provider,
       configuredHeaders: resolved.headers,
       conversationId: input.conversationId,
+      requestKind: "turn",
     });
+    const maxTokens = finiteNumberValue(input.agent.model_settings.max_tokens);
+    const temperature = finiteNumberValue(
+      input.agent.model_settings.temperature,
+    );
     const options: SimpleStreamOptions & Record<string, unknown> = {
       ...resolved.providerOptions,
       ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
       ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-      ...(headers ? { headers } : {}),
+      headers,
       ...(this.abortSignal ? { signal: this.abortSignal } : {}),
       maxRetries: 0,
       sessionId: input.conversationId,
@@ -628,9 +630,8 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         ? { samplingParams: input.agent.model_settings.sampling_params }
         : {}),
       ...(reasoning ? { reasoning } : {}),
-      ...(maxTokensForSettings(input.agent.model_settings)
-        ? { maxTokens: maxTokensForSettings(input.agent.model_settings) }
-        : {}),
+      ...(maxTokens ? { maxTokens } : {}),
+      ...(temperature !== undefined ? { temperature } : {}),
       ...(serviceTierForSettings(resolved.model, input.agent.model_settings)
         ? {
             serviceTier: serviceTierForSettings(
@@ -648,6 +649,24 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           }
         : {}),
     };
+    const verbosity = input.agent.model_settings.verbosity;
+    if (
+      (resolved.model.api === "openai-responses" ||
+        resolved.model.api === "openai-codex-responses") &&
+      (verbosity === "low" || verbosity === "medium" || verbosity === "high")
+    ) {
+      // pi-ai's streamSimple drops textVerbosity (including for Codex), so
+      // forward the saved setting at the same payload seam as output effort.
+      const existing = options.onPayload;
+      options.onPayload = async (payload, model) => {
+        const next = (await existing?.(payload, model)) ?? payload;
+        if (!isRecord(next)) return next;
+        return {
+          ...next,
+          text: { ...(isRecord(next.text) ? next.text : {}), verbosity },
+        };
+      };
+    }
     if (resolved.model.api === "openai-responses") {
       // pi-ai replays OpenAI Responses output items from transcript history.
       // Those upstream item IDs (rs_*, msg_*, fc_*) are not retrievable when the

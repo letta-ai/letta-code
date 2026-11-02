@@ -15,6 +15,7 @@ const COMMANDS = new Set([
   "requests",
   "rotate",
   "test",
+  "update",
 ]);
 const BOOLEAN_FLAGS = new Set([
   "confirm",
@@ -28,6 +29,7 @@ const COMMAND_OPTIONS = new Map([
   [
     "create",
     new Set([
+      "computer",
       "credential-output",
       "disabled",
       "name",
@@ -53,12 +55,14 @@ const COMMAND_OPTIONS = new Map([
       "webhook-id",
     ]),
   ],
+  ["update", new Set(["computer", "webhook-id"])],
 ]);
 
 function usage() {
   console.error(`Usage:
   node manage-agent-webhooks.mjs list
-  node manage-agent-webhooks.mjs create --name <name> (--public | --secure --credential-output <path> | --security-key-stdin) [--preprompt <text>] [--disabled]
+  node manage-agent-webhooks.mjs create --name <name> (--public | --secure --credential-output <path> | --security-key-stdin) [--preprompt <text>] [--disabled] [--computer <deviceId>]
+  node manage-agent-webhooks.mjs update --webhook-id <id> --computer <deviceId|cloud>
   node manage-agent-webhooks.mjs test --webhook-id <id> --confirm [--payload-file <path>] [--credential-file <path> | --security-key-stdin]
   node manage-agent-webhooks.mjs requests --webhook-id <id> [--limit <1-50>] [--include-body]
   node manage-agent-webhooks.mjs enable --webhook-id <id>
@@ -144,8 +148,10 @@ export function safeAgentWebhook(webhook) {
   for (const field of ["enabled", "requires_authorization_header"]) {
     if (typeof webhook[field] === "boolean") safe[field] = webhook[field];
   }
-  if (typeof webhook.disabled_at === "string" || webhook.disabled_at === null) {
-    safe.disabled_at = webhook.disabled_at;
+  for (const field of ["disabled_at", "target_device_id"]) {
+    if (typeof webhook[field] === "string" || webhook[field] === null) {
+      safe[field] = webhook[field];
+    }
   }
   return safe;
 }
@@ -753,6 +759,15 @@ function requireWebhookId(args) {
   return requireString(args["webhook-id"], "Pass --webhook-id");
 }
 
+// "cloud" maps to null: run webhook turns in the agent's Cloud sandbox.
+function targetDeviceIdFromArgs(args) {
+  const computer = requireString(
+    args.computer,
+    "--computer must be a device ID or cloud",
+  );
+  return computer === "cloud" ? null : computer;
+}
+
 function requireConfirmation(args, action) {
   if (args.confirm !== true) {
     throw new Error(`${action} requires --confirm`);
@@ -826,6 +841,10 @@ async function runManagementCommand(params) {
         params.args.preprompt,
         "--preprompt must contain a non-whitespace character",
       );
+    }
+    if (params.args.computer !== undefined) {
+      const targetDeviceId = targetDeviceIdFromArgs(params.args);
+      if (targetDeviceId) body.target_device_id = targetDeviceId;
     }
     if (securityKey) body.security_key = securityKey;
     const credentialReservation = usesGeneratedCredential
@@ -914,6 +933,8 @@ async function runManagementCommand(params) {
       if (
         webhook.name !== body.name ||
         webhook.enabled !== body.enabled ||
+        (webhook.target_device_id ?? null) !==
+          (body.target_device_id ?? null) ||
         !prepromptMatches
       ) {
         throw new Error(
@@ -1048,14 +1069,22 @@ async function runManagementCommand(params) {
     return;
   }
 
-  if (params.command === "enable" || params.command === "disable") {
+  if (
+    params.command === "enable" ||
+    params.command === "disable" ||
+    params.command === "update"
+  ) {
     if (params.command === "disable") {
       requireConfirmation(params.args, "Disabling a webhook");
     }
+    const update =
+      params.command === "update"
+        ? { target_device_id: targetDeviceIdFromArgs(params.args) }
+        : { enabled: params.command === "enable" };
     const mutation = await requestSideEffect(
       itemUrl,
       {
-        body: JSON.stringify({ enabled: params.command === "enable" }),
+        body: JSON.stringify(update),
         headers: params.headers,
         method: "PATCH",
       },
@@ -1074,12 +1103,12 @@ async function runManagementCommand(params) {
         params.baseUrl,
         params.agentId,
       );
-      const expectedEnabled = params.command === "enable";
-      if (
-        webhook.id !== webhookId ||
-        typeof webhook.enabled !== "boolean" ||
-        webhook.enabled !== expectedEnabled
-      ) {
+      const stateMatches =
+        params.command === "update"
+          ? webhook.target_device_id === update.target_device_id
+          : typeof webhook.enabled === "boolean" &&
+            webhook.enabled === update.enabled;
+      if (webhook.id !== webhookId || !stateMatches) {
         throw new Error(
           "Update response does not match the requested webhook state",
         );

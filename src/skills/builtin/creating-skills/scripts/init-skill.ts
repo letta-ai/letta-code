@@ -7,7 +7,7 @@
  *
  * Examples:
  *   npx tsx init-skill.ts my-new-skill --path .skills
- *   npx tsx init-skill.ts my-api-helper --path ~/.letta/skills
+ *   npx tsx init-skill.ts my-api-helper --path "${LETTA_CONFIG_DIR:-$HOME/.letta}/skills"
  */
 
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -268,7 +268,9 @@ if (isMainModule()) {
     console.log("  - Must match directory name exactly");
     console.log("\nExamples:");
     console.log("  npx tsx init-skill.ts my-new-skill --path .skills");
-    console.log("  npx tsx init-skill.ts my-api-helper --path ~/.letta/skills");
+    console.log(
+      `  npx tsx init-skill.ts my-api-helper --path "\${LETTA_CONFIG_DIR:-$HOME/.letta}/skills"`,
+    );
     process.exit(1);
   }
 

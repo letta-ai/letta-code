@@ -13,6 +13,10 @@ import {
 const handles: BrowserDiscoveryServerHandle[] = [];
 const blockers: Server[] = [];
 const tempDirs: string[] = [];
+// Cold Node starts on loaded Windows runners can take several seconds. A
+// fixture kept alive by a leaked handle never exits, so this still catches
+// the leak, within the unit runner's 15 second test timeout.
+const NODE_FIXTURE_TIMEOUT_MS = 10_000;
 
 afterEach(async () => {
   await Promise.all(handles.splice(0).map((handle) => handle.close()));
@@ -220,7 +224,7 @@ setTimeout(() => undefined, 500);
       socket.write(
         `GET /status HTTP/1.1\r\nHost: ${address.host}:${address.port}\r\n`,
       );
-      const exit = await waitForChildExit(child, 2_000, () => stderr);
+      const exit = await waitForChildExit(child, 4_000, () => stderr);
       expect(exit).toEqual({ code: 0, signal: null });
     } finally {
       socket.destroy();
@@ -237,7 +241,7 @@ setTimeout(() => undefined, 500);
 `);
     const result = spawnSync("bun", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -256,7 +260,7 @@ setTimeout(() => undefined, 500);
 `);
     const result = spawnSync("node", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -272,7 +276,7 @@ console.log("closed");
 `);
     const result = spawnSync("node", [fixture], {
       encoding: "utf8",
-      timeout: 5_000,
+      timeout: NODE_FIXTURE_TIMEOUT_MS,
     });
 
     expect(result.status).toBe(0);
@@ -365,7 +369,7 @@ async function readFirstLine(
       reject(
         new Error(`Timed out waiting for Node fixture output: ${getStderr()}`),
       );
-    }, 2_000);
+    }, NODE_FIXTURE_TIMEOUT_MS);
     const onData = (chunk: Buffer): void => {
       output += chunk.toString();
       const newline = output.indexOf("\n");

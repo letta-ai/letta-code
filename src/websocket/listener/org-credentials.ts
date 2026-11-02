@@ -1,12 +1,18 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import {
   getSecretValue,
   isKeychainAvailable,
   setSecretValue,
 } from "@/utils/secrets";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 /**
  * Credentials a listener holds for one organization (`letta server --org`).
@@ -44,8 +50,7 @@ function secretName(organizationId: string): string {
 }
 
 function fallbackPath(): string {
-  const home = process.env.HOME || homedir();
-  return join(home, ".letta", "listener-org-auth.json");
+  return join(resolveGlobalConfigDir(), "listener-org-auth.json");
 }
 
 function readFallback(): Record<string, OrgCredentials> {
@@ -96,9 +101,11 @@ export const orgCredentialStore: OrgCredentialStore = {
     const all = readFallback();
     all[organizationId] = credentials;
     mkdirSync(dirname(path), { mode: 0o700, recursive: true });
+    chmodSync(dirname(path), 0o700);
     writeFileSync(path, `${JSON.stringify(all, null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
     });
+    chmodSync(path, 0o600);
   },
 };

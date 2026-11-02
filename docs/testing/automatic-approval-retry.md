@@ -48,15 +48,17 @@ The contracts above remain the acceptance criteria when rerunning the tests.
 This is synthetic, focused evidence, not a successful full-repository suite or
 a live production concurrency test. The pending-state check is not an atomic
 backend transaction, so the existing server-conflict recovery remains necessary.
-Historical sender attribution still requires server-side correlation. No
-human verification of the AI-assisted review follow-up is claimed here.
+Historical sender attribution still requires server-side correlation. The
+contributor's human-verification declaration belongs in the PR form; automated
+test results do not establish that declaration.
 
 ## Review follow-up
 
 The review on #5240 identified two read failures and a conflict with #5236.
-This follow-up is rebased on #5232 at `1f2bb90c`, which already contains current
-`main`, the listener timer correction, lossless queue recovery and foreign-approval
-ownership protection. Do not replay the old #5232 commits on top of it.
+This follow-up integrates updated #5232 at `6af13eeb` and `main` at `3b7e3ffc`
+by merging without rewriting published history. It retains the listener timer
+correction, lossless queue recovery and foreign-approval ownership protection.
+Do not replay the old #5232 commits on top of it.
 
 | Review guarantee | Evidence |
 | --- | --- |
@@ -81,7 +83,7 @@ and `approval-empty-sse` for the Node bundle created by
 `node scripts/verify-busy-recovery.cjs --expect fixed`. Run additional scenarios
 as `node .letta/busy-repro/scenario.mjs <scenario>` and inspect `TUI_BUSY_RESULT`.
 
-### Local verification snapshot
+### Original follow-up verification snapshot
 
 - 333 distinct focused tests passed across 22 files, in isolated/serialized runs:
   37 read/reconciliation/helper tests, 18 real-hook TUI journeys, and 278 existing
@@ -102,3 +104,25 @@ The broader regression selection also includes `check-approval.test.ts`,
 `turn-recovery-policy.test.ts`, `api-backend.test.ts`,
 `headless-approval-recovery.test.ts`, both listener send suites and the
 TUI queue/lifecycle suites. Run the module-mocked files in their own processes.
+
+### Main integration verification (2026-11-02)
+
+After integrating updated #5232 and `main`, 430 focused tests passed across
+32 files: 350 in the 24-file busy/approval regression selection plus 80 in the
+eight queue/ownership suites below. Every file ran in its own Bun process.
+All 13 repository checks, the full build, seven verifier unit tests and the
+three baseline-compatible compiled Node scenarios also passed.
+
+```sh
+bun test src/cli/tui-queue-adapter.test.ts
+bun test src/websocket/listener-queue-adapter.test.ts
+bun test src/websocket/listener/recovery-ownership.test.ts
+bun test src/websocket/listener/send-lease.test.ts
+bun test src/websocket/listener/steering-drain.test.ts
+bun test src/queue/queue-runtime-pause.test.ts
+bun test src/queue/listener-tui-queue-parity.test.ts
+bun test src/queue/turn-queue-runtime.test.ts
+```
+
+The earlier 333-test snapshot is historical, not this integration's test count.
+No passing remote CI or live production concurrency result is implied.

@@ -1,5 +1,5 @@
 /**
- * Persistent remote session settings stored in ~/.letta/remote-settings.json.
+ * Persistent remote session settings stored below the product config root.
  *
  * Stores per-conversation CWD and permission mode so both survive letta server
  * restarts. Mirrors the in-memory Map keys used by cwd.ts and permissionMode.ts.
@@ -16,11 +16,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
 import { isConfirmedUnusableDirectory } from "@/helpers/usable-directory";
 import type { PermissionMode } from "@/permissions/mode";
 import { isDebugEnabled } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   flushAbandonedRemoteSettingsLock,
   releaseRemoteSettingsLock,
@@ -82,12 +82,8 @@ const REMOTE_SETTINGS_FLUSH_TIMEOUT_MS = 1_000;
 const REMOTE_SETTINGS_FLUSH_RETRY_MIN_MS = 10;
 const REMOTE_SETTINGS_FLUSH_RETRY_JITTER_MS = 30;
 
-function getRemoteSettingsHome(): string {
-  return process.env.HOME || homedir();
-}
-
 export function getRemoteSettingsPath(): string {
-  return path.join(getRemoteSettingsHome(), ".letta", "remote-settings.json");
+  return path.join(resolveGlobalConfigDir(), "remote-settings.json");
 }
 
 /**
@@ -95,7 +91,7 @@ export function getRemoteSettingsPath(): string {
  * Populates the in-memory cache. Returns {} on any read/parse error.
  *
  * Applies a one-time migration: if cwdMap is absent, tries to load
- * the legacy ~/.letta/cwd-cache.json.
+ * the legacy cwd-cache.json in the same product config root.
  */
 export function loadRemoteSettings(): RemoteSettings {
   if (_cache !== null) {
@@ -760,11 +756,7 @@ export function resetRemoteSettingsCache(): void {
  */
 function loadLegacyCwdCache(): Record<string, string> {
   try {
-    const legacyPath = path.join(
-      getRemoteSettingsHome(),
-      ".letta",
-      "cwd-cache.json",
-    );
+    const legacyPath = path.join(resolveGlobalConfigDir(), "cwd-cache.json");
     if (!existsSync(legacyPath)) return {};
     const raw = readFileSync(legacyPath, "utf-8");
     const parsed = JSON.parse(raw) as Record<string, unknown>;

@@ -5,10 +5,7 @@ import {
 import type { createBuffers } from "@/cli/helpers/accumulator";
 import { rebindTurnToolContextMcpOriginator } from "@/tools/execution-context-mcp-originator";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
-import {
-  getEffectiveMcpOriginatorId,
-  getMcpOriginatorScope,
-} from "./mcp-originator-scope";
+import { getEffectiveMcpOriginatorId } from "./mcp-originator-scope";
 import type {
   RecoveryAuthorityStore,
   RecoveryEvidenceWriter,
@@ -57,9 +54,9 @@ export function applyTurnOriginSwap(
 }
 
 /**
- * Bind queue eligibility to the ORIGINAL input alongside the ownership callback.
- * Recovery inputs contain only approval results and cannot prove an origin.
- * Consumed compatible inputs are rebound and checkpointed before continuation.
+ * Build the queued-continuation hooks for a parked turn. Recovery inputs
+ * contain only approval results, so they never append queued messages.
+ * Consumed inputs are origin-swapped and checkpointed before continuation.
  */
 export function createQueuedTurnConsumer(params: {
   parkedInput: IncomingMessage;
@@ -71,7 +68,6 @@ export function createQueuedTurnConsumer(params: {
   recoveryEvidenceWriter?: RecoveryEvidenceWriter;
 }) {
   return {
-    activeOriginatorScope: getMcpOriginatorScope(params.parkedInput),
     allowQueuedContinuation: params.parkedInput.messages.some(
       (message) => "content" in message,
     ),

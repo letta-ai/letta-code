@@ -13,6 +13,27 @@ export const MAX_RETRY_ATTEMPTS = Math.ceil(
 // coherent replacement instead of awaiting the stream socket forever.
 export const LISTENER_STREAM_OPEN_TIMEOUT_MS = 30000; // 30 seconds
 
+// ws has no default opening-handshake timeout. If the TCP connect or HTTP
+// upgrade hangs (e.g. a NAT silently drops packets after a network blip), a
+// listener socket stays CONNECTING forever and never emits error/close, so no
+// retry is scheduled. Bound the handshake so the normal close path retries.
+export const LISTENER_HANDSHAKE_TIMEOUT_MS = 30000; // 30 seconds
+
+/** Options for every listener WebSocket, so a hung handshake errors and closes. */
+export function getListenerSocketOptions(apiKey: string): {
+  headers: Record<string, string>;
+  handshakeTimeout: number;
+} {
+  const configured = Number(process.env.LETTA_LISTENER_HANDSHAKE_TIMEOUT_MS);
+  return {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    handshakeTimeout:
+      Number.isFinite(configured) && configured > 0
+        ? configured
+        : LISTENER_HANDSHAKE_TIMEOUT_MS,
+  };
+}
+
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline
 // after ~120s of silence) and the relay replies with a `pong`.

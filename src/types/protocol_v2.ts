@@ -428,8 +428,6 @@ export type QueueMessageKind =
   | "message"
   | "task_notification"
   | "cron_prompt"
-  | "approval_result"
-  | "overlay_action"
   | "mod_continue";
 
 export type QueueMessageSource =
@@ -464,7 +462,7 @@ export interface LoopStatusUpdateMessage extends RuntimeEnvelope {
 export interface QueueUpdateMessage extends RuntimeEnvelope {
   type: "update_queue";
   queue: QueueMessage[];
-  removed: import("./queue-update-protocol").QueueRemovalTransition[];
+  removed?: import("./queue-update-protocol").QueueRemovalTransition[];
 }
 
 /** Standard Letta message delta forwarded through the stream channel. */
@@ -568,11 +566,11 @@ export interface SubagentSnapshot {
   parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
+  progress_texts?: { id: string; at: string; text: string }[]; // Absent = none
   total_tokens: number;
   duration_ms: number;
   error?: string;
-  /** Truncated final report, set for `notify: "caller"` launches. */
-  result?: string;
+  result?: string; // Truncated final report for `notify: "caller"` launches.
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {

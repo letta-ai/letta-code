@@ -8,15 +8,15 @@
 
 import { execFile as execFileCb } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { FileDiffMetadata } from "@pierre/diffs";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import diffViewerTemplate from "./diff-viewer-template.txt";
 
 const execFile = promisify(execFileCb);
 
-const VIEWERS_DIR = join(homedir(), ".letta", "viewers");
+const VIEWERS_DIR = join(resolveGlobalConfigDir(), "viewers");
 const GIT_TIMEOUT_MS = 60_000;
 const GIT_MAX_BUFFER = 50 * 1024 * 1024;
 const MAX_RENDERED_FILES = 100;

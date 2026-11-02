@@ -37,6 +37,7 @@ import { isRecord } from "@/utils/type-guards";
 import {
   assertLocalCompactionProgress,
   estimateLocalMessageTokens,
+  finishLocalFullCompaction,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
@@ -842,23 +843,23 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
-    assertLocalCompactionProgress(stats, "all");
-    const storeResult = this.store.compactConversationAll({
-      conversationId,
-      agentId,
+    return finishLocalFullCompaction({
+      messages,
       summary,
-      packedSummary: packageLocalSummaryMessage(summary, stats, settings.mode),
       stats,
-      remainingMessages: plan.messagesToKeep,
+      plan,
+      systemPrompt: agent.system,
+      persist: (summary, packedSummary, remainingMessages) =>
+        this.store.compactConversationAll({
+          conversationId,
+          agentId,
+          summary,
+          packedSummary,
+          stats,
+          remainingMessages,
+        }),
     });
-    return {
-      numMessagesBefore: storeResult.numMessagesBefore,
-      numMessagesAfter: storeResult.numMessagesAfter,
-      summary,
-      stats,
-    };
   }
-
   private async compactLocalConversationSlidingWindow(
     conversationId: string,
     agentId: string,
@@ -914,7 +915,6 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
-
   private async getOrCompileSystemPrompt(
     conversationId: string,
     agentId: string,
@@ -935,7 +935,6 @@ export class LocalBackend extends HeadlessBackend {
     ) {
       return existing;
     }
-
     if (
       existing?.rawSystemHash === rawSystemHash &&
       existing.memfsRevision !== memfsRevision

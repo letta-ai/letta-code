@@ -15,6 +15,25 @@ function isWindowsCommandShim(command: string): boolean {
   return /\.(?:cmd|bat)$/i.test(command);
 }
 
+/**
+ * Spawns a command by name. On Windows, cross-spawn resolves bare names such as
+ * `codex` through PATH and PATHEXT, so npm-installed `codex.cmd` shims run
+ * through cmd.exe with argv boundaries intact. Native spawn only finds real
+ * executables and reports ENOENT for those shims. Other platforms keep native
+ * spawn.
+ */
+export function getCommandProcessFactory({
+  nativeSpawn = spawn,
+  platform = process.platform,
+  windowsSpawn = crossSpawn,
+}: {
+  nativeSpawn?: PackageManagerProcessFactory;
+  platform?: NodeJS.Platform;
+  windowsSpawn?: PackageManagerProcessFactory;
+} = {}): PackageManagerProcessFactory {
+  return platform === "win32" ? windowsSpawn : nativeSpawn;
+}
+
 export function getPackageManagerProcessFactory({
   nativeSpawn = spawn,
   platform = process.platform,

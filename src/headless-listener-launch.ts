@@ -223,7 +223,7 @@ export async function launchListenerConversation(
         if (ids.includes(clientMessageId)) runIds.add(runId);
       }
     } else if (message.type === "update_queue") {
-      cancelled ||= message.removed.some(
+      cancelled ||= (message.removed ?? []).some(
         (entry) =>
           entry.client_message_id === clientMessageId &&
           entry.disposition === "cancelled",

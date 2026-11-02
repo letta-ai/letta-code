@@ -1,7 +1,10 @@
+import { isStatelessSubagentTags } from "@/agent/agent-tags";
+
 interface HeadlessMemfsPolicyOptions {
   statelessRequested: boolean;
   isSubagentRole: boolean;
   newAgentRequested: boolean;
+  agentTags?: readonly string[] | null;
 }
 
 interface HeadlessMemfsPolicy {
@@ -18,6 +21,9 @@ export function resolveHeadlessMemfsPolicy(
     options.isSubagentRole && options.newAgentRequested;
   return {
     isFreshStatelessSubagent,
-    isStatelessSession: options.statelessRequested || isFreshStatelessSubagent,
+    isStatelessSession:
+      options.statelessRequested ||
+      isFreshStatelessSubagent ||
+      isStatelessSubagentTags(options.agentTags),
   };
 }

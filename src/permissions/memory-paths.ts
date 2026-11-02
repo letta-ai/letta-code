@@ -182,7 +182,7 @@ export function resolveAllowedMemoryRoots(
   options: ResolveAllowedMemoryRootsOptions = {},
 ): ResolvedMemoryRoots {
   const env = options.env ?? process.env;
-  const homeDir = options.homeDir ?? homedir();
+  const homeDir = options.homeDir ?? env.HOME ?? env.USERPROFILE ?? homedir();
 
   const explicit = getExplicitEnvRoots(env);
   if (explicit.roots.length > 0) {

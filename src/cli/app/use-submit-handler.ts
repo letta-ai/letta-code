@@ -137,7 +137,6 @@ import {
 } from "@/reminders/engine";
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import {
-  enqueueMemoryGitSyncReminder,
   markPostCompactionContextRemindersPending,
   markSecretsInfoReminderPending,
   type SharedReminderState,
@@ -3743,11 +3742,6 @@ ${SYSTEM_REMINDER_CLOSE}
         conversationId,
         agentId,
         isEnabled: isActiveMemfsEnabled,
-        enqueueReminder: (text) => {
-          enqueueMemoryGitSyncReminder(sharedReminderStateRef.current, {
-            text,
-          });
-        },
       });
 
       // Clean up placeholders after submission

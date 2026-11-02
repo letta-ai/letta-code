@@ -79,6 +79,93 @@ export function assertLocalCompactionProgress(
   );
 }
 
+// The system prompt lives outside LocalMessage history and is never evicted.
+export function finishLocalFullCompaction(input: {
+  messages: LocalMessage[];
+  summary: string;
+  stats: LocalCompactionStats;
+  plan: LocalAllCompactionPlan;
+  systemPrompt: string;
+  persist: (
+    summary: string,
+    packedSummary: string,
+    remaining: LocalMessage[],
+  ) => {
+    numMessagesBefore: number;
+    numMessagesAfter: number;
+  };
+}): {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summary: string;
+  stats: LocalCompactionStats;
+} {
+  let { summary } = input;
+  const { stats } = input;
+  let remaining = input.plan.messagesToKeep;
+  let warning: string | undefined;
+  try {
+    assertLocalCompactionProgress(stats, "all");
+  } catch (error) {
+    if (
+      !(error instanceof LocalIrreducibleContextError) ||
+      stats.trigger !== "context_window_overflow"
+    )
+      throw error;
+    // Preserve the latest user turn, including its tool calls and results.
+    let latestTurn = input.messages.findLastIndex(
+      (message) => message.role === "user" && !message.metadata?.compaction,
+    );
+    if (latestTurn < 0) {
+      latestTurn = Math.max(
+        0,
+        input.messages.findIndex((message) => !message.metadata?.compaction),
+      );
+    }
+    let cutoff = 0;
+    warning =
+      "Warning: older messages were dropped because compaction could not reduce the context. The latest turn was kept.";
+    const packedWarning = packageLocalSummaryMessage(warning);
+    const overhead = Math.ceil(
+      (input.systemPrompt.length + packedWarning.length) / 4,
+    );
+    do {
+      if (cutoff >= latestTurn) break;
+      // Evict whole turns so tool results never outlive their calls.
+      cutoff++;
+      while (cutoff < latestTurn && input.messages[cutoff]?.role !== "user")
+        cutoff++;
+    } while (
+      overhead + estimateLocalMessageTokens(input.messages.slice(cutoff)) >=
+      (stats.context_window ?? 0)
+    );
+    remaining = input.messages.slice(cutoff);
+    stats.messages_count_after = remaining.length + (cutoff > 0 ? 1 : 0);
+    stats.context_tokens_after = estimateLocalMessageTokens(remaining);
+    if (cutoff === 0) {
+      return {
+        numMessagesBefore: input.messages.length,
+        numMessagesAfter: input.messages.length,
+        summary: "",
+        stats,
+      };
+    }
+    summary = warning;
+    stats.context_tokens_after += overhead;
+  }
+  const packedSummary = warning
+    ? JSON.stringify({
+        type: "system_alert",
+        message: warning,
+        time: new Date().toISOString(),
+        compaction_stats: stats,
+      })
+    : packageLocalSummaryMessage(summary, stats, "all");
+  const result = input.persist(summary, packedSummary, remaining);
+  if (warning) console.warn(warning);
+  return { ...result, summary, stats };
+}
+
 export async function runLocalPressureCompaction<T>(
   compact: () => Promise<T>,
 ): Promise<T | null> {
@@ -86,8 +173,7 @@ export async function runLocalPressureCompaction<T>(
     return await compact();
   } catch (error) {
     // Pressure compaction is opportunistic: it must not fail a turn (or a
-    // completed response). A real overflow still surfaces this error via
-    // the provider overflow path.
+    // completed response).
     if (error instanceof LocalIrreducibleContextError) return null;
     throw error;
   }
@@ -508,12 +594,13 @@ async function runGenerateText(
     provider: resolved.model.provider,
     configuredHeaders: resolved.headers,
     conversationId: input.conversationId,
+    requestKind: "compaction",
   });
   const options: SimpleStreamOptions & Record<string, unknown> = {
     ...resolved.providerOptions,
     ...(resolved.apiKey ? { apiKey: resolved.apiKey } : {}),
     ...(resolved.timeout !== false ? { timeoutMs: resolved.timeout } : {}),
-    ...(headers ? { headers } : {}),
+    headers,
     ...(input.abortSignal ? { signal: input.abortSignal } : {}),
     // Mirrors Pi's createSummarizationOptions, which passes the session
     // thinking level into summarization requests. Required for adaptive

@@ -19,6 +19,7 @@ describe("isSkillAvailableForAgent", () => {
       "managing-shared-memory",
       "music-generation",
       "speech-generation",
+      "video-generation",
       "working-across-computers",
     ]) {
       const skill: Skill = { ...baseSkill, id };
@@ -68,10 +69,11 @@ describe("isSkillAvailableForAgent", () => {
     }
   });
 
-  test("ships the speech and music skills only to Cloud agents", async () => {
+  test("ships the speech, music, and video skills only to Cloud agents", async () => {
     for (const [skillId, endpoint] of [
       ["speech-generation", "/v1/audio/speech"],
       ["music-generation", "/v1/audio/music"],
+      ["video-generation", "/v1/videos"],
     ] as const) {
       for (const [agentId, available] of [
         ["agent-local-123", false],

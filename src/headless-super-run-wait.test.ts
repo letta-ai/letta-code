@@ -280,14 +280,58 @@ test("a permanent Cloud read failure is terminal", async () => {
   expect(reads).toBe(1);
 });
 
-test("completion without a correlated child run is failure", async () => {
-  await expect(
-    waitForAcceptedSuperRun(
+test("completion without a correlated child run fails after the link grace window", async () => {
+  const clock = makeClock();
+  const now = spyOn(Date, "now").mockImplementation(clock.now);
+  let reads = 0;
+  try {
+    await expect(
+      waitForAcceptedSuperRun(
+        receipt,
+        new AbortController().signal,
+        deps({
+          exact: async () => {
+            reads++;
+            return { ...exact(), run_ids: [] };
+          },
+          sleep: async () => clock.sleep(5_000),
+        }),
+      ),
+    ).rejects.toThrow("without a correlated child run");
+    expect(clock.now()).toBe(60_000);
+    expect(reads).toBe(13);
+  } finally {
+    now.mockRestore();
+  }
+});
+
+test("waits for a child run linked after the Super Run completed", async () => {
+  const clock = makeClock();
+  const now = spyOn(Date, "now").mockImplementation(clock.now);
+  const reads: string[] = [];
+  try {
+    const result = await waitForAcceptedSuperRun(
       receipt,
       new AbortController().signal,
-      deps({ exact: async () => ({ ...exact(), run_ids: [] }) }),
-    ),
-  ).rejects.toThrow("without a correlated child run");
+      deps({
+        // The run link lands 10s after the Super Run is already complete.
+        exact: async () => ({
+          ...exact(),
+          run_ids: clock.now() >= 10_000 ? ["run-late"] : [],
+        }),
+        run: async (id) => {
+          reads.push(id);
+          return { ...run(), id } as Run;
+        },
+        sleep: async () => clock.sleep(1_000),
+      }),
+    );
+    expect(reads).toEqual(["run-late"]);
+    expect(result.runIds).toEqual(["run-late"]);
+    expect(result.text).toBe("Done");
+  } finally {
+    now.mockRestore();
+  }
 });
 
 test("a failed child run is failure", async () => {

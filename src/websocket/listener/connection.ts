@@ -1,4 +1,4 @@
-import type WebSocket from "ws";
+import WebSocket from "ws";
 import { rebindBrowserDeviceMcpOAuthOperationsToSocket } from "./commands/browser-device-mcp-oauth";
 import { closeOutboundTransportQueue } from "./outbound-wire";
 import { getConversationRuntimeKey, nextEventSeq } from "./runtime";
@@ -68,10 +68,20 @@ function refreshLegacySingleConnection(runtime: ListenerRuntime): void {
   // Turn continuations may capture this handle before a transient disconnect.
   runtime.transport = runtime.processTransport ?? only?.writer ?? null;
   runtime.streamTransport = only?.streamWriter ?? null;
-  runtime.socket = only ? socketForTransport(only.writer) : null;
-  runtime.streamSocket = only?.streamWriter
-    ? socketForTransport(only.streamWriter)
-    : null;
+  // Unregistered CONNECTING/OPEN sockets belong to an in-flight reconnect.
+  const pending = (socket: WebSocket | null | undefined) =>
+    socket != null &&
+    socket.readyState <= WebSocket.OPEN &&
+    ![...runtime.connections.values()].some(
+      ({ writer, streamWriter }) =>
+        writer === socket || streamWriter === socket,
+    );
+  if (only || !pending(runtime.socket))
+    runtime.socket = only ? socketForTransport(only.writer) : null;
+  if (only || !pending(runtime.streamSocket))
+    runtime.streamSocket = only?.streamWriter
+      ? socketForTransport(only.streamWriter)
+      : null;
 }
 
 export function createConnectionRequestKey(

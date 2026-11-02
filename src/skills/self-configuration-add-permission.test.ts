@@ -52,6 +52,7 @@ async function runAddPermission(
   delete childEnv.USERPROFILE;
   delete childEnv.HOMEDRIVE;
   delete childEnv.HOMEPATH;
+  delete childEnv.LETTA_CONFIG_DIR;
   Object.assign(childEnv, env);
   if (env.HOME !== undefined && env.USERPROFILE === undefined) {
     childEnv.USERPROFILE = env.HOME;
@@ -157,13 +158,12 @@ test("add_permission dry run does not require user confirmation or write", async
   expect(() => readFileSync(settingsPath, "utf8")).toThrow();
 });
 
-test("add_permission confirmed user write succeeds and preserves file mode", async () => {
+test("add_permission confirmed user write repairs secure file modes", async () => {
   const root = makeTempDir("self-config-add-permission-confirmed-");
   const homeDir = join(root, "home");
   const settingsPath = join(homeDir, ".letta", "settings.json");
   writeJson(settingsPath, { permissions: { allow: [] } });
   chmodSync(settingsPath, 0o640);
-  const beforeMode = statSync(settingsPath).mode & 0o777;
 
   const result = await runAddPermission(
     [
@@ -183,5 +183,58 @@ test("add_permission confirmed user write succeeds and preserves file mode", asy
   expect(JSON.parse(readFileSync(settingsPath, "utf8"))).toEqual({
     permissions: { allow: ["Bash(git diff:*)"] },
   });
-  expect(statSync(settingsPath).mode & 0o777).toBe(beforeMode);
+  if (process.platform !== "win32") {
+    expect(statSync(dirname(settingsPath)).mode & 0o777).toBe(0o700);
+    expect(statSync(settingsPath).mode & 0o777).toBe(0o600);
+  }
+});
+
+test("add_permission isolates user writes under LETTA_CONFIG_DIR", async () => {
+  const root = makeTempDir("self-config-add-permission-product-");
+  const homeDir = join(root, "home");
+  const configDir = join(homeDir, ".dream");
+  const legacyPath = join(homeDir, ".letta", "settings.json");
+  writeJson(legacyPath, { permissions: { allow: ["Bash(legacy:*)"] } });
+
+  const result = await runAddPermission(
+    [
+      "--rule",
+      "Bash(dream:*)",
+      "--type",
+      "allow",
+      "--scope",
+      "user",
+      "--confirm-user-scope",
+    ],
+    { HOME: homeDir, LETTA_CONFIG_DIR: configDir },
+  );
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(
+    JSON.parse(readFileSync(join(configDir, "settings.json"), "utf8")),
+  ).toEqual({ permissions: { allow: ["Bash(dream:*)"] } });
+  expect(JSON.parse(readFileSync(legacyPath, "utf8"))).toEqual({
+    permissions: { allow: ["Bash(legacy:*)"] },
+  });
+});
+
+test("add_permission rejects a relative LETTA_CONFIG_DIR", async () => {
+  const root = makeTempDir("self-config-add-permission-relative-");
+
+  const result = await runAddPermission(
+    [
+      "--rule",
+      "Bash(dream:*)",
+      "--type",
+      "allow",
+      "--scope",
+      "user",
+      "--confirm-user-scope",
+    ],
+    { HOME: root, LETTA_CONFIG_DIR: ".dream" },
+  );
+
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain("LETTA_CONFIG_DIR must be absolute");
 });

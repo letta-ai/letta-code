@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { type Instance, render } from "ink";
 import stripAnsi from "strip-ansi";
@@ -99,6 +103,62 @@ afterEach(() => {
 });
 
 describe("ProviderSelector validation", () => {
+  test("shows local store save errors as validation errors", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "selector-invalid-key-"));
+    const previousStorageDir = process.env.LETTA_LOCAL_BACKEND_DIR;
+    process.env.LETTA_LOCAL_BACKEND_DIR = storageDir;
+    configureBackendMode("local");
+    try {
+      const stdin = createInputStream();
+      const stdout = new CaptureStream() as CaptureStream & NodeJS.WriteStream;
+      instance = render(<ProviderSelector onCancel={() => {}} />, {
+        stdin,
+        stdout,
+        debug: true,
+        patchConsole: false,
+        exitOnCtrlC: false,
+      });
+      await waitFor(
+        () => stripAnsi(stdout.latest()).includes("Anthropic"),
+        "provider list",
+      );
+      await typeInput(stdin, "Anthropic");
+      stdin.push("\r");
+      await waitFor(
+        () => stripAnsi(stdout.latest()).includes("(enter key)"),
+        "API key input",
+      );
+      stdin.push("secret\r\nnotification");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      stdin.push("\r");
+      await waitFor(
+        () => stripAnsi(stdout.latest()).includes("key validated!"),
+        "local validation",
+      );
+      stdin.push("\r");
+      await waitFor(
+        () =>
+          stripAnsi(stdout.latest()).includes(
+            "contains whitespace or line breaks.",
+          ),
+        "local save error",
+        () => stripAnsi(stdout.latest()),
+      );
+      expect(stripAnsi(stdout.latest())).toContain("invalid key");
+      expect(existsSync(join(storageDir, "providers", "auth.json"))).toBe(
+        false,
+      );
+    } finally {
+      instance?.unmount();
+      instance?.cleanup();
+      instance = undefined;
+      if (previousStorageDir === undefined)
+        delete process.env.LETTA_LOCAL_BACKEND_DIR;
+      else process.env.LETTA_LOCAL_BACKEND_DIR = previousStorageDir;
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  }, 15_000);
+
   test("validates an OpenAI-compatible key against the entered base URL", async () => {
     let checkBody: Record<string, unknown> | undefined;
     server = Bun.serve({

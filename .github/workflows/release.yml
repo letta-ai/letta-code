@@ -7,6 +7,11 @@ on:
     paths:
       - package.json
   workflow_dispatch:
+    inputs:
+      force_pypi:
+        description: Publish to PyPI regardless of version
+        type: boolean
+        default: false
 
 jobs:
   publish:
@@ -15,6 +20,7 @@ jobs:
     outputs:
       should_publish: ${{ steps.detect.outputs.should_publish }}
       is_prerelease: ${{ steps.version.outputs.is_prerelease }}
+      pypi_release: ${{ steps.version.outputs.pypi_release }}
       pypi_published: ${{ steps.version.outputs.pypi_published }}
     environment: npm-publish
     permissions:
@@ -82,6 +88,12 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "pypi_release=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pypi_release=false" >> "$GITHUB_OUTPUT"
+          fi
 
           if [[ "$VERSION" == *-* ]]; then
             PRERELEASE_LABEL=$(echo "$VERSION" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-([^.]+)(\..*)?$/\1/')
@@ -298,7 +310,7 @@ jobs:
     needs: publish
     if: >-
       needs.publish.outputs.should_publish == 'true' &&
-      needs.publish.outputs.is_prerelease == 'false' &&
+      (needs.publish.outputs.pypi_release == 'true' || inputs.force_pypi) &&
       needs.publish.outputs.pypi_published != 'true'
     uses: ./.github/workflows/pypi-wheels.yml
 
@@ -309,7 +321,7 @@ jobs:
       needs.publish.result == 'success' &&
       needs.build-pypi-wheels.result == 'success' &&
       needs.publish.outputs.should_publish == 'true' &&
-      needs.publish.outputs.is_prerelease == 'false' &&
+      (needs.publish.outputs.pypi_release == 'true' || inputs.force_pypi) &&
       needs.publish.outputs.pypi_published != 'true'
     runs-on: ubuntu-latest
     environment:

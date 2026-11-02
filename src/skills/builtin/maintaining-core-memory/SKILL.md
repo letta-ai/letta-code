@@ -61,7 +61,7 @@ Core memory is the agent's working model: who it is, how the user thinks and wha
 - When several rules share a cause, replace them with the one principle that explains them all, and delete the lines it absorbs in the same edit. Adding the principle while keeping the old rules is a log with a summary on top. A healthy file becomes more general over time; a growing count of narrow rules is a sign of failure.
 - State the principle with the reason that makes it generalize: "Verify claims against the running system, because Sarah trusts evidence over plausibility", not three separate rules about tests, logs, and deployments.
 - Write to the agent in the second person or imperative mood: "Lead with the answer", not "The user likes answers first". Say what to do rather than only what to avoid.
-- Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
+- Leave out provenance: no names, dates, quotes, or stories about the incident. Message history already holds the events, and the commit message records why the line changed and where the learning came from. When you edit a section that already contains provenance-laden rules, rewrite them as principles; nothing is lost, because git keeps the old text.
 - Update only from a pattern or an explicit instruction, not a single ambiguous event.
 - Check that a change does not contradict an existing line; resolve the conflict instead of adding both.
 - Write in plain language without all-caps or absolute emphasis. Overstated instructions get overapplied.
@@ -99,3 +99,24 @@ When a root file is long or the total is near its limit:
 1. Delete stale, duplicated, or rederivable content.
 2. Move subject detail into deferred memory and leave a one-line pointer in root `MEMORY.md`.
 3. Move procedures into skills.
+
+## Commit memory changes
+
+Every memory commit must let someone reading `git log` or `git blame` on a memory or skill line trace back to the events that justified it. Commit each learning separately; a learning may touch several files. When a turn produces several learnings, finish and commit one before editing for the next. From the repository root, stage only that learning's files and commit in one shell call:
+
+```bash
+git add <changed files> && git commit -m "memory(<origin>): <what was learned>
+
+<what happened: the events that led to this learning and why it should persist>
+
+Sources:
+- <conversation ID> (<message IDs>), <who>, <date>: <what happened there>"
+```
+
+- `<origin>` is `self` when you edit your own memory during a conversation, or `dream` when you are a reflection or dream subagent reviewing past transcripts.
+- Provenance belongs in the commit, not the memory file: who said or did it (name and ID), when, the quote, and the incident go in the body and `Sources:`. The memory line states only the resulting rule or fact. For example, the file says "Be concise" and the commit says "feedback 'talk more concisely' from Charles <id> on <date>". Git dates the commit, not the event, so write the event date.
+- The subject states the learning itself, such as `memory(self): Sarah wants one commit per learning`, not the file edit.
+- The body tells the story: what the user said or corrected, what failed or succeeded, or what pattern recurred, and why it generalizes beyond that moment. A reader should understand why the memory exists without opening the sources.
+- `Sources:` lists the evidence precisely enough to find again, with one line on what happened at each: a conversation ID with the message IDs where it happened, a transcript or session ID, a file path, a URL, PR, or issue, or a commit hash. When the user explicitly asked for the change, cite that request. Resolve values such as `$CONVERSATION_ID` before writing them; never commit a literal variable name.
+- Do not invent a source. If the origin cannot be identified, write `Sources: unknown` and say why in the body.
+- Never include secrets.

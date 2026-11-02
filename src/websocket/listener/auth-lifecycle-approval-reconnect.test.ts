@@ -503,6 +503,8 @@ describe("listener approval reconnect timing", () => {
         createConnectionRequestKey(connectionId, "external"),
         {
           connectionId,
+          requestFrame: "{}",
+          sentOn: gatewayConnection.writer,
           resolve,
           reject,
           timeout: setTimeout(() => {}, 30_000),

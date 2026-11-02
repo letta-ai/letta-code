@@ -79,7 +79,10 @@ test("completed input replay survives idle runtime eviction", async () => {
     "agent-1",
     "conversation-1",
   );
-  const processIncomingMessage = mock(async () => {});
+  const processQueuedTurn = mock(async () => {
+    firstRuntime.dequeuedInputIdentitiesByBatchId.clear();
+    firstRuntime.dequeuedClientMessageIdsByBatchId.clear();
+  });
   const acknowledgements: Array<{
     accepted: boolean;
     disposition?: "started" | "queued";
@@ -98,11 +101,12 @@ test("completed input replay survives idle runtime eviction", async () => {
       send: () => {},
     },
     options,
-    processQueuedTurn: async () => {},
-    processIncomingMessage,
+    processQueuedTurn,
+    processIncomingMessage: async () => {},
     trackListenerError: () => {},
     onInputAccepted: (ack) => acknowledgements.push(ack),
   });
+  await firstRuntime.messageQueue;
   await firstRuntime.messageQueue;
   expect(
     getConversationRuntime(listener, "agent-1", "conversation-1"),
@@ -124,16 +128,16 @@ test("completed input replay survives idle runtime eviction", async () => {
       send: () => {},
     },
     options,
-    processQueuedTurn: async () => {},
-    processIncomingMessage,
+    processQueuedTurn,
+    processIncomingMessage: async () => {},
     trackListenerError: () => {},
     onInputAccepted: (ack) => acknowledgements.push(ack),
   });
   await replacementRuntime.messageQueue;
 
-  expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(processQueuedTurn).toHaveBeenCalledTimes(1);
   expect(acknowledgements).toEqual([
-    { accepted: true, disposition: "started" },
+    { accepted: true, disposition: "queued" },
     // The duplicate re-ack carries the live-owner proof the originator
     // token store needs before recreating a lost entry.
     {

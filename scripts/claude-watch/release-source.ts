@@ -18,6 +18,9 @@ export interface ReleaseSourceFetchOptions {
   retries?: number;
   backoffMs?: number;
   sleep?: (milliseconds: number) => Promise<void>;
+  currentVersion?: string | null;
+  previousVersion?: string | null;
+  allowNpmOnlyExactVersions?: boolean;
 }
 
 export interface ReleaseSelectionOptions {
@@ -373,27 +376,94 @@ async function fetchJson(
   });
 }
 
+function isNotFoundFetchError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.cause instanceof Error &&
+    error.cause.message.startsWith("404 ")
+  );
+}
+
 export async function fetchClaudeGitHubReleases(
   options: ReleaseSourceFetchOptions = {},
 ): Promise<ClaudeGitHubRelease[]> {
-  const rawReleases: unknown[] = [];
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "User-Agent": "letta-claude-watch",
+    ...(process.env.GH_TOKEN
+      ? { Authorization: `Bearer ${process.env.GH_TOKEN}` }
+      : {}),
+  };
+  const currentVersion = options.currentVersion
+    ? normalizeGitHubReleaseTag(options.currentVersion)
+    : null;
+  const previousVersion = options.previousVersion
+    ? normalizeGitHubReleaseTag(options.previousVersion)
+    : null;
+  const rawReleases: unknown[] = [
+    await fetchJson(`${GITHUB_RELEASES_URL}/latest`, options, headers),
+  ];
+  let foundCurrent = true;
+  if (currentVersion) {
+    try {
+      rawReleases.push(
+        await fetchJson(
+          `${GITHUB_RELEASES_URL}/tags/${encodeURIComponent(`v${currentVersion}`)}`,
+          options,
+          headers,
+        ),
+      );
+    } catch (error) {
+      if (!options.allowNpmOnlyExactVersions || !isNotFoundFetchError(error)) {
+        throw error;
+      }
+      foundCurrent = false;
+    }
+  }
+
+  const pointReleases = parseClaudeGitHubReleases(rawReleases);
+  const resolvedCurrentVersion =
+    currentVersion ?? pointReleases.at(-1)?.tag_name;
+  if (
+    !previousVersion ||
+    previousVersion === resolvedCurrentVersion ||
+    !foundCurrent
+  ) {
+    return pointReleases;
+  }
+
+  try {
+    rawReleases.push(
+      await fetchJson(
+        `${GITHUB_RELEASES_URL}/tags/${encodeURIComponent(`v${previousVersion}`)}`,
+        options,
+        headers,
+      ),
+    );
+  } catch (error) {
+    if (!options.allowNpmOnlyExactVersions || !isNotFoundFetchError(error)) {
+      throw error;
+    }
+    return parseClaudeGitHubReleases(rawReleases);
+  }
+
   for (let page = 1; ; page += 1) {
     const payload = await fetchJson(
       `${GITHUB_RELEASES_URL}?per_page=100&page=${page}`,
       options,
-      {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "letta-claude-watch",
-        ...(process.env.GH_TOKEN
-          ? { Authorization: `Bearer ${process.env.GH_TOKEN}` }
-          : {}),
-      },
+      headers,
     );
     if (!Array.isArray(payload)) {
       throw new TypeError("GitHub releases response must be an array");
     }
     rawReleases.push(...payload);
-    if (payload.length < 100) break;
+    const parsedPage = parseClaudeGitHubReleases(payload);
+    if (
+      parsedPage.some(({ tag_name }) => tag_name === previousVersion) ||
+      payload.length < 100
+    ) {
+      break;
+    }
   }
   return parseClaudeGitHubReleases(rawReleases);
 }

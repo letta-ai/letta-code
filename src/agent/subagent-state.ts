@@ -18,6 +18,30 @@ export interface ToolCall {
   args: string;
 }
 
+/**
+ * An assistant text block from an external coding worker. Sent to a parent on
+ * another computer as `SubagentSnapshot.progress_texts` (latest
+ * {@link MAX_PROGRESS_TEXTS}, oldest first); older listeners omit the field.
+ */
+export interface ProgressText {
+  /** Stable per subagent, so a parent appends each text to its log once. */
+  id: string;
+  /** ISO timestamp of when the text was recorded. */
+  at: string;
+  text: string;
+}
+
+/** Longest progress text excerpt kept per entry. */
+export const PROGRESS_TEXT_CHARS = 300;
+/** Most recent progress texts kept per subagent (and sent in snapshots). */
+export const MAX_PROGRESS_TEXTS = 20;
+
+/** Collapse whitespace and cap a progress excerpt to one short line. */
+export function excerptProgressText(value: string, max: number): string {
+  const line = value.replace(/\s+/g, " ").trim();
+  return line.length > max ? `${line.slice(0, max)}…` : line;
+}
+
 export interface SubagentState {
   id: string;
   type: string; // "General-purpose", "Recall", "code-reviewer", etc.
@@ -33,6 +57,10 @@ export interface SubagentState {
   /** Exact accepted Super Run for a remotely executing child send. */
   superRunId?: string;
   toolCalls: ToolCall[];
+  /** Latest assistant text blocks from an external worker, oldest first. */
+  progressTexts?: ProgressText[];
+  /** Texts recorded so far; numbers progress text IDs so they stay stable. */
+  progressTextCount?: number;
   // Monotonic counter to avoid transient regressions in rendered tool usage.
   maxToolCallsSeen: number;
   totalTokens: number;
@@ -40,6 +68,9 @@ export interface SubagentState {
   error?: string;
   /** Final report published for a caller-notified launch. */
   result?: string;
+  /** The outcome is published to a caller on another computer, which may
+   * reconnect later to read it. Set for failures too, which carry no result. */
+  published?: boolean;
   model?: string;
   startTime: number;
   toolCallId?: string; // Links this subagent to its parent Task tool call
@@ -115,9 +146,10 @@ let cachedLifecycleItems: SubagentLifecycleItem[] = [];
 
 const DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS = 30_000;
 let completedSubagentRetentionMs = DEFAULT_COMPLETED_SUBAGENT_RETENTION_MS;
-// A published result is how a caller on another computer receives the outcome,
-// and it may reconnect after an outage to read it, so keep those entries longer.
-const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
+// A published outcome is how a caller on another computer receives the result
+// or the failure, and it may reconnect after an outage to read it, so keep
+// those entries longer.
+export const DEFAULT_PUBLISHED_RESULT_RETENTION_MS = 30 * 60_000;
 let publishedResultRetentionMs = DEFAULT_PUBLISHED_RESULT_RETENTION_MS;
 const completedSubagentCleanupTimers = new Map<string, TimerHandle>();
 
@@ -165,6 +197,10 @@ function unrefTimer(timer: TimerHandle): void {
   }
 }
 
+function isPublished(agent: SubagentState): boolean {
+  return agent.published === true || agent.result !== undefined;
+}
+
 function scheduleCompletedSubagentCleanup(id: string): void {
   const agent = store.agents.get(id);
   if (!agent || (agent.status !== "completed" && agent.status !== "error")) {
@@ -200,7 +236,7 @@ function armCompletedSubagentCleanup(id: string): void {
       store.agents.delete(id);
       notifyListeners();
     },
-    agent.result !== undefined
+    isPublished(agent)
       ? publishedResultRetentionMs
       : completedSubagentRetentionMs,
   );
@@ -356,6 +392,32 @@ export function addToolCall(
 }
 
 /**
+ * Record an assistant text block from an external worker, keeping the latest
+ * {@link MAX_PROGRESS_TEXTS}. Skips blanks and a repeat of the previous text.
+ */
+export function addProgressText(
+  subagentId: string,
+  text: string,
+  now: () => Date = () => new Date(),
+): void {
+  const agent = store.agents.get(subagentId);
+  if (!agent) return;
+  const excerpt = excerptProgressText(text, PROGRESS_TEXT_CHARS);
+  const previous = agent.progressTexts?.at(-1);
+  if (!excerpt || previous?.text === excerpt) return;
+  const count = (agent.progressTextCount ?? 0) + 1;
+  store.agents.set(subagentId, {
+    ...agent,
+    progressTexts: [
+      ...(agent.progressTexts ?? []),
+      { id: `text-${count}`, at: now().toISOString(), text: excerpt },
+    ].slice(-MAX_PROGRESS_TEXTS),
+    progressTextCount: count,
+  });
+  notifyListeners();
+}
+
+/**
  * Mark a subagent as completed
  */
 export function completeSubagent(
@@ -365,6 +427,7 @@ export function completeSubagent(
     error?: string;
     totalTokens?: number;
     result?: string;
+    published?: boolean;
   },
 ): void {
   const agent = store.agents.get(id);
@@ -378,6 +441,7 @@ export function completeSubagent(
     // The run settled on its own: no failed stop remains to retry.
     stopFailed: undefined,
     ...(result.result !== undefined ? { result: result.result } : {}),
+    ...(result.published ? { published: true } : {}),
     durationMs: Date.now() - agent.startTime,
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
@@ -499,8 +563,8 @@ export function getGroupedSubagents(): Map<string, SubagentState[]> {
 export function clearCompletedSubagents(): void {
   let removedAny = false;
   for (const [id, agent] of store.agents.entries()) {
-    // A published result waits for its remote caller; its own timer removes it.
-    if (agent.result !== undefined) continue;
+    // A published outcome waits for its remote caller; its own timer removes it.
+    if (isPublished(agent)) continue;
     // A cancel is still in flight for this row: deleting it would lose a
     // live remote run's only retry handle. The abort hook clears the flag
     // once the cancel settles.

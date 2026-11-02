@@ -32,6 +32,15 @@ const TEST_AGENTS = [
 
 function fakeBackend(created: string[] = [], deleted: string[] = []): Backend {
   return {
+    retrieveAgent: async (agentId: string) => {
+      const agent = TEST_AGENTS.find((candidate) => candidate.id === agentId);
+      if (!agent) {
+        throw Object.assign(new Error(`Agent ${agentId} not found`), {
+          name: "LocalBackendNotFoundError",
+        });
+      }
+      return agent;
+    },
     listAgents: async () => TEST_AGENTS,
     createConversation: async (body: { agent_id: string }) => {
       const id = `conv-test-${created.length + 1}`;

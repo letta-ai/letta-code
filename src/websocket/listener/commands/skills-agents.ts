@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { resolveModel } from "@/agent/model";
+import { getGlobalSkillsDir } from "@/agent/skills";
 import { settingsManager } from "@/settings-manager";
 import type {
   CreateAgentCommand,
@@ -51,11 +52,7 @@ export async function handleSkillCommand(
   } = await import("node:fs");
   const { basename, join } = await import("node:path");
 
-  // Compute skills dir dynamically to respect LETTA_HOME (important for tests)
-  const lettaHome =
-    process.env.LETTA_HOME ||
-    join(process.env.HOME || process.env.USERPROFILE || "~", ".letta");
-  const globalSkillsDir = join(lettaHome, "skills");
+  const globalSkillsDir = getGlobalSkillsDir();
 
   if (parsed.type === "skill_enable") {
     try {

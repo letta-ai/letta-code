@@ -8,6 +8,9 @@ export interface ExternalToolCall {
 
 export type ExternalToolCallListener = (call: ExternalToolCall) => void;
 
+/** Called with each assistant text block a Claude Code or Codex worker emits. */
+export type ExternalTextListener = (text: string) => void;
+
 const MAX_TOOL_CALL_ARGS_LENGTH = 1_000;
 
 /** Serialize tool arguments compactly, capped so progress snapshots stay small. */

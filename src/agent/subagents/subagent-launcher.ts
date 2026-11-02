@@ -21,6 +21,7 @@ import {
   resolveEntryScriptPath,
   resolveLettaInvocation,
 } from "@/tools/impl/shell-env";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   readSubagentDepth,
   SUBAGENT_DEPTH_ENV,
@@ -190,7 +191,7 @@ function resolveMemorySubagentScratchpad(
   const configuredTranscriptRoot = parentProcessEnv[TRANSCRIPT_ROOT_ENV];
   const transcriptRoot =
     configuredTranscriptRoot?.trim() ||
-    join(parentProcessEnv.HOME?.trim() || homedir(), ".letta", "transcripts");
+    join(resolveGlobalConfigDir(parentProcessEnv, homedir()), "transcripts");
   const scope = subagentId
     ? encodeURIComponent(subagentId)
     : crypto.randomUUID();
@@ -237,6 +238,8 @@ export function composeSubagentChildEnv(
     ...parentProcessEnv,
     ...(inheritedApiKey && { LETTA_API_KEY: inheritedApiKey }),
     ...(inheritedBaseUrl && { LETTA_BASE_URL: inheritedBaseUrl }),
+    // Subagents run from the parent's install and must not replace it.
+    DISABLE_AUTOUPDATER: "1",
     LETTA_CODE_AGENT_ROLE: "subagent",
     [MEMORY_WORKER_SESSION_ENV]: subagentType === "memory" ? "1" : undefined,
     [SUBAGENT_LAUNCH_ENV]: "1",

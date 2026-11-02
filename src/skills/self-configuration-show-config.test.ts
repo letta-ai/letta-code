@@ -28,6 +28,7 @@ const isolatedEnvKeys = [
   "LETTA_BASE_URL",
   "LETTA_SETTINGS_BASE_URL",
   "LETTA_BACKEND",
+  "LETTA_CONFIG_DIR",
   "MEMORY_DIR",
   "HOME",
   "USERPROFILE",
@@ -209,6 +210,31 @@ test("show_config runtime reports safe process and settings facts", async () => 
   ]);
   expect(result.stdout).not.toContain("runtime-secret");
   expect(result.stdout).not.toContain("settings-secret");
+});
+
+test("show_config reads user settings from LETTA_CONFIG_DIR", async () => {
+  const root = makeTempDir("self-config-show-config-product-");
+  const homeDir = join(root, "home");
+  const cwd = homeDir;
+  const configDir = join(homeDir, ".dream");
+  mkdirSync(cwd, { recursive: true });
+  writeJson(join(homeDir, ".letta", "settings.json"), {
+    windowTitle: "legacy",
+  });
+  writeJson(join(configDir, "settings.json"), { windowTitle: "dream" });
+  writeJson(join(homeDir, ".letta", "settings.local.json"), {
+    windowTitle: "legacy-local",
+  });
+
+  const result = await runShowConfig(
+    ["--cwd", cwd, "--section", "settings", "--json"],
+    { HOME: homeDir, LETTA_CONFIG_DIR: configDir },
+  );
+
+  expect(result.stderr).toBe("");
+  expect(result.exitCode).toBe(0);
+  expect(result.stdout).toContain("dream");
+  expect(result.stdout).not.toContain("legacy");
 });
 
 test("show_config json agents omit arbitrary agent entry fields", async () => {

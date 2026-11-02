@@ -104,10 +104,10 @@ Use `turn_start` only when the mod needs to inspect or transform the outbound us
 
 ## Local state
 
-For small persistent state, use a clearly named file under `~/.letta/mods/`, for example:
+For small persistent state, use a clearly named file under the active product config root's `mods/` directory, for example:
 
 ```text
-~/.letta/mods/my-mod.state.json
+${LETTA_CONFIG_DIR:-$HOME/.letta}/mods/my-mod.state.json
 ```
 
 Use atomic-ish writes when practical: write the full JSON file from an in-memory object after each change. Validate parsed state and fall back gracefully if the file is missing or malformed.

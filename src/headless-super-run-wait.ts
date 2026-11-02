@@ -21,10 +21,15 @@ export interface SuperRunWaitDeps {
   run: (runId: string, signal: AbortSignal) => Promise<Run>;
   messages: (runId: string, signal: AbortSignal) => Promise<Message[]>;
   pollMs?: number;
+  /** How long a completed Super Run may report no linked child run. */
+  runLinkGraceMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
 }
 
 class RemoteExecutionFailed extends Error {}
+
+/** The server can link a child run to its Super Run after marking it complete. */
+const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
 
 function isTransientReadError(error: unknown): boolean {
   if (error instanceof ApiRequestError || error instanceof APIError) {
@@ -104,6 +109,8 @@ export async function waitForAcceptedSuperRun(
   deps: SuperRunWaitDeps,
 ): Promise<EnqueuedReply> {
   const pollMs = deps.pollMs ?? 1_000;
+  const runLinkGraceMs = deps.runLinkGraceMs ?? DEFAULT_RUN_LINK_GRACE_MS;
+  let completedWithoutRunSince: number | undefined;
   const sleep =
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
@@ -134,8 +141,14 @@ export async function waitForAcceptedSuperRun(
       continue;
     }
 
+    // run_ids is newest first, so this is the run that ended the send.
     const runId = exact.run_ids[0];
     if (!runId) {
+      completedWithoutRunSince ??= Date.now();
+      if (Date.now() - completedWithoutRunSince < runLinkGraceMs) {
+        await sleep(pollMs, signal);
+        continue;
+      }
       throw new RemoteExecutionFailed(
         `Remote Super Run ${exact.id} completed without a correlated child run.`,
       );

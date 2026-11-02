@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { readStdin } from "@/utils/stdin";
 import { isRecord } from "@/utils/type-guards";
 
 export type McpOutput = (message: string) => unknown;
@@ -151,18 +152,6 @@ export async function loadMcpToolArgs(
       ? await (deps.readStdin ?? readStdin)()
       : await (deps.readFile ?? ((path) => readFile(path, "utf8")))(file);
   return parseJsonObject(raw, `Invalid arguments in ${file}`);
-}
-
-function readStdin(): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let value = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      value += chunk;
-    });
-    process.stdin.on("end", () => resolve(value));
-    process.stdin.on("error", reject);
-  });
 }
 
 function parseJsonObject(raw: string, label: string): Record<string, unknown> {
