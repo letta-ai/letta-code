@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { APIError } from "@letta-ai/letta-client";
 import type { Backend } from "@/backend";
 import {
   normalizeAgentMessageComputer,
@@ -83,92 +82,121 @@ test.each([{ value: false }, { value: 0 }, { value: [] }, { value: {} }])(
 
 const TARGET_CONV = "conv-33333333-3333-4333-8333-333333333333";
 
-function lookupBackend(retrieve: () => Promise<unknown>) {
-  return {
-    retrieveConversation: retrieve,
-    createConversation: async () => {
-      throw new Error("unexpected conversation creation");
+function recordingBackend(conversationAgentId?: string) {
+  const reads: string[] = [];
+  const created: unknown[] = [];
+  const backend = {
+    retrieveConversation: async (id: string) => {
+      reads.push(id);
+      if (!conversationAgentId) {
+        throw Object.assign(new Error("403 Forbidden"), { status: 403 });
+      }
+      return { id, agent_id: conversationAgentId };
+    },
+    createConversation: async (body: unknown) => {
+      created.push(body);
+      return { id: "conv-created" };
     },
   } as unknown as Backend;
+  return { backend, reads, created };
 }
 
-function forbidden() {
-  return APIError.generate(
-    403,
-    {
-      detail:
-        "Other conversations of the same agent can only enqueue a message to the DM itself.",
-    },
-    undefined,
-    new Headers(),
+test("a conversation ID alone is a destination and is never read", async () => {
+  const f = recordingBackend("agent-owner");
+  const destination = await resolveAgentMessageDestination(
+    { conversationId: TARGET_CONV, senderAgentId: "agent-sender" },
+    f.backend,
   );
-}
-
-test("an unreadable conversation is addressed through the sender's agent", async () => {
-  const backend = lookupBackend(async () => {
-    throw forbidden();
-  });
-  expect(
-    await resolveAgentMessageDestination(
-      { conversationId: TARGET_CONV, senderAgentId: "agent-sender" },
-      backend,
-    ),
-  ).toEqual({ agentId: "agent-sender", conversationId: TARGET_CONV });
+  expect(destination).toEqual({ conversationId: TARGET_CONV });
+  expect(f.reads).toEqual([]);
+  expect(f.created).toEqual([]);
 });
 
-test("an unreadable conversation keeps an explicit agent_id", async () => {
-  const backend = lookupBackend(async () => {
-    throw forbidden();
-  });
+test("an explicit agent_id is passed through for an unreadable conversation", async () => {
+  const f = recordingBackend();
   expect(
     await resolveAgentMessageDestination(
-      {
-        agentId: "agent-explicit",
-        conversationId: TARGET_CONV,
-        senderAgentId: "agent-sender",
-      },
-      backend,
+      { agentId: "agent-explicit", conversationId: TARGET_CONV },
+      f.backend,
     ),
   ).toEqual({ agentId: "agent-explicit", conversationId: TARGET_CONV });
 });
 
-test("an unreadable conversation without any agent still fails", async () => {
-  const backend = lookupBackend(async () => {
-    throw forbidden();
-  });
+test("a readable conversation of another agent is rejected early", async () => {
+  const f = recordingBackend("agent-owner");
   await expect(
-    resolveAgentMessageDestination({ conversationId: TARGET_CONV }, backend),
-  ).rejects.toThrow("403");
+    resolveAgentMessageDestination(
+      { agentId: "agent-requested", conversationId: TARGET_CONV },
+      f.backend,
+    ),
+  ).rejects.toThrow("The conversation does not belong to the requested agent.");
+});
+
+test("the default conversation still requires agent_id", async () => {
+  const f = recordingBackend("agent-owner");
+  await expect(
+    resolveAgentMessageDestination(
+      { conversationId: "default", senderAgentId: "agent-sender" },
+      f.backend,
+    ),
+  ).rejects.toThrow("The default conversation requires agent_id.");
+  expect(
+    await resolveAgentMessageDestination(
+      { agentId: "agent-target", conversationId: "default" },
+      f.backend,
+    ),
+  ).toEqual({ agentId: "agent-target", conversationId: "default" });
+  expect(f.reads).toEqual([]);
+});
+
+test("an agent-only send creates a conversation for that agent", async () => {
+  const f = recordingBackend();
+  expect(
+    await resolveAgentMessageDestination(
+      { agentId: "agent-target", senderAgentId: "agent-sender" },
+      f.backend,
+    ),
+  ).toEqual({ agentId: "agent-target", conversationId: "conv-created" });
+  expect(f.created).toEqual([{ agent_id: "agent-target", hidden: true }]);
 });
 
 test.each([
-  ["not found", APIError.generate(404, {}, undefined, new Headers())],
-  ["network", new Error("socket hang up")],
-])("a %s lookup failure still throws", async (_label, failure) => {
-  const backend = lookupBackend(async () => {
-    throw failure;
-  });
-  await expect(
-    resolveAgentMessageDestination(
-      { conversationId: TARGET_CONV, senderAgentId: "agent-sender" },
-      backend,
-    ),
-  ).rejects.toBe(failure);
-});
+  [{ conversationId: TARGET_CONV }, { conversationId: TARGET_CONV }],
+  [
+    { conversationId: TARGET_CONV },
+    { agentId: "agent-self", conversationId: TARGET_CONV },
+  ],
+  [
+    { agentId: "agent-self", conversationId: "default" },
+    { agentId: "agent-self", conversationId: "default" },
+  ],
+])(
+  "refuses to message the current conversation: %j",
+  async (target, current) => {
+    const f = recordingBackend();
+    await expect(
+      resolveAgentMessageDestination(
+        { ...target, currentConversation: current },
+        f.backend,
+      ),
+    ).rejects.toThrow("Cannot message the current conversation.");
+    expect(f.reads).toEqual([]);
+  },
+);
 
-test("a readable conversation of another agent is still rejected", async () => {
-  const backend = lookupBackend(async () => ({
-    id: TARGET_CONV,
-    agent_id: "agent-owner",
-  }));
-  await expect(
-    resolveAgentMessageDestination(
+test("another agent's default conversation is not the current one", async () => {
+  const f = recordingBackend();
+  expect(
+    await resolveAgentMessageDestination(
       {
-        agentId: "agent-requested",
-        conversationId: TARGET_CONV,
-        senderAgentId: "agent-sender",
+        agentId: "agent-other",
+        conversationId: "default",
+        currentConversation: {
+          agentId: "agent-self",
+          conversationId: "default",
+        },
       },
-      backend,
+      f.backend,
     ),
-  ).rejects.toThrow("The conversation does not belong to the requested agent.");
+  ).toEqual({ agentId: "agent-other", conversationId: "default" });
 });
