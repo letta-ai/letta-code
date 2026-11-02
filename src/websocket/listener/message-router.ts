@@ -151,7 +151,8 @@ export function createListenerMessageHandler(
         parsed.type === "launch_subagent" ||
         parsed.type === "monitor_stop" ||
         parsed.type === "subagent_message" ||
-        parsed.type === "subagent_stop"
+        parsed.type === "subagent_stop" ||
+        parsed.type === "read_subagent_events"
       ) {
         const { handleTaskControlCommand } = await import(
           "./commands/task-control"
