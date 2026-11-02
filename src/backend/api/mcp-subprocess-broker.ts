@@ -297,7 +297,12 @@ export function createMcpSubprocessBroker(options: {
           response.destroy();
           return;
         }
-        if (!scope || scope.agentId !== options.agentId) {
+        if (
+          !scope ||
+          scope.agentId !== options.agentId ||
+          (parsed.operation === "secrets" &&
+            scope.originatorToken !== initialScope.originatorToken)
+        ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;
         }
