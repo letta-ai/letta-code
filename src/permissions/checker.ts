@@ -824,8 +824,7 @@ function getDefaultDecision(
 
   // Task tool: auto-approve safe subagent types
   if (canonicalToolName(toolName) === "Task") {
-    // agent_type replaces subagent_type, which stays accepted as an alias.
-    const requestedType = toolArgs?.agent_type ?? toolArgs?.subagent_type;
+    const requestedType = toolArgs?.agent_type;
     const subagentType = typeof requestedType === "string" ? requestedType : "";
     if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
       return "allow";

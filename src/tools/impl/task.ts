@@ -97,7 +97,7 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   notifyCaller?: boolean;
 }
 
-// Valid subagent_types when deploying an existing agent
+// Internal subagent configs allowed when deploying an existing agent
 const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 
 export {
@@ -697,10 +697,10 @@ export async function launchSubagent(
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
-  const subagent_type =
+  const configName =
     selection.kind === "external" ? selection.type : selection.subagentType;
 
-  const prepared = subagent_type === "custom" && isDeployingExisting;
+  const prepared = configName === "custom" && isDeployingExisting;
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -709,7 +709,7 @@ export async function launchSubagent(
     ? createExternalCodingAgentConfig(externalCodingAgentType)
     : prepared
       ? preparedConversationConfig()
-      : allConfigs[subagent_type];
+      : allConfigs[configName];
   if (!config) {
     return {
       success: false,
@@ -722,11 +722,7 @@ export async function launchSubagent(
       error: `fork_context is only supported for agent_type "letta" and external workers; "${requestedType}" runs with its own prompt and context`,
     };
   }
-  if (
-    !prepared &&
-    isDeployingExisting &&
-    !VALID_DEPLOY_TYPES.has(subagent_type)
-  ) {
+  if (!prepared && isDeployingExisting && !VALID_DEPLOY_TYPES.has(configName)) {
     return {
       success: false,
       error: `When deploying an existing agent, agent_type must be "letta". Got: "${requestedType}"`,
@@ -752,7 +748,7 @@ export async function launchSubagent(
   }
   const resolvedComputer = resolveLaunchComputer({
     requested: args.computer,
-    subagentType: subagent_type,
+    subagentType: configName,
     config,
   });
   if (resolvedComputer.error) {
@@ -774,7 +770,7 @@ export async function launchSubagent(
     if (!parentAgentId) {
       return {
         success: false,
-        error: `${subagent_type} requires a parent agent identity`,
+        error: `${configName} requires a parent agent identity`,
       };
     }
     if (resolvedComputer.computer) {
@@ -810,7 +806,7 @@ export async function launchSubagent(
     }
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
-      subagentType: subagent_type,
+      subagentType: configName,
       config,
       prompt: inputPrompt,
       description,
@@ -861,7 +857,7 @@ export async function launchSubagent(
       (a) => a.id === subagentId && a.status === "error",
     );
     if (args.notifyCaller && !agentId && failed) {
-      const error = failed.error ?? `${subagent_type} failed to start`;
+      const error = failed.error ?? `${configName} failed to start`;
       const code = classifyExternalCodingAgentStartupError(error);
       return { success: false, error, ...(code ? { error_code: code } : {}) };
     }
@@ -929,7 +925,7 @@ export async function launchSubagent(
   signal?.throwIfAborted();
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
-    subagentType: subagent_type,
+    subagentType: configName,
     config,
     prompt,
     description,

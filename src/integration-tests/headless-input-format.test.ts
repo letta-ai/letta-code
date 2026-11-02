@@ -666,7 +666,7 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "Launch exactly one Agent tool with subagent_type='general-purpose'. " +
+                  "Launch exactly one Agent tool with agent_type='letta'. " +
                   `Ask the subagent to use Read on ${JSON.stringify(fixture.reportPath)} and return the file's contents verbatim. ` +
                   "Do not read the file yourself or call any other tools. " +
                   "After the Agent tool returns, reply with exactly LAUNCHED and end your turn. " +

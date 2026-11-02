@@ -223,7 +223,7 @@ function isPlanningToolName(toolName) {
 }
 
 function isAllowedReadOnlySubagent(args) {
-  const subagentType = args?.subagent_type;
+  const subagentType = args?.agent_type;
   return typeof subagentType === "string" && readOnlySubagentTypes.has(normalizedToolName(subagentType));
 }
 

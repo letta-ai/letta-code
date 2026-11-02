@@ -138,7 +138,7 @@ describe("prepared conversation launch", () => {
     });
     const outcome = runWithRuntimeContext({ workingDirectory: testHome }, () =>
       launchSubagent({
-        subagent_type: "custom",
+        agent_type: "custom",
         conversation_id: "conv-child",
         prompt: "Work",
         description: "Cancelled startup",
@@ -158,9 +158,9 @@ describe("prepared conversation launch", () => {
     expect(spawnProcess).not.toHaveBeenCalled();
   });
 
-  test.each(["custom", "general-purpose"])(
+  test.each(["custom", "letta"])(
     "%s preserves its provider-failure policy",
-    async (subagent_type) => {
+    async (agent_type) => {
       processFailure =
         "Provider fixture is not supported; supported providers: anthropic";
       const terminal = Promise.withResolvers<void>();
@@ -174,7 +174,7 @@ describe("prepared conversation launch", () => {
       try {
         await runWithRuntimeContext({ workingDirectory: testHome }, () =>
           launchSubagent({
-            subagent_type,
+            agent_type,
             conversation_id: "conv-child",
             prompt: "Worker instructions",
             description: "Provider failure regression",
@@ -185,7 +185,7 @@ describe("prepared conversation launch", () => {
         expect(backgroundTask?.status).toBe("failed");
         expect(backgroundTask?.error).toContain(processFailure);
         expect(childInputs[0]?.args).toContain("conv-child");
-        if (subagent_type === "custom") {
+        if (agent_type === "custom") {
           expect(spawnProcess).toHaveBeenCalledTimes(1);
           expect(childInputs[0]?.args).not.toContain("--new-agent");
           expect(getSubagentSnapshot().agents[0]?.conversationId).toBe(
@@ -211,7 +211,7 @@ describe("prepared conversation launch", () => {
           { workingDirectory: testHome, connectionId: "conn-parent" },
           () =>
             launchSubagent({
-              subagent_type: "custom",
+              agent_type: "custom",
               conversation_id: "conv-child",
               prompt: "Worker instructions",
               description: "Worker",
@@ -243,7 +243,7 @@ describe("prepared conversation launch", () => {
       { workingDirectory: testHome },
       () =>
         launchSubagent({
-          subagent_type: "custom",
+          agent_type: "custom",
           signal: controller.signal,
           conversation_id: "conv-child",
           prompt: "Worker instructions",
@@ -293,7 +293,7 @@ describe("prepared conversation launch", () => {
     { conversation_id: "conv-child", client_message_id: "  " },
   ])("rejects invalid prepared launches before spawning %j", async (input) => {
     const result = await launchSubagent({
-      subagent_type: "custom",
+      agent_type: "custom",
       ...input,
       prompt: "Work",
       description: "Worker",
@@ -305,14 +305,14 @@ describe("prepared conversation launch", () => {
 });
 
 describe("fork launch receipt", () => {
-  test.each(["fork", "recall"])(
-    "%s returns both IDs before the child emits init or completes",
-    async (subagent_type) => {
+  test.each([{ fork_context: true }, { agent_type: "recall" }])(
+    "%j returns both IDs before the child emits init or completes",
+    async (selection) => {
       const receipt = await runWithRuntimeContext(
         { workingDirectory: testHome },
         () =>
           task({
-            subagent_type,
+            ...selection,
             prompt: "Investigate the parent conversation",
             description: "Fork receipt regression",
           }),
@@ -351,7 +351,7 @@ describe("nested Agent launch", () => {
         { workingDirectory: testHome },
         () =>
           task({
-            subagent_type: "fork",
+            fork_context: true,
             prompt: "Nested work",
             description: "Nested background launch",
           }),

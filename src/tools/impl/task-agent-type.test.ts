@@ -25,32 +25,14 @@ describe("resolveTaskAgentSelection", () => {
   });
 
   test.each([
-    [
-      { subagent_type: "general-purpose" },
-      { kind: "letta", subagentType: "general-purpose", forkContext: false },
-    ],
-    [
-      { subagent_type: "fork" },
-      { kind: "letta", subagentType: "fork", forkContext: true },
-    ],
-    [
-      { subagent_type: "fork", fork_context: true },
-      { kind: "letta", subagentType: "fork", forkContext: true },
-    ],
-    [
-      { subagent_type: "codex" },
-      { kind: "external", type: "codex", forkContext: false },
-    ],
-    [
-      { subagent_type: "recall" },
-      { kind: "letta", subagentType: "recall", forkContext: false },
-    ],
-    [
-      { subagent_type: "my-reviewer" },
-      { kind: "letta", subagentType: "my-reviewer", forkContext: false },
-    ],
-  ])("maps deprecated subagent_type %j", (args, selection) => {
-    expect(resolveTaskAgentSelection(args)).toEqual({ selection } as never);
+    [{ agent_type: "letta" }, "general-purpose", false],
+    [{ agent_type: " letta " }, "general-purpose", false],
+    [{ agent_type: "recall" }, "recall", false],
+    [{ agent_type: "my-reviewer" }, "my-reviewer", false],
+  ])("maps agent_type %j to the %s config", (args, subagentType, fork) => {
+    expect(resolveTaskAgentSelection(args)).toEqual({
+      selection: { kind: "letta", subagentType, forkContext: fork },
+    });
   });
 
   test.each(["claude-code", "codex", "cursor", "opencode"])(
@@ -64,23 +46,36 @@ describe("resolveTaskAgentSelection", () => {
     },
   );
 
-  test("accepts matching agent_type and subagent_type", () => {
-    expect(
-      resolveTaskAgentSelection({
-        agent_type: "letta",
-        subagent_type: "general-purpose",
-      }),
-    ).toHaveProperty("selection.subagentType", "general-purpose");
+  test.each([
+    [{ agent_type: "fork" }, "replaced by fork_context: true"],
+    [{ agent_type: "fork", fork_context: true }, "replaced by fork_context"],
+    [{ agent_type: "general-purpose" }, 'is now the default "letta"'],
+    [{ agent_type: " general-purpose " }, 'is now the default "letta"'],
+  ])("rejects retired agent_type %j with its migration", (args, message) => {
+    const result = resolveTaskAgentSelection(args);
+    expect(result).toHaveProperty("error");
+    expect((result as { error: string }).error).toContain(message);
   });
 
   test.each([
-    { agent_type: "codex", subagent_type: "claude-code" },
-    { agent_type: "letta", subagent_type: "fork" },
-    { subagent_type: "fork", fork_context: false },
+    { subagent_type: "general-purpose" },
+    { subagent_type: "fork" },
+    { subagent_type: "codex" },
+    { agent_type: "codex", subagent_type: "codex" },
+  ])("rejects the removed subagent_type field %j", (args) => {
+    const result = resolveTaskAgentSelection(args as never);
+    expect(result).toEqual({
+      error:
+        'subagent_type was removed; use agent_type (default "letta"), and fork_context: true instead of "fork"',
+    });
+  });
+
+  test.each([
     { agent_type: "" },
+    { agent_type: "  " },
     { agent_type: 3 },
     { fork_context: "yes" },
-  ])("rejects contradictory or malformed input %j", (args) => {
+  ])("rejects malformed input %j", (args) => {
     expect(resolveTaskAgentSelection(args)).toHaveProperty("error");
   });
 

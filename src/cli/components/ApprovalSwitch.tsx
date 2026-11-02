@@ -147,7 +147,7 @@ function getFileEditInfo(approval: ApprovalRequest): FileEditInfo | null {
 function getTaskInfo(approval: ApprovalRequest): TaskInfo | null {
   try {
     const args = JSON.parse(approval.toolArgs || "{}");
-    const requestedType = args.agent_type ?? args.subagent_type ?? "letta";
+    const requestedType = args.agent_type ?? "letta";
     return {
       subagentType:
         typeof requestedType === "string" ? requestedType : "unknown",

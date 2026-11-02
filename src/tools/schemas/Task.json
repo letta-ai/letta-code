@@ -17,10 +17,6 @@
       "type": "boolean",
       "description": "Start the agent with this conversation's full history so the prompt can refer to earlier context. Defaults to false (the agent starts fresh with only the prompt). Cannot be combined with agent_id or conversation_id."
     },
-    "subagent_type": {
-      "type": "string",
-      "description": "Deprecated alias for agent_type."
-    },
     "model": {
       "type": "string",
       "description": "Optional except for new cursor sessions, which require a Cursor model ID (list IDs with `letta model list --worker cursor`). When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."

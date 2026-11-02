@@ -139,7 +139,6 @@ describe("Agent launch selection", () => {
   test.each([
     { agent_type: "letta", fork_context: true },
     { fork_context: true },
-    { subagent_type: "fork" },
   ])("%j forks the parent conversation into the child", async (args) => {
     const result = await task({ ...brief, ...args });
 
@@ -171,14 +170,16 @@ describe("Agent launch selection", () => {
   test.each([
     [{ fork_context: true, agent_id: "agent-other" }, "fork_context cannot"],
     [{ fork_context: true, conversation_id: "conv-x" }, "fork_context cannot"],
-    [{ subagent_type: "fork", agent_id: "agent-other" }, "fork_context cannot"],
     [{ agent_type: "codex", fork_context: true }, "not supported for codex"],
     [{ agent_type: "reviewer", fork_context: true }, "only supported"],
     [
       { agent_type: "nope" },
       'Invalid agent_type "nope". Available types: letta',
     ],
-    [{ agent_type: "codex", subagent_type: "fork" }, "deprecated alias"],
+    [{ agent_type: "fork" }, "replaced by fork_context: true"],
+    [{ agent_type: "general-purpose" }, 'is now the default "letta"'],
+    [{ subagent_type: "fork" }, "subagent_type was removed"],
+    [{ subagent_type: "general-purpose" }, "subagent_type was removed"],
   ])("rejects %j before forking or spawning", async (args, message) => {
     const result = await task({ ...brief, ...args });
 

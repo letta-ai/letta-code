@@ -613,8 +613,8 @@ export async function getModelFacingSubagentDescriptors(
   Array<{ name: string; description: string; recommendedModel: string }>
 > {
   const configs = await getAllSubagentConfigs(workingDirectory);
-  // `general-purpose` is advertised as the default `letta` agent_type, and
-  // `fork` as `fork_context: true`; both names remain accepted as aliases.
+  // `general-purpose` backs the default `letta` agent_type and `fork` backs
+  // `fork_context: true`; neither name is a valid agent_type.
   return [
     ...Object.entries(configs)
       .filter(([name]) => name !== "memory" && name !== "fork")

@@ -143,7 +143,7 @@ test("Agent returns a native Cursor handle and TaskStop terminates its running s
     },
     async () => {
       const launch = await launchSubagent({
-        subagent_type: "cursor",
+        agent_type: "cursor",
         model,
         description: "Cursor cancellation proof",
         prompt:

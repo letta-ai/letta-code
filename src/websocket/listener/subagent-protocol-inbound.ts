@@ -1,6 +1,8 @@
 import type {
   LaunchSubagentCommand,
+  LaunchSubagentWireArgs,
   ReadSubagentEventsCommand,
+  SubagentLaunchArgs,
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
@@ -9,6 +11,7 @@ import { isAgentRuntimeScope } from "./protocol-validation";
 const ARGUMENTS = new Set([
   "agent_type",
   "fork_context",
+  // Original wire spelling of agent_type; see LaunchSubagentWireArgs.
   "subagent_type",
   "prompt",
   "description",
@@ -54,6 +57,12 @@ export function isLaunchSubagentCommand(
     return false;
   if (args.fork_context !== undefined && typeof args.fork_context !== "boolean")
     return false;
+  // A client speaks either the original wire field or the new pair, not both.
+  if (
+    args.subagent_type !== undefined &&
+    (args.agent_type !== undefined || args.fork_context !== undefined)
+  )
+    return false;
   for (const key of [
     "agent_type",
     "subagent_type",
@@ -81,6 +90,22 @@ export function isLaunchSubagentCommand(
       Number.isSafeInteger(args.max_turns) &&
       args.max_turns > 0)
   );
+}
+
+/**
+ * Translate wire launch arguments into Agent launch arguments. The original
+ * `subagent_type` values map onto the new fields: `general-purpose` is the
+ * default `letta` agent and `fork` is `fork_context: true`.
+ */
+export function toSubagentLaunchArgs(
+  args: LaunchSubagentWireArgs,
+): SubagentLaunchArgs {
+  const { subagent_type: wireType, ...launchArgs } = args;
+  if (wireType === undefined) return launchArgs;
+  const type = wireType.trim();
+  if (type === "general-purpose") return launchArgs;
+  if (type === "fork") return { ...launchArgs, fork_context: true };
+  return { ...launchArgs, agent_type: type };
 }
 
 function hasValidControlBase(value: unknown): value is Record<

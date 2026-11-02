@@ -8,7 +8,7 @@ import {
 
 test("memory cannot be dispatched through the public launch entry point", async () => {
   const result = await launchSubagent({
-    subagent_type: "memory",
+    agent_type: "memory",
     prompt: "Edit memory",
     description: "Edit memory",
   });

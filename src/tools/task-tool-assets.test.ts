@@ -16,7 +16,7 @@ describe("stripComputerFromTaskSchema", () => {
     const stripped = stripComputerFromTaskSchema(taskSchema);
     expect(stripped.properties?.computer).toBeUndefined();
     expect(stripped.properties?.prompt).toBeDefined();
-    expect(stripped.properties?.subagent_type).toBeDefined();
+    expect(stripped.properties?.agent_type).toBeDefined();
     expect(stripped.required).toEqual(taskSchema.required);
   });
 
@@ -90,9 +90,16 @@ describe("task() computer guard", () => {
 });
 
 describe("Task agent_type requirement", () => {
-  test("the schema leaves agent_type and its alias optional", () => {
+  test("the schema leaves agent_type optional", () => {
     expect(taskSchema.required).not.toContain("agent_type");
-    expect(taskSchema.required).not.toContain("subagent_type");
+  });
+  test("the schema rejects the removed subagent_type field", () => {
+    expect(taskSchema.properties?.subagent_type).toBeUndefined();
+    expect(taskSchema.additionalProperties).toBe(false);
+  });
+  test("the model-facing description no longer mentions subagent_type", () => {
+    expect(taskDescription).not.toContain("subagent_type");
+    expect(taskDescription).not.toContain("alias");
   });
   // Omitting agent_type launches the default letta subagent; that launch path
   // is covered in impl/task-fork-context.test.ts.

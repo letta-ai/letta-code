@@ -6,8 +6,6 @@ export interface SubagentLaunchArgs {
   agent_type?: string;
   /** Start the child with the parent conversation's context. */
   fork_context?: boolean;
-  /** Deprecated alias for `agent_type` (`fork` = letta + fork_context). */
-  subagent_type?: string;
   prompt: string;
   description: string;
   /** Identity of the initial assignment input, not the launch command request_id. */
@@ -47,12 +45,22 @@ export type SubagentStartupErrorCode = "not_installed" | "not_signed_in";
  */
 export type SubagentLaunchNotify = "caller";
 
+/**
+ * `launch_subagent` arguments on the wire. `subagent_type` is the original
+ * App Server field; listeners that predate `agent_type` accept only it, so
+ * existing clients and older computers keep using it. The listener maps it
+ * onto `agent_type` before launching; it is not an Agent tool argument.
+ */
+export interface LaunchSubagentWireArgs extends SubagentLaunchArgs {
+  subagent_type?: string;
+}
+
 export interface LaunchSubagentCommand {
   type: "launch_subagent";
   request_id: string;
   /** Parent conversation, used for launch context and completion notifications. */
   runtime: AgentRuntimeScope;
-  args: SubagentLaunchArgs;
+  args: LaunchSubagentWireArgs;
   /** The originating Agent or external-tool call, when present. */
   tool_call_id?: string;
   /** Requires the `launch_subagent_notify_caller` capability. */

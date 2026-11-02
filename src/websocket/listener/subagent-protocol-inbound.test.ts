@@ -6,6 +6,7 @@ import {
   isLaunchSubagentCommand,
   isSubagentMessageCommand,
   isSubagentStopCommand,
+  toSubagentLaunchArgs,
 } from "./subagent-protocol-inbound";
 
 const command = {
@@ -67,6 +68,8 @@ describe("launch_subagent protocol", () => {
     { args: { ...command.args, notifyCaller: true } },
     { args: { ...command.args, agent_type: "" } },
     { args: { ...command.args, fork_context: "true" } },
+    { args: { ...command.args, agent_type: "custom" } },
+    { args: { ...command.args, fork_context: false } },
   ])("rejects malformed or injected launch fields %j", (fields) => {
     expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
   });
@@ -77,6 +80,22 @@ describe("launch_subagent protocol", () => {
       args: { ...args, agent_type: "codex", fork_context: true },
     };
     expect(isLaunchSubagentCommand(input)).toBe(true);
+  });
+  test.each([
+    [{ subagent_type: "custom" }, { agent_type: "custom" }],
+    [{ subagent_type: "codex" }, { agent_type: "codex" }],
+    [{ subagent_type: "general-purpose" }, {}],
+    [{ subagent_type: "fork" }, { fork_context: true }],
+    [
+      { agent_type: "codex", fork_context: false },
+      { agent_type: "codex", fork_context: false },
+    ],
+  ])("maps wire selection %j onto Agent launch args", (wire, launch) => {
+    const base = { prompt: "Do the work", description: "Child task" };
+    expect(toSubagentLaunchArgs({ ...base, ...wire })).toEqual({
+      ...base,
+      ...launch,
+    });
   });
   test("accepts caller notification and an MCP selection", () => {
     const input = {
