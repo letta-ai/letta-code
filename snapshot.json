@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.316:docs:90cf1d3d7b76ecdc70ec486235cf03e52a0e1720a2b12e5bb9b724205107f2a7:runtime:c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c",
+  "candidate_id": "claude@2.1.316:docs:f25a393afffc4a0c8eaa55c9c6831358ef77c43153cab1ad9ec2ba3c658d2071:runtime:c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c",
   "package_version": "2.1.316",
   "npm_integrity": "sha512-i3BpzyDkcCPnsa0CSkWgxGPs7WMsyqDkxkqT0SDxyEC5XMIxEmcUmluWRHG9VSeBY8Vyv+l9X34JvJ/Bj54nBQ==",
   "npm_published_at": "2026-10-31T00:42:05.743Z",
@@ -1106,7 +1106,7 @@
       },
       "https://code.claude.com/docs/en/server-managed-settings.md": {
         "url": "https://code.claude.com/docs/en/server-managed-settings.md",
-        "hash": "d7020b6bc747f95f074e1ca51a686143fc5648d704665a8665a765da38be5884",
+        "hash": "ac70af357f2914b1f5c59dbf5c640d5462fdd05098b4750b8237313d7db93f47",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/server-managed-settings.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "90cf1d3d7b76ecdc70ec486235cf03e52a0e1720a2b12e5bb9b724205107f2a7"
+    "digest": "f25a393afffc4a0c8eaa55c9c6831358ef77c43153cab1ad9ec2ba3c658d2071"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1685,8 +1685,8 @@
     ],
     "digest": "c1267d398bcc60aefd7207c88cd07e9f08615aede73aba6c688786e43ebc9a4c"
   },
-  "fetched_at": "2026-11-02T18:21:41.542Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41499631911",
-  "state_commit_parent": "b48dca9b47f6af322c625fcfc0d514683caa1df8",
-  "analysis_parent_sha": "b48dca9b47f6af322c625fcfc0d514683caa1df8"
+  "fetched_at": "2026-11-02T20:19:00.501Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/41517910135",
+  "state_commit_parent": "232949f7e5ac2c6c76437c702495047db4000d70",
+  "analysis_parent_sha": "232949f7e5ac2c6c76437c702495047db4000d70"
 }
