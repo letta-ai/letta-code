@@ -1,80 +1,20 @@
 import { describe, expect, spyOn, test } from "bun:test";
-import { APIError } from "@letta-ai/letta-client";
 import type { SubagentResult } from "@/agent/subagents";
-import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
-import type { AgentRetrieveOptions, Backend } from "@/backend";
-import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
+import type { Backend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  caller,
+  sendAgentMessageFixture as fixture,
+  message,
+  TARGET_CONV,
+} from "@/test-utils/send-agent-message-fixture";
 import { send_agent_message } from "./send-agent-message";
 
 const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLAUDE_AGENT_ID = `claude_${CLAUDE_SESSION_ID}`;
 const CODEX_THREAD_ID = "22222222-2222-4222-8222-222222222222";
 const CODEX_AGENT_ID = `codex_${CODEX_THREAD_ID}`;
-const TARGET_CONV = "conv-33333333-3333-4333-8333-333333333333";
-
-function fixture(targetTags: readonly string[] = []) {
-  const submissions: EnqueueConversationInput[] = [];
-  const created: unknown[] = [];
-  const tracked: TrackChildSendInput[] = [];
-  const backend = {
-    capabilities: { environmentRouting: true },
-    retrieveAgent: async (id: string, options?: AgentRetrieveOptions) => ({
-      id,
-      name: "Hayt",
-      // Cloud only returns tags when explicitly included.
-      tags: options?.include?.includes("agent.tags") ? targetTags : [],
-    }),
-    retrieveConversation: async (id: string) => ({
-      id,
-      agent_id: "agent-target",
-    }),
-    createConversation: async (input: unknown) => {
-      created.push(input);
-      return { id: "conv-new" };
-    },
-  } as unknown as Backend;
-  const enqueue = async (input: EnqueueConversationInput) => {
-    submissions.push(input);
-    return {
-      status: "queued" as const,
-      agent_id: input.agentId ?? null,
-      conversation_id: input.conversationId,
-      client_message_id: input.clientMessageId,
-      workflow_id: "wf-1",
-      super_run_id: "sr-1",
-    };
-  };
-  const trackChildSend = (input: TrackChildSendInput) => {
-    tracked.push(input);
-    return "subagent-tracked";
-  };
-  // Keep worker resumes off the real vault and MCP inventory.
-  const workerEnv = {
-    resolveSecretEnv: async () => ({}),
-    resolveMcpReminder: async () => undefined,
-  };
-  return {
-    backend,
-    enqueue,
-    trackChildSend,
-    workerEnv,
-    submissions,
-    created,
-    tracked,
-  };
-}
-
-const caller = {
-  agentId: "agent-caller",
-  conversationId: "conv-caller",
-  actingUserId: "user-caller",
-};
-const message = {
-  conversation_id: TARGET_CONV,
-  message: "Please check the tests.",
-};
 
 test.each([false, true])(
   "missing acting user diagnostic respects debug mode: %s",
@@ -704,7 +644,6 @@ test.each([
   { message: "hello" },
   { ...message, message: " " },
   { ...message, conversation_id: `${TARGET_CONV}; echo bad` },
-  { ...message, agent_id: "agent-wrong" },
 ])(
   "invalid destination or input is rejected without submission: %j",
   async (args) => {
@@ -866,95 +805,6 @@ test("cancelling an in-flight submission preserves uncertain acceptance without 
   expect(outcome.status).toBe("error");
   expect(JSON.parse(outcome.content).status).toBe("acceptance_unknown");
   expect(attempts).toBe(1);
-});
-
-test("a conversation-ID send reads nothing and enqueues without agent_id", async () => {
-  const f = fixture(["parent:agent-caller"]);
-  const reads: string[] = [];
-  f.backend.retrieveConversation = async (id) => {
-    reads.push(`conversation:${id}`);
-    throw APIError.generate(403, {}, undefined, new Headers());
-  };
-  f.backend.retrieveAgent = async (id) => {
-    reads.push(`agent:${id}`);
-    throw new Error("unexpected agent read");
-  };
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, f),
-  );
-  expect(result.status).toBe("success");
-  expect(reads).toEqual([]);
-  expect(f.submissions).toHaveLength(1);
-  expect(f.submissions[0]?.conversationId).toBe(TARGET_CONV);
-  expect(f.submissions[0]?.agentId).toBeUndefined();
-  expect(f.tracked).toHaveLength(0);
-  expect(JSON.parse(result.content)).toMatchObject({
-    status: "queued",
-    agent_id: null,
-    conversation_id: TARGET_CONV,
-    status_command: `letta messages status --conversation ${TARGET_CONV}`,
-    messages_command: `letta messages list --conversation ${TARGET_CONV}`,
-  });
-});
-
-const childMessage = { ...message, agent_id: "agent-target" };
-
-test("a send to this agent's own subagent is tracked against the receipt", async () => {
-  const f = fixture(["type:code-reviewer", "parent:agent-caller"]);
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(childMessage, f),
-  );
-  expect(result.status).toBe("success");
-  expect(f.tracked).toHaveLength(1);
-  expect(f.tracked[0]).toMatchObject({
-    receipt: { agent_id: "agent-target", super_run_id: "sr-1" },
-    child: { name: "Hayt", type: "code-reviewer" },
-    prompt: message.message,
-    parentScope: { agentId: "agent-caller", conversationId: "conv-caller" },
-  });
-});
-
-test.each([
-  { tags: [] },
-  { tags: ["type:general-purpose", "parent:agent-someone-else"] },
-])(
-  "a send to a peer agent is never tracked as a subagent: %j",
-  async ({ tags }) => {
-    const f = fixture(tags);
-    const result = await runWithRuntimeContext(caller, () =>
-      send_agent_message(childMessage, f),
-    );
-    expect(result.status).toBe("success");
-    expect(f.submissions).toHaveLength(1);
-    expect(f.tracked).toHaveLength(0);
-  },
-);
-
-test("a failed child lookup still delivers and skips tracking", async () => {
-  const f = fixture(["parent:agent-caller"]);
-  f.backend.retrieveAgent = async () => {
-    throw new ApiRequestError("gone", 404, "gone");
-  };
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(childMessage, f),
-  );
-  expect(result.status).toBe("success");
-  expect(f.submissions).toHaveLength(1);
-  expect(f.tracked).toHaveLength(0);
-});
-
-test("a rejected enqueue to a child is not tracked", async () => {
-  const f = fixture(["parent:agent-caller"]);
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(childMessage, {
-      ...f,
-      enqueue: async () => {
-        throw new ApiRequestError("refused", 403, "refused");
-      },
-    }),
-  );
-  expect(result.status).toBe("error");
-  expect(f.tracked).toHaveLength(0);
 });
 
 test("a subagent that omits the destination messages the conversation that launched it", async () => {

@@ -84,8 +84,9 @@ export function buildAgentMessageRecoveryCommands(destination: {
  * Shared destination lookup for CLI sends and the SendAgentMessage tool.
  *
  * A non-default conversation ID is a complete address: the enqueue endpoint
- * derives the agent from it, so the conversation is not read and `agentId` is
- * returned only when the caller supplied it.
+ * derives the agent from it and reports it in the receipt, so the conversation
+ * is not read and `agentId` is returned only when the caller supplied it. A
+ * caller-supplied `agentId` is forwarded; the server owns any mismatch check.
  */
 export async function resolveAgentMessageDestination(
   input: {
@@ -96,7 +97,7 @@ export async function resolveAgentMessageDestination(
     /** Calling runtime, independent of optional sender attribution overrides. */
     currentConversation?: { agentId?: string; conversationId?: string };
   },
-  backend: Pick<Backend, "retrieveConversation" | "createConversation">,
+  backend: Pick<Backend, "createConversation">,
   signal?: AbortSignal,
 ): Promise<{ agentId?: string; conversationId: string }> {
   const agentId = validateAddress(input.agentId, "agent");
@@ -105,9 +106,7 @@ export async function resolveAgentMessageDestination(
     throw new Error("Choose a destination with agent_id or conversation_id.");
   }
   const options = { signal, ...actingUserRequestOptions(input.actingUserId) };
-  if (conversationId && conversationId !== "default") {
-    if (agentId) await assertConversationAgent(conversationId, agentId);
-  } else {
+  if (!conversationId || conversationId === "default") {
     if (!agentId) {
       throw new Error("The default conversation requires agent_id.");
     }
@@ -133,27 +132,4 @@ export async function resolveAgentMessageDestination(
     );
   }
   return agentId ? { agentId, conversationId } : { conversationId };
-
-  /**
-   * Best-effort: catch an explicit agent/conversation mismatch early when the
-   * conversation is readable. Unreadable conversations (e.g. enqueue-only) go
-   * straight to the enqueue, which owns the authorization decision.
-   */
-  async function assertConversationAgent(
-    id: string,
-    expectedAgentId: string,
-  ): Promise<void> {
-    let owner: string | null | undefined;
-    try {
-      owner = (await backend.retrieveConversation(id, options)).agent_id;
-    } catch {
-      signal?.throwIfAborted();
-      return;
-    }
-    if (owner && owner !== expectedAgentId) {
-      throw new Error(
-        "The conversation does not belong to the requested agent.",
-      );
-    }
-  }
 }

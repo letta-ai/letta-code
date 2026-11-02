@@ -174,6 +174,43 @@ test.each(["text", "json", "stream-json"])(
   },
 );
 
+test("no-wait reports the agent from the server's receipt", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async () => {
+    throw new Error("a conversation-ID send must not read the conversation");
+  };
+  const result = await tryCloudHeadlessSend(
+    flags(
+      "--conversation",
+      "conv-target",
+      "--no-wait",
+      "--output-format",
+      "json",
+    ),
+    "hello",
+    f.backend,
+    false,
+    {
+      ...f.deps,
+      enqueue: async (input) => ({
+        ...(await f.deps.enqueue(input)),
+        agent_id: "agent-target",
+      }),
+    },
+  );
+  expect(result).toBe(0);
+  expect(f.submissions[0]?.agentId).toBeUndefined();
+  expect(JSON.parse(f.stdout.join(""))).toMatchObject({
+    status: "queued",
+    agent_id: "agent-target",
+    conversation_id: "conv-target",
+    status_command:
+      "letta messages status --agent agent-target --conversation conv-target",
+    messages_command:
+      "letta messages list --agent agent-target --conversation conv-target",
+  });
+});
+
 test("the CLI client message ID reaches Cloud enqueue unchanged", async () => {
   const f = fixture();
   expect(

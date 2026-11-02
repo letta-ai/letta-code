@@ -492,13 +492,6 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
-    // A child spawned by this agent keeps doing its work; show it as running.
-    // Without an agent ID the conversation alone addresses the send; skip the
-    // child lookup rather than reading the conversation to find its agent.
-    const child = destination.agentId
-      ? await resolveChildSubagent(backend, destination.agentId, sender.agentId)
-      : null;
-    signal.throwIfAborted();
     submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -510,6 +503,13 @@ export async function send_agent_message(
       },
       signal,
     );
+    // A child spawned by this agent keeps doing its work; show it as running.
+    // The receipt names the conversation's agent (older servers omit it, so
+    // fall back to the passed agent); with neither, tracking is skipped. The
+    // lookup never fails the send: it was already accepted.
+    const child = receipt.agent_id
+      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+      : null;
     if (child) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
