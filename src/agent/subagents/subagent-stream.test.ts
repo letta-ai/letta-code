@@ -288,7 +288,7 @@ describe("task progress log", () => {
         type: "message",
         message_type: "reasoning_message",
         id: "r1",
-        reasoning: "not logged",
+        reasoning: "only in the event log",
       });
       processEvent(state, {
         type: "message",
@@ -300,6 +300,14 @@ describe("task progress log", () => {
           arguments: '{"command":"ls"}',
         },
       });
+      processEvent(state, {
+        type: "message",
+        message_type: "tool_return_message",
+        date: "2026-11-01T10:00:01.000Z",
+        tool_call_id: "call-1",
+        status: "error",
+        tool_return: "a.txt\nls: b: No such file",
+      });
       text("m2", "Done.");
       // The last message is written when the child's stdout closes.
       flushPendingProgressText(state, "subagent-1");
@@ -307,6 +315,7 @@ describe("task progress log", () => {
       expect(readFileSync(outputFile, "utf8")).toBe(
         "[1970-01-01T00:00:00.000Z] text: Listing files.\n" +
           '[2026-11-01T10:00:00.000Z] tool: Bash {"command":"ls"}\n' +
+          "[2026-11-01T10:00:01.000Z] result: Bash error, 25 B: ls: b: No such file\n" +
           "[1970-01-01T00:00:00.000Z] text: Done.\n",
       );
     } finally {

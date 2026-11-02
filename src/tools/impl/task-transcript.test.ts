@@ -11,12 +11,14 @@ import {
 } from "@/agent/subagent-state";
 import {
   closeTaskProgressLog,
+  externalWorkerProgressListeners,
   openTaskProgressLog,
   recordTaskProgressRemoteText,
   recordTaskProgressText,
   recordTaskProgressToolCall,
   TASK_PROGRESS_MAX_LINES,
   TASK_PROGRESS_TEXT_CHARS,
+  taskEventsFileFor,
 } from "./task-transcript";
 
 const SUBAGENT = "subagent-progress-test";
@@ -87,6 +89,52 @@ describe("task progress log", () => {
     recordTaskProgressText(SUBAGENT, "late");
     recordTaskProgressToolCall(SUBAGENT, { id: "t", name: "Bash", args: "" });
     expect(lines(file)).toEqual([]);
+  });
+});
+
+describe("task event log", () => {
+  test("keeps every event in full next to a one-line-per-result output file", () => {
+    const file = outputFile();
+    const worker = externalWorkerProgressListeners(SUBAGENT);
+    const command = `pytest ${"-k x ".repeat(100)}`;
+    const output = `${"PASS test_ok\n".repeat(2_000)}FAIL test_parse_hours\nAssertionError: 6000 != 5400\n1 failed`;
+    worker.onToolCall({
+      id: "c1",
+      name: "Bash",
+      args: "{}",
+      input: { command },
+    });
+    worker.onReasoning("Suite 3 may be slow.");
+    worker.onToolResult({ id: "c1", isError: true, output });
+    worker.onToolResult({ id: "c1", isError: true, output: "replayed" });
+
+    expect(lines(file).slice(1)).toEqual([
+      "[1970-01-01T00:00:00.000Z] result: Bash error, 25.4 KB: FAIL test_parse_hours",
+    ]);
+    const events = lines(taskEventsFileFor(file)).map((line) =>
+      JSON.parse(line),
+    );
+    const at = "1970-01-01T00:00:00.000Z";
+    expect(events).toEqual([
+      {
+        seq: 1,
+        at,
+        type: "tool_call",
+        id: "c1",
+        name: "Bash",
+        input: { command },
+      },
+      { seq: 2, at, type: "reasoning", text: "Suite 3 may be slow." },
+      {
+        seq: 3,
+        at,
+        type: "tool_result",
+        tool_call_id: "c1",
+        name: "Bash",
+        is_error: true,
+        output,
+      },
+    ]);
   });
 });
 

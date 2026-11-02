@@ -43,7 +43,12 @@ export interface OpenCodeEvent {
       type: string;
       callID?: string;
       tool?: string;
-      state?: { status: string; input?: unknown };
+      state?: {
+        status: string;
+        input?: unknown;
+        output?: unknown;
+        error?: unknown;
+      };
     };
   };
 }

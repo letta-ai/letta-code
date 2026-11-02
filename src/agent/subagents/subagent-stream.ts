@@ -14,8 +14,9 @@ import {
 } from "@/agent/subagent-state.js";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
+import { toolOutputText } from "@/tools/impl/external-tool-call";
 import {
-  recordTaskProgressText,
+  recordTaskEvent,
   recordTaskProgressToolCall,
 } from "@/tools/impl/task-transcript";
 import { debugWarn } from "@/utils/debug";
@@ -44,11 +45,11 @@ export interface ExecutionState {
   displayedToolCalls: Set<string>;
   toolCallStatuses: Map<string, "success" | "error">;
   /**
-   * Assistant text streamed so far for the current message. The child emits
-   * one `assistant_message` chunk per token batch, all with the same ID; the
-   * whole message goes to the task's progress log once it ends.
+   * Assistant or reasoning text streamed so far for the current message. The
+   * child emits one chunk per token batch, all with the same ID; the whole
+   * message goes to the task's progress log once it ends.
    */
-  pendingText?: { id: string; text: string };
+  pendingText?: { id: string; kind: "text" | "reasoning"; text: string };
 }
 
 /**
@@ -96,21 +97,34 @@ export function flushPendingProgressText(
   const pending = state.pendingText;
   if (!pending) return;
   state.pendingText = undefined;
-  recordTaskProgressText(subagentId, pending.text);
+  recordTaskEvent(subagentId, { type: pending.kind, text: pending.text });
 }
 
-function handleAssistantChunk(
-  event: { id?: string; otid?: string; content?: unknown },
+function handleTextChunk(
+  event: {
+    id?: string;
+    otid?: string;
+    content?: unknown;
+    reasoning?: unknown;
+    message_type?: string;
+  },
   state: ExecutionState,
   subagentId: string,
 ): void {
+  const kind =
+    event.message_type === "reasoning_message" ? "reasoning" : "text";
   const id = event.id ?? event.otid ?? "";
-  const text = assistantChunkText(event.content);
-  if (state.pendingText && state.pendingText.id !== id) {
+  const text =
+    kind === "reasoning"
+      ? toolOutputText(event.reasoning)
+      : assistantChunkText(event.content);
+  const pending = state.pendingText;
+  if (pending && (pending.id !== id || pending.kind !== kind)) {
     flushPendingProgressText(state, subagentId);
   }
   state.pendingText = {
     id,
+    kind,
     text: (state.pendingText?.text ?? "") + text,
   };
 }
@@ -182,16 +196,52 @@ function handleToolCallEvent(
   }
 }
 
+interface ToolReturnFields {
+  tool_call_id?: string;
+  status?: string;
+  tool_return?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+}
+
+type ToolReturnEvent = ToolReturnFields & {
+  date?: string;
+  tool_returns?: ToolReturnFields[] | null;
+};
+
+/** Write each tool return of a `tool_return_message`, in full, to the task's logs. */
+export function recordToolReturnProgress(
+  event: ToolReturnEvent,
+  subagentId: string,
+): void {
+  const returns = Array.isArray(event.tool_returns)
+    ? event.tool_returns
+    : [event];
+  for (const toolReturn of returns) {
+    if (!toolReturn.tool_call_id) continue;
+    const output =
+      toolOutputText(toolReturn.tool_return) ||
+      [toolReturn.stdout, toolReturn.stderr]
+        .map(toolOutputText)
+        .filter(Boolean)
+        .join("\n");
+    recordTaskEvent(
+      subagentId,
+      {
+        type: "tool_result",
+        tool_call_id: toolReturn.tool_call_id,
+        is_error: toolReturn.status === "error",
+        output,
+      },
+      { at: typeof event.date === "string" ? event.date : undefined },
+    );
+  }
+}
+
 function handleToolReturnEvent(
-  event: {
-    tool_call_id?: string;
-    status?: string;
-    tool_returns?: Array<{
-      tool_call_id?: string;
-      status?: string;
-    }>;
-  },
+  event: ToolReturnEvent,
   state: ExecutionState,
+  subagentId: string,
 ): void {
   const returns = Array.isArray(event.tool_returns)
     ? event.tool_returns
@@ -204,6 +254,7 @@ function handleToolReturnEvent(
       state.toolCallStatuses.set(toolCallId, toolReturn.status);
     }
   }
+  recordToolReturnProgress(event, subagentId);
 }
 
 /**
@@ -338,22 +389,22 @@ export function processStreamEvent(
         break;
 
       case "message":
-        // Record tool calls and assistant text so the subagent's tool-call
-        // list and the task's output file stay in sync, then forward the
-        // message for WS streaming to the web UI.
-        if (event.message_type === "assistant_message") {
-          handleAssistantChunk(event, state, subagentId);
-        } else if (
-          event.message_type !== "reasoning_message" &&
-          event.message_type !== "usage_statistics"
+        // Record tool calls, results, and text so the subagent's tool-call
+        // list and the task's logs stay in sync, then forward the message
+        // for WS streaming to the web UI.
+        if (
+          event.message_type === "assistant_message" ||
+          event.message_type === "reasoning_message"
         ) {
+          handleTextChunk(event, state, subagentId);
+        } else if (event.message_type !== "usage_statistics") {
           flushPendingProgressText(state, subagentId);
         }
         if (event.message_type === "tool_call_message") {
           handleToolCallEvent(event, state, subagentId);
         }
         if (event.message_type === "tool_return_message") {
-          handleToolReturnEvent(event, state);
+          handleToolReturnEvent(event, state, subagentId);
         }
         emitStreamEvent(subagentId, event);
         break;

@@ -3,7 +3,10 @@ import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import {
   type ExternalToolCallListener,
+  type ExternalWorkerListeners,
+  emitProgress,
   formatExternalToolCallArgs,
+  toolOutputText,
 } from "./external-tool-call";
 import { type OpenCodeEvent, OpenCodeServer } from "./opencode-server";
 
@@ -17,6 +20,7 @@ interface OpenCodeTurnOptions {
   resumeSessionId?: string;
   onStarted?: (sessionId: string) => void;
   onToolCall?: ExternalToolCallListener;
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
 }
 
 interface OpenCodeMessage {
@@ -35,6 +39,8 @@ interface Turn {
   startedAt: number;
   generation: number;
   onToolCall?: ExternalToolCallListener;
+  /** Repeated updates are deduped by the task's log. */
+  onToolResult?: ExternalWorkerListeners["onToolResult"];
   seen: Set<string>;
 }
 
@@ -138,6 +144,23 @@ function onEvent(session: Session, event: OpenCodeEvent): void {
       id: part.callID,
       name: part.tool,
       args: formatExternalToolCallArgs(part.state?.input),
+      input: part.state?.input,
+    });
+  }
+  const status = part?.state?.status;
+  if (
+    event.type === "message.part.updated" &&
+    part?.type === "tool" &&
+    part.callID &&
+    (status === "completed" || status === "error")
+  ) {
+    emitProgress(turn.onToolResult, {
+      id: part.callID,
+      name: part.tool,
+      isError: status === "error",
+      output: toolOutputText(
+        status === "error" ? part.state?.error : part.state?.output,
+      ),
     });
   }
 }
@@ -267,6 +290,7 @@ function start(session: Session, options: OpenCodeTurnOptions): Turn {
     generation: 0,
     seen: new Set(),
     onToolCall: options.onToolCall,
+    onToolResult: options.onToolResult,
   };
   session.active = turn;
   submit(session, turn, options.prompt);
