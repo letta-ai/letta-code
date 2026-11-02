@@ -126,17 +126,31 @@ export function closeTaskProgressLog(subagentId: string): void {
   progressLogs.delete(subagentId);
 }
 
-/** Append `tool: <name> <args>` once per tool-call ID. */
+function isoOrUndefined(at: string | undefined): string | undefined {
+  return at === undefined || Number.isNaN(Date.parse(at))
+    ? undefined
+    : new Date(at).toISOString();
+}
+
+/**
+ * Append `tool: <name> <args>` once per tool-call ID, stamped with `at` (when
+ * the worker made the call) if given, else now.
+ */
 export function recordTaskProgressToolCall(
   subagentId: string,
   call: ExternalToolCall,
+  at?: string,
 ): void {
   const log = progressLogs.get(subagentId);
   if (!log || log.seenToolCallIds.has(call.id)) return;
   log.seenToolCallIds.add(call.id);
   log.lastText = undefined;
   const args = excerpt(call.args, TASK_PROGRESS_ARGS_CHARS);
-  appendProgress(log, `tool: ${call.name}${args ? ` ${args}` : ""}`);
+  appendProgress(
+    log,
+    `tool: ${call.name}${args ? ` ${args}` : ""}`,
+    isoOrUndefined(at),
+  );
 }
 
 /** Append `text: <excerpt>`, skipping blanks and consecutive repeats. */
@@ -163,10 +177,7 @@ export function recordTaskProgressRemoteText(
   const line = excerpt(entry.text, TASK_PROGRESS_TEXT_CHARS);
   if (!line) return;
   log.lastText = line;
-  const at = Number.isNaN(Date.parse(entry.at))
-    ? undefined
-    : new Date(entry.at).toISOString();
-  appendProgress(log, `text: ${line}`, at);
+  appendProgress(log, `text: ${line}`, isoOrUndefined(entry.at));
 }
 
 /**

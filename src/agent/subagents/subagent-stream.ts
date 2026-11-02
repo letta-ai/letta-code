@@ -14,6 +14,10 @@ import {
 } from "@/agent/subagent-state.js";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
+import {
+  recordTaskProgressText,
+  recordTaskProgressToolCall,
+} from "@/tools/impl/task-transcript";
 import { debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import type { SubagentResult } from ".";
@@ -39,10 +43,16 @@ export interface ExecutionState {
   } | null;
   displayedToolCalls: Set<string>;
   toolCallStatuses: Map<string, "success" | "error">;
+  /**
+   * Assistant text streamed so far for the current message. The child emits
+   * one `assistant_message` chunk per token batch, all with the same ID; the
+   * whole message goes to the task's progress log once it ends.
+   */
+  pendingText?: { id: string; text: string };
 }
 
 /**
- * Record a tool call to the state store
+ * Record a tool call to the state store and the task's progress log
  */
 function recordToolCall(
   subagentId: string,
@@ -50,10 +60,59 @@ function recordToolCall(
   toolName: string,
   toolArgs: string,
   displayedToolCalls: Set<string>,
+  at?: string,
 ): void {
   if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
   displayedToolCalls.add(toolCallId);
   addToolCall(subagentId, toolCallId, toolName, toolArgs);
+  recordTaskProgressToolCall(
+    subagentId,
+    { id: toolCallId, name: toolName, args: toolArgs },
+    at,
+  );
+}
+
+function assistantChunkText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("");
+}
+
+/**
+ * Write the assistant message streamed so far to the task's progress log.
+ * Called when the message ends: another message or the result arrives, or the
+ * child's stdout closes.
+ */
+export function flushPendingProgressText(
+  state: ExecutionState,
+  subagentId: string,
+): void {
+  const pending = state.pendingText;
+  if (!pending) return;
+  state.pendingText = undefined;
+  recordTaskProgressText(subagentId, pending.text);
+}
+
+function handleAssistantChunk(
+  event: { id?: string; otid?: string; content?: unknown },
+  state: ExecutionState,
+  subagentId: string,
+): void {
+  const id = event.id ?? event.otid ?? "";
+  const text = assistantChunkText(event.content);
+  if (state.pendingText && state.pendingText.id !== id) {
+    flushPendingProgressText(state, subagentId);
+  }
+  state.pendingText = {
+    id,
+    text: (state.pendingText?.text ?? "") + text,
+  };
 }
 
 /**
@@ -91,6 +150,7 @@ function handleInitEvent(
  */
 function handleToolCallEvent(
   event: {
+    date?: string;
     tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
     tool_calls?: Array<{
       tool_call_id?: string;
@@ -116,6 +176,7 @@ function handleToolCallEvent(
         name,
         toolArgs,
         state.displayedToolCalls,
+        typeof event.date === "string" ? event.date : undefined,
       );
     }
   }
@@ -277,8 +338,17 @@ export function processStreamEvent(
         break;
 
       case "message":
-        // Record tool calls so the subagent's tool-call list stays in sync,
-        // then forward the message for WS streaming to the web UI.
+        // Record tool calls and assistant text so the subagent's tool-call
+        // list and the task's output file stay in sync, then forward the
+        // message for WS streaming to the web UI.
+        if (event.message_type === "assistant_message") {
+          handleAssistantChunk(event, state, subagentId);
+        } else if (
+          event.message_type !== "reasoning_message" &&
+          event.message_type !== "usage_statistics"
+        ) {
+          flushPendingProgressText(state, subagentId);
+        }
         if (event.message_type === "tool_call_message") {
           handleToolCallEvent(event, state, subagentId);
         }
@@ -289,10 +359,12 @@ export function processStreamEvent(
         break;
 
       case "result":
+        flushPendingProgressText(state, subagentId);
         handleResultEvent(event, state, subagentId);
         break;
 
       case "error":
+        flushPendingProgressText(state, subagentId);
         state.finalError = event.error || event.message || "Unknown error";
         break;
     }
