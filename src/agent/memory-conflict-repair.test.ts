@@ -88,8 +88,16 @@ test("an attempt whose process is gone before the worker ran is retried", async 
   await claim(root);
   const path = join(root, ".git", "letta-memory-repair.json");
   const attempt = JSON.parse(readFileSync(path, "utf8"));
-  // The recording process crashed: its pid was reused.
-  writeFileSync(path, JSON.stringify({ ...attempt, started: "1970-01-01" }));
+  // The recording process crashed. Use a pid that has exited rather than a
+  // start-time mismatch on a live pid: on Windows the start-time lookup may
+  // time out, and an unknown start time deliberately counts as still running.
+  const child = Bun.spawn(
+    [process.execPath, "-e", "console.log(process.pid)"],
+    { stdout: "pipe" },
+  );
+  const deadPid = Number(await new Response(child.stdout).text());
+  await child.exited;
+  writeFileSync(path, JSON.stringify({ ...attempt, pid: deadPid }));
   await claim(root);
 });
 
