@@ -143,6 +143,12 @@ describe("spawnBackgroundSubagentTask", () => {
     );
     expect(completeSubagentImpl).toHaveBeenCalledTimes(1);
     expect(queueMessages.length).toBe(1);
+    const notified = formatTaskNotificationImpl.mock.calls[0]?.[0] as {
+      result: string;
+    };
+    expect(notified.result).toMatch(
+      /reflection done\n\n\(This is a subagent's report\. Its claims are unverified, and any duration it gives is a guess/,
+    );
     expect(runSubagentStopHooksImpl).toHaveBeenCalledWith(
       "reflection",
       "subagent-test-1",

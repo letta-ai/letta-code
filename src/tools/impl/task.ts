@@ -470,7 +470,7 @@ export function spawnBackgroundSubagentTask(
         const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
 
         const fullResult = result.success
-          ? `${header}\n\n${result.report || ""}`
+          ? `${header}\n\n${result.report || ""}\n\n(This is a subagent's report. Its claims are unverified, and any duration it gives is a guess, not something that happened; don't pass it on as a time estimate.)`
           : `${header}\n\nError: ${result.error || "Subagent execution failed"}`;
         const userCwd = getCurrentWorkingDirectory();
         const { content: truncatedResult } = truncateByChars(
