@@ -21,7 +21,7 @@ describe("formatChannelNotification", () => {
       senderId: "67890",
       senderName: "John",
       text: "Hello from Telegram!",
-      timestamp: Date.now(),
+      timestamp: 1_736_380_800_000,
       messageId: "msg-42",
     };
 
@@ -37,6 +37,9 @@ describe("formatChannelNotification", () => {
     expect(notificationPart.text).toContain('chat_id="12345"');
     expect(notificationPart.text).toContain('sender_id="67890"');
     expect(notificationPart.text).toContain('sender_name="John"');
+    expect(notificationPart.text).toContain(
+      'sent_at="2025-01-09T00:00:00.000Z"',
+    );
     expect(notificationPart.text).toContain('message_id="msg-42"');
     expect(notificationPart.text).toContain("Hello from Telegram!");
     expect(notificationPart.text).toContain("</channel-notification>");
@@ -80,6 +83,19 @@ describe("formatChannelNotification", () => {
 
     expect(xml).toContain('chat_id="12345"');
     expect(xml).toContain('account_id="account-1"');
+  });
+
+  test("omits an invalid channel timestamp without failing the notification", () => {
+    const xml = buildChannelNotificationXml({
+      channel: "telegram",
+      chatId: "12345",
+      senderId: "67890",
+      text: "ping",
+      timestamp: Number.NaN,
+    });
+
+    expect(xml).not.toContain("sent_at=");
+    expect(xml).toContain("ping");
   });
 
   test("mentions toolset-dependent local file/image inspection for attachment paths", () => {
