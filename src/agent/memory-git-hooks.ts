@@ -1,9 +1,9 @@
 /**
  * Git hook scripts installed into agent and shared memory repositories.
  *
- * The pre-commit hook validates memory markdown frontmatter; the post-commit
- * hook mirrors commits to an optional user-configured memory-repository
- * remote. Both are (re)installed by the CLI harness on clone/pull/init —
+ * The pre-commit hook validates memory markdown frontmatter; the
+ * post-commit, post-merge and post-rewrite hooks mirror `main` to an optional
+ * user-configured memory-repository remote. All are (re)installed by the CLI harness on clone/pull/init —
  * see memory-git.ts.
  */
 
@@ -245,8 +245,10 @@ export function installSharedMemoryPreCommitHook(dir: string): void {
 }
 
 /**
- * Bash post-commit hook that pushes memfs commits to an optional additional
- * git remote (the "memory repository" endpoint).
+ * Bash hook that pushes memfs `main` to an optional additional git remote (the
+ * "memory repository" endpoint). Installed as post-commit, post-merge and
+ * post-rewrite, so commits, merges/fast-forwards/pulls and rebases all push.
+ * Hook arguments and stdin (post-rewrite's rewritten-SHA list) are ignored.
  *
  * Reads the remote URL from the repo's local git config
  * (`letta.memoryRepository.url`). No-op when the key is unset. Push runs
@@ -278,21 +280,31 @@ disown 2>/dev/null || true
 exit 0
 `;
 
+/** Every hook that fires when `main` advances, so each one pushes the mirror. */
+export const MEMORY_REPOSITORY_PUSH_HOOKS = [
+  "post-commit",
+  "post-merge",
+  "post-rewrite",
+] as const;
+
 /**
- * Install the post-commit hook that pushes to `letta.memoryRepository.url`.
- * Hook is harmless when the config key is unset (no-ops on every commit).
+ * Install the hooks that push to `letta.memoryRepository.url` after commits,
+ * merges (including fast-forwards and pulls) and rebases. Hooks are harmless
+ * when the config key is unset (they no-op).
  */
 export function installPostCommitHook(dir: string): void {
   const hooksDir = join(dir, ".git", "hooks");
-  const hookPath = join(hooksDir, "post-commit");
 
   if (!existsSync(hooksDir)) {
     mkdirSync(hooksDir, { recursive: true });
   }
 
-  writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
-  chmodSync(hookPath, 0o755);
-  debugLog("memfs-git", "Installed post-commit memory-repository hook");
+  for (const hook of MEMORY_REPOSITORY_PUSH_HOOKS) {
+    const hookPath = join(hooksDir, hook);
+    writeFileSync(hookPath, POST_COMMIT_HOOK_SCRIPT, "utf-8");
+    chmodSync(hookPath, 0o755);
+  }
+  debugLog("memfs-git", "Installed memory-repository push hooks");
 }
 
 /** Refresh every harness-owned Git hook for an API-backed memory checkout. */
