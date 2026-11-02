@@ -75,17 +75,6 @@ type Context = Parameters<typeof useConversationLoop>[0];
 type ResumeBody = Parameters<
   ReturnType<typeof getBackend>["streamConversationMessages"]
 >[1];
-type Scenario =
-  | "busy"
-  | "normal"
-  | "accepted-own-otid"
-  | "foreign-approval"
-  | "cancel-foreign-approval"
-  | "queue-timeout"
-  | "queue-exhausted"
-  | "queue-metadata-failure"
-  | "queue-approval-timeout"
-  | "queue-own-drain-error";
 const foreignApproval = scenario.includes("foreign-approval");
 const queueFailure = scenario.startsWith("queue-");
 const queue = new QueueRuntime();
@@ -143,14 +132,12 @@ let runPolls = 0;
 const originalNow = Date.now;
 const originalSetTimeout = globalThis.setTimeout;
 const originalClearTimeout = globalThis.clearTimeout;
-const timers = new Map<
-  ReturnType<typeof setTimeout>,
-  {
-    due: number;
-    callback: (...args: unknown[]) => void;
-    args: unknown[];
-  }
->();
+type ScheduledTimer = {
+  due: number;
+  callback: (...args: unknown[]) => void;
+  args: unknown[];
+};
+const timers = new Map<ReturnType<typeof setTimeout>, ScheduledTimer>();
 let pump: ReturnType<typeof setTimeout> | null = null;
 let clock = 0;
 const blockerCompletesAt = 90_000;
@@ -159,16 +146,7 @@ function scheduleNextTimer(): void {
   if (pump || timers.size === 0) return;
   pump = originalSetTimeout(() => {
     pump = null;
-    let next:
-      | [
-          ReturnType<typeof setTimeout>,
-          {
-            due: number;
-            callback: (...args: unknown[]) => void;
-            args: unknown[];
-          },
-        ]
-      | undefined;
+    let next: [ReturnType<typeof setTimeout>, ScheduledTimer] | undefined;
     for (const entry of timers) {
       if (!next || entry[1].due < next[1].due) next = entry;
     }
@@ -300,6 +278,16 @@ const context: Context = {
 };
 
 const originalBackend = getBackend();
+function requestError(status: number, detail: string, blocker?: string) {
+  return new APIError(
+    status,
+    { detail, ...(blocker ? { run_id: blocker } : {}) },
+    undefined,
+    new Headers(),
+  );
+}
+const busyDetail = (blocker = runId) =>
+  `Another request (run_id=${blocker}) is currently being processed for this conversation.`;
 function stopStream(streamRunId: string) {
   return {
     controller: new AbortController(),
@@ -329,7 +317,7 @@ const fakeBackend = Object.create(
             pendingIds = [];
             const detail = "Invalid tool call IDs: expected [], received [A3]";
             if (scenario === "approval-empty-sse") return errorStream(detail);
-            throw new APIError(400, { detail }, undefined, new Headers());
+            throw requestError(400, detail);
           }
           if (scenario === "approval-sse-only") {
             pendingIds = ["A1", "A2"];
@@ -343,14 +331,7 @@ const fakeBackend = Object.create(
               : scenario === "approval-cleared"
                 ? []
                 : ["A1", "A2"];
-          throw new APIError(
-            409,
-            {
-              detail: `Another request (run_id=${runId}) is currently being processed for this conversation.`,
-            },
-            undefined,
-            new Headers(),
-          );
+          throw requestError(409, busyDetail());
         }
         const messages = body.messages as Array<{
           approvals?: Array<{ tool_call_id: string }>;
@@ -376,15 +357,11 @@ const fakeBackend = Object.create(
         }
         const approvalPending =
           scenario === "queue-approval-timeout" && sentPayloads.length > 1;
-        throw new APIError(
+        throw requestError(
           409,
-          {
-            detail: approvalPending
-              ? "Conversation is waiting for approval"
-              : `Another request (run_id=${runId}) is currently being processed for this conversation.`,
-          },
-          undefined,
-          new Headers(),
+          approvalPending
+            ? "Conversation is waiting for approval"
+            : busyDetail(),
         );
       }
       if (foreignApproval) {
@@ -401,23 +378,10 @@ const fakeBackend = Object.create(
               context.abortControllerRef.current?.abort();
             }, 1000);
           }
-          throw new APIError(
-            409,
-            { detail: "Conversation is waiting for approval" },
-            undefined,
-            new Headers(),
-          );
+          throw requestError(409, "Conversation is waiting for approval");
         }
         const blocker = attempt === 1 ? runId : continuationId;
-        throw new APIError(
-          409,
-          {
-            detail: `Another request (run_id=${blocker}) is currently being processed for this conversation.`,
-            run_id: blocker,
-          },
-          undefined,
-          new Headers(),
-        );
+        throw requestError(409, busyDetail(blocker), blocker);
       }
       if (scenario === "normal") {
         acceptedPayloads.push(capturedMessages(body));
@@ -425,30 +389,14 @@ const fakeBackend = Object.create(
       }
       if (scenario === "accepted-own-otid" && sentPayloads.length === 1) {
         acceptedPayloads.push(capturedMessages(body));
-        throw new APIError(
-          409,
-          {
-            detail: `Another request (run_id=${runId}) is currently being processed for this conversation.`,
-            run_id: runId,
-          },
-          undefined,
-          new Headers(),
-        );
+        throw requestError(409, busyDetail(), runId);
       }
       if (scenario === "busy" && clock >= blockerCompletesAt) {
         blockingRunActive = false;
         acceptedPayloads.push(capturedMessages(body));
         return stopStream("run-original-input");
       }
-      throw new APIError(
-        409,
-        {
-          detail: `Another request (run_id=${runId}) is currently being processed for this conversation.`,
-          run_id: runId,
-        },
-        undefined,
-        new Headers(),
-      );
+      throw requestError(409, busyDetail(), runId);
     },
     async streamConversationMessages(_id: string, body: ResumeBody) {
       resumeBodies.push(body);
@@ -484,12 +432,7 @@ const fakeBackend = Object.create(
           },
         };
       }
-      throw new APIError(
-        404,
-        { detail: "No run found for the provided otid" },
-        undefined,
-        new Headers(),
-      );
+      throw requestError(404, "No run found for the provided otid");
     },
     async retrieveRun(id: string) {
       polledRunIds.push(id);
@@ -667,10 +610,7 @@ try {
       source: "user",
       content: [{ type: "text", text: "queued first" }],
     };
-    const second: Omit<
-      import("@/queue/queue-runtime").MessageQueueItem,
-      "id" | "enqueuedAt"
-    > = {
+    const second: typeof first = {
       kind: "message",
       source: "user",
       content: "queued second",
@@ -701,7 +641,7 @@ try {
       runtime: process.version,
       bun: process.versions.bun ?? null,
       source: "useConversationLoop",
-      scenario: scenario as Scenario,
+      scenario,
       virtualElapsedMs: clock,
       blockerCompletesAt,
       sentPayloads,

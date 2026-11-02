@@ -652,6 +652,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           queue?.clear("error");
         }
       };
+      const prepareRecoveredApprovals = (approvals: ApprovalRequest[]) => {
+        // Restore only user text, then replace all stale approval state together.
+        const textToRestore = getRestorableUserText(currentInput);
+        if (textToRestore) setRestoredInput(textToRestore);
+        setApprovalResults([]);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+        setApprovalContexts([]);
+        queueApprovalResults(null);
+        setPendingApprovals(approvals);
+      };
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -1147,19 +1158,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   if (!canContinueTurn()) return;
 
                   if (serverApprovals && serverApprovals.length > 0) {
-                    // Preserve user message (filter system reminders to avoid re-inject)
-                    const textToRestore = getRestorableUserText(currentInput);
-                    if (textToRestore) setRestoredInput(textToRestore);
-
-                    // Clear all stale approval state before setting new approvals
-                    setApprovalResults([]);
-                    setAutoHandledResults([]);
-                    setAutoDeniedApprovals([]);
-                    setApprovalContexts([]);
-                    queueApprovalResults(null);
-
-                    // Set up approval UI with fetched approvals
-                    setPendingApprovals(serverApprovals);
+                    prepareRecoveredApprovals(serverApprovals);
 
                     // Analyze approval contexts (same logic as /resume)
                     try {
@@ -2254,19 +2253,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
 
               if (serverApprovals && serverApprovals.length > 0) {
-                // Preserve user message (filter system reminders to avoid re-inject)
-                const textToRestore = getRestorableUserText(currentInput);
-                if (textToRestore) setRestoredInput(textToRestore);
-
-                // Clear all stale approval state before setting new approvals
-                setApprovalResults([]);
-                setAutoHandledResults([]);
-                setAutoDeniedApprovals([]);
-                setApprovalContexts([]);
-                queueApprovalResults(null);
-
-                // Set up approval UI with fetched approvals
-                setPendingApprovals(serverApprovals);
+                prepareRecoveredApprovals(serverApprovals);
 
                 // Analyze approval contexts
                 try {
