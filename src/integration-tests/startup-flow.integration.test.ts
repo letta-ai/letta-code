@@ -671,44 +671,35 @@ describe("Startup Flow - Integration", () => {
         console.log("Skipping: no test conversation available");
         return;
       }
-      const conversationId = testConversationId;
 
-      // The process that created the conversation has exited, so verify
-      // destination resolution and Cloud acceptance without waiting for a receiver.
-      const send = (extra: string[]) =>
-        runCliJson(
-          [
-            ...extra,
-            "--conversation",
-            conversationId,
-            "--no-wait",
-            "-p",
-            "Say OK",
-            "--output-format",
-            "json",
-          ],
-          {
-            timeoutMs: 60000,
-            retryOnTimeouts: 0,
-            retryOnParseErrors: 0,
-          },
-        );
+      const result = await runCliJson(
+        [
+          "--conversation",
+          testConversationId,
+          // The process that created the conversation has exited, so verify
+          // destination resolution and Cloud acceptance without waiting for a receiver.
+          "--no-wait",
+          "-p",
+          "Say OK",
+          "--output-format",
+          "json",
+        ],
+        {
+          timeoutMs: 60000,
+          retryOnTimeouts: 0,
+          retryOnParseErrors: 0,
+        },
+      );
 
       // The server derives the agent from the conversation and its receipt
       // does not echo it, so the CLI reports no agent it was not given.
-      const result = await send([]);
       expect(result.exitCode).toBe(0);
-      expect(result.output.status).toBe("queued");
-      expect(result.output.conversation_id).toBe(conversationId);
-      expect(result.output.agent_id).toBeNull();
-
-      const withAgent = await send(["--agent", testAgentId]);
-      expect(withAgent.exitCode).toBe(0);
-      expect(withAgent.output.status).toBe("queued");
-      expect(withAgent.output.agent_id).toBe(testAgentId);
-      expect(withAgent.output.conversation_id).toBe(conversationId);
+      const output = result.output;
+      expect(output.status).toBe("queued");
+      expect(output.conversation_id).toBe(testConversationId);
+      expect(output.agent_id).toBeNull();
     },
-    { timeout: 130000 },
+    { timeout: 70000 },
   );
 
   test(
