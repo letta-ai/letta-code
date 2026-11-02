@@ -2,6 +2,11 @@ import type { AgentRuntimeScope } from "./runtime-scope";
 
 /** The public launch arguments shared by Agent and App Server clients. */
 export interface SubagentLaunchArgs {
+  /** `letta` (default), an external worker type, or a named Letta subagent. */
+  agent_type?: string;
+  /** Start the child with the parent conversation's context. */
+  fork_context?: boolean;
+  /** Deprecated alias for `agent_type` (`fork` = letta + fork_context). */
   subagent_type?: string;
   prompt: string;
   description: string;

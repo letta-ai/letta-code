@@ -150,7 +150,9 @@ export function getGlobalAgentsDir(): string {
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
 // Runtime support is separate from advertising an adapter in the prompt.
+// `letta` is the Agent tool's default agent_type, not a subagent name.
 const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
+  "letta",
   "claude-code",
   "codex",
   "opencode",
@@ -611,11 +613,13 @@ export async function getModelFacingSubagentDescriptors(
   Array<{ name: string; description: string; recommendedModel: string }>
 > {
   const configs = await getAllSubagentConfigs(workingDirectory);
+  // `general-purpose` is advertised as the default `letta` agent_type, and
+  // `fork` as `fork_context: true`; both names remain accepted as aliases.
   return [
     ...Object.entries(configs)
-      .filter(([name]) => name !== "memory")
+      .filter(([name]) => name !== "memory" && name !== "fork")
       .map(([name, config]) => ({
-        name,
+        name: name === "general-purpose" ? "letta" : name,
         description: config.description,
         recommendedModel: config.recommendedModel,
       })),

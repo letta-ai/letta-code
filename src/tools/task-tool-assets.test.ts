@@ -43,7 +43,7 @@ describe("stripComputerFromTaskDescription", () => {
   test("keeps external coding agent docs but drops their computer routing", () => {
     const stripped = stripComputerFromTaskDescription(taskDescription);
     expect(stripped).toContain("## External Coding Agents");
-    expect(stripped).toContain('subagent_type: "claude-code"');
+    expect(stripped).toContain('agent_type: "claude-code"');
     expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
   });
 
@@ -89,17 +89,13 @@ describe("task() computer guard", () => {
   });
 });
 
-describe("Task subagent_type requirement", () => {
-  test("the schema leaves subagent_type optional so resumes can omit it", () => {
+describe("Task agent_type requirement", () => {
+  test("the schema leaves agent_type and its alias optional", () => {
+    expect(taskSchema.required).not.toContain("agent_type");
     expect(taskSchema.required).not.toContain("subagent_type");
   });
-
-  test("launching a new subagent without subagent_type is still rejected", async () => {
-    const { launchSubagent } = await import("./impl/task");
-    await expect(
-      launchSubagent({ prompt: "Work", description: "New task" } as never),
-    ).rejects.toThrow("missing required parameter: subagent_type");
-  });
+  // Omitting agent_type launches the default letta subagent; that launch path
+  // is covered in impl/task-fork-context.test.ts.
 });
 
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {

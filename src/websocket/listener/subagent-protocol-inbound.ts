@@ -7,6 +7,8 @@ import type {
 import { isAgentRuntimeScope } from "./protocol-validation";
 
 const ARGUMENTS = new Set([
+  "agent_type",
+  "fork_context",
   "subagent_type",
   "prompt",
   "description",
@@ -50,7 +52,10 @@ export function isLaunchSubagentCommand(
     !args.description.trim()
   )
     return false;
+  if (args.fork_context !== undefined && typeof args.fork_context !== "boolean")
+    return false;
   for (const key of [
+    "agent_type",
     "subagent_type",
     "model",
     "agent_id",

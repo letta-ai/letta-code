@@ -65,8 +65,18 @@ describe("launch_subagent protocol", () => {
     { notify: "self" },
     { args: { ...command.args, mcp: [] } },
     { args: { ...command.args, notifyCaller: true } },
+    { args: { ...command.args, agent_type: "" } },
+    { args: { ...command.args, fork_context: "true" } },
   ])("rejects malformed or injected launch fields %j", (fields) => {
     expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
+  });
+  test("accepts agent_type and fork_context without subagent_type", () => {
+    const { subagent_type: _legacy, ...args } = command.args;
+    const input = {
+      ...command,
+      args: { ...args, agent_type: "codex", fork_context: true },
+    };
+    expect(isLaunchSubagentCommand(input)).toBe(true);
   });
   test("accepts caller notification and an MCP selection", () => {
     const input = {
