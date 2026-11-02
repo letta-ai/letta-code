@@ -5,8 +5,12 @@
  * listings, or agent context.
  */
 
+import { type ChildProcess, spawn } from "node:child_process";
 import { parseArgs } from "node:util";
+import { getClient } from "@/backend/api/client";
+import { createMcpSubprocessBrokerClient } from "@/backend/api/mcp-subprocess-broker";
 import { settingsManager } from "@/settings-manager";
+import type { PackageManagerProcessFactory } from "@/utils/package-manager-spawn";
 import {
   deleteSecretOnServer,
   refreshAndListSecrets,
@@ -20,6 +24,11 @@ export interface SecretSubcommandDeps {
   listSecrets?: typeof refreshAndListSecrets;
   readStdin?: () => Promise<string>;
   setSecret?: typeof setSecretOnServer;
+  env?: NodeJS.ProcessEnv;
+  getClient?: () => Promise<{
+    get(path: string): Promise<unknown>;
+  }>;
+  spawnCommand?: PackageManagerProcessFactory;
 }
 
 const SECRET_OPTIONS = {
@@ -38,6 +47,7 @@ Usage:
   letta secret set KEY VALUE              Set KEY directly (exposes the value in argv)
   letta secret list                       List secret names (never values)
   letta secret unset KEY                  Unset a secret (aliases: delete | remove | rm)
+  letta secrets run -- <command> [args...] Fetch authorized secrets and run a child command
 
 Options:
   --agent <agent-id>   Target agent (defaults to LETTA_AGENT_ID / AGENT_ID)
@@ -52,6 +62,10 @@ Notes:
   - Pass the variable name to --env (not $NAME). $NAME is substituted by the
     harness and would place the resolved value in process arguments.
   - A running session picks up CLI-side changes at its next session start.
+  - "secrets run" fetches fresh values for one child process only. It does not
+    update the shell, files, or the regular session cache.
+  - Child stdout/stderr are attached directly to the terminal for interactive
+    behavior. A command that prints its own environment can therefore expose it.
 `.trim(),
   );
 }
@@ -71,6 +85,120 @@ function normalizeKey(key: string): string {
 
 function printError(error: unknown): void {
   console.error(error instanceof Error ? error.message : String(error));
+}
+
+const SECRET_ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const FORWARDED_SIGNALS = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
+
+function parseFreshSecrets(value: unknown): Record<string, string> {
+  if (!Array.isArray(value)) throw new Error("invalid response");
+  const secrets: Record<string, string> = {};
+  for (const entry of value) {
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      typeof entry.key !== "string" ||
+      typeof entry.value !== "string" ||
+      !SECRET_ENV_KEY.test(entry.key)
+    ) {
+      throw new Error("invalid response");
+    }
+    secrets[entry.key] = entry.value;
+  }
+  return secrets;
+}
+
+function signalExitCode(signal: NodeJS.Signals | null): number {
+  switch (signal) {
+    case "SIGHUP":
+      return 129;
+    case "SIGINT":
+      return 130;
+    case "SIGTERM":
+      return 143;
+    default:
+      return 1;
+  }
+}
+
+async function waitForChild(child: ChildProcess): Promise<number> {
+  const handlers = new Map<NodeJS.Signals, () => void>();
+  for (const signal of FORWARDED_SIGNALS) {
+    const handler = () => {
+      try {
+        child.kill(signal);
+      } catch {
+        // The child may have exited while the signal was being delivered.
+      }
+    };
+    handlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+
+  try {
+    return await new Promise<number>((resolve) => {
+      child.once("error", () => resolve(1));
+      child.once("close", (code, signal) =>
+        resolve(code ?? signalExitCode(signal)),
+      );
+    });
+  } finally {
+    for (const [signal, handler] of handlers) {
+      process.off(signal, handler);
+    }
+  }
+}
+
+async function runWithFreshSecrets(
+  command: string | undefined,
+  args: string[],
+  agentId: string | undefined,
+  deps: SecretSubcommandDeps,
+): Promise<number> {
+  if (!command) {
+    console.error("Usage: letta secrets run -- <command> [args...]");
+    return 1;
+  }
+  const env = deps.env ?? process.env;
+  const resolvedAgentId = (
+    agentId ||
+    env.LETTA_AGENT_ID ||
+    env.AGENT_ID ||
+    ""
+  ).trim();
+  if (!resolvedAgentId) {
+    console.error(
+      "Specify --agent <agent-id>, or run inside a session where LETTA_AGENT_ID or AGENT_ID is set.",
+    );
+    return 1;
+  }
+
+  let secrets: Record<string, string>;
+  try {
+    const client =
+      createMcpSubprocessBrokerClient(env) ??
+      (await (deps.getClient ?? getClient)());
+    const response = await client.get(
+      `/v1/agents/${encodeURIComponent(resolvedAgentId)}/secrets`,
+    );
+    secrets = parseFreshSecrets(response);
+  } catch {
+    console.error("Unable to refresh secrets for this command.");
+    return 1;
+  }
+
+  let child: ChildProcess;
+  try {
+    child = (deps.spawnCommand ?? spawn)(command, args, {
+      env: { ...env, ...secrets },
+      shell: false,
+      stdio: "inherit",
+    });
+  } catch {
+    console.error("Unable to start command.");
+    return 1;
+  }
+  return waitForChild(child);
 }
 
 export async function runSecretSubcommand(
@@ -109,6 +237,15 @@ export async function runSecretSubcommand(
     case "help": {
       printUsage();
       return 0;
+    }
+
+    case "run": {
+      return runWithFreshSecrets(
+        rawKey,
+        parsed.positionals.slice(2),
+        agentIdArg,
+        deps,
+      );
     }
 
     case "list": {

@@ -62,6 +62,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "remote":
     case "sandbox":
     case "secret":
+    case "secrets":
     case "server":
     case "shared-memory":
     case "skills":
@@ -118,6 +119,7 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
     case "sandbox":
       return runSandboxSubcommand(rest);
     case "secret":
+    case "secrets":
       return runSecretSubcommand(rest);
     case "teleport":
       return runTeleportSubcommand(rest);

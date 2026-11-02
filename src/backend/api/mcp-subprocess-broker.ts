@@ -19,6 +19,7 @@ export const MCP_SUBPROCESS_BROKER_KEY_ENV = "LETTA_MCP_SUBPROCESS_BROKER_KEY";
 
 const MCP_ORIGINATOR_TOKEN_HEADER = "x-letta-mcp-originator-token";
 const MCP_ORIGINATOR_ISOLATION_HEADER = "x-letta-mcp-originator-isolation";
+const SECRET_ISOLATION_HEADER = "x-letta-secret-isolation";
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const BROKER_PATH = "/mcp";
@@ -41,6 +42,7 @@ type McpBrokerScope = {
 
 type ParsedMcpRequest = {
   agentId: string;
+  operation: "mcp" | "secrets";
   path: string;
 };
 
@@ -73,15 +75,21 @@ function safeEqual(left: string, right: string): boolean {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-function originatorHeaders(
+function requestHeaders(
   token: string | undefined,
+  operation: ParsedMcpRequest["operation"],
 ): Record<string, string> | undefined {
-  return token
-    ? {
-        [MCP_ORIGINATOR_TOKEN_HEADER]: token,
-        [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
-      }
-    : undefined;
+  const headers: Record<string, string> = {};
+  if (token) {
+    Object.assign(headers, {
+      [MCP_ORIGINATOR_TOKEN_HEADER]: token,
+      [MCP_ORIGINATOR_ISOLATION_HEADER]: "1",
+    });
+  }
+  if (operation === "secrets") {
+    headers[SECRET_ISOLATION_HEADER] = "1";
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
 function decodeCanonicalSegment(segment: string): string | null {
@@ -108,20 +116,26 @@ function parseMcpRequest(
 ): ParsedMcpRequest | null {
   if (requestPath.includes("?") || requestPath.includes("#")) return null;
   const parts = requestPath.split("/");
-  if (
-    parts[0] !== "" ||
-    parts[1] !== "v1" ||
-    parts[2] !== "agents" ||
-    parts[4] !== "mcp-servers"
-  ) {
+  if (parts[0] !== "" || parts[1] !== "v1" || parts[2] !== "agents") {
     return null;
   }
   const agentId = parts[3] ? decodeCanonicalSegment(parts[3]) : null;
   if (!agentId) return null;
 
+  if (method === "GET" && parts.length === 5 && parts[4] === "secrets") {
+    return {
+      agentId,
+      operation: "secrets",
+      path: `/v1/agents/${encodeURIComponent(agentId)}/secrets`,
+    };
+  }
+
+  if (parts[4] !== "mcp-servers") return null;
+
   if (method === "GET" && parts.length === 5) {
     return {
       agentId,
+      operation: "mcp",
       path: `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers`,
     };
   }
@@ -130,6 +144,7 @@ function parseMcpRequest(
     if (!serverId) return null;
     return {
       agentId,
+      operation: "mcp",
       path: `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(serverId)}/tools`,
     };
   }
@@ -141,6 +156,7 @@ function parseMcpRequest(
   ) {
     return {
       agentId,
+      operation: "mcp",
       path: `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/tools/search`,
     };
   }
@@ -155,6 +171,7 @@ function parseMcpRequest(
     if (!serverId || !toolId) return null;
     return {
       agentId,
+      operation: "mcp",
       path: `/v1/agents/${encodeURIComponent(agentId)}/mcp-servers/${encodeURIComponent(serverId)}/tools/${encodeURIComponent(toolId)}/run`,
     };
   }
@@ -256,16 +273,19 @@ export function createMcpSubprocessBroker(options: {
         }
 
         const parsed = parseMcpRequest(payload.method, payload.path);
-        const [initialScope, allowedAgents] = await Promise.all([
-          options.getScope(),
-          resolveAllowedAgentIds(),
-        ]);
+        const initialScope = options.getScope();
+        const allowedAgents =
+          parsed?.operation === "mcp"
+            ? await resolveAllowedAgentIds()
+            : undefined;
         if (
           closed ||
           !parsed ||
           !initialScope ||
           initialScope.agentId !== options.agentId ||
-          !allowedAgents.has(parsed.agentId)
+          (parsed.operation === "secrets"
+            ? parsed.agentId !== options.agentId
+            : !allowedAgents?.has(parsed.agentId))
         ) {
           sendJson(response, 403, { ok: false, error: "Forbidden" });
           return;
@@ -283,7 +303,7 @@ export function createMcpSubprocessBroker(options: {
         }
         // Discovery needs the same verified identity as execution so Cloud can
         // omit restricted servers and tools from unauthorized turns.
-        const headers = originatorHeaders(scope.originatorToken);
+        const headers = requestHeaders(scope.originatorToken, parsed.operation);
         const value =
           payload.method === "GET"
             ? await client.get(parsed.path, ...(headers ? [{ headers }] : []))
