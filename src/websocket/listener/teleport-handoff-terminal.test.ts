@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import WebSocket from "ws";
 import { createBuffers } from "@/cli/helpers/accumulator";
 import { TestDirectory } from "@/test-utils/test-fs";
@@ -7,13 +7,27 @@ import {
   openListenerConnection,
   subscribeListenerConnection,
 } from "./connection";
-import { getOrCreateScopedRuntime } from "./conversation-runtime";
+import {
+  getOrCreateScopedRuntime,
+  restoreDurableQueuedInputs,
+} from "./conversation-runtime";
+import {
+  commitInputDisposition,
+  ordinaryInputIdentity,
+  reserveInputDisposition,
+} from "./input-disposition";
+import { attachTerminalConsumerToLiveAcceptedInput } from "./input-disposition-ownership";
+import {
+  loadPreparedInputTerminals,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import {
   createInterruptedTurnStore,
   recordListenerWork,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
 import { handleTeleportRequest } from "./teleport";
+import { TeleportTerminalPreparedError } from "./teleport-terminal-transfer";
 import { createTurnCorrelation } from "./turn-correlation";
 import { createTurnDurabilityOwnership } from "./turn-durability-ownership";
 import { createTurnFinalizer } from "./turn-finalizer";
@@ -57,9 +71,16 @@ function makeOptions(): StartListenerOptions {
  * Drive a Slack-originated source turn through the production finalizer while
  * a teleport is pending, and return the frames the source connection emitted.
  */
-function yieldSourceTurnToTeleport(drained: boolean) {
+function yieldSourceTurnToTeleport(
+  drained: boolean,
+  lateDuplicate = false,
+  durableListener = true,
+  forceTerminalStoreFailure = false,
+) {
   const listener = createRuntime();
-  listener.connectionId = "conn-source";
+  const scheduleRecordedRecovery = mock(() => {});
+  listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
+  listener.connectionId = durableListener ? "conn-source" : "source";
   const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
   const socket = new MockSocket();
   openListenerConnection({
@@ -83,6 +104,20 @@ function yieldSourceTurnToTeleport(drained: boolean) {
     { runId: "run-source", terminalConsumerIds: [SLACK_CONSUMER] },
     "run_observed",
   );
+  const identity = ordinaryInputIdentity("cm-source");
+  const admission = reserveInputDisposition(runtime, identity);
+  if (admission.kind !== "reserved") throw new Error("expected reservation");
+  expect(
+    commitInputDisposition(runtime, admission.reservation, "started", {
+      incoming: {
+        type: "message",
+        agentId: AGENT_ID,
+        conversationId: CONVERSATION_ID,
+        messages: [],
+        terminalConsumerIds: [SLACK_CONSUMER],
+      },
+    }),
+  ).toBe(true);
   if (drained) runtime.pendingTurns = 1;
   handleTeleportRequest({
     listener,
@@ -99,12 +134,22 @@ function yieldSourceTurnToTeleport(drained: boolean) {
       },
     },
   });
+  if (lateDuplicate) {
+    expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:recovery",
+      ),
+    ).toBe(true);
+  }
   if (drained) runtime.pendingTurns = 0;
   const incoming: IncomingMessage = {
     type: "message",
     agentId: AGENT_ID,
     conversationId: CONVERSATION_ID,
     terminalConsumerIds: [SLACK_CONSUMER],
+    durableInputIdentities: identity ? [identity] : [],
     messages: [{ role: "user", content: "reply in the Slack thread" }],
   };
   const ownership = createTurnDurabilityOwnership();
@@ -120,6 +165,34 @@ function yieldSourceTurnToTeleport(drained: boolean) {
     conversationId: CONVERSATION_ID,
     interruptedRevisionRef: { current: revision },
   });
+  if (forceTerminalStoreFailure) {
+    const store = createTurnFinishedStore();
+    for (let index = 0; index < 64; index += 1) {
+      store.put(
+        AGENT_ID,
+        CONVERSATION_ID,
+        {
+          type: "turn_finished",
+          turn_id: `capacity-${index}`,
+          stop_reason: "end_turn",
+          terminal_consumer_ids: [`capacity:${index}`],
+        },
+        {
+          connectionId: `capacity-${index}`,
+          canRotate: false,
+          lineageId: `capacity-${index}`,
+        },
+      );
+    }
+    expect(() =>
+      finalizer.finishTurn({
+        stopReason: "cancelled",
+        agentId: AGENT_ID,
+        conversationId: CONVERSATION_ID,
+      }),
+    ).toThrow(TeleportTerminalPreparedError);
+    return { listener, runtime, socket, scheduleRecordedRecovery };
+  }
   const transition = finalizer.finishTurn({
     stopReason: drained ? "end_turn" : "cancelled",
     agentId: AGENT_ID,
@@ -127,8 +200,32 @@ function yieldSourceTurnToTeleport(drained: boolean) {
   });
   expect(transition.finished).toBe(true);
   expect(runtime.turnLifecycle.kind).toBe("idle");
-  return { listener, runtime, socket };
+  return { listener, runtime, socket, scheduleRecordedRecovery };
 }
+
+test("a post-prepare terminal-store failure preserves transferred ownership", () => {
+  withTemporaryHome(() => {
+    const { listener, scheduleRecordedRecovery } = yieldSourceTurnToTeleport(
+      false,
+      true,
+      true,
+      true,
+    );
+    const interrupted = createInterruptedTurnStore().read(
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    expect(interrupted?.teleport?.teleportId).toBe("teleport-1");
+    expect(interrupted?.teleport?.continuation?.terminal_consumer_ids).toEqual([
+      SLACK_CONSUMER,
+      "slack:recovery",
+    ]);
+    expect(
+      loadPreparedInputTerminals(listener)[0]?.message.terminal_consumer_ids,
+    ).toBeUndefined();
+    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
+  });
+});
 
 function withTemporaryHome(run: () => void): void {
   const oldHome = process.env.HOME;
@@ -146,7 +243,7 @@ function withTemporaryHome(run: () => void): void {
 
 test("an active-turn teleport handoff publishes readiness without a source turn_finished", () => {
   withTemporaryHome(() => {
-    const { runtime, socket } = yieldSourceTurnToTeleport(false);
+    const { runtime, socket } = yieldSourceTurnToTeleport(false, true);
     const types = socket.sent.map((message) => message.type);
 
     // Channel gateways retire the turn's delivery on turn_finished. The turn
@@ -159,6 +256,10 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
         teleport_id: "teleport-1",
         success: true,
         active_turn: true,
+        continuation: {
+          approvals: [],
+          terminal_consumer_ids: [SLACK_CONSUMER, "slack:recovery"],
+        },
       }),
     );
 
@@ -170,6 +271,17 @@ test("an active-turn teleport handoff publishes readiness without a source turn_
     socket.sent.length = 0;
     replayPendingTurnFinishedToConnection(socket as never, runtime, "source");
     expect(socket.sent).toEqual([]);
+
+    const unavailable = yieldSourceTurnToTeleport(false, false, false).socket;
+    expect(unavailable.sent).toContainEqual(
+      expect.objectContaining({
+        type: "turn_finished",
+        terminal_consumer_ids: [SLACK_CONSUMER],
+      }),
+    );
+    expect(unavailable.sent).not.toContainEqual(
+      expect.objectContaining({ type: "teleport_ready" }),
+    );
   });
 });
 
@@ -187,5 +299,58 @@ test("a drained teleport still reports the finished turn before readiness", () =
       terminal_consumer_ids: [SLACK_CONSUMER],
     });
     expect(socket.sent[readyIndex]).toMatchObject({ active_turn: false });
+  });
+});
+
+test("restart promotion keeps transferred consumers off the source terminal", () => {
+  withTemporaryHome(() => {
+    const listener = createRuntime();
+    const runtime = getOrCreateScopedRuntime(
+      listener,
+      AGENT_ID,
+      CONVERSATION_ID,
+    );
+    const identity = ordinaryInputIdentity("cm-crash-handoff");
+    const admission = reserveInputDisposition(runtime, identity);
+    if (admission.kind !== "reserved") throw new Error("expected reservation");
+    expect(
+      commitInputDisposition(runtime, admission.reservation, "started", {
+        incoming: {
+          type: "message",
+          agentId: AGENT_ID,
+          conversationId: CONVERSATION_ID,
+          messages: [],
+          terminalConsumerIds: [SLACK_CONSUMER, "slack:recovery"],
+        },
+      }),
+    ).toBe(true);
+    expect(
+      prepareInputTerminal(runtime, identity ? [identity] : [], {
+        scope: { agentId: AGENT_ID, conversationId: CONVERSATION_ID },
+        message: {
+          type: "turn_finished",
+          turn_id: "turn-crash-handoff",
+          stop_reason: "cancelled",
+          terminal_consumer_ids: [SLACK_CONSUMER, "slack:recovery"],
+        },
+        owner: {
+          connectionId: "source",
+          canRotate: false,
+          lineageId: "source",
+        },
+        persistWithoutConsumers: true,
+        suppressConsumerPublication: true,
+      }),
+    ).toBe(true);
+    const terminalStore = createTurnFinishedStore();
+    restoreDurableQueuedInputs(listener, terminalStore);
+
+    expect(
+      terminalStore.read(AGENT_ID, CONVERSATION_ID)?.terminals[0]?.message,
+    ).toEqual({
+      type: "turn_finished",
+      turn_id: "turn-crash-handoff",
+      stop_reason: "cancelled",
+    });
   });
 });

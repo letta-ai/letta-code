@@ -4,6 +4,8 @@ import type { RuntimeScope } from "./runtime-scope";
 
 export interface TeleportContinuation {
   approvals: NonNullable<ApprovalCreate["approvals"]>;
+  /** External terminal consumers transferred from the source turn. */
+  terminal_consumer_ids?: string[];
 }
 
 export interface InputTeleportContinuePayload {
@@ -37,9 +39,18 @@ export interface TeleportRequestCommand {
 
 export interface TeleportFailedCommand {
   type: "teleport_failed";
+  request_id?: string;
   teleport_id: string;
   runtime: RuntimeScope;
   error: string;
+}
+
+export interface TeleportFailedAckMessage {
+  type: "teleport_failed_ack";
+  request_id: string;
+  teleport_id: string;
+  runtime: RuntimeScope;
+  accepted: true;
 }
 
 export type TeleportProtocolCommand =
@@ -54,6 +65,7 @@ export interface TeleportProbeResponseMessage {
   supported: true;
   drains_accepted_inputs: true;
   idempotent_continuation: true;
+  transfers_terminal_consumers: true;
 }
 
 export interface TeleportReadyMessage {
@@ -70,4 +82,5 @@ export interface TeleportReadyMessage {
 
 export type TeleportProtocolMessage =
   | TeleportProbeResponseMessage
+  | TeleportFailedAckMessage
   | TeleportReadyMessage;

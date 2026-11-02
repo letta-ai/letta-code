@@ -188,6 +188,7 @@ test.each(["telegram", "slack", "discord"])(
 
     await f.deliver({
       type: "teleport_failed",
+      request_id: "request-failed",
       teleport_id: "teleport-1",
       runtime: scope,
       error: "Local channel teleport is blocked",

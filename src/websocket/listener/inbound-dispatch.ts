@@ -13,7 +13,10 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
-import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
+import {
+  attachTerminalConsumerToLiveAcceptedInput,
+  hasLiveAcceptedInputOwner,
+} from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import {
@@ -160,6 +163,7 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
+        const terminalConsumerId = incoming.terminalConsumerIds?.[0];
         // Refresh-only re-ack: the originator token store may recreate a
         // lost entry only while the durable ledger shows a live owner for
         // this input; terminal tombstones fail the proof and stay rejected.
@@ -167,7 +171,14 @@ export function dispatchInboundMessageWhenReady(params: {
           accepted: true,
           disposition: admission.disposition,
           duplicate: true,
-          mayRecreateOwner: liveAcceptedInputOwnerProof(runtime, identity),
+          mayRecreateOwner: () =>
+            terminalConsumerId
+              ? attachTerminalConsumerToLiveAcceptedInput(
+                  runtime,
+                  identity,
+                  terminalConsumerId,
+                )
+              : hasLiveAcceptedInputOwner(runtime, identity),
         });
         return;
       }

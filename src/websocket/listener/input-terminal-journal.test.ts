@@ -19,6 +19,7 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
+import { attachTerminalConsumerToLiveAcceptedInput } from "./input-disposition-ownership";
 import { hasCompletedInputTerminalRevision } from "./input-terminal-evidence";
 import {
   loadPreparedInputTerminals,
@@ -126,6 +127,13 @@ test("restart promotes prepared terminal before accepted input can execute again
       }),
     ).toBe(true);
     expect(
+      attachTerminalConsumerToLiveAcceptedInput(
+        runtime,
+        identity,
+        "slack:recovery",
+      ),
+    ).toBe(true);
+    expect(
       prepareInputTerminal(runtime, identity ? [identity] : [], {
         scope: {
           agentId: "agent-durable",
@@ -147,7 +155,10 @@ test("restart promotes prepared terminal before accepted input can execute again
 
     const restarted = persistentRuntime(path);
     expect(loadDurableQueuedInputs(restarted.listener)).toEqual([]);
-    expect(loadPreparedInputTerminals(restarted.listener)).toHaveLength(1);
+    expect(
+      loadPreparedInputTerminals(restarted.listener)[0]?.message
+        .terminal_consumer_ids,
+    ).toEqual(["slack:agent-1", "slack:recovery"]);
     const terminalStore = createTurnFinishedStore(terminalDirectory);
     expect(restoreDurableQueuedInputs(restarted.listener, terminalStore)).toBe(
       0,
@@ -158,6 +169,10 @@ test("restart promotes prepared terminal before accepted input can execute again
         .read("agent-durable", "conversation-durable")
         ?.terminals.map((terminal) => terminal.message.turn_id),
     ).toEqual(["turn-effect-committed"]);
+    expect(
+      terminalStore.read("agent-durable", "conversation-durable")?.terminals[0]
+        ?.message.terminal_consumer_ids,
+    ).toEqual(["slack:agent-1", "slack:recovery"]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

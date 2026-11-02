@@ -597,13 +597,13 @@ export type {
   ClientToolsetConfig,
   InputCreateMessagePayload,
 } from "./input-create-message";
-
 export interface InputAcceptedResponseMessage {
   type: "input_accepted";
   request_id: string;
   runtime: ConversationRuntimeScope;
   accepted: boolean;
   disposition?: "started" | "queued";
+  duplicate_owner_live?: boolean;
   error?: string;
 }
 
