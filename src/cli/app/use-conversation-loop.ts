@@ -648,6 +648,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           queue?.clear("error");
         }
       };
+      const prepareRecoveredApprovals = (approvals: ApprovalRequest[]) => {
+        // Restore only user text, then replace all stale approval state together.
+        const textToRestore = getRestorableUserText(currentInput);
+        if (textToRestore) setRestoredInput(textToRestore);
+        setApprovalResults([]);
+        setAutoHandledResults([]);
+        setAutoDeniedApprovals([]);
+        setApprovalContexts([]);
+        queueApprovalResults(null);
+        setPendingApprovals(approvals);
+      };
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -775,6 +786,9 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
 
         while (true) {
           const signal = turnAbortController.signal;
+          const canContinueTurn = () =>
+            myGeneration === conversationGenerationRef.current &&
+            !signal.aborted;
           if (myGeneration !== conversationGenerationRef.current) return;
 
           // Check if cancelled before starting new stream
@@ -874,12 +888,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               preStreamAction === "resolve_approval_pending" &&
               (await busyApprovalGuard.wait(signal))
             ) {
-              if (
-                myGeneration !== conversationGenerationRef.current ||
-                signal.aborted ||
-                userCancelledRef.current
-              )
-                return;
+              if (!canContinueTurn() || userCancelledRef.current) return;
               retryingBusyInput = true;
               continue;
             }
@@ -945,10 +954,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   currentInput,
                   signal,
                 );
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                ) {
+                if (!canContinueTurn()) {
                   resumeStream.controller.abort();
                   return;
                 }
@@ -970,11 +976,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   contextTrackerRef.current,
                   streamSequenceCursor,
                 );
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                )
-                  return;
+                if (!canContinueTurn()) return;
                 debugLog(
                   "stream",
                   "Pre-stream resume succeeded (stopReason=%s)",
@@ -1017,18 +1019,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                   busyApprovalGuard.noteConflict(errorDetail);
                   await waitForBusyRunRetry(errorDetail, retryDelayMs, signal);
                 } catch (waitError) {
-                  if (
-                    myGeneration !== conversationGenerationRef.current ||
-                    signal.aborted
-                  )
-                    return;
+                  if (!canContinueTurn()) return;
                   throw waitError;
                 }
-                if (
-                  myGeneration !== conversationGenerationRef.current ||
-                  signal.aborted
-                )
-                  return;
+                if (!canContinueTurn()) return;
 
                 // Remove status message
                 buffersRef.current.byId.delete(statusId);
@@ -1148,19 +1142,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     );
 
                   if (serverApprovals && serverApprovals.length > 0) {
-                    // Preserve user message (filter system reminders to avoid re-inject)
-                    const textToRestore = getRestorableUserText(currentInput);
-                    if (textToRestore) setRestoredInput(textToRestore);
-
-                    // Clear all stale approval state before setting new approvals
-                    setApprovalResults([]);
-                    setAutoHandledResults([]);
-                    setAutoDeniedApprovals([]);
-                    setApprovalContexts([]);
-                    queueApprovalResults(null);
-
-                    // Set up approval UI with fetched approvals
-                    setPendingApprovals(serverApprovals);
+                    prepareRecoveredApprovals(serverApprovals);
 
                     // Analyze approval contexts (same logic as /resume)
                     try {
@@ -2260,19 +2242,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 );
 
               if (serverApprovals && serverApprovals.length > 0) {
-                // Preserve user message (filter system reminders to avoid re-inject)
-                const textToRestore = getRestorableUserText(currentInput);
-                if (textToRestore) setRestoredInput(textToRestore);
-
-                // Clear all stale approval state before setting new approvals
-                setApprovalResults([]);
-                setAutoHandledResults([]);
-                setAutoDeniedApprovals([]);
-                setApprovalContexts([]);
-                queueApprovalResults(null);
-
-                // Set up approval UI with fetched approvals
-                setPendingApprovals(serverApprovals);
+                prepareRecoveredApprovals(serverApprovals);
 
                 // Analyze approval contexts
                 try {
