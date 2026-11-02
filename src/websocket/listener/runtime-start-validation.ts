@@ -32,6 +32,8 @@ export function isRuntimeStartCommand(
       isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.mode_is_default === undefined ||
+      typeof c.mode_is_default === "boolean") &&
     (c.execution_settings === undefined ||
       isRuntimeExecutionSettings(c.execution_settings)) &&
     (c.workspace_sandbox === undefined ||
