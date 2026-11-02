@@ -3,6 +3,20 @@
 This directory owns local listener orchestration. Read this file before changing
 turns, approvals, cancellation, recovery, queue gating, or status projection.
 
+## Listener vs Conversation Scope
+
+A listener connection is not one-per-conversation. `ListenerRuntime` multiplexes
+`ConversationRuntime`s keyed by `(agent_id, conversation_id)` (`scope.ts`,
+`runtime.ts`); `normalizeConversationId` maps an empty conversation ID to
+`default`. Whether a conversation gets its own listener or shares one is a
+provisioning decision (e.g., Cloud sandbox scope), never made by the listener
+itself — the listener always supports many conversations, and idle conversation
+runtimes can be evicted without closing the connection.
+
+Serialized per-connection work is shared by every conversation on that
+connection: the drain queue and any tool setup/restore lane are per connection,
+not per conversation. Conversations on separate listeners never share a lane.
+
 ## Canonical Ownership
 
 `TurnLifecycle` in `turn-lifecycle.ts` is the only owner of active-turn state.
