@@ -2,12 +2,24 @@
 
 Launch a new agent to handle complex, multi-step tasks autonomously.
 
-The Agent tool launches specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools available to it.
+The Agent tool launches specialized agents that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-Two independent choices shape a launch:
+Three independent choices shape a launch:
 
-- `agent_type` selects who runs the task. It defaults to `letta`, a Letta subagent with full tools. Set it to `claude-code`, `codex`, or `cursor` for an external coding worker, or to the name of a specialized Letta subagent listed under Available Agents (for example `recall`).
+- `harness` selects which runner executes the task. It defaults to `letta`, a Letta subagent. Set it to `claude-code`, `codex`, `cursor`, or `opencode` to start that external coding worker instead (see External Coding Agents below).
+- `subagent_type` selects a specialized Letta subagent from the agent types listed under Available Agents (for example `recall`, or a custom agent defined in `.letta/agents/`). It only applies to harness `letta`. If omitted, the default Letta agent is used: a full-capability agent for research, planning, and implementation.
 - `fork_context` selects what the agent starts with. `false` (the default) starts it fresh with only your prompt. `true` gives it this conversation's full history, so the prompt can refer to earlier context.
+
+```typescript
+// Default Letta agent
+Agent({ description: "Find auth code", prompt: "..." })
+
+// Specialized Letta subagent
+Agent({ subagent_type: "recall", description: "Find past decision", prompt: "..." })
+
+// External coding worker
+Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
+```
 
 ## When NOT to use the Agent tool:
 
@@ -37,7 +49,15 @@ Two independent choices shape a launch:
 
 ## External Coding Agents
 
-Use `agent_type: "claude-code"`, `"codex"`, or `"cursor"` to start an external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. `fork_context` is not yet supported for them, so put the context they need in the prompt. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+Use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `subagent_type`, `agent_id`, or `conversation_id`. `fork_context` is not yet supported for them, so put the context they need in the prompt. When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+
+```typescript
+Agent({
+  harness: "codex",
+  description: "Fix flaky test",
+  prompt: "Make src/utils/retry.test.ts pass reliably. Run it ten times to confirm.",
+})
+```
 
 Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
 
@@ -47,7 +67,7 @@ External coding workers automatically receive the parent's MCP discovery metadat
 
 ```typescript
 Agent({
-  agent_type: "claude-code",
+  harness: "claude-code",
   description: "Inspect Linear issue",
   prompt: "Read the issue and trace the relevant implementation.",
   mcp: {
@@ -63,16 +83,15 @@ Omitting `mcp` advertises every MCP server currently available to the parent. `m
 
 Instead of spawning a fresh subagent from a template, you can deploy an existing agent to work in your local codebase.
 
-### Access Levels (agent_type)
+### Access Levels
 
-When deploying an existing agent, only `agent_type: "letta"` (the default) is supported: full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. `fork_context` cannot be combined with `agent_id` or `conversation_id`.
+When deploying an existing agent, use the default harness `letta` and omit `subagent_type`: the agent keeps its own system prompt and memory, with full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. `fork_context` cannot be combined with `agent_id` or `conversation_id`.
 
 ### Parameters
 
 - **agent_id**: The ID of an existing agent to deploy (e.g., "agent-abc123")
   - Starts a new conversation with that agent
   - The agent keeps its own system prompt and memory
-  - Tool access is controlled by agent_type
 
 - **conversation_id**: Resume from an existing conversation (e.g., "conv-xyz789")
   - Normal `conv-...` IDs are globally unique and do not require `agent_id`
@@ -155,7 +174,20 @@ Agent({ fork_context: true, description: "Implement component A", prompt: "..." 
 Agent({ fork_context: true, description: "Implement component B", prompt: "..." })
 ```
 
-`fork_context` applies to `agent_type: "letta"`. Specialized Letta subagents run with their own prompt and context (`recall` always sees the conversation). It cannot be combined with `agent_id` or `conversation_id`.
+`fork_context` applies to the default Letta agent. Specialized Letta subagents (`subagent_type`) run with their own prompt and context, so they reject it; `recall` always sees the conversation. It cannot be combined with `agent_id` or `conversation_id`.
+
+## Specialized Letta Subagents
+
+Pass `subagent_type` with one of the agent types listed under Available Agents to use its prompt and toolset:
+
+```typescript
+// Search earlier conversation history (read-only)
+Agent({
+  subagent_type: "recall",
+  description: "Find past decision",
+  prompt: "Find where we decided how retries should back off, and quote the reasoning."
+})
+```
 
 ## Running on Another Computer
 

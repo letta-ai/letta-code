@@ -70,11 +70,11 @@ import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent"
 import { resolveLaunchComputer } from "./subagent-computer";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
-  describeTaskAgentType,
-  listAgentTypes,
+  describeTaskAgentSelection,
+  listSubagentTypes,
   preparedConversationConfig,
   resolveTaskAgentSelection,
-} from "./task-agent-type";
+} from "./task-agent-selection";
 import {
   buildTaskResultHeader,
   closeTaskProgressLog,
@@ -640,12 +640,6 @@ export async function launchSubagent(
   if ("error" in resolvedSelection)
     return { success: false, error: resolvedSelection.error };
   const { selection } = resolvedSelection;
-  if (selection.kind === "letta" && selection.subagentType === "memory") {
-    return {
-      success: false,
-      error: "Memory edits belong in the parent agent; memory is harness-only.",
-    };
-  }
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -661,7 +655,7 @@ export async function launchSubagent(
 
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
-  const requestedType = describeTaskAgentType(selection);
+  const requestedType = describeTaskAgentSelection(selection);
   if (selection.forkContext && isDeployingExisting) {
     return {
       success: false,
@@ -713,19 +707,19 @@ export async function launchSubagent(
   if (!config) {
     return {
       success: false,
-      error: `Invalid agent_type "${requestedType}". Available types: ${listAgentTypes(Object.keys(allConfigs))}`,
+      error: `Invalid subagent_type "${configName}". Available subagent types: ${listSubagentTypes(Object.keys(allConfigs))}. Omit subagent_type for the default agent.`,
     };
   }
   if (selection.kind === "letta" && selection.forkContext && !config.fork) {
     return {
       success: false,
-      error: `fork_context is only supported for agent_type "letta" and external workers; "${requestedType}" runs with its own prompt and context`,
+      error: `fork_context is not supported for ${requestedType}; it runs with its own prompt and context. Omit subagent_type to fork the default agent`,
     };
   }
   if (!prepared && isDeployingExisting && !VALID_DEPLOY_TYPES.has(configName)) {
     return {
       success: false,
-      error: `When deploying an existing agent, agent_type must be "letta". Got: "${requestedType}"`,
+      error: `When deploying an existing agent, omit subagent_type (the agent keeps its own prompt). Got: ${requestedType}`,
     };
   }
   if (

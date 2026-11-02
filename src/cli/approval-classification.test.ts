@@ -150,7 +150,7 @@ describe("classifyApprovals", () => {
     expect(denied?.permission.reason).toBe(denied?.denyReason);
   });
 
-  test("lets Agent resume an existing conversation without agent_type", async () => {
+  test("lets Agent resume an existing conversation without subagent_type", async () => {
     await loadTools();
     permissionMode.setMode("unrestricted");
 

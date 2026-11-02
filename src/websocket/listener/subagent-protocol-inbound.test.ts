@@ -66,30 +66,49 @@ describe("launch_subagent protocol", () => {
     { notify: "self" },
     { args: { ...command.args, mcp: [] } },
     { args: { ...command.args, notifyCaller: true } },
-    { args: { ...command.args, agent_type: "" } },
+    { args: { ...command.args, harness: "" } },
+    { args: { ...command.args, harness: 3 } },
+    { args: { ...command.args, subagent_type: "  " } },
     { args: { ...command.args, fork_context: "true" } },
     { args: { ...command.args, agent_type: "custom" } },
-    { args: { ...command.args, fork_context: false } },
   ])("rejects malformed or injected launch fields %j", (fields) => {
     expect(isLaunchSubagentCommand({ ...command, ...fields })).toBe(false);
   });
-  test("accepts agent_type and fork_context without subagent_type", () => {
+  test.each([
+    { harness: "codex", fork_context: true },
+    { harness: "letta", subagent_type: "recall" },
+    { subagent_type: "custom", fork_context: false },
+  ])("accepts the current selection fields %j", (selection) => {
     const { subagent_type: _legacy, ...args } = command.args;
-    const input = {
-      ...command,
-      args: { ...args, agent_type: "codex", fork_context: true },
-    };
-    expect(isLaunchSubagentCommand(input)).toBe(true);
+    expect(
+      isLaunchSubagentCommand({ ...command, args: { ...args, ...selection } }),
+    ).toBe(true);
   });
   test.each([
-    [{ subagent_type: "custom" }, { agent_type: "custom" }],
-    [{ subagent_type: "codex" }, { agent_type: "codex" }],
+    // An older client: only subagent_type, with its original meaning.
+    [{ subagent_type: "custom" }, { subagent_type: "custom" }],
+    [{ subagent_type: "recall" }, { subagent_type: "recall" }],
+    [{ subagent_type: " my-reviewer " }, { subagent_type: "my-reviewer" }],
+    [{ subagent_type: "codex" }, { harness: "codex" }],
+    [{ subagent_type: "claude-code" }, { harness: "claude-code" }],
+    [{ subagent_type: "cursor" }, { harness: "cursor" }],
+    [{ subagent_type: "opencode" }, { harness: "opencode" }],
     [{ subagent_type: "general-purpose" }, {}],
     [{ subagent_type: "fork" }, { fork_context: true }],
+    // A current client: harness or fork_context present, passed through.
     [
-      { agent_type: "codex", fork_context: false },
-      { agent_type: "codex", fork_context: false },
+      { harness: "codex", fork_context: false },
+      { harness: "codex", fork_context: false },
     ],
+    [
+      { harness: "letta", subagent_type: "recall" },
+      { harness: "letta", subagent_type: "recall" },
+    ],
+    [
+      { subagent_type: "fork", fork_context: true },
+      { subagent_type: "fork", fork_context: true },
+    ],
+    [{}, {}],
   ])("maps wire selection %j onto Agent launch args", (wire, launch) => {
     const base = { prompt: "Do the work", description: "Child task" };
     expect(toSubagentLaunchArgs({ ...base, ...wire })).toEqual({

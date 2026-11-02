@@ -223,8 +223,9 @@ function isPlanningToolName(toolName) {
 }
 
 function isAllowedReadOnlySubagent(args) {
-  const subagentType = args?.agent_type;
-  return typeof subagentType === "string" && readOnlySubagentTypes.has(normalizedToolName(subagentType));
+  const harness = args?.harness ?? "letta";
+  const subagentType = args?.subagent_type;
+  return harness === "letta" && typeof subagentType === "string" && readOnlySubagentTypes.has(normalizedToolName(subagentType));
 }
 
 function isPlanFileWrite(toolName, args, cwd) {

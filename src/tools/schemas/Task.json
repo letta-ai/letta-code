@@ -9,9 +9,14 @@
       "type": "string",
       "description": "The task for the agent to perform"
     },
-    "agent_type": {
+    "harness": {
       "type": "string",
-      "description": "Which agent runs the task. Defaults to letta (a Letta subagent with full tools). Use claude-code, codex, or cursor for an external coding worker, or the name of a specialized Letta subagent listed under Available Agents."
+      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
+      "description": "Which runner executes the task. Defaults to letta (a Letta subagent). Use claude-code, codex, cursor, or opencode to start that external coding worker instead."
+    },
+    "subagent_type": {
+      "type": "string",
+      "description": "The type of specialized Letta subagent to use for this task, from the agents listed under Available Agents (for example recall, or a custom agent). Only applies to harness letta. Omit it for the default agent."
     },
     "fork_context": {
       "type": "boolean",

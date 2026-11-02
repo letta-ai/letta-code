@@ -8,12 +8,12 @@ import {
 
 test("memory cannot be dispatched through the public launch entry point", async () => {
   const result = await launchSubagent({
-    agent_type: "memory",
+    subagent_type: "memory",
     prompt: "Edit memory",
     description: "Edit memory",
   });
   expect(result.success).toBe(false);
-  if (!result.success) expect(result.error).toContain("harness-only");
+  if (!result.success) expect(result.error).toContain("internal subagent type");
 });
 
 test("memory repair launch requires a claim token", () => {

@@ -518,7 +518,7 @@ rl.on("line", line => {
     try {
       const result = await run(
         `return await tools.Agent({
-      agent_type: 'claude-code', prompt: 'Perform a task', description: 'Script task', mcp: {inherit: false}
+      harness: 'claude-code', prompt: 'Perform a task', description: 'Script task', mcp: {inherit: false}
     });`,
         "unrestricted",
         undefined,

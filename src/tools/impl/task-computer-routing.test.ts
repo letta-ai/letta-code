@@ -129,7 +129,7 @@ afterAll(() => {
 });
 
 const launchArgs = {
-  agent_type: "letta",
+  harness: "letta",
   prompt: "Check routing without executing a child",
   description: "Routing contract",
 };
@@ -171,10 +171,10 @@ describe("task computer routing", () => {
       capabilities.environmentRouting = routing;
       const result = await task({
         ...launchArgs,
-        agent_type: "memory",
+        subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("memory is harness-only");
+      expect(result).toContain("internal subagent type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -252,10 +252,10 @@ describe("task computer routing", () => {
       setDefaultComputer("cloud");
       const result = await task({
         ...launchArgs,
-        agent_type: "memory",
+        subagent_type: "memory",
       });
 
-      expect(result).toContain("memory is harness-only");
+      expect(result).toContain("internal subagent type");
       expect(receivedEnvironment).toBeUndefined();
     });
 

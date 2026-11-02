@@ -48,7 +48,7 @@ test("default mode - treats Agent like Task for safe subagent auto-approval", ()
   const result = checkPermission(
     "Agent",
     {
-      agent_type: "recall",
+      subagent_type: "recall",
       prompt: "find prior notes",
       description: "Search history",
     },
@@ -66,7 +66,7 @@ test("default mode - auto-approves the sandboxed memory worker", () => {
   const result = checkPermission(
     "Agent",
     {
-      agent_type: "memory",
+      subagent_type: "memory",
       prompt: "Remember that the user prefers tabs",
       description: "Update memory",
     },

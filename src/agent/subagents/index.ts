@@ -28,6 +28,7 @@ import memoryAgentMd from "./builtin/memory.md";
 import recallAgentMd from "./builtin/recall.md";
 import reflectionAgentMd from "./builtin/reflection.md";
 import reflectionV2AgentMd from "./builtin/reflection-v2.md";
+import { MODEL_HIDDEN_SUBAGENT_NAMES } from "./subagent-names";
 
 const STANDARD_BUILTIN_SOURCES = [
   forkAgentMd,
@@ -116,26 +117,6 @@ export interface SubagentDiscoveryResult {
 // Constants
 // ============================================================================
 
-export const EXTERNAL_CODING_AGENT_DESCRIPTORS = [
-  {
-    name: "claude-code",
-    description:
-      "Run the locally installed Claude Code CLI as a one-shot coding worker",
-    recommendedModel: "configured Claude Code default",
-  },
-  {
-    name: "codex",
-    description:
-      "Start a locally installed Codex coding session with mid-turn steering",
-    recommendedModel: "configured Codex default",
-  },
-  {
-    name: "cursor",
-    description: "Run Cursor's coding agent in the selected checkout",
-    recommendedModel: "explicit Cursor model ID required for a new session",
-  },
-] as const;
-
 /**
  * Directory for subagent files (relative to project root)
  */
@@ -150,7 +131,7 @@ export function getGlobalAgentsDir(): string {
 
 export const GLOBAL_AGENTS_DIR = getGlobalAgentsDir();
 // Runtime support is separate from advertising an adapter in the prompt.
-// `letta` is the Agent tool's default agent_type, not a subagent name.
+// `letta` is the Agent tool's default harness, not a subagent name.
 const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
   "letta",
   "claude-code",
@@ -613,18 +594,15 @@ export async function getModelFacingSubagentDescriptors(
   Array<{ name: string; description: string; recommendedModel: string }>
 > {
   const configs = await getAllSubagentConfigs(workingDirectory);
-  // `general-purpose` backs the default `letta` agent_type and `fork` backs
-  // `fork_context: true`; neither name is a valid agent_type.
-  return [
-    ...Object.entries(configs)
-      .filter(([name]) => name !== "memory" && name !== "fork")
-      .map(([name, config]) => ({
-        name: name === "general-purpose" ? "letta" : name,
-        description: config.description,
-        recommendedModel: config.recommendedModel,
-      })),
-    ...EXTERNAL_CODING_AGENT_DESCRIPTORS,
-  ];
+  // Available Agents lists the `subagent_type` values the model may pass.
+  // External workers are `harness` values, described by the tool itself.
+  return Object.entries(configs)
+    .filter(([name]) => !MODEL_HIDDEN_SUBAGENT_NAMES.has(name))
+    .map(([name, config]) => ({
+      name,
+      description: config.description,
+      recommendedModel: config.recommendedModel,
+    }));
 }
 
 /**

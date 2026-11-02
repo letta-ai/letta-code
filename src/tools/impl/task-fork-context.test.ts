@@ -136,32 +136,32 @@ describe("Agent launch selection", () => {
     ]);
   });
 
-  test.each([
-    { agent_type: "letta", fork_context: true },
-    { fork_context: true },
-  ])("%j forks the parent conversation into the child", async (args) => {
-    const result = await task({ ...brief, ...args });
+  test.each([{ harness: "letta", fork_context: true }, { fork_context: true }])(
+    "%j forks the parent conversation into the child",
+    async (args) => {
+      const result = await task({ ...brief, ...args });
 
-    expect(result).toContain("Task running in background");
-    expect(forkConversation).toHaveBeenCalledTimes(1);
-    expect(spawnCalls).toEqual([
-      {
-        type: "fork",
-        existingConversationId: "conv-forked-child",
-        forkedContext: true,
-      },
-    ]);
-  });
+      expect(result).toContain("Task running in background");
+      expect(forkConversation).toHaveBeenCalledTimes(1);
+      expect(spawnCalls).toEqual([
+        {
+          type: "fork",
+          existingConversationId: "conv-forked-child",
+          forkedContext: true,
+        },
+      ]);
+    },
+  );
 
   test("a named subagent configured to fork keeps forking", async () => {
-    await task({ ...brief, agent_type: "recall" });
+    await task({ ...brief, subagent_type: "recall" });
 
     expect(forkConversation).toHaveBeenCalledTimes(1);
     expect(spawnCalls[0]?.type).toBe("recall");
   });
 
   test("a named subagent without fork runs fresh", async () => {
-    await task({ ...brief, agent_type: "reviewer" });
+    await task({ ...brief, subagent_type: "reviewer" });
 
     expect(forkConversation).not.toHaveBeenCalled();
     expect(spawnCalls[0]).toMatchObject({ type: "reviewer" });
@@ -170,16 +170,28 @@ describe("Agent launch selection", () => {
   test.each([
     [{ fork_context: true, agent_id: "agent-other" }, "fork_context cannot"],
     [{ fork_context: true, conversation_id: "conv-x" }, "fork_context cannot"],
-    [{ agent_type: "codex", fork_context: true }, "not supported for codex"],
-    [{ agent_type: "reviewer", fork_context: true }, "only supported"],
+    [{ harness: "codex", fork_context: true }, "not supported for codex"],
     [
-      { agent_type: "nope" },
-      'Invalid agent_type "nope". Available types: letta',
+      { subagent_type: "reviewer", fork_context: true },
+      'fork_context is not supported for subagent_type "reviewer"',
     ],
-    [{ agent_type: "fork" }, "replaced by fork_context: true"],
-    [{ agent_type: "general-purpose" }, 'is now the default "letta"'],
-    [{ subagent_type: "fork" }, "subagent_type was removed"],
-    [{ subagent_type: "general-purpose" }, "subagent_type was removed"],
+    [
+      { subagent_type: "nope" },
+      'Invalid subagent_type "nope". Available subagent types: recall, reviewer',
+    ],
+    [{ harness: "nope" }, 'Invalid harness "nope"'],
+    [{ harness: "codex", subagent_type: "recall" }, "only applies to harness"],
+    [{ subagent_type: "fork" }, "use fork_context: true"],
+    [
+      { subagent_type: "general-purpose" },
+      "omit subagent_type for the default",
+    ],
+    [{ subagent_type: "codex" }, 'pass harness: "codex"'],
+    [{ subagent_type: "init" }, "internal subagent type"],
+    [{ subagent_type: "reflection" }, "internal subagent type"],
+    [{ subagent_type: "memory" }, "internal subagent type"],
+    [{ agent_type: "letta" }, "agent_type was renamed to harness"],
+    [{ agent_type: "fork" }, "agent_type was renamed to harness"],
   ])("rejects %j before forking or spawning", async (args, message) => {
     const result = await task({ ...brief, ...args });
 
@@ -189,10 +201,10 @@ describe("Agent launch selection", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
-  test("deploying an existing agent accepts agent_type letta", async () => {
+  test("deploying an existing agent accepts harness letta", async () => {
     const result = await task({
       ...brief,
-      agent_type: "letta",
+      harness: "letta",
       agent_id: "agent-other",
     });
 

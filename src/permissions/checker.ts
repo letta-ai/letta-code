@@ -760,7 +760,7 @@ function matchesPattern(
 }
 
 /**
- * Subagent types that are safe to auto-approve by default.
+ * Letta subagent types (`subagent_type`) that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
  * mutations are constrained by the memory-subagent sandbox.
  */
@@ -824,9 +824,13 @@ function getDefaultDecision(
 
   // Task tool: auto-approve safe subagent types
   if (canonicalToolName(toolName) === "Task") {
-    const requestedType = toolArgs?.agent_type;
-    const subagentType = typeof requestedType === "string" ? requestedType : "";
-    if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
+    const harness = toolArgs?.harness;
+    const subagentType =
+      typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
+    if (
+      (harness === undefined || harness === "letta") &&
+      SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)
+    ) {
       return "allow";
     }
     // Other subagent types require approval
