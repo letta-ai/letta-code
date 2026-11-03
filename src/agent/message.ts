@@ -58,11 +58,27 @@ const MCP_ORIGINATOR_SUPER_RUN_HEADER = "x-letta-mcp-originator-super-run-id";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
+type ClientSkillsPayload = NonNullable<
+  ConversationMessageCreateParams["client_skills"]
+>;
+/**
+ * The server renders `client_skills` into the prompt prefix, so any change to
+ * it invalidates the provider prompt cache and earlier thinking blocks.
+ * `frozen` is the payload sent on every request in a scope; later catalog
+ * changes reach the model only through update reminders, diffed against
+ * `announced` (frozen list + reminders already delivered). A completed
+ * compaction resets the prefix cache anyway, so it re-baselines both.
+ */
+type ClientSkillsBaseline = {
+  frozen: ClientSkillsPayload;
+  announced: ClientSkillsPayload;
+  rebaseline: boolean;
+};
 // Backend identity and agent/default-conversation scope must not share a
 // notification baseline. Discovery cache invalidation must not clear it either.
 const sentClientSkillsByBackend = new WeakMap<
   Backend,
-  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
+  Map<string, ClientSkillsBaseline>
 >();
 
 function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
@@ -173,6 +189,7 @@ function attachResponseStateTracking(
     scope: string;
     conversationId: string;
     agentId: string | null;
+    onCompaction?: () => void;
   },
 ): Stream<LettaStreamingResponse> {
   const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
@@ -187,6 +204,12 @@ function attachResponseStateTracking(
       async next() {
         const result = await iterator.next();
         if (!result.done) {
+          if (
+            (result.value.message_type as string | undefined) ===
+            "summary_message"
+          ) {
+            params.onCompaction?.();
+          }
           const responseId = getResponseStateId(result.value);
           if (responseId) {
             responseStateIdsByScope.set(params.scope, responseId);
@@ -461,10 +484,16 @@ export async function sendMessageStreamWithBackend(
     sentClientSkills = new Map();
     sentClientSkillsByBackend.set(backend, sentClientSkills);
   }
-  const skillReminder = buildClientSkillsUpdateReminder(
-    sentClientSkills.get(skillScope),
-    clientSkills,
-  );
+  const skillBaseline = sentClientSkills.get(skillScope);
+  const isNewSkillBaseline = !skillBaseline || skillBaseline.rebaseline;
+  // Keep the prompt prefix byte-stable: reuse the frozen catalog and announce
+  // additions, removals, and description changes as a reminder instead.
+  const requestClientSkills = isNewSkillBaseline
+    ? clientSkills
+    : skillBaseline.frozen;
+  const skillReminder = isNewSkillBaseline
+    ? null
+    : buildClientSkillsUpdateReminder(skillBaseline.announced, clientSkills);
   // Deliver at the next model boundary (including tool continuations), not by
   // launching an unsolicited run from a filesystem watcher. Keep approvals and
   // the original input/otid in place, then append the runtime reminder.
@@ -500,7 +529,7 @@ export async function sendMessageStreamWithBackend(
     requestMessages,
     opts,
     clientTools,
-    clientSkills,
+    requestClientSkills,
   );
 
   if (isDebugEnabled()) {
@@ -511,13 +540,13 @@ export async function sendMessageStreamWithBackend(
       opts.agentId ?? "(none)",
     );
 
-    const formattedSkills = clientSkills.map(
+    const formattedSkills = requestClientSkills.map(
       (skill) => `${skill.name} (${skill.location})`,
     );
     debugLog(
       "agent-message",
       "sendMessageStream: client_skills (%d) %s",
-      clientSkills.length,
+      requestClientSkills.length,
       formattedSkills.length > 0 ? formattedSkills.join(", ") : "(none)",
     );
 
@@ -631,11 +660,21 @@ export async function sendMessageStreamWithBackend(
         },
       );
       // A rejected request must not consume the notification; retries need it.
-      sentClientSkills.set(skillScope, clientSkills);
+      const acceptedBaseline: ClientSkillsBaseline = isNewSkillBaseline
+        ? { frozen: clientSkills, announced: clientSkills, rebaseline: false }
+        : { ...skillBaseline, announced: clientSkills };
+      sentClientSkills.set(skillScope, acceptedBaseline);
+      const skillBaselines = sentClientSkills;
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
         agentId: opts.agentId ?? null,
+        onCompaction: () => {
+          // Ignore a late summary from a stream superseded by a newer send.
+          if (skillBaselines.get(skillScope) === acceptedBaseline) {
+            acceptedBaseline.rebaseline = true;
+          }
+        },
       });
       break;
     } catch (error) {

@@ -337,3 +337,30 @@ test("does not reuse attachment resolution errors after the list recovers", asyn
   expect(failed.errors).toHaveLength(1);
   expect(recovered.errors).toEqual([]);
 });
+
+test("keeps a discovered repository's skills while its checkout refreshes", async () => {
+  await createSkill(sharedSkillsRoot("steady"), "steady-review", "Steady");
+  const options = buildOptions([{ id: "repo-steady", name: "steady" }]);
+  const names = async () =>
+    (await buildClientSkillsPayload(options)).clientSkills.map(
+      (skill) => skill.name,
+    );
+  expect(await names()).toContain("steady-review");
+
+  let release!: () => void;
+  const barrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const refresh = startCheckout(
+    AGENT_ID,
+    getRepositoryMountDir(AGENT_ID, "steady"),
+    () => barrier,
+  );
+  try {
+    invalidateClientSkillsPayloadCache();
+    expect(await names()).toContain("steady-review");
+  } finally {
+    release();
+    await refresh;
+  }
+});

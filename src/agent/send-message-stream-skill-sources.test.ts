@@ -167,13 +167,8 @@ describe("sendMessageStream skill sources", () => {
       expect(content.content).toContain("<system-reminder>");
       expect(content.content).toContain("Newly cloned skill");
       expect(JSON.stringify(content)).not.toContain("BODY_MUST_STAY_LAZY");
-      expect(accepted?.client_skills).toEqual([
-        {
-          name: "late-skill",
-          description: "Newly cloned skill",
-          location: join(skillDir, "SKILL.md"),
-        },
-      ]);
+      // The catalog stays frozen at the first send; the reminder carries it.
+      expect(accepted?.client_skills).toEqual([]);
       expect(recorded.at(-2)?.body.messages).toEqual(accepted?.messages);
       await send("conv-a");
       expect(recorded.at(-1)?.body.messages).toHaveLength(1);

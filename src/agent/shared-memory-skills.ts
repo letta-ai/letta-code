@@ -152,6 +152,13 @@ export async function resolveSharedMemorySkillsContext(options: {
   return { skillsDirs, errors };
 }
 
+/**
+ * Last skills discovered per repository mount. A checkout that is refreshing
+ * keeps exposing these so the catalog does not dip for one request and come
+ * back on the next; only a mount never discovered before is skipped.
+ */
+const lastSkillsByRepositoryMount = new Map<string, Skill[]>();
+
 export async function discoverSharedMemorySkills(
   skillsDirs: string[],
 ): Promise<SkillDiscoveryResult> {
@@ -160,8 +167,15 @@ export async function discoverSharedMemorySkills(
 
   for (const dir of skillsDirs) {
     const repositoryMount = dirname(dir);
-    if (isCheckoutPending(repositoryMount)) continue;
+    if (isCheckoutPending(repositoryMount)) {
+      for (const skill of lastSkillsByRepositoryMount.get(repositoryMount) ??
+        []) {
+        if (!skillsById.has(skill.id)) skillsById.set(skill.id, { ...skill });
+      }
+      continue;
+    }
     if (!existsSync(repositoryMount)) {
+      lastSkillsByRepositoryMount.delete(repositoryMount);
       errors.push({
         path: repositoryMount,
         message: "Attached repository is not mounted locally",
@@ -175,9 +189,13 @@ export async function discoverSharedMemorySkills(
         skipBundled: true,
       });
       errors.push(...discovery.errors);
-      for (const skill of discovery.skills) {
+      const mountSkills = discovery.skills.map(
+        (skill): Skill => ({ ...skill, source: "agent" }),
+      );
+      lastSkillsByRepositoryMount.set(repositoryMount, mountSkills);
+      for (const skill of mountSkills) {
         if (!skillsById.has(skill.id)) {
-          skillsById.set(skill.id, { ...skill, source: "agent" });
+          skillsById.set(skill.id, { ...skill });
         }
       }
     } catch (error) {
