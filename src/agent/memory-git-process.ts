@@ -38,7 +38,18 @@ export async function execGit(
   const closed = new Promise<void>((resolve) => child.once("close", resolve));
   const result = new Promise<{ stdout: string; stderr: string }>(
     (resolve, reject) => {
-      child.once("error", reject);
+      child.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") {
+          reject(
+            new Error(
+              "Letta's local memory needs Git, but `git` wasn't found on PATH. Install Git (https://git-scm.com/downloads) and restart.",
+              { cause: error },
+            ),
+          );
+        } else {
+          reject(error);
+        }
+      });
       child.once("close", (code, signal) => {
         if (timedOut || bufferError || code !== 0) {
           reject(
