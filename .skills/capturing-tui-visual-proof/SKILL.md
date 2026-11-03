@@ -1,6 +1,11 @@
 ---
 name: capturing-tui-visual-proof
 description: Captures reviewable before-and-after visual proof from the real Letta Code Ink TUI. Use when a Letta Code PR changes interactive CLI rendering or behavior and needs terminal screenshots or GIFs in its PR body.
+metadata:
+  status: proposed
+  confidence: medium
+  evidence: '["letta:conv-1c0b72e1-93ce-4ca6-9e59-06f04e848918"]'
+  rationale: 'The trajectory fulfills a before/after PR-proof request by capturing the changed UI in both light and dark themes, while the letta-code TUI skill only required keeping the theme constant between runs. Without the added rule, theme-sensitive TUI proof can cover a single render path and let a theme-specific regression ship.'
 ---
 
 # Capturing TUI Visual Proof
@@ -17,7 +22,10 @@ real terminal workflow.
   proves the claim.
 
 Keep every variable except the code revision identical: terminal dimensions,
-theme, agent, model, prompt, fixtures, and CLI flags.
+theme, agent, model, prompt, fixtures, and CLI flags. For a theme-sensitive
+rendering change, capture the before/after pair in every theme the change can
+render under; each theme is a distinct render path, and proof of one is not
+proof of the others.
 
 ## Prepare Exact Before and After Checkouts
 
@@ -177,3 +185,10 @@ full commit SHA rather than a branch or short SHA. Fetch the final PR body and
 download both embedded URLs to confirm they return the committed files.
 
 Keep tapes, temporary skills, MP4s, frames, and detached checkouts out of the PR.
+
+## Why this works / why it will be useful again
+
+Each TUI theme is a distinct render path, so before/after proof captured in one
+theme cannot vouch for colors, borders, or layout in another. One extra
+recording per theme keeps the proof cheap while preventing a theme-specific
+rendering regression from shipping with convincing single-theme evidence.
