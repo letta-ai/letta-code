@@ -8,6 +8,7 @@ import {
   isConversationBusyError,
   isInvalidToolCallIdsError,
   rebuildInputWithFreshDenials,
+  waitForConversationBusyRun,
 } from "@/agent/approval-recovery";
 import { extractApprovals } from "@/agent/check-approval";
 
@@ -147,6 +148,54 @@ describe("isConversationBusyError", () => {
     expect(isConversationBusyError(undefined)).toBe(false);
     expect(isConversationBusyError(123)).toBe(false);
     expect(isConversationBusyError({ detail: REAL_ERROR_DETAIL })).toBe(false);
+  });
+});
+
+describe("waitForConversationBusyRun", () => {
+  test("waits through active states until the named blocker settles", async () => {
+    const statuses = ["created", "pending", "running", "completed"];
+    const runIds: string[] = [];
+    const result = await waitForConversationBusyRun("run-blocker", undefined, {
+      pollIntervalMs: 1,
+      retrieveRun: async (runId, options) => {
+        runIds.push(runId);
+        expect(options?.maxRetries).toBe(0);
+        return { status: statuses.shift() };
+      },
+      sleep: async () => {},
+    });
+
+    expect(result).toBe("settled");
+    expect(runIds).toEqual([
+      "run-blocker",
+      "run-blocker",
+      "run-blocker",
+      "run-blocker",
+    ]);
+  });
+
+  test("does not treat unknown metadata as proof that the lock settled", async () => {
+    expect(
+      await waitForConversationBusyRun("run-blocker", undefined, {
+        retrieveRun: async () => ({ status: "unknown" }),
+      }),
+    ).toBe("unavailable");
+  });
+
+  test("uses the caller's absolute deadline across polling", async () => {
+    let now = 0;
+    expect(
+      await waitForConversationBusyRun("run-blocker", undefined, {
+        deadlineMs: 3,
+        pollIntervalMs: 2,
+        now: () => now,
+        retrieveRun: async () => ({ status: "running" }),
+        sleep: async (delayMs) => {
+          now += delayMs;
+        },
+      }),
+    ).toBe("timed_out");
+    expect(now).toBe(3);
   });
 });
 
