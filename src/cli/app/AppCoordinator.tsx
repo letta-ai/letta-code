@@ -514,15 +514,11 @@ export function App({
   }, [streaming]);
 
   // Guard ref for preventing concurrent processConversation calls
-  // Separate from streaming state which may be set early for UI responsiveness
-  // Tracks depth to allow intentional reentry while blocking parallel calls
-  const processingConversationRef = useRef(0);
+  const processingConversationRef = useRef(0),
+    staleTurnUnwindingRef = useRef(false);
 
   // Generation counter - incremented on each ESC interrupt.
-  // Allows processConversation to detect if it's been superseded.
   const conversationGenerationRef = useRef(0);
-
-  // Whether an interrupt has been requested for the current stream
   const [interruptRequested, setInterruptRequested] = useState(false);
 
   // Whether a command is running (disables input but no streaming UI)
@@ -3715,6 +3711,7 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    staleTurnUnwindingRef,
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
@@ -3943,6 +3940,7 @@ export function App({
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
+    staleTurnUnwindingRef,
     queueApprovalResults,
     refreshDerived,
     resetTrajectoryBases,
@@ -5049,7 +5047,9 @@ export function App({
         inputVisible={inputVisible}
         // Aborted-but-unwound turn: keep Esc routed to the interrupt handler.
         interruptRequested={
-          interruptRequested || !!abortControllerRef.current?.signal.aborted
+          interruptRequested ||
+          !!abortControllerRef.current?.signal.aborted ||
+          staleTurnUnwindingRef.current
         }
         hasStopFailedTasks={hasStopFailedTasks}
         isAgentBusy={isAgentBusy}

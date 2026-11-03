@@ -235,6 +235,7 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
+  staleTurnUnwindingRef: MutableRefObject<boolean>;
   /** Read side of the approval-results queue, for abort partial-result overlays. */
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
@@ -333,6 +334,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    staleTurnUnwindingRef,
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
@@ -539,12 +541,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           refreshDerived();
         }
       }
-      // Copy so we can safely mutate for retry recovery flows
       const inputList = Array.isArray(initialInput) ? initialInput : [];
       let currentInput = [...inputList];
       const allowReentry = options?.allowReentry ?? false;
 
-      // Use provided generation or capture current: detects ESC during async work
       const myGeneration =
         options?.submissionGeneration ?? conversationGenerationRef.current;
 
@@ -554,8 +554,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         return;
       }
 
-      // Guard against concurrent calls (two quick submissions). Dedicated ref,
-      // not streamingRef: streaming is set early for UI responsiveness.
       if (processingConversationRef.current > 0 && !allowReentry) {
         return;
       }
@@ -2842,6 +2840,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           turnAbortController,
           abortControllerRef,
           processingConversationRef,
+          staleTurnUnwindingRef,
           userCancelledRef,
           setInterruptRequested,
           queueLength: () => tuiQueueRef.current?.length ?? 0,

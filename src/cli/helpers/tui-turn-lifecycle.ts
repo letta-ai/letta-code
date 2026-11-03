@@ -41,6 +41,7 @@ export type TuiTurnFinishArgs = {
   turnAbortController: AbortController | null;
   abortControllerRef: { current: AbortController | null };
   processingConversationRef: { current: number };
+  staleTurnUnwindingRef?: { current: boolean };
   userCancelledRef: { current: boolean };
   setInterruptRequested: (value: boolean) => void;
   queueLength: () => number;
@@ -62,7 +63,12 @@ export function finishTuiTurn(args: TuiTurnFinishArgs): void {
   }
   // A forced interrupt releases the ownership refs before this finally runs.
   // Do not let that late turn decrement a replacement turn's count.
-  if (!ownsTurn && args.isStale) return;
+  if (!ownsTurn && args.isStale) {
+    if (args.staleTurnUnwindingRef) {
+      args.staleTurnUnwindingRef.current = false;
+    }
+    return;
+  }
   // Decrement BEFORE bumping the epoch: the dequeue effect can fire
   // synchronously (Ink legacy mode) and its defer gate checks === 0.
   args.processingConversationRef.current = Math.max(
@@ -78,6 +84,9 @@ export function finishTuiTurn(args: TuiTurnFinishArgs): void {
     return;
   }
   if (args.processingConversationRef.current === 0) {
+    if (args.staleTurnUnwindingRef) {
+      args.staleTurnUnwindingRef.current = false;
+    }
     settleTuiInterrupt({
       userCancelledRef: args.userCancelledRef,
       setInterruptRequested: args.setInterruptRequested,

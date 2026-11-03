@@ -53,6 +53,7 @@ type InterruptHandlerContext = {
   pendingApprovals: ApprovalRequest[];
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
   processingConversationRef: MutableRefObject<number>;
+  staleTurnUnwindingRef: MutableRefObject<boolean>;
   queueApprovalResults: QueueApprovalResults;
   refreshDerived: () => void;
   resetTrajectoryBases: () => void;
@@ -126,6 +127,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
+    staleTurnUnwindingRef,
     queueApprovalResults,
     refreshDerived,
     resetTrajectoryBases,
@@ -152,6 +154,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
   // do so, so the interrupt settles immediately.
   const settleIfNoTurnInFlight = () => {
     if (processingConversationRef.current > 0) return;
+    staleTurnUnwindingRef.current = false;
     settleTuiInterrupt({
       userCancelledRef,
       setInterruptRequested,
@@ -180,7 +183,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       .then(() => {
         const latched = interruptEscalationRef.current;
         const cancelConversationId =
-          latched && latched.controller === abortControllerRef.current
+          latched &&
+          (latched.controller === abortControllerRef.current ||
+            staleTurnUnwindingRef.current)
             ? latched.target
             : conversationIdRef.current === "default"
               ? agentIdRef.current
@@ -219,6 +224,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
+      staleTurnUnwindingRef.current = processingConversationRef.current > 0;
       latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
@@ -308,7 +314,12 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
 
     const abortedControllerWitness =
       abortControllerRef.current?.signal.aborted ?? false;
-    if (!streaming || interruptRequested || abortedControllerWitness) {
+    if (
+      !streaming ||
+      interruptRequested ||
+      abortedControllerWitness ||
+      staleTurnUnwindingRef.current
+    ) {
       // Second+ Esc while the first interrupt is still unwinding: escalate.
       // Re-fire the backend cancel (the first attempt may have failed) and
       // settle the interrupt immediately so the UI is never wedged waiting
@@ -317,8 +328,14 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // interrupt at the outer gate too: a rapid second Esc before React
       // commits (stale closure still reads streaming) must reach this branch,
       // as must a post-force-settle Esc while a stuck turn owns its controller.
-      if (interruptRequested || abortedControllerWitness) {
-        abortControllerRef.current?.abort();
+      if (
+        interruptRequested ||
+        abortedControllerWitness ||
+        staleTurnUnwindingRef.current
+      ) {
+        if (interruptRequested || abortedControllerWitness) {
+          abortControllerRef.current?.abort();
+        }
         sendBackendCancel();
         appendError(
           "Interrupt forced; the turn will stop as soon as it observes the abort.",
@@ -371,6 +388,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       latchInterruptTarget();
+      staleTurnUnwindingRef.current = processingConversationRef.current > 0;
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 

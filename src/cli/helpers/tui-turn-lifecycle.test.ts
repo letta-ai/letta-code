@@ -23,6 +23,7 @@ function harness(overrides?: {
     controller,
     abortControllerRef,
     processingConversationRef,
+    staleTurnUnwindingRef: { current: true },
     conversationGenerationRef: {
       current: overrides?.generation ?? 0,
     },
@@ -170,6 +171,7 @@ describe("finishTuiTurn — interrupted (stale) turn", () => {
     expect(h.abortControllerRef.current).toBe(replacement);
     expect(h.processingConversationRef.current).toBe(1);
     expect(h.conversationGenerationRef.current).toBe(1);
+    expect(h.staleTurnUnwindingRef.current).toBe(false);
   });
 
   test("the processing count never goes negative", () => {
