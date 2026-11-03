@@ -1,12 +1,15 @@
 import { afterEach, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, posix } from "node:path";
 import {
   buildClientSkillsPayload,
   invalidateClientSkillsPayloadCache,
 } from "@/agent/client-skills";
-import { sandboxRepositoryLayout } from "@/cloud-sandbox-workspace";
+import {
+  SANDBOX_WORKSPACE_ROOT,
+  sandboxRepositoryLayout,
+} from "@/cloud-sandbox-workspace";
 import { runWithRuntimeContext } from "@/runtime-context";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import { readSkillContent } from "@/tools/impl/skill";
@@ -51,18 +54,22 @@ async function twoRepositories() {
     { owner: "owner", repo: "app" },
     { owner: "owner", repo: "lib" },
   ]);
-  // Same shape as the sandbox layout, rooted in the temp directory.
+  // Sandbox paths are always Linux paths, whatever the parent runs on.
+  expect(layout.skillDirectories).toEqual([
+    "/root/workspace/lib/.agents/skills",
+  ]);
+  // The same layout as local paths under the temp directory, which stands in
+  // for the sandbox workspace root.
   const skillDirectories = layout.skillDirectories.map((dir) =>
-    dir.replace("/root/workspace", root),
+    join(root, ...posix.relative(SANDBOX_WORKSPACE_ROOT, dir).split("/")),
   );
   return { app, appSkill, libSkill, appShared, skillDirectories };
 }
 
 test("a second repository's .agents/skills joins the first repository's", async () => {
   const repos = await twoRepositories();
-  // The sandbox layout uses POSIX paths; resolve() normalizes separators on Windows.
-  expect(repos.skillDirectories.map((dir) => resolve(dir))).toEqual([
-    resolve(repos.app, "..", "lib", ".agents", "skills"),
+  expect(repos.skillDirectories).toEqual([
+    join(repos.app, "..", "lib", ".agents", "skills"),
   ]);
 
   const result = await buildClientSkillsPayload({
