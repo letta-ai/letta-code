@@ -91,20 +91,119 @@ function getPermissionSourcePaths(workingDirectory: string): string[] {
 }
 
 function getFileSignature(path: string): FileSignature {
+  let stat: ReturnType<typeof statSync>;
   try {
-    const stat = statSync(path);
-    if (!stat.isFile()) {
+    stat = statSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return { exists: false };
     }
-    return {
-      exists: true,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
-      hash: createHash("sha256").update(readFileSync(path)).digest("hex"),
-    };
-  } catch {
-    return { exists: false };
+    throw createSettingsReadError(path, error);
   }
+
+  if (!stat.isFile()) {
+    throw new Error(`Permissions settings path is not a file: ${path}`);
+  }
+
+  let hash: string;
+  try {
+    hash = createHash("sha256").update(readFileSync(path)).digest("hex");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { exists: false };
+    }
+    throw createSettingsReadError(path, error);
+  }
+
+  return { exists: true, mtimeMs: stat.mtimeMs, size: stat.size, hash };
+}
+
+function createSettingsReadError(path: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `Unable to read permissions settings at ${path}: ${message}`,
+    {
+      cause: error,
+    },
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseSettingsFile(content: string, path: string): SettingsFile {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(content);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(
+      `Invalid permissions settings JSON at ${path}: ${message}`,
+      {
+        cause: error,
+      },
+    );
+  }
+
+  if (!isRecord(parsed)) {
+    throw new Error(
+      `Invalid permissions settings at ${path}: expected an object`,
+    );
+  }
+
+  if (parsed.permissions !== undefined) {
+    if (!isRecord(parsed.permissions)) {
+      throw new Error(
+        `Invalid permissions settings at ${path}: permissions must be an object`,
+      );
+    }
+
+    for (const key of [
+      "allow",
+      "deny",
+      "ask",
+      "alwaysAsk",
+      "additionalDirectories",
+    ] as const) {
+      const rules = parsed.permissions[key];
+      if (
+        rules !== undefined &&
+        (!Array.isArray(rules) ||
+          rules.some((rule) => typeof rule !== "string"))
+      ) {
+        throw new Error(
+          `Invalid permissions settings at ${path}: permissions.${key} must be an array of strings`,
+        );
+      }
+    }
+
+    const mode = parsed.permissions.mode;
+    if (
+      mode !== undefined &&
+      (typeof mode !== "string" || !migratePermissionMode(mode))
+    ) {
+      throw new Error(
+        `Invalid permissions settings at ${path}: permissions.mode must be a recognized permission mode`,
+      );
+    }
+  }
+
+  return parsed as SettingsFile;
+}
+
+async function readSettingsFile(path: string): Promise<SettingsFile | null> {
+  let content: string;
+  try {
+    content = await readFile(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw createSettingsReadError(path, error);
+  }
+
+  return parseSettingsFile(content, path);
 }
 
 function getFileSignatures(paths: string[]): Map<string, FileSignature> {
@@ -264,17 +363,9 @@ export async function loadPermissions(
   };
 
   for (const settingsPath of sources) {
-    try {
-      if (exists(settingsPath)) {
-        const content = await readFile(settingsPath);
-        const settings = JSON.parse(content) as SettingsFile;
-        if (settings.permissions) {
-          mergePermissions(merged, settings.permissions);
-        }
-      }
-    } catch (_error) {
-      // Silently skip files that can't be parsed
-      // (user might have invalid JSON)
+    const settings = await readSettingsFile(settingsPath);
+    if (settings?.permissions) {
+      mergePermissions(merged, settings.permissions);
     }
   }
 

@@ -3,7 +3,10 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
-import { resetPermissionLoaderCacheForTests } from "@/permissions/loader";
+import {
+  loadPermissions,
+  resetPermissionLoaderCacheForTests,
+} from "@/permissions/loader";
 import { permissionMode } from "@/permissions/mode";
 import { applyStartupPermissionMode } from "@/permissions/startup";
 
@@ -98,4 +101,36 @@ test("startup rejects invalid CLI permission mode", async () => {
     expect(result.message).toContain("Invalid permission mode: banana");
   }
   expect(permissionMode.getMode()).toBe("standard");
+});
+
+test("startup rejects malformed permission settings before continuing", async () => {
+  const projectDir = join(testDir, "project-invalid-settings");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    '{"permissions":{"mode":"strict","deny":["Bash"]}',
+  );
+
+  await expect(
+    applyStartupPermissionMode({ workingDirectory: projectDir }),
+  ).rejects.toThrow(settingsPath);
+  expect(permissionMode.getMode()).toBe("standard");
+});
+
+test("startup preserves CLI permission mode precedence with malformed settings", async () => {
+  const projectDir = join(testDir, "project-invalid-settings-with-cli-mode");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    '{"permissions":{"mode":"strict","deny":["Bash"]}',
+  );
+
+  const result = await applyStartupPermissionMode({
+    permissionModeValue: "acceptEdits",
+    workingDirectory: projectDir,
+  });
+
+  expect(result).toEqual({ ok: true, mode: "acceptEdits", source: "cli" });
+  expect(permissionMode.getMode()).toBe("acceptEdits");
+  await expect(loadPermissions(projectDir)).rejects.toThrow(settingsPath);
 });
