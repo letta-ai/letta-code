@@ -24,7 +24,7 @@ Skills are not the default. A one-off task, a fact, or a preference belongs in m
 
 You only have access to **Bash** and **Edit**. Do not call `Read`, `Write`, memory tools, recall tools, or conversation search, even if those names appear in the transcript.
 
-Your memory repo root is `$MEMORY_DIR`. The terminal tool can expand environment variables; use `$MEMORY_DIR` on Unix or `$env:MEMORY_DIR` in PowerShell. Edit cannot expand either form. Keep all filesystem writes under the memory repo and run all git commands from inside it. Do not inspect or modify `.git` internals and do not change git config; use normal `git status`, `git diff`, `git add`, and `git commit` commands only.
+Your memory repo root is `$MEMORY_DIR`. The terminal tool can expand environment variables; use `$MEMORY_DIR` on Unix or `$env:MEMORY_DIR` in PowerShell. Edit cannot expand either form. Keep durable memory and skill writes under the memory repo. Run all git commands from inside the memory repo. Do not inspect or modify `.git` internals and do not change git config; use normal `git status`, `git diff`, `git add`, and `git commit` commands only.
 
 Use **Edit** for every modification to a file that already exists (memory or skill). Do not rewrite existing files with terminal heredocs, scripts, or redirection. Edit paths must be absolute paths under the memory repo, never literal `$MEMORY_DIR/...` or `$env:MEMORY_DIR/...` strings. To get an Edit path, resolve it with the terminal first (for example, `printf "%s/system/persona.md\n" "$MEMORY_DIR"` on Unix or `Join-Path $env:MEMORY_DIR "system/persona.md"` in PowerShell) and then use the printed path.
 
@@ -32,7 +32,7 @@ Use the **Bash** terminal tool for reading, git, and filesystem/bulk operations 
 
 - Inspect transcripts with bounded reads. Determine file size first: on Unix, `wc -c "$TRANSCRIPT_PATH"`; in PowerShell, `(Get-Item -LiteralPath $env:TRANSCRIPT_PATH).Length`. If a file is <= 15000 bytes, a full read is okay; otherwise use targeted reads (`head`, `tail`, `grep`, and `sed -n` on Unix, or `Get-Content`, `Select-String`, and `-TotalCount` in PowerShell).
 - Inspect memory with concise, platform-native commands. Use `find`, `grep`, `head`, and targeted `cat` on Unix; use `Get-ChildItem`, `Select-String`, and `Get-Content` in PowerShell.
-- Create new files with the shell-native method. On Unix, use a quoted heredoc. In PowerShell, use a single-quoted here-string piped to `Set-Content -LiteralPath <path> -Encoding utf8`. Move, rename, or delete only under `$MEMORY_DIR` (`mv`, `rm`, and `mkdir -p` on Unix; `Move-Item`, `Remove-Item`, and `New-Item` in PowerShell). If a temp file is needed, put it under `$MEMORY_DIR/.tmp/` and remove it before committing.
+- Create new files with the shell-native method. On Unix, use a quoted heredoc. In PowerShell, use a single-quoted here-string piped to `Set-Content -LiteralPath <path> -Encoding utf8`. Move, rename, or delete files only under `$MEMORY_DIR` or the subagent scratchpad (`$LETTA_SCRATCHPAD` on Unix, `$env:LETTA_SCRATCHPAD` in PowerShell). Use the subagent scratchpad (`$LETTA_SCRATCHPAD` on Unix, `$env:LETTA_SCRATCHPAD` in PowerShell) for temporary files, helper scripts, and intermediate artifacts; keep durable memory and skill edits under `$MEMORY_DIR` and do not commit scratchpad contents.
 - On Windows, avoid `&&` for failure-stopping chains so the command also works with Windows PowerShell; issue dependent commands in separate tool calls or check `$LASTEXITCODE` explicitly.
 
 ## Memory Filesystem
