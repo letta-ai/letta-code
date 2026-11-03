@@ -755,21 +755,13 @@ export async function launchSubagent(
         error: `${configName} requires a parent agent identity`,
       };
     }
-    const worker = await prepareExternalWorkerPrompt({
-      prompt: inputPrompt,
-      forkContext: args.fork_context === true,
-      parentAgentId,
-      parentConversationId: resolvedParentScope?.conversationId,
-      remote: Boolean(resolvedComputer.computer),
-      signal,
-    });
-    if ("error" in worker) return { success: false, error: worker.error };
     if (resolvedComputer.computer) {
       return launchRemoteExternalCodingAgent(
         {
           type: externalCodingAgentType,
           computer: resolvedComputer.computer,
-          prompt: worker.prompt,
+          prompt: inputPrompt,
+          forkContext: args.fork_context === true,
           description,
           model,
           mcp: args.mcp,
@@ -783,6 +775,14 @@ export async function launchSubagent(
         { spawn: spawnBackgroundSubagentTask },
       );
     }
+    const worker = await prepareExternalWorkerPrompt({
+      prompt: inputPrompt,
+      forkContext: args.fork_context === true,
+      parentAgentId,
+      parentConversationId: resolvedParentScope?.conversationId,
+      signal,
+    });
+    if ("error" in worker) return { success: false, error: worker.error };
     let mcpReminder: string | undefined;
     try {
       mcpReminder = await resolveExternalCodingAgentMcpReminder(

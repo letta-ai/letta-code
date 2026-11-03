@@ -89,12 +89,15 @@ mock.module("./external-coding-agent", () => ({
     return new Promise<SubagentResult>(() => {});
   },
 }));
-const remotePrompts: string[] = [];
+const remoteLaunches: Array<{ prompt: string; forkContext?: boolean }> = [];
 const realRemote = await import("./remote-external-coding-agent");
 mock.module("./remote-external-coding-agent", () => ({
   ...realRemote,
-  launchRemoteExternalCodingAgent: async (launch: { prompt: string }) => {
-    remotePrompts.push(launch.prompt);
+  launchRemoteExternalCodingAgent: async (launch: {
+    prompt: string;
+    forkContext?: boolean;
+  }) => {
+    remoteLaunches.push(launch);
     return { success: true, task_id: "t", output_file: "o", agent_id: null };
   },
 }));
@@ -102,7 +105,14 @@ mock.module("./remote-external-coding-agent", () => ({
 const { task } = await import("./task");
 const forkConversation = mock(async () => ({ id: "conv-forked-child" }));
 const retrieveAgent = mock(async () => ({ model: "anthropic/test-model" }));
+const olderMessage = `OLDER ${"x".repeat(50_000)}`;
 const parentMessages = [
+  {
+    id: "older",
+    date: "",
+    message_type: "user_message",
+    content: olderMessage,
+  },
   {
     id: "m1",
     date: "",
@@ -124,7 +134,7 @@ beforeEach(async () => {
   forkConversation.mockClear();
   listConversationMessages.mockClear();
   workerPrompts.length = 0;
-  remotePrompts.length = 0;
+  remoteLaunches.length = 0;
   __testSetBackend({
     capabilities: { environmentRouting: true },
     forkConversation,
@@ -181,9 +191,10 @@ describe("fork_context for external coding workers", () => {
     expect(forkConversation).not.toHaveBeenCalled();
     expect(workerPrompts).toHaveLength(1);
     const prompt = workerPrompts[0] as string;
-    const path = prompt.match(/is at:\n(.+)\n/)?.[1] as string;
+    const path = prompt.match(/available at:\n(.+)\n/)?.[1] as string;
     expect(path).toStartWith(join(scratchpad, ".letta", "parent-transcripts"));
-    expect(await Bun.file(path).text()).toContain("Use Postgres.");
+    expect(await Bun.file(path).text()).toContain(olderMessage);
+    expect(prompt).toContain("Use Postgres.");
     expect(prompt).toEndWith("Task:\nDo the work");
   });
 
@@ -194,7 +205,7 @@ describe("fork_context for external coding workers", () => {
     expect(workerPrompts).toEqual(["Do the work"]);
   });
 
-  test("a forked remote worker gets the transcript inline", async () => {
+  test("a forked remote worker prepares history at the destination, not the caller", async () => {
     await task({
       ...brief,
       harness: "claude-code",
@@ -202,9 +213,10 @@ describe("fork_context for external coding workers", () => {
       computer: "office-mac",
     });
 
-    expect(remotePrompts).toHaveLength(1);
-    expect(remotePrompts[0]).toContain("### User\n\nUse Postgres.");
-    expect(remotePrompts[0]).not.toContain("is at:");
+    expect(remoteLaunches).toHaveLength(1);
+    expect(remoteLaunches[0]?.prompt).toBe(brief.prompt);
+    expect(remoteLaunches[0]?.forkContext).toBe(true);
+    expect(listConversationMessages).not.toHaveBeenCalled();
   });
 
   test("a forked external worker ignores the default computer", async () => {
@@ -220,7 +232,7 @@ describe("fork_context for external coding workers", () => {
       delete process.env.LETTA_DEFAULT_SUBAGENT_COMPUTER;
     }
 
-    expect(remotePrompts).toHaveLength(0);
+    expect(remoteLaunches).toHaveLength(0);
     expect(workerPrompts).toHaveLength(1);
   });
 });

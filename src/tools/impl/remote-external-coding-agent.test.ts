@@ -45,7 +45,6 @@ const runtime = {
   conversation_id: scope.conversationId,
 };
 
-/** The App Server client surface this module uses, backed by in-memory frames. */
 class FakeComputer {
   readonly launches: LaunchSubagentCommand[] = [];
   readonly messages: SubagentMessageCommand[] = [];
@@ -197,6 +196,7 @@ function environment(
     metadata: capable
       ? {
           launch_subagent_notify_caller: true,
+          external_fork_context: steering,
           ...(steering ? { subagent_message: true } : {}),
         }
       : {},
@@ -268,7 +268,6 @@ function launch(
   );
 }
 
-/** The notification follows the task's lifecycle, after its completion settles. */
 async function notified(): Promise<QueuedMessage> {
   for (let i = 0; i < 200 && queued.length === 0; i++)
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -321,7 +320,7 @@ describe("launchRemoteExternalCodingAgent", () => {
           });
         if (path === `/v1/environments/device-${conversations}`)
           return Response.json({
-            ...environment(true),
+            ...environment(true, true),
             connectionId: `conn-${conversations}`,
           });
         throw new Error(`Unexpected request: ${request.method} ${path}`);
@@ -340,6 +339,7 @@ describe("launchRemoteExternalCodingAgent", () => {
             prompt: "Fix the bug",
             description: "Fix the bug",
             parentScope: scope,
+            forkContext: worker === 2,
           },
           { spawn, connect },
         );
@@ -349,6 +349,10 @@ describe("launchRemoteExternalCodingAgent", () => {
         expect(computer.launches[0]).toMatchObject({
           runtime,
           notify: "caller",
+          args:
+            worker === 2
+              ? { harness: type, fork_context: true }
+              : { subagent_type: type },
         });
         expect(requests.slice((worker - 1) * 3, worker * 3)).toEqual([
           {
@@ -429,7 +433,6 @@ describe("launchRemoteExternalCodingAgent", () => {
         },
       }),
     ]);
-    // The remote native session can't be resumed from this machine.
     expect(result.agent_id).toBeNull();
 
     computer.snapshot({ status: "running" }, 1);
@@ -506,7 +509,6 @@ describe("launchRemoteExternalCodingAgent", () => {
       at: "2026-11-01T21:47:03.554Z",
       text: "All suites passed.",
     };
-    // An older listener sends no progress_texts at all.
     computer.snapshot({ status: "running" }, 1);
     await Bun.sleep(0);
     computer.snapshot({ progress_texts: [first] }, 2);
@@ -551,7 +553,6 @@ describe("launchRemoteExternalCodingAgent", () => {
   });
 
   test("keeps the launch response's native ID when status updates lag", async () => {
-    // No status update arrives within the wait window.
     const computer = new FakeComputer(() => ({
       ...accepted,
       agent_id: "claude_11111111-1111-4111-8111-111111111111",
@@ -789,7 +790,6 @@ describe("launchRemoteExternalCodingAgent", () => {
 
   test("says the worker is no longer listed when the listener lacks it", async () => {
     const first = new FakeComputer(() => accepted);
-    // The replacement listener is a new process with no record of the worker.
     const second = new FakeComputer(
       () => accepted,
       (computer) => computer.emptySnapshot(),
@@ -810,10 +810,10 @@ describe("launchRemoteExternalCodingAgent", () => {
 
   test("tells the caller to update an older Letta Code without connecting", async () => {
     const computer = new FakeComputer(() => accepted);
-    for (const type of ["claude-code", "codex"] as const) {
-      expect(await launch([computer], { type }, false)).toEqual({
+    for (const forkContext of [false, true]) {
+      expect(await launch([computer], { forkContext }, forkContext)).toEqual({
         success: false,
-        error: `brad-box is running an older Letta Code that can't run ${type === "codex" ? "Codex" : "Claude Code"} subagents remotely. Update Letta Code on brad-box.`,
+        error: expect.stringContaining("Update Letta Code on brad-box"),
       });
     }
     expect(computer.launches).toHaveLength(0);

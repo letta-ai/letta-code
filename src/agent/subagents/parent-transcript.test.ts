@@ -3,10 +3,8 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 import {
   fetchParentConversationMessages,
-  PARENT_TRANSCRIPT_TOOL_ARGS_CHARS,
-  PARENT_TRANSCRIPT_TOOL_RESULT_CHARS,
   renderParentTranscript,
-  selectRecentTurns,
+  selectRecentMessages,
 } from "./parent-transcript";
 
 const date = "2026-01-01T00:00:00Z";
@@ -32,7 +30,7 @@ const toolReturn = (tool_return: string, status = "success") =>
 
 describe("renderParentTranscript", () => {
   test("renders turns with tool calls and results, omitting reasoning and system", () => {
-    const { turns, markdown } = renderParentTranscript([
+    const { messages, markdown } = renderParentTranscript([
       msg({ message_type: "system_message", content: "SYSTEM PROMPT" }),
       user("Fix the flaky test in src/a.test.ts"),
       msg({ message_type: "reasoning_message", reasoning: "SECRET THOUGHTS" }),
@@ -43,21 +41,21 @@ describe("renderParentTranscript", () => {
       assistant("Done."),
     ]);
 
-    expect(turns).toHaveLength(2);
-    expect(turns[0]).toContain(
+    expect(messages).toHaveLength(6);
+    expect(messages[0]).toContain(
       "### User\n\nFix the flaky test in src/a.test.ts",
     );
-    expect(turns[0]).toContain("**Tool call: Bash**");
-    expect(turns[0]).toContain('{"command":"bun test src/a.test.ts"}');
-    expect(turns[0]).toContain("**Tool result (error)**");
-    expect(turns[0]).toContain("### Assistant\n\nThe timeout is too short.");
-    expect(turns[1]).toStartWith("### User\n\nGo ahead and raise it");
+    expect(messages[1]).toContain("**Tool call: Bash**");
+    expect(messages[1]).toContain('{"command":"bun test src/a.test.ts"}');
+    expect(messages[2]).toContain("**Tool result (error)**");
+    expect(messages[3]).toContain("### Assistant\n\nThe timeout is too short.");
+    expect(messages[4]).toStartWith("### User\n\nGo ahead and raise it");
     expect(markdown).not.toContain("SECRET THOUGHTS");
     expect(markdown).not.toContain("SYSTEM PROMPT");
   });
 
   test("strips system reminders and drops reminder-only user messages", () => {
-    const { turns } = renderParentTranscript([
+    const { messages } = renderParentTranscript([
       user([
         {
           type: "text",
@@ -72,26 +70,21 @@ describe("renderParentTranscript", () => {
       ]),
     ]);
 
-    expect(turns).toEqual(["### User\n\nReal question"]);
+    expect(messages).toEqual(["### User\n\nReal question"]);
   });
 
-  test("clips long tool results and arguments", () => {
+  test("preserves long tool results and arguments", () => {
+    const args = `{"content":"${"a".repeat(8_000)}"}`;
+    const result = "r".repeat(60_000);
     const { markdown } = renderParentTranscript([
       user("go"),
-      toolCall(
-        "Write",
-        `{"content":"${"a".repeat(PARENT_TRANSCRIPT_TOOL_ARGS_CHARS * 2)}"}`,
-      ),
-      toolReturn("r".repeat(PARENT_TRANSCRIPT_TOOL_RESULT_CHARS * 10)),
+      toolCall("Write", args),
+      toolReturn(result),
     ]);
 
-    expect(markdown).toContain("[arguments truncated:");
-    expect(markdown).toContain("[result truncated: 18,000 more characters]");
-    expect(markdown.length).toBeLessThan(
-      PARENT_TRANSCRIPT_TOOL_ARGS_CHARS +
-        PARENT_TRANSCRIPT_TOOL_RESULT_CHARS +
-        1_000,
-    );
+    expect(markdown).toContain(args);
+    expect(markdown).toContain(result);
+    expect(markdown).not.toContain("truncated:");
   });
 
   test("renders client-side tool results from approval responses", () => {
@@ -135,39 +128,51 @@ describe("renderParentTranscript", () => {
   });
 
   test("starts a turn at a compaction summary", () => {
-    const { turns } = renderParentTranscript([
+    const { messages } = renderParentTranscript([
       msg({ message_type: "summary_message", summary: "Earlier: set up repo" }),
       user("next"),
     ]);
 
-    expect(turns[0]).toBe(
+    expect(messages[0]).toBe(
       "### Summary of earlier conversation\n\nEarlier: set up repo",
     );
-    expect(turns).toHaveLength(2);
+    expect(messages).toHaveLength(2);
   });
 });
 
-describe("selectRecentTurns", () => {
-  test("keeps the newest turns that fit, oldest first", () => {
-    const turns = ["a".repeat(50), "b".repeat(50), "c".repeat(50)];
-    const { text, turnCount } = selectRecentTurns(turns, 110);
+describe("selectRecentMessages", () => {
+  test("keeps the newest complete messages that fit, oldest first", () => {
+    const messages = ["a".repeat(50), "b".repeat(50), "c".repeat(50)];
+    const { text, messageCount, earlier } = selectRecentMessages(messages, 110);
 
-    expect(turnCount).toBe(2);
+    expect(messageCount).toBe(2);
+    expect(earlier).toBe("a".repeat(50));
     expect(text).toBe(`${"b".repeat(50)}\n\n---\n\n${"c".repeat(50)}`);
   });
 
-  test("respects the turn cap even when more would fit", () => {
-    expect(selectRecentTurns(["a", "b", "c"], 1_000, 2).turnCount).toBe(2);
+  test("has no message-count cap and includes separators in the budget", () => {
+    const messages = Array.from({ length: 20 }, (_, i) => `${i}`);
+    const full = messages.join("\n\n---\n\n");
+    expect(selectRecentMessages(messages, full.length)).toEqual({
+      text: full,
+      messageCount: 20,
+      earlier: "",
+    });
+    expect(selectRecentMessages(messages, full.length - 1).messageCount).toBe(
+      19,
+    );
   });
 
-  test("keeps the end of an oversized last turn within the budget", () => {
+  test("preserves an oversized latest message entirely in the file portion", () => {
     const last = `${"x".repeat(500)}LATEST REQUEST`;
-    const { text, turnCount } = selectRecentTurns(["old", last], 100);
+    const { text, messageCount, earlier } = selectRecentMessages(
+      ["old", last],
+      100,
+    );
 
-    expect(turnCount).toBe(1);
-    expect(text.length).toBeLessThanOrEqual(100);
-    expect(text).toStartWith("… [start of this turn omitted]");
-    expect(text).toEndWith("LATEST REQUEST");
+    expect(messageCount).toBe(0);
+    expect(text).toBe("");
+    expect(earlier).toBe(`old\n\n---\n\n${last}`);
   });
 });
 
