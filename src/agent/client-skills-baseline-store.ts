@@ -23,6 +23,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
 import { getServerUrl } from "@/backend/api/server-url";
 import { APIBackend } from "@/backend/backend";
 import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
@@ -86,7 +87,8 @@ export function clientSkillsBackendIdentity(backend: object): string | null {
     try {
       return getServerUrl();
     } catch {
-      return process.env.LETTA_BASE_URL ?? null;
+      // Settings may not be loaded yet; use getServerUrl's env/default order.
+      return process.env.LETTA_BASE_URL || LETTA_CLOUD_API_URL;
     }
   }
   return null;
