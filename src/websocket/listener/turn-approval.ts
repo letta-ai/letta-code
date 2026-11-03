@@ -283,6 +283,9 @@ export async function handleApprovalStop(params: {
     conversation_id: conversationId,
   };
   const classificationPermissionMode = turnPermissionModeState.mode;
+  const classificationPermissionModeState = {
+    mode: classificationPermissionMode,
+  };
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
@@ -290,7 +293,7 @@ export async function handleApprovalStop(params: {
       requireArgsForAutoApprove: true,
       missingNameReason: "Tool call incomplete - missing name",
       workingDirectory: turnWorkingDirectory,
-      permissionModeState: turnPermissionModeState,
+      permissionModeState: classificationPermissionModeState,
       agentId: agentId ?? undefined,
       toolContextId: turnToolContextId ?? undefined,
     },
@@ -593,7 +596,6 @@ export async function handleApprovalStop(params: {
   );
   const executionRunId =
     runId || runtime.activeRunId || msgRunIds[msgRunIds.length - 1];
-  // Only relay-owned output waits for client reconnect (#3522).
   if (approvedDecisions.length > 0 && !processOwnedTurn && !isDeliveryReady()) {
     const transportOpenResult = await waitForTransportOpen(
       isDeliveryReady,
@@ -712,8 +714,7 @@ export async function handleApprovalStop(params: {
       afterToolExecution: effectBoundary.afterToolExecution,
     });
   } catch (error) {
-    // Persist partial results and fail unknown outcomes before delivery waits;
-    // recovery must never execute committed effects again.
+    // Persist partial results before delivery waits; recovery never replays effects.
     const boundaryResults = effectBoundary.results;
     const failureResults = [
       ...boundaryResults,
@@ -733,8 +734,7 @@ export async function handleApprovalStop(params: {
       "after_tool_execution",
     );
 
-    // Close tool-start events after execution throws. Cancellation retains
-    // precedence because its cached interrupted results own terminal delivery.
+    // Close tool starts after throws; cancellation still owns terminal delivery.
     emitToolExecutionOutput.flush();
     if (!shouldInterrupt() && !processOwnedTurn && !isDeliveryReady()) {
       await waitForTransportOpen(isDeliveryReady, shouldInterrupt);
