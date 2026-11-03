@@ -152,7 +152,12 @@ export async function waitForConversationBusyRun(
       return "unavailable";
     }
 
-    if (TERMINAL_BLOCKING_RUN_STATUSES.has(String(status))) return "settled";
+    if (TERMINAL_BLOCKING_RUN_STATUSES.has(String(status))) {
+      const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
+      if (delayMs <= 0) return "timed_out";
+      await sleep(delayMs, signal);
+      return "settled";
+    }
     if (!ACTIVE_BLOCKING_RUN_STATUSES.has(String(status))) return "unavailable";
 
     const delayMs = Math.min(pollIntervalMs, deadlineMs - now());

@@ -873,9 +873,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             const blockingRunId = extractConversationBusyRunId(errorDetail);
-            // A server-named blocker has its own bounded wait and does not spend
-            // the generic three-attempt fallback budget. This lets one rejected
-            // input survive successive healthy runs from another client.
             if (
               preStreamAction === "retry_conversation_busy" ||
               blockingRunId
@@ -916,7 +913,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               }
 
               if (!stream) {
-                // Show status message
                 const statusId = uid("status");
                 buffersRef.current.byId.set(statusId, {
                   kind: "status",
@@ -947,8 +943,12 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                     );
                     refreshDerived();
                   }
-
                   if (settled) {
+                    if (
+                      myGeneration !== conversationGenerationRef.current ||
+                      userCancelledRef.current
+                    )
+                      return;
                     buffersRef.current.interrupted = false;
                     restorePinnedPermissionMode();
                     continue;

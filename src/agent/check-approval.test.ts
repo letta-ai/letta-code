@@ -155,6 +155,7 @@ describe("waitForConversationBusyRun", () => {
   test("waits through active states until the named blocker settles", async () => {
     const statuses = ["created", "pending", "running", "completed"];
     const runIds: string[] = [];
+    const delays: number[] = [];
     const result = await waitForConversationBusyRun("run-blocker", undefined, {
       pollIntervalMs: 1,
       retrieveRun: async (runId, options) => {
@@ -162,7 +163,9 @@ describe("waitForConversationBusyRun", () => {
         expect(options?.maxRetries).toBe(0);
         return { status: statuses.shift() };
       },
-      sleep: async () => {},
+      sleep: async (delayMs) => {
+        delays.push(delayMs);
+      },
     });
 
     expect(result).toBe("settled");
@@ -172,6 +175,7 @@ describe("waitForConversationBusyRun", () => {
       "run-blocker",
       "run-blocker",
     ]);
+    expect(delays).toEqual([1, 1, 1, 1]);
   });
 
   test("does not treat unknown metadata as proof that the lock settled", async () => {
