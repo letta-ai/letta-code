@@ -31,7 +31,9 @@ beforeAll(async () => {
   model = await resolveCursorTestModel(cwd);
   process.env.HOME = root;
   await settingsManager.initialize();
-});
+  // resolveCursorTestModel lists Cursor's live model catalog, which has taken
+  // longer than bun's default 5s hook timeout.
+}, 30_000);
 
 afterAll(async () => {
   await closeCursorSessions();
