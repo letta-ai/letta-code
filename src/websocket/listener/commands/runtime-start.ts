@@ -433,8 +433,13 @@ async function applyRuntimeStartState(
       scope.agent_id,
       scope.conversation_id,
     );
-    state.mode = mode;
-    persistPermissionModeMapForRuntime(context.runtime);
+    // A default-only mode (e.g. a channel account's default) must not
+    // override a mode explicitly chosen for this conversation.
+    if (!(parsed.mode_is_default && state.explicit)) {
+      state.mode = mode;
+      if (!parsed.mode_is_default) state.explicit = true;
+      persistPermissionModeMapForRuntime(context.runtime);
+    }
   }
 
   if (parsed.cwd !== undefined || workspaceSandbox) {

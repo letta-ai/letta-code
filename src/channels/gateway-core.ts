@@ -704,7 +704,7 @@ export class ChannelGateway {
           ? { conversation_source_tags: conversationTags }
           : {}),
         ...(delivery.defaultPermissionMode
-          ? { mode: delivery.defaultPermissionMode }
+          ? { mode: delivery.defaultPermissionMode, mode_is_default: true }
           : {}),
         recover_approvals: true,
         force_device_status: false,

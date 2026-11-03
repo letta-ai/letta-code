@@ -223,5 +223,4 @@ describe("fork_context for external coding workers", () => {
     expect(remotePrompts).toHaveLength(0);
     expect(workerPrompts).toHaveLength(1);
   });
-
 });

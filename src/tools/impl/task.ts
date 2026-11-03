@@ -881,8 +881,13 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
-  // Deploys were rejected above: fork_context and non-letta types can't deploy.
   if (config.fork) {
+    if (args.agent_id || args.conversation_id) {
+      return {
+        success: false,
+        error: `${requestedType} forks context and cannot be combined with agent_id or conversation_id`,
+      };
+    }
     try {
       const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
       const parentConvId =

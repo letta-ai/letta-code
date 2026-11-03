@@ -111,6 +111,7 @@ export function handleModeChange(
     }
 
     current.mode = incomingMode;
+    current.explicit = true;
 
     persistPermissionModeMapForRuntime(runtime);
 
