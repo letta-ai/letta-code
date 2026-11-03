@@ -107,6 +107,28 @@ export interface SandboxDesktopSession {
   expiresAt: string;
 }
 
+export interface SandboxPublicExposure {
+  url: string;
+  port: number;
+  expiresAt: string;
+}
+
+export async function createSandboxPublicExposure(
+  port: number,
+  deps: SandboxFilesApiDeps = defaultDeps,
+): Promise<SandboxPublicExposure> {
+  const response = await request(
+    "/v1/sandbox-exposures",
+    {
+      method: "POST",
+      body: JSON.stringify({ port }),
+      headers: { "Content-Type": "application/json" },
+    },
+    deps,
+  );
+  return (await response.json()) as SandboxPublicExposure;
+}
+
 /**
  * Start the sandbox's graphical desktop and mint a short-lived relay session.
  * The server fixes the lifetime (one hour today); the body is intentionally
