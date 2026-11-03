@@ -4,7 +4,7 @@ import type { AgentRuntimeScope } from "./runtime-scope";
 export interface SubagentLaunchArgs {
   /** `letta` (default) or an external coding worker (`claude-code`, `codex`, ...). */
   harness?: string;
-  /** A specialized Letta subagent (`recall`, a custom agent). Harness `letta` only. */
+  /** A named Letta preset; overrides other launch settings. `custom` + identity is the prepared-conversation wire protocol. */
   subagent_type?: string;
   /** Start the child with the parent conversation's context. */
   fork_context?: boolean;

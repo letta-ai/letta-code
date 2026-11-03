@@ -305,7 +305,20 @@ describe("prepared conversation launch", () => {
 });
 
 describe("fork launch receipt", () => {
-  test.each([{ fork_context: true }, { subagent_type: "recall" }])(
+  test.each([
+    { fork_context: true },
+    { subagent_type: "recall" },
+    {
+      subagent_type: "recall",
+      harness: "codex",
+      fork_context: false,
+      model: "ignored-model",
+      computer: "ignored-computer",
+      agent_id: "ignored-agent",
+      conversation_id: "ignored-conversation",
+      mcp: { inherit: false },
+    },
+  ])(
     "%j returns both IDs before the child emits init or completes",
     async (selection) => {
       const receipt = await runWithRuntimeContext(

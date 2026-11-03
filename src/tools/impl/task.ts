@@ -70,7 +70,7 @@ import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent"
 import { resolveLaunchComputer } from "./subagent-computer";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
-  describeTaskAgentSelection,
+  applySubagentPreset,
   listSubagentTypes,
   preparedConversationConfig,
   resolveTaskAgentSelection,
@@ -96,9 +96,6 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   /** The launching App Server client owns the completion notification. */
   notifyCaller?: boolean;
 }
-
-// Internal subagent configs allowed when deploying an existing agent
-const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 
 export {
   waitForBackgroundSubagentAgentId,
@@ -636,6 +633,12 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
+  // `custom` + identity is the App Server's prepared-conversation protocol,
+  // not a named preset. The Agent adapter strips overrides before reaching here.
+  const prepared =
+    args.subagent_type === "custom" &&
+    Boolean(args.agent_id || args.conversation_id);
+  if (!prepared) args = applySubagentPreset(args);
   const resolvedSelection = resolveTaskAgentSelection(args);
   if ("error" in resolvedSelection)
     return { success: false, error: resolvedSelection.error };
@@ -655,8 +658,12 @@ export async function launchSubagent(
 
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
-  const requestedType = describeTaskAgentSelection(selection);
-  if (selection.forkContext && isDeployingExisting) {
+  const configName =
+    selection.kind === "external" ? selection.type : selection.subagentType;
+  const requestedType = args.subagent_type
+    ? `subagent_type "${configName}"`
+    : configName;
+  if (args.fork_context && isDeployingExisting) {
     return {
       success: false,
       error: "fork_context cannot be combined with agent_id or conversation_id",
@@ -671,7 +678,7 @@ export async function launchSubagent(
       error: `${requestedType} does not accept agent_id or conversation_id at launch; use SendAgentMessage with the synthetic agent ID for follow-up work`,
     };
   }
-  if (isExternalCodingAgent && selection.forkContext) {
+  if (isExternalCodingAgent && args.fork_context) {
     return {
       success: false,
       error: `fork_context is not supported for ${requestedType} yet; put the context it needs in the prompt`,
@@ -691,10 +698,6 @@ export async function launchSubagent(
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
-  const configName =
-    selection.kind === "external" ? selection.type : selection.subagentType;
-
-  const prepared = configName === "custom" && isDeployingExisting;
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -708,18 +711,6 @@ export async function launchSubagent(
     return {
       success: false,
       error: `Invalid subagent_type "${configName}". Available subagent types: ${listSubagentTypes(Object.keys(allConfigs))}. Omit subagent_type for the default agent.`,
-    };
-  }
-  if (selection.kind === "letta" && selection.forkContext && !config.fork) {
-    return {
-      success: false,
-      error: `fork_context is not supported for ${requestedType}; it runs with its own prompt and context. Omit subagent_type to fork the default agent`,
-    };
-  }
-  if (!prepared && isDeployingExisting && !VALID_DEPLOY_TYPES.has(configName)) {
-    return {
-      success: false,
-      error: `When deploying an existing agent, omit subagent_type (the agent keeps its own prompt). Got: ${requestedType}`,
     };
   }
   if (
@@ -978,7 +969,7 @@ export async function task(args: TaskArgs): Promise<string> {
     const errorSuffix = errors.length > 0 ? `, ${errors.length} error(s)` : "";
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
-  const result = await launchSubagent(args);
+  const result = await launchSubagent(applySubagentPreset(args));
   if (!result.success) return `Error: ${result.error}`;
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id

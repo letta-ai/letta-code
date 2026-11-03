@@ -1,165 +1,88 @@
 import { describe, expect, test } from "bun:test";
 import {
-  describeTaskAgentSelection,
+  applySubagentPreset,
   listSubagentTypes,
   resolveTaskAgentSelection,
-  TASK_HARNESSES,
 } from "./task-agent-selection";
 
-function errorOf(args: Record<string, unknown>): string {
-  const result = resolveTaskAgentSelection(args);
-  if (!("error" in result)) throw new Error("expected an error");
-  return result.error;
-}
-
-describe("resolveTaskAgentSelection", () => {
-  test("defaults to a fresh default letta agent", () => {
-    expect(resolveTaskAgentSelection({})).toEqual({
-      selection: {
-        kind: "letta",
-        subagentType: "general-purpose",
-        specialized: false,
-        forkContext: false,
+describe("Agent launch selection", () => {
+  test.each([
+    [{}, { kind: "letta", subagentType: "general-purpose" }],
+    [{ fork_context: true }, { kind: "letta", subagentType: "fork" }],
+    [
+      { harness: " letta " },
+      { kind: "letta", subagentType: "general-purpose" },
+    ],
+    [
+      { subagent_type: " recall ", harness: "codex", fork_context: false },
+      { kind: "letta", subagentType: "recall" },
+    ],
+    [
+      {
+        subagent_type: "reviewer",
+        harness: "invalid",
+        fork_context: "ignored",
       },
-    });
-  });
-
-  test.each([{}, { harness: "letta" }, { harness: " letta " }])(
-    "%j with fork_context runs the forked config",
-    (args) => {
-      expect(
-        resolveTaskAgentSelection({ ...args, fork_context: true }),
-      ).toEqual({
-        selection: {
-          kind: "letta",
-          subagentType: "fork",
-          specialized: false,
-          forkContext: true,
-        },
-      });
-    },
-  );
-
-  test.each([
-    [{ subagent_type: "recall" }, "recall"],
-    [{ subagent_type: " recall ", harness: "letta" }, "recall"],
-    [{ subagent_type: "my-reviewer" }, "my-reviewer"],
-  ])("maps %j to the %s config", (args, subagentType) => {
-    expect(resolveTaskAgentSelection(args)).toEqual({
-      selection: {
-        kind: "letta",
-        subagentType,
-        specialized: true,
-        forkContext: false,
-      },
-    });
-  });
-
-  test.each(["claude-code", "codex", "cursor", "opencode"])(
-    "routes harness %s to the external worker",
-    (harness) => {
-      expect(
-        resolveTaskAgentSelection({ harness, fork_context: true }),
-      ).toEqual({
-        selection: { kind: "external", type: harness, forkContext: true },
-      } as never);
-    },
-  );
-
-  test("the harness list is letta plus every external worker", () => {
-    expect([...TASK_HARNESSES]).toEqual([
-      "letta",
-      "claude-code",
-      "codex",
-      "opencode",
-      "cursor",
-    ]);
-  });
-
-  test.each(["claude-code", "codex", "cursor", "opencode"])(
-    "rejects subagent_type with harness %s",
-    (harness) => {
-      expect(errorOf({ harness, subagent_type: "recall" })).toBe(
-        `subagent_type only applies to harness "letta"; omit subagent_type when harness is "${harness}"`,
-      );
-    },
-  );
-
-  test.each([
-    [
-      { subagent_type: "fork" },
-      'subagent_type "fork" was removed; use fork_context: true and omit subagent_type',
+      { kind: "letta", subagentType: "reviewer" },
     ],
-    [
-      { subagent_type: " general-purpose " },
-      'subagent_type "general-purpose" was removed; omit subagent_type for the default agent',
-    ],
-    [
-      { subagent_type: "letta" },
-      '"letta" is a harness, not a subagent_type; omit subagent_type for the default agent',
-    ],
-  ])("rejects retired subagent_type %j with its migration", (args, error) => {
-    expect(errorOf(args)).toBe(error);
-  });
-
-  test.each(["claude-code", "codex", "cursor", "opencode"])(
-    "points subagent_type %s at harness",
-    (name) => {
-      expect(errorOf({ subagent_type: name })).toBe(
-        `"${name}" is a harness, not a subagent_type; pass harness: "${name}" and omit subagent_type`,
-      );
-      expect(errorOf({ harness: "codex", subagent_type: name })).toContain(
-        `pass harness: "${name}"`,
-      );
-    },
-  );
-
-  test.each(["init", "reflection", "memory"])(
-    "rejects internal subagent_type %s",
-    (name) => {
-      expect(errorOf({ subagent_type: name })).toBe(
-        `"${name}" is an internal subagent type launched by the harness; it cannot be selected with subagent_type`,
-      );
-    },
-  );
-
-  test.each([
-    { agent_type: "letta" },
-    { agent_type: "codex" },
-    { agent_type: "recall", subagent_type: "recall" },
-  ])("rejects the renamed agent_type field %j", (args) => {
-    expect(errorOf(args)).toBe(
-      'agent_type was renamed to harness; pass harness ("letta", "claude-code", "codex", "opencode", "cursor") and, for a specialized Letta subagent, subagent_type',
-    );
+    [{ harness: "claude-code" }, { kind: "external", type: "claude-code" }],
+    [{ harness: "codex" }, { kind: "external", type: "codex" }],
+    [{ harness: "cursor" }, { kind: "external", type: "cursor" }],
+    [{ harness: "opencode" }, { kind: "external", type: "opencode" }],
+  ] as const)("resolves %j", (args, selection) => {
+    expect(resolveTaskAgentSelection(args)).toEqual({ selection });
   });
 
   test.each([
     { harness: "" },
-    { harness: "  " },
     { harness: 3 },
     { harness: "recall" },
     { subagent_type: "" },
     { subagent_type: 3 },
     { fork_context: "yes" },
-  ])("rejects malformed input %j", (args) => {
+    ...[
+      "fork",
+      "general-purpose",
+      "letta",
+      "codex",
+      "claude-code",
+      "cursor",
+      "opencode",
+      "init",
+      "reflection",
+      "memory",
+    ].map((subagent_type) => ({ subagent_type })),
+  ])("rejects invalid selection %j", (args) => {
     expect(resolveTaskAgentSelection(args)).toHaveProperty("error");
   });
 
-  test("describes selections as callers name them", () => {
-    const describe = (args: Record<string, unknown>) => {
-      const result = resolveTaskAgentSelection(args);
-      if ("error" in result) throw new Error(result.error);
-      return describeTaskAgentSelection(result.selection);
+  test("presets discard launch overrides but preserve cancellation and caller metadata", () => {
+    const signal = new AbortController().signal;
+    const assignment = {
+      subagent_type: "recall",
+      prompt: "Find the decision",
+      description: "Recall decision",
+      signal,
+      toolCallId: "call-1",
+      notifyCaller: true,
     };
-    expect(describe({})).toBe('harness "letta"');
-    expect(describe({ fork_context: true })).toBe('harness "letta"');
-    expect(describe({ subagent_type: "recall" })).toBe(
-      'subagent_type "recall"',
-    );
-    expect(describe({ harness: "codex" })).toBe("codex");
+    const overrides = {
+      harness: "codex",
+      fork_context: false,
+      model: "override",
+      computer: "remote",
+      agent_id: "other",
+      conversation_id: "other-conversation",
+      mcp: { inherit: false },
+    };
+    const normalized = applySubagentPreset({ ...assignment, ...overrides });
+    expect(normalized).toMatchObject(assignment);
+    for (const key of Object.keys(overrides))
+      expect(normalized[key as keyof typeof normalized]).toBeUndefined();
+    expect(applySubagentPreset(overrides)).toBe(overrides);
   });
 
-  test("suggests only selectable subagent types", () => {
+  test("error suggestions exclude non-selectable configs", () => {
     expect(
       listSubagentTypes([
         "general-purpose",
@@ -168,9 +91,8 @@ describe("resolveTaskAgentSelection", () => {
         "init",
         "reflection",
         "recall",
-        "my-reviewer",
+        "reviewer",
       ]),
-    ).toBe("recall, my-reviewer");
-    expect(listSubagentTypes(["general-purpose", "fork"])).toBe("(none)");
+    ).toBe("recall, reviewer");
   });
 });

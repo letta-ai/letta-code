@@ -13,7 +13,8 @@ test("memory cannot be dispatched through the public launch entry point", async 
     description: "Edit memory",
   });
   expect(result.success).toBe(false);
-  if (!result.success) expect(result.error).toContain("internal subagent type");
+  if (!result.success)
+    expect(result.error).toContain("not a selectable subagent_type");
 });
 
 test("memory repair launch requires a claim token", () => {

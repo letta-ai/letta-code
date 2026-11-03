@@ -824,13 +824,9 @@ function getDefaultDecision(
 
   // Task tool: auto-approve safe subagent types
   if (canonicalToolName(toolName) === "Task") {
-    const harness = toolArgs?.harness;
     const subagentType =
       typeof toolArgs?.subagent_type === "string" ? toolArgs.subagent_type : "";
-    if (
-      (harness === undefined || harness === "letta") &&
-      SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)
-    ) {
+    if (SAFE_AUTO_APPROVE_SUBAGENT_TYPES.has(subagentType)) {
       return "allow";
     }
     // Other subagent types require approval

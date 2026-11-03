@@ -114,8 +114,7 @@ describe("Task agent selection fields", () => {
     expect(taskDescription).toContain('harness: "codex"');
     expect(taskDescription).toContain('subagent_type: "recall"');
   });
-  // Omitting both launches the default letta subagent; that launch path is
-  // covered in impl/task-fork-context.test.ts.
+  // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
 
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {

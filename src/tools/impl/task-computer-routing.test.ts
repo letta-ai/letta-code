@@ -34,6 +34,8 @@ mock.module("@/agent/subagents", () => ({
   getAllSubagentConfigs: async () => ({
     "general-purpose": config,
     fork: { ...config, name: "fork", fork: true },
+    reviewer: { ...config, name: "reviewer" },
+    custom: { ...config, name: "custom" },
     memory: { ...config, name: "memory" },
   }),
   clearSubagentConfigCache: () => {},
@@ -135,6 +137,33 @@ const launchArgs = {
 };
 
 describe("task computer routing", () => {
+  test.each(["reviewer", "custom"])(
+    "the %s preset ignores optional launch overrides",
+    async (subagent_type) => {
+      const result = await task({
+        ...launchArgs,
+        subagent_type,
+        harness: "codex",
+        fork_context: true,
+        model: "ignored-model",
+        computer: "ignored-computer",
+        agent_id: "ignored-agent",
+        conversation_id: "ignored-conversation",
+        mcp: { inherit: false },
+      });
+
+      expect(result).toContain("Task running in background");
+      expect(spawn.mock.calls[0]?.slice(0, 3)).toEqual([
+        subagent_type,
+        launchArgs.prompt,
+        undefined,
+      ]);
+      expect(spawn.mock.calls[0]?.slice(5, 7)).toEqual([undefined, undefined]);
+      expect(receivedEnvironment).toBeUndefined();
+      expect(forkConversation).not.toHaveBeenCalled();
+    },
+  );
+
   test("forwards a whitespace-padded selector trimmed to the child", async () => {
     const result = await task({ ...launchArgs, computer: " \t office-mac \n" });
 
@@ -174,7 +203,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("internal subagent type");
+      expect(result).toContain("not a selectable subagent_type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -255,7 +284,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
       });
 
-      expect(result).toContain("internal subagent type");
+      expect(result).toContain("not a selectable subagent_type");
       expect(receivedEnvironment).toBeUndefined();
     });
 

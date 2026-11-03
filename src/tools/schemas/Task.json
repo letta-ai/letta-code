@@ -16,11 +16,11 @@
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized Letta subagent to use for this task, from the agents listed under Available Agents (for example recall, or a custom agent). Only applies to harness letta. Omit it for the default agent."
+      "description": "A preset from Available Agents (for example recall, or a custom agent). Supply only description and prompt alongside it: the preset determines launch settings and all other optional fields are ignored. Omit subagent_type to configure the launch yourself."
     },
     "fork_context": {
       "type": "boolean",
-      "description": "Start the agent with this conversation's full history so the prompt can refer to earlier context. Defaults to false (the agent starts fresh with only the prompt). Cannot be combined with agent_id or conversation_id."
+      "description": "Without subagent_type, start the default Letta agent with this conversation's full history. Defaults to false (fresh context). Cannot be combined with agent_id or conversation_id. Presets ignore this field and use their configured context."
     },
     "model": {
       "type": "string",
