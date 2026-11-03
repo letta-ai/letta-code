@@ -17,6 +17,7 @@ import {
   clearLastSDKDiagnostic,
   consumeLastSDKDiagnostic,
 } from "@/backend/api/client";
+import { tapConversationCompaction } from "@/backend/compaction-events";
 import { telemetry } from "@/telemetry";
 import { debugLog, debugWarn } from "@/utils/debug";
 import {
@@ -770,6 +771,15 @@ export async function drainStreamWithResume(
             throw resumeError;
           }
           resumeAbortRelay?.attach(resumeStream as object);
+          if (streamRequestContext) {
+            // A compaction replayed on the resumed tail must re-baseline skills.
+            // streamRunMessages has no conversation id; re-reporting is harmless.
+            tapConversationCompaction(resumeStream, {
+              backend,
+              conversationId: streamRequestContext.resolvedConversationId,
+              agentId: streamRequestContext.agentId,
+            });
+          }
 
           const candidate = await drainStream(
             resumeStream,

@@ -73,6 +73,7 @@ const createMessageStreamMock = mock(
 const streamConversationMessagesMock = mock(
   async (_conversationId: string, _body: unknown, _options?: unknown) => ({
     kind: "resume-stream",
+    async *[Symbol.asyncIterator]() {},
   }),
 );
 const cancelConversationMock = mock(async (_conversationId: string) => ({
