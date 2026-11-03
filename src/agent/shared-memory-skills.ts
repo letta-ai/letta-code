@@ -16,6 +16,9 @@ const ATTACHED_REPOSITORIES_CACHE_KEY = Symbol.for(
   "@letta/attachedRepositoriesCache",
 );
 const ATTACHED_REPOSITORIES_CACHE_TTL_MS = 5_000;
+const LAST_GOOD_ATTACHED_REPOSITORIES_KEY = Symbol.for(
+  "@letta/lastGoodAttachedRepositories",
+);
 
 interface AttachedRepositoriesCacheEntry {
   expiresAt: number;
@@ -26,7 +29,29 @@ type AttachedRepositoriesCache = Map<string, AttachedRepositoriesCacheEntry>;
 
 type GlobalWithAttachedRepositories = typeof globalThis & {
   [ATTACHED_REPOSITORIES_CACHE_KEY]?: AttachedRepositoriesCache;
+  [LAST_GOOD_ATTACHED_REPOSITORIES_KEY]?: Map<
+    string,
+    AttachedAgentRepository[]
+  >;
 };
+
+/**
+ * Last successful repository list per agent. Unlike the TTL cache, this is
+ * never expired or invalidated: a failed fetch falls back to it so a transient
+ * error does not drop every attached-repo skill for one request (which churns
+ * the prompt prefix and emits spurious skill reminders). Only another
+ * successful response replaces it.
+ */
+function getLastGoodAttachedRepositories(): Map<
+  string,
+  AttachedAgentRepository[]
+> {
+  const global = globalThis as GlobalWithAttachedRepositories;
+  if (!global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY]) {
+    global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY] = new Map();
+  }
+  return global[LAST_GOOD_ATTACHED_REPOSITORIES_KEY];
+}
 
 function getAttachedRepositoriesCache(): AttachedRepositoriesCache {
   const global = globalThis as GlobalWithAttachedRepositories;
@@ -66,7 +91,14 @@ async function getAttachedRepositories(
   cache.set(agentId, entry);
 
   try {
-    return (await promise).map((repository) => ({ ...repository }));
+    const repositories = await promise;
+    if (cache.get(agentId) === entry) {
+      getLastGoodAttachedRepositories().set(
+        agentId,
+        repositories.map((repository) => ({ ...repository })),
+      );
+    }
+    return repositories.map((repository) => ({ ...repository }));
   } catch (error) {
     if (cache.get(agentId) === entry) {
       cache.delete(agentId);
@@ -99,6 +131,7 @@ export async function resolveSharedMemorySkillsContext(options: {
   }
 
   let repositories: AttachedAgentRepository[];
+  let fetchError: SkillDiscoveryError | undefined;
   if (options.attachedRepositories) {
     repositories = options.attachedRepositories.map((repository) => ({
       ...repository,
@@ -116,19 +149,19 @@ export async function resolveSharedMemorySkillsContext(options: {
     try {
       repositories = await getAttachedRepositories(agentId);
     } catch (error) {
-      return {
-        skillsDirs: [],
-        errors: [
-          {
-            path: `shared-memory:${agentId}`,
-            message: `Failed to list attached repositories: ${error instanceof Error ? error.message : String(error)}`,
-          },
-        ],
+      fetchError = {
+        path: `shared-memory:${agentId}`,
+        message: `Failed to list attached repositories: ${error instanceof Error ? error.message : String(error)}`,
       };
+      const lastGood = getLastGoodAttachedRepositories().get(agentId);
+      if (!lastGood) {
+        return { skillsDirs: [], errors: [fetchError] };
+      }
+      repositories = lastGood.map((repository) => ({ ...repository }));
     }
   }
 
-  const errors: SkillDiscoveryError[] = [];
+  const errors: SkillDiscoveryError[] = fetchError ? [fetchError] : [];
   const skillsDirs: string[] = [];
   const { getRepositoryMountDir, validateAgentRepositoryName } = await import(
     "./memory-git"
