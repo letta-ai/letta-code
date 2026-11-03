@@ -13,7 +13,6 @@ import {
   migratePermissionMode,
   type PermissionMode,
 } from "@/permissions/mode";
-import { telemetry } from "@/telemetry";
 import {
   loadRemoteSettings,
   type PersistedPermissionModeState,
@@ -185,22 +184,6 @@ export function loadPersistedPermissionModeMap(): Map<
   } catch {
     return new Map();
   }
-}
-
-export function loadPersistedPermissionModeMapWithTelemetry(): Map<
-  string,
-  ConversationPermissionModeState
-> {
-  const restoredModes = loadPersistedPermissionModeMap();
-  const globalDefault = globalPermissionMode.getMode();
-  telemetry.trackPermissionModeChanged({
-    new_mode: globalDefault,
-    source: "startup_restore",
-    mode_is_default: true,
-    restored_mode_count: restoredModes.size,
-    global_default: globalDefault,
-  });
-  return restoredModes;
 }
 
 /**

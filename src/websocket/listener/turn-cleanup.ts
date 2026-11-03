@@ -1,10 +1,8 @@
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
 import { settingsManager } from "@/settings-manager";
-import { telemetry } from "@/telemetry";
 import { releaseChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { TO_SUBSCRIBERS } from "./connection";
 import {
-  getConversationPermissionModeState,
   persistPermissionModeMapForRuntime,
   pruneConversationPermissionModeStateIfDefault,
 } from "./permission-mode";
@@ -37,26 +35,11 @@ export async function runListenerTurnCleanup(params: {
 
   if (!finalized) return;
 
-  const permissionModeBeforePrune = getConversationPermissionModeState(
-    runtime.listener,
-    normalizedAgentId,
-    conversationId,
-  ).mode;
-  const permissionModePruned = pruneConversationPermissionModeStateIfDefault(
+  pruneConversationPermissionModeStateIfDefault(
     runtime.listener,
     normalizedAgentId,
     conversationId,
   );
-  if (permissionModePruned) {
-    telemetry.trackPermissionModeChanged({
-      agent_id: normalizedAgentId,
-      conversation_id: conversationId,
-      prev_mode: permissionModeBeforePrune,
-      new_mode: permissionModeBeforePrune,
-      source: "turn_cleanup_prune",
-      mode_is_default: true,
-    });
-  }
   persistPermissionModeMapForRuntime(runtime.listener);
   emitDeviceStatusIfOpen(runtime, {
     agent_id: agentId ?? null,

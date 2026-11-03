@@ -116,14 +116,16 @@ export function handleModeChange(
     current.explicit = true;
 
     persistPermissionModeMapForRuntime(runtime);
-    telemetry.trackPermissionModeChanged({
-      agent_id: agentId,
-      conversation_id: conversationId,
-      prev_mode: previousMode,
-      new_mode: incomingMode,
-      source: "user_toggle",
-      mode_is_default: false,
-    });
+    if (previousMode !== incomingMode) {
+      telemetry.trackPermissionModeChanged({
+        agent_id: agentId,
+        conversation_id: conversationId,
+        prev_mode: previousMode,
+        new_mode: incomingMode,
+        source: "user_toggle",
+        mode_is_default: false,
+      });
+    }
 
     emitRuntimeStateUpdates(runtime, scope);
 

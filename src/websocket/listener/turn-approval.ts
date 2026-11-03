@@ -282,6 +282,7 @@ export async function handleApprovalStop(params: {
     agent_id: agentId,
     conversation_id: conversationId,
   };
+  const classificationPermissionMode = turnPermissionModeState.mode;
   const { autoAllowed, autoDenied, needsUserInput } = await classifyApprovals(
     approvals,
     {
@@ -321,7 +322,7 @@ export async function handleApprovalStop(params: {
     user_input_tool_call_ids: needsUserInput.map(
       (entry) => entry.approval.toolCallId,
     ),
-    permission_mode: turnPermissionModeState.mode,
+    permission_mode: classificationPermissionMode,
   };
   emitCanonicalMessageDelta(
     socket,
@@ -669,7 +670,6 @@ export async function handleApprovalStop(params: {
     return interruptTermination();
   }
 
-  // Broadcast file writes to all windows.
   const onFileWrite = (filePath: string, content: string) => {
     if (!runtime.turnLifecycle.isCurrent(turnLease) || !authorityGuard())
       return;

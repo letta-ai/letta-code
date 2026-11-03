@@ -441,14 +441,16 @@ async function applyRuntimeStartState(
       state.mode = mode;
       if (!parsed.mode_is_default) state.explicit = true;
       persistPermissionModeMapForRuntime(context.runtime);
-      telemetry.trackPermissionModeChanged({
-        agent_id: scope.agent_id,
-        conversation_id: scope.conversation_id,
-        prev_mode: previousMode,
-        new_mode: mode,
-        source: "runtime_start",
-        mode_is_default: parsed.mode_is_default === true,
-      });
+      if (previousMode !== mode) {
+        telemetry.trackPermissionModeChanged({
+          agent_id: scope.agent_id,
+          conversation_id: scope.conversation_id,
+          prev_mode: previousMode,
+          new_mode: mode,
+          source: "runtime_start",
+          mode_is_default: parsed.mode_is_default === true,
+        });
+      }
     }
   }
 
