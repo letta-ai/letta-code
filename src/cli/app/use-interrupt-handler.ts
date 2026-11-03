@@ -329,6 +329,11 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           setInterruptRequested,
           queueLength: tuiQueueRef.current?.length ?? 0,
           bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
+          forceRelease: {
+            abortControllerRef,
+            processingConversationRef,
+            conversationGenerationRef,
+          },
         });
       }
       // Idle: no turn is streaming or unwinding, but a background task whose

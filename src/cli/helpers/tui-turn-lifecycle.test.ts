@@ -8,6 +8,7 @@ function harness(overrides?: {
   processing?: number;
   queueLength?: number;
   controller?: AbortController | null;
+  generation?: number;
 }) {
   const controller =
     overrides?.controller === undefined
@@ -22,6 +23,9 @@ function harness(overrides?: {
     controller,
     abortControllerRef,
     processingConversationRef,
+    conversationGenerationRef: {
+      current: overrides?.generation ?? 0,
+    },
     userCancelledRef,
     interruptRequested,
     bumps: () => epochBumps,
@@ -139,6 +143,33 @@ describe("finishTuiTurn — interrupted (stale) turn", () => {
       turnAbortController: stale,
     });
     expect(h.abortControllerRef.current).toBe(replacement);
+  });
+
+  test("forced release allows a new turn and ignores the old turn's late finally", () => {
+    const h = harness();
+    settleTuiInterrupt({
+      ...h.args,
+      queueLength: 0,
+      bumpDequeueEpoch: () => {},
+      forceRelease: {
+        abortControllerRef: h.abortControllerRef,
+        processingConversationRef: h.processingConversationRef,
+        conversationGenerationRef: h.conversationGenerationRef,
+      },
+    });
+
+    const replacement = new AbortController();
+    h.abortControllerRef.current = replacement;
+    h.processingConversationRef.current = 1;
+    finishTuiTurn({
+      ...h.args,
+      isStale: true,
+      turnAbortController: h.controller,
+    });
+
+    expect(h.abortControllerRef.current).toBe(replacement);
+    expect(h.processingConversationRef.current).toBe(1);
+    expect(h.conversationGenerationRef.current).toBe(1);
   });
 
   test("the processing count never goes negative", () => {

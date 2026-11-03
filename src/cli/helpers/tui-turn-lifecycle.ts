@@ -16,7 +16,17 @@ export function settleTuiInterrupt(args: {
   setInterruptRequested: (value: boolean) => void;
   queueLength: number;
   bumpDequeueEpoch: () => void;
+  forceRelease?: {
+    abortControllerRef: { current: AbortController | null };
+    processingConversationRef: { current: number };
+    conversationGenerationRef: { current: number };
+  };
 }): void {
+  if (args.forceRelease) {
+    args.forceRelease.abortControllerRef.current = null;
+    args.forceRelease.processingConversationRef.current = 0;
+    args.forceRelease.conversationGenerationRef.current += 1;
+  }
   args.userCancelledRef.current = false;
   args.setInterruptRequested(false);
   if (args.queueLength > 0) {
@@ -46,9 +56,13 @@ export type TuiTurnFinishArgs = {
  * controller of the turn that replaced it.
  */
 export function finishTuiTurn(args: TuiTurnFinishArgs): void {
-  if (args.abortControllerRef.current === args.turnAbortController) {
+  const ownsTurn = args.abortControllerRef.current === args.turnAbortController;
+  if (ownsTurn) {
     args.abortControllerRef.current = null;
   }
+  // A forced interrupt releases the ownership refs before this finally runs.
+  // Do not let that late turn decrement a replacement turn's count.
+  if (!ownsTurn && args.isStale) return;
   // Decrement BEFORE bumping the epoch: the dequeue effect can fire
   // synchronously (Ink legacy mode) and its defer gate checks === 0.
   args.processingConversationRef.current = Math.max(
