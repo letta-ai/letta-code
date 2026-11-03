@@ -20,7 +20,7 @@
     },
     "fork_context": {
       "type": "boolean",
-      "description": "Without subagent_type, start the default Letta agent with this conversation's full history. Defaults to false (fresh context). Cannot be combined with agent_id or conversation_id. Presets ignore this field and use their configured context."
+      "description": "When creating a Letta Code subagent (without subagent_type), whether to include the full conversation history in the subagent. Cannot be applied to existing agents or threads. Defaults to false (fresh context)."
     },
     "model": {
       "type": "string",
