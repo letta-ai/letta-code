@@ -48,7 +48,6 @@ import {
 import {
   classifyExternalCodingAgentStartupError,
   createExternalCodingAgentConfig,
-  isExternalCodingAgentType,
   resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
@@ -71,6 +70,12 @@ import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent"
 import { resolveLaunchComputer } from "./subagent-computer";
 import { buildBackgroundTaskAbortHook } from "./task-abort-hook.js";
 import {
+  applySubagentPreset,
+  listSubagentTypes,
+  preparedConversationConfig,
+  resolveTaskAgentSelection,
+} from "./task-agent-selection";
+import {
   buildTaskResultHeader,
   closeTaskProgressLog,
   externalWorkerProgressListeners,
@@ -91,9 +96,6 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   /** The launching App Server client owns the completion notification. */
   notifyCaller?: boolean;
 }
-
-// Valid subagent_types when deploying an existing agent
-const VALID_DEPLOY_TYPES = new Set(["general-purpose"]);
 
 export {
   waitForBackgroundSubagentAgentId,
@@ -631,12 +633,16 @@ export function spawnBackgroundSubagentTask(
 export async function launchSubagent(
   args: TaskArgs,
 ): Promise<SubagentLaunchResult> {
-  if (args.subagent_type === "memory") {
-    return {
-      success: false,
-      error: "Memory edits belong in the parent agent; memory is harness-only.",
-    };
-  }
+  // `custom` + identity is the App Server's prepared-conversation protocol,
+  // not a named preset. The Agent adapter strips overrides before reaching here.
+  const prepared =
+    args.subagent_type === "custom" &&
+    Boolean(args.agent_id || args.conversation_id);
+  if (!prepared) args = applySubagentPreset(args);
+  const resolvedSelection = resolveTaskAgentSelection(args);
+  if ("error" in resolvedSelection)
+    return { success: false, error: resolvedSelection.error };
+  const { selection } = resolvedSelection;
   const { model, toolCallId, signal } = args;
   if (
     args.client_message_id !== undefined &&
@@ -652,17 +658,30 @@ export async function launchSubagent(
 
   // Determine if deploying an existing agent
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
-  const requestedType = args.subagent_type;
+  const configName =
+    selection.kind === "external" ? selection.type : selection.subagentType;
+  const requestedType = args.subagent_type
+    ? `subagent_type "${configName}"`
+    : configName;
+  if (args.fork_context && isDeployingExisting) {
+    return {
+      success: false,
+      error: "fork_context cannot be combined with agent_id or conversation_id",
+    };
+  }
   const externalCodingAgentType =
-    typeof requestedType === "string" &&
-    isExternalCodingAgentType(requestedType)
-      ? requestedType
-      : null;
+    selection.kind === "external" ? selection.type : null;
   const isExternalCodingAgent = externalCodingAgentType !== null;
   if (isExternalCodingAgent && isDeployingExisting) {
     return {
       success: false,
       error: `${requestedType} does not accept agent_id or conversation_id at launch; use SendAgentMessage with the synthetic agent ID for follow-up work`,
+    };
+  }
+  if (isExternalCodingAgent && args.fork_context) {
+    return {
+      success: false,
+      error: `fork_context is not supported for ${requestedType} yet; put the context it needs in the prompt`,
     };
   }
   if (args.mcp && !isExternalCodingAgent) {
@@ -674,29 +693,11 @@ export async function launchSubagent(
   const mcpValidationError = validateExternalCodingAgentMcpOptions(args.mcp);
   if (mcpValidationError) return { success: false, error: mcpValidationError };
 
-  // Validate required parameters based on mode
-  if (isDeployingExisting) {
-    // Deploying existing agent: prompt and description required, subagent_type optional
-    validateRequiredParams(args, ["prompt", "description"], "Task");
-  } else {
-    // Creating new agent: subagent_type, prompt, and description required
-    validateRequiredParams(
-      args,
-      ["subagent_type", "prompt", "description"],
-      "Task",
-    );
-  }
+  validateRequiredParams(args, ["prompt", "description"], "Task");
 
-  // Extract validated params
   const inputPrompt = args.prompt as string;
   const description = args.description as string;
 
-  // For existing agents, default subagent_type to "general-purpose" for permissions
-  const subagent_type = isDeployingExisting
-    ? args.subagent_type || "general-purpose"
-    : (args.subagent_type as string);
-
-  const prepared = subagent_type === "custom" && isDeployingExisting;
   const allConfigs =
     prepared || isExternalCodingAgent
       ? {}
@@ -704,31 +705,12 @@ export async function launchSubagent(
   const config: SubagentConfig | undefined = isExternalCodingAgent
     ? createExternalCodingAgentConfig(externalCodingAgentType)
     : prepared
-      ? {
-          name: "custom",
-          description: "Prepared conversation",
-          systemPrompt: "",
-          allowedTools: "all",
-          recommendedModel: "inherit",
-          skills: [],
-          fork: false,
-          launchProfile: "default",
-        }
-      : allConfigs[subagent_type];
+      ? preparedConversationConfig()
+      : allConfigs[configName];
   if (!config) {
     return {
       success: false,
-      error: `Invalid subagent type "${subagent_type}". Available types: ${Object.keys(allConfigs).join(", ")}`,
-    };
-  }
-  if (
-    !prepared &&
-    isDeployingExisting &&
-    !VALID_DEPLOY_TYPES.has(subagent_type)
-  ) {
-    return {
-      success: false,
-      error: `When deploying an existing agent, subagent_type must be "general-purpose". Got: "${subagent_type}"`,
+      error: `Invalid subagent_type "${configName}". Available subagent types: ${listSubagentTypes(Object.keys(allConfigs))}. Omit subagent_type for the default agent.`,
     };
   }
   if (
@@ -752,7 +734,7 @@ export async function launchSubagent(
   const resolvedComputer = await resolveLaunchComputer({
     requested: args.computer,
     repos: args.repos,
-    subagentType: subagent_type,
+    subagentType: configName,
     config,
   });
   if (resolvedComputer.error)
@@ -773,7 +755,7 @@ export async function launchSubagent(
     if (!parentAgentId) {
       return {
         success: false,
-        error: `${subagent_type} requires a parent agent identity`,
+        error: `${configName} requires a parent agent identity`,
       };
     }
     if (resolvedComputer.computer) {
@@ -809,7 +791,7 @@ export async function launchSubagent(
     }
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
-      subagentType: subagent_type,
+      subagentType: configName,
       config,
       prompt: inputPrompt,
       description,
@@ -842,27 +824,25 @@ export async function launchSubagent(
       },
     });
     let agentId: string | null = null;
-    if (isExternalCodingAgent) {
-      const abortStartup = () =>
-        backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
-      signal?.addEventListener("abort", abortStartup, { once: true });
-      try {
-        if (signal?.aborted) abortStartup();
-        agentId = await waitForBackgroundSubagentAgentId(
-          subagentId,
-          null,
-          signal,
-        );
-        signal?.throwIfAborted();
-      } finally {
-        signal?.removeEventListener("abort", abortStartup);
-      }
+    const abortStartup = () =>
+      backgroundTasks.get(taskId)?.abortController?.abort(signal?.reason);
+    signal?.addEventListener("abort", abortStartup, { once: true });
+    try {
+      if (signal?.aborted) abortStartup();
+      agentId = await waitForBackgroundSubagentAgentId(
+        subagentId,
+        null,
+        signal,
+      );
+      signal?.throwIfAborted();
+    } finally {
+      signal?.removeEventListener("abort", abortStartup);
     }
     const failed = getSubagentSnapshot().agents.find(
       (a) => a.id === subagentId && a.status === "error",
     );
     if (args.notifyCaller && !agentId && failed) {
-      const error = failed.error ?? `${subagent_type} failed to start`;
+      const error = failed.error ?? `${configName} failed to start`;
       const code = classifyExternalCodingAgentStartupError(error);
       return { success: false, error, ...(code ? { error_code: code } : {}) };
     }
@@ -899,8 +879,7 @@ export async function launchSubagent(
     if (args.agent_id || args.conversation_id) {
       return {
         success: false,
-        error:
-          "Subagent type with fork: true cannot be combined with agent_id or conversation_id",
+        error: `${requestedType} forks context and cannot be combined with agent_id or conversation_id`,
       };
     }
     try {
@@ -931,7 +910,7 @@ export async function launchSubagent(
   signal?.throwIfAborted();
 
   const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
-    subagentType: subagent_type,
+    subagentType: configName,
     config,
     prompt,
     description,
@@ -990,7 +969,7 @@ export async function task(args: TaskArgs): Promise<string> {
     const errorSuffix = errors.length > 0 ? `, ${errors.length} error(s)` : "";
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
-  const result = await launchSubagent(args);
+  const result = await launchSubagent(applySubagentPreset(args));
   if (!result.success) return `Error: ${result.error}`;
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id

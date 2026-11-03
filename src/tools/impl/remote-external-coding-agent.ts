@@ -439,6 +439,8 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
+        // Older listeners accept only `subagent_type`; current listeners
+        // translate an external worker name there into `harness`.
         subagent_type: type,
         prompt,
         description: params.description,
