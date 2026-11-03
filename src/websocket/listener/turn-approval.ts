@@ -543,7 +543,7 @@ export async function handleApprovalStop(params: {
                 requireArgsForAutoApprove: true,
                 missingNameReason: "Tool call incomplete - missing name",
                 workingDirectory: turnWorkingDirectory,
-                permissionModeState: turnPermissionModeState,
+                permissionModeState: classificationPermissionModeState,
                 agentId: agentId ?? undefined,
                 toolContextId: turnToolContextId ?? undefined,
               },
