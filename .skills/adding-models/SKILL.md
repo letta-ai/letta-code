@@ -1,6 +1,11 @@
 ---
 name: adding-models
 description: Guide for adding new LLM models to Letta Code. Use when the user wants to add support for a new model, needs to know valid model handles, or wants to update model-specific compatibility behavior. Covers runtime catalog sources, CI test matrices, and handle validation.
+metadata:
+  status: proposed
+  confidence: high
+  evidence: '["letta:conv-c01c8621-38ce-4177-a32a-19dba815fe69"]'
+  rationale: 'A multi-agent investigation established the Snowflake Cortex BYOK provider contract (provider_type anthropic-cortex, account-scoped base URL, bearer-token api_key, /models discovery) and confirmed provider identifiers differ between the Cloud API store and local providers. Retaining the contract and the base-URL fallback hazard prevents re-deriving them and avoids sending a Snowflake bearer token to api.anthropic.com.'
 ---
 
 # Adding Models
@@ -100,6 +105,27 @@ Models are automatically assigned toolsets based on provider:
 - Others → `default` toolset
 
 This is handled by `isGeminiModel()` and `isOpenAIModel()` in `src/tools/manager.ts`. You typically don't need to modify this unless adding a new provider.
+
+## Provider Integration Notes
+
+**Provider identifiers are layer-specific.** The Cloud/API provider store
+(`src/providers/byok-providers.ts`, `CLOUD_BYOK_PROVIDERS`) uses ids like
+`bedrock`, `anthropic`, and `openai`; local providers use different names such
+as `amazon-bedrock`. The same provider can have different ids per layer, so
+confirm whether a requested provider belongs to the Cloud BYOK rows
+(`GET /v1/models`) or the local pi-ai inventory before wiring it.
+
+**Snowflake Cortex is a Cloud BYOK provider (`anthropic-cortex`).** It exposes
+an Anthropic Messages API-compatible endpoint with:
+- `base_url`: `https://<account>.snowflakecomputing.com/api/v2/cortex`
+- `api_key`: the Snowflake bearer token
+- model discovery: `GET {base_url}/models`, not Anthropic's `/v1/models`
+
+**Never fall back to a default host for endpoint-defined BYOK providers.** For
+providers reached through a customer-supplied base URL (Cortex, OpenAI-compatible
+endpoints), treat the base URL as required: a missing or empty URL must not fall
+back to the provider's default host (e.g. `api.anthropic.com`), or the stored
+`api_key` — a Snowflake bearer token for Cortex — is sent to the wrong host.
 
 ## Common Issues
 
