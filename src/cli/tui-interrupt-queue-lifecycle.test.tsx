@@ -147,6 +147,47 @@ class DelayedInterruptExecutor implements HeadlessTurnExecutor {
   }
 }
 
+class ReplacementInterruptExecutor implements HeadlessTurnExecutor {
+  readonly inputs: HeadlessTurnExecutorInput[] = [];
+  private readonly abortResolvers: (() => void)[] = [];
+  private readonly releases: (() => void)[] = [];
+  readonly abortObserved = [0, 1].map(
+    () =>
+      new Promise<void>((resolve) => {
+        this.abortResolvers.push(resolve);
+      }),
+  );
+
+  async execute(input: HeadlessTurnExecutorInput) {
+    const turn = this.inputs.length;
+    this.inputs.push(input);
+    if (turn >= 2) return createAssistantMessageStream();
+
+    const controller = new AbortController();
+    const abortObserved = this.abortResolvers[turn];
+    const release = new Promise<void>((resolve) => {
+      this.releases[turn] = resolve;
+    });
+    return {
+      controller,
+      async *[Symbol.asyncIterator]() {
+        await new Promise<void>((resolve) => {
+          controller.signal.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+        abortObserved?.();
+        // The caller controls when the old and replacement turns finish.
+        await release;
+      },
+    } as unknown as Stream<LettaStreamingResponse>;
+  }
+
+  settle(turn: number): void {
+    this.releases[turn]?.();
+  }
+}
+
 const monitorSources = new Set<WebSocketServer>();
 const monitorIds = new Set<string>();
 
@@ -450,6 +491,31 @@ describe("TUI interrupt queue lifecycle", () => {
     );
 
     executor.settleInterruptedTurn();
+  }, 15_000);
+
+  test("a replacement turn's first Esc aborts normally after force-release", async () => {
+    const executor = new ReplacementInterruptExecutor();
+    const { stdin } = await renderTestApp(executor);
+
+    await typePrompt(stdin, "start turn");
+    await waitFor(() => executor.inputs.length === 1, "the initial turn");
+    stdin.push("\u001b");
+    await executor.abortObserved[0];
+
+    // Force-settle the stuck turn, then let a system notification start a
+    // replacement while the original stream is still unresolved.
+    stdin.push("\u001b");
+    addToMessageQueue({
+      kind: "task_notification",
+      text: monitorNotification("replacement turn"),
+    });
+    await waitFor(() => executor.inputs.length === 2, "the replacement turn");
+
+    stdin.push("\u001b");
+    await executor.abortObserved[1];
+
+    executor.settle(0);
+    executor.settle(1);
   }, 15_000);
 
   test("a failed backend cancel is surfaced and a second Esc retries it", async () => {

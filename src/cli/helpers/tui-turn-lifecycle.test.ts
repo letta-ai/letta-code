@@ -16,6 +16,7 @@ function harness(overrides?: {
       : overrides.controller;
   const abortControllerRef = { current: controller };
   const processingConversationRef = { current: overrides?.processing ?? 1 };
+  const releasedGenerationRef = { current: null as number | null };
   const staleTurnUnwindingRef = { current: true };
   const userCancelledRef = { current: true };
   const interruptRequested: boolean[] = [];
@@ -24,6 +25,7 @@ function harness(overrides?: {
     controller,
     abortControllerRef,
     processingConversationRef,
+    releasedGenerationRef,
     staleTurnUnwindingRef,
     conversationGenerationRef: {
       current: overrides?.generation ?? 0,
@@ -34,7 +36,9 @@ function harness(overrides?: {
     args: {
       abortControllerRef,
       processingConversationRef,
+      releasedGenerationRef,
       staleTurnUnwindingRef,
+      turnGeneration: 0,
       userCancelledRef,
       setInterruptRequested: (value: boolean) => {
         interruptRequested.push(value);
@@ -158,6 +162,7 @@ describe("finishTuiTurn — interrupted (stale) turn", () => {
         abortControllerRef: h.abortControllerRef,
         processingConversationRef: h.processingConversationRef,
         conversationGenerationRef: h.conversationGenerationRef,
+        releasedGenerationRef: h.releasedGenerationRef,
       },
     });
 
@@ -174,6 +179,27 @@ describe("finishTuiTurn — interrupted (stale) turn", () => {
     expect(h.processingConversationRef.current).toBe(1);
     expect(h.conversationGenerationRef.current).toBe(1);
     expect(h.staleTurnUnwindingRef.current).toBe(false);
+  });
+
+  test("overlapping stale turns still settle after a plain Esc", () => {
+    const h = harness({ processing: 2 });
+    const nested = new AbortController();
+    finishTuiTurn({
+      ...h.args,
+      isStale: true,
+      turnAbortController: nested,
+    });
+    expect(h.processingConversationRef.current).toBe(1);
+    expect(h.userCancelledRef.current).toBe(true);
+
+    finishTuiTurn({
+      ...h.args,
+      isStale: true,
+      turnAbortController: h.controller,
+    });
+    expect(h.processingConversationRef.current).toBe(0);
+    expect(h.userCancelledRef.current).toBe(false);
+    expect(h.interruptRequested).toEqual([false]);
   });
 
   test("the processing count never goes negative", () => {

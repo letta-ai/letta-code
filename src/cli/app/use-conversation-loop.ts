@@ -235,6 +235,7 @@ type ConversationLoopContext = {
     overrideModel?: string | null,
   ) => Promise<PreparedScopeToolContext>;
   processingConversationRef: MutableRefObject<number>;
+  releasedGenerationRef: MutableRefObject<number | null>;
   staleTurnUnwindingRef: MutableRefObject<boolean>;
   /** Read side of the approval-results queue, for abort partial-result overlays. */
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
@@ -334,6 +335,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    releasedGenerationRef,
     staleTurnUnwindingRef,
     queuedApprovalResultsRef,
     queueApprovalResults,
@@ -633,13 +635,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           userCancelledRef.current = false;
           return;
         }
-
         // Check if user hit escape before we started
         if (userCancelledRef.current) {
           userCancelledRef.current = false; // Reset for next time
           return;
         }
-
         // Double-check we haven't become stale between entry and try block
         if (myGeneration !== conversationGenerationRef.current) {
           return;
@@ -651,7 +651,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         setExecutionPhase("requesting");
         turnAbortController = new AbortController();
         abortControllerRef.current = turnAbortController;
-
+        staleTurnUnwindingRef.current = false;
         if (
           await maybeStreamSyntheticNoModelResponse(
             currentInput,
@@ -661,7 +661,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         ) {
           return;
         }
-
         // Recover interrupted message only after explicit user interrupt: if
         // cache holds ONLY user messages, prepend them (type="message" is a
         // local discriminator, not in SDK types).
@@ -2832,12 +2831,13 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         if (!preserveTranscriptStartForApproval) {
           pendingTranscriptStartLineIndexRef.current = null;
         }
-
         // Wakes dequeue on a normal completion; when superseded by an ESC
         // interrupt, settles the interrupt (cancelling -> idle) instead.
         finishTuiTurn({
           isStale: myGeneration !== conversationGenerationRef.current,
           turnAbortController,
+          turnGeneration: myGeneration,
+          releasedGenerationRef,
           abortControllerRef,
           processingConversationRef,
           staleTurnUnwindingRef,

@@ -53,6 +53,7 @@ type InterruptHandlerContext = {
   pendingApprovals: ApprovalRequest[];
   pendingInterruptRecoveryConversationIdRef: MutableRefObject<string | null>;
   processingConversationRef: MutableRefObject<number>;
+  releasedGenerationRef: MutableRefObject<number | null>;
   staleTurnUnwindingRef: MutableRefObject<boolean>;
   queueApprovalResults: QueueApprovalResults;
   refreshDerived: () => void;
@@ -127,6 +128,7 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     pendingApprovals,
     pendingInterruptRecoveryConversationIdRef,
     processingConversationRef,
+    releasedGenerationRef,
     staleTurnUnwindingRef,
     queueApprovalResults,
     refreshDerived,
@@ -337,6 +339,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
         abortedControllerWitness ||
         staleTurnUnwindingRef.current
       ) {
+        const ownsLatchedTurn =
+          interruptEscalationRef.current?.controller !== null &&
+          interruptEscalationRef.current?.controller ===
+            abortControllerRef.current;
         if (interruptRequested || abortedControllerWitness) {
           abortControllerRef.current?.abort();
         }
@@ -350,11 +356,16 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           setInterruptRequested,
           queueLength: tuiQueueRef.current?.length ?? 0,
           bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
-          forceRelease: {
-            abortControllerRef,
-            processingConversationRef,
-            conversationGenerationRef,
-          },
+          ...(ownsLatchedTurn
+            ? {
+                forceRelease: {
+                  abortControllerRef,
+                  processingConversationRef,
+                  conversationGenerationRef,
+                  releasedGenerationRef,
+                },
+              }
+            : {}),
         });
       }
       // Idle: no turn is streaming or unwinding, but a background task whose

@@ -20,12 +20,15 @@ export function settleTuiInterrupt(args: {
     abortControllerRef: { current: AbortController | null };
     processingConversationRef: { current: number };
     conversationGenerationRef: { current: number };
+    releasedGenerationRef: { current: number | null };
   };
 }): void {
   if (args.forceRelease) {
     args.forceRelease.abortControllerRef.current = null;
     args.forceRelease.processingConversationRef.current = 0;
     args.forceRelease.conversationGenerationRef.current += 1;
+    args.forceRelease.releasedGenerationRef.current =
+      args.forceRelease.conversationGenerationRef.current;
   }
   args.userCancelledRef.current = false;
   args.setInterruptRequested(false);
@@ -39,6 +42,8 @@ export type TuiTurnFinishArgs = {
   isStale: boolean;
   /** The controller this turn created, or null if it never got that far. */
   turnAbortController: AbortController | null;
+  turnGeneration: number;
+  releasedGenerationRef?: { current: number | null };
   abortControllerRef: { current: AbortController | null };
   processingConversationRef: { current: number };
   staleTurnUnwindingRef?: { current: boolean };
@@ -58,12 +63,16 @@ export type TuiTurnFinishArgs = {
  */
 export function finishTuiTurn(args: TuiTurnFinishArgs): void {
   const ownsTurn = args.abortControllerRef.current === args.turnAbortController;
+  const wasForceReleased =
+    args.releasedGenerationRef?.current !== null &&
+    args.releasedGenerationRef?.current !== undefined &&
+    args.turnGeneration < args.releasedGenerationRef.current;
   if (ownsTurn) {
     args.abortControllerRef.current = null;
   }
   // A forced interrupt releases the ownership refs before this finally runs.
   // Do not let that late turn decrement a replacement turn's count.
-  if (!ownsTurn && args.isStale) {
+  if (!ownsTurn && args.isStale && wasForceReleased) {
     if (args.staleTurnUnwindingRef) {
       args.staleTurnUnwindingRef.current = false;
     }
