@@ -39,8 +39,10 @@ import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
+  CONVERSATION_BUSY_WAIT_TIMEOUT_MS as BUSY_WAIT_MS,
   buildFreshDenialApprovals,
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -50,8 +52,10 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
+  resumeConversationBusyRequest as resumeBusy,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
+  waitForConversationBusyRunOrThrow as waitForBusyRun,
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
 import {
@@ -78,7 +82,6 @@ import { SessionStats } from "./agent/stats";
 import {
   type BackendMode,
   type ConversationCreateBody,
-  type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
 import type { ParsedCliArgs } from "./cli/args";
@@ -2102,6 +2105,7 @@ export async function handleHeadlessCommand(
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
+  let busyDeadline: number | null = null;
   let chatgptPlanSwaps = 0;
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
@@ -2214,6 +2218,7 @@ export async function handleHeadlessCommand(
           { maxRetries: 0, signal: sigintSignal },
         );
         turnToolContextId = getStreamToolContextId(stream);
+        busyDeadline = null;
       } catch (preStreamError) {
         if (sigintSignal.aborted) {
           await exitInterrupted();
@@ -2254,42 +2259,39 @@ export async function handleHeadlessCommand(
               "Pending approval detected, resolving before retry...",
             );
           }
-
           await resolveAllPendingApprovals();
           continue;
         }
 
-        // 409 "conversation busy": resume via the conversation stream
-        // endpoint. Server resolves otid lookup then active-run fallback;
-        // falls back to exponential backoff retry if the endpoint fails.
-        if (preStreamAction === "retry_conversation_busy") {
-          const messageOtid = currentInput
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((v): v is string => typeof v === "string");
-
-          try {
-            stream = (await getBackend().streamConversationMessages(
-              conversationId,
-              // Cast needed until SDK MessageStreamParams includes otid field
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (agent?.id ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-            )) as Awaited<ReturnType<typeof sendMessageStream>>;
+        const blockingRunId = extractConversationBusyRunId(errorDetail);
+        if (preStreamAction === "retry_conversation_busy" || blockingRunId) {
+          const resumeStream = await resumeBusy(
+            conversationId,
+            agent?.id,
+            currentInput,
+            sigintSignal,
+          );
+          if (resumeStream) {
+            stream = resumeStream as typeof stream;
             conversationBusyRetries = 0;
-            // Fall through to drain
-          } catch {
+            busyDeadline = null;
+          } else {
+            if (blockingRunId) {
+              busyDeadline ??= Date.now() + BUSY_WAIT_MS;
+              const settled = await waitForBusyRun(
+                blockingRunId,
+                sigintSignal,
+                busyDeadline,
+              );
+              if (settled) continue;
+            }
+            if (preStreamAction !== "retry_conversation_busy")
+              throw preStreamError;
             conversationBusyRetries += 1;
             const retryDelayMs = getRetryDelayMs({
               category: "conversation_busy",
               attempt: conversationBusyRetries,
             });
-
             if (outputFormat === "stream-json") {
               const retryMsg: RetryMessage = {
                 type: "retry",
@@ -2306,12 +2308,10 @@ export async function handleHeadlessCommand(
                 `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
               );
             }
-
             await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
             continue;
           }
         }
-
         if (preStreamAction === "retry_transient") {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;

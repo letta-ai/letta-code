@@ -660,6 +660,46 @@ export function parseChatGPTUsageLimitDetail(
   return null;
 }
 
+const CHATGPT_MODEL_UNSUPPORTED_FRAGMENTS = [
+  "model_not_found",
+  "not supported when using codex with a chatgpt account",
+];
+
+function hasModelUnsupportedText(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  const normalized = value.toLowerCase();
+  return CHATGPT_MODEL_UNSUPPORTED_FRAGMENTS.some((fragment) =>
+    normalized.includes(fragment),
+  );
+}
+
+/**
+ * Detect a ChatGPT plan that lists a model but cannot serve it, e.g.
+ * `ChatGPT SSE error (model_not_found): The '<model>' model is not supported
+ * when using Codex with a ChatGPT account.` Rotation treats this like an
+ * unusable plan for that model.
+ */
+export function isChatGPTModelUnsupportedError(error: unknown): boolean {
+  if (hasModelUnsupportedText(error)) return true;
+  if (!isRecord(error)) return false;
+  const structured = error as ChatGPTUsageLimitErrorInput;
+  if (
+    hasModelUnsupportedText(structured.detail) ||
+    hasModelUnsupportedText(structured.message) ||
+    hasModelUnsupportedText(structured.errorCode) ||
+    hasModelUnsupportedText(structured.error_code) ||
+    hasModelUnsupportedText(structured.raw)
+  ) {
+    return true;
+  }
+  if (!isRecord(structured.raw)) return false;
+  try {
+    return hasModelUnsupportedText(JSON.stringify(structured.raw));
+  } catch {
+    return false;
+  }
+}
+
 export interface ChatGPTFailoverModelEntry {
   handle: string;
   providerType?: string;
