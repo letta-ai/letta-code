@@ -15,7 +15,7 @@ describe("stop-failed background task retry wiring", () => {
 
     // The idle/escalation gate.
     const gateIndex = source.indexOf(
-      "if (!streaming || interruptRequested || abortedControllerWitness) {",
+      "if (\n      !streaming ||\n      interruptRequested ||\n      abortedControllerWitness ||\n      staleTurnUnwindingRef.current\n    ) {",
     );
     expect(gateIndex).toBeGreaterThanOrEqual(0);
 
