@@ -8,10 +8,36 @@ import {
   message,
   TARGET_CONV,
 } from "@/test-utils/send-agent-message-fixture";
-import { send_agent_message } from "./send-agent-message";
+import {
+  AGENT_SEND_RECEIPT_NOTE,
+  send_agent_message,
+} from "./send-agent-message";
 
 // The enqueue receipt names the conversation's agent; it drives the reported
 // agent, the recovery hints, and child-subagent tracking.
+
+test("an accepted send tells the sender not to end its turn waiting on a reply", async () => {
+  const f = fixture([], "agent-target");
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, f),
+  );
+  expect(result.status).toBe("success");
+  expect(JSON.parse(result.content).note).toBe(AGENT_SEND_RECEIPT_NOTE);
+});
+
+test("a failed send carries no reply note", async () => {
+  const f = fixture([], "agent-target");
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, {
+      ...f,
+      enqueue: async () => {
+        throw new ApiRequestError("refused", 409, "refused");
+      },
+    }),
+  );
+  expect(result.status).toBe("error");
+  expect(JSON.parse(result.content).note).toBeUndefined();
+});
 
 test("a conversation-ID send reports the agent from the server's receipt", async () => {
   const f = fixture([], "agent-target");

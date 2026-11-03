@@ -71,6 +71,12 @@ interface SendAgentMessageDeps {
   workerEnv?: ExternalWorkerResumeEnvDependencies;
 }
 
+// Shown to the sending model on every accepted Letta conversation send. Without
+// it, a sender that asked a question often ends its turn waiting on a reply
+// that may never come (the recipient may have no way to answer it).
+export const AGENT_SEND_RECEIPT_NOTE =
+  "Sent. The recipient may not be able to reply, so don't end your turn waiting on one; keep working with your own tools, and set a Wake if you still need the answer.";
+
 const FULL_CONVERSATION_ID =
   /^conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -528,6 +534,7 @@ export async function send_agent_message(
           agentId: receipt.agent_id,
           conversationId: receipt.conversation_id,
         }),
+        note: AGENT_SEND_RECEIPT_NOTE,
       }),
       status: "success",
     };
