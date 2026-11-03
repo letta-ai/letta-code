@@ -925,8 +925,9 @@ The three rule arrays share one syntax; see [Permission rule syntax](#permission
 Choose whether Claude Code uses the auto mode classifier to review shell commands in plan mode. With the default `true`, the classifier reviews each command during planning when auto mode is available and you see no prompt, except for [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths). Set `false` to get a permission prompt for every command outside the built-in read-only set. Appears in `/config` as **Use auto mode during plan**.
 
 * **Scope**: [`User, local, or managed`](#scopes). A repository can't turn it off for you.
+  * A `false` in any of these files or in `--settings` turns it off, unless you leave that user or local file out with an option such as [`--setting-sources`](https://code.claude.com/docs/en/cli-reference#cli-flags). Ignoring a left-out file requires Claude Code v2.1.314 or later
 * **Type**: Boolean
-  * `true`: the same as unset; when auto mode is available, the classifier reviews each shell command during planning instead of prompting you for it, except [critical-path removals](https://code.claude.com/docs/en/permission-modes.md#critical-paths). A `false` in any of these files still turns it off
+  * `true`: the same as unset; when auto mode is available, the classifier reviews shell commands during planning
   * `false`: you get a permission prompt for every command outside the built-in read-only set
 * **Default**: `true`
 
@@ -2073,7 +2074,7 @@ Let sandboxed commands on macOS listen on network ports, for example to start a 
 
 ### `sandbox.network.allowMachLookup`
 
-List additional XPC and Mach service names the macOS sandbox may look up. Tools that communicate over XPC, such as the iOS Simulator or Playwright, need their services listed here.
+List additional XPC and Mach service names the macOS sandbox may look up. Tools that communicate over XPC, such as the iOS Simulator or Playwright, need their services listed here. Sandboxed commands can reach outside the sandbox to each service that you list, and the sandbox [doesn't confine what those services do for those commands](https://code.claude.com/docs/en/sandboxing.md#security-limitations).
 
 * **Scope**: [`Any file`](#scopes), with [limits on project and local settings](https://code.claude.com/docs/en/sandboxing.md#repository-settings-under-an-admin-required-sandbox)
 * **Type**: array of strings, each a service name; a single trailing `*` matches a prefix, and `"*"` alone matches every service
@@ -2422,6 +2423,7 @@ This example turns off automatic compaction and routes API requests through a pr
 
     Ignoring this group in project and local settings requires Claude Code v2.1.282 or later.
   * Variables that change how Claude Code starts or syncs, such as `CLAUDE_CODE_PROCESS_WRAPPER`, `CLAUDE_CODE_SYNC_SKILLS`, `CLAUDE_CODE_SYNC_PLUGINS`, `CLAUDE_CODE_PLUGIN_CACHE_DIR`, and `CLAUDE_CODE_PLUGIN_SEED_DIR`.
+  * Variables that set your claude.ai sign-in, such as [`CLAUDE_CODE_OAUTH_TOKEN`, `CLAUDE_CODE_OAUTH_REFRESH_TOKEN`, and `CLAUDE_CODE_OAUTH_SCOPES`](https://code.claude.com/docs/en/env-vars#variables).
   * The [screen reader mode](https://code.claude.com/docs/en/accessibility.md) variable `CLAUDE_AX_SCREEN_READER` and the other variables whose names start with `CLAUDE_AX_`, such as [`CLAUDE_AX_STARTUP_QUIET_MS`](https://code.claude.com/docs/en/env-vars#variables).
   * [`CLAUDE_CODE_USER_DIALOG_TIMEOUT_MS`](https://code.claude.com/docs/en/env-vars#variables), which sets the timer on an unanswered dialog.
   * [`CLAUDE_CODE_DISABLE_ATTACHMENTS`](https://code.claude.com/docs/en/env-vars#variables), which turns off attachment processing.
