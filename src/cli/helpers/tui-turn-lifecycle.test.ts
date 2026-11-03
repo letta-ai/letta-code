@@ -16,6 +16,7 @@ function harness(overrides?: {
       : overrides.controller;
   const abortControllerRef = { current: controller };
   const processingConversationRef = { current: overrides?.processing ?? 1 };
+  const staleTurnUnwindingRef = { current: true };
   const userCancelledRef = { current: true };
   const interruptRequested: boolean[] = [];
   let epochBumps = 0;
@@ -23,7 +24,7 @@ function harness(overrides?: {
     controller,
     abortControllerRef,
     processingConversationRef,
-    staleTurnUnwindingRef: { current: true },
+    staleTurnUnwindingRef,
     conversationGenerationRef: {
       current: overrides?.generation ?? 0,
     },
@@ -33,6 +34,7 @@ function harness(overrides?: {
     args: {
       abortControllerRef,
       processingConversationRef,
+      staleTurnUnwindingRef,
       userCancelledRef,
       setInterruptRequested: (value: boolean) => {
         interruptRequested.push(value);

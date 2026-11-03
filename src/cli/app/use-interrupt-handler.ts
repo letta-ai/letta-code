@@ -154,7 +154,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
   // do so, so the interrupt settles immediately.
   const settleIfNoTurnInFlight = () => {
     if (processingConversationRef.current > 0) return;
-    staleTurnUnwindingRef.current = false;
+    if (!abortControllerRef.current) {
+      staleTurnUnwindingRef.current = false;
+    }
     settleTuiInterrupt({
       userCancelledRef,
       setInterruptRequested,
@@ -224,7 +226,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       hasTrackedTools &&
       !toolResultsInFlightRef.current
     ) {
-      staleTurnUnwindingRef.current = processingConversationRef.current > 0;
+      staleTurnUnwindingRef.current =
+        processingConversationRef.current > 0 ||
+        abortControllerRef.current !== null;
       latchInterruptTarget();
       toolAbortControllerRef.current.abort();
 
@@ -388,7 +392,9 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
     // If EAGER_CANCEL is enabled, immediately stop everything client-side first
     if (EAGER_CANCEL) {
       latchInterruptTarget();
-      staleTurnUnwindingRef.current = processingConversationRef.current > 0;
+      staleTurnUnwindingRef.current =
+        processingConversationRef.current > 0 ||
+        abortControllerRef.current !== null;
       // Prevent multiple handleInterrupt calls while state updates are pending
       setInterruptRequested(true);
 
