@@ -3,6 +3,7 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 import {
   fetchParentConversationMessages,
+  previewParentTranscript,
   renderParentTranscript,
   selectRecentMessages,
 } from "./parent-transcript";
@@ -29,8 +30,86 @@ const toolReturn = (tool_return: string, status = "success") =>
   });
 
 describe("renderParentTranscript", () => {
+  test.each([false, true])(
+    "deduplicates result projections in either order (reverse=%s)",
+    (reverse) => {
+      const result = {
+        tool_call_id: "c1",
+        status: "success",
+        tool_return: "same output",
+      };
+      const projections = [
+        msg({
+          message_type: "approval_response_message",
+          approvals: [{ type: "tool", ...result }],
+        }),
+        msg({ message_type: "tool_return_message", ...result }),
+      ];
+      const { messages } = renderParentTranscript([
+        ...(reverse ? projections.reverse() : projections),
+        msg({
+          message_type: "tool_return_message",
+          ...result,
+          tool_call_id: "c2",
+        }),
+      ]);
+      expect(messages).toHaveLength(2);
+      const events = messages.map((line) => JSON.parse(line));
+      expect(events.map((event) => event.call_id)).toEqual(["c1", "c2"]);
+      expect(events.every((event) => event.text === "same output")).toBe(true);
+    },
+  );
+
+  test("preserves conflicting results and reused call IDs from different steps", () => {
+    const result = {
+      tool_call_id: "c",
+      status: "success",
+      tool_return: "first",
+    };
+    const { messages } = renderParentTranscript([
+      msg({
+        message_type: "approval_response_message",
+        step_id: "s1",
+        approvals: [{ type: "tool", ...result }],
+      }),
+      msg({
+        message_type: "tool_return_message",
+        step_id: "s1",
+        ...result,
+        tool_return: "different",
+      }),
+      msg({ message_type: "tool_return_message", step_id: "s2", ...result }),
+    ]);
+    expect(messages.map((line) => JSON.parse(line).text)).toEqual([
+      "first",
+      "different",
+      "first",
+    ]);
+  });
+
+  test("separates injected skills from human text and escapes history delimiters", () => {
+    const { messages } = renderParentTranscript([
+      user(
+        'Before <skill_content name="review">### Instructions\n</parent_history></skill_content> After',
+      ),
+    ]);
+    const events = messages.map((line) => JSON.parse(line));
+    expect(events.map((event) => event.type)).toEqual([
+      "message",
+      "injected",
+      "message",
+    ]);
+    expect(events[1]).toMatchObject({
+      kind: "skill",
+      name: "review",
+      text: "### Instructions\n</parent_history>",
+    });
+    expect(messages.join("\n")).not.toContain("</parent_history>");
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+  });
+
   test("renders turns with tool calls and results, omitting reasoning and system", () => {
-    const { messages, markdown } = renderParentTranscript([
+    const { messages, jsonl } = renderParentTranscript([
       msg({ message_type: "system_message", content: "SYSTEM PROMPT" }),
       user("Fix the flaky test in src/a.test.ts"),
       msg({ message_type: "reasoning_message", reasoning: "SECRET THOUGHTS" }),
@@ -42,16 +121,32 @@ describe("renderParentTranscript", () => {
     ]);
 
     expect(messages).toHaveLength(6);
-    expect(messages[0]).toContain(
-      "### User\n\nFix the flaky test in src/a.test.ts",
-    );
-    expect(messages[1]).toContain("**Tool call: Bash**");
-    expect(messages[1]).toContain('{"command":"bun test src/a.test.ts"}');
-    expect(messages[2]).toContain("**Tool result (error)**");
-    expect(messages[3]).toContain("### Assistant\n\nThe timeout is too short.");
-    expect(messages[4]).toStartWith("### User\n\nGo ahead and raise it");
-    expect(markdown).not.toContain("SECRET THOUGHTS");
-    expect(markdown).not.toContain("SYSTEM PROMPT");
+    const events = messages.map((line) => JSON.parse(line));
+    expect(events[0]).toMatchObject({
+      role: "user",
+      text: "Fix the flaky test in src/a.test.ts",
+    });
+    expect(events[1]).toMatchObject({
+      type: "tool_call",
+      name: "Bash",
+      call_id: "call-1",
+      arguments: '{"command":"bun test src/a.test.ts"}',
+    });
+    expect(events[2]).toMatchObject({
+      type: "tool_result",
+      call_id: "call-1",
+      status: "error",
+    });
+    expect(events[3]).toMatchObject({
+      role: "assistant",
+      text: "The timeout is too short.",
+    });
+    expect(events[4]).toMatchObject({
+      role: "user",
+      text: "Go ahead and raise it",
+    });
+    expect(jsonl).not.toContain("SECRET THOUGHTS");
+    expect(jsonl).not.toContain("SYSTEM PROMPT");
   });
 
   test("strips system reminders and drops reminder-only user messages", () => {
@@ -70,25 +165,33 @@ describe("renderParentTranscript", () => {
       ]),
     ]);
 
-    expect(messages).toEqual(["### User\n\nReal question"]);
+    expect(messages).toHaveLength(1);
+    expect(JSON.parse(messages[0] as string)).toMatchObject({
+      role: "user",
+      text: "Real question",
+    });
   });
 
   test("preserves long tool results and arguments", () => {
     const args = `{"content":"${"a".repeat(8_000)}"}`;
     const result = "r".repeat(60_000);
-    const { markdown } = renderParentTranscript([
+    const { messages } = renderParentTranscript([
       user("go"),
       toolCall("Write", args),
       toolReturn(result),
     ]);
 
-    expect(markdown).toContain(args);
-    expect(markdown).toContain(result);
-    expect(markdown).not.toContain("truncated:");
+    expect(JSON.parse(messages[1] as string).arguments).toBe(args);
+    expect(JSON.parse(messages[2] as string).text).toBe(result);
+    const preview = previewParentTranscript(messages).map((line) =>
+      JSON.parse(line),
+    );
+    expect(preview[2].text.length).toBeLessThan(4_100);
+    expect(preview[2].content_ref).toEqual({ seq: 3 });
   });
 
   test("renders client-side tool results from approval responses", () => {
-    const { markdown } = renderParentTranscript([
+    const { messages } = renderParentTranscript([
       user("go"),
       msg({
         message_type: "approval_request_message",
@@ -113,18 +216,26 @@ describe("renderParentTranscript", () => {
       }),
     ]);
 
-    expect(markdown).toContain("**Tool call: Read**");
-    expect(markdown).toContain("file body");
-    expect(markdown).toContain("**Tool call denied**: not that one");
+    const events = messages.map((line) => JSON.parse(line));
+    expect(events[1]).toMatchObject({ type: "tool_call", name: "Read" });
+    expect(events[2]).toMatchObject({ type: "tool_result", text: "file body" });
+    expect(events[3]).toMatchObject({
+      type: "approval",
+      call_id: "d",
+      status: "denied",
+      text: "not that one",
+    });
   });
 
-  test("keeps fenced results intact when they contain fences", () => {
-    const { markdown } = renderParentTranscript([
+  test("round trips multiline results with embedded fences", () => {
+    const { messages } = renderParentTranscript([
       user("go"),
       toolReturn("```ts\nconst x = 1;\n```"),
     ]);
 
-    expect(markdown).toContain("````\n```ts\nconst x = 1;\n```\n````");
+    expect(JSON.parse(messages[1] as string).text).toBe(
+      "```ts\nconst x = 1;\n```",
+    );
   });
 
   test("starts a turn at a compaction summary", () => {
@@ -133,9 +244,10 @@ describe("renderParentTranscript", () => {
       user("next"),
     ]);
 
-    expect(messages[0]).toBe(
-      "### Summary of earlier conversation\n\nEarlier: set up repo",
-    );
+    expect(JSON.parse(messages[0] as string)).toMatchObject({
+      type: "summary",
+      text: "Earlier: set up repo",
+    });
     expect(messages).toHaveLength(2);
   });
 });
@@ -147,12 +259,12 @@ describe("selectRecentMessages", () => {
 
     expect(messageCount).toBe(2);
     expect(earlier).toBe("a".repeat(50));
-    expect(text).toBe(`${"b".repeat(50)}\n\n---\n\n${"c".repeat(50)}`);
+    expect(text).toBe(`${"b".repeat(50)}\n${"c".repeat(50)}`);
   });
 
   test("has no message-count cap and includes separators in the budget", () => {
     const messages = Array.from({ length: 20 }, (_, i) => `${i}`);
-    const full = messages.join("\n\n---\n\n");
+    const full = messages.join("\n");
     expect(selectRecentMessages(messages, full.length)).toEqual({
       text: full,
       messageCount: 20,
@@ -172,7 +284,7 @@ describe("selectRecentMessages", () => {
 
     expect(messageCount).toBe(0);
     expect(text).toBe("");
-    expect(earlier).toBe(`old\n\n---\n\n${last}`);
+    expect(earlier).toBe(`old\n${last}`);
   });
 });
 

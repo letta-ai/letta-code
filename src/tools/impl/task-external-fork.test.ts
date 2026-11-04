@@ -191,7 +191,10 @@ describe("fork_context for external coding workers", () => {
     expect(forkConversation).not.toHaveBeenCalled();
     expect(workerPrompts).toHaveLength(1);
     const prompt = workerPrompts[0] as string;
-    const path = prompt.match(/available at:\n(.+)\n/)?.[1] as string;
+    const metadata = JSON.parse(
+      prompt.split("<parent_history>\n")[1]?.split("\n")[0] as string,
+    );
+    const path = metadata.full_history_path as string;
     expect(path).toStartWith(join(scratchpad, ".letta", "parent-transcripts"));
     expect(await Bun.file(path).text()).toContain(olderMessage);
     expect(prompt).toContain("Use Postgres.");
