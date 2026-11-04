@@ -94,6 +94,17 @@ The following skills are available. Read the relevant SKILL.md before using a sk
     expect(reminder).toBeUndefined();
   });
 
+  test("caps inventory characters at whole skill entries", () => {
+    const reminder = buildExternalCodingAgentSkillsReminder(
+      Array.from({ length: 10 }, (_, i) => ({
+        ...skill(`skill-${i}`),
+        description: "x".repeat(8_000),
+      })),
+    );
+    expect(reminder?.match(/SKILL.md:/g)).toHaveLength(3);
+    expect(reminder?.endsWith(`${sep}SKILL.md\n</system-reminder>`)).toBe(true);
+  });
+
   test("caps large inventories without cutting paths", () => {
     const reminder = buildExternalCodingAgentSkillsReminder(
       Array.from({ length: 200 }, (_, i) => skill(`skill-${i}`)),
