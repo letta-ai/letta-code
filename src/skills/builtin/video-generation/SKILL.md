@@ -157,6 +157,10 @@ Example:
 }
 ```
 
+## Iterating until a take passes
+
+When a clip has to pass checks (no frozen stretches, intact hands and props, a seamless loop, a reviewer's notes) and will likely take several renders, hand the whole render, check, adjust, re-render loop to one background subagent instead of running it in your own conversation. Brief it with the goal, every requirement the clip must meet (including each action the prompt asks for, since that is where defects tend to appear), the budget and the reference frames, and have it return a passing take or a diagnosis of why the shot can't pass. Every render, frame check and completion notice you run yourself stays in your context and pulls each next fix toward the latest failure. When new feedback arrives, send it to that subagent rather than patching the take yourself.
+
 ## Chaining with other skills
 
 - **Keyframes:** generate stills with the `image-generation` skill, then pass them as `frame_images` (`first_frame` / `last_frame`) or image `input_references` as data URLs.
