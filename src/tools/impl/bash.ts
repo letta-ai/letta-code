@@ -22,6 +22,7 @@ import {
   commandRunsForegroundSleep,
   FOREGROUND_SLEEP_BLOCKED_MESSAGE,
 } from "./foreground-sleep.js";
+import { findMemoryExfiltration } from "./memory-push-guard.js";
 import {
   appendBackgroundProcessOutput,
   appendToOutputFile,
@@ -390,6 +391,17 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   if (!run_in_background && commandRunsForegroundSleep(command)) {
     return {
       content: [{ type: "text", text: FOREGROUND_SLEEP_BLOCKED_MESSAGE }],
+      status: "error",
+    };
+  }
+
+  const memoryBlocked = findMemoryExfiltration(command, {
+    cwd: userCwd,
+    env: getShellEnv(),
+  });
+  if (memoryBlocked) {
+    return {
+      content: [{ type: "text", text: memoryBlocked }],
       status: "error",
     };
   }
