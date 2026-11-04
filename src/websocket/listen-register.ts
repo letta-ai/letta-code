@@ -138,6 +138,7 @@ export async function registerWithCloud(
         // Mirrors app_server_info so callers can check before connecting.
         launch_subagent_notify_caller: true,
         subagent_message: true,
+        external_fork_context: true,
         self_update: getSelfUpdateStatus(),
       },
     }),
