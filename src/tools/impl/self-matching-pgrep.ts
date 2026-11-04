@@ -73,12 +73,19 @@ function patternMatches(pattern: string, text: string): boolean {
  * Returns the pattern of a `pgrep -f` / `pkill -f` in this command that also
  * matches the command itself, or null. The Bash tool runs commands as
  * `<shell> -c "<command>"`, so that shell's command line contains every pattern
- * written into the command; pgrep excludes only its own process, not the shell.
+ * written into the command; on Linux, pgrep excludes only its own process, not
+ * that shell.
  *
  * Like the foreground-sleep check, this is a workflow guard, not a security
  * boundary: commands the splitter cannot analyze are let through.
  */
-export function findSelfMatchingPgrepPattern(command: string): string | null {
+export function findSelfMatchingPgrepPattern(
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  // BSD/macOS pgrep and pkill exclude their own ancestors by default, so the
+  // calling shell never matches there. Linux procps-ng has no such exclusion.
+  if (platform !== "linux") return null;
   const segments =
     splitShellSegmentsAllowCommandSubstitution(command) ??
     splitShellSegments(command);

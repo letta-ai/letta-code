@@ -222,6 +222,7 @@ describe("Bash tool", () => {
   });
 
   test("blocks a background wait loop whose pgrep -f pattern matches itself", async () => {
+    if (process.platform !== "linux") return;
     const before = backgroundProcesses.size;
     const result = await bash({
       command: "while pgrep -f runall.py >/dev/null; do sleep 3; done",

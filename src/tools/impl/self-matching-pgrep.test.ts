@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { findSelfMatchingPgrepPattern } from "./self-matching-pgrep";
+import { findSelfMatchingPgrepPattern as findOnPlatform } from "./self-matching-pgrep";
+
+const findSelfMatchingPgrepPattern = (command: string) =>
+  findOnPlatform(command, "linux");
 
 describe("findSelfMatchingPgrepPattern", () => {
   test("flags wait loops whose pgrep -f pattern is in the command itself", () => {
@@ -43,8 +46,14 @@ describe("findSelfMatchingPgrepPattern", () => {
     expect(findSelfMatchingPgrepPattern("echo pgrep -f foo")).toBeNull();
   });
 
+  test("never flags on macOS, where pgrep excludes its ancestors", () => {
+    expect(
+      findOnPlatform("while pgrep -f runall.py; do sleep 3; done", "darwin"),
+    ).toBeNull();
+  });
+
   test("the flagged pattern really matches its own shell in pgrep", () => {
-    if (process.platform === "win32") return;
+    if (process.platform !== "linux") return;
     const probe = spawnSync("pgrep", ["--version"]);
     if (probe.error) return;
     const command = "pgrep -f self-match-probe-7f3a >/dev/null && echo matched";
