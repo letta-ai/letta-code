@@ -1,5 +1,5 @@
 import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
-import { updateSubagent } from "@/agent/subagent-state.js";
+import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
 import type { SubagentResult } from "@/agent/subagents";
 import { getBackend } from "@/backend";
 import {
@@ -12,11 +12,17 @@ import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import {
+  readConversationRuntimeStatus,
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
 import { recordTaskEvent } from "@/tools/impl/task-transcript";
 import { getErrorMessage } from "@/utils/error";
+import { addToMessageQueue } from "@/utils/message-queue-bridge";
+import {
+  formatTaskNotification,
+  resolveNotificationScope,
+} from "@/utils/task-notifications";
 import {
   type ExecutionState,
   processStreamEvent,
@@ -25,9 +31,41 @@ import {
 
 export interface RemoteTurnWaitDeps
   extends Partial<
-    Pick<SuperRunWaitDeps, "exact" | "run" | "pollMs" | "progressMs" | "sleep">
+    Pick<
+      SuperRunWaitDeps,
+      "exact" | "run" | "pollMs" | "progressMs" | "sleep" | "runtimeStatus"
+    >
   > {
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
+}
+
+/** Capture the initiating parent scope before the remote wait outlives its turn. */
+export function createRemoteIdleNotifier(
+  subagentId: string,
+  parentScope?: { agentId: string; conversationId: string },
+): (text: string, count: number) => void {
+  const entry = getSubagents().find((agent) => agent.id === subagentId);
+  const scope = resolveNotificationScope(
+    parentScope ??
+      (entry?.parentAgentId
+        ? {
+            agentId: entry.parentAgentId,
+            conversationId: entry.parentConversationId ?? "default",
+          }
+        : undefined),
+  );
+  return (text, count) => {
+    addToMessageQueue({
+      kind: "task_notification",
+      ...scope,
+      text: formatTaskNotification({
+        taskId: subagentId,
+        status: "running",
+        summary: `Agent loop stopped with ${count} background process${count === 1 ? "" : "es"} still running`,
+        result: `${text}\n\nThe child agent's loop has stopped with ${count} background process${count === 1 ? "" : "es"} still running. It will resume when they finish, and a final notification will follow.`,
+      }),
+    });
+  };
 }
 
 function messageText(content: unknown): string {
@@ -113,6 +151,8 @@ export async function collectRemoteTurnResult(
     const finishedRuns = new Set<string>();
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       exact: deps.exact ?? getExactSuperRun,
+      runtimeStatus: deps.runtimeStatus ?? readConversationRuntimeStatus,
+      onIdle: createRemoteIdleNotifier(subagentId),
       run:
         deps.run ??
         ((runId, readSignal) =>

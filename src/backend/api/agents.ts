@@ -40,6 +40,8 @@ export interface AgentRuntimeStatusEntry {
   state: "IDLE" | "PENDING_DELIVERY" | "ACTIVE" | "ACTIVE_UNATTRIBUTED";
   /** The owning listener's loop status, relayed verbatim; null when unowned. */
   loop_state: { status: string } | null;
+  /** Running background shell processes reported by the listener. */
+  active_bash_count?: number;
   active_harness?: { connection_id: string } | null;
   has_conflicting_listeners?: boolean;
   active_run_ids: string[];
