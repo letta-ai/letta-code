@@ -16,12 +16,23 @@ import {
   parseExternalCodingAgentId,
   parseExternalCodingAgentOutput,
   resolveExternalCodingAgentMcpReminder,
-  runExternalCodingAgent,
+  runExternalCodingAgent as runExternalCodingAgentImpl,
   scrubWorkerListeners,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
 import { clearNativeSessionCaptureForTests } from "./native-session-capture";
+
+// Lifecycle tests use synthetic parents; discovery is covered separately.
+function runExternalCodingAgent(
+  options: Parameters<typeof runExternalCodingAgentImpl>[0],
+  deps: Parameters<typeof runExternalCodingAgentImpl>[1] = {},
+) {
+  return runExternalCodingAgentImpl(options, {
+    resolveSkillsReminder: async () => undefined,
+    ...deps,
+  });
+}
 
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 
@@ -633,64 +644,101 @@ describe("parent memory launch instructions", () => {
     async (type) => {
       const parentAgentId = `agent-worker-parent-${randomUUID()}`;
       const directory = getScopedMemoryFilesystemRoot(parentAgentId);
-      for (const [hasMemory, mcpReminder] of [
-        [true, "MCP discovery"],
-        [true, undefined],
-        [false, undefined],
-        [false, "MCP discovery"],
-      ] as const) {
-        if (hasMemory) mkdirSync(directory, { recursive: true });
-        let received: string | undefined;
-        try {
-          const resolvedMcpReminder =
-            mcpReminder ??
-            (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
-              inherit: false,
-            }));
-          await runExternalCodingAgent(
-            {
-              type,
-              parentAgentId,
-              prompt: "task",
-              mcpReminder: resolvedMcpReminder,
-            },
-            {
-              resolveSecretEnv: async () => ({}),
-              runPreflight: async () => ({
-                exitCode: 0,
-                stdout: '{"loggedIn":true}',
-                stderr: "",
-              }),
-              runProcess: async (command) => {
-                const index = command.args.indexOf("--append-system-prompt");
-                received = index >= 0 ? command.args[index + 1] : undefined;
-                return {
+      for (const skillsReminder of [undefined, "skills"] as const) {
+        for (const [hasMemory, mcpReminder] of [
+          [true, "MCP discovery"],
+          [true, undefined],
+          [false, undefined],
+          [false, "MCP discovery"],
+        ] as const) {
+          if (hasMemory) mkdirSync(directory, { recursive: true });
+          let received: string | undefined;
+          try {
+            const resolvedMcpReminder =
+              mcpReminder ??
+              (await resolveExternalCodingAgentMcpReminder(parentAgentId, {
+                inherit: false,
+              }));
+            await runExternalCodingAgent(
+              {
+                type,
+                parentAgentId,
+                prompt: "task",
+                mcpReminder: resolvedMcpReminder,
+              },
+              {
+                resolveSkillsReminder: async () => skillsReminder,
+                resolveSecretEnv: async () => ({}),
+                runPreflight: async () => ({
                   exitCode: 0,
-                  stdout: '{"result":"done","session_id":"c1"}',
+                  stdout: '{"loggedIn":true}',
                   stderr: "",
-                };
+                }),
+                runProcess: async (command) => {
+                  const index = command.args.indexOf("--append-system-prompt");
+                  received = index >= 0 ? command.args[index + 1] : undefined;
+                  return {
+                    exitCode: 0,
+                    stdout: '{"result":"done","session_id":"c1"}',
+                    stderr: "",
+                  };
+                },
+                runCodexTurn: async (options) => {
+                  received = options.mcpReminder;
+                  throw new Error("captured launch instructions");
+                },
               },
-              runCodexTurn: async (options) => {
-                received = options.mcpReminder;
-                throw new Error("captured launch instructions");
-              },
-            },
-          );
-          const note = buildParentMemoryNote(parentAgentId);
-          expect(received).toBe(
-            [
-              note
-                ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
-                : undefined,
-              mcpReminder,
-            ]
-              .filter(Boolean)
-              .join("\n\n") || undefined,
-          );
-        } finally {
-          rmSync(directory, { recursive: true, force: true });
+            );
+            const note = buildParentMemoryNote(parentAgentId);
+            expect(received).toBe(
+              [
+                note
+                  ? `${SYSTEM_REMINDER_OPEN}\n${note}\n${SYSTEM_REMINDER_CLOSE}`
+                  : undefined,
+                skillsReminder,
+                mcpReminder,
+              ]
+                .filter(Boolean)
+                .join("\n\n") || undefined,
+            );
+          } finally {
+            rmSync(directory, { recursive: true, force: true });
+          }
         }
       }
+    },
+  );
+});
+
+describe("workers without skill forwarding", () => {
+  test.each(["opencode", "cursor"] as const)(
+    "%s forwards MCP without discovering or forwarding skills",
+    async (type) => {
+      let discovered = false;
+      let received: string | undefined;
+      const result = await runExternalCodingAgent(
+        {
+          type,
+          parentAgentId: "parent",
+          prompt: "test",
+          mcpReminder: "MCP",
+        },
+        {
+          resolveSkillsReminder: async () => {
+            discovered = true;
+            return "skills";
+          },
+          resolveSecretEnv: async () => ({}),
+          [type === "cursor" ? "runCursorTurn" : "runOpenCodeTurn"]:
+            async (options: { mcpReminder?: string }) => {
+              received = options.mcpReminder;
+              return { agentId: "parent", report: "done", success: true };
+            },
+        },
+      );
+      expect(result.success).toBe(true);
+      expect(discovered).toBe(false);
+      expect(received).toBe("MCP");
     },
   );
 });

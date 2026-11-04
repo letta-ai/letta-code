@@ -59,6 +59,8 @@ Agent({
 })
 ```
 
+Subagents like Claude Code/Codex are forwarded the same skills and MCP servers that you have (when launched with the `Agent` tool), but lack long-term memory and context. Forward any relevant memory files or other context in the task specification or via steering if additional context is required post-launch.
+
 Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
 
 Fresh Letta subagents automatically discover and call the parent's MCP servers through `letta mcp`. This includes local and cloud-attached servers without copying connections or credentials. Deploying an existing agent keeps that agent's MCP scope.

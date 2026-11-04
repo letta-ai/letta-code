@@ -32,6 +32,7 @@ import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
+import { resolveExternalCodingAgentSkillsReminder } from "./external-coding-agent-skills";
 import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
@@ -107,6 +108,9 @@ export interface ExternalCodingAgentProcessResult {
 }
 
 export interface ExternalCodingAgentDependencies {
+  resolveSkillsReminder?: typeof resolveExternalCodingAgentSkillsReminder;
+  runOpenCodeTurn?: typeof runOpenCodeTurn;
+  runCursorTurn?: typeof runCursorTurn;
   runCodexTurn?: typeof runCodexTurn;
   runProcess?: (
     command: ExternalCodingAgentCommand,
@@ -603,6 +607,17 @@ export async function runExternalCodingAgent(
   options: ExternalCodingAgentRunOptions,
   deps: ExternalCodingAgentDependencies = {},
 ): Promise<SubagentResult> {
+  if (options.type === "claude-code" || options.type === "codex") {
+    const skillsReminder = await (
+      deps.resolveSkillsReminder ?? resolveExternalCodingAgentSkillsReminder
+    )(options.parentAgentId, options.cwd ?? getCurrentWorkingDirectory());
+    options = {
+      ...options,
+      mcpReminder:
+        [skillsReminder, options.mcpReminder].filter(Boolean).join("\n\n") ||
+        undefined,
+    };
+  }
   const startedAt = Date.now();
   const { env, secretEnv, mcpReminder } = await buildExternalWorkerLaunchEnv(
     options,
@@ -676,7 +691,7 @@ export async function runExternalCodingAgent(
   if (options.type === "opencode") {
     // OpenCode persists native sessions itself; transcript capture currently
     // supports only Claude/Codex formats, not OpenCode's database.
-    return runOpenCodeTurn(
+    return (deps.runOpenCodeTurn ?? runOpenCodeTurn)(
       {
         ...options,
         cwd,
@@ -689,7 +704,7 @@ export async function runExternalCodingAgent(
     );
   }
   if (options.type === "cursor") {
-    return runCursorTurn(
+    return (deps.runCursorTurn ?? runCursorTurn)(
       {
         ...options,
         cwd,
