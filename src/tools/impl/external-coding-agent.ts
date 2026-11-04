@@ -32,24 +32,21 @@ import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
+import {
+  EXTERNAL_CODING_AGENT_TYPES,
+  type ExternalCodingAgentType,
+} from "./external-coding-agent-types";
 import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
+  type NativeSessionSource,
   rememberNativeSession,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { runOpenCodeTurn } from "./opencode-session";
-
-export const EXTERNAL_CODING_AGENT_TYPES = [
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-] as const;
-export type ExternalCodingAgentType =
-  (typeof EXTERNAL_CODING_AGENT_TYPES)[number];
+import { PI_NOT_SIGNED_IN_PREFIX, runPiTurn } from "./pi-rpc-session";
 
 export interface ExternalCodingAgentMcpOptions {
   inherit: boolean;
@@ -105,6 +102,7 @@ export interface ExternalCodingAgentProcessResult {
 
 export interface ExternalCodingAgentDependencies {
   runCodexTurn?: typeof runCodexTurn;
+  runPiTurn?: typeof runPiTurn;
   runProcess?: (
     command: ExternalCodingAgentCommand,
     options: {
@@ -123,18 +121,25 @@ export interface ExternalCodingAgentDependencies {
   resolveSecretEnv?: (parentAgentId: string) => Promise<Record<string, string>>;
 }
 
-export function isExternalCodingAgentType(
-  value: string,
-): value is ExternalCodingAgentType {
-  return (EXTERNAL_CODING_AGENT_TYPES as readonly string[]).includes(value);
-}
-
 const EXTERNAL_AGENT_ID_PREFIXES: Record<ExternalCodingAgentType, string> = {
   "claude-code": "claude_",
   codex: "codex_",
   opencode: "opencode_",
   cursor: "cursor_",
+  pi: "pi_",
 };
+
+/**
+ * The transcript source for workers whose native session files are captured
+ * into the parent conversation; undefined for workers without capture.
+ */
+export function nativeSessionSourceFor(
+  type: ExternalCodingAgentType,
+): NativeSessionSource | undefined {
+  if (type === "claude-code") return "claude_code";
+  if (type === "codex" || type === "pi") return type;
+  return undefined;
+}
 const NATIVE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -308,6 +313,7 @@ async function runProcess(
 
 const MISSING_EXECUTABLE_PREFIX = "Required executable '";
 const CODEX_NOT_READY_PREFIX = "Codex executable is not ready";
+const PI_NOT_READY_PREFIX = "pi executable is not ready";
 const CLAUDE_NOT_SIGNED_IN_PREFIX = "claude-code authentication is not ready";
 
 async function defaultRunPreflight(
@@ -358,12 +364,14 @@ export function classifyExternalCodingAgentStartupError(
 ): SubagentStartupErrorCode | undefined {
   if (
     error.startsWith(MISSING_EXECUTABLE_PREFIX) ||
-    error.startsWith(CODEX_NOT_READY_PREFIX)
+    error.startsWith(CODEX_NOT_READY_PREFIX) ||
+    error.startsWith(PI_NOT_READY_PREFIX)
   )
     return "not_installed";
   if (
     error.startsWith(CLAUDE_NOT_SIGNED_IN_PREFIX) ||
     error.startsWith(CODEX_NOT_SIGNED_IN_ERROR) ||
+    error.startsWith(PI_NOT_SIGNED_IN_PREFIX) ||
     error.startsWith("Cursor is not signed in:")
   )
     return "not_signed_in";
@@ -389,11 +397,13 @@ function assertPreflightReady(
   } else if (result.exitCode === 0) {
     return;
   }
-  throw new Error(
+  const prefix =
     type === "codex"
-      ? `${CODEX_NOT_READY_PREFIX}${output ? `: ${output}` : ""}`
-      : `${CLAUDE_NOT_SIGNED_IN_PREFIX}${output ? `: ${output}` : ""}`,
-  );
+      ? CODEX_NOT_READY_PREFIX
+      : type === "pi"
+        ? PI_NOT_READY_PREFIX
+        : CLAUDE_NOT_SIGNED_IN_PREFIX;
+  throw new Error(`${prefix}${output ? `: ${output}` : ""}`);
 }
 
 export function parseExternalCodingAgentOutput(
@@ -622,7 +632,7 @@ export async function runExternalCodingAgent(
         actingUserId: captureActingUserId,
       }
     : undefined;
-  const source = options.type === "claude-code" ? "claude_code" : "codex";
+  const source = nativeSessionSourceFor(options.type) ?? "codex";
   let captureReservation: Promise<NativeSessionCaptureReservation> | undefined;
   let captureSessionId = options.resumeSessionId;
   const reserveCapture = (sessionId: string) => {
@@ -696,6 +706,53 @@ export async function runExternalCodingAgent(
       env,
       secretEnv,
     );
+  }
+  if (options.type === "pi") {
+    try {
+      const preflight = await (deps.runPreflight ?? defaultRunPreflight)(
+        "pi",
+        preflightArgs("pi"),
+        env,
+        options.signal,
+      );
+      assertPreflightReady("pi", preflight);
+      return capture(
+        await (deps.runPiTurn ?? runPiTurn)(
+          {
+            prompt: options.prompt,
+            parentAgentId: options.parentAgentId,
+            cwd,
+            model: options.model,
+            mcpReminder: options.mcpReminder,
+            signal: options.signal,
+            resumeSessionId: options.resumeSessionId,
+            onToolCall: options.onToolCall,
+            onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
+            beforeStart: async (sessionId) => {
+              if (scope && !captureReservation) {
+                if (!options.resumeSessionId)
+                  rememberNativeSession("pi", sessionId, scope);
+                await reserveCapture(sessionId);
+              }
+            },
+            onStarted: (sessionId) =>
+              options.onStarted?.(formatExternalCodingAgentId("pi", sessionId)),
+          },
+          env,
+        ),
+      );
+    } catch (error) {
+      return capture({
+        agentId: options.parentAgentId,
+        model: options.model,
+        report: "",
+        success: false,
+        error: normalizeError(error),
+        durationMs: Date.now() - startedAt,
+      });
+    }
   }
   if (options.type === "codex") {
     try {

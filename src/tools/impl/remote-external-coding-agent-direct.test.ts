@@ -49,6 +49,7 @@ class FakeDirectServer {
     private readonly capabilities: {
       launch_subagent_notify_caller?: boolean;
       subagent_message?: boolean;
+      external_harnesses?: string[];
     } = { launch_subagent_notify_caller: true, subagent_message: true },
   ) {}
 
@@ -352,5 +353,80 @@ describe("direct App Server computers", () => {
         "Direct computers run external coding workers only",
       ),
     });
+  });
+
+  test("pi launches need a computer that advertises the pi harness", async () => {
+    const launchPi = (server: FakeDirectServer) =>
+      launchRemoteExternalCodingAgent(
+        {
+          type: "pi",
+          computer: "direct:build-box",
+          prompt: "p",
+          description: "d",
+          toolCallId: "call-1",
+          parentScope: scope,
+        },
+        { spawn, agentIdWaitMs: 1, ...directDeps(server).deps },
+      );
+    const older = new FakeDirectServer({
+      launch_subagent_notify_caller: true,
+      subagent_message: true,
+      external_harnesses: ["claude-code", "codex", "opencode", "cursor"],
+    });
+    expect(await launchPi(older)).toEqual({
+      success: false,
+      error: expect.stringContaining("can't run pi subagents remotely"),
+    });
+    expect(older.launches).toHaveLength(0);
+
+    const current = new FakeDirectServer({
+      launch_subagent_notify_caller: true,
+      subagent_message: true,
+      external_harnesses: ["codex", "pi"],
+    });
+    expect((await launchPi(current)).success).toBe(true);
+    expect(current.launches[0]?.args).toMatchObject({ subagent_type: "pi" });
+    current.snapshot({ status: "completed", result: "Done" });
+  });
+
+  test("Cloud computers without the pi capability are reported as outdated", async () => {
+    const connects: string[] = [];
+    const result = await launchRemoteExternalCodingAgent(
+      {
+        type: "pi",
+        computer: "brad-box",
+        prompt: "p",
+        description: "d",
+        parentScope: scope,
+      },
+      {
+        spawn,
+        resolveComputer: async () => ({
+          connectionId: "conn-1",
+          environment: {
+            id: "env-1",
+            connectionId: "conn-1",
+            deviceId: "device-1",
+            connectionName: "brad-box",
+            organizationId: "org-1",
+            podId: "pod-1",
+            connectedAt: 1,
+            lastHeartbeat: Date.now(),
+            lastSeenAt: 1,
+            firstSeenAt: 1,
+            metadata: { launch_subagent_notify_caller: true },
+          },
+        }),
+        connect: async (id) => {
+          connects.push(id);
+          throw new Error("must not connect");
+        },
+      },
+    );
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining("can't run pi subagents remotely"),
+    });
+    expect(connects).toHaveLength(0);
   });
 });

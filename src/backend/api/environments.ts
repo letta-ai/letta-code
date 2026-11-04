@@ -13,6 +13,8 @@ export interface EnvironmentMetadata {
   launch_subagent_notify_caller?: boolean;
   /** Supports steering and stopping remote external subagents. */
   subagent_message?: boolean;
+  /** External worker harnesses this computer can launch. */
+  external_harnesses?: string[];
   [key: string]: unknown;
 }
 

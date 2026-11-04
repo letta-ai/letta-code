@@ -42,10 +42,13 @@ import type {
 import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
-  type ExternalCodingAgentType,
   formatExternalCodingAgentId,
   parseExternalCodingAgentId,
 } from "./external-coding-agent";
+import {
+  computerSupportsHarness,
+  type ExternalCodingAgentType,
+} from "./external-coding-agent-types";
 import { followRemoteSubagentEvents } from "./remote-subagent-events";
 
 export const REMOTE_EXTERNAL_WORKER_STOPPED = Symbol(
@@ -103,6 +106,7 @@ const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
   codex: "Codex",
   opencode: "OpenCode",
   cursor: "Cursor",
+  pi: "pi",
 };
 
 export function formatRemoteStartupError(
@@ -123,8 +127,11 @@ export function formatOutdatedComputerError(
   return `${computer} is running an older Letta Code that can't run ${DISPLAY_NAMES[type]} subagents remotely. Update Letta Code on ${computer}.`;
 }
 
-function formatOutdatedSteeringError(computer: string): string {
-  return `${computer} is running an older Letta Code that can't steer Claude Code subagents remotely. Update Letta Code on ${computer}.`;
+function formatOutdatedSteeringError(
+  type: ExternalCodingAgentType,
+  computer: string,
+): string {
+  return `${computer} is running an older Letta Code that can't steer ${DISPLAY_NAMES[type]} subagents remotely. Update Letta Code on ${computer}.`;
 }
 
 async function defaultResolveComputer(computer: string, scope: ParentScope) {
@@ -179,6 +186,7 @@ async function defaultConnectDirect(
 
 interface DirectCapabilities {
   notifyCaller: boolean;
+  harnesses: unknown;
   steering: boolean;
 }
 
@@ -189,6 +197,7 @@ async function readDirectCapabilities(
   const info = await client.info({ timeoutMs: 10_000 });
   return {
     notifyCaller: info.capabilities.launch_subagent_notify_caller === true,
+    harnesses: info.capabilities.external_harnesses,
     steering: info.capabilities.subagent_message === true,
   };
 }
@@ -432,7 +441,10 @@ export async function launchRemoteExternalCodingAgent(
         error: `Can't reach ${computer}: ${errorMessage(error)}`,
       };
     }
-    if (!capabilities.notifyCaller) {
+    if (
+      !capabilities.notifyCaller ||
+      !computerSupportsHarness(type, capabilities.harnesses)
+    ) {
       client.close();
       return {
         success: false,
@@ -447,7 +459,13 @@ export async function launchRemoteExternalCodingAgent(
         computer,
         parentScope,
       );
-      if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
+      if (
+        resolved.environment.metadata?.launch_subagent_notify_caller !== true ||
+        !computerSupportsHarness(
+          type,
+          resolved.environment.metadata?.external_harnesses,
+        )
+      )
         return {
           success: false,
           error: formatOutdatedComputerError(type, computer),
@@ -669,7 +687,7 @@ async function connectQualifiedTarget(
     const client = await reconnect();
     try {
       if (!(await readDirectCapabilities(client)).steering)
-        throw new Error(formatOutdatedSteeringError(computer));
+        throw new Error(formatOutdatedSteeringError(target.type, computer));
     } catch (error) {
       client.close();
       throw error;
@@ -680,7 +698,7 @@ async function connectQualifiedTarget(
     computer,
   );
   if (resolved.environment.metadata?.subagent_message !== true)
-    throw new Error(formatOutdatedSteeringError(computer));
+    throw new Error(formatOutdatedSteeringError(target.type, computer));
   const reconnect = async () => {
     const latest = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       computer,

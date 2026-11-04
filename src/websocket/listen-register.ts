@@ -5,6 +5,7 @@
 
 import { createHash } from "node:crypto";
 import { getDesktopAccessToken } from "@/auth/desktop-credentials";
+import { EXTERNAL_CODING_AGENT_TYPES } from "@/tools/impl/external-coding-agent-types";
 import { getSelfUpdateStatus } from "@/updater/auto-update";
 import { getMachineMetadata } from "@/utils/machine-metadata";
 import { getVersion } from "@/version.ts";
@@ -138,6 +139,7 @@ export async function registerWithCloud(
         // Mirrors app_server_info so callers can check before connecting.
         launch_subagent_notify_caller: true,
         subagent_message: true,
+        external_harnesses: [...EXTERNAL_CODING_AGENT_TYPES],
         self_update: getSelfUpdateStatus(),
       },
     }),

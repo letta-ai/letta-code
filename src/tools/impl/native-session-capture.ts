@@ -13,8 +13,9 @@ import { join } from "node:path";
 import { ApiRequestError, apiRequest } from "@/backend/api/request";
 import { getServerUrl, isCloudServerUrl } from "@/backend/api/server-url";
 import { debugWarn } from "@/utils/debug";
+import { findPiSessionPath } from "./pi-session-paths";
 
-export type NativeSessionSource = "claude_code" | "codex";
+export type NativeSessionSource = "claude_code" | "codex" | "pi";
 export interface NativeSessionScope {
   agentId: string;
   conversationId: string;
@@ -408,6 +409,7 @@ export async function findNativeSessionPath(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
   if (!UUID.test(sessionId)) return undefined;
+  if (source === "pi") return findPiSessionPath(sessionId, env);
   const home = env.HOME || homedir();
   if (source === "claude_code") {
     const projects = join(

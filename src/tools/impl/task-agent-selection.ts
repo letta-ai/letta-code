@@ -5,7 +5,7 @@ import {
   EXTERNAL_CODING_AGENT_TYPES,
   type ExternalCodingAgentType,
   isExternalCodingAgentType,
-} from "./external-coding-agent";
+} from "./external-coding-agent-types";
 
 export const TASK_HARNESSES = [
   "letta",

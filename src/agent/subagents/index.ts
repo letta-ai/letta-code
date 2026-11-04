@@ -138,6 +138,7 @@ const RESERVED_EXTERNAL_SUBAGENT_NAMES = new Set([
   "codex",
   "opencode",
   "cursor",
+  "pi",
 ]);
 
 // ============================================================================

@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import { isLocalBackendEnabled } from "@/backend";
+import { EXTERNAL_CODING_AGENT_TYPES } from "@/tools/impl/external-coding-agent-types";
 import {
   APP_SERVER_PROTOCOL_VERSION,
   type AppServerInfoCommand,
@@ -37,6 +38,7 @@ export function buildAppServerInfoResponse(
       launch_subagent: true,
       launch_subagent_notify_caller: true,
       subagent_message: true,
+      external_harnesses: [...EXTERNAL_CODING_AGENT_TYPES],
       runtime_workspace_sandbox: true,
       runtime_external_tools_update: true,
       structured_outputs: options.backend === "api",

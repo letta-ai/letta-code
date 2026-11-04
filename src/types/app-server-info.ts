@@ -27,6 +27,8 @@ export interface AppServerInfoResponseMessage {
     launch_subagent_notify_caller?: boolean;
     /** Supports steering and stopping remote external subagents. */
     subagent_message?: boolean;
+    /** External worker harnesses this server can launch. */
+    external_harnesses?: string[];
     runtime_workspace_sandbox?: boolean;
     runtime_external_tools_update?: boolean;
     structured_outputs?: boolean;
@@ -75,6 +77,11 @@ export function isAppServerInfoResponseMessage(
       typeof capabilityRecord.launch_subagent_notify_caller === "boolean") &&
     (capabilityRecord.subagent_message === undefined ||
       typeof capabilityRecord.subagent_message === "boolean") &&
+    (capabilityRecord.external_harnesses === undefined ||
+      (Array.isArray(capabilityRecord.external_harnesses) &&
+        capabilityRecord.external_harnesses.every(
+          (harness) => typeof harness === "string",
+        ))) &&
     (capabilityRecord.runtime_workspace_sandbox === undefined ||
       typeof capabilityRecord.runtime_workspace_sandbox === "boolean") &&
     (capabilityRecord.runtime_external_tools_update === undefined ||

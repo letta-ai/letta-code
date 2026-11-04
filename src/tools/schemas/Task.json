@@ -11,8 +11,8 @@
     },
     "harness": {
       "type": "string",
-      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
-      "description": "Which runner executes the task. Defaults to letta (a Letta subagent). Use claude-code, codex, cursor, or opencode to start that external coding worker instead."
+      "enum": ["letta", "claude-code", "codex", "cursor", "opencode", "pi"],
+      "description": "Which runner executes the task. Defaults to letta (a Letta subagent). Use claude-code, codex, cursor, opencode, or pi to start that external coding worker instead."
     },
     "subagent_type": {
       "type": "string",

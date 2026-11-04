@@ -2,10 +2,11 @@ import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
   createExternalCodingAgentConfig,
-  type ExternalCodingAgentType,
+  nativeSessionSourceFor,
   parseExternalCodingAgentId,
   runExternalCodingAgent,
 } from "./external-coding-agent";
+import type { ExternalCodingAgentType } from "./external-coding-agent-types";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -76,12 +77,8 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (
-          target &&
-          (target.type === "claude-code" || target.type === "codex")
-        ) {
-          const source =
-            target.type === "claude-code" ? "claude_code" : "codex";
+        const source = target && nativeSessionSourceFor(target.type);
+        if (target && source) {
           try {
             if (args.captureReservation) {
               await args.captureReservation.capture();

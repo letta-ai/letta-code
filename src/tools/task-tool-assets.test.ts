@@ -95,7 +95,7 @@ describe("Task agent selection fields", () => {
     expect(taskSchema.required).not.toContain("harness");
     expect(taskSchema.properties?.harness).toMatchObject({
       type: "string",
-      enum: ["letta", "claude-code", "codex", "cursor", "opencode"],
+      enum: ["letta", "claude-code", "codex", "cursor", "opencode", "pi"],
     });
     const schemaEnum = (taskSchema.properties?.harness as { enum: string[] })
       .enum;

@@ -7,6 +7,7 @@ import { listCodexModels } from "./codex-app-server";
 import { listCursorModels } from "./cursor-session";
 import { resolveExternalCodingAgentSecretEnv } from "./external-coding-agent";
 import { OpenCodeServer } from "./opencode-server";
+import { listPiModels } from "./pi-rpc-session";
 
 interface WorkerModel {
   id: string;
@@ -99,6 +100,7 @@ function listNativeModels(
 ): Promise<unknown[]> {
   if (worker === "codex") return listCodexModels(cwd, env);
   if (worker === "cursor") return listCursorModels(cwd, env);
+  if (worker === "pi") return listPiModels(cwd, env);
   return listClaudeModels(cwd, env);
 }
 
@@ -117,8 +119,10 @@ export async function listExternalWorkerModels(
   cwd: string;
   models: WorkerModel[];
 }> {
-  if (!["claude-code", "codex", "opencode", "cursor"].includes(worker))
-    throw new Error("--worker must be claude-code, codex, opencode, or cursor");
+  if (!["claude-code", "codex", "opencode", "cursor", "pi"].includes(worker))
+    throw new Error(
+      "--worker must be claude-code, codex, opencode, cursor, or pi",
+    );
   const baseEnv = deps.env ?? process.env;
   const agentId = baseEnv.AGENT_ID ?? baseEnv.LETTA_AGENT_ID;
   const secrets = agentId
@@ -158,7 +162,7 @@ export async function listExternalWorkerModels(
         const id =
           worker === "codex"
             ? model.model
-            : worker === "cursor"
+            : worker === "cursor" || worker === "pi"
               ? model.id
               : model.value;
         if (typeof id !== "string" || typeof model.displayName !== "string")

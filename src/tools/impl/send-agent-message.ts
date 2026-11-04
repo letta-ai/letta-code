@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SubagentResult } from "@/agent/subagents";
 import {
   resolveChildSubagent,
   trackChildSend,
@@ -33,6 +34,7 @@ import { sendCursorMessage } from "./cursor-session";
 import {
   buildExternalWorkerResumeEnv,
   type ExternalWorkerResumeEnvDependencies,
+  nativeSessionSourceFor,
   parseExternalCodingAgentId,
   resolveExternalCodingAgentSecretEnv,
   scrubExternalWorkerResult,
@@ -40,10 +42,12 @@ import {
 import { trackExternalFollowupCompletion } from "./external-coding-agent-task";
 import {
   type NativeSessionCaptureReservation,
+  type NativeSessionSource,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { sendOpenCodeMessage } from "./opencode-session";
+import { sendPiMessage } from "./pi-rpc-session";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
@@ -66,6 +70,7 @@ interface SendAgentMessageDeps {
   trackChildSend?: typeof trackChildSend;
   sendClaudeMessage?: typeof sendClaudeMessage;
   sendCodexMessage?: typeof sendCodexMessage;
+  sendPiMessage?: typeof sendPiMessage;
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
   sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
   workerEnv?: ExternalWorkerResumeEnvDependencies;
@@ -77,7 +82,7 @@ const FULL_CONVERSATION_ID =
 function finishUntrackedNativeCapture(
   completion: Promise<unknown>,
   reservation: NativeSessionCaptureReservation | undefined,
-  source: "claude_code" | "codex",
+  source: NativeSessionSource,
   sessionId: string,
 ): void {
   if (!reservation) return;
@@ -93,7 +98,7 @@ function finishUntrackedNativeCapture(
 
 async function finishFailedNativeStartCapture(
   reservation: NativeSessionCaptureReservation | undefined,
-  source: "claude_code" | "codex",
+  source: NativeSessionSource,
   sessionId: string,
 ): Promise<void> {
   if (!reservation) return;
@@ -278,141 +283,81 @@ export async function send_agent_message(
         },
         deps.workerEnv,
       );
-      if (externalTarget.type === "codex") {
-        let captureReservation: NativeSessionCaptureReservation | undefined;
-        let receipt: Awaited<ReturnType<typeof sendCodexMessage>>;
-        try {
-          receipt = await (deps.sendCodexMessage ?? sendCodexMessage)(
-            {
-              threadId: externalTarget.sessionId,
-              prompt: args.message,
-              parentAgentId: parentScope.agentId,
-              cwd: getCurrentWorkingDirectory(),
-              mcpReminder: worker.mcpReminder,
-              signal: args.signal,
-              beforeStart: async () => {
-                captureReservation = await reserveNativeSessionCapture(
-                  "codex",
-                  externalTarget.sessionId,
-                  {
-                    ...parentScope,
-                    actingUserId: getRuntimeActingUserAttribution(),
-                  },
-                );
-              },
-            },
-            { env: worker.env },
-          );
-        } catch (error) {
-          await finishFailedNativeStartCapture(
-            captureReservation,
-            "codex",
-            externalTarget.sessionId,
-          );
-          throw error;
-        }
-        if (receipt.mode === "steered") {
-          return {
-            content: JSON.stringify({
-              status: "accepted",
-              agent_id: args.agent_id,
-              delivery: "turn/steer",
-              turn_id: receipt.turnId,
-            }),
-            status: "success",
-          };
-        }
-        if (!receipt.completion || !receipt.interrupt) {
-          throw new Error(
-            "Codex turn/start returned an incomplete background-task receipt",
-          );
-        }
-        const completion = receipt.completion.then((result) =>
-          scrubExternalWorkerResult(result, worker.secretEnv),
-        );
-        let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
-        try {
-          taskReceipt = (
-            deps.trackExternalFollowup ?? trackExternalFollowupCompletion
-          )({
-            type: "codex",
-            agentId: args.agent_id as string,
-            message: args.message,
-            parentScope: {
-              ...parentScope,
-              actingUserId: getRuntimeActingUserAttribution(),
-            },
-            completion,
-            interrupt: receipt.interrupt,
-            captureReservation,
-          });
-        } catch (error) {
-          await receipt.interrupt().catch(() => undefined);
-          finishUntrackedNativeCapture(
-            completion,
-            captureReservation,
-            "codex",
-            externalTarget.sessionId,
-          );
-          throw error;
-        }
-        return {
-          content: JSON.stringify({
-            status: "accepted",
-            agent_id: args.agent_id,
-            delivery: "turn/start",
-            turn_id: receipt.turnId,
-            task_id: taskReceipt.taskId,
-            output_file: taskReceipt.outputFile,
-          }),
-          status: "success",
-        };
-      }
+      const source = nativeSessionSourceFor(externalTarget.type) ?? "codex";
+      const sessionId = externalTarget.sessionId;
+      const actingScope = {
+        ...parentScope,
+        actingUserId: getRuntimeActingUserAttribution(),
+      };
       let captureReservation: NativeSessionCaptureReservation | undefined;
-      let receipt: Awaited<ReturnType<typeof sendClaudeMessage>>;
-      try {
-        receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)(
-          {
-            sessionId: externalTarget.sessionId,
-            prompt: args.message,
-            parentAgentId: parentScope.agentId,
-            cwd: getCurrentWorkingDirectory(),
-            mcpReminder: worker.mcpReminder,
-            signal: args.signal,
-            beforeStart: async () => {
-              captureReservation = await reserveNativeSessionCapture(
-                "claude_code",
-                externalTarget.sessionId,
-                {
-                  ...parentScope,
-                  actingUserId: getRuntimeActingUserAttribution(),
-                },
-              );
-            },
-          },
-          { env: worker.env },
+      const beforeStart = async () => {
+        captureReservation = await reserveNativeSessionCapture(
+          source,
+          sessionId,
+          actingScope,
         );
+      };
+      const followup = {
+        prompt: args.message,
+        parentAgentId: parentScope.agentId,
+        cwd: getCurrentWorkingDirectory(),
+        mcpReminder: worker.mcpReminder,
+        signal: args.signal,
+        beforeStart,
+      };
+      // Each worker names how it delivered a steer or a new turn.
+      const deliveries =
+        externalTarget.type === "codex"
+          ? { steered: "turn/steer", started: "turn/start" }
+          : externalTarget.type === "pi"
+            ? { steered: "rpc/steer", started: "rpc/prompt" }
+            : { steered: "stream/interrupt", started: "resume/start" };
+      let receipt: {
+        mode: "steered" | "new_turn" | "resumed";
+        turnId?: string;
+        completion?: Promise<SubagentResult>;
+        interrupt?: () => Promise<void>;
+      };
+      try {
+        receipt =
+          externalTarget.type === "codex"
+            ? await (deps.sendCodexMessage ?? sendCodexMessage)(
+                { ...followup, threadId: sessionId },
+                { env: worker.env },
+              )
+            : externalTarget.type === "pi"
+              ? await (deps.sendPiMessage ?? sendPiMessage)(
+                  { ...followup, sessionId },
+                  worker.env,
+                )
+              : await (deps.sendClaudeMessage ?? sendClaudeMessage)(
+                  { ...followup, sessionId },
+                  { env: worker.env },
+                );
       } catch (error) {
         await finishFailedNativeStartCapture(
           captureReservation,
-          "claude_code",
-          externalTarget.sessionId,
+          source,
+          sessionId,
         );
         throw error;
       }
+      const turnId = receipt.turnId ? { turn_id: receipt.turnId } : {};
       if (receipt.mode === "steered") {
         return {
           content: JSON.stringify({
             status: "accepted",
             agent_id: args.agent_id,
-            delivery: "stream/interrupt",
+            delivery: deliveries.steered,
+            ...turnId,
           }),
           status: "success",
         };
       }
-      if (!receipt.completion || !receipt.interrupt) {
+      const { interrupt } = receipt;
+      if (!receipt.completion || !interrupt) {
         throw new Error(
-          "Claude resume returned an incomplete background-task receipt",
+          `${externalTarget.type} returned an incomplete background-task receipt`,
         );
       }
       const completion = receipt.completion.then((result) =>
@@ -423,24 +368,21 @@ export async function send_agent_message(
         taskReceipt = (
           deps.trackExternalFollowup ?? trackExternalFollowupCompletion
         )({
-          type: "claude-code",
+          type: externalTarget.type,
           agentId: args.agent_id as string,
           message: args.message,
-          parentScope: {
-            ...parentScope,
-            actingUserId: getRuntimeActingUserAttribution(),
-          },
+          parentScope: actingScope,
           completion,
-          interrupt: receipt.interrupt,
+          interrupt,
           captureReservation,
         });
       } catch (error) {
-        await receipt.interrupt().catch(() => undefined);
+        await interrupt().catch(() => undefined);
         finishUntrackedNativeCapture(
           completion,
           captureReservation,
-          "claude_code",
-          externalTarget.sessionId,
+          source,
+          sessionId,
         );
         throw error;
       }
@@ -448,7 +390,8 @@ export async function send_agent_message(
         content: JSON.stringify({
           status: "accepted",
           agent_id: args.agent_id,
-          delivery: "resume/start",
+          delivery: deliveries.started,
+          ...turnId,
           task_id: taskReceipt.taskId,
           output_file: taskReceipt.outputFile,
         }),

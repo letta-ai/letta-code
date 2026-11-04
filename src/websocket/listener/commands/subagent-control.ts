@@ -11,18 +11,21 @@ import {
   buildExternalWorkerResumeEnv,
   type ExternalWorkerLaunchEnv,
   type ExternalWorkerResumeEnvDependencies,
-  isExternalCodingAgentType,
+  nativeSessionSourceFor,
   parseExternalCodingAgentId,
   resolveExternalCodingAgentSecretEnv,
   scrubExternalWorkerResult,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
+import { isExternalCodingAgentType } from "@/tools/impl/external-coding-agent-types";
 import {
   getNativeSessionOwner,
   type NativeSessionCaptureReservation,
+  type NativeSessionSource,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
+import { sendPiMessage } from "@/tools/impl/pi-rpc-session";
 import { backgroundTasks } from "@/tools/impl/process_manager";
 import type {
   SubagentMessageCommand,
@@ -51,7 +54,7 @@ function dedupeKey(command: SubagentMessageCommand): string {
 function finishUntrackedNativeCapture(
   completion: Promise<unknown>,
   reservation: NativeSessionCaptureReservation | undefined,
-  source: "claude_code" | "codex",
+  source: NativeSessionSource,
   sessionId: string,
 ): void {
   if (!reservation) return;
@@ -89,11 +92,9 @@ function ownsNativeSession(
 ): boolean {
   const target = parseExternalCodingAgentId(agentId);
   if (!target || target.computer) return false;
-  if (target.type !== "claude-code" && target.type !== "codex") return false;
-  const owner = getNativeSessionOwner(
-    target.type === "claude-code" ? "claude_code" : "codex",
-    target.sessionId,
-  );
+  const source = nativeSessionSourceFor(target.type);
+  if (!source) return false;
+  const owner = getNativeSessionOwner(source, target.sessionId);
   return (
     owner?.agentId === runtime.agentId &&
     owner.conversationId === runtime.conversationId
@@ -126,6 +127,7 @@ export async function handleSubagentMessageCommand(
   deps: {
     sendClaude?: typeof sendClaudeMessage;
     sendCodex?: typeof sendCodexMessage;
+    sendPi?: typeof sendPiMessage;
     track?: typeof trackExternalFollowupCompletion;
     reserveCapture?: typeof reserveNativeSessionCapture;
     workerEnv?: ExternalWorkerResumeEnvDependencies;
@@ -167,7 +169,16 @@ export async function handleSubagentMessageCommand(
         throw new Error("Remote OpenCode steering is not supported");
 
       let captureReservation: NativeSessionCaptureReservation | undefined;
-      const source = target.type === "claude-code" ? "claude_code" : "codex";
+      const source = nativeSessionSourceFor(target.type) ?? "codex";
+      const beforeStart = async () => {
+        captureReservation = await (
+          deps.reserveCapture ?? reserveNativeSessionCapture
+        )(source, sessionId, {
+          agentId: command.runtime.agent_id,
+          conversationId: command.runtime.conversation_id,
+          actingUserId: command.runtime.acting_user_id,
+        });
+      };
       const secrets =
         target.type === "cursor"
           ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
@@ -195,45 +206,41 @@ export async function handleSubagentMessageCommand(
                 { ...process.env, ...secrets },
                 secrets,
               )
-            : target.type === "claude-code"
-              ? (deps.sendClaude ?? sendClaudeMessage)(
+            : target.type === "pi"
+              ? (deps.sendPi ?? sendPiMessage)(
                   {
-                    sessionId: target.sessionId,
+                    sessionId,
                     prompt: command.message,
                     parentAgentId: command.runtime.agent_id,
                     cwd: getCurrentWorkingDirectory(),
                     mcpReminder: worker?.mcpReminder,
-                    beforeStart: async () => {
-                      captureReservation = await (
-                        deps.reserveCapture ?? reserveNativeSessionCapture
-                      )(source, sessionId, {
-                        agentId: command.runtime.agent_id,
-                        conversationId: command.runtime.conversation_id,
-                        actingUserId: command.runtime.acting_user_id,
-                      });
-                    },
+                    beforeStart,
                   },
-                  { env: worker?.env },
+                  worker?.env,
                 )
-              : (deps.sendCodex ?? sendCodexMessage)(
-                  {
-                    threadId: target.sessionId,
-                    prompt: command.message,
-                    parentAgentId: command.runtime.agent_id,
-                    cwd: getCurrentWorkingDirectory(),
-                    mcpReminder: worker?.mcpReminder,
-                    beforeStart: async () => {
-                      captureReservation = await (
-                        deps.reserveCapture ?? reserveNativeSessionCapture
-                      )(source, sessionId, {
-                        agentId: command.runtime.agent_id,
-                        conversationId: command.runtime.conversation_id,
-                        actingUserId: command.runtime.acting_user_id,
-                      });
+              : target.type === "claude-code"
+                ? (deps.sendClaude ?? sendClaudeMessage)(
+                    {
+                      sessionId: target.sessionId,
+                      prompt: command.message,
+                      parentAgentId: command.runtime.agent_id,
+                      cwd: getCurrentWorkingDirectory(),
+                      mcpReminder: worker?.mcpReminder,
+                      beforeStart,
                     },
-                  },
-                  { env: worker?.env },
-                );
+                    { env: worker?.env },
+                  )
+                : (deps.sendCodex ?? sendCodexMessage)(
+                    {
+                      threadId: target.sessionId,
+                      prompt: command.message,
+                      parentAgentId: command.runtime.agent_id,
+                      cwd: getCurrentWorkingDirectory(),
+                      mcpReminder: worker?.mcpReminder,
+                      beforeStart,
+                    },
+                    { env: worker?.env },
+                  );
         }),
       );
       if (receipt.mode === "steered")

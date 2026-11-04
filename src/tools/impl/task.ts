@@ -49,11 +49,11 @@ import {
 import {
   classifyExternalCodingAgentStartupError,
   createExternalCodingAgentConfig,
-  EXTERNAL_CODING_AGENT_TYPES,
   resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
+import { EXTERNAL_CODING_AGENT_TYPES } from "./external-coding-agent-types";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
