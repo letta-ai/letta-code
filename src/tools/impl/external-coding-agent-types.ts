@@ -26,6 +26,14 @@ const HARNESSES_BEFORE_CAPABILITY: ReadonlySet<string> = new Set([
   "cursor",
 ]);
 
+/**
+ * Whether `type` may be sent as the legacy `subagent_type` wire field, which
+ * older listeners understand. Newer harnesses are only sent as `harness`.
+ */
+export function isLegacyWireHarness(type: ExternalCodingAgentType): boolean {
+  return HARNESSES_BEFORE_CAPABILITY.has(type);
+}
+
 /** Whether a computer with these capabilities can launch `type`. */
 export function computerSupportsHarness(
   type: ExternalCodingAgentType,

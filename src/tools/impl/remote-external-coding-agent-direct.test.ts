@@ -14,6 +14,7 @@ import type {
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
 import type { QueuedMessage } from "@/utils/message-queue-bridge";
+import { toSubagentLaunchArgs } from "@/websocket/listener/subagent-protocol-inbound";
 import { backgroundTasks } from "./process_manager";
 import {
   launchRemoteExternalCodingAgent,
@@ -22,6 +23,7 @@ import {
   stopRemoteExternalCodingAgent,
 } from "./remote-external-coding-agent";
 import { launchSubagent, spawnBackgroundSubagentTask } from "./task";
+import { resolveTaskAgentSelection } from "./task-agent-selection";
 
 const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
 const runtime = {
@@ -406,7 +408,14 @@ describe("direct App Server computers", () => {
       external_harnesses: ["codex", "pi"],
     });
     expect((await launchPi(current)).success).toBe(true);
-    expect(current.launches[0]?.args).toMatchObject({ subagent_type: "pi" });
+    const args = current.launches[0]?.args;
+    // Only the original four names translate from `subagent_type`.
+    expect(args).toMatchObject({ harness: "pi" });
+    expect(args).not.toHaveProperty("subagent_type");
+    if (!args) throw new Error("no launch");
+    expect(resolveTaskAgentSelection(toSubagentLaunchArgs(args))).toEqual({
+      selection: { kind: "external", type: "pi" },
+    });
     current.snapshot({ status: "completed", result: "Done" });
   });
 

@@ -48,6 +48,7 @@ import {
 import {
   computerSupportsHarness,
   type ExternalCodingAgentType,
+  isLegacyWireHarness,
 } from "./external-coding-agent-types";
 import { followRemoteSubagentEvents } from "./remote-subagent-events";
 
@@ -533,10 +534,13 @@ export async function launchRemoteExternalCodingAgent(
       },
       args: {
         // Older listeners accept only `subagent_type`; current listeners
-        // translate an external worker name there into `harness`.
+        // translate the original worker names there into `harness`. A newer
+        // harness is gated on a listener that already reads `harness`.
         ...(params.forkContext
           ? { harness: type, fork_context: true }
-          : { subagent_type: type }),
+          : isLegacyWireHarness(type)
+            ? { subagent_type: type }
+            : { harness: type }),
         prompt: params.prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
