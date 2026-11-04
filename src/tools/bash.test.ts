@@ -221,6 +221,20 @@ describe("Bash tool", () => {
     expect(result.content[0]?.text).toContain("running in background");
   });
 
+  test("blocks a background wait loop whose pgrep -f pattern matches itself", async () => {
+    const before = backgroundProcesses.size;
+    const result = await bash({
+      command: "while pgrep -f runall.py >/dev/null; do sleep 3; done",
+      description: "Test self-matching pgrep block",
+      run_in_background: true,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("wait <pid>");
+    // Nothing was started, so no leftover process can hold the conversation.
+    expect(backgroundProcesses.size).toBe(before);
+  });
+
   test("does not block sleep in argument or quoted position", async () => {
     const result = await bash({
       command: "echo sleep 5 'then; sleep well'",
