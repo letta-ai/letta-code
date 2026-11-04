@@ -419,9 +419,8 @@ test("returns the turn-end reply while a leftover background process keeps the S
     });
     expect(result.text).toBe("Done");
     expect(result.runIds).toEqual(["run-1"]);
-    // The notification grace window passed before the reply was returned.
-    expect(clock.now()).toBeGreaterThanOrEqual(5_000);
-    expect(clock.now()).toBeLessThan(10_000);
+    // Returned on the first poll after the turn ended, not after a drain.
+    expect(clock.now()).toBeLessThan(5_000);
   } finally {
     now.mockRestore();
   }

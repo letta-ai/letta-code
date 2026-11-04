@@ -46,19 +46,12 @@ export interface SuperRunWaitDeps {
     conversationId: string,
     signal: AbortSignal,
   ) => Promise<AgentRuntimeStatusEntry | null>;
-  /**
-   * How long the newest run must stay completed, with no newer run linked,
-   * before the turn counts as ended. Lets a notification turn queued right at
-   * turn end take over the send.
-   */
-  turnEndGraceMs?: number;
 }
 
 class RemoteExecutionFailed extends Error {}
 
 /** The server can link a child run to its Super Run after marking it complete. */
 const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
-const DEFAULT_TURN_END_GRACE_MS = 5_000;
 
 /** Default `runtimeStatus` dep: the conversation's Cloud runtime-status entry. */
 export async function readConversationRuntimeStatus(
@@ -184,18 +177,18 @@ export async function waitForAcceptedSuperRun(
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
       delay(ms, undefined, { signal: waitSignal }));
-  const turnEndGraceMs = deps.turnEndGraceMs ?? DEFAULT_TURN_END_GRACE_MS;
-  let turnEnd: { runId: string; since: number; noReply: boolean } | undefined;
+  // Newest run already found to have ended without a reply; skip rereading it.
+  let noReplyRunId: string | undefined;
   // The Super Run is still open. Its turn is over when the newest linked run
-  // completed with a reply, no newer run took over within the grace window,
-  // and the listener is waiting on input with none of this send's runs live.
-  // Anything else (including read errors) keeps the normal wait.
+  // completed with a reply and the listener is waiting on input with none of
+  // this send's runs live. Anything else (including read errors) keeps the
+  // normal wait.
   const replyAtTurnEnd = async (
     exact: ExactSuperRun,
   ): Promise<EnqueuedReply | null> => {
     const runId = exact.run_ids[0];
     if (!deps.runtimeStatus || !runId) return null;
-    if (turnEnd?.runId === runId && turnEnd.noReply) return null;
+    if (noReplyRunId === runId) return null;
     try {
       const readSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
       const run = await deps.run(runId, readSignal);
@@ -203,13 +196,8 @@ export async function waitForAcceptedSuperRun(
         run.status !== "completed" ||
         run.stop_reason === "requires_approval"
       ) {
-        turnEnd = undefined;
         return null;
       }
-      if (turnEnd?.runId !== runId) {
-        turnEnd = { runId, since: Date.now(), noReply: false };
-      }
-      if (Date.now() - turnEnd.since < turnEndGraceMs) return null;
       const status = await deps.runtimeStatus(
         getEnqueueAgentId(receipt),
         receipt.conversation_id,
@@ -229,7 +217,7 @@ export async function waitForAcceptedSuperRun(
         ),
       );
       if (!text) {
-        turnEnd.noReply = true;
+        noReplyRunId = runId;
         return null;
       }
       return {
