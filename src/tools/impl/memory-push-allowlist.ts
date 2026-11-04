@@ -226,6 +226,13 @@ async function scanCommand(
 ): Promise<string | null> {
   let cwd = startCwd;
   let shellEnv = context.env;
+  // A shell function that pushes runs later under a name we cannot follow.
+  if (
+    /\bfunction\s+[\w.:-]+|[\w.:-]+\s*\(\s*\)\s*[{(]/.test(command) &&
+    /\bgit\b[\s\S]*\bpush\b/.test(command)
+  ) {
+    return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+  }
   for (const segment of splitSegments(command)) {
     const words = tokenize(expandVariables(segment, shellEnv));
     const assignments: Record<string, string> = {};
@@ -244,6 +251,30 @@ async function scanCommand(
     const env = { ...shellEnv, ...assignments };
     const name = basename(words[0] ?? "");
     const args = words.slice(1);
+    const nestedGit = args.findIndex((arg) => basename(arg) === "git");
+    if (name !== "git" && nestedGit >= 0 && /\bpush\b/.test(command)) {
+      // A wrapper (xargs, timeout, find -exec, ...) runs git with arguments
+      // we may not see, so only a literal allowed push URL passes.
+      const blocked = await checkWrappedPush(
+        args.slice(nestedGit + 1),
+        context,
+      );
+      if (blocked) return blocked;
+    }
+    const nestedText = name === "eval" ? args.join(" ") : undefined;
+    if (
+      (name === "eval" || name === "bash" || name === "sh" || name === "zsh") &&
+      context.depth >= 2 &&
+      /\b(git|push)\b/.test(nestedText ?? args.join(" "))
+    ) {
+      return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+    }
+    if (
+      name === "alias" &&
+      args.some((arg) => /=[\s\S]*\b(git|push)\b/.test(arg))
+    ) {
+      return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+    }
     if (name === "cd") {
       cwd = resolvePath(cwd, args[0] ?? env.HOME ?? cwd);
     } else if (name === "git") {
@@ -255,7 +286,7 @@ async function scanCommand(
       }
     } else if (name === "eval" && context.depth < 2) {
       const nested = { ...context, env, depth: context.depth + 1 };
-      const blocked = await scanCommand(args.join(" "), cwd, nested);
+      const blocked = await scanCommand(nestedText ?? "", cwd, nested);
       if (blocked) return blocked;
     } else if (
       (name === "source" || name === ".") &&
@@ -278,6 +309,19 @@ async function scanCommand(
     }
   }
   return null;
+}
+
+/** Checks a git invocation run by another program, e.g. `xargs git push`. */
+async function checkWrappedPush(
+  gitArgs: string[],
+  context: ScanContext,
+): Promise<string | null> {
+  if (gitArgs[0] !== "push") return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+  const { repository } = parsePushArgs(gitArgs.slice(1));
+  const origins = await memoryOrigins(context.memoryDir);
+  return repository && isAllowedUrl(repository, origins, context.allowed)
+    ? null
+    : MEMORY_PUSH_UNVERIFIED_MESSAGE;
 }
 
 async function checkGit(
