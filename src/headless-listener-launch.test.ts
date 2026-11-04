@@ -140,7 +140,10 @@ test("listener resume keeps conversation identity separate from its parent", asy
         });
         expect(wire.commands[0]).not.toHaveProperty("agent_id");
         expect(input.agentId).toBe("agent-parent");
-        return { ...receipt(input.clientMessageId), agent_id: input.agentId };
+        return {
+          ...receipt(input.clientMessageId),
+          agent_id: input.agentId ?? null,
+        };
       },
     },
   );

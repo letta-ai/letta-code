@@ -5,6 +5,7 @@ import {
 } from "@/agent/subagents/child-send-tracking";
 import { type Backend, getBackend } from "@/backend";
 import {
+  buildAgentMessageRecoveryCommands,
   buildAgentSendContent,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
@@ -136,7 +137,7 @@ export async function send_agent_message(
 ): Promise<{ content: string; status: "success" | "error" }> {
   const clientMessageId = randomUUID();
   let submissionAttempted = false;
-  let destination: { agentId: string; conversationId: string } | undefined;
+  let destination: { agentId?: string; conversationId: string } | undefined;
   try {
     if (!args.message?.trim()) throw new Error("Message must not be empty.");
     const context = getRuntimeContext();
@@ -491,13 +492,6 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
-    // A child spawned by this agent keeps doing its work; show it as running.
-    const child = await resolveChildSubagent(
-      backend,
-      destination.agentId,
-      sender.agentId,
-    );
-    signal.throwIfAborted();
     submissionAttempted = true;
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
@@ -509,6 +503,13 @@ export async function send_agent_message(
       },
       signal,
     );
+    // A child spawned by this agent keeps doing its work; show it as running.
+    // The receipt names the conversation's agent (older servers omit it, so
+    // fall back to the passed agent); with neither, tracking is skipped. The
+    // lookup never fails the send: it was already accepted.
+    const child = receipt.agent_id
+      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+      : null;
     if (child) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
@@ -523,8 +524,10 @@ export async function send_agent_message(
     return {
       content: JSON.stringify({
         ...receipt,
-        status_command: `letta messages status --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}`,
-        messages_command: `letta messages list --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}`,
+        ...buildAgentMessageRecoveryCommands({
+          agentId: receipt.agent_id,
+          conversationId: receipt.conversation_id,
+        }),
       }),
       status: "success",
     };
@@ -544,7 +547,7 @@ export async function send_agent_message(
         client_message_id: clientMessageId,
         ...(destination
           ? {
-              agent_id: destination.agentId,
+              ...(destination.agentId ? { agent_id: destination.agentId } : {}),
               conversation_id: destination.conversationId,
             }
           : {}),

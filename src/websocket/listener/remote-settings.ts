@@ -32,6 +32,18 @@ import {
 /** Persisted permission mode state for a single conversation. */
 export interface PersistedPermissionModeState {
   mode: PermissionMode;
+  /** Set when the mode was explicitly chosen rather than inherited from a default. */
+  explicit?: boolean;
+}
+
+function permissionModeStatesEqual(
+  left: PersistedPermissionModeState,
+  right: PersistedPermissionModeState,
+): boolean {
+  return (
+    left.mode === right.mode &&
+    Boolean(left.explicit) === Boolean(right.explicit)
+  );
 }
 
 export interface RemoteSettings {
@@ -386,7 +398,7 @@ function buildRemoteSettingsPatch(
     patch.permissionModeMap = createSettingsMapPatch(
       previous.permissionModeMap,
       updates.permissionModeMap,
-      (left, right) => left.mode === right.mode,
+      permissionModeStatesEqual,
     );
   }
   return patch;
@@ -475,7 +487,7 @@ function applyPendingRemoteSettingsPatches(
       result.permissionModeMap = applySettingsMapPatch(
         result.permissionModeMap,
         pending.patch.permissionModeMap,
-        (left, right) => left.mode === right.mode,
+        permissionModeStatesEqual,
       );
     }
   }

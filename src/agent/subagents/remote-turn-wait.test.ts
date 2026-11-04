@@ -6,6 +6,7 @@ import type {
   Message,
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
+import { clearSubagentsByIds, registerSubagent } from "@/agent/subagent-state";
 import type {
   EnqueueReceipt,
   ExactSuperRun,
@@ -14,6 +15,10 @@ import {
   closeTaskProgressLog,
   openTaskProgressLog,
 } from "@/tools/impl/task-transcript";
+import {
+  type QueuedMessage,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import type { ExecutionState } from "./subagent-stream";
 
@@ -131,5 +136,119 @@ test("streams a remote Letta subagent's progress into the output file while it r
   } finally {
     closeTaskProgressLog(SUBAGENT);
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("notifies once while a completed child waits on background work and continues to the terminal result", async () => {
+  const queued: QueuedMessage[] = [];
+  setMessageQueueAdder((message) => queued.push(message));
+  registerSubagent(SUBAGENT, "general-purpose", "test", undefined, true);
+  let poll = 0;
+  let settled = false;
+  try {
+    const pending = collectRemoteTurnResult(
+      {
+        status: "queued",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+        super_run_id: "sr-1",
+      } as EnqueueReceipt,
+      { displayedToolCalls: new Set() } as ExecutionState,
+      SUBAGENT,
+      new AbortController().signal,
+      {
+        exact: async () => {
+          poll += 1;
+          if (poll <= 3) return { ...superRun(["run-1"]), status: "STC" };
+          return superRun(["run-2", "run-1"], true);
+        },
+        run: async (id) =>
+          ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
+        listMessages: async (id) => [
+          say(id, 1, id === "run-1" ? "Build is running." : "Build passed."),
+        ],
+        runtimeStatus: async () => ({
+          conversation_id: "conv-1",
+          state: "ACTIVE",
+          loop_state: { status: "WAITING_ON_INPUT" },
+          active_run_ids: [],
+          active_bash_count: 4,
+          last_activity_at: 0,
+        }),
+        sleep: async () => {
+          expect(settled).toBe(false);
+          expect(queued).toHaveLength(1);
+          expect(queued[0]).toMatchObject({ kind: "task_notification" });
+          expect(queued[0]?.text).toContain("<status>running</status>");
+          expect(queued[0]?.text).toContain("Build is running.");
+          expect(queued[0]?.text).toContain(
+            "loop has stopped with 4 background processes still running",
+          );
+          expect(queued[0]?.text).toContain(
+            "It will resume when they finish, and a final notification will follow.",
+          );
+        },
+        progressMs: 0,
+      },
+    ).then((result) => {
+      settled = true;
+      return result;
+    });
+    expect(await pending).toMatchObject({
+      success: true,
+      report: "Build passed.",
+    });
+    expect(poll).toBe(4);
+    expect(queued).toHaveLength(1);
+  } finally {
+    setMessageQueueAdder(null);
+    clearSubagentsByIds([SUBAGENT]);
+  }
+});
+
+test("does not notify a foreground Task's parent, which is blocked in this wait", async () => {
+  const queued: QueuedMessage[] = [];
+  setMessageQueueAdder((message) => queued.push(message));
+  registerSubagent(SUBAGENT, "general-purpose", "test", undefined, false);
+  let poll = 0;
+  try {
+    const result = await collectRemoteTurnResult(
+      {
+        status: "queued",
+        agent_id: "agent-1",
+        conversation_id: "conv-1",
+        super_run_id: "sr-1",
+      } as EnqueueReceipt,
+      { displayedToolCalls: new Set() } as ExecutionState,
+      SUBAGENT,
+      new AbortController().signal,
+      {
+        exact: async () => {
+          poll += 1;
+          if (poll <= 3) return { ...superRun(["run-1"]), status: "STC" };
+          return superRun(["run-2", "run-1"], true);
+        },
+        run: async (id) =>
+          ({ id, status: "completed", stop_reason: "end_turn" }) as Run,
+        listMessages: async (id) => [
+          say(id, 1, id === "run-1" ? "Build is running." : "Build passed."),
+        ],
+        runtimeStatus: async () => ({
+          conversation_id: "conv-1",
+          state: "ACTIVE",
+          loop_state: { status: "WAITING_ON_INPUT" },
+          active_run_ids: [],
+          active_bash_count: 4,
+          last_activity_at: 0,
+        }),
+        sleep: async () => {},
+        progressMs: 0,
+      },
+    );
+    expect(result).toMatchObject({ success: true, report: "Build passed." });
+    expect(queued).toHaveLength(0);
+  } finally {
+    setMessageQueueAdder(null);
+    clearSubagentsByIds([SUBAGENT]);
   }
 });

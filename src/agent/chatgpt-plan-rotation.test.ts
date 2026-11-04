@@ -406,6 +406,45 @@ describe("rotateChatGPTPlanOnQuotaLimit", () => {
     });
   }
 
+  test("rotates away from a plan that rejects the model with model_not_found", async () => {
+    const agent = {
+      id: "agent-rotation",
+      model: PRIMARY_HANDLE,
+      llm_config: { context_window: 272_000 },
+    };
+    const conversations = new Map([
+      ["conv-first", { id: "conv-first", model: PRIMARY_HANDLE }],
+    ]);
+    const { backend } = mockBackend(agent, conversations);
+    __testSetBackend(backend as never);
+    clearAvailableModelsCache();
+
+    try {
+      const exhausted = new Set<string>();
+      const rotation = await rotateChatGPTPlanOnQuotaLimit({
+        agentId: "agent-rotation",
+        conversationId: "conv-first",
+        currentHandle: null,
+        error: {
+          message:
+            "ChatGPT SSE error (model_not_found): The 'gpt-5.2' model is not supported when using Codex with a ChatGPT account.",
+        },
+        exhaustedProviders: exhausted,
+      });
+
+      expect(rotation?.toHandle).toBe(SIBLING_HANDLE);
+      expect(conversations.get("conv-first")?.model).toBe(SIBLING_HANDLE);
+      expect(exhausted).toEqual(new Set(["chatgpt-caren"]));
+      if (!rotation) throw new Error("expected a rotation");
+      expect(formatPlanRotationNotice(rotation)).toBe(
+        "chatgpt-caren doesn't support gpt-5.2 — switched to chatgpt-jin",
+      );
+    } finally {
+      clearAvailableModelsCache();
+      __testSetBackend(null);
+    }
+  });
+
   test("inherits variant settings from the agent when the conversation has no override", async () => {
     const agent = {
       id: "agent-rotation",

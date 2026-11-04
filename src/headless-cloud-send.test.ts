@@ -108,7 +108,7 @@ function fixture() {
       submissions.push(input);
       return {
         status: "queued" as const,
-        agent_id: input.agentId,
+        agent_id: input.agentId ?? null,
         conversation_id: input.conversationId,
         client_message_id: input.clientMessageId,
         workflow_id: "wf-1",
@@ -126,6 +126,10 @@ test.each(["text", "json", "stream-json"])(
   "no-wait %s exits on HTTP acceptance with a receipt and recovery commands",
   async (format) => {
     const f = fixture();
+    // The conversation ID alone addresses a send; it is never read first.
+    f.backend.retrieveConversation = async () => {
+      throw new Error("a conversation-ID send must not read the conversation");
+    };
     const result = await tryCloudHeadlessSend(
       flags(
         "--conversation",
@@ -144,12 +148,14 @@ test.each(["text", "json", "stream-json"])(
     const receipt = JSON.parse(f.stdout.join(""));
     expect(receipt).toMatchObject({
       status: "queued",
-      agent_id: "agent-target",
+      agent_id: null,
       conversation_id: "conv-target",
       workflow_id: "wf-1",
       super_run_id: "sr-1",
+      status_command: "letta messages status --conversation conv-target",
+      messages_command: "letta messages list --conversation conv-target",
     });
-    expect(receipt.status_command).toContain("letta messages status");
+    expect(f.submissions[0]?.agentId).toBeUndefined();
     expect(receipt).not.toHaveProperty("run_id");
     expect(f.submissions[0]?.content).toEqual([
       {
@@ -167,6 +173,43 @@ test.each(["text", "json", "stream-json"])(
     expect(f.deps.env.CONVERSATION_ID).toBe("conv-parent");
   },
 );
+
+test("no-wait reports the agent from the server's receipt", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async () => {
+    throw new Error("a conversation-ID send must not read the conversation");
+  };
+  const result = await tryCloudHeadlessSend(
+    flags(
+      "--conversation",
+      "conv-target",
+      "--no-wait",
+      "--output-format",
+      "json",
+    ),
+    "hello",
+    f.backend,
+    false,
+    {
+      ...f.deps,
+      enqueue: async (input) => ({
+        ...(await f.deps.enqueue(input)),
+        agent_id: "agent-target",
+      }),
+    },
+  );
+  expect(result).toBe(0);
+  expect(f.submissions[0]?.agentId).toBeUndefined();
+  expect(JSON.parse(f.stdout.join(""))).toMatchObject({
+    status: "queued",
+    agent_id: "agent-target",
+    conversation_id: "conv-target",
+    status_command:
+      "letta messages status --agent agent-target --conversation conv-target",
+    messages_command:
+      "letta messages list --agent agent-target --conversation conv-target",
+  });
+});
 
 test("the CLI client message ID reaches Cloud enqueue unchanged", async () => {
   const f = fixture();

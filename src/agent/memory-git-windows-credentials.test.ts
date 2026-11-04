@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withRepositoryCheckout } from "@/utils/repository-checkout";
+import { buildNonInteractiveGitEnv } from "./memory-git";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
 
 test("the configured Windows helper survives atomic checkout publication", async () => {
@@ -49,7 +50,11 @@ test("the configured Windows helper survives atomic checkout publication", async
         {
           input: "protocol=https\nhost=example.test\n\n",
           encoding: "utf8",
-          env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+          // Match the product's git environment, and keep the runner's
+          // system helper (Git Credential Manager) out of the lookup so
+          // only the helper under test answers.
+          env: { ...buildNonInteractiveGitEnv(), GIT_CONFIG_NOSYSTEM: "1" },
+          timeout: 10_000,
         },
       );
       expect(credentials).toContain("username=letta");

@@ -1,6 +1,6 @@
 import type { ApprovalResult } from "@/agent/approval-execution";
 import type { TeleportContinuation } from "@/types/protocol_v2";
-import type { InputIdentity } from "./types";
+import type { InputIdentity, InterruptedTerminalAuthority } from "./types";
 
 export interface InterruptedTurnRecord {
   revision?: string;
@@ -16,6 +16,10 @@ export interface InterruptedTurnRecord {
     intentRevision?: string;
     /** Interrupted-record revision captured by the durable terminal owner. */
     committedRevision?: string;
+    /** Exact terminal authority whose proof may authorize destination ownership. */
+    terminalAuthority?: InterruptedTerminalAuthority;
+    /** Ready was CASed onto a record that already contained successor work. */
+    preserveSuccessorWork?: boolean;
     /** Exact record revision which first published this ready handoff. */
     readyRevision?: string;
   };

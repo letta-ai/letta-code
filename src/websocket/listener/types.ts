@@ -297,10 +297,14 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
+  /** Canonical journal aliases stamped when restart promotion completes. */
+  inputDispositionKeys?: string[];
   /** Durable claim that orders this publication before later quarantine. */
   publicationClaimed?: true;
   /** Persist a crash proof even when no external terminal consumer exists. */
   persistWithoutConsumers?: true;
+  /** Consumers moved to a teleport continuation; source proof stays private. */
+  suppressConsumerPublication?: true;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";
@@ -330,6 +334,7 @@ export type DurablePreparedInputTerminal = {
 export type InterruptedTerminalAuthority = {
   interruptedRevision: string;
   authorityRevision: string;
+  recoveryAuthorityBaseRevision?: string;
   recoveryLineageId?: string;
   terminalIdentity?: string;
   preparationSequence?: number;

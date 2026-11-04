@@ -298,7 +298,13 @@ test("accepted queue drains before teleport readiness", () => {
 
 test.each([
   { name: "missing continuation", continuation: undefined },
-  { name: "empty approvals", continuation: { approvals: [] } },
+  {
+    name: "transferred terminal consumers",
+    continuation: {
+      approvals: [],
+      terminal_consumer_ids: ["slack:original", "slack:recovery"],
+    },
+  },
   {
     name: "completed tool result",
     continuation: {
@@ -396,6 +402,11 @@ test.each([
     }),
   );
   expect(processIncomingMessage).toHaveBeenCalledTimes(1);
+  expect(processIncomingMessage.mock.calls[0]?.[0].terminalConsumerIds).toEqual(
+    continuation && "terminal_consumer_ids" in continuation
+      ? continuation.terminal_consumer_ids
+      : undefined,
+  );
   expect(processIncomingMessage.mock.calls[0]?.[0].messages).toEqual([
     ...(continuation?.approvals.length
       ? [

@@ -81,7 +81,7 @@ test("a successful teleport receipt retires saved work without sending results",
   }
 });
 
-test("startup recovery preserves a teleport intent with its matching terminal", async () => {
+test("startup recovery suppresses source consumers after pre-prepare teleport crash", async () => {
   const directory = mkdtempSync(join(tmpdir(), "recorded-teleport-terminal-"));
   const store = createInterruptedTurnStore(join(directory, "interrupted"));
   const terminalStore = createTurnFinishedStore(join(directory, "terminals"));
@@ -96,44 +96,47 @@ test("startup recovery preserves a teleport intent with its matching terminal", 
       results: [],
       requestOtid: "request-1",
       workingDirectory: "/project",
+      terminalConsumerIds: ["slack:agent-1"],
       teleport: {
         teleportId: "teleport-1",
         connectionId: "source-a",
         connectionGeneration: "generation-a",
         activeTurn: true,
-        continuation: { approvals: [] },
+        continuation: {
+          approvals: [],
+          terminal_consumer_ids: ["slack:agent-1"],
+        },
+        terminalAuthority: {
+          interruptedRevision: "",
+          authorityRevision: "",
+          terminalIdentity: "terminal-teleport",
+        },
         ready: false,
       },
     });
-    terminalStore.put(
-      "agent-1",
-      "conv-1",
-      {
-        type: "turn_finished",
-        turn_id: "turn-teleport",
-        stop_reason: "cancelled",
-      },
-      {
-        connectionId: "conn-source",
-        canRotate: true,
-        lineageId: "lineage-source",
-        interruptedRevision: persisted.revision,
-      },
-    );
 
     await recoverRecordedTurns(listener, {
       store,
       terminalStore,
       canRecover: async () => true,
-      teleportStatus: (async () => ({ status: "failed" })) as never,
+      acquireClaim: acquireTestClaim,
+      teleportStatus: (async () => ({ status: "waiting_for_source" })) as never,
     });
 
     expect(store.read("agent-1", "conv-1")?.teleport).toMatchObject({
       teleportId: "teleport-1",
       activeTurn: true,
-      continuation: { approvals: [] },
-      ready: false,
+      continuation: {
+        approvals: [],
+        terminal_consumer_ids: ["slack:agent-1"],
+      },
+      committedRevision: persisted.revision,
+      ready: true,
     });
+    expect(
+      terminalStore.read("agent-1", "conv-1")?.terminals[0]?.message
+        .terminal_consumer_ids,
+    ).toBeUndefined();
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
