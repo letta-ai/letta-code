@@ -51,7 +51,7 @@ function commitAll(dir: string, message: string): void {
   git(dir, "commit", "-q", "-m", message);
 }
 
-function check(command: string, cwd = projectDir): string | null {
+function check(command: string, cwd = projectDir): Promise<string | null> {
   return checkMemoryPushAllowlist(command, { cwd, env });
 }
 
@@ -97,160 +97,193 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe("memory push allowlist: memory repository pushes", () => {
-  test("allows pushing the memory repository to its memory remote", () => {
-    expect(check("git push", memoryDir)).toBeNull();
-    expect(check('cd "$MEMORY_DIR" && git push origin main')).toBeNull();
-    expect(check("git -C $MEMORY_DIR push -u origin HEAD")).toBeNull();
-  });
-
-  test("blocks pushing the memory repository anywhere else", () => {
-    expect(
-      check("git push https://github.com/someone/notes.git main", memoryDir),
-    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-    expect(
-      check(
-        'git -C "$MEMORY_DIR" push git@github.com:someone/notes.git main 2>&1',
-      ),
-    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-  });
-
-  test("allows remotes matching a configured prefix, and only those", () => {
-    const mirror = "https://git.example.com/me/memory-mirror.git";
-    expect(check(`git push ${mirror} main`, memoryDir)).toBeNull();
-    expect(
-      check(
-        `git push https://token@git.example.com/me/memory-mirror.git/`,
-        memoryDir,
-      ),
-    ).toBeNull();
-    expect(
-      check(
-        "git push https://git.example.com/me/memory-mirror.git-2 main",
-        memoryDir,
-      ),
-    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-    expect(
-      check(
-        "git push https://other.test/v1/git/agent-1/state.git main",
-        memoryDir,
-      ),
-    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-  });
-
-  test("ignores letta.memoryRepository.url set from the shell", () => {
-    const other = "https://github.com/someone/notes.git";
-    git(memoryDir, "config", "letta.memoryRepository.url", other);
-    try {
-      expect(check(`git push ${other} main`, memoryDir)).toBe(
-        MEMORY_PUSH_BLOCKED_MESSAGE,
-      );
-    } finally {
-      git(memoryDir, "config", "--unset", "letta.memoryRepository.url");
-    }
-  });
-});
-
-describe("memory push allowlist: other repositories", () => {
-  test("allows a normal push", () => {
-    writeFileSync(join(projectDir, "app.ts"), "export const answer = 42;\n");
-    commitAll(projectDir, "feature");
-    expect(check("git push origin main")).toBeNull();
-    expect(check("git add -A && git commit -m wip && git push")).toBeNull();
-    git(projectDir, "push", "-q", "origin", "main");
-  });
-
-  test("ignores skill files and small files from memory", () => {
-    mkdirSync(join(projectDir, "skills"), { recursive: true });
-    execFileSync("cp", [
-      join(memoryDir, "skills", "shared", "SKILL.md"),
-      join(projectDir, "skills", "SKILL.md"),
-    ]);
-    commitAll(projectDir, "add skill");
-    expect(check("git push origin main")).toBeNull();
-    git(projectDir, "push", "-q", "origin", "main");
-  });
-
-  test("blocks pushing commits that contain a copied memory file", () => {
-    execFileSync("cp", [
-      join(memoryDir, "MEMORY.md"),
-      join(projectDir, "how-i-work.md"),
-    ]);
-    commitAll(projectDir, "docs");
-    try {
-      expect(check("git push origin main")).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-      expect(check("git push > /tmp/push.log 2>&1")).toBe(
-        MEMORY_PUSH_BLOCKED_MESSAGE,
-      );
+describe.skipIf(process.platform === "win32")(
+  "memory push allowlist: memory repository pushes",
+  () => {
+    test("allows pushing the memory repository to its memory remote", async () => {
+      expect(await check("git push", memoryDir)).toBeNull();
       expect(
-        check(`bash -lc 'cd ${projectDir} && git push -u origin HEAD'`, root),
+        await check('cd "$MEMORY_DIR" && git push origin main'),
+      ).toBeNull();
+      expect(await check("git -C $MEMORY_DIR push -u origin HEAD")).toBeNull();
+    });
+
+    test("blocks pushing the memory repository anywhere else", async () => {
+      expect(
+        await check(
+          "git push https://github.com/someone/notes.git main",
+          memoryDir,
+        ),
       ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-      expect(check("git push --all origin")).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
-    } finally {
-      git(projectDir, "reset", "-q", "--hard", "HEAD~1");
-    }
-    expect(check("git push origin main")).toBeNull();
-  });
-
-  test("allows memory files when the destination is allowed", () => {
-    execFileSync("cp", [
-      join(memoryDir, "MEMORY.md"),
-      join(projectDir, "how-i-work.md"),
-    ]);
-    commitAll(projectDir, "docs");
-    try {
       expect(
-        check("git push https://git.example.com/me/memory-mirror.git main"),
-      ).toBeNull();
-    } finally {
-      git(projectDir, "reset", "-q", "--hard", "HEAD~1");
-    }
-  });
+        await check(
+          'git -C "$MEMORY_DIR" push git@github.com:someone/notes.git main 2>&1',
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+    });
 
-  test("checks nothing when the allowlist is unset or empty", () => {
-    for (const value of [undefined, "", " , "]) {
-      const localEnv = { ...env, [MEMORY_PUSH_ALLOWLIST_ENV]: value };
+    test("allows remotes matching a configured prefix, and only those", async () => {
+      const mirror = "https://git.example.com/me/memory-mirror.git";
+      expect(await check(`git push ${mirror} main`, memoryDir)).toBeNull();
       expect(
-        checkMemoryPushAllowlist("git push https://github.com/x/y.git main", {
-          cwd: memoryDir,
-          env: localEnv,
-        }),
+        await check(
+          `git push https://token@git.example.com/me/memory-mirror.git/`,
+          memoryDir,
+        ),
       ).toBeNull();
       expect(
-        checkMemoryPushAllowlist("rsync -a $MEMORY_DIR/ ./memory-backup/", {
-          cwd: projectDir,
-          env: localEnv,
-        }),
+        await check(
+          "git push https://git.example.com/me/memory-mirror.git-2 main",
+          memoryDir,
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+      expect(
+        await check(
+          "git push https://other.test/v1/git/agent-1/state.git main",
+          memoryDir,
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+    });
+
+    test("ignores letta.memoryRepository.url set from the shell", async () => {
+      const other = "https://github.com/someone/notes.git";
+      git(memoryDir, "config", "letta.memoryRepository.url", other);
+      try {
+        expect(await check(`git push ${other} main`, memoryDir)).toBe(
+          MEMORY_PUSH_BLOCKED_MESSAGE,
+        );
+      } finally {
+        git(memoryDir, "config", "--unset", "letta.memoryRepository.url");
+      }
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "memory push allowlist: other repositories",
+  () => {
+    test("allows a normal push", async () => {
+      writeFileSync(join(projectDir, "app.ts"), "export const answer = 42;\n");
+      commitAll(projectDir, "feature");
+      expect(await check("git push origin main")).toBeNull();
+      expect(
+        await check("git add -A && git commit -m wip && git push"),
       ).toBeNull();
-    }
-  });
-});
+      git(projectDir, "push", "-q", "origin", "main");
+    });
 
-describe("memory push allowlist: copies", () => {
-  test("blocks copying the memory directory into another Git worktree", () => {
-    expect(check("rsync -a $MEMORY_DIR/ ./memory-backup/")).toBe(
-      MEMORY_COPY_BLOCKED_MESSAGE,
-    );
-    expect(check(`cp -r "${memoryDir}" ${projectDir}/notes`, root)).toBe(
-      MEMORY_COPY_BLOCKED_MESSAGE,
-    );
-    expect(check("cp $MEMORY_DIR/*.md docs/")).toBe(
-      MEMORY_COPY_BLOCKED_MESSAGE,
-    );
-  });
+    test("ignores skill files and small files from memory", async () => {
+      mkdirSync(join(projectDir, "skills"), { recursive: true });
+      execFileSync("cp", [
+        join(memoryDir, "skills", "shared", "SKILL.md"),
+        join(projectDir, "skills", "SKILL.md"),
+      ]);
+      commitAll(projectDir, "add skill");
+      expect(await check("git push origin main")).toBeNull();
+      git(projectDir, "push", "-q", "origin", "main");
+    });
 
-  test("blocks copying memory to a remote host", () => {
-    expect(check("rsync -az $MEMORY_DIR host.example.com:/srv/", root)).toBe(
-      MEMORY_COPY_BLOCKED_MESSAGE,
-    );
-  });
+    test("blocks pushing commits that contain a copied memory file", async () => {
+      execFileSync("cp", [
+        join(memoryDir, "MEMORY.md"),
+        join(projectDir, "how-i-work.md"),
+      ]);
+      commitAll(projectDir, "docs");
+      try {
+        expect(await check("git push origin main")).toBe(
+          MEMORY_PUSH_BLOCKED_MESSAGE,
+        );
+        expect(await check("git push > /tmp/push.log 2>&1")).toBe(
+          MEMORY_PUSH_BLOCKED_MESSAGE,
+        );
+        expect(
+          await check(
+            `bash -lc 'cd ${projectDir} && git push -u origin HEAD'`,
+            root,
+          ),
+        ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+        expect(await check("git push --all origin")).toBe(
+          MEMORY_PUSH_BLOCKED_MESSAGE,
+        );
+      } finally {
+        git(projectDir, "reset", "-q", "--hard", "HEAD~1");
+      }
+      expect(await check("git push origin main")).toBeNull();
+    });
 
-  test("allows copies inside memory, to scratch space, and unrelated copies", () => {
-    expect(check("cp MEMORY.md archive-MEMORY.md", memoryDir)).toBeNull();
-    expect(
-      check(`cp -r $MEMORY_DIR ${join(root, "scratch")}`, root),
-    ).toBeNull();
-    expect(check("cp README.md docs/README.md")).toBeNull();
-    expect(check("echo 'cp -r $MEMORY_DIR ./x'")).toBeNull();
-  });
-});
+    test("allows memory files when the destination is allowed", async () => {
+      execFileSync("cp", [
+        join(memoryDir, "MEMORY.md"),
+        join(projectDir, "how-i-work.md"),
+      ]);
+      commitAll(projectDir, "docs");
+      try {
+        expect(
+          await check(
+            "git push https://git.example.com/me/memory-mirror.git main",
+          ),
+        ).toBeNull();
+      } finally {
+        git(projectDir, "reset", "-q", "--hard", "HEAD~1");
+      }
+    });
+
+    test("checks nothing when the allowlist is unset or empty", async () => {
+      for (const value of [undefined, "", " , "]) {
+        const localEnv = { ...env, [MEMORY_PUSH_ALLOWLIST_ENV]: value };
+        expect(
+          await checkMemoryPushAllowlist(
+            "git push https://github.com/x/y.git main",
+            {
+              cwd: memoryDir,
+              env: localEnv,
+            },
+          ),
+        ).toBeNull();
+        expect(
+          await checkMemoryPushAllowlist(
+            "rsync -a $MEMORY_DIR/ ./memory-backup/",
+            {
+              cwd: projectDir,
+              env: localEnv,
+            },
+          ),
+        ).toBeNull();
+      }
+    });
+  },
+);
+
+describe.skipIf(process.platform === "win32")(
+  "memory push allowlist: copies",
+  () => {
+    test("blocks copying the memory directory into another Git worktree", async () => {
+      expect(await check("rsync -a $MEMORY_DIR/ ./memory-backup/")).toBe(
+        MEMORY_COPY_BLOCKED_MESSAGE,
+      );
+      expect(
+        await check(`cp -r "${memoryDir}" ${projectDir}/notes`, root),
+      ).toBe(MEMORY_COPY_BLOCKED_MESSAGE);
+      expect(await check("cp $MEMORY_DIR/*.md docs/")).toBe(
+        MEMORY_COPY_BLOCKED_MESSAGE,
+      );
+    });
+
+    test("blocks copying memory to a remote host", async () => {
+      expect(
+        await check("rsync -az $MEMORY_DIR host.example.com:/srv/", root),
+      ).toBe(MEMORY_COPY_BLOCKED_MESSAGE);
+    });
+
+    test("allows copies inside memory, to scratch space, and unrelated copies", async () => {
+      expect(
+        await check("cp MEMORY.md archive-MEMORY.md", memoryDir),
+      ).toBeNull();
+      expect(
+        await check(`cp -r $MEMORY_DIR ${join(root, "scratch")}`, root),
+      ).toBeNull();
+      expect(await check("cp README.md docs/README.md")).toBeNull();
+      expect(await check("echo 'cp -r $MEMORY_DIR ./x'")).toBeNull();
+    });
+  },
+);

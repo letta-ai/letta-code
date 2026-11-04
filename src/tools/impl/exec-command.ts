@@ -599,7 +599,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
   const cwd = resolveShellWorkdir(args.workdir);
-  const memoryBlocked = checkMemoryPushAllowlist(args.cmd, {
+  const memoryBlocked = await checkMemoryPushAllowlist(args.cmd, {
     cwd,
     env: getShellEnv(),
   });

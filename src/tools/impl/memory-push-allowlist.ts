@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -15,7 +15,7 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
  * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
  *   a remote host is refused, since that copy would be pushed from there.
  *
- * When the variable is unset nothing is checked. Pushes made by the memory
+ * When the variable is unset, or on Windows, nothing is checked. Pushes made by the memory
  * repository's own hooks (including the `/memory-repository` mirror) do not
  * go through these tools and are unaffected.
  */
@@ -54,13 +54,15 @@ export interface MemoryPushAllowlistOptions {
 }
 
 /** Returns a tool error when the command breaks the configured allowlist. */
-export function checkMemoryPushAllowlist(
+export async function checkMemoryPushAllowlist(
   command: string,
   options: MemoryPushAllowlistOptions,
-): string | null {
+): Promise<string | null> {
   const { env } = options;
   const memoryDir = (env.MEMORY_DIR || env.LETTA_MEMORY_DIR || "").trim();
   const allowed = parseAllowedRemotes(env[MEMORY_PUSH_ALLOWLIST_ENV]);
+  // Command parsing assumes POSIX shell syntax and paths.
+  if (process.platform === "win32") return null;
   if (allowed.length === 0 || !memoryDir) return null;
   if (!/\b(push|cp|rsync|scp)\b/.test(command)) return null;
   const context = { env, memoryDir: resolve(memoryDir), allowed, depth: 0 };
@@ -88,11 +90,11 @@ interface ScanContext {
   depth: number;
 }
 
-function scanCommand(
+async function scanCommand(
   command: string,
   startCwd: string,
   context: ScanContext,
-): string | null {
+): Promise<string | null> {
   let cwd = startCwd;
   for (const segment of splitSegments(command)) {
     const words = tokenize(expandVariables(segment, context.env));
@@ -107,10 +109,10 @@ function scanCommand(
     if (name === "cd") {
       cwd = resolvePath(cwd, args[0] ?? context.env.HOME ?? cwd);
     } else if (name === "git") {
-      const blocked = checkGit(args, cwd, context);
+      const blocked = await checkGit(args, cwd, context);
       if (blocked) return blocked;
     } else if (COPY_COMMANDS.has(name)) {
-      if (copiesMemoryOut(args, cwd, context)) {
+      if (await copiesMemoryOut(args, cwd, context)) {
         return MEMORY_COPY_BLOCKED_MESSAGE;
       }
     } else if (
@@ -121,7 +123,7 @@ function scanCommand(
       const inner = index >= 0 ? args[index + 1] : undefined;
       if (inner) {
         const nested = { ...context, depth: context.depth + 1 };
-        const blocked = scanCommand(inner, cwd, nested);
+        const blocked = await scanCommand(inner, cwd, nested);
         if (blocked) return blocked;
       }
     }
@@ -129,11 +131,11 @@ function scanCommand(
   return null;
 }
 
-function checkGit(
+async function checkGit(
   args: string[],
   startCwd: string,
   context: ScanContext,
-): string | null {
+): Promise<string | null> {
   let cwd = startCwd;
   let index = 0;
   while (index < args.length && (args[index] ?? "").startsWith("-")) {
@@ -149,16 +151,20 @@ function checkGit(
   }
   if (args[index] !== "push") return null;
   const pushArgs = args.slice(index + 1);
-  const repoCommonDir = gitCommonDir(cwd);
+  const repoCommonDir = await gitCommonDir(cwd);
   if (!repoCommonDir) return null;
-  const urls = pushUrls(pushArgs, cwd);
-  if (urls.length > 0 && urls.every((url) => isAllowedUrl(url, context))) {
+  const urls = await pushUrls(pushArgs, cwd);
+  const origins = await memoryOrigins(context.memoryDir);
+  if (
+    urls.length > 0 &&
+    urls.every((url) => isAllowedUrl(url, origins, context.allowed))
+  ) {
     return null;
   }
-  if (repoCommonDir === gitCommonDir(context.memoryDir)) {
+  if (repoCommonDir === (await gitCommonDir(context.memoryDir))) {
     return MEMORY_PUSH_BLOCKED_MESSAGE;
   }
-  return pushContainsMemoryFiles(pushArgs, cwd, context.memoryDir)
+  return (await pushContainsMemoryFiles(pushArgs, cwd, context.memoryDir))
     ? MEMORY_PUSH_BLOCKED_MESSAGE
     : null;
 }
@@ -199,34 +205,42 @@ function parsePushArgs(args: string[]): ParsedPush {
 }
 
 /** The URLs a push would send to, resolving remote names in `cwd`. */
-function pushUrls(args: string[], cwd: string): string[] {
+async function pushUrls(args: string[], cwd: string): Promise<string[]> {
   const { repository } = parsePushArgs(args);
-  const remote = repository ?? defaultPushRemote(cwd);
-  const remotes = (git(cwd, ["remote"]) ?? "").split("\n").filter(Boolean);
+  const remote = repository ?? (await defaultPushRemote(cwd));
+  const remotes = ((await git(cwd, ["remote"])) ?? "")
+    .split("\n")
+    .filter(Boolean);
   if (!remotes.includes(remote)) return [remote];
-  return (git(cwd, ["remote", "get-url", "--push", "--all", remote]) ?? "")
+  return (
+    (await git(cwd, ["remote", "get-url", "--push", "--all", remote])) ?? ""
+  )
     .split("\n")
     .filter(Boolean);
 }
 
+/** Push URLs of the memory repository's own `origin`, normalized. */
+async function memoryOrigins(memoryDir: string): Promise<string[]> {
+  const urls = await git(memoryDir, [
+    "remote",
+    "get-url",
+    "--push",
+    "--all",
+    "origin",
+  ]);
+  return (urls ?? "").split("\n").filter(Boolean).map(normalizeRemoteUrl);
+}
+
 /** The memory repository's own origin, or a configured prefix. */
-function isAllowedUrl(url: string, context: ScanContext): boolean {
+function isAllowedUrl(
+  url: string,
+  origins: string[],
+  allowed: string[],
+): boolean {
   const normalized = normalizeRemoteUrl(url);
-  const origins = (
-    git(context.memoryDir, [
-      "remote",
-      "get-url",
-      "--push",
-      "--all",
-      "origin",
-    ]) ?? ""
-  )
-    .split("\n")
-    .filter(Boolean)
-    .map(normalizeRemoteUrl);
   return (
     origins.includes(normalized) ||
-    context.allowed.some(
+    allowed.some(
       (prefix) =>
         normalized === prefix ||
         normalized.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`) ||
@@ -235,22 +249,24 @@ function isAllowedUrl(url: string, context: ScanContext): boolean {
   );
 }
 
-function defaultPushRemote(cwd: string): string {
-  const branch = git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+async function defaultPushRemote(cwd: string): Promise<string> {
+  const branch = await git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
   return (
-    (branch && git(cwd, ["config", "--get", `branch.${branch}.pushRemote`])) ||
-    git(cwd, ["config", "--get", "remote.pushDefault"]) ||
-    (branch && git(cwd, ["config", "--get", `branch.${branch}.remote`])) ||
+    (branch &&
+      (await git(cwd, ["config", "--get", `branch.${branch}.pushRemote`]))) ||
+    (await git(cwd, ["config", "--get", "remote.pushDefault"])) ||
+    (branch &&
+      (await git(cwd, ["config", "--get", `branch.${branch}.remote`]))) ||
     "origin"
   );
 }
 
-function pushContainsMemoryFiles(
+async function pushContainsMemoryFiles(
   args: string[],
   cwd: string,
   memoryDir: string,
-): boolean {
-  const memoryBlobs = collectMemoryBlobs(memoryDir);
+): Promise<boolean> {
+  const memoryBlobs = await collectMemoryBlobs(memoryDir);
   if (memoryBlobs.size === 0) return false;
   const parsed = parsePushArgs(args);
   const tips = parsed.refspecs
@@ -259,7 +275,7 @@ function pushContainsMemoryFiles(
   if (parsed.allBranches) tips.push("--branches");
   if (parsed.tags) tips.push("--tags");
   if (tips.length === 0) tips.push("HEAD");
-  const objects = git(cwd, [
+  const objects = await git(cwd, [
     "rev-list",
     "--objects",
     ...tips,
@@ -273,9 +289,9 @@ function pushContainsMemoryFiles(
 }
 
 /** Blob IDs for memory files, both committed and as currently on disk. */
-function collectMemoryBlobs(memoryDir: string): Set<string> {
+async function collectMemoryBlobs(memoryDir: string): Promise<Set<string>> {
   const blobs = new Set<string>();
-  const tree = git(memoryDir, ["ls-tree", "-r", "-l", "HEAD"]) ?? "";
+  const tree = (await git(memoryDir, ["ls-tree", "-r", "-l", "HEAD"])) ?? "";
   for (const line of tree.split("\n")) {
     const match = /^\d+ blob ([0-9a-f]+)\s+(\d+)\t(.+)$/.exec(line);
     if (match?.[1] && isMemoryContentFile(match[3] ?? "", Number(match[2]))) {
@@ -283,19 +299,19 @@ function collectMemoryBlobs(memoryDir: string): Set<string> {
     }
   }
   const paths = (
-    git(memoryDir, [
+    (await git(memoryDir, [
       "ls-files",
       "--cached",
       "--others",
       "--exclude-standard",
-    ]) ?? ""
+    ])) ?? ""
   )
     .split("\n")
     .filter((path) =>
       isMemoryContentFile(path, fileSize(resolve(memoryDir, path))),
     );
   if (paths.length > 0) {
-    const hashed = git(
+    const hashed = await git(
       memoryDir,
       ["hash-object", "--stdin-paths"],
       paths.join("\n"),
@@ -314,11 +330,11 @@ function isMemoryContentFile(path: string, size: number): boolean {
   );
 }
 
-function copiesMemoryOut(
+async function copiesMemoryOut(
   args: string[],
   cwd: string,
   context: ScanContext,
-): boolean {
+): Promise<boolean> {
   let target: string | undefined;
   const operands: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -342,12 +358,12 @@ function copiesMemoryOut(
   });
   if (!touchesMemory) return false;
   if (isRemoteSpec(target)) return true;
-  const targetCommonDir = gitCommonDir(
+  const targetCommonDir = await gitCommonDir(
     nearestExistingDir(resolvePath(cwd, target)),
   );
   return (
     targetCommonDir !== null &&
-    targetCommonDir !== gitCommonDir(context.memoryDir)
+    targetCommonDir !== (await gitCommonDir(context.memoryDir))
   );
 }
 
@@ -365,8 +381,8 @@ function nearestExistingDir(path: string): string {
   return current;
 }
 
-function gitCommonDir(cwd: string): string | null {
-  const dir = git(cwd, [
+async function gitCommonDir(cwd: string): Promise<string | null> {
+  const dir = await git(cwd, [
     "rev-parse",
     "--path-format=absolute",
     "--git-common-dir",
@@ -374,20 +390,30 @@ function gitCommonDir(cwd: string): string | null {
   return dir ? canonical(dir) : null;
 }
 
-function git(cwd: string, args: string[], input?: string): string | null {
-  try {
-    const result = spawnSync("git", args, {
-      cwd,
-      input,
-      encoding: "utf8",
-      maxBuffer: 64 * 1024 * 1024,
-      timeout: GIT_TIMEOUT_MS,
-      stdio: ["pipe", "pipe", "ignore"],
-    });
-    return result.status === 0 ? result.stdout.trim() : null;
-  } catch {
-    return null;
-  }
+/** Runs git without blocking the event loop; null on any failure. */
+function git(
+  cwd: string,
+  args: string[],
+  input?: string,
+): Promise<string | null> {
+  return new Promise((resolveOutput) => {
+    try {
+      const child = execFile(
+        "git",
+        args,
+        {
+          cwd,
+          encoding: "utf8",
+          maxBuffer: 64 * 1024 * 1024,
+          timeout: GIT_TIMEOUT_MS,
+        },
+        (error, stdout) => resolveOutput(error ? null : stdout.trim()),
+      );
+      child.stdin?.end(input ?? "");
+    } catch {
+      resolveOutput(null);
+    }
+  });
 }
 
 function fileSize(path: string): number {

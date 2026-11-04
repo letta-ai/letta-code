@@ -395,7 +395,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     };
   }
 
-  const memoryBlocked = checkMemoryPushAllowlist(command, {
+  const memoryBlocked = await checkMemoryPushAllowlist(command, {
     cwd: userCwd,
     env: getShellEnv(),
   });
