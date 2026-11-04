@@ -8,7 +8,7 @@ Choose a preset or configure the launch yourself:
 
 - `subagent_type` selects a preset from Available Agents (for example `recall`, or a custom agent in `.letta/agents/`). Only `description` and `prompt` are required alongside it. The preset determines the launch settings; all other optional Agent fields are ignored.
 - Without `subagent_type`, `harness` selects the runner: `letta` (the default), `claude-code`, `codex`, `cursor`, or `opencode`. The default Letta agent can research, plan, and implement.
-- Without `subagent_type`, `fork_context: true` gives the default Letta agent this conversation's history. Otherwise it starts fresh with your prompt.
+- Without `subagent_type`, `fork_context: true` gives the default Letta agent, or an external coding worker, this conversation's history. Otherwise it starts fresh with your prompt.
 
 ```typescript
 // Default Letta agent
@@ -49,7 +49,7 @@ Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
 
 ## External Coding Agents
 
-Omit `subagent_type` and use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. `fork_context` is not yet supported for them, so put the context they need in the prompt. When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+Omit `subagent_type` and use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. With `fork_context: true`, the latest complete messages up to 50,000 characters are included in the prompt; older messages are saved without tool-output clipping under `.letta/parent-transcripts/` on the worker's execution host. Reasoning and system messages are omitted. When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
 
 ```typescript
 Agent({
@@ -195,7 +195,7 @@ Without `subagent_type`, pass `computer` to run the subagent's turn on another c
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
-External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
+External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. With `fork_context: true`, the destination prepares the preview and older-history file before launching the worker, including in a Cloud sandbox. A remote host must support destination-local history files or the launch fails. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
