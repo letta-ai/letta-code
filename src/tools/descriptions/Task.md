@@ -23,7 +23,7 @@ Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
 
 ## When NOT to use the Agent tool:
 
-- To send input to an agent that is already working, use SendAgentMessage when available (Cloud backend). It sends to the existing conversation without waiting for an answer or creating another local task. On the local backend, or for other ways to message an agent, load the messaging-agents skill.
+- To send input to an agent that is already working, use SendAgentMessage when available (Cloud backend). It sends to the existing conversation without waiting for an answer or creating another local task. On the local backend, use the CLI send described in SendAgentMessage.
 - If you want to read a specific file path, use the Read or Glob tool instead of the Agent tool, to find the match more quickly
 - If you are searching for a specific class definition like "class Foo", use the Glob tool instead, to find the match more quickly
 - If you are searching for code within a specific file or set of 2-3 files, use the Read tool instead of the Agent tool, to find the match more quickly
@@ -99,7 +99,7 @@ When deploying an existing agent, use the default harness `letta` and omit `suba
   - Continues from the conversation's existing message history
   - Use this to continue context from:
     - A prior Agent tool invocation that returned a conversation_id
-    - A message thread started via the messaging-agents skill
+    - A message thread started with SendAgentMessage or `letta -p`
 
 ### Examples
 
