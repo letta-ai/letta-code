@@ -152,7 +152,12 @@ export async function collectRemoteTurnResult(
     const reply = await waitForAcceptedSuperRun(receipt, signal, {
       exact: deps.exact ?? getExactSuperRun,
       runtimeStatus: deps.runtimeStatus ?? readConversationRuntimeStatus,
-      onIdle: createRemoteIdleNotifier(subagentId),
+      // Only a background task's parent can act on an interim notice. A
+      // foreground Task blocks its parent in this wait, so the notice would
+      // queue behind the final result and promise a follow-up that never comes.
+      ...(getSubagents().find((agent) => agent.id === subagentId)?.isBackground
+        ? { onIdle: createRemoteIdleNotifier(subagentId) }
+        : {}),
       run:
         deps.run ??
         ((runId, readSignal) =>
