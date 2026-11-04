@@ -78,13 +78,17 @@
     {
       "path": "src/channels/service.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "env": {
+        "LETTA_SKIP_KEYCHAIN_CHECK": "1"
+      },
       "reason": "Mutates shared channel stores and credential mode; local fixtures must not use the macOS keychain."
     },
     {
       "path": "src/channels/registry-lifecycle.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "env": {
+        "LETTA_SKIP_KEYCHAIN_CHECK": "1"
+      },
       "reason": "initializeChannels() probes the OS keychain and caches the process-global channel credential mode; on macOS that cached keyring mode made later channel fixtures write tokens to the runner keychain."
     },
     {
@@ -130,7 +134,9 @@
     {
       "path": "src/cli/helpers/pinned-agent-listing.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_SKIP_KEYCHAIN_CHECK": "1" },
+      "env": {
+        "LETTA_SKIP_KEYCHAIN_CHECK": "1"
+      },
       "reason": "Mutates HOME, local-backend paths, the settings singleton, and the keychain service name."
     },
     {
@@ -171,7 +177,9 @@
     {
       "path": "src/cli/reflection-worktree-completion.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
       "reason": "Exercises reflection worktree cleanup telemetry with real Git processes and the shared telemetry singleton."
     },
     {
@@ -182,13 +190,17 @@
     {
       "path": "src/telemetry/flush-auth.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
       "reason": "Explicitly exercises telemetry emission with mocked network requests."
     },
     {
       "path": "src/telemetry/flush-batching.test.ts",
       "timeoutMs": 15000,
-      "env": { "LETTA_CODE_TELEM": "1" },
+      "env": {
+        "LETTA_CODE_TELEM": "1"
+      },
       "reason": "Explicitly exercises telemetry batching with mocked network requests."
     },
     {
@@ -265,6 +277,11 @@
       "path": "src/websocket/listener/remote-settings.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates HOME and the remote-settings singleton to verify startup cwd-map repair."
+    },
+    {
+      "path": "src/tools/impl/task-external-fork.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Mocks subagent discovery, the child-process launch and the external worker hand-off while exercising task() fork_context for external coding workers with process-global backend, settings, and subagent state."
     }
   ]
 }

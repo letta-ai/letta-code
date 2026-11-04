@@ -140,6 +140,7 @@ export async function registerWithCloud(
         launch_subagent_notify_caller: true,
         subagent_message: true,
         external_harnesses: [...EXTERNAL_CODING_AGENT_TYPES],
+        external_fork_context: true,
         self_update: getSelfUpdateStatus(),
       },
     }),

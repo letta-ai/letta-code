@@ -299,6 +299,27 @@ describe("direct App Server computers", () => {
     expect(connected).toHaveLength(0);
   });
 
+  test("fork_context is refused before connecting to a direct computer", async () => {
+    const server = new FakeDirectServer();
+    const { deps, connected } = directDeps(server);
+    const result = await launchRemoteExternalCodingAgent(
+      {
+        type: "codex",
+        computer: "direct:build-box",
+        prompt: "p",
+        description: "d",
+        forkContext: true,
+        parentScope: scope,
+      },
+      { spawn, ...deps },
+    );
+    expect(result).toEqual({
+      success: false,
+      error: expect.stringContaining("fork_context is not supported"),
+    });
+    expect(connected).toHaveLength(0);
+  });
+
   test("stop and steer resolve @direct:<name> through the direct store", async () => {
     const server = new FakeDirectServer();
     const { deps, connected } = directDeps(server);

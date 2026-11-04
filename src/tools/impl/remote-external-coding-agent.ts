@@ -77,6 +77,8 @@ export interface RemoteExternalCodingAgentLaunch {
   type: ExternalCodingAgentType;
   computer: string;
   prompt: string;
+  /** The destination reads the parent history and writes its own transcript file. */
+  forkContext?: boolean;
   description: string;
   model?: string;
   mcp?: ExternalCodingAgentMcpOptions;
@@ -421,6 +423,13 @@ export async function launchRemoteExternalCodingAgent(
   // computer need not share; inherit only when the caller asks for it.
   let mcp = params.mcp;
   if (directName) {
+    // The destination renders fork history from its own backend, which a
+    // direct computer need not share with the caller.
+    if (params.forkContext)
+      return {
+        success: false,
+        error: `fork_context is not supported on direct computers (${computer}); put the context the worker needs in the prompt.`,
+      };
     let record: DirectComputer;
     try {
       record = (deps.resolveDirectComputer ?? getDirectComputer)(directName);
@@ -470,6 +479,14 @@ export async function launchRemoteExternalCodingAgent(
           success: false,
           error: formatOutdatedComputerError(type, computer),
         };
+      if (
+        params.forkContext &&
+        resolved.environment.metadata?.external_fork_context !== true
+      )
+        return {
+          success: false,
+          error: `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
+        };
       connectionId = resolved.connectionId;
       qualifier = resolved.environment.deviceId;
       supportsSteering =
@@ -517,7 +534,9 @@ export async function launchRemoteExternalCodingAgent(
       args: {
         // Older listeners accept only `subagent_type`; current listeners
         // translate an external worker name there into `harness`.
-        subagent_type: type,
+        ...(params.forkContext
+          ? { harness: type, fork_context: true }
+          : { subagent_type: type }),
         prompt: params.prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
