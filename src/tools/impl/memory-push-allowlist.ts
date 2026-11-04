@@ -13,6 +13,10 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
  *   URL matching an allowed entry.
  * - `git push` from another repository must not carry a file whose bytes match
  *   a file in the memory directory, unless it targets an allowed URL.
+ * - Destinations are resolved by git with the command's own global options
+ *   (`-c`, `--config-env`, `--git-dir`, ...) and environment assignments, so
+ *   config overrides are taken into account. A push whose options cannot be
+ *   reproduced that way is refused.
  * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
  *   a remote host is refused, since that copy would be pushed from there.
  *
@@ -24,6 +28,8 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 export const MEMORY_PUSH_ALLOWLIST_ENV = "LETTA_MEMORY_PUSH_ALLOWED_REMOTES";
 
 export const MEMORY_PUSH_BLOCKED_MESSAGE = `Blocked: memory repository contents can only be pushed to the memory remote or to a remote listed in ${MEMORY_PUSH_ALLOWLIST_ENV}. Remove memory files from the commits you are pushing, or push to an allowed remote.`;
+
+export const MEMORY_PUSH_UNVERIFIED_MESSAGE = `Blocked: this git push uses global options or environment values whose push destination cannot be checked while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Run git push without them.`;
 
 export const MEMORY_COPY_BLOCKED_MESSAGE = `Blocked: copying the memory directory into another Git repository or to a remote host is disabled while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Memory files stay in the memory repository.`;
 
@@ -122,26 +128,71 @@ interface ScanContext {
   depth: number;
 }
 
+/**
+ * Where and how probe commands run so they see the same repository and
+ * configuration as the command being checked: the working directory, the
+ * command's global git options, and its environment.
+ */
+interface GitTarget {
+  cwd: string;
+  options: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+/** Global git options that take a separate value argument. */
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  "-c",
+  "--config-env",
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+]);
+/** Global git options without a value that probes can safely repeat. */
+const GIT_FLAG_OPTIONS = new Set([
+  "-p",
+  "--paginate",
+  "-P",
+  "--no-pager",
+  "--bare",
+  "--no-replace-objects",
+  "--no-lazy-fetch",
+  "--no-optional-locks",
+  "--no-advice",
+  "--literal-pathspecs",
+  "--glob-pathspecs",
+  "--noglob-pathspecs",
+  "--icase-pathspecs",
+]);
+
 async function scanCommand(
   command: string,
   startCwd: string,
   context: ScanContext,
 ): Promise<string | null> {
   let cwd = startCwd;
+  let shellEnv = context.env;
   for (const segment of splitSegments(command)) {
-    const words = tokenize(expandVariables(segment, context.env));
+    const words = tokenize(expandVariables(segment, shellEnv));
+    const assignments: Record<string, string> = {};
     while (words.length > 0) {
       const first = words[0] ?? "";
-      if (!PREFIX_WORDS.has(first) && !/^[A-Za-z_][A-Za-z0-9_]*=/.test(first))
-        break;
+      const assignment = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(first);
+      if (assignment?.[1]) assignments[assignment[1]] = assignment[2] ?? "";
+      else if (!PREFIX_WORDS.has(first) && first !== "export") break;
       words.shift();
     }
+    if (words.length === 0) {
+      // `export NAME=value` or a bare assignment lasts for later commands.
+      shellEnv = { ...shellEnv, ...assignments };
+      continue;
+    }
+    const env = { ...shellEnv, ...assignments };
     const name = basename(words[0] ?? "");
     const args = words.slice(1);
     if (name === "cd") {
-      cwd = resolvePath(cwd, args[0] ?? context.env.HOME ?? cwd);
+      cwd = resolvePath(cwd, args[0] ?? env.HOME ?? cwd);
     } else if (name === "git") {
-      const blocked = await checkGit(args, cwd, context);
+      const blocked = await checkGit(args, cwd, env, assignments, context);
       if (blocked) return blocked;
     } else if (COPY_COMMANDS.has(name)) {
       if (await copiesMemoryOut(args, cwd, context)) {
@@ -154,7 +205,7 @@ async function scanCommand(
       const index = args.findIndex((arg) => /^-[a-z]*c$/.test(arg));
       const inner = index >= 0 ? args[index + 1] : undefined;
       if (inner) {
-        const nested = { ...context, depth: context.depth + 1 };
+        const nested = { ...context, env, depth: context.depth + 1 };
         const blocked = await scanCommand(inner, cwd, nested);
         if (blocked) return blocked;
       }
@@ -166,26 +217,45 @@ async function scanCommand(
 async function checkGit(
   args: string[],
   startCwd: string,
+  env: NodeJS.ProcessEnv,
+  assignments: Record<string, string>,
   context: ScanContext,
 ): Promise<string | null> {
   let cwd = startCwd;
+  const options: string[] = [];
+  let reproducible = true;
   let index = 0;
   while (index < args.length && (args[index] ?? "").startsWith("-")) {
     const option = args[index] ?? "";
     if (option === "-C") {
       cwd = resolvePath(cwd, args[index + 1] ?? "");
       index += 2;
-    } else if (["-c", "--git-dir", "--work-tree"].includes(option)) {
+    } else if (GIT_OPTIONS_WITH_VALUE.has(option)) {
+      options.push(option, args[index + 1] ?? "");
       index += 2;
     } else {
+      const flag = option.split("=")[0] ?? "";
+      if (option.includes("=") && GIT_OPTIONS_WITH_VALUE.has(flag)) {
+        options.push(option);
+      } else if (GIT_FLAG_OPTIONS.has(option)) {
+        options.push(option);
+      } else {
+        reproducible = false;
+      }
       index += 1;
     }
   }
   if (args[index] !== "push") return null;
+  // A value the shell would still expand cannot be reproduced by the probe.
+  const values = [...options, ...Object.values(assignments)];
+  if (!reproducible || values.some((value) => /[$`]/.test(value))) {
+    return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+  }
+  const target: GitTarget = { cwd, options, env };
   const pushArgs = args.slice(index + 1);
-  const repoCommonDir = await gitCommonDir(cwd);
+  const repoCommonDir = await gitCommonDir(target);
   if (!repoCommonDir) return null;
-  const urls = await pushUrls(pushArgs, cwd);
+  const urls = await pushUrls(pushArgs, target);
   const origins = await memoryOrigins(context.memoryDir);
   if (
     urls.length > 0 &&
@@ -196,9 +266,14 @@ async function checkGit(
   if (repoCommonDir === (await gitCommonDir(context.memoryDir))) {
     return MEMORY_PUSH_BLOCKED_MESSAGE;
   }
-  return (await pushContainsMemoryFiles(pushArgs, cwd, context.memoryDir))
+  return (await pushContainsMemoryFiles(pushArgs, target, context.memoryDir))
     ? MEMORY_PUSH_BLOCKED_MESSAGE
     : null;
+}
+
+/** Runs a git probe the way the checked command would run git. */
+function probe(target: GitTarget, args: string[]): Promise<string | null> {
+  return git(target.cwd, [...target.options, ...args], undefined, target.env);
 }
 
 interface ParsedPush {
@@ -236,19 +311,83 @@ function parsePushArgs(args: string[]): ParsedPush {
   return parsed;
 }
 
-/** The URLs a push would send to, resolving remote names in `cwd`. */
-async function pushUrls(args: string[], cwd: string): Promise<string[]> {
+/**
+ * The URLs a push would send to, resolved the way git resolves them: a
+ * configured remote's `pushurl` (with `insteadOf` applied) or its `url`
+ * (with `pushInsteadOf`, else `insteadOf`, applied); anything else is used as
+ * a URL with the same rewrites. Config is read through the probe, so
+ * overrides from `-c`, `--config-env` and the environment count.
+ */
+async function pushUrls(args: string[], target: GitTarget): Promise<string[]> {
   const { repository } = parsePushArgs(args);
-  const remote = repository ?? (await defaultPushRemote(cwd));
-  const remotes = ((await git(cwd, ["remote"])) ?? "")
-    .split("\n")
-    .filter(Boolean);
-  if (!remotes.includes(remote)) return [remote];
-  return (
-    (await git(cwd, ["remote", "get-url", "--push", "--all", remote])) ?? ""
-  )
-    .split("\n")
-    .filter(Boolean);
+  const remote = repository ?? (await defaultPushRemote(target));
+  const rewrites = await urlRewrites(target);
+  const configured = async (key: string) =>
+    (
+      (await probe(target, [
+        "config",
+        "--get-all",
+        `remote.${remote}.${key}`,
+      ])) ?? ""
+    )
+      .split("\n")
+      .filter(Boolean);
+  const pushurls = await configured("pushurl");
+  if (pushurls.length > 0) {
+    return pushurls.map((url) => rewriteUrl(url, rewrites.fetch) ?? url);
+  }
+  const urls = await configured("url");
+  return (urls.length > 0 ? urls : [remote]).map(
+    (url) =>
+      rewriteUrl(url, rewrites.push) ?? rewriteUrl(url, rewrites.fetch) ?? url,
+  );
+}
+
+interface UrlRewrite {
+  base: string;
+  prefix: string;
+}
+
+/** `url.<base>.insteadOf` and `url.<base>.pushInsteadOf` from all config. */
+async function urlRewrites(
+  target: GitTarget,
+): Promise<{ fetch: UrlRewrite[]; push: UrlRewrite[] }> {
+  const output = await probe(target, [
+    "config",
+    "-z",
+    "--get-regexp",
+    "^url\\..*\\.(push)?insteadof$",
+  ]);
+  const rewrites = { fetch: [] as UrlRewrite[], push: [] as UrlRewrite[] };
+  for (const entry of (output ?? "").split("\0")) {
+    const newline = entry.indexOf("\n");
+    if (newline < 0) continue;
+    const key = entry.slice(0, newline);
+    const prefix = entry.slice(newline + 1);
+    const dot = key.lastIndexOf(".");
+    const base = key.slice("url.".length, dot);
+    const kind = key.slice(dot + 1).toLowerCase();
+    if (!prefix) continue;
+    (kind === "pushinsteadof" ? rewrites.push : rewrites.fetch).push({
+      base,
+      prefix,
+    });
+  }
+  return rewrites;
+}
+
+/** Git's rule: the longest matching prefix wins. */
+function rewriteUrl(url: string, rewrites: UrlRewrite[]): string | null {
+  let best: UrlRewrite | null = null;
+  for (const rewrite of rewrites) {
+    if (
+      url.startsWith(rewrite.prefix) &&
+      (!best || rewrite.prefix.length > best.prefix.length)
+    ) {
+      best = rewrite;
+    }
+  }
+  return best ? best.base + url.slice(best.prefix.length) : null;
 }
 
 /** Push URLs of the memory repository's own `origin`, normalized. */
@@ -291,21 +430,30 @@ function isAllowedUrl(
   );
 }
 
-async function defaultPushRemote(cwd: string): Promise<string> {
-  const branch = await git(cwd, ["symbolic-ref", "--quiet", "--short", "HEAD"]);
+async function defaultPushRemote(target: GitTarget): Promise<string> {
+  const branch = await probe(target, [
+    "symbolic-ref",
+    "--quiet",
+    "--short",
+    "HEAD",
+  ]);
   return (
     (branch &&
-      (await git(cwd, ["config", "--get", `branch.${branch}.pushRemote`]))) ||
-    (await git(cwd, ["config", "--get", "remote.pushDefault"])) ||
+      (await probe(target, [
+        "config",
+        "--get",
+        `branch.${branch}.pushRemote`,
+      ]))) ||
+    (await probe(target, ["config", "--get", "remote.pushDefault"])) ||
     (branch &&
-      (await git(cwd, ["config", "--get", `branch.${branch}.remote`]))) ||
+      (await probe(target, ["config", "--get", `branch.${branch}.remote`]))) ||
     "origin"
   );
 }
 
 async function pushContainsMemoryFiles(
   args: string[],
-  cwd: string,
+  target: GitTarget,
   memoryDir: string,
 ): Promise<boolean> {
   const memoryBlobs = await collectMemoryBlobs(memoryDir);
@@ -317,7 +465,7 @@ async function pushContainsMemoryFiles(
   if (parsed.allBranches) tips.push("--branches");
   if (parsed.tags) tips.push("--tags");
   if (tips.length === 0) tips.push("HEAD");
-  const objects = await git(cwd, [
+  const objects = await probe(target, [
     "rev-list",
     "--objects",
     ...tips,
@@ -423,8 +571,12 @@ function nearestExistingDir(path: string): string {
   return current;
 }
 
-async function gitCommonDir(cwd: string): Promise<string | null> {
-  const dir = await git(cwd, [
+async function gitCommonDir(where: string | GitTarget): Promise<string | null> {
+  const target =
+    typeof where === "string"
+      ? { cwd: where, options: [], env: process.env }
+      : where;
+  const dir = await probe(target, [
     "rev-parse",
     "--path-format=absolute",
     "--git-common-dir",
@@ -437,6 +589,7 @@ function git(
   cwd: string,
   args: string[],
   input?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | null> {
   return new Promise((resolveOutput) => {
     try {
@@ -445,6 +598,7 @@ function git(
         args,
         {
           cwd,
+          env,
           encoding: "utf8",
           maxBuffer: 64 * 1024 * 1024,
           timeout: GIT_TIMEOUT_MS,
