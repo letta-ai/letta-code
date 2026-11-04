@@ -139,13 +139,13 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`outputStyle`](#outputstyle) | Change Claude's role, tone, and output format with an [output style](https://code.claude.com/docs/en/output-styles.md) | Model and responses | Any file |
 | [`parentSettingsBehavior`](#parentsettingsbehavior) | Apply or drop restrictions an [SDK or IDE host](https://code.claude.com/docs/en/managed-settings.md#let-an-embedding-host-add-policy) passes when you deploy [managed settings](https://code.claude.com/docs/en/managed-settings.md) | Enterprise and managed settings | Managed |
 | [`permissionExplainerEnabled`](#permissionexplainerenabled) | Removed in v2.1.257, together with the `Ctrl+E` command explanation on shell permission prompts | Global config settings | Global config |
-| [`permissions`](#permissions) | Set allow, ask, and deny rules and the starting [permission mode](https://code.claude.com/docs/en/permission-modes.md) | Permission settings | Any file |
+| [`permissions`](#permissions) | Set allow, ask, and deny rules and the default [permission mode](https://code.claude.com/docs/en/permission-modes.md) | Permission settings | Any file |
 | [`permissions.additionalDirectories`](#permissions-additionaldirectories) | Give Claude file access to [directories outside the current one](https://code.claude.com/docs/en/permissions.md#working-directories) | Permission settings | Any file |
 | [`permissions.allow`](#permissions-allow) | Approve listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) without a prompt | Permission settings | Any file |
 | [`permissions.ask`](#permissions-ask) | Always prompt before listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) | Permission settings | Any file |
 | [`permissions.blockReadsOutsideWorkingDirectories`](#permissions-blockreadsoutsideworkingdirectories) | Make the file tools refuse reads outside the [working directories](https://code.claude.com/docs/en/permissions.md#working-directories) in every permission mode | Permission settings | Any file |
 | [`permissions.blockWritesOutsideWorkingDirectories`](#permissions-blockwritesoutsideworkingdirectories) | Make the `Write`, `Edit`, and `NotebookEdit` tools refuse paths outside the [working directories](https://code.claude.com/docs/en/permissions.md#working-directories) in every permission mode, apart from [some of Claude Code's own files](#what-the-write-block-refuses-and-what-stays-writable) | Permission settings | Any file |
-| [`permissions.defaultMode`](#permissions-defaultmode) | Set the [permission mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) new sessions start in | Permission settings | Any file |
+| [`permissions.defaultMode`](#permissions-defaultmode) | Set the default [permission mode](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for new sessions | Permission settings | Any file |
 | [`permissions.deny`](#permissions-deny) | Block listed [tool uses](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax), including reads of files that hold secrets | Permission settings | Any file |
 | [`permissions.disableBypassPermissionsMode`](#permissions-disablebypasspermissionsmode) | Prevent anyone from entering [bypassPermissions mode](https://code.claude.com/docs/en/permission-modes.md#skip-all-checks-with-bypasspermissions-mode) | Permission settings | Any file |
 | [`plansDirectory`](#plansdirectory) | Choose where [plan mode](https://code.claude.com/docs/en/permission-modes.md#analyze-before-you-edit-with-plan-mode) writes plan files | Memory and context | Any file |
@@ -804,7 +804,7 @@ The session's effort level comes from [`effortLevel`](#effortlevel), [`modelSett
 
 ## Permission settings
 
-Decide what Claude can do without asking, which permission mode a session starts in, and what auto mode's classifier allows. For rule syntax and the permission model, see [Configure permissions](https://code.claude.com/docs/en/permissions.md).
+Decide what Claude can do without asking, the default permission mode for new sessions, and what auto mode's classifier allows. For rule syntax and the permission model, see [Configure permissions](https://code.claude.com/docs/en/permissions.md).
 
 ### `allowManagedPermissionRulesOnly`
 
@@ -899,7 +899,7 @@ Remove [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate
 
 ### `permissions`
 
-Control which tools Claude can use without asking, which ones always prompt, and which ones are blocked, and set the [permission mode](https://code.claude.com/docs/en/permission-modes.md) a session starts in. Every `permissions.*` key below nests under this object.
+Control which tools Claude can use without asking, which ones prompt, and which ones are blocked. Also set the default [permission mode](https://code.claude.com/docs/en/permission-modes.md) for new sessions. Every `permissions.*` key below nests under this object.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: object with `allow`, `ask`, `deny`, `additionalDirectories`, `blockReadsOutsideWorkingDirectories`, `blockWritesOutsideWorkingDirectories`, `defaultMode`, `disableBypassPermissionsMode`, and `disableAutoMode`
@@ -1137,7 +1137,7 @@ To let Claude reach one directory outside the project while `blockReadsOutsideWo
 
 ### `permissions.defaultMode`
 
-Set the [permission mode](https://code.claude.com/docs/en/permission-modes.md) new sessions start in. When you leave it unset, sessions start in the [built-in default](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for your surface.
+Set the default [permission mode](https://code.claude.com/docs/en/permission-modes.md) for new sessions. When you leave it unset, the [built-in default](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) for your surface applies.
 
 * **Scope**: [`Any file`](#scopes). `auto` and `bypassPermissions` don't take effect from project or local settings, so set them in `~/.claude/settings.json` instead. Before v2.1.257, `bypassPermissions` took effect from any file. For conversations the VS Code extension starts, Claude Code reads only user, managed, and `--settings` values.
 * **Type**: string, one of:
@@ -5587,12 +5587,12 @@ The desktop app manages some plugins itself, including plugins synced from claud
 
 Block CLI startup until Claude Code has freshly fetched [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md). If the fetch fails, Claude Code exits instead of continuing with cached or no settings. Set it when your environment can't accept even a brief window in which a session runs without its managed policy.
 
-When the key is unset, Claude Code doesn't block startup on the fetch, though when the developer signs in at startup it waits up to five seconds for the fetch. A Cloud gateway session always waits, and exits if the gateway can't be reached.
+When the key is unset, Claude Code doesn't block startup on the fetch, though when the developer signs in at startup it waits up to five seconds for the fetch. [Anthropic can require the settings](https://code.claude.com/docs/en/server-managed-settings.md#fetch-and-caching-behavior), which does block a start without them. A Cloud gateway session waits, and exits if the gateway can't be reached.
 
 * **Scope**: [`Managed`](#scopes). Claude Code honors a `true` from any admin-controlled managed source, even one that isn't the highest-priority source.
 * **Type**: Boolean
   * `true`: Claude Code blocks startup until it has freshly fetched server-managed settings, and exits if the fetch fails
-  * `false`: Claude Code doesn't block startup on the fetch, though at a sign-in startup it waits up to five seconds for the fetch
+  * `false`: unless Anthropic requires the settings, Claude Code doesn't block startup on the fetch, though at a sign-in startup it waits up to five seconds for the fetch
 * **Default**: `false`
 
 ```json managed-settings.json theme={null}

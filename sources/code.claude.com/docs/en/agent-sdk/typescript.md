@@ -2011,6 +2011,7 @@ Set `CLAUDE_CODE_STARTUP_FAILURE_RESULTS` to `1` in [`env`](#options) to receive
 * A resume that Claude Code stops because it [can't return the session to its worktree](https://code.claude.com/docs/en/worktrees.md#the-session-resumes-outside-its-worktree), with `worktree_unverified` or `worktree_resume_refused`. That section says which error carries which value.
 * A refused [`continue`](#options) of a conversation that a background session holds, with `session_held_by_background`. For a refused [`resume`](#options) of such a conversation, Claude Code writes the result only when the variable is set.
 * A start that Claude Code refuses because [`failIfUnavailable`](#sandboxsettings) is on and the sandbox can't start, with `sandbox_required_unavailable`.
+* A start that Claude Code refuses because `~/.claude.json` isn't valid JSON, with `config_file_invalid`.
 
 The `SDKStartupFailureReason` type lists the values `startup_failure_reason` can hold:
 
@@ -2035,7 +2036,8 @@ type SDKStartupFailureReason =
   | "bypass_root"
   | "org_config_required_unavailable"
   | "org_config_refused"
-  | "sandbox_required_unavailable";
+  | "sandbox_required_unavailable"
+  | "config_file_invalid";
 ```
 
 Each value names one refusal:
@@ -2062,6 +2064,7 @@ Each value names one refusal:
 | `org_config_required_unavailable` | The session needs the organization's policies and managed settings before it can start, and they couldn't be loaded, for example because of a network failure or an Anthropic server error. Requires Agent SDK v0.3.293 or later |
 | `org_config_refused` | Anthropic refused to provide the organization's policies and managed settings for this sign-in, for example because the sign-in expired or was revoked, or the organization doesn't allow Claude Code for this account. Requires Agent SDK v0.3.293 or later |
 | `sandbox_required_unavailable` | [`failIfUnavailable`](#sandboxsettings) is on and the sandbox can't start. The text in `errors` ends with `Set sandbox.failIfUnavailable=false to allow unsandboxed execution.` Requires Agent SDK v0.3.314 or later |
+| `config_file_invalid` | `~/.claude.json` isn't valid JSON. Claude Code leaves the file unchanged, so a retry fails the same way until someone repairs it. `errors` names the file and says how to restore or repair it. See [Configuration error in \~/.claude.json](https://code.claude.com/docs/en/errors.md#configuration-error-in-claude-json). Requires TypeScript Agent SDK v0.3.318 or later and Claude Code v2.1.318 or later |
 
 ### `SDKSystemMessage`
 

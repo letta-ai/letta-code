@@ -69,7 +69,7 @@ When [auto mode](https://code.claude.com/docs/en/permission-modes.md#eliminate-p
 
 ## Permission modes
 
-Claude Code supports several permission modes that control how it approves tool calls. See [Permission modes](https://code.claude.com/docs/en/permission-modes.md) for when to use each one. To change the mode sessions start in, set `defaultMode` in your [settings files](https://code.claude.com/docs/en/settings.md#where-settings-live). [Which mode a session starts in](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) covers the built-in default for each plan and what the VS Code extension reads.
+Claude Code supports several permission modes that control how it approves tool calls. See [Permission modes](https://code.claude.com/docs/en/permission-modes.md) for when to use each one. To change the default permission mode for new sessions, set `defaultMode` in your [settings files](https://code.claude.com/docs/en/settings.md#where-settings-live). [Which mode a session starts in](https://code.claude.com/docs/en/permission-modes.md#which-mode-a-session-starts-in) covers the built-in default for each plan and what the VS Code extension reads.
 
 | Mode | Description |
 | :- | :- |
