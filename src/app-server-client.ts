@@ -220,6 +220,19 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
+    // A rejected handshake can report more than one socket error, and some
+    // runtimes emit them after the request has closed. The socket is unusable
+    // once opening fails, so absorb later errors instead of letting an
+    // unhandled "error" event crash the process.
+    let absorbing = false;
+    const absorbLaterErrors = () => {
+      if (absorbing) return;
+      absorbing = true;
+      // Prefer EventEmitter `on`: Node-style emitters only treat those
+      // listeners as handling "error".
+      if (socket.on) socket.on("error", () => {});
+      else attachSocketListener(socket, "error", () => {});
+    };
     let detachOpen = () => {};
     let detachError = () => {};
     let detachResponse = () => {};
@@ -242,6 +255,7 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
         let finished = false;
         const finish = () => {
           if (finished) return;
+          absorbLaterErrors();
           detachBody();
           const detail = body.toString("utf8").trim();
           reject(
@@ -278,6 +292,7 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
       detachResponse = () => socket.off?.("unexpected-response", onResponse);
     }
     detachError = onceSocketEvent(socket, "error", (event) => {
+      absorbLaterErrors();
       cleanup();
       reject(
         new Error(`App-server WebSocket failed to open: ${String(event)}`),

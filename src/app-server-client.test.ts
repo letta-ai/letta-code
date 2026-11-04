@@ -114,6 +114,29 @@ describe("app-server client", () => {
     ).toBe(0);
   });
 
+  test("absorbs socket errors that follow a failed handshake", async () => {
+    class FailingSocket extends EventEmitter {
+      constructor(_url: string) {
+        super();
+      }
+      readyState = 0;
+      send() {}
+      close() {}
+    }
+    const client = createAppServerClient({
+      url: "http://localhost:4500",
+      WebSocket: FailingSocket,
+    });
+    const pending = client.connect();
+    const socket = client.socket as FailingSocket;
+    socket.emit("error", new Error("Unexpected server response: 401"));
+    await expect(pending).rejects.toThrow(
+      "App-server WebSocket failed to open",
+    );
+    // A second error from the dead socket must not be unhandled.
+    expect(() => socket.emit("error", new Error("aborted"))).not.toThrow();
+  });
+
   test("launches a subagent and correlates success and failure responses", async () => {
     const { client, control } = createFakeClient();
     const opened = client.connect();
