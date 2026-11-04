@@ -199,7 +199,7 @@ describe("sandbox subcommand", () => {
         createPublicExposure: async (port) => {
           calls.push(port);
           return {
-            url: "https://opaque.preview.letta.app",
+            url: "https://opaque.preview.dream.site",
             port,
             expiresAt: "2026-11-04T20:00:00.000Z",
           };
@@ -209,7 +209,7 @@ describe("sandbox subcommand", () => {
       expect(exitCode).toBe(0);
       expect(calls).toEqual([3000]);
       expect(JSON.parse(output[0] ?? "{}")).toEqual({
-        url: "https://opaque.preview.letta.app",
+        url: "https://opaque.preview.dream.site",
         port: 3000,
         expiresAt: "2026-11-04T20:00:00.000Z",
       });
