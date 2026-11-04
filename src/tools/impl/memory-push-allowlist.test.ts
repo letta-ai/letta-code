@@ -145,6 +145,73 @@ describe.skipIf(process.platform === "win32")(
       ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
     });
 
+    test("matches entries ending in .git exactly", async () => {
+      const exactEnv = {
+        ...env,
+        [MEMORY_PUSH_ALLOWLIST_ENV]:
+          "https://host.example.test/v1/git/a/state.git",
+      };
+      const push = (url: string) =>
+        checkMemoryPushAllowlist(`git push ${url} HEAD:main`, {
+          cwd: memoryDir,
+          env: exactEnv,
+        });
+      const base = "https://host.example.test/v1/git/a";
+      expect(await push(`${base}/state.git`)).toBeNull();
+      expect(await push(`${base}/state.git/`)).toBeNull();
+      expect(
+        await push("https://user:secret@host.example.test/v1/git/a/state.git"),
+      ).toBeNull();
+      for (const url of [
+        `${base}/state.git/../../a/repositories/x.git`,
+        `${base}/state.git/../repositories/x.git`,
+        `${base}/state.git/%2e%2e/%2E%2E/a/repositories/x.git`,
+        `${base}/state.git/.%2e/repositories/x.git`,
+        `${base}/./state.git`,
+        `${base}/state.git/sub`,
+        `${base}/repositories/x.git`,
+        `${base}/state.git?x=1`,
+        "https://host.example.test/v1/git/b/state.git",
+      ]) {
+        expect(await push(url)).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+      }
+    });
+
+    test("rejects dot segments under a prefix entry", async () => {
+      expect(
+        await check(
+          "git push https://api.example.test/v1/git/agent-1/../agent-2/state.git main",
+          memoryDir,
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+      expect(
+        await check(
+          "git push https://api.example.test/v1/git/agent-1/%2e%2e/agent-2/state.git main",
+          memoryDir,
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+    });
+
+    test("normalizes the memory origin before comparing", async () => {
+      const originEnv = {
+        ...env,
+        [MEMORY_PUSH_ALLOWLIST_ENV]: "https://unrelated.example.test/x.git",
+      };
+      const push = (url: string) =>
+        checkMemoryPushAllowlist(`git push ${url} main`, {
+          cwd: memoryDir,
+          env: originEnv,
+        });
+      expect(
+        await push("https://tok@API.example.test/v1/git/agent-1/state.git/"),
+      ).toBeNull();
+      expect(
+        await push(
+          "https://api.example.test/v1/git/agent-1/state.git/../../agent-2/state.git",
+        ),
+      ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+    });
+
     test("ignores letta.memoryRepository.url set from the shell", async () => {
       const other = "https://github.com/someone/notes.git";
       git(memoryDir, "config", "letta.memoryRepository.url", other);

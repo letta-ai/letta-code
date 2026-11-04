@@ -6,10 +6,11 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
  * Optional push-destination allowlist for the memory repository.
  *
  * Set `LETTA_MEMORY_PUSH_ALLOWED_REMOTES` to a comma-separated list of remote
- * URL prefixes. When it is set, shell commands run through the Bash and
- * exec_command tools are checked before they start:
+ * URLs. Entries ending in `.git` match that repository exactly; other entries
+ * match as path prefixes. When it is set, shell commands run through the Bash
+ * and exec_command tools are checked before they start:
  * - `git push` from the memory repository must target its own `origin` or a
- *   URL matching an allowed prefix.
+ *   URL matching an allowed entry.
  * - `git push` from another repository must not carry a file whose bytes match
  *   a file in the memory directory, unless it targets an allowed URL.
  * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
@@ -72,15 +73,46 @@ export async function checkMemoryPushAllowlist(
 function parseAllowedRemotes(value: string | undefined): string[] {
   return (value ?? "")
     .split(",")
-    .map((prefix) => normalizeRemoteUrl(prefix.trim()))
-    .filter(Boolean);
+    .map((entry) => normalizeRemoteUrl(entry))
+    .filter((entry): entry is string => Boolean(entry));
 }
 
-/** Drops credentials and trailing slashes so prefixes compare cleanly. */
-function normalizeRemoteUrl(url: string): string {
-  return url
-    .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1")
-    .replace(/\/+$/, "");
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:\/\//i;
+
+/**
+ * Normalizes a remote URL to `scheme://host[:port]/path` without credentials,
+ * query or trailing slashes. Returns null for URLs that cannot be compared
+ * safely: dot segments (plain or percent-encoded), encoded or back-slashes,
+ * queries and fragments can all make the request go to a different path than
+ * the string suggests.
+ */
+function normalizeRemoteUrl(url: string): string | null {
+  const trimmed = url.trim();
+  if (!trimmed || /[?#\\]|%2f|%5c/i.test(trimmed)) return null;
+  if (!URL_SCHEME.test(trimmed)) {
+    // scp-style (`user@host:path`) or local path.
+    if (hasDotSegment(trimmed.split(/[/:]/))) return null;
+    return trimmed.replace(/\/+$/, "");
+  }
+  const rawPath = trimmed.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/]*/i, "");
+  if (hasDotSegment(rawPath.split("/"))) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(
+    /\/+$/,
+    "",
+  );
+}
+
+function hasDotSegment(segments: string[]): boolean {
+  return segments.some((segment) => {
+    const decoded = segment.replace(/%2e/gi, ".");
+    return decoded === "." || decoded === "..";
+  });
 }
 
 interface ScanContext {
@@ -228,24 +260,34 @@ async function memoryOrigins(memoryDir: string): Promise<string[]> {
     "--all",
     "origin",
   ]);
-  return (urls ?? "").split("\n").filter(Boolean).map(normalizeRemoteUrl);
+  return (urls ?? "")
+    .split("\n")
+    .map((url) => normalizeRemoteUrl(url))
+    .filter((url): url is string => Boolean(url));
 }
 
-/** The memory repository's own origin, or a configured prefix. */
+/**
+ * The memory repository's own origin, or a configured entry. Entries ending
+ * in `.git` name one repository and match exactly; other entries match as
+ * path prefixes.
+ */
 function isAllowedUrl(
   url: string,
   origins: string[],
   allowed: string[],
 ): boolean {
   const normalized = normalizeRemoteUrl(url);
+  if (!normalized) return false;
   return (
     origins.includes(normalized) ||
-    allowed.some(
-      (prefix) =>
-        normalized === prefix ||
-        normalized.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`) ||
-        (prefix.endsWith(":") && normalized.startsWith(prefix)),
-    )
+    allowed.some((entry) => {
+      if (normalized === entry) return true;
+      if (entry.endsWith(".git")) return false;
+      return (
+        normalized.startsWith(`${entry}/`) ||
+        (entry.endsWith(":") && normalized.startsWith(entry))
+      );
+    })
   );
 }
 
