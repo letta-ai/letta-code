@@ -9,9 +9,18 @@
       "type": "string",
       "description": "The task for the agent to perform"
     },
+    "harness": {
+      "type": "string",
+      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
+      "description": "Which runner executes the task. Defaults to letta (a Letta subagent). Use claude-code, codex, cursor, or opencode to start that external coding worker instead."
+    },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task. Required when launching a new subagent; optional with agent_id or conversation_id, where it defaults to general-purpose. Use claude-code, codex, or cursor for an external coding worker."
+      "description": "A preset from Available Agents (for example recall, or a custom agent). Supply only description and prompt alongside it: the preset determines launch settings and all other optional fields are ignored. Omit subagent_type to configure the launch yourself."
+    },
+    "fork_context": {
+      "type": "boolean",
+      "description": "When creating a Letta Code subagent (without subagent_type), whether to include the full conversation history in the subagent. Cannot be applied to existing agents or threads. Defaults to false (fresh context)."
     },
     "model": {
       "type": "string",

@@ -72,6 +72,8 @@ export interface RemoteExternalCodingAgentLaunch {
   type: ExternalCodingAgentType;
   computer: string;
   prompt: string;
+  /** The destination reads the parent history and writes its own transcript file. */
+  forkContext?: boolean;
   description: string;
   model?: string;
   mcp?: ExternalCodingAgentMcpOptions;
@@ -374,6 +376,14 @@ export async function launchRemoteExternalCodingAgent(
         success: false,
         error: formatOutdatedComputerError(type, computer),
       };
+    if (
+      params.forkContext &&
+      resolved.environment.metadata?.external_fork_context !== true
+    )
+      return {
+        success: false,
+        error: `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
+      };
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
@@ -439,7 +449,11 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        subagent_type: type,
+        // Older listeners accept only `subagent_type`; current listeners
+        // translate an external worker name there into `harness`.
+        ...(params.forkContext
+          ? { harness: type, fork_context: true }
+          : { subagent_type: type }),
         prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),

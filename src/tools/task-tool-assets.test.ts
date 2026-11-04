@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import TaskDescriptionRaw from "./descriptions/Task.md";
+import { TASK_HARNESSES } from "./impl/task-agent-selection";
 import type { JsonSchema } from "./model-facing-tool";
 import TaskSchema from "./schemas/Task.json";
 import {
@@ -16,7 +17,7 @@ describe("stripComputerFromTaskSchema", () => {
     const stripped = stripComputerFromTaskSchema(taskSchema);
     expect(stripped.properties?.computer).toBeUndefined();
     expect(stripped.properties?.prompt).toBeDefined();
-    expect(stripped.properties?.subagent_type).toBeDefined();
+    expect(stripped.properties?.harness).toBeDefined();
     expect(stripped.required).toEqual(taskSchema.required);
   });
 
@@ -43,7 +44,7 @@ describe("stripComputerFromTaskDescription", () => {
   test("keeps external coding agent docs but drops their computer routing", () => {
     const stripped = stripComputerFromTaskDescription(taskDescription);
     expect(stripped).toContain("## External Coding Agents");
-    expect(stripped).toContain('subagent_type: "claude-code"');
+    expect(stripped).toContain('harness: "claude-code"');
     expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
   });
 
@@ -89,17 +90,31 @@ describe("task() computer guard", () => {
   });
 });
 
-describe("Task subagent_type requirement", () => {
-  test("the schema leaves subagent_type optional so resumes can omit it", () => {
+describe("Task agent selection fields", () => {
+  test("harness is an optional enum of letta and the external workers", () => {
+    expect(taskSchema.required).not.toContain("harness");
+    expect(taskSchema.properties?.harness).toMatchObject({
+      type: "string",
+      enum: ["letta", "claude-code", "codex", "cursor", "opencode"],
+    });
+    const schemaEnum = (taskSchema.properties?.harness as { enum: string[] })
+      .enum;
+    expect([...schemaEnum].sort()).toEqual([...TASK_HARNESSES].sort());
+  });
+  test("subagent_type is an optional string and agent_type is gone", () => {
     expect(taskSchema.required).not.toContain("subagent_type");
+    expect(taskSchema.properties?.subagent_type).toMatchObject({
+      type: "string",
+    });
+    expect(taskSchema.properties?.agent_type).toBeUndefined();
+    expect(taskSchema.additionalProperties).toBe(false);
   });
-
-  test("launching a new subagent without subagent_type is still rejected", async () => {
-    const { launchSubagent } = await import("./impl/task");
-    await expect(
-      launchSubagent({ prompt: "Work", description: "New task" } as never),
-    ).rejects.toThrow("missing required parameter: subagent_type");
+  test("the model-facing description uses harness and subagent_type", () => {
+    expect(taskDescription).not.toMatch(/\bagent_type\b/);
+    expect(taskDescription).toContain('harness: "codex"');
+    expect(taskDescription).toContain('subagent_type: "recall"');
   });
+  // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
 
 describe("resolveBackendSpecificToolAssets Task dispatch", () => {

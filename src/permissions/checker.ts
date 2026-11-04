@@ -760,7 +760,7 @@ function matchesPattern(
 }
 
 /**
- * Subagent types that are safe to auto-approve by default.
+ * Letta subagent types (`subagent_type`) that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
  * mutations are constrained by the memory-subagent sandbox.
  */

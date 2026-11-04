@@ -2,9 +2,24 @@
 
 Launch a new agent to handle complex, multi-step tasks autonomously.
 
-The Agent tool launches specialized subagents that autonomously handle complex tasks. Each subagent type has specific capabilities and tools available to it.
+The Agent tool launches specialized agents that autonomously handle complex tasks. Each agent type has specific capabilities and tools available to it.
 
-When launching a new subagent, you must specify a subagent_type parameter to select which agent type to use. When deploying an existing agent with agent_id or conversation_id, it is optional and defaults to general-purpose.
+Choose a preset or configure the launch yourself:
+
+- `subagent_type` selects a preset from Available Agents (for example `recall`, or a custom agent in `.letta/agents/`). Only `description` and `prompt` are required alongside it. The preset determines the launch settings; all other optional Agent fields are ignored.
+- Without `subagent_type`, `harness` selects the runner: `letta` (the default), `claude-code`, `codex`, `cursor`, or `opencode`. The default Letta agent can research, plan, and implement.
+- Without `subagent_type`, `fork_context: true` gives the default Letta agent, or an external coding worker, this conversation's history. Otherwise it starts fresh with your prompt.
+
+```typescript
+// Default Letta agent
+Agent({ description: "Find auth code", prompt: "..." })
+
+// Specialized Letta subagent
+Agent({ subagent_type: "recall", description: "Find past decision", prompt: "..." })
+
+// External coding worker
+Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
+```
 
 ## When NOT to use the Agent tool:
 
@@ -24,7 +39,9 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 - For exact details, such as which test failed and its error, a file's contents, or a command's full output, read the event log next to the output file (the `Event log:` path in the tool result, `<task>.jsonl`). It has one JSON object per line, in order and untruncated: `tool_call` (`id`, `name`, `input`), `tool_result` (`tool_call_id`, `name`, `is_error`, `output`), `text`, `reasoning`, and `notification` (a background command's completion notice, with its output). Search it with Grep or `jq` instead of reading it whole when it is large. For a Letta subagent, `letta messages list --agent <agent_id> --conversation <conversation_id>` reads its full conversation, including turns after this task.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
 - Provide clear, detailed prompts so the agent can work autonomously and return exactly the information you need.
-- Agents with "access to current context" can see the full conversation history before the tool call. When using these agents, you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. The agent will receive all prior messages and understand the context.
+- Make each subtask concrete, well defined, and self-contained: what to do, where, and what a finished result looks like.
+- Point the agent at the repository and file paths to read rather than passing your own summary of them. An agent on this machine shares your filesystem, so make sure the checkout exists before you launch it. An agent on another machine or a fresh Cloud sandbox starts empty, so tell it what to clone.
+- A forked agent sees the full conversation history before the tool call, so you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. Presets determine whether they fork; otherwise use `fork_context: true`.
 - The agent's outputs should generally be trusted
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
@@ -32,7 +49,15 @@ When launching a new subagent, you must specify a subagent_type parameter to sel
 
 ## External Coding Agents
 
-Use `subagent_type: "claude-code"`, `"codex"`, or `"cursor"` to start an external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+Omit `subagent_type` and use `harness: "claude-code"`, `"codex"`, `"cursor"`, or `"opencode"` to start that external coding worker in the selected checkout. These workers execute shell commands and edits without per-tool Letta approvals; only delegate work you authorize them to perform. They use the same background task lifecycle and completion notifications as Letta subagents, but do not create Letta agents or conversations. Do not combine them with `agent_id` or `conversation_id`. With `fork_context: true`, the latest complete messages up to 50,000 characters are included in the prompt; older messages are saved without tool-output clipping under `.letta/parent-transcripts/` on the worker's execution host. Reasoning and system messages are omitted. When `model` is omitted, each worker uses its own CLI's default model; a new `cursor` session requires a Cursor model ID. Discover native model IDs with `letta model list --worker [claude-code|codex|opencode|cursor]`.
+
+```typescript
+Agent({
+  harness: "codex",
+  description: "Fix flaky test",
+  prompt: "Make src/utils/retry.test.ts pass reliably. Run it ten times to confirm.",
+})
+```
 
 Use the receipt's `agent_id` with `SendAgentMessage` to message active work or start a tracked follow-up, and its `task_id` with `TaskStop` to stop it.
 
@@ -42,7 +67,7 @@ External coding workers automatically receive the parent's MCP discovery metadat
 
 ```typescript
 Agent({
-  subagent_type: "claude-code",
+  harness: "claude-code",
   description: "Inspect Linear issue",
   prompt: "Read the issue and trace the relevant implementation.",
   mcp: {
@@ -58,16 +83,15 @@ Omitting `mcp` advertises every MCP server currently available to the parent. `m
 
 Instead of spawning a fresh subagent from a template, you can deploy an existing agent to work in your local codebase.
 
-### Access Levels (subagent_type)
+### Access Levels
 
-When deploying an existing agent, only `general-purpose` is supported: full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. If `subagent_type` is not specified, it defaults to `"general-purpose"`.
+When deploying an existing agent, use the default harness `letta` and omit `subagent_type`: the agent keeps its own system prompt and memory, with full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. `fork_context` cannot be combined with `agent_id` or `conversation_id`.
 
 ### Parameters
 
 - **agent_id**: The ID of an existing agent to deploy (e.g., "agent-abc123")
   - Starts a new conversation with that agent
   - The agent keeps its own system prompt and memory
-  - Tool access is controlled by subagent_type
 
 - **conversation_id**: Resume from an existing conversation (e.g., "conv-xyz789")
   - Normal `conv-...` IDs are globally unique and do not require `agent_id`
@@ -83,7 +107,6 @@ When deploying an existing agent, only `general-purpose` is supported: full read
 // Deploy an existing agent
 Agent({
   agent_id: "agent-abc123",
-  subagent_type: "general-purpose",
   description: "Fix auth bug",
   prompt: "Fix the bug in auth.ts"
 })
@@ -109,71 +132,81 @@ Agent({
 ```typescript
 // Good - specific and actionable
 Agent({
-  subagent_type: "general-purpose",
   description: "Find authentication code",
   prompt: "Search for all authentication-related code in src/. List file paths and the main auth approach used."
 })
 
 // Good - complex multi-step task
 Agent({
-  subagent_type: "general-purpose",
   description: "Add input validation",
   prompt: "Add email and password validation to the user registration form. Check existing validation patterns first, then implement consistent validation."
 })
 
 // Parallel execution - launch both at once in a single message
-Agent({ subagent_type: "general-purpose", description: "Find frontend components", prompt: "..." })
-Agent({ subagent_type: "general-purpose", description: "Find backend APIs", prompt: "..." })
+Agent({ description: "Find frontend components", prompt: "..." })
+Agent({ description: "Find backend APIs", prompt: "..." })
 
 // Bad - too simple, use Read tool instead
 Agent({
-  subagent_type: "general-purpose",
   prompt: "Read src/index.ts"
 })
 ```
 
 ## Forking Parent Context
 
-Use `subagent_type: "fork"` to launch a subagent that inherits the parent's full conversation history. The subagent runs against a forked copy of the current conversation, so it has all accumulated context without the parent needing to serialize it into the prompt.
+Omit `subagent_type` and set `fork_context: true` to start the default Letta agent with this conversation's full history. It runs against a forked copy of the current conversation, so it has all accumulated context without you serializing it into the prompt.
 
 This is useful when:
-- The subagent needs deep context that would be expensive to re-explain in the prompt
-- You want to leverage prompt caching across multiple parallel forked subagents
+- The agent needs deep context that would be expensive to re-explain in the prompt
+- You want to leverage prompt caching across multiple parallel forked agents
 - The task requires understanding decisions and discussion from earlier in the conversation
 
 ```typescript
 // Fork with full parent context
 Agent({
-  subagent_type: "fork",
+  fork_context: true,
   description: "Implement auth module",
   prompt: "Implement the auth module we discussed. Use the patterns from the existing code."
 })
 
 // Parallel forks share the same cached prefix
-Agent({ subagent_type: "fork", description: "Implement component A", prompt: "..." })
-Agent({ subagent_type: "fork", description: "Implement component B", prompt: "..." })
+Agent({ fork_context: true, description: "Implement component A", prompt: "..." })
+Agent({ fork_context: true, description: "Implement component B", prompt: "..." })
 ```
 
-Note: `fork` cannot be combined with `agent_id` or `conversation_id`.
+Presets ignore `fork_context` and use their configured context; `recall` always sees the conversation. Without a preset, `fork_context: true` cannot be combined with `agent_id` or `conversation_id`.
+
+## Specialized Letta Subagents
+
+Pass `subagent_type`, `description`, and `prompt` to use a preset's settings. Any other optional Agent fields are ignored:
+
+```typescript
+// Search earlier conversation history (read-only)
+Agent({
+  subagent_type: "recall",
+  description: "Find past decision",
+  prompt: "Find where we decided how retries should back off, and quote the reasoning."
+})
+```
 
 ## Running on Another Computer
 
-Pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
+Without `subagent_type`, pass `computer` to run the subagent's turn on another connected computer instead of this machine. Prefer a stable device ID or computer name; these select the freshest online listener for that device. Ephemeral connection IDs are still supported to pin a specific listener. The call fails fast if the named device is offline, the name matches multiple online devices, or the listener is too old to support routing.
 
 `computer: "cloud"` provisions a Cloud sandbox for the subagent's conversation and runs the turn there. Sandboxes are per-conversation: this is a separate machine from wherever you are running now, even if you are already in a Cloud sandbox.
 
 A fresh Cloud sandbox starts with an empty workspace. Pass `repos` (e.g. `["owner/repo", "owner/other@my-branch", "owner/third@<commit SHA>"]`, at most 10, each repo name used once) to list the repositories the subagent needs; the sandbox clones each to `/root/workspace/<repo>`. A branch is pinned to its current commit when you launch, so push your work-in-progress branch before passing it. The subagent's first turn waits for the clones and starts in the first repository, where its `AGENTS.md`, `CLAUDE.md`, and `.agents/skills` apply; Letta subagents also get the skills in each other repository's `.agents/skills`, while external workers (claude-code, codex, cursor) only see the first repository's. If a clone is still running after a few minutes, the subagent starts anyway and its result notes which repository was not ready.
 
-External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
+External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. With `fork_context: true`, the destination prepares the preview and older-history file before launching the worker, including in a Cloud sandbox. A remote host must support destination-local history files or the launch fails. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
 
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
-Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. `fork` and `recall` ignore the default and always start here, because their inherited context describes this machine's files.
+Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. Forked agents (`fork_context: true`) and `recall` ignore the default and always start here, because their inherited context describes this machine's files.
 
 ```typescript
 // Fork this conversation and run the work on a connected computer
 Agent({
-  subagent_type: "fork",
+  fork_context: true,
   computer: "office-mac",
   description: "Run integration tests",
   prompt: "Run the integration suite in the checkout on this machine and report failures."
