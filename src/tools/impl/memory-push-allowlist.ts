@@ -85,13 +85,13 @@ export async function checkMemoryPushAllowlist(
   if (
     options.shellStateUnknown &&
     /\bGIT_(CONFIG\w*|DIR|COMMON_DIR|WORK_TREE|NAMESPACE|EXEC_PATH)=/.test(
-      command,
+      unquoted(command),
     )
   ) {
     // Later typed lines would run with this environment, which we cannot see.
     return MEMORY_PUSH_UNVERIFIED_MESSAGE;
   }
-  if (!/\b(git|push|cp|rsync|scp)\b/.test(command)) return null;
+  if (!/\b(git|push|cp|rsync|scp)\b/.test(unquoted(command))) return null;
   const context = {
     env,
     memoryDir: resolve(memoryDir),
@@ -226,10 +226,11 @@ async function scanCommand(
 ): Promise<string | null> {
   let cwd = startCwd;
   let shellEnv = context.env;
+  const text = unquoted(command);
   // A shell function that pushes runs later under a name we cannot follow.
   if (
-    /\bfunction\s+[\w.:-]+|[\w.:-]+\s*\(\s*\)\s*[{(]/.test(command) &&
-    /\bgit\b[\s\S]*\bpush\b/.test(command)
+    /\bfunction\s+[\w.:-]+|[\w.:-]+\s*\(\s*\)\s*[{(]/.test(text) &&
+    /\bgit\b[\s\S]*\bpush\b/.test(text)
   ) {
     return MEMORY_PUSH_UNVERIFIED_MESSAGE;
   }
@@ -252,7 +253,7 @@ async function scanCommand(
     const name = basename(words[0] ?? "");
     const args = words.slice(1);
     const nestedGit = args.findIndex((arg) => basename(arg) === "git");
-    if (name !== "git" && nestedGit >= 0 && /\bpush\b/.test(command)) {
+    if (name !== "git" && nestedGit >= 0 && /\bpush\b/.test(text)) {
       // A wrapper (xargs, timeout, find -exec, ...) runs git with arguments
       // we may not see, so only a literal allowed push URL passes.
       const blocked = await checkWrappedPush(
@@ -290,7 +291,7 @@ async function scanCommand(
       if (blocked) return blocked;
     } else if (
       (name === "source" || name === ".") &&
-      /\b(git|push)\b/.test(command) &&
+      /\b(git|push)\b/.test(text) &&
       !isRegularFile(resolvePath(cwd, args[0] ?? ""))
     ) {
       // Commands sourced from a string or a pipe cannot be read ahead.
@@ -875,6 +876,11 @@ function fileSize(path: string): number {
   } catch {
     return -1;
   }
+}
+
+/** Text with quotes and backslashes removed, as keywords reach the shell. */
+function unquoted(text: string): string {
+  return text.replace(/['"\\]/g, "");
 }
 
 function isRegularFile(path: string): boolean {
