@@ -10,7 +10,7 @@ import {
 } from "@/tools/impl/exec-command";
 import {
   MEMORY_PUSH_ALLOWLIST_ENV,
-  MEMORY_PUSH_BLOCKED_MESSAGE,
+  MEMORY_PUSH_UNVERIFIED_MESSAGE,
 } from "@/tools/impl/memory-push-allowlist";
 import {
   __resetBackgroundRetentionConfigForTests,
@@ -351,15 +351,23 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
 
       await expect(
         write_stdin({ session_id: sessionId, chars: `${push}\n` }),
-      ).rejects.toThrow(MEMORY_PUSH_BLOCKED_MESSAGE);
+      ).rejects.toThrow(MEMORY_PUSH_UNVERIFIED_MESSAGE);
       // A line split across writes is checked once it is complete.
       await write_stdin({ session_id: sessionId, chars: push });
       await expect(
         write_stdin({ session_id: sessionId, chars: "\r" }),
-      ).rejects.toThrow(MEMORY_PUSH_BLOCKED_MESSAGE);
+      ).rejects.toThrow(MEMORY_PUSH_UNVERIFIED_MESSAGE);
+      // The shell may have changed directory, so only an explicit allowed
+      // URL passes.
+      await expect(
+        write_stdin({
+          session_id: sessionId,
+          chars: "cd /tmp\ngit push origin main\n",
+        }),
+      ).rejects.toThrow(MEMORY_PUSH_UNVERIFIED_MESSAGE);
       const allowed = await write_stdin({
         session_id: sessionId,
-        chars: "git push origin main\n",
+        chars: "git push https://api.example.test/memory.git main\n",
         yield_time_ms: 200,
       });
       expect(allowed.output).toContain("Process running with session ID");

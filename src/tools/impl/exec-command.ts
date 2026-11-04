@@ -773,6 +773,7 @@ async function checkTypedLines(
     const blocked = await checkMemoryPushAllowlist(line, {
       cwd: session.cwd,
       env: getShellEnv(),
+      shellStateUnknown: true,
     });
     if (blocked) {
       session.pendingStdinLine = "";

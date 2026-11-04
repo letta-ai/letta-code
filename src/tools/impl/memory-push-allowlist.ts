@@ -18,6 +18,8 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
  *   config overrides are taken into account. A push whose options cannot be
  *   reproduced that way is refused. Aliases are expanded; `!` shell aliases
  *   are refused.
+ * - `git config` / `git remote` writes that could redirect the memory
+ *   repository's pushes are refused unless the new URL is allowed.
  * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
  *   a remote host is refused, since that copy would be pushed from there.
  *
@@ -30,7 +32,9 @@ export const MEMORY_PUSH_ALLOWLIST_ENV = "LETTA_MEMORY_PUSH_ALLOWED_REMOTES";
 
 export const MEMORY_PUSH_BLOCKED_MESSAGE = `Blocked: memory repository contents can only be pushed to the memory remote or to a remote listed in ${MEMORY_PUSH_ALLOWLIST_ENV}. Remove memory files from the commits you are pushing, or push to an allowed remote.`;
 
-export const MEMORY_PUSH_UNVERIFIED_MESSAGE = `Blocked: this git push uses global options or environment values whose push destination cannot be checked while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Run git push without them.`;
+export const MEMORY_PUSH_UNVERIFIED_MESSAGE = `Blocked: the destination of this git push cannot be checked while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Run git push as a single command with an allowed remote URL, without options or aliases that change it.`;
+
+export const MEMORY_CONFIG_BLOCKED_MESSAGE = `Blocked: changing remotes, URL rewrites, aliases, hooks or includes of the memory repository or of global git config is disabled while ${MEMORY_PUSH_ALLOWLIST_ENV} is set, unless the new URL is allowed.`;
 
 export const MEMORY_COPY_BLOCKED_MESSAGE = `Blocked: copying the memory directory into another Git repository or to a remote host is disabled while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Memory files stay in the memory repository.`;
 
@@ -59,6 +63,12 @@ const PREFIX_WORDS = new Set([
 export interface MemoryPushAllowlistOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
+  /**
+   * The shell may have changed directory or environment since `cwd`/`env`
+   * were captured (lines typed into an interactive session). Pushes are then
+   * allowed only to an explicitly given, allowed URL.
+   */
+  shellStateUnknown?: boolean;
 }
 
 /** Returns a tool error when the command breaks the configured allowlist. */
@@ -72,8 +82,23 @@ export async function checkMemoryPushAllowlist(
   // Command parsing assumes POSIX shell syntax and paths.
   if (process.platform === "win32") return null;
   if (allowed.length === 0 || !memoryDir) return null;
+  if (
+    options.shellStateUnknown &&
+    /\bGIT_(CONFIG\w*|DIR|COMMON_DIR|WORK_TREE|NAMESPACE|EXEC_PATH)=/.test(
+      command,
+    )
+  ) {
+    // Later typed lines would run with this environment, which we cannot see.
+    return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+  }
   if (!/\b(git|push|cp|rsync|scp)\b/.test(command)) return null;
-  const context = { env, memoryDir: resolve(memoryDir), allowed, depth: 0 };
+  const context = {
+    env,
+    memoryDir: resolve(memoryDir),
+    allowed,
+    depth: 0,
+    shellStateUnknown: options.shellStateUnknown ?? false,
+  };
   return scanCommand(command, options.cwd, context);
 }
 
@@ -127,6 +152,7 @@ interface ScanContext {
   memoryDir: string;
   allowed: string[];
   depth: number;
+  shellStateUnknown: boolean;
 }
 
 /**
@@ -276,15 +302,28 @@ async function checkGit(
     }
   }
   const subcommand = args[index] ?? "";
+  if (subcommand === "config" || subcommand === "remote") {
+    const target: GitTarget = { cwd, options, env };
+    return (await changesPushConfig(
+      subcommand,
+      args.slice(index + 1),
+      target,
+      context,
+    ))
+      ? MEMORY_CONFIG_BLOCKED_MESSAGE
+      : null;
+  }
   if (subcommand !== "push") {
     // Built-in commands cannot be redefined by an alias; anything else might
     // be one, and a `!` alias runs a shell command we cannot see into.
     if (!subcommand || GIT_COMMON_BUILTINS.has(subcommand)) return null;
-    const alias = await probe({ cwd, options, env }, [
-      "config",
-      "--get",
-      `alias.${subcommand}`,
-    ]);
+    const aliasArgs = ["config", "--get", `alias.${subcommand}`];
+    const alias =
+      (await probe({ cwd, options, env }, aliasArgs)) ??
+      // The shell may have moved into the memory repository.
+      (context.shellStateUnknown
+        ? await probe({ cwd: context.memoryDir, options, env }, aliasArgs)
+        : null);
     if (!alias) return null;
     if (alias.trimStart().startsWith("!") || aliasDepth >= 5) {
       return MEMORY_PUSH_UNVERIFIED_MESSAGE;
@@ -310,10 +349,21 @@ async function checkGit(
   }
   const target: GitTarget = { cwd, options, env };
   const pushArgs = args.slice(index + 1);
+  const origins = await memoryOrigins(context.memoryDir);
+  if (context.shellStateUnknown) {
+    // The repository and its config depend on where the shell is now.
+    const { repository } = parsePushArgs(pushArgs);
+    const urls = repository ? await pushUrls(pushArgs, target) : [];
+    const verified =
+      repository !== undefined &&
+      isAllowedUrl(repository, origins, context.allowed) &&
+      urls.length > 0 &&
+      urls.every((url) => isAllowedUrl(url, origins, context.allowed));
+    return verified ? null : MEMORY_PUSH_UNVERIFIED_MESSAGE;
+  }
   const repoCommonDir = await gitCommonDir(target);
   if (!repoCommonDir) return null;
   const urls = await pushUrls(pushArgs, target);
-  const origins = await memoryOrigins(context.memoryDir);
   if (
     urls.length > 0 &&
     urls.every((url) => isAllowedUrl(url, origins, context.allowed))
@@ -326,6 +376,101 @@ async function checkGit(
   return (await pushContainsMemoryFiles(pushArgs, target, context.memoryDir))
     ? MEMORY_PUSH_BLOCKED_MESSAGE
     : null;
+}
+
+const CONFIG_OPTIONS_WITH_VALUE = new Set([
+  "--blob",
+  "--type",
+  "--default",
+  "--comment",
+  "--value",
+]);
+const CONFIG_READ_OPTIONS = new Set([
+  "--get",
+  "--get-all",
+  "--get-regexp",
+  "--get-urlmatch",
+  "--get-color",
+  "--get-colorbool",
+  "-l",
+  "--list",
+  "--unset",
+  "--unset-all",
+  "--remove-section",
+]);
+const CONFIG_READ_SUBCOMMANDS = new Set([
+  "get",
+  "list",
+  "unset",
+  "remove-section",
+]);
+
+/**
+ * Probes read config before the command runs, so a `git config` or
+ * `git remote` write followed by a push in the same command would be checked
+ * against stale config. Writes that can change where the memory repository
+ * pushes (in its own config or in global config) are refused unless the new
+ * URL is allowed.
+ */
+async function changesPushConfig(
+  subcommand: "config" | "remote",
+  args: string[],
+  target: GitTarget,
+  context: ScanContext,
+): Promise<boolean> {
+  let shared = false;
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index] ?? "";
+    if (subcommand === "remote") {
+      if (arg === "-t" || arg === "-m") index += 1;
+      else if (!arg.startsWith("-")) positional.push(arg);
+    } else if (["--global", "--system", "--file", "-f"].includes(arg)) {
+      shared = true;
+      if (arg === "--file" || arg === "-f") index += 1;
+    } else if (arg.startsWith("--file=")) {
+      shared = true;
+    } else if (CONFIG_OPTIONS_WITH_VALUE.has(arg)) {
+      index += 1;
+    } else if (CONFIG_READ_OPTIONS.has(arg)) {
+      return false;
+    } else if (["-e", "--edit", "--rename-section"].includes(arg)) {
+      positional.unshift("edit");
+    } else if (!arg.startsWith("-")) {
+      positional.push(arg);
+    }
+  }
+  const memoryCommonDir = await gitCommonDir(context.memoryDir);
+  if (
+    !shared &&
+    !context.shellStateUnknown &&
+    (await gitCommonDir(target)) !== memoryCommonDir
+  ) {
+    return false;
+  }
+  const origins = await memoryOrigins(context.memoryDir);
+  const allowed = (url: string | undefined) =>
+    url !== undefined && isAllowedUrl(url, origins, context.allowed);
+  if (subcommand === "remote") {
+    const [action, , url] = positional;
+    if (action === "add" || action === "set-url") return !allowed(url);
+    return action === "rename";
+  }
+  if (CONFIG_READ_SUBCOMMANDS.has(positional[0] ?? "")) return false;
+  if (positional[0] === "edit" || positional[0] === "rename-section") {
+    return true;
+  }
+  if (positional[0] === "set") positional.shift();
+  const [key = "", value] = positional;
+  if (value === undefined) return false;
+  const lower = key.toLowerCase();
+  if (/^remote\..+\.(url|pushurl)$/.test(lower)) return !allowed(value);
+  if (/^url\..+\.(push)?insteadof$/.test(lower)) {
+    return !allowed(key.slice("url.".length, key.lastIndexOf(".")));
+  }
+  return /^(remote\.|url\.|alias\.|include|core\.hookspath$|branch\..+\.pushremote$)/.test(
+    lower,
+  );
 }
 
 /** Runs a git probe the way the checked command would run git. */
