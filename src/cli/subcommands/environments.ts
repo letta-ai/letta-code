@@ -4,6 +4,11 @@ import {
   type EnvironmentConnection,
   listEnvironments,
 } from "@/backend/api/environments";
+import {
+  DIRECT_COMPUTER_ACTIONS,
+  DIRECT_COMPUTER_USAGE,
+  runDirectComputersAction,
+} from "@/cli/subcommands/direct-computers";
 import { settingsManager } from "@/settings-manager";
 import { getVersion } from "@/version.ts";
 
@@ -44,6 +49,7 @@ Notes:
   - Use --computer cloud to route through the target agent's cloud sandbox.
   - Use --computer <name|device-id|connection-id> with headless messaging
     to route a message through a specific registered computer.
+${DIRECT_COMPUTER_USAGE}
 `.trim(),
   );
 }
@@ -145,6 +151,9 @@ export async function runEnvironmentsSubcommand(
   argv: string[],
   deps: EnvironmentsSubcommandDeps = {},
 ): Promise<number> {
+  // Direct computers are local records; they need no Cloud auth.
+  if (argv[0] && DIRECT_COMPUTER_ACTIONS.has(argv[0]))
+    return runDirectComputersAction(argv);
   let parsed: ReturnType<typeof parseEnvironmentsArgs>;
   try {
     parsed = parseEnvironmentsArgs(argv);

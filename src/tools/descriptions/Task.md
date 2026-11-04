@@ -197,6 +197,8 @@ Without `subagent_type`, pass `computer` to run the subagent's turn on another c
 
 External coding workers also accept `computer`: the worker runs on that connected computer using its checkout, installed runtime, and credentials. If the required runtime or credentials are unavailable there, don't run it on this machine instead.
 
+`computer: "direct:<name>"` reaches a computer configured with `letta computers add-direct` over its own App Server connection, without Letta Cloud. It runs external coding workers only (set `harness`), and the worker does not inherit your MCP servers unless you pass `mcp`.
+
 Omit `computer` to run the subagent on the current machine. That is the default and the right choice for almost all tasks — the subagent shares your working directory and files. Only set `computer` when the task specifically needs another machine (its files, its OS, or an isolated sandbox).
 
 Some hosts set a default so that subagents launched without a `computer` run elsewhere — on those, omitting `computer` does not mean this machine. Pass `computer: "local"` to pin a subagent to the current machine regardless of that default. Forked agents (`fork_context: true`) and `recall` ignore the default and always start here, because their inherited context describes this machine's files.

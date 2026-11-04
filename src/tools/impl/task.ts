@@ -31,6 +31,7 @@ import {
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
+import { isDirectComputerSelector } from "@/backend/direct-computers";
 import { runSubagentStopHooks } from "@/hooks";
 import {
   getCurrentWorkingDirectory,
@@ -48,6 +49,7 @@ import {
 import {
   classifyExternalCodingAgentStartupError,
   createExternalCodingAgentConfig,
+  EXTERNAL_CODING_AGENT_TYPES,
   resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
@@ -738,6 +740,16 @@ export async function launchSubagent(
   });
   if (resolvedComputer.error) {
     return { success: false, error: resolvedComputer.error };
+  }
+  if (
+    !isExternalCodingAgent &&
+    resolvedComputer.computer &&
+    isDirectComputerSelector(resolvedComputer.computer)
+  ) {
+    return {
+      success: false,
+      error: `Direct computers run external coding workers only (harness: ${EXTERNAL_CODING_AGENT_TYPES.join(", ")}); a Letta subagent needs a computer connected through Letta Cloud.`,
+    };
   }
 
   let effectiveAgentId = args.agent_id;

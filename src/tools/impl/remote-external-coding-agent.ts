@@ -24,6 +24,14 @@ import {
   resolveEnvironmentConnectionId,
 } from "@/backend/api/environments";
 import { getApiRequestConfig } from "@/backend/api/request";
+import {
+  type DirectComputer,
+  formatDirectComputerSelector,
+  getDirectComputer,
+  isDirectComputerSelector,
+  parseDirectComputerSelector,
+  readDirectComputerToken,
+} from "@/backend/direct-computers";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
@@ -86,6 +94,8 @@ export interface RemoteExternalCodingAgentDeps {
   ) => Promise<AppServerClient>;
   reconnectDelayMs?: number;
   agentIdWaitMs?: number;
+  resolveDirectComputer?: (name: string) => DirectComputer;
+  connectDirect?: (computer: DirectComputer) => Promise<AppServerClient>;
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
@@ -146,6 +156,41 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
     client.close();
     throw error;
   }
+}
+
+/** Connect straight to a computer's `letta server --listen` endpoint. */
+async function defaultConnectDirect(
+  computer: DirectComputer,
+): Promise<AppServerClient> {
+  const token = readDirectComputerToken(computer);
+  const client = createAppServerClient({
+    url: computer.url,
+    authToken: token,
+    WebSocket,
+    requestTimeoutMs: 30_000,
+  });
+  try {
+    return await client.connect();
+  } catch (error) {
+    client.close();
+    throw new Error(errorMessage(error).split(token).join("[redacted]"));
+  }
+}
+
+interface DirectCapabilities {
+  notifyCaller: boolean;
+  steering: boolean;
+}
+
+/** A direct computer has no environment row; ask its App Server instead. */
+async function readDirectCapabilities(
+  client: AppServerClient,
+): Promise<DirectCapabilities> {
+  const info = await client.info({ timeoutMs: 10_000 });
+  return {
+    notifyCaller: info.capabilities.launch_subagent_notify_caller === true,
+    steering: info.capabilities.subagent_message === true,
+  };
 }
 
 async function resolveQualifiedComputer(deviceId: string) {
@@ -352,38 +397,85 @@ export async function launchRemoteExternalCodingAgent(
   deps: RemoteExternalCodingAgentDeps,
 ): Promise<SubagentLaunchResult> {
   const { type, computer, parentScope } = params;
-  let connectionId: string;
-  let deviceId: string;
+  const directName = parseDirectComputerSelector(computer);
+  if (isDirectComputerSelector(computer) && !directName)
+    return {
+      success: false,
+      error: `Invalid direct computer selector "${computer}"; use direct:<name>.`,
+    };
+  // Identifies the computer in qualified worker IDs (`<id>@<qualifier>`).
+  let qualifier: string;
   let supportsSteering: boolean;
-  try {
-    const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
-      computer,
-      parentScope,
-    );
-    if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
+  let connect: () => Promise<AppServerClient>;
+  let client: AppServerClient | undefined;
+  // The remote side resolves MCP against its own backend, which a direct
+  // computer need not share; inherit only when the caller asks for it.
+  let mcp = params.mcp;
+  if (directName) {
+    let record: DirectComputer;
+    try {
+      record = (deps.resolveDirectComputer ?? getDirectComputer)(directName);
+    } catch (error) {
+      return { success: false, error: errorMessage(error) };
+    }
+    connect = () => (deps.connectDirect ?? defaultConnectDirect)(record);
+    qualifier = formatDirectComputerSelector(directName);
+    mcp ??= { inherit: false };
+    let capabilities: DirectCapabilities;
+    try {
+      client = await connect();
+      capabilities = await readDirectCapabilities(client);
+    } catch (error) {
+      client?.close();
+      return {
+        success: false,
+        error: `Can't reach ${computer}: ${errorMessage(error)}`,
+      };
+    }
+    if (!capabilities.notifyCaller) {
+      client.close();
       return {
         success: false,
         error: formatOutdatedComputerError(type, computer),
       };
-    connectionId = resolved.connectionId;
-    deviceId = resolved.environment.deviceId;
-    supportsSteering = resolved.environment.metadata?.subagent_message === true;
-  } catch (error) {
-    return { success: false, error: errorMessage(error) };
+    }
+    supportsSteering = capabilities.steering;
+  } else {
+    let connectionId: string;
+    try {
+      const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
+        computer,
+        parentScope,
+      );
+      if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
+        return {
+          success: false,
+          error: formatOutdatedComputerError(type, computer),
+        };
+      connectionId = resolved.connectionId;
+      qualifier = resolved.environment.deviceId;
+      supportsSteering =
+        resolved.environment.metadata?.subagent_message === true;
+    } catch (error) {
+      return { success: false, error: errorMessage(error) };
+    }
+    connect = () => (deps.connect ?? defaultConnect)(connectionId, parentScope);
   }
-  params.signal?.throwIfAborted();
+  if (params.signal?.aborted) {
+    client?.close();
+    params.signal.throwIfAborted();
+  }
 
-  const connect = () =>
-    (deps.connect ?? defaultConnect)(connectionId, parentScope);
   const toolCallId = params.toolCallId ?? `remote-${randomUUID()}`;
-  let client: AppServerClient;
-  try {
-    client = await connect();
-  } catch (error) {
-    return {
-      success: false,
-      error: `Can't reach ${computer}: ${errorMessage(error)}`,
-    };
+  if (!client) {
+    try {
+      client = await connect();
+    } catch (error) {
+      return {
+        success: false,
+        error: `Can't reach ${computer}: ${errorMessage(error)}`,
+      };
+    }
   }
   const follower = new RemoteSubagentFollower(
     parentScope,
@@ -411,7 +503,7 @@ export async function launchRemoteExternalCodingAgent(
         prompt: params.prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
-        ...(params.mcp ? { mcp: params.mcp } : {}),
+        ...(mcp ? { mcp } : {}),
       },
       tool_call_id: toolCallId,
       notify: "caller",
@@ -439,7 +531,7 @@ export async function launchRemoteExternalCodingAgent(
       ? parseExternalCodingAgentId(nativeAgentId)
       : null;
     return parsed && !parsed.computer
-      ? formatExternalCodingAgentId(parsed.type, parsed.sessionId, deviceId)
+      ? formatExternalCodingAgentId(parsed.type, parsed.sessionId, qualifier)
       : null;
   };
   // The computer waits for the native session before answering the launch,
@@ -541,6 +633,8 @@ export interface RemoteExternalCodingAgentControlDeps {
     connectionId: string,
     parentScope: ParentScope,
   ) => Promise<AppServerClient>;
+  resolveDirectComputer?: (name: string) => DirectComputer;
+  connectDirect?: (computer: DirectComputer) => Promise<AppServerClient>;
   track?: (args: {
     type: ExternalCodingAgentType;
     agentId: string;
@@ -558,21 +652,48 @@ async function connectQualifiedTarget(
 ): Promise<{
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
+  /** Open another connection to the same computer. */
+  reconnect: () => Promise<AppServerClient>;
 }> {
   const target = parseExternalCodingAgentId(agentId);
   if (!target?.computer || target.type === "opencode")
     throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
+  const computer = target.computer;
+  if (isDirectComputerSelector(computer)) {
+    const name = parseDirectComputerSelector(computer);
+    if (!name)
+      throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
+    const record = (deps.resolveDirectComputer ?? getDirectComputer)(name);
+    const reconnect = () =>
+      (deps.connectDirect ?? defaultConnectDirect)(record);
+    const client = await reconnect();
+    try {
+      if (!(await readDirectCapabilities(client)).steering)
+        throw new Error(formatOutdatedSteeringError(computer));
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+    return { target, client, reconnect };
+  }
   const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
-    target.computer,
+    computer,
   );
   if (resolved.environment.metadata?.subagent_message !== true)
-    throw new Error(formatOutdatedSteeringError(target.computer));
+    throw new Error(formatOutdatedSteeringError(computer));
+  const reconnect = async () => {
+    const latest = await (deps.resolveComputer ?? resolveQualifiedComputer)(
+      computer,
+    );
+    return (deps.connect ?? defaultConnect)(latest.connectionId, parentScope);
+  };
   return {
     target,
     client: await (deps.connect ?? defaultConnect)(
       resolved.connectionId,
       parentScope,
     ),
+    reconnect,
   };
 }
 
@@ -614,21 +735,12 @@ export async function sendRemoteExternalCodingAgentMessage(
   outputFile?: string;
 }> {
   const requestId = `subagent-message-${randomUUID()}`;
-  const { target, client } = await connectQualifiedTarget(
-    params.agentId,
-    params.parentScope,
-    deps,
-  );
+  const {
+    target,
+    client,
+    reconnect: connect,
+  } = await connectQualifiedTarget(params.agentId, params.parentScope, deps);
   const toolCallId = params.toolCallId ?? `remote-followup-${randomUUID()}`;
-  const connect = async () => {
-    const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
-      target.computer as string,
-    );
-    return (deps.connect ?? defaultConnect)(
-      resolved.connectionId,
-      params.parentScope,
-    );
-  };
   const follower = new RemoteSubagentFollower(
     params.parentScope,
     toolCallId,
@@ -685,13 +797,7 @@ export async function sendRemoteExternalCodingAgentMessage(
     )
     .finally(() => follower.close());
   const interrupt = async () => {
-    const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
-      target.computer as string,
-    );
-    const stopClient = await (deps.connect ?? defaultConnect)(
-      resolved.connectionId,
-      params.parentScope,
-    );
+    const stopClient = await connect();
     try {
       await stopClient.stopSubagent({
         runtime: {
