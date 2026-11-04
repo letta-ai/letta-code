@@ -47,13 +47,13 @@ const options = { canUseTool: handleToolRequest };
 The callback fires in two cases:
 
 1. **Tool needs approval**: Claude wants to use a tool that isn't auto-approved by a [permission rule](https://code.claude.com/docs/en/agent-sdk/permissions.md) or permission mode. Check `tool_name` for the tool (e.g., `"Bash"`, `"Write"`).
-2. **Claude asks a question**: Claude calls the `AskUserQuestion` tool. Check if `tool_name == "AskUserQuestion"` to handle it differently. If you specify a `tools` array, include `AskUserQuestion` for this to work. See [Handle clarifying questions](#handle-clarifying-questions) for details.
+2. **Claude asks a question**: Claude calls the `AskUserQuestion` tool. Check if `tool_name == "AskUserQuestion"` to handle it differently. If you specify a `tools` array, include `AskUserQuestion` for this to work. For more information, see [Handle clarifying questions](#handle-clarifying-questions).
 
 > [!WARNING]
 >
-> **The callback never fires for auto-approved tools.** Any approval earlier in the [permission evaluation flow](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated), an allow rule or a mode like `acceptEdits` or `bypassPermissions`, resolves the call before `canUseTool` is consulted. If you list a tool bare in `allowed_tools`, a `canUseTool` check for that tool runs only when the [evaluation flow](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) routes the call back to a prompt, such as an ask rule or `plan` mode. For logic that must apply to every tool call, use a [`PreToolUse` hook](https://code.claude.com/docs/en/agent-sdk/hooks), which executes before the rest of the flow and can allow, deny, or modify requests.
+> **An earlier step can allow or deny a call before `canUseTool` runs.** The [permission evaluation flow](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) checks deny rules, the permission mode, and allow rules before your callback.
 >
-> An allow rule doesn't pre-approve the [actions no mode auto-approves](https://code.claude.com/docs/en/permission-modes.md#actions-no-mode-auto-approves); see [How permissions are evaluated](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated) for which of them reach the callback and what happens in `dontAsk` and `auto` mode.
+> To run your checks on calls that a rule or the permission mode already allowed, use a [`PreToolUse` hook](https://code.claude.com/docs/en/agent-sdk/hooks), which runs for those calls and can allow, deny, or modify them.
 
 You can also use the [`PermissionRequest` hook](https://code.claude.com/docs/en/agent-sdk/hooks#available-hooks) to send external notifications (Slack, email, push) when Claude is waiting for approval.
 
