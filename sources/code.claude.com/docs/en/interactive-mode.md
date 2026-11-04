@@ -287,10 +287,12 @@ To get back a draft you cleared with `Ctrl+C`, press `Up`, either right away or 
 
 ### Reverse search with Ctrl+R
 
-Press `Ctrl+R` to interactively search through your command history. In [fullscreen rendering](https://code.claude.com/docs/en/fullscreen.md), `Ctrl+R` opens a search dialog instead: type to filter, press `Up` and `Down` to move through matches, and press `Ctrl+S` to cycle the scope through this session, this project, and all projects. Press `Enter` or `Tab` to place a match in the prompt input, or `Esc` to cancel. The steps below describe the classic renderer's inline search:
+Press `Ctrl+R` to interactively search through your command history. In [fullscreen rendering](https://code.claude.com/docs/en/fullscreen.md), `Ctrl+R` opens a search dialog instead. Type to filter in the dialog, and press `Up` and `Down` to move through the list of matches, with a preview pane showing the start of the highlighted match.
+
+In the dialog, press `Ctrl+S` to cycle the scope through this session, this project, and all projects. Press `Enter` or `Tab` to place a match in the prompt input, or `Esc` to cancel. The steps below describe the classic renderer's inline search:
 
 1. **Start search**: press `Ctrl+R` to activate reverse history search
-2. **Type query**: enter text to search for in previous commands. The search term is highlighted in matching results
+2. **Type query**: enter text to search for in previous commands. The current match appears in the prompt input.
 3. **Navigate matches**: press `Ctrl+R` again to cycle through older matches
 4. **Search scope**: the inline search always searches prompts from all projects
 5. **Accept match**:
@@ -299,8 +301,6 @@ Press `Ctrl+R` to interactively search through your command history. In [fullscr
 6. **Cancel search**:
    * Press `Ctrl+C` to cancel and restore your original input
    * Press `Backspace` on empty search to cancel
-
-The inline search scans your full prompt history, newest first, with duplicates collapsed to the newest occurrence. The fullscreen dialog searches your whole prompt history in the selected scope, newest first, with duplicates collapsed to the newest occurrence: the most recent prompts appear immediately, and matches from older prompts fill in as Claude Code loads the rest. Matching prompts display with the search term highlighted, so you can find and reuse previous inputs.
 
 Accepting a match or canceling the search takes effect immediately, even while Claude Code is still loading the history.
 

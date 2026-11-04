@@ -224,6 +224,7 @@ SDK matchers follow the same rules as [matchers in settings files](https://code.
 | `matcher` | `string` | `undefined` | Pattern matched against the event's filter field, following the [rules for matchers in settings files](https://code.claude.com/docs/en/hooks.md#matcher-patterns). For tool hooks, that field is the tool name. Built-in tools include `Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `WebFetch`, `Agent`, and others. See [Tool Input Types](https://code.claude.com/docs/en/agent-sdk/typescript.md#tool-input-types) for the full list. MCP tools use the pattern `mcp__<server>__<action>`, where `<server>` is the key you use in the `mcpServers` configuration, spelled as the [tool naming convention](https://code.claude.com/docs/en/agent-sdk/mcp.md#tool-naming-convention) describes. |
 | `hooks` | `HookCallback[]` | - | Required. Array of callback functions to execute when the pattern matches |
 | `timeout` | `number` | `undefined` | Timeout in seconds. When omitted, Claude Code applies the [event's default timeout](#hook-timeout). Your SDK callbacks follow the `command` hook defaults |
+| `onFailure` | `"continue" \| "block"` | `undefined` | What a failed callback does. Set `"block"` to [block the action when a callback fails](#block-the-action-when-a-callback-fails). In Python, use `on_failure` |
 
 Use the `matcher` pattern to target specific tools whenever possible. A matcher with `'Bash'` only runs for Bash commands, while omitting the pattern runs your callbacks for every occurrence of the event.
 
@@ -282,6 +283,53 @@ const asyncHook: HookCallback = async (input, toolUseID, { signal }) => {
 > [!NOTE]
 >
 > Async outputs can't block, modify, or inject context into the operation since the agent has already moved on. Use them only for side effects like logging, metrics, or notifications.
+
+### Block the action when a callback fails
+
+On most events, if a callback throws or returns output that fails validation, the action goes ahead and your app receives an [`SDKInformationalMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkinformationalmessage) warning whose `tag` is `hook_callback_failed`. A `PreToolUse` guard that crashes then lets the tool call reach the normal permission flow. A callback that returns nothing, such as a path with no `return`, also counts as failing. In Python, read `tag` from `SystemMessage.data`.
+
+To block the action instead, set `onFailure: "block"` in TypeScript or `on_failure="block"` in Python on the matcher. Requires TypeScript Agent SDK v0.3.317 or later, or Python Agent SDK v0.2.177 or later. This example blocks a Bash call when `check_policy` in Python or `checkPolicy` in TypeScript fails:
+
+```python Python theme={null}
+options = ClaudeAgentOptions(
+    hooks={
+        "PreToolUse": [
+            HookMatcher(matcher="Bash", hooks=[check_policy], on_failure="block")
+        ]
+    }
+)
+```
+
+```typescript TypeScript theme={null}
+import type { Options } from "@anthropic-ai/claude-agent-sdk";
+
+const options: Options = {
+  hooks: {
+    PreToolUse: [{ matcher: "Bash", hooks: [checkPolicy], onFailure: "block" }]
+  }
+};
+```
+
+To test it, make the callback raise an error and ask Claude to run a Bash command. The tool result includes `failed; blocking because onFailure is "block"`, and Claude doesn't see your error text.
+
+Return `{}` when the callback has no opinion. With `"block"` set, a path with no `return` blocks the action. A callback that catches its own error and returns `{}` isn't failing, so let the error propagate from a guard.
+
+#### Events that behave differently
+
+These events don't always block with `"block"` set:
+
+* **`Stop`, `SubagentStop`, `TaskCompleted`, and `TeammateIdle`**: these events ignore the option, so the action goes ahead.
+* **`PermissionRequest`**: the block counts only if it arrives before your `canUseTool` callback answers.
+* **`PostToolUse`**: the tool has already run, so Claude receives the failure as feedback.
+
+A callback that exceeds its timeout follows [Hook timeout](#hook-timeout). With `"block"` set, a timeout also blocks `PreCompact`, `Elicitation`, and `WorktreeCreate`.
+
+#### Startup errors for `onFailure`
+
+With `"block"` set, the query fails at startup and sends no prompt when it can't honor the option:
+
+* **Claude Code doesn't support the option**: the error includes `does not honor`. Update Claude Code, or remove the option.
+* **The session was already running and didn't register your hooks**: the error includes `did not register your hooks`. Start a new session.
 
 ## Examples
 
@@ -779,7 +827,7 @@ When a callback exceeds its timeout, Claude Code cancels it and discards its out
 * `Stop` and `SubagentStop`: the timed-out callback counts as returning no decision. The agent or subagent stops as if that callback had allowed it, and a decision from your other hooks on the event still applies. Before Claude Code v2.1.273, a timed-out `Stop` or `SubagentStop` callback counted as a failed hook run, and Claude Code discarded the decisions of your other hooks on the event.
 * `SessionStart`: the timed-out callback counts as returning no output, and the session continues with the output of your other `SessionStart` hooks.
 * `PreModelSwitch`: Claude Code blocks the model switch. A hook that doesn't answer hasn't approved the switch.
-* Other events, such as `Notification`, `PreCompact`, and `PostModelSwitch`: Claude Code logs the failure and continues.
+* Other events, such as `Notification`, `PreCompact`, and `PostModelSwitch`: Claude Code logs the failure and continues. With [`onFailure: "block"`](#block-the-action-when-a-callback-fails), a timeout on `PreCompact`, `Elicitation`, or `WorktreeCreate` blocks the action.
 
 The first time a `Stop` or `SessionStart` callback times out in the main session, Claude Code also adds an [`SDKInformationalMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkinformationalmessage) to the message stream saying the app driving the session didn't respond. Later timeouts don't repeat that message while your app stays unresponsive.
 

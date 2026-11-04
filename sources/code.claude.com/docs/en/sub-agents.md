@@ -416,6 +416,10 @@ To run a subagent at its own [effort level](https://code.claude.com/docs/en/mode
 
 When you ask Claude to run a non-fork subagent at a specific effort level, it can also pass an `effort` parameter for that invocation. The parameter overrides the `effort` field and stays in effect when the subagent is [resumed](#resume-subagents). The [`CLAUDE_CODE_EFFORT_LEVEL`](https://code.claude.com/docs/en/env-vars#variables) environment variable takes precedence over both. The per-invocation parameter requires Claude Code v2.1.292 or later.
 
+#### When a subagent has no `effort` field or parameter
+
+On the main conversation's model, the subagent runs at the level you pick in the session, such as with `/effort`, or set with `--effort`. On another model, [that level doesn't apply](https://code.claude.com/docs/en/model-config.md#effort-level-of-subagents-and-teammates). To choose its level, set the `effort` field.
+
 ### Control subagent capabilities
 
 You can control what subagents can do through tool access, permission modes, and conditional rules.
