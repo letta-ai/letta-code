@@ -18,6 +18,10 @@ import {
   createInterruptedTurnStore,
   recordedToolResults,
 } from "./interrupted-turn-record";
+import {
+  recordedRunAwaitsApproval,
+  resumeIfRecordedApprovalsUnstarted,
+} from "./recorded-approval-resume";
 import { resolveRecordedRunId } from "./recorded-run-resolution";
 import {
   hasCompletedTeleportInput,
@@ -530,11 +534,7 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        if (
-          recordedRun &&
-          recordedRun.status !== "running" &&
-          recordedRun.status !== "created"
-        ) {
+        if (recordedRun && !recordedRunAwaitsApproval(recordedRun)) {
           pending = [];
         }
         if (!pending.length) {
@@ -745,15 +745,23 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
-        const hasProvablyUnstartedApproval = owned.some((approval) =>
-          recoveryRecord.unstartedToolCallIds?.includes(approval.toolCallId),
-        );
-        if (hasProvablyUnstartedApproval) {
-          await recoveryClaim?.release();
-          recoveryClaim = undefined;
-          deferred = true;
-          continue;
-        }
+        const unstarted = await resumeIfRecordedApprovalsUnstarted({
+          listener,
+          runtime,
+          record: recoveryRecord,
+          ownedToolCallIds: owned.map((approval) => approval.toolCallId),
+          hasRecoveryCompletion: Boolean(runningCompletion),
+          releaseClaim: async () => {
+            await recoveryClaim?.release();
+            recoveryClaim = undefined;
+          },
+          retry: () =>
+            scheduleRecordedTurnRecovery(listener, () =>
+              recoverRecordedTurns(listener, deps),
+            ),
+        });
+        if (unstarted === "defer") deferred = true;
+        if (unstarted !== "none") continue;
         const approvals = recordedToolResults(
           recoveryRecord,
           owned.map((approval) => approval.toolCallId),
