@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
 import type { Backend } from "@/backend";
 import { searchConversationsForBackend } from "@/backend/conversation-search";
+import { LocalBackend } from "@/backend/local/local-backend";
 
 function conversation(input: {
   id: string;
@@ -205,5 +209,37 @@ describe("searchConversationsForBackend on the local backend", () => {
 
     expect(results).toEqual([]);
     expect(listCalls).toHaveLength(0);
+  });
+});
+
+describe("searchConversationsForBackend against the local store", () => {
+  test("finds an older conversation that a recency-limited search would skip", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "conversation-search-"));
+    try {
+      const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      const agent = await backend.createAgent({ name: "Local" } as never);
+      // Created first, so it is the oldest conversation for this agent.
+      const older = await backend.createConversation({
+        agent_id: agent.id,
+        summary: "OLDER_RELEVANT_7Q4M",
+      } as never);
+      for (let index = 0; index < 12; index++) {
+        await backend.createConversation({
+          agent_id: agent.id,
+          summary: `Recent conversation ${index}`,
+        } as never);
+      }
+
+      const results = await searchConversationsForBackend(
+        { query: "OLDER_RELEVANT_7Q4M", agent_id: agent.id, limit: 12 },
+        backend,
+      );
+
+      expect(results.map((result) => result.conversation.id)).toEqual([
+        older.id,
+      ]);
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
   });
 });
