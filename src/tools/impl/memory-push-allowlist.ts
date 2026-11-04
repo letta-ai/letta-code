@@ -1,35 +1,34 @@
 import { spawnSync } from "node:child_process";
 import { realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 
 /**
- * Keep the memory repository's contents from leaving it through shell tools.
+ * Optional push-destination allowlist for the memory repository.
  *
- * In managed cloud runtimes, shell commands are screened before they run:
- * - `git push` from the memory repository is allowed only to the memory
- *   remote (a `/v1/git/` endpoint or the configured memory-repository mirror).
- * - `git push` from any other repository is refused when the commits being
- *   pushed contain a file whose bytes match a file in the memory directory.
- * - `cp`/`rsync`/`scp` of the memory directory (or files in it) into another
- *   Git worktree or to a remote host is refused.
+ * Set `LETTA_MEMORY_PUSH_ALLOWED_REMOTES` to a comma-separated list of remote
+ * URL prefixes. When it is set, shell commands run through the Bash and
+ * exec_command tools are checked before they start:
+ * - `git push` from the memory repository must target its own `origin` or a
+ *   URL matching an allowed prefix.
+ * - `git push` from another repository must not carry a file whose bytes match
+ *   a file in the memory directory, unless it targets an allowed URL.
+ * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
+ *   a remote host is refused, since that copy would be pushed from there.
  *
- * This is a guardrail against well-meant copies, not a security boundary:
- * edited copies, archives, scripts that run git themselves, and uploads that
- * do not go through git are not detected.
+ * When the variable is unset nothing is checked. Pushes made by the memory
+ * repository's own hooks (including the `/memory-repository` mirror) do not
+ * go through these tools and are unaffected.
  */
 
-export const MEMORY_PUSH_BLOCKED_MESSAGE =
-  "Blocked: this would push files from your memory directory to a remote other than the memory repository. Memory files stay in the memory repository; remove them from the commits you are pushing and try again.";
+export const MEMORY_PUSH_ALLOWLIST_ENV = "LETTA_MEMORY_PUSH_ALLOWED_REMOTES";
 
-export const MEMORY_COPY_BLOCKED_MESSAGE =
-  "Blocked: this would copy your memory directory into another Git repository or to a remote host. Memory files stay in the memory repository.";
+export const MEMORY_PUSH_BLOCKED_MESSAGE = `Blocked: memory repository contents can only be pushed to the memory remote or to a remote listed in ${MEMORY_PUSH_ALLOWLIST_ENV}. Remove memory files from the commits you are pushing, or push to an allowed remote.`;
+
+export const MEMORY_COPY_BLOCKED_MESSAGE = `Blocked: copying the memory directory into another Git repository or to a remote host is disabled while ${MEMORY_PUSH_ALLOWLIST_ENV} is set. Memory files stay in the memory repository.`;
 
 /** Files smaller than this are too generic to treat as memory content. */
 const MIN_MEMORY_FILE_BYTES = 64;
 const GIT_TIMEOUT_MS = 10_000;
-const MEMORY_REMOTE_PATH =
-  /^[a-z][a-z0-9+.-]*:\/\/[^/\s]+(?:\/[^\s]*)?\/v1\/git\//i;
 const COPY_COMMANDS = new Set(["cp", "rsync", "scp"]);
 const PREFIX_WORDS = new Set([
   "if",
@@ -49,27 +48,43 @@ const PREFIX_WORDS = new Set([
   "nohup",
 ]);
 
-export interface MemoryPushGuardOptions {
+export interface MemoryPushAllowlistOptions {
   cwd: string;
   env: NodeJS.ProcessEnv;
 }
 
-/** Returns a tool error message when the command would move memory out. */
-export function findMemoryExfiltration(
+/** Returns a tool error when the command breaks the configured allowlist. */
+export function checkMemoryPushAllowlist(
   command: string,
-  options: MemoryPushGuardOptions,
+  options: MemoryPushAllowlistOptions,
 ): string | null {
   const { env } = options;
   const memoryDir = (env.MEMORY_DIR || env.LETTA_MEMORY_DIR || "").trim();
-  if (!isManagedCloudRuntime(env) || !memoryDir) return null;
+  const allowed = parseAllowedRemotes(env[MEMORY_PUSH_ALLOWLIST_ENV]);
+  if (allowed.length === 0 || !memoryDir) return null;
   if (!/\b(push|cp|rsync|scp)\b/.test(command)) return null;
-  const context = { env, memoryDir: resolve(memoryDir), depth: 0 };
+  const context = { env, memoryDir: resolve(memoryDir), allowed, depth: 0 };
   return scanCommand(command, options.cwd, context);
+}
+
+function parseAllowedRemotes(value: string | undefined): string[] {
+  return (value ?? "")
+    .split(",")
+    .map((prefix) => normalizeRemoteUrl(prefix.trim()))
+    .filter(Boolean);
+}
+
+/** Drops credentials and trailing slashes so prefixes compare cleanly. */
+function normalizeRemoteUrl(url: string): string {
+  return url
+    .replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1")
+    .replace(/\/+$/, "");
 }
 
 interface ScanContext {
   env: NodeJS.ProcessEnv;
   memoryDir: string;
+  allowed: string[];
   depth: number;
 }
 
@@ -136,10 +151,12 @@ function checkGit(
   const pushArgs = args.slice(index + 1);
   const repoCommonDir = gitCommonDir(cwd);
   if (!repoCommonDir) return null;
+  const urls = pushUrls(pushArgs, cwd);
+  if (urls.length > 0 && urls.every((url) => isAllowedUrl(url, context))) {
+    return null;
+  }
   if (repoCommonDir === gitCommonDir(context.memoryDir)) {
-    return pushesToMemoryRemote(pushArgs, cwd)
-      ? null
-      : MEMORY_PUSH_BLOCKED_MESSAGE;
+    return MEMORY_PUSH_BLOCKED_MESSAGE;
   }
   return pushContainsMemoryFiles(pushArgs, cwd, context.memoryDir)
     ? MEMORY_PUSH_BLOCKED_MESSAGE
@@ -181,19 +198,40 @@ function parsePushArgs(args: string[]): ParsedPush {
   return parsed;
 }
 
-function pushesToMemoryRemote(args: string[], cwd: string): boolean {
+/** The URLs a push would send to, resolving remote names in `cwd`. */
+function pushUrls(args: string[], cwd: string): string[] {
   const { repository } = parsePushArgs(args);
   const remote = repository ?? defaultPushRemote(cwd);
   const remotes = (git(cwd, ["remote"]) ?? "").split("\n").filter(Boolean);
-  const urls = remotes.includes(remote)
-    ? (git(cwd, ["remote", "get-url", "--push", "--all", remote]) ?? "")
-        .split("\n")
-        .filter(Boolean)
-    : [remote];
-  const mirror = git(cwd, ["config", "--get", "letta.memoryRepository.url"]);
+  if (!remotes.includes(remote)) return [remote];
+  return (git(cwd, ["remote", "get-url", "--push", "--all", remote]) ?? "")
+    .split("\n")
+    .filter(Boolean);
+}
+
+/** The memory repository's own origin, or a configured prefix. */
+function isAllowedUrl(url: string, context: ScanContext): boolean {
+  const normalized = normalizeRemoteUrl(url);
+  const origins = (
+    git(context.memoryDir, [
+      "remote",
+      "get-url",
+      "--push",
+      "--all",
+      "origin",
+    ]) ?? ""
+  )
+    .split("\n")
+    .filter(Boolean)
+    .map(normalizeRemoteUrl);
   return (
-    urls.length > 0 &&
-    urls.every((url) => MEMORY_REMOTE_PATH.test(url) || url === mirror)
+    origins.includes(normalized) ||
+    context.allowed.some(
+      (prefix) =>
+        normalized === prefix ||
+        normalized.startsWith(prefix.endsWith("/") ? prefix : `${prefix}/`) ||
+        (prefix.endsWith(":") && normalized.startsWith(prefix)),
+    )
   );
 }
 

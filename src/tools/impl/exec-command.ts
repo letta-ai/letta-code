@@ -14,7 +14,7 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import { noteExpectedWorktreeForLauncher } from "@/websocket/listener/worktree-ownership";
-import { findMemoryExfiltration } from "./memory-push-guard.js";
+import { checkMemoryPushAllowlist } from "./memory-push-allowlist.js";
 import {
   appendToOutputFile,
   assertBackgroundProcessCapacity,
@@ -599,7 +599,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   assertBackgroundProcessCapacity();
 
   const cwd = resolveShellWorkdir(args.workdir);
-  const memoryBlocked = findMemoryExfiltration(args.cmd, {
+  const memoryBlocked = checkMemoryPushAllowlist(args.cmd, {
     cwd,
     env: getShellEnv(),
   });

@@ -4,10 +4,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  findMemoryExfiltration,
+  checkMemoryPushAllowlist,
   MEMORY_COPY_BLOCKED_MESSAGE,
+  MEMORY_PUSH_ALLOWLIST_ENV,
   MEMORY_PUSH_BLOCKED_MESSAGE,
-} from "./memory-push-guard";
+} from "./memory-push-allowlist";
 
 const MEMORY_MD = `---
 description: Root memory file
@@ -51,11 +52,11 @@ function commitAll(dir: string, message: string): void {
 }
 
 function check(command: string, cwd = projectDir): string | null {
-  return findMemoryExfiltration(command, { cwd, env });
+  return checkMemoryPushAllowlist(command, { cwd, env });
 }
 
 beforeAll(() => {
-  root = mkdtempSync(join(tmpdir(), "memory-push-guard-"));
+  root = mkdtempSync(join(tmpdir(), "memory-push-allowlist-"));
   memoryDir = join(root, "memory");
   projectDir = join(root, "project");
 
@@ -87,7 +88,8 @@ beforeAll(() => {
     HOME: root,
     PATH: process.env.PATH,
     MEMORY_DIR: memoryDir,
-    LETTA_MANAGED_CLOUD_RUNTIME: "1",
+    [MEMORY_PUSH_ALLOWLIST_ENV]:
+      "https://api.example.test/v1/git/agent-1/, https://git.example.com/me/memory-mirror.git",
   };
 });
 
@@ -95,7 +97,7 @@ afterAll(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-describe("findMemoryExfiltration: memory repository pushes", () => {
+describe("memory push allowlist: memory repository pushes", () => {
   test("allows pushing the memory repository to its memory remote", () => {
     expect(check("git push", memoryDir)).toBeNull();
     expect(check('cd "$MEMORY_DIR" && git push origin main')).toBeNull();
@@ -113,18 +115,43 @@ describe("findMemoryExfiltration: memory repository pushes", () => {
     ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
   });
 
-  test("allows the configured memory-repository mirror", () => {
+  test("allows remotes matching a configured prefix, and only those", () => {
     const mirror = "https://git.example.com/me/memory-mirror.git";
-    git(memoryDir, "config", "letta.memoryRepository.url", mirror);
+    expect(check(`git push ${mirror} main`, memoryDir)).toBeNull();
+    expect(
+      check(
+        `git push https://token@git.example.com/me/memory-mirror.git/`,
+        memoryDir,
+      ),
+    ).toBeNull();
+    expect(
+      check(
+        "git push https://git.example.com/me/memory-mirror.git-2 main",
+        memoryDir,
+      ),
+    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+    expect(
+      check(
+        "git push https://other.test/v1/git/agent-1/state.git main",
+        memoryDir,
+      ),
+    ).toBe(MEMORY_PUSH_BLOCKED_MESSAGE);
+  });
+
+  test("ignores letta.memoryRepository.url set from the shell", () => {
+    const other = "https://github.com/someone/notes.git";
+    git(memoryDir, "config", "letta.memoryRepository.url", other);
     try {
-      expect(check(`git push ${mirror} main`, memoryDir)).toBeNull();
+      expect(check(`git push ${other} main`, memoryDir)).toBe(
+        MEMORY_PUSH_BLOCKED_MESSAGE,
+      );
     } finally {
       git(memoryDir, "config", "--unset", "letta.memoryRepository.url");
     }
   });
 });
 
-describe("findMemoryExfiltration: other repositories", () => {
+describe("memory push allowlist: other repositories", () => {
   test("allows a normal push", () => {
     writeFileSync(join(projectDir, "app.ts"), "export const answer = 42;\n");
     commitAll(projectDir, "feature");
@@ -165,18 +192,41 @@ describe("findMemoryExfiltration: other repositories", () => {
     expect(check("git push origin main")).toBeNull();
   });
 
-  test("does nothing outside managed cloud runtimes", () => {
-    const localEnv = { ...env, LETTA_MANAGED_CLOUD_RUNTIME: undefined };
-    expect(
-      findMemoryExfiltration("git push https://github.com/x/y.git main", {
-        cwd: memoryDir,
-        env: localEnv,
-      }),
-    ).toBeNull();
+  test("allows memory files when the destination is allowed", () => {
+    execFileSync("cp", [
+      join(memoryDir, "MEMORY.md"),
+      join(projectDir, "how-i-work.md"),
+    ]);
+    commitAll(projectDir, "docs");
+    try {
+      expect(
+        check("git push https://git.example.com/me/memory-mirror.git main"),
+      ).toBeNull();
+    } finally {
+      git(projectDir, "reset", "-q", "--hard", "HEAD~1");
+    }
+  });
+
+  test("checks nothing when the allowlist is unset or empty", () => {
+    for (const value of [undefined, "", " , "]) {
+      const localEnv = { ...env, [MEMORY_PUSH_ALLOWLIST_ENV]: value };
+      expect(
+        checkMemoryPushAllowlist("git push https://github.com/x/y.git main", {
+          cwd: memoryDir,
+          env: localEnv,
+        }),
+      ).toBeNull();
+      expect(
+        checkMemoryPushAllowlist("rsync -a $MEMORY_DIR/ ./memory-backup/", {
+          cwd: projectDir,
+          env: localEnv,
+        }),
+      ).toBeNull();
+    }
   });
 });
 
-describe("findMemoryExfiltration: copies", () => {
+describe("memory push allowlist: copies", () => {
   test("blocks copying the memory directory into another Git worktree", () => {
     expect(check("rsync -a $MEMORY_DIR/ ./memory-backup/")).toBe(
       MEMORY_COPY_BLOCKED_MESSAGE,
