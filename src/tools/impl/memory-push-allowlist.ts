@@ -253,6 +253,17 @@ async function scanCommand(
       if (await copiesMemoryOut(args, cwd, context)) {
         return MEMORY_COPY_BLOCKED_MESSAGE;
       }
+    } else if (name === "eval" && context.depth < 2) {
+      const nested = { ...context, env, depth: context.depth + 1 };
+      const blocked = await scanCommand(args.join(" "), cwd, nested);
+      if (blocked) return blocked;
+    } else if (
+      (name === "source" || name === ".") &&
+      /\b(git|push)\b/.test(command) &&
+      !isRegularFile(resolvePath(cwd, args[0] ?? ""))
+    ) {
+      // Commands sourced from a string or a pipe cannot be read ahead.
+      return MEMORY_PUSH_UNVERIFIED_MESSAGE;
     } else if (
       (name === "bash" || name === "sh" || name === "zsh") &&
       context.depth < 2
@@ -819,6 +830,14 @@ function fileSize(path: string): number {
     return statSync(path).size;
   } catch {
     return -1;
+  }
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
   }
 }
 
