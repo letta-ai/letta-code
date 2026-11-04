@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +8,10 @@ import {
   exec_command,
   write_stdin,
 } from "@/tools/impl/exec-command";
+import {
+  MEMORY_PUSH_ALLOWLIST_ENV,
+  MEMORY_PUSH_BLOCKED_MESSAGE,
+} from "@/tools/impl/memory-push-allowlist";
 import {
   __resetBackgroundRetentionConfigForTests,
   backgroundProcesses,
@@ -312,6 +317,59 @@ describe.skipIf(isWindows)("Codex unified exec tools", () => {
 
     expect(second.output).toContain("Process running with session ID");
     expect(second.output).toContain("Output:\nhello");
+  });
+
+  test("write_stdin applies the memory push allowlist to typed lines", async () => {
+    const root = fs.mkdtempSync(join(tmpdir(), "exec-memory-push-"));
+    const memoryDir = join(root, "memory");
+    const saved = {
+      MEMORY_DIR: process.env.MEMORY_DIR,
+      [MEMORY_PUSH_ALLOWLIST_ENV]: process.env[MEMORY_PUSH_ALLOWLIST_ENV],
+    };
+    try {
+      fs.mkdirSync(memoryDir);
+      execFileSync("git", ["init", "-q"], { cwd: memoryDir });
+      execFileSync(
+        "git",
+        ["remote", "add", "origin", "https://api.example.test/memory.git"],
+        { cwd: memoryDir },
+      );
+      process.env.MEMORY_DIR = memoryDir;
+      process.env[MEMORY_PUSH_ALLOWLIST_ENV] =
+        "https://api.example.test/memory.git";
+
+      const first = await exec_command({
+        cmd: "cat",
+        tty: true,
+        workdir: memoryDir,
+        yield_time_ms: 50,
+      });
+      const sessionId = Number(
+        first.output.match(/Process running with session ID (\d+)/)?.[1],
+      );
+      const push = "git push https://github.com/someone/notes.git main";
+
+      await expect(
+        write_stdin({ session_id: sessionId, chars: `${push}\n` }),
+      ).rejects.toThrow(MEMORY_PUSH_BLOCKED_MESSAGE);
+      // A line split across writes is checked once it is complete.
+      await write_stdin({ session_id: sessionId, chars: push });
+      await expect(
+        write_stdin({ session_id: sessionId, chars: "\r" }),
+      ).rejects.toThrow(MEMORY_PUSH_BLOCKED_MESSAGE);
+      const allowed = await write_stdin({
+        session_id: sessionId,
+        chars: "git push origin main\n",
+        yield_time_ms: 200,
+      });
+      expect(allowed.output).toContain("Process running with session ID");
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      fs.rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("tty-enabled sessions allocate a terminal device", async () => {

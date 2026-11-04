@@ -16,7 +16,8 @@ import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
  * - Destinations are resolved by git with the command's own global options
  *   (`-c`, `--config-env`, `--git-dir`, ...) and environment assignments, so
  *   config overrides are taken into account. A push whose options cannot be
- *   reproduced that way is refused.
+ *   reproduced that way is refused. Aliases are expanded; `!` shell aliases
+ *   are refused.
  * - `cp`/`rsync`/`scp` of the memory directory into another Git worktree or to
  *   a remote host is refused, since that copy would be pushed from there.
  *
@@ -71,7 +72,7 @@ export async function checkMemoryPushAllowlist(
   // Command parsing assumes POSIX shell syntax and paths.
   if (process.platform === "win32") return null;
   if (allowed.length === 0 || !memoryDir) return null;
-  if (!/\b(push|cp|rsync|scp)\b/.test(command)) return null;
+  if (!/\b(git|push|cp|rsync|scp)\b/.test(command)) return null;
   const context = { env, memoryDir: resolve(memoryDir), allowed, depth: 0 };
   return scanCommand(command, options.cwd, context);
 }
@@ -147,6 +148,34 @@ const GIT_OPTIONS_WITH_VALUE = new Set([
   "--work-tree",
   "--namespace",
 ]);
+/** Frequent built-in subcommands, which skip the alias lookup. */
+const GIT_COMMON_BUILTINS = new Set([
+  "add",
+  "branch",
+  "checkout",
+  "cherry-pick",
+  "clone",
+  "commit",
+  "config",
+  "diff",
+  "fetch",
+  "init",
+  "log",
+  "ls-files",
+  "merge",
+  "pull",
+  "rebase",
+  "remote",
+  "reset",
+  "restore",
+  "rev-parse",
+  "show",
+  "stash",
+  "status",
+  "switch",
+  "tag",
+  "worktree",
+]);
 /** Global git options without a value that probes can safely repeat. */
 const GIT_FLAG_OPTIONS = new Set([
   "-p",
@@ -220,6 +249,7 @@ async function checkGit(
   env: NodeJS.ProcessEnv,
   assignments: Record<string, string>,
   context: ScanContext,
+  aliasDepth = 0,
 ): Promise<string | null> {
   let cwd = startCwd;
   const options: string[] = [];
@@ -245,7 +275,34 @@ async function checkGit(
       index += 1;
     }
   }
-  if (args[index] !== "push") return null;
+  const subcommand = args[index] ?? "";
+  if (subcommand !== "push") {
+    // Built-in commands cannot be redefined by an alias; anything else might
+    // be one, and a `!` alias runs a shell command we cannot see into.
+    if (!subcommand || GIT_COMMON_BUILTINS.has(subcommand)) return null;
+    const alias = await probe({ cwd, options, env }, [
+      "config",
+      "--get",
+      `alias.${subcommand}`,
+    ]);
+    if (!alias) return null;
+    if (alias.trimStart().startsWith("!") || aliasDepth >= 5) {
+      return MEMORY_PUSH_UNVERIFIED_MESSAGE;
+    }
+    const expanded = [
+      ...args.slice(0, index),
+      ...tokenize(alias),
+      ...args.slice(index + 1),
+    ];
+    return checkGit(
+      expanded,
+      startCwd,
+      env,
+      assignments,
+      context,
+      aliasDepth + 1,
+    );
+  }
   // A value the shell would still expand cannot be reproduced by the probe.
   const values = [...options, ...Object.values(assignments)];
   if (!reproducible || values.some((value) => /[$`]/.test(value))) {

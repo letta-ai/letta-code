@@ -99,6 +99,10 @@ interface ExecSession {
   status: ExecSessionStatus;
   exitCode: number | null;
   tty: boolean;
+  /** Working directory the session started in. */
+  cwd: string;
+  /** Text written to a tty session after its last newline. */
+  pendingStdinLine: string;
   secrets: Readonly<Record<string, string>>;
   streamScrubbers: {
     stdout: SecretStreamScrubber;
@@ -640,6 +644,8 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
     status: "running",
     exitCode: null,
     tty: args.tty ?? false,
+    cwd,
+    pendingStdinLine: "",
     secrets: redactions,
     streamScrubbers: {
       stdout: createSecretStreamScrubber(redactions),
@@ -752,6 +758,30 @@ export async function exec_command(
   };
 }
 
+/**
+ * Checks each complete line typed into a tty session the same way as an
+ * initial command, so the memory push allowlist also covers interactive
+ * shells. A refused write is not sent.
+ */
+async function checkTypedLines(
+  session: ExecSession,
+  chars: string,
+): Promise<void> {
+  const lines = (session.pendingStdinLine + chars).split(/\r\n|\r|\n/);
+  const pending = lines.pop() ?? "";
+  for (const line of lines) {
+    const blocked = await checkMemoryPushAllowlist(line, {
+      cwd: session.cwd,
+      env: getShellEnv(),
+    });
+    if (blocked) {
+      session.pendingStdinLine = "";
+      throw new Error(blocked);
+    }
+  }
+  session.pendingStdinLine = pending;
+}
+
 export async function write_stdin(
   args: WriteStdinArgs,
 ): Promise<ExecCommandResult> {
@@ -772,6 +802,9 @@ export async function write_stdin(
         "stdin is closed for this session; rerun exec_command with tty=true to keep stdin open",
       );
     }
+  }
+  if (chars && session.tty) {
+    await checkTypedLines(session, chars);
   }
   session.activeWriteStdinCalls++;
   let output: string;
