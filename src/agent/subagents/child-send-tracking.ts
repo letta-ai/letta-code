@@ -9,9 +9,13 @@ import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   getEnqueueAgentId,
   getExactSuperRun,
+  listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
-import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
+import {
+  readConversationRuntimeStatus,
+  waitForAcceptedSuperRun,
+} from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
 
 export interface ChildSubagentIdentity {
@@ -78,8 +82,10 @@ function waitForChildRun(
     exact: getExactSuperRun,
     run: (runId, readSignal) =>
       backend.retrieveRun(runId, { signal: readSignal }),
-    // Only the lifecycle matters here; the reply is never collected.
-    messages: async () => [],
+    // The reply is never collected, but ending the send at the child's turn
+    // end (rather than when its conversation drains) needs its reply text.
+    messages: listEnqueuedRunMessages,
+    runtimeStatus: readConversationRuntimeStatus,
   });
 }
 

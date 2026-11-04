@@ -12,6 +12,7 @@ import { buildAgentReference } from "@/cli/helpers/app-urls";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { cancelAcceptedListenerInput } from "@/headless-listener-launch";
 import {
+  readConversationRuntimeStatus,
   type SuperRunWaitDeps,
   waitForAcceptedSuperRun,
 } from "@/headless-super-run-wait";
@@ -25,7 +26,10 @@ import {
 
 export interface RemoteTurnWaitDeps
   extends Partial<
-    Pick<SuperRunWaitDeps, "exact" | "run" | "pollMs" | "progressMs" | "sleep">
+    Pick<
+      SuperRunWaitDeps,
+      "exact" | "run" | "pollMs" | "progressMs" | "sleep" | "runtimeStatus"
+    >
   > {
   listMessages?: (runId: string, signal: AbortSignal) => Promise<Message[]>;
 }
@@ -137,6 +141,9 @@ export async function collectRemoteTurnResult(
           if (runId !== newest) finishedRuns.add(runId);
         }
       },
+      // The task's result is the child's turn-end reply; a leftover
+      // background process must not hold it until the conversation drains.
+      runtimeStatus: deps.runtimeStatus ?? readConversationRuntimeStatus,
       ...(deps.pollMs !== undefined ? { pollMs: deps.pollMs } : {}),
       ...(deps.progressMs !== undefined ? { progressMs: deps.progressMs } : {}),
       ...(deps.sleep ? { sleep: deps.sleep } : {}),

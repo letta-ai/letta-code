@@ -393,3 +393,36 @@ test("abort interrupts background retries", async () => {
     ),
   ).rejects.toThrow();
 });
+
+test("returns the turn-end reply while a leftover background process keeps the Super Run open", async () => {
+  const clock = makeClock();
+  const now = spyOn(Date, "now").mockImplementation(clock.now);
+  // Without the turn-end check the Super Run never completes; stop the test
+  // with an abort instead of hanging.
+  const giveUp = new AbortController();
+  try {
+    const result = await waitForAcceptedSuperRun(receipt, giveUp.signal, {
+      ...deps(),
+      // Cloud keeps the send STC while any background process still counts.
+      exact: async () => exact("STC"),
+      runtimeStatus: async () => ({
+        conversation_id: "conv-1",
+        state: "ACTIVE",
+        loop_state: { status: "WAITING_ON_INPUT" },
+        active_run_ids: [],
+        last_activity_at: 0,
+      }),
+      sleep: async () => {
+        await clock.sleep(1_000);
+        if (clock.now() > 120_000) giveUp.abort();
+      },
+    });
+    expect(result.text).toBe("Done");
+    expect(result.runIds).toEqual(["run-1"]);
+    // The notification grace window passed before the reply was returned.
+    expect(clock.now()).toBeGreaterThanOrEqual(5_000);
+    expect(clock.now()).toBeLessThan(10_000);
+  } finally {
+    now.mockRestore();
+  }
+});

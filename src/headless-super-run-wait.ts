@@ -5,6 +5,10 @@ import type {
   Run,
 } from "@letta-ai/letta-client/resources/agents/messages";
 import {
+  type AgentRuntimeStatusEntry,
+  getAgentRuntimeStatus,
+} from "@/backend/api/agents";
+import {
   type EnqueueReceipt,
   type ExactSuperRun,
   getEnqueueAgentId,
@@ -31,12 +35,48 @@ export interface SuperRunWaitDeps {
   /** How long a completed Super Run may report no linked child run. */
   runLinkGraceMs?: number;
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  /**
+   * Opt in to returning when the send's turn ends. Cloud completes a Super Run
+   * only once the whole conversation runtime drains, so a leftover background
+   * process in the recipient can keep the send open after its final reply.
+   * Reads the conversation's runtime status; null when unavailable.
+   */
+  runtimeStatus?: (
+    agentId: string,
+    conversationId: string,
+    signal: AbortSignal,
+  ) => Promise<AgentRuntimeStatusEntry | null>;
+  /**
+   * How long the newest run must stay completed, with no newer run linked,
+   * before the turn counts as ended. Lets a notification turn queued right at
+   * turn end take over the send.
+   */
+  turnEndGraceMs?: number;
 }
 
 class RemoteExecutionFailed extends Error {}
 
 /** The server can link a child run to its Super Run after marking it complete. */
 const DEFAULT_RUN_LINK_GRACE_MS = 60_000;
+const DEFAULT_TURN_END_GRACE_MS = 5_000;
+
+/** Default `runtimeStatus` dep: the conversation's Cloud runtime-status entry. */
+export async function readConversationRuntimeStatus(
+  agentId: string,
+  conversationId: string,
+  signal: AbortSignal,
+): Promise<AgentRuntimeStatusEntry | null> {
+  const snapshot = await getAgentRuntimeStatus(
+    agentId,
+    [conversationId],
+    signal,
+  );
+  return (
+    snapshot.statuses.find(
+      (status) => status.conversation_id === conversationId,
+    ) ?? null
+  );
+}
 
 function isTransientReadError(error: unknown): boolean {
   if (error instanceof ApiRequestError || error instanceof APIError) {
@@ -144,6 +184,64 @@ export async function waitForAcceptedSuperRun(
     deps.sleep ??
     ((ms: number, waitSignal: AbortSignal) =>
       delay(ms, undefined, { signal: waitSignal }));
+  const turnEndGraceMs = deps.turnEndGraceMs ?? DEFAULT_TURN_END_GRACE_MS;
+  let turnEnd: { runId: string; since: number; noReply: boolean } | undefined;
+  // The Super Run is still open. Its turn is over when the newest linked run
+  // completed with a reply, no newer run took over within the grace window,
+  // and the listener is waiting on input with none of this send's runs live.
+  // Anything else (including read errors) keeps the normal wait.
+  const replyAtTurnEnd = async (
+    exact: ExactSuperRun,
+  ): Promise<EnqueuedReply | null> => {
+    const runId = exact.run_ids[0];
+    if (!deps.runtimeStatus || !runId) return null;
+    if (turnEnd?.runId === runId && turnEnd.noReply) return null;
+    try {
+      const readSignal = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+      const run = await deps.run(runId, readSignal);
+      if (
+        run.status !== "completed" ||
+        run.stop_reason === "requires_approval"
+      ) {
+        turnEnd = undefined;
+        return null;
+      }
+      if (turnEnd?.runId !== runId) {
+        turnEnd = { runId, since: Date.now(), noReply: false };
+      }
+      if (Date.now() - turnEnd.since < turnEndGraceMs) return null;
+      const status = await deps.runtimeStatus(
+        getEnqueueAgentId(receipt),
+        receipt.conversation_id,
+        readSignal,
+      );
+      if (
+        status?.loop_state?.status !== "WAITING_ON_INPUT" ||
+        status.active_run_ids.some((id) => exact.run_ids.includes(id))
+      ) {
+        return null;
+      }
+      await reportProgress(exact.run_ids, true);
+      const text = assistantText(
+        await deps.messages(
+          runId,
+          AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+        ),
+      );
+      if (!text) {
+        turnEnd.noReply = true;
+        return null;
+      }
+      return {
+        text,
+        runIds: exact.run_ids,
+        stopReason: run.stop_reason ?? null,
+      };
+    } catch {
+      signal.throwIfAborted();
+      return null;
+    }
+  };
 
   while (true) {
     signal.throwIfAborted();
@@ -167,6 +265,8 @@ export async function waitForAcceptedSuperRun(
     const terminal = exact.status === "COM" || exact.completed_at !== null;
     if (!terminal) {
       await reportProgress(exact.run_ids, false);
+      const reply = await replyAtTurnEnd(exact);
+      if (reply) return reply;
       await sleep(pollMs, signal);
       continue;
     }
