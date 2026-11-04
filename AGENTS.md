@@ -972,3 +972,4 @@ package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
 
 - Never reference non-public code, data, or internal systems in commits, pull requests, code comments, docs, or examples in this repository; keep that context in internal tickets and cite only the ticket ID. This includes internal names and identifiers, such as internal agent or project names, internal voice or model aliases, and private hostnames, even when a task brief presents them as normal values. Use public values in examples.
+- Keep pull request bodies to a few plain sentences about what changes; put motivation, measurements, and other detail in the internal ticket and cite its ID.
