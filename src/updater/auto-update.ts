@@ -832,7 +832,12 @@ export async function startupAutoUpdate(
   autoUpdate: typeof checkAndAutoUpdate = checkAndAutoUpdate,
 ): Promise<AutoUpdateResult | undefined> {
   if (platform !== "win32") return autoUpdate();
-  if (isPythonDistribution() || !isAutoUpdateEnabled() || isRunningLocally()) {
+  if (
+    isPythonDistribution() ||
+    !isAutoUpdateEnabled() ||
+    process.env.LETTA_CODE_AGENT_ROLE === "subagent" ||
+    isRunningLocally()
+  ) {
     return undefined;
   }
   const result = await checkForUpdate(fetchImpl);

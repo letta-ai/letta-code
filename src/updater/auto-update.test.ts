@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { startStartupAutoUpdateCheck } from "@/startup-auto-update";
 import {
   acquireUpdateLock,
   buildInstallCommand,
@@ -48,6 +49,7 @@ test("Python wheels never query npm or self-install updates", async () => {
 test("Windows startup never installs in place and returns the manual command", async () => {
   const savedArgv1 = process.argv[1];
   const savedEnv = {
+    LETTA_CODE_AGENT_ROLE: process.env.LETTA_CODE_AGENT_ROLE,
     LETTA_PACKAGE_MANAGER: process.env.LETTA_PACKAGE_MANAGER,
     DISABLE_AUTOUPDATER: process.env.DISABLE_AUTOUPDATER,
   };
@@ -55,6 +57,7 @@ test("Windows startup never installs in place and returns the manual command", a
     "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@letta-ai\\letta-code\\letta.js";
   process.env.LETTA_PACKAGE_MANAGER = "npm";
   delete process.env.DISABLE_AUTOUPDATER;
+  delete process.env.LETTA_CODE_AGENT_ROLE;
   try {
     const fetchImpl = mock(() =>
       Promise.resolve(
@@ -593,6 +596,28 @@ describe("checkAndAutoUpdate install guards", () => {
     expect(result).toBeUndefined();
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(runCommand).not.toHaveBeenCalled();
+  });
+
+  test("Windows subagents skip the registry check and print nothing", async () => {
+    process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+    const fetchSpy = mock(fetchImpl);
+    const autoUpdate = mock(async () => undefined);
+    const logError = mock(() => {});
+
+    const result = await startStartupAutoUpdateCheck(
+      () =>
+        startupAutoUpdate(
+          "win32",
+          fetchSpy as unknown as typeof fetch,
+          autoUpdate,
+        ),
+      logError,
+    );
+
+    expect(result).toBeUndefined();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(autoUpdate).not.toHaveBeenCalled();
+    expect(logError).not.toHaveBeenCalled();
   });
 
   test("installs and releases the lock when no other update is running", async () => {
