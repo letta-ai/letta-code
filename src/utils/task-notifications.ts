@@ -27,6 +27,15 @@ export interface TaskNotification {
   status: "completed" | "failed" | "running";
   summary: string;
   result: string;
+  /**
+   * Another agent's final report. Rendered after `result` inside an
+   * unverified `<report>` block so the recipient treats it as a claim to
+   * check, not as its own verified finding. Metadata stays in `result`.
+   */
+  report?: {
+    from: string;
+    text: string;
+  };
   outputFile?: string;
   usage?: {
     totalTokens?: number;
@@ -46,8 +55,40 @@ function escapeXml(str: string): string {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+function escapeXmlAttr(str: string): string {
+  return escapeXml(str).replace(/"/g, "&quot;");
+}
+
 function unescapeXml(str: string): string {
   return str.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
+}
+
+// ============================================================================
+// Unverified Reports
+// ============================================================================
+
+export const UNVERIFIED_REPORT_NOTICE =
+  "Not yet verified by you: check the one thing it rests on before stating it as fact, or attribute it.";
+
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Wrap another agent's report in a delimited block marked as unverified,
+ * followed by a one-line notice. The report text is XML-escaped, so it cannot
+ * close the block early or forge a second one. Idempotent: text that is
+ * already exactly a wrapped report from the same source is returned as-is.
+ */
+export function wrapUnverifiedReport(text: string, from: string): string {
+  const open = `<report from="${escapeXmlAttr(from)}" verified="no">`;
+  const alreadyWrapped = new RegExp(
+    `^${escapeRegExp(open)}[^<>]*</report>\n${escapeRegExp(UNVERIFIED_REPORT_NOTICE)}$`,
+  );
+  if (alreadyWrapped.test(text)) {
+    return text;
+  }
+  return `${open}${escapeXml(text)}</report>\n${UNVERIFIED_REPORT_NOTICE}`;
 }
 
 // ============================================================================
@@ -103,6 +144,12 @@ export function formatTaskNotification(notification: TaskNotification): string {
   // Escape summary and result to prevent XML injection
   const escapedSummary = escapeXml(notification.summary);
   const escapedResult = escapeXml(notification.result);
+  const reportBlock = notification.report
+    ? `${escapedResult ? "\n\n" : ""}${wrapUnverifiedReport(
+        notification.report.text,
+        notification.report.from,
+      )}`
+    : "";
 
   const usageLines: string[] = [];
   if (notification.usage?.totalTokens !== undefined) {
@@ -122,7 +169,7 @@ export function formatTaskNotification(notification: TaskNotification): string {
 <task-id>${notification.taskId}</task-id>
 <status>${notification.status}</status>
 <summary>${escapedSummary}</summary>
-<result>${escapedResult}</result>${usageBlock}
+<result>${escapedResult}${reportBlock}</result>${usageBlock}
 </task-notification>${notification.outputFile ? `\nFull transcript available at: ${notification.outputFile}` : ""}`;
 }
 

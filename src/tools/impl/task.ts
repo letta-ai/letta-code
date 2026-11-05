@@ -472,16 +472,29 @@ export function spawnBackgroundSubagentTask(
         );
         const durationMs = Math.max(0, Date.now() - bgTask.startTime.getTime());
 
-        const fullResult = result.success
-          ? `${header}\n\n${result.report || ""}`
+        // The child's report is delivered as an unverified report block;
+        // the header and error lines stay plain metadata.
+        const notificationBody = result.success
+          ? header
           : `${header}\n\nError: ${result.error || "Subagent execution failed"}`;
         const userCwd = getCurrentWorkingDirectory();
         const { content: truncatedResult } = truncateByChars(
-          fullResult,
+          notificationBody,
           LIMITS.TASK_OUTPUT_CHARS,
           "Task",
           { workingDirectory: userCwd },
         );
+        const report = result.success
+          ? {
+              from: `subagent:${description || subagentId}`,
+              text: truncateByChars(
+                result.report || "",
+                LIMITS.TASK_OUTPUT_CHARS,
+                "Task",
+                { workingDirectory: userCwd },
+              ).content,
+            }
+          : undefined;
 
         const defaultSummary = `Agent "${description}" ${result.success ? "completed" : "failed"}`;
         const summary = await resolveCompletionSummary(
@@ -495,6 +508,7 @@ export function spawnBackgroundSubagentTask(
           status: result.success ? "completed" : "failed",
           summary,
           result: truncatedResult,
+          report,
           outputFile,
           usage: {
             totalTokens: result.totalTokens,
