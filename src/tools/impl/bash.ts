@@ -31,6 +31,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -582,6 +583,9 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status,
         detail,
       });
+      // Publish the lower running count only after the notification is
+      // queued, so the conversation never looks drained with nothing pending.
+      notifyBackgroundProcessStateChanged(parentScope);
       scheduleBackgroundProcessCleanup(bashId);
     });
   };
