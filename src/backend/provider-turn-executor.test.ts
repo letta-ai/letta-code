@@ -100,7 +100,7 @@ describe("ProviderTurnExecutor", () => {
       );
       expect(
         chunks.find((chunk) => chunk.message_type === "usage_statistics"),
-      ).toMatchObject({ cost_usd: expected });
+      ).toMatchObject({ api_cost_usd: expected });
     },
   );
 
@@ -141,7 +141,7 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual<UsageStatistics>({
       message_type: "usage_statistics",
       step_count: 1,
-      cost_usd: expectedCost,
+      api_cost_usd: expectedCost,
       cache_write_1h_tokens: 20,
       prompt_tokens: 100,
       completion_tokens: 40,

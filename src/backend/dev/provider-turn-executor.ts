@@ -324,7 +324,7 @@ function createUsageStatisticsChunk(
     // One chunk per completed provider step (see the `done` handler), so each
     // reports exactly one step, matching Cloud's per-step usage_statistics.
     step_count: 1,
-    cost_usd: costUsd,
+    api_cost_usd: costUsd,
     ...(usage?.cacheWrite1h !== undefined
       ? { cache_write_1h_tokens: usage.cacheWrite1h }
       : {}),

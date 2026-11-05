@@ -104,8 +104,8 @@ describe("client usage cost", () => {
       { ...shared, prompt_tokens: 500 },
       "anthropic/claude-sonnet-4-5",
     );
-    expect(cloud.cost_usd).toBeCloseTo(0.00357);
-    expect(local.cost_usd).toBeCloseTo(cloud.cost_usd as number);
+    expect(cloud.api_cost_usd).toBeCloseTo(0.00357);
+    expect(local.api_cost_usd).toBeCloseTo(cloud.api_cost_usd as number);
   });
   test("ambiguous cache accounting fails closed", () => {
     const event = {
@@ -116,11 +116,11 @@ describe("client usage cost", () => {
       cost_usd: 99,
     };
     expect(
-      priceUsageEvent(event, "anthropic/claude-sonnet-4-5").cost_usd,
+      priceUsageEvent(event, "anthropic/claude-sonnet-4-5").api_cost_usd,
     ).toBeNull();
   });
   test.each([undefined, 99, null])(
-    "overwrites server cost %s on cloud events",
+    "ignores server cost %s on cloud events",
     (cost_usd) => {
       const event = {
         message_type: "usage_statistics",
@@ -129,9 +129,9 @@ describe("client usage cost", () => {
         cost_usd,
       };
       expect(
-        priceUsageEvent(event, "anthropic/claude-sonnet-4-5").cost_usd,
+        priceUsageEvent(event, "anthropic/claude-sonnet-4-5").api_cost_usd,
       ).toBeCloseTo(0.0045);
-      expect(priceUsageEvent(event, "unknown/model").cost_usd).toBeNull();
+      expect(priceUsageEvent(event, "unknown/model").api_cost_usd).toBeNull();
     },
   );
 });

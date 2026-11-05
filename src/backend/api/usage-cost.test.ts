@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import type { APIClient } from "@/backend/backend";
 import { conversationCostModel, withClientUsageCost } from "./usage-cost";
 
-test("cloud streams replace server cost and preserve controller identity", async () => {
+test("cloud streams add client cost and preserve controller identity", async () => {
   const controller = new AbortController();
   const stream = {
     controller,
@@ -26,12 +26,15 @@ test("cloud streams replace server cost and preserve controller identity", async
     return "anthropic/claude-sonnet-4-5";
   });
   const events = await Array.fromAsync(stream);
-  for (const event of events) expect(event.cost_usd).toBeCloseTo(0.0045);
+  for (const event of events)
+    expect(
+      (event as { api_cost_usd?: number | null }).api_cost_usd,
+    ).toBeCloseTo(0.0045);
   expect(lookups).toBe(1);
   expect(stream.controller).toBe(controller);
 });
 
-test("failed model lookups drop server cost", async () => {
+test("failed model lookups leave client cost null", async () => {
   const stream = {
     async *[Symbol.asyncIterator]() {
       yield {
@@ -45,7 +48,8 @@ test("failed model lookups drop server cost", async () => {
   withClientUsageCost(stream, async () => {
     throw new Error("unavailable");
   });
-  for await (const event of stream) expect(event.cost_usd).toBeNull();
+  for await (const event of stream)
+    expect((event as { api_cost_usd?: number | null }).api_cost_usd).toBeNull();
 });
 
 test("conversation override wins; default and inherited models use the agent", async () => {

@@ -321,7 +321,7 @@ export type ResultSubtype = "success" | "interrupted" | "error" | "queued";
  */
 export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics & {
   /** Client-computed list-price USD; null when pricing is unavailable. */
-  cost_usd?: number | null;
+  api_cost_usd?: number | null;
   /** Subset of cache writes with one-hour retention. */
   cache_write_1h_tokens?: number;
 };

@@ -91,11 +91,11 @@ export function calculateUsageCost(
   return Number.isFinite(cost) && cost >= 0 ? cost : null;
 }
 
-/** Replace server-reported cost before raw stream consumers (including budgets) see it. */
+/** Add the client-computed api_cost_usd before raw stream consumers (including budgets) see it. */
 export function priceUsageEvent<T extends { message_type?: string }>(
   event: T,
   model: CostModel,
-): T & { cost_usd?: number | null } {
+): T & { api_cost_usd?: number | null } {
   if (event.message_type !== "usage_statistics") return event;
   const fields = event as Record<string, unknown>;
   const count = (key: string, fallback = 0): number =>
@@ -119,7 +119,7 @@ export function priceUsageEvent<T extends { message_type?: string }>(
   }
   return {
     ...event,
-    cost_usd: calculateUsageCost(model, {
+    api_cost_usd: calculateUsageCost(model, {
       input,
       output,
       cacheRead,

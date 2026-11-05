@@ -24,6 +24,8 @@ export function withClientUsageCost<T extends { message_type?: string }>(
   stream: AsyncIterable<T>,
   resolveModel: () => Promise<string | null>,
 ): void {
+  // Non-streaming results (and test doubles) have nothing to price.
+  if (typeof stream?.[Symbol.asyncIterator] !== "function") return;
   const iterate = stream[Symbol.asyncIterator].bind(stream);
   let model: Promise<string | null> | undefined;
   stream[Symbol.asyncIterator] = async function* () {

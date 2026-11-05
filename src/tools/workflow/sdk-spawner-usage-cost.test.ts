@@ -33,5 +33,5 @@ test("prices raw SDK usage before workflow consumers read it", async () => {
     { prompt: "inspect", options: {}, callIndex: 0 },
     new AbortController().signal,
   );
-  expect(messages[0]?.event?.cost_usd).toBeCloseTo(0.0045);
+  expect(messages[0]?.event?.api_cost_usd).toBeCloseTo(0.0045);
 });
