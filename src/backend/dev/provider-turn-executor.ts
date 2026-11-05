@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
+  Api,
   AssistantMessage,
   AssistantMessageEvent,
+  Model,
   Usage,
 } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -24,6 +26,7 @@ import {
   markLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
+import type { UsageStatistics } from "@/types/protocol";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,
@@ -79,15 +82,16 @@ export interface LlmEndInfo {
 }
 
 export type ProviderStreamEvent =
-  | { type: "provider-part"; part: ProviderStreamPart }
+  | { type: "provider-part"; part: ProviderStreamPart; model?: Model<Api> }
   | { type: "local-message"; message: LocalMessage }
   | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
   part: ProviderStreamPart,
+  model?: Model<Api>,
 ): ProviderStreamEvent {
-  return { type: "provider-part", part };
+  return { type: "provider-part", part, model };
 }
 
 export function providerLocalMessage(
@@ -302,8 +306,25 @@ export function estimateProviderRequestBytes(
 
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
+  model: Model<Api> | undefined,
   contextTokensEstimate?: number,
-): LettaStreamingResponse {
+): UsageStatistics {
+  // pi-ai owns cache, context-tier, and service-tier pricing. Forward its
+  // total; zero catalog rates alone do not establish that a model is free.
+  const rates = model?.cost;
+  const hasPrice = [rates, ...(rates?.tiers ?? [])].some((rate) =>
+    [rate?.input, rate?.output, rate?.cacheRead, rate?.cacheWrite].some(
+      (value) => typeof value === "number" && value > 0,
+    ),
+  );
+  const isFreeLocalEndpoint =
+    model !== undefined &&
+    ["ollama", "lmstudio", "llama-cpp"].includes(model.provider);
+  const costUsd = hasPrice
+    ? (usage?.cost?.total ?? null)
+    : isFreeLocalEndpoint
+      ? 0
+      : null;
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -317,6 +338,7 @@ function createUsageStatisticsChunk(
     // One chunk per completed provider step (see the `done` handler), so each
     // reports exactly one step, matching Cloud's per-step usage_statistics.
     step_count: 1,
+    cost_usd: costUsd,
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
@@ -332,7 +354,7 @@ function createUsageStatisticsChunk(
       ? { reasoning_tokens: reasoningTokens }
       : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
-  } as unknown as LettaStreamingResponse;
+  } as unknown as UsageStatistics;
 }
 
 function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
@@ -503,6 +525,7 @@ function createProviderLettaStream(
               sawUsageStatistics = true;
               yield createUsageStatisticsChunk(
                 part.message.usage,
+                event.model,
                 contextTokensEstimate,
               );
             }

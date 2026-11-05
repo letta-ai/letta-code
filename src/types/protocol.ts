@@ -319,7 +319,9 @@ export type ResultSubtype = "success" | "interrupted" | "error" | "queued";
  * Usage statistics from letta-client.
  * Re-exported for convenience.
  */
-export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics;
+export type UsageStatistics = LettaStreamingResponse.LettaUsageStatistics & {
+  cost_usd?: number | null;
+};
 
 export interface ResultMessage extends MessageEnvelope {
   type: "result";
