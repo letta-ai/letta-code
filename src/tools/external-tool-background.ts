@@ -19,9 +19,64 @@ type ExternalResult = {
   status: "success" | "error";
   toolReturn: MessageCreate["content"];
 };
+/** An external tool unwound early because the turn's abort signal fired. */
+export type InterruptedExternalResult = {
+  status: "error";
+  toolReturn: string;
+};
 type Settled<T> =
   | { kind: "result"; result: T }
   | { kind: "error"; error: unknown };
+
+/**
+ * Build the fulfilled error result for an external tool whose turn was
+ * cancelled mid-flight. Mirrors the bridge-timeout wording: the remote tool
+ * was already dispatched and may still take effect, so the model must not
+ * assume the call was rolled back.
+ */
+export function interruptedExternalToolResult(
+  toolName: string,
+): InterruptedExternalResult {
+  return {
+    status: "error",
+    toolReturn: `External tool call interrupted by user: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
+  };
+}
+
+/**
+ * Settle a blocking external-tool operation when the turn's abort signal
+ * fires so a cancelled turn stops waiting for the remote result. The
+ * underlying operation keeps running; once the turn is unwound its eventual
+ * result has no consumer (the notification path is only wired after a
+ * yield), so it is dropped rather than surfaced.
+ */
+function raceExternalOperationAbort<T extends ExternalResult>(
+  operation: Promise<T>,
+  signal: AbortSignal,
+  toolName: string,
+): Promise<T | InterruptedExternalResult> {
+  if (signal.aborted) {
+    return Promise.resolve(interruptedExternalToolResult(toolName));
+  }
+  return new Promise((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      resolve(interruptedExternalToolResult(toolName));
+    };
+    signal.addEventListener("abort", onAbort);
+    operation.then(
+      (result) => {
+        cleanup();
+        resolve(result);
+      },
+      (error: unknown) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
 
 function notificationText(toolReturn: unknown): string {
   return scrubAmbientSecrets(String(toolReturn));
@@ -34,6 +89,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   operation: Promise<T>,
   options?: {
     yieldMs?: number;
+    signal?: AbortSignal;
     scope?: NotificationScope;
     runtimeScope?: {
       agentId?: string | null;
@@ -45,7 +101,10 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     enqueue?: (message: QueuedMessage) => void;
     shouldEnqueue?: () => boolean | Promise<boolean>;
   },
-): Promise<T | { status: "success"; toolReturn: string }> {
+): Promise<
+  T | { status: "success"; toolReturn: string } | InterruptedExternalResult
+> {
+  const signal = options?.signal;
   const runtime = options?.runtimeScope;
   const scope =
     options?.scope ??
@@ -70,7 +129,9 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     !scope ||
     (!options?.enqueue && !isQueueBridgeConnected())
   )
-    return operation;
+    return signal
+      ? raceExternalOperationAbort(operation, signal, toolName)
+      : operation;
 
   const startedAt = Date.now();
   const settled: Promise<Settled<T>> = operation.then(
@@ -78,6 +139,13 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     (error: unknown) => ({ kind: "error", error }),
   );
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const abortSettled = signal
+    ? new Promise<{ kind: "aborted" }>((resolve) => {
+        onAbort = () => resolve({ kind: "aborted" });
+        signal?.addEventListener("abort", onAbort);
+      })
+    : undefined;
   const first = await Promise.race([
     settled,
     new Promise<{ kind: "yield" }>((resolve) => {
@@ -86,13 +154,22 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
         options?.yieldMs ?? DEFAULT_EXTERNAL_TOOL_YIELD_MS,
       );
     }),
+    ...(abortSettled ? [abortSettled] : []),
   ]);
   if (timer !== undefined) clearTimeout(timer);
+  if (onAbort !== undefined && signal) {
+    signal.removeEventListener("abort", onAbort);
+  }
+  if (first.kind === "aborted") return interruptedExternalToolResult(toolName);
   if (first.kind === "result") return first.result;
   if (first.kind === "error") throw first.error;
   // A mod may reload while the operation is in the foreground window.
   // If a tool_end handler became active, wait for the real result inline.
-  if (!canBackground()) return operation;
+  if (!canBackground()) {
+    return signal
+      ? raceExternalOperationAbort(operation, signal, toolName)
+      : operation;
+  }
 
   const taskId = `external_${crypto.randomUUID()}`;
   const enqueue = options?.enqueue ?? addToMessageQueue;

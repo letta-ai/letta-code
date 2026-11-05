@@ -2,7 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { classifyApprovals } from "@/cli/helpers/approval-classification";
+import {
+  classifyApprovals,
+  getMissingRequiredArgs,
+} from "@/cli/helpers/approval-classification";
 import {
   clearModPermissions,
   registerModPermission,
@@ -549,5 +552,44 @@ describe("classifyApprovals", () => {
       matchedRule: "mod permission:deny-exit-plan-mode",
       reason: "still planning",
     });
+  });
+
+  test("treats null as present only when the property schema admits null", async () => {
+    registerModTool({
+      name: "nullable_args_tool",
+      description: "nullable args test tool",
+      parameters: {
+        type: "object",
+        properties: {
+          nullable: { type: ["string", "null"] },
+          strict: { type: "string" },
+          union: { anyOf: [{ type: "string" }, { type: "null" }] },
+        },
+        required: ["nullable", "strict", "union"],
+      },
+      owner: {
+        id: "global:/tmp/nullable_args_tool.ts",
+        path: "/tmp/nullable_args_tool.ts",
+        scope: "global",
+        generation: 1,
+      },
+      path: "/tmp/nullable_args_tool.ts",
+      requiresApproval: true,
+      approvalPolicy: "ask",
+      parallelSafe: false,
+      activationSignal: new AbortController().signal,
+      run: () => "ok",
+    });
+
+    expect(
+      await getMissingRequiredArgs("nullable_args_tool", {
+        nullable: null,
+        strict: null,
+        union: null,
+      }),
+    ).toEqual(["strict"]);
+    expect(
+      await getMissingRequiredArgs("nullable_args_tool", { strict: "x" }),
+    ).toEqual(["nullable", "union"]);
   });
 });

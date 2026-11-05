@@ -19,15 +19,15 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import { debugWarn } from "@/utils/debug";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 const MAX_ENTRIES = 100;
 const CONTENT_TRUNCATE_LEN = 200;
 const MAX_SESSION_FILES = 5;
-const LOG_BASE_DIR = join(homedir(), ".letta", "logs", "chunk-logs");
+const LOG_BASE_DIR = join(resolveGlobalConfigDir(), "logs", "chunk-logs");
 
 // ---------------------------------------------------------------------------
 // Truncation helpers

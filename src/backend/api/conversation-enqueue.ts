@@ -58,19 +58,28 @@ async function waitForShutdownRetry(
 
 export interface EnqueueReceipt {
   status: "queued";
-  agent_id: string;
+  agent_id: string | null;
   conversation_id: string;
   client_message_id: string;
   workflow_id: string;
   super_run_id: string;
   /** Listener selected for a managed Agent launch, used only for cancellation. */
   connection_id?: string;
+  /** Parent used for Cloud status and cancellation, never for history ownership. */
+  parent_agent_id?: string;
   /** Original enqueue attribution; preserve null so cancellation suppresses fallback. */
   acting_user_id?: string | null;
 }
 
+export function getEnqueueAgentId(receipt: EnqueueReceipt): string {
+  const id = receipt.agent_id ?? receipt.parent_agent_id;
+  if (!id) throw new Error("Queued conversation has no agent or parent agent.");
+  return id;
+}
+
 export interface EnqueueConversationInput {
-  agentId: string;
+  /** Required only for `default`; other conversation IDs identify their agent. */
+  agentId?: string;
   conversationId: string;
   clientMessageId: string;
   content: MessageCreate["content"];
@@ -85,7 +94,7 @@ export async function enqueueConversationMessage(
   request = apiRequest,
 ): Promise<EnqueueReceipt> {
   const body = {
-    agent_id: input.agentId,
+    ...(input.agentId !== undefined ? { agent_id: input.agentId } : {}),
     client_message_id: input.clientMessageId,
     ...(input.computer !== undefined ? { computer: input.computer } : {}),
     messages: [
@@ -99,7 +108,7 @@ export async function enqueueConversationMessage(
   let accepted: Pick<
     EnqueueReceipt,
     "client_message_id" | "workflow_id" | "super_run_id"
-  >;
+  > & { agent_id?: string | null };
   let retries = 0;
   while (true) {
     try {
@@ -133,7 +142,7 @@ export async function enqueueConversationMessage(
   return {
     ...accepted,
     status: "queued",
-    agent_id: input.agentId,
+    agent_id: accepted.agent_id ?? input.agentId ?? null,
     conversation_id: input.conversationId,
     acting_user_id: input.actingUserId,
   };
@@ -143,8 +152,8 @@ export async function enqueueConversationMessage(
 export async function dequeueConversationMessage(
   input: Pick<
     EnqueueConversationInput,
-    "agentId" | "conversationId" | "clientMessageId" | "actingUserId"
-  >,
+    "conversationId" | "clientMessageId" | "actingUserId"
+  > & { agentId: string },
   signal?: AbortSignal,
   request = apiRequest,
 ): Promise<{

@@ -666,7 +666,7 @@ describe("input-format stream-json", () => {
               message: {
                 role: "user",
                 content:
-                  "Launch exactly one Agent tool with subagent_type='general-purpose'. " +
+                  "Launch exactly one Agent tool with the default Letta agent (no subagent_type). " +
                   `Ask the subagent to use Read on ${JSON.stringify(fixture.reportPath)} and return the file's contents verbatim. ` +
                   "Do not read the file yourself or call any other tools. " +
                   "After the Agent tool returns, reply with exactly LAUNCHED and end your turn. " +
@@ -733,7 +733,10 @@ describe("input-format stream-json", () => {
         ).toBe(false);
 
         expect(results[0]?.result?.trim()).toBe("LAUNCHED");
-        expect(result?.result?.trim()).toBe(fixture.expectedReport);
+        // The report token is unique per run and only reachable through the
+        // child, so finding it proves the handoff without depending on how the
+        // model frames its final sentence.
+        expect(result?.result).toContain(fixture.expectedReport);
       } finally {
         await rm(fixture.rootDir, { recursive: true, force: true });
       }

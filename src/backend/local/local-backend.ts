@@ -39,6 +39,7 @@ import {
   assertLocalCompactionProgress,
   assertLocalPressureBudget,
   estimateLocalMessageTokens,
+  finishLocalFullCompaction,
   isLocalSlidingWindowCompactionPlanningError,
   LOCAL_DEFAULT_COMPACTION_MODE,
   LOCAL_DEFAULT_SLIDING_WINDOW_PERCENTAGE,
@@ -46,6 +47,7 @@ import {
   type LocalCompactionResult,
   type LocalCompactionStats,
   type LocalCompleteFunction,
+  localCompactionSettingsForStorage,
   packageLocalSummaryMessage,
   planLocalAllCompaction,
   planLocalSlidingWindowCompaction,
@@ -155,21 +157,6 @@ function validateLocalCompactionSettingsRecord(
       )}").`,
     );
   }
-}
-
-function localCompactionSettingsForStorage(
-  settings: LocalCompactionSettingsRecord | null | undefined,
-): LocalCompactionSettingsRecord | null | undefined {
-  if (settings === undefined || settings === null) return settings;
-
-  const hasLocalSetting =
-    hasOwn(settings, "mode") ||
-    hasOwn(settings, "prompt") ||
-    hasOwn(settings, "clip_chars") ||
-    hasOwn(settings, "sliding_window_percentage");
-  if (!hasLocalSetting) return undefined;
-
-  return { ...settings };
 }
 
 function formatMidConversationMemoryUpdate(
@@ -837,23 +824,28 @@ export class LocalBackend extends HeadlessBackend {
       messages_count_before: messages.length,
       messages_count_after: 1 + plan.messagesToKeep.length,
     };
-    assertLocalCompactionProgress(stats, "all", settings.maxMessageTokens);
-    const storeResult = this.store.compactConversationAll({
-      conversationId,
-      agentId,
+    assertLocalPressureBudget(
+      stats.context_tokens_after ?? 0,
+      "all",
+      settings.maxMessageTokens,
+    );
+    return finishLocalFullCompaction({
+      messages,
       summary,
-      packedSummary: packageLocalSummaryMessage(summary, stats, settings.mode),
       stats,
-      remainingMessages: plan.messagesToKeep,
+      plan,
+      systemPrompt: agent.system,
+      persist: (summary, packedSummary, remainingMessages) =>
+        this.store.compactConversationAll({
+          conversationId,
+          agentId,
+          summary,
+          packedSummary,
+          stats,
+          remainingMessages,
+        }),
     });
-    return {
-      numMessagesBefore: storeResult.numMessagesBefore,
-      numMessagesAfter: storeResult.numMessagesAfter,
-      summary,
-      stats,
-    };
   }
-
   private async compactLocalConversationSlidingWindow(
     conversationId: string,
     agentId: string,
@@ -913,7 +905,6 @@ export class LocalBackend extends HeadlessBackend {
       stats,
     };
   }
-
   private async getOrCompileSystemPrompt(
     conversationId: string,
     agentId: string,
@@ -934,7 +925,6 @@ export class LocalBackend extends HeadlessBackend {
     ) {
       return existing;
     }
-
     if (
       existing?.rawSystemHash === rawSystemHash &&
       existing.memfsRevision !== memfsRevision

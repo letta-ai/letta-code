@@ -5,7 +5,7 @@
  * 1. Prompt for bot token from @BotFather
  * 2. Validate via getMe()
  * 3. Choose DM policy
- * 4. Write config to ~/.letta/channels/telegram/accounts.json
+ * 4. Write config to the active product's channels directory
  * 5. Start `letta server --channels telegram`
  * 6. Message the bot from Telegram to get a pairing code
  * 7. Run `/channels telegram pair <code>` in the target ADE/Desktop conversation
@@ -14,6 +14,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccountWithSecrets } from "@/channels/accounts";
+import { getChannelAccountsPath } from "@/channels/config";
 import type { DmPolicy, TelegramChannelAccount } from "@/channels/types";
 import { validateTelegramToken } from "./account-display";
 import { ensureTelegramRuntimeInstalled } from "./runtime";
@@ -135,9 +136,7 @@ export async function runTelegramSetup(): Promise<boolean> {
 
     await upsertChannelAccountWithSecrets("telegram", account);
     console.log("\n✓ Telegram bot configured!");
-    console.log(
-      "Config written to: ~/.letta/channels/telegram/accounts.json\n",
-    );
+    console.log(`Config written to: ${getChannelAccountsPath("telegram")}\n`);
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels telegram");
     console.log("  2. Message the bot from Telegram to get a pairing code");

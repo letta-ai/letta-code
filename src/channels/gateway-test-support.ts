@@ -152,6 +152,12 @@ export class FakeClient implements ChannelGatewayClient {
     for (const listener of this.messageListeners) listener(message);
   }
 
+  async emitAsync(message: WsProtocolMessage): Promise<void> {
+    await Promise.all(
+      this.messageListeners.map(async (listener) => listener(message)),
+    );
+  }
+
   emitExternalToolCall(request: ExternalToolCallRequestMessage): void {
     for (const listener of this.externalToolListeners) listener(request);
   }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline/promises";
 import { upsertChannelAccount } from "@/channels/accounts";
+import { getChannelAccountsPath } from "@/channels/config";
 import type {
   DmPolicy,
   WhatsAppChannelAccount,
@@ -149,9 +150,7 @@ export async function runWhatsAppSetup(): Promise<boolean> {
 
     upsertChannelAccount("whatsapp", account);
     console.log("\nWhatsApp account configured.");
-    console.log(
-      "Config written to: ~/.letta/channels/whatsapp/accounts.json\n",
-    );
+    console.log(`Config written to: ${getChannelAccountsPath("whatsapp")}\n`);
     console.log("Next steps:");
     console.log("  1. Start the listener: letta server --channels whatsapp");
     console.log("  2. Scan the QR from WhatsApp linked devices");

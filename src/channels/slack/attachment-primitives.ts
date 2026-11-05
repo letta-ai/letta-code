@@ -26,9 +26,10 @@ export type SlackAttachmentReadClient = {
     replies(args: {
       channel: string;
       ts: string;
+      oldest?: string;
+      latest?: string;
       limit?: number;
       inclusive?: boolean;
-      cursor?: string;
     }): Promise<unknown>;
   };
 };
@@ -54,14 +55,9 @@ type SlackAttachmentLike = {
 };
 
 type SlackMessageLike = {
-  ts?: string;
+  ts: string;
   files?: unknown[];
   attachments?: unknown[];
-};
-
-type SlackMessagePage = {
-  messages?: SlackMessageLike[];
-  response_metadata?: { next_cursor?: string };
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -72,6 +68,25 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
+}
+
+function parseSlackMessages(value: unknown): SlackMessageLike[] {
+  const page = asRecord(value);
+  if (!page || !Array.isArray(page.messages)) return [];
+
+  return page.messages
+    .map((entry): SlackMessageLike | null => {
+      const message = asRecord(entry);
+      if (!message || !isNonEmptyString(message.ts)) return null;
+      return {
+        ts: message.ts,
+        files: Array.isArray(message.files) ? message.files : undefined,
+        attachments: Array.isArray(message.attachments)
+          ? message.attachments
+          : undefined,
+      };
+    })
+    .filter((entry): entry is SlackMessageLike => Boolean(entry));
 }
 
 function normalizeSlackFileLike(value: unknown): SlackFileLike | null {
@@ -151,11 +166,6 @@ export function collectSlackFiles(rawEvent: unknown): SlackFileLike[] {
   return Array.from(deduped.values()).slice(0, MAX_SLACK_ATTACHMENTS);
 }
 
-function nextCursor(page: SlackMessagePage): string | undefined {
-  const value = page.response_metadata?.next_cursor;
-  return isNonEmptyString(value) ? value.trim() : undefined;
-}
-
 /**
  * Find the exact Slack message and return only its files.
  *
@@ -172,34 +182,31 @@ export async function resolveSlackMessageFiles(params: {
   client: SlackAttachmentReadClient;
 }): Promise<SlackFileLike[] | null> {
   if (isNonEmptyString(params.threadTs)) {
-    let cursor: string | undefined;
-    do {
-      const page = (await params.client.conversations.replies({
+    const messages = parseSlackMessages(
+      await params.client.conversations.replies({
         channel: params.channelId,
         ts: params.threadTs,
-        limit: 200,
+        oldest: params.messageTs,
+        latest: params.messageTs,
         inclusive: true,
-        ...(cursor ? { cursor } : {}),
-      })) as SlackMessagePage;
-      const message = (page.messages ?? []).find(
-        (entry) => entry.ts === params.messageTs,
-      );
-      if (message) return collectSlackFiles(message);
-      cursor = nextCursor(page);
-    } while (cursor);
-    return null;
+        // Slack may lead with the thread root even when the bounds pin a reply.
+        limit: 2,
+      }),
+    );
+    const message = messages.find((entry) => entry.ts === params.messageTs);
+    return message ? collectSlackFiles(message) : null;
   }
 
-  const page = (await params.client.conversations.history({
-    channel: params.channelId,
-    oldest: params.messageTs,
-    latest: params.messageTs,
-    inclusive: true,
-    limit: 1,
-  })) as SlackMessagePage;
-  const message = (page.messages ?? []).find(
-    (entry) => entry.ts === params.messageTs,
+  const messages = parseSlackMessages(
+    await params.client.conversations.history({
+      channel: params.channelId,
+      oldest: params.messageTs,
+      latest: params.messageTs,
+      inclusive: true,
+      limit: 1,
+    }),
   );
+  const message = messages.find((entry) => entry.ts === params.messageTs);
   return message ? collectSlackFiles(message) : null;
 }
 

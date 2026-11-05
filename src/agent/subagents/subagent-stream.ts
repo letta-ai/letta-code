@@ -14,6 +14,11 @@ import {
 } from "@/agent/subagent-state.js";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
+import { toolOutputText } from "@/tools/impl/external-tool-call";
+import {
+  recordTaskEvent,
+  recordTaskProgressToolCall,
+} from "@/tools/impl/task-transcript";
 import { debugWarn } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import type { SubagentResult } from ".";
@@ -39,10 +44,16 @@ export interface ExecutionState {
   } | null;
   displayedToolCalls: Set<string>;
   toolCallStatuses: Map<string, "success" | "error">;
+  /**
+   * Assistant or reasoning text streamed so far for the current message. The
+   * child emits one chunk per token batch, all with the same ID; the whole
+   * message goes to the task's progress log once it ends.
+   */
+  pendingText?: { id: string; kind: "text" | "reasoning"; text: string };
 }
 
 /**
- * Record a tool call to the state store
+ * Record a tool call to the state store and the task's progress log
  */
 function recordToolCall(
   subagentId: string,
@@ -50,10 +61,72 @@ function recordToolCall(
   toolName: string,
   toolArgs: string,
   displayedToolCalls: Set<string>,
+  at?: string,
 ): void {
   if (!toolCallId || !toolName || displayedToolCalls.has(toolCallId)) return;
   displayedToolCalls.add(toolCallId);
   addToolCall(subagentId, toolCallId, toolName, toolArgs);
+  recordTaskProgressToolCall(
+    subagentId,
+    { id: toolCallId, name: toolName, args: toolArgs },
+    at,
+  );
+}
+
+function assistantChunkText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) =>
+      part && typeof part === "object" && "text" in part
+        ? String((part as { text?: unknown }).text ?? "")
+        : "",
+    )
+    .join("");
+}
+
+/**
+ * Write the assistant message streamed so far to the task's progress log.
+ * Called when the message ends: another message or the result arrives, or the
+ * child's stdout closes.
+ */
+export function flushPendingProgressText(
+  state: ExecutionState,
+  subagentId: string,
+): void {
+  const pending = state.pendingText;
+  if (!pending) return;
+  state.pendingText = undefined;
+  recordTaskEvent(subagentId, { type: pending.kind, text: pending.text });
+}
+
+function handleTextChunk(
+  event: {
+    id?: string;
+    otid?: string;
+    content?: unknown;
+    reasoning?: unknown;
+    message_type?: string;
+  },
+  state: ExecutionState,
+  subagentId: string,
+): void {
+  const kind =
+    event.message_type === "reasoning_message" ? "reasoning" : "text";
+  const id = event.id ?? event.otid ?? "";
+  const text =
+    kind === "reasoning"
+      ? toolOutputText(event.reasoning)
+      : assistantChunkText(event.content);
+  const pending = state.pendingText;
+  if (pending && (pending.id !== id || pending.kind !== kind)) {
+    flushPendingProgressText(state, subagentId);
+  }
+  state.pendingText = {
+    id,
+    kind,
+    text: (state.pendingText?.text ?? "") + text,
+  };
 }
 
 /**
@@ -91,6 +164,7 @@ function handleInitEvent(
  */
 function handleToolCallEvent(
   event: {
+    date?: string;
     tool_call?: { tool_call_id?: string; name?: string; arguments?: string };
     tool_calls?: Array<{
       tool_call_id?: string;
@@ -116,21 +190,58 @@ function handleToolCallEvent(
         name,
         toolArgs,
         state.displayedToolCalls,
+        typeof event.date === "string" ? event.date : undefined,
       );
     }
   }
 }
 
+interface ToolReturnFields {
+  tool_call_id?: string;
+  status?: string;
+  tool_return?: unknown;
+  stdout?: unknown;
+  stderr?: unknown;
+}
+
+type ToolReturnEvent = ToolReturnFields & {
+  date?: string;
+  tool_returns?: ToolReturnFields[] | null;
+};
+
+/** Write each tool return of a `tool_return_message`, in full, to the task's logs. */
+export function recordToolReturnProgress(
+  event: ToolReturnEvent,
+  subagentId: string,
+): void {
+  const returns = Array.isArray(event.tool_returns)
+    ? event.tool_returns
+    : [event];
+  for (const toolReturn of returns) {
+    if (!toolReturn.tool_call_id) continue;
+    const output =
+      toolOutputText(toolReturn.tool_return) ||
+      [toolReturn.stdout, toolReturn.stderr]
+        .map(toolOutputText)
+        .filter(Boolean)
+        .join("\n");
+    recordTaskEvent(
+      subagentId,
+      {
+        type: "tool_result",
+        tool_call_id: toolReturn.tool_call_id,
+        is_error: toolReturn.status === "error",
+        output,
+      },
+      { at: typeof event.date === "string" ? event.date : undefined },
+    );
+  }
+}
+
 function handleToolReturnEvent(
-  event: {
-    tool_call_id?: string;
-    status?: string;
-    tool_returns?: Array<{
-      tool_call_id?: string;
-      status?: string;
-    }>;
-  },
+  event: ToolReturnEvent,
   state: ExecutionState,
+  subagentId: string,
 ): void {
   const returns = Array.isArray(event.tool_returns)
     ? event.tool_returns
@@ -143,6 +254,7 @@ function handleToolReturnEvent(
       state.toolCallStatuses.set(toolCallId, toolReturn.status);
     }
   }
+  recordToolReturnProgress(event, subagentId);
 }
 
 /**
@@ -151,6 +263,7 @@ function handleToolReturnEvent(
 function isEnqueueReceipt(event: {
   status?: unknown;
   agent_id?: unknown;
+  parent_agent_id?: unknown;
   conversation_id?: unknown;
   client_message_id?: unknown;
   super_run_id?: unknown;
@@ -159,7 +272,10 @@ function isEnqueueReceipt(event: {
 }): event is EnqueueReceipt {
   return (
     event.status === "queued" &&
-    typeof event.agent_id === "string" &&
+    (typeof event.agent_id === "string" ||
+      (event.agent_id === null && typeof event.parent_agent_id === "string")) &&
+    (event.parent_agent_id === undefined ||
+      typeof event.parent_agent_id === "string") &&
     typeof event.conversation_id === "string" &&
     typeof event.client_message_id === "string" &&
     typeof event.super_run_id === "string" &&
@@ -195,6 +311,7 @@ function handleResultEvent(
     num_turns?: number;
     status?: unknown;
     agent_id?: unknown;
+    parent_agent_id?: unknown;
     conversation_id?: unknown;
     client_message_id?: unknown;
     super_run_id?: unknown;
@@ -210,6 +327,9 @@ function handleResultEvent(
       state.enqueueReceipt = {
         status: "queued",
         agent_id: event.agent_id,
+        ...(event.parent_agent_id
+          ? { parent_agent_id: event.parent_agent_id }
+          : {}),
         conversation_id: event.conversation_id,
         client_message_id: event.client_message_id,
         super_run_id: event.super_run_id,
@@ -269,22 +389,33 @@ export function processStreamEvent(
         break;
 
       case "message":
-        // Record tool calls so the subagent's tool-call list stays in sync,
-        // then forward the message for WS streaming to the web UI.
+        // Record tool calls, results, and text so the subagent's tool-call
+        // list and the task's logs stay in sync, then forward the message
+        // for WS streaming to the web UI.
+        if (
+          event.message_type === "assistant_message" ||
+          event.message_type === "reasoning_message"
+        ) {
+          handleTextChunk(event, state, subagentId);
+        } else if (event.message_type !== "usage_statistics") {
+          flushPendingProgressText(state, subagentId);
+        }
         if (event.message_type === "tool_call_message") {
           handleToolCallEvent(event, state, subagentId);
         }
         if (event.message_type === "tool_return_message") {
-          handleToolReturnEvent(event, state);
+          handleToolReturnEvent(event, state, subagentId);
         }
         emitStreamEvent(subagentId, event);
         break;
 
       case "result":
+        flushPendingProgressText(state, subagentId);
         handleResultEvent(event, state, subagentId);
         break;
 
       case "error":
+        flushPendingProgressText(state, subagentId);
         state.finalError = event.error || event.message || "Unknown error";
         break;
     }

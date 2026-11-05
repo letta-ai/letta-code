@@ -1,4 +1,4 @@
-import type { FsSandboxPolicy } from "./policy.js";
+import { type FsSandboxPolicy, getOrderedSandboxPathRules } from "./policy.js";
 
 /**
  * macOS Seatbelt backend.
@@ -53,34 +53,33 @@ export function buildSeatbeltProfile(policy: FsSandboxPolicy): {
     lines.push(`(allow file-write* (subpath (param "${name}")))`);
   });
 
-  // 3. Wall off the denied roots entirely (read + write). Overrides the base
-  //    writable above for the cross-agent subtree.
-  policy.deniedRoots.forEach((root, i) => {
-    const name = `DENIED_${i}`;
-    defines.push({ name, value: root });
-    lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
-    // Git linked worktrees may stat denied ancestor directories while resolving
-    // an allowed worktree path. Re-allow metadata on the denied root itself so
-    // path canonicalization can succeed without exposing directory contents or
-    // file data from other agents.
-    lines.push(`(allow file-read-metadata (literal (param "${name}")))`);
-  });
+  // 3. Apply deny and self-carve rules from broadest path to narrowest path.
+  //    Seatbelt is last-match-wins, so an alternating overlap shape remains:
+  //    primary deny → outer self → nested deny → inner self.
+  for (const rule of getOrderedSandboxPathRules(policy)) {
+    const prefix =
+      rule.kind === "deny"
+        ? "DENIED"
+        : rule.kind === "readonly"
+          ? "READONLY"
+          : "WRITABLE";
+    const name = `${prefix}_${rule.index}`;
+    defines.push({ name, value: rule.root });
 
-  // 4. Restore writable roots (read + write). Emitted after every deny above so
-  //    it wins — including for a self-memory dir nested inside a denied root.
-  policy.writableRoots.forEach((root, i) => {
-    const name = `WRITABLE_${i}`;
-    defines.push({ name, value: root });
-    lines.push(`(allow file-read* file-write* (subpath (param "${name}")))`);
-  });
-
-  // 5. Restore readonly roots (read only). Wins over the read-deny; the
-  //    corresponding write-deny still stands, so these stay read-only.
-  policy.readonlyRoots.forEach((root, i) => {
-    const name = `READONLY_${i}`;
-    defines.push({ name, value: root });
-    lines.push(`(allow file-read* (subpath (param "${name}")))`);
-  });
+    if (rule.kind === "deny") {
+      lines.push(`(deny file-read* file-write* (subpath (param "${name}")))`);
+      // Git linked worktrees may stat denied ancestor directories while
+      // resolving an allowed worktree path. Metadata does not expose contents.
+      lines.push(`(allow file-read-metadata (literal (param "${name}")))`);
+    } else if (rule.kind === "readonly") {
+      // Revoke a broader writable ancestor before re-allowing reads. A still
+      // narrower writable descendant is emitted later and can opt back in.
+      lines.push(`(deny file-write* (subpath (param "${name}")))`);
+      lines.push(`(allow file-read* (subpath (param "${name}")))`);
+    } else {
+      lines.push(`(allow file-read* file-write* (subpath (param "${name}")))`);
+    }
+  }
 
   return { profile: `${lines.join("\n")}\n`, defines };
 }

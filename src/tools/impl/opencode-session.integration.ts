@@ -172,7 +172,7 @@ test("Agent launch returns an early native ID and TaskStop stops its background 
     },
     async () => {
       const launch = await launchSubagent({
-        subagent_type: "opencode",
+        harness: "opencode",
         description: "Cancellation proof",
         prompt: "Run sleep 30 in the shell, then reply done.",
         mcp: { inherit: false },

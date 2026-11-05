@@ -1,5 +1,4 @@
 import { runPostTurnMemorySync } from "@/reminders/memory-git-sync";
-import { enqueueMemoryGitSyncReminder } from "@/reminders/state";
 import { settingsManager } from "@/settings-manager";
 import { releaseChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { TO_SUBSCRIBERS } from "./connection";
@@ -69,9 +68,6 @@ export async function runListenerTurnCleanup(params: {
           { agent_id: agentId, conversation_id: conversationId },
           TO_SUBSCRIBERS,
         );
-      },
-      enqueueReminder: (text) => {
-        enqueueMemoryGitSyncReminder(runtime.reminderState, { text });
       },
     });
   }

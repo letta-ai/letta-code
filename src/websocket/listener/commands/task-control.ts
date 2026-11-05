@@ -1,6 +1,7 @@
 import type WebSocket from "ws";
 import type {
   LaunchSubagentCommand,
+  ReadSubagentEventsCommand,
   SubagentMessageCommand,
   SubagentStopCommand,
 } from "@/types/subagent-protocol";
@@ -11,6 +12,7 @@ import {
   handleSubagentMessageCommand,
   handleSubagentStopCommand,
 } from "./subagent-control";
+import { handleReadSubagentEventsCommand } from "./subagent-events";
 import { handleLaunchSubagentCommand } from "./subagents";
 import type {
   GetOrCreateScopedRuntime,
@@ -22,6 +24,7 @@ export async function handleTaskControlCommand(
   command:
     | LaunchSubagentCommand
     | MonitorStopCommand
+    | ReadSubagentEventsCommand
     | SubagentMessageCommand
     | SubagentStopCommand,
   context: {
@@ -44,6 +47,11 @@ export async function handleTaskControlCommand(
   const execute = async () => {
     if (command.type === "monitor_stop") {
       const response = await handleMonitorStopCommand(command, runtime);
+      safeSocketSend(socket, response, response.type, command.type);
+      return;
+    }
+    if (command.type === "read_subagent_events") {
+      const response = handleReadSubagentEventsCommand(command);
       safeSocketSend(socket, response, response.type, command.type);
       return;
     }

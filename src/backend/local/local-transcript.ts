@@ -358,9 +358,24 @@ export function readJsonFile<T>(path: string): T | undefined {
 }
 
 export function readJsonlFile<T>(path: string): T[] {
-  if (!existsSync(path)) return [];
-
   const items: T[] = [];
+  forEachJsonlRow<T>(path, (item) => {
+    items.push(item);
+  });
+  return items;
+}
+
+/**
+ * Stream a JSONL file row by row in 64 KB chunks. Only the current row is
+ * held in memory, so callers that do not retain rows stay bounded no matter
+ * how large the file grows.
+ */
+export function forEachJsonlRow<T>(
+  path: string,
+  onRow: (item: T) => void,
+): void {
+  if (!existsSync(path)) return;
+
   const buffer = Buffer.alloc(64 * 1024);
   const pending: Buffer[] = [];
   const fd = openSync(path, "r");
@@ -377,7 +392,7 @@ export function readJsonlFile<T>(path: string): T[] {
           : suffix;
         pending.length = 0;
         const text = line.toString("utf8");
-        if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+        if (text.trim().length > 0) onRow(JSON.parse(text) as T);
         lineStart = index + 1;
       }
       if (lineStart < bytesRead) {
@@ -390,9 +405,8 @@ export function readJsonlFile<T>(path: string): T[] {
 
   if (pending.length > 0) {
     const text = Buffer.concat(pending).toString("utf8");
-    if (text.trim().length > 0) items.push(JSON.parse(text) as T);
+    if (text.trim().length > 0) onRow(JSON.parse(text) as T);
   }
-  return items;
 }
 
 export function readJsonlFileSuffix<T>(

@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -867,5 +868,22 @@ describe("syncPendingMemoryCommitsAfterTurn", () => {
 
     expect(result.status).toBe("skipped");
     expect(git(repo, "rev-list --count @{u}..HEAD").trim()).toBe("1");
+  });
+});
+
+describe("attached repository mount depth", () => {
+  test("uses shallow clones and normal fast-forward refreshes", () => {
+    const source = readFileSync(
+      new URL("./memory-git.ts", import.meta.url),
+      "utf8",
+    );
+    const mountSync = source.slice(
+      source.indexOf("async function syncRepoMount("),
+      source.indexOf("export async function maybeUpdateMemoryRemoteOrigin("),
+    );
+    expect(mountSync).toContain(
+      '["clone", "--depth", "1", args.remoteUrl, "."]',
+    );
+    expect(mountSync).toContain('["pull", "--ff-only"]');
   });
 });

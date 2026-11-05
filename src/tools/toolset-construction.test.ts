@@ -111,8 +111,11 @@ describe("shared toolset construction", () => {
       expect(description).toContain("## Available Agents");
       expect(description).toContain("### toolset-auditor");
       expect(description).toContain("Inspect toolset assembly");
-      expect(description).toContain("### claude-code");
-      expect(description).toContain("### codex");
+      // External workers are harness values, not subagent types; internal
+      // subagents are harness-launched only.
+      for (const hidden of ["claude-code", "codex", "cursor", "reflection"]) {
+        expect(description).not.toContain(`### ${hidden}\n`);
+      }
     }
     const other = await prepare({ toolsetPreference: "letta" });
     expect(

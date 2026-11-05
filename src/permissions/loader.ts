@@ -6,6 +6,12 @@ import { type FSWatcher, readFileSync, statSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { exists, readFile, writeFile } from "@/utils/fs.js";
+import {
+  hasGlobalConfigDirOverride,
+  isHomeWorkingDirectory,
+  isProjectSettingsPathGlobal,
+  resolveGlobalSettingsPath,
+} from "@/utils/settings-path";
 import { migratePermissionMode } from "./mode";
 import {
   normalizePermissionRule,
@@ -23,6 +29,7 @@ type SettingsFile = {
 };
 
 type UserSettingsPathsOptions = {
+  configDir?: string;
   homeDir?: string;
   xdgConfigHome?: string;
 };
@@ -47,29 +54,40 @@ const watchers = new Map<string, FSWatcher>();
 
 export function getUserSettingsPaths(options: UserSettingsPathsOptions = {}): {
   canonical: string;
-  legacy: string;
+  legacy?: string;
 } {
   const homeDir = options.homeDir || homedir();
+  const env: NodeJS.ProcessEnv = { ...process.env, HOME: homeDir };
+  if (options.configDir !== undefined) {
+    env.LETTA_CONFIG_DIR = options.configDir;
+  }
   const xdgConfigHome =
     options.xdgConfigHome ||
     process.env.XDG_CONFIG_HOME ||
     join(homeDir, ".config");
 
   return {
-    canonical: join(homeDir, ".letta", "settings.json"),
-    legacy: join(xdgConfigHome, "letta", "settings.json"),
+    canonical: resolveGlobalSettingsPath(env, homeDir),
+    ...(hasGlobalConfigDirOverride(env)
+      ? {}
+      : { legacy: join(xdgConfigHome, "letta", "settings.json") }),
   };
 }
 
 function getPermissionSourcePaths(workingDirectory: string): string[] {
   const { canonical: userSettingsPath, legacy: legacyUserSettingsPath } =
     getUserSettingsPaths();
-  return [
-    legacyUserSettingsPath, // User legacy
-    userSettingsPath, // User (canonical)
-    join(workingDirectory, ".letta", "settings.json"), // Project
-    join(workingDirectory, ".letta", "settings.local.json"), // Local
-  ];
+  const sources = [legacyUserSettingsPath, userSettingsPath].filter(
+    (path): path is string => Boolean(path),
+  );
+  if (!isProjectSettingsPathGlobal(workingDirectory))
+    sources.push(join(workingDirectory, ".letta", "settings.json"));
+  if (
+    !hasGlobalConfigDirOverride() ||
+    !isHomeWorkingDirectory(workingDirectory)
+  )
+    sources.push(join(workingDirectory, ".letta", "settings.local.json"));
+  return sources;
 }
 
 function getFileSignature(path: string): FileSignature {
@@ -332,6 +350,16 @@ export async function savePermissionRule(
   scope: "project" | "local" | "user",
   workingDirectory: string = process.cwd(),
 ): Promise<void> {
+  if (
+    scope !== "user" &&
+    hasGlobalConfigDirOverride() &&
+    isHomeWorkingDirectory(workingDirectory)
+  ) {
+    throw new Error(
+      `Cannot save ${scope} permissions under HOME while LETTA_CONFIG_DIR is set`,
+    );
+  }
+
   const normalizedWorkingDirectory = resolve(workingDirectory);
 
   // Determine settings file path based on scope
@@ -387,7 +415,11 @@ export async function savePermissionRule(
   }
 
   // Save settings
-  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+  await writeFile(
+    settingsPath,
+    JSON.stringify(settings, null, 2),
+    scope === "user" ? { directoryMode: 0o700, mode: 0o600 } : undefined,
+  );
   invalidatePermissionSource(settingsPath);
 
   // If saving to .letta/settings.local.json, ensure it's gitignored

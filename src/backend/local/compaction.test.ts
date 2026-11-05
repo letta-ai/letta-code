@@ -58,6 +58,7 @@ describe("local compaction summarizer options", () => {
 
       expect(capturedOptions?.sessionId).toBe("conv-opencode-compaction");
       expect(capturedOptions?.headers).toEqual({
+        "x-letta-request-kind": "compaction",
         "x-opencode-session": "conv-opencode-compaction",
       });
     } finally {

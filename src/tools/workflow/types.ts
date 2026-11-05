@@ -46,6 +46,8 @@ export interface AgentCallOptions {
   allowedTools?: string[];
   /** Extra system prompt appended for this subagent. */
   systemPrompt?: string;
+  /** Skill names whose full content is loaded into this subagent's prompt. */
+  skills?: string[];
   /** Per-call timeout in milliseconds. */
   timeoutMs?: number;
   /** Maximum unique tool calls for this subagent. Default 1000. */
@@ -132,6 +134,8 @@ export interface RunWorkflowOptions {
   builtinToolNames?: readonly string[];
   /** Lists callable tools; backs `listTools()` and `describeTool()`. */
   listTools?: () => Promise<WorkflowToolInfo[]>;
+  /** Variables exposed as `process.env`: the shell environment plus the agent's secrets. */
+  env?: Readonly<Record<string, string>>;
   /** Lifetime tool call cap (runaway-loop backstop). Default 1000. */
   maxTotalToolCalls?: number;
 }

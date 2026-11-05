@@ -100,9 +100,38 @@ export async function uploadFileToSandbox(
 }
 
 export interface SandboxDesktopSession {
+  /** Optional browser viewer URL supplied by the server. */
+  viewerUrl?: string;
   /** Relay websocket URL carrying a bearer token; treat it as a secret. */
   url: string;
   expiresAt: string;
+}
+
+export interface SandboxPublicExposure {
+  url: string;
+  port: number;
+  expiresAt: string;
+}
+
+export type SandboxPublicExposureExpiry =
+  | { expiresInSeconds: number }
+  | { extendBySeconds: number };
+
+export async function createSandboxPublicExposure(
+  port: number,
+  expiry: SandboxPublicExposureExpiry,
+  deps: SandboxFilesApiDeps = defaultDeps,
+): Promise<SandboxPublicExposure> {
+  const response = await request(
+    "/v1/sandbox-exposures",
+    {
+      method: "POST",
+      body: JSON.stringify({ port, ...expiry }),
+      headers: { "Content-Type": "application/json" },
+    },
+    deps,
+  );
+  return (await response.json()) as SandboxPublicExposure;
 }
 
 /**

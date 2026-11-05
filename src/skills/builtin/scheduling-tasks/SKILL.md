@@ -23,7 +23,7 @@ Execution determines schedule ownership; there is no runner selection flag:
 - In a managed Cloud sandbox, schedules are durable Cloud schedules and run in the agent's Cloud sandbox.
 - On a user-managed computer or self-hosted runtime, schedules are local and fire only while a Letta session is running there.
 
-From a managed Cloud sandbox, `--computer <deviceId>` can run the scheduled work on a specific connected computer. Get the device ID from `letta computers list`. If that computer is offline at fire time, execution falls back to the Cloud sandbox. Local execution cannot target another computer.
+From a managed Cloud sandbox, `--computer <deviceId>` can run the scheduled work on a specific connected computer. Get the device ID from `letta computers list`. If that computer is offline at fire time, that occurrence fails (`TARGET_DEVICE_UNAVAILABLE`) and does not run; omit `--computer` to run in the Cloud sandbox. Local execution cannot target another computer.
 
 Creation and execution follow those rules, while management commands still show and cancel both local and Cloud inventory. This keeps schedules created by older CLI versions visible without changing where new schedules run.
 

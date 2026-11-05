@@ -5,11 +5,13 @@
  * concurrent calls with different models never touch a shared agent.
  */
 
+import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { getBackend } from "@/backend";
 import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
+import { priceUsageEvent } from "@/usage/cost";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -67,19 +69,7 @@ export interface WorkerRun {
 async function latestWorkerRun(
   conversationId: string,
 ): Promise<WorkerRun | null> {
-  const backend = getBackend();
-  const messages = await backend.listConversationMessages(conversationId, {
-    limit: 100,
-    order: "desc",
-  });
-  const runId = messages
-    .getPaginatedItems()
-    .map((message) => message.run_id)
-    .find(
-      (id): id is string => typeof id === "string" && id.startsWith("run-"),
-    );
-  if (!runId) return null;
-  return backend.retrieveRun(runId);
+  return getBackend().latestConversationRun(conversationId);
 }
 
 async function retrieveWorkerConversation(
@@ -283,6 +273,7 @@ async function drainTurn(
   maxToolCalls: number,
   onUsage?: (totalTokens: number) => void,
   onStarted?: (conversationId: string) => void,
+  model?: string,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
@@ -301,6 +292,7 @@ async function drainTurn(
     }
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
+      if (message.event) message.event = priceUsageEvent(message.event, model);
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
@@ -470,9 +462,9 @@ export function createSdkSpawner(
       );
     }
     if (persisted && resumeId && config.verifyPersistedRuns !== false) {
-      // SDK App Server turns have Runs, not Super Runs. If the latest
-      // persisted message has no run ID or the run is not terminal, do not
-      // risk sending a second prompt into an active conversation.
+      // SDK App Server turns have Runs, not Super Runs. If there is no
+      // persisted run or the latest run is not terminal, do not risk sending a
+      // second prompt into an active conversation.
       const latest = await (config.latestRun ?? latestWorkerRun)(resumeId);
       if (
         !latest ||
@@ -515,6 +507,24 @@ export function createSdkSpawner(
         error: `Unknown model "${options.model}". Run \`letta model list\` for valid handles.`,
       };
     }
+    // Same <loaded_skills> block --pre-load-skills puts in a subagent's turn,
+    // resolved from the parent's skill sources.
+    const loadedSkills = options.skills?.length
+      ? await loadPreloadedSkills(options.skills, {
+          agentId: config.parentAgentId,
+          ...(config.cwd ? { workingDirectory: config.cwd } : {}),
+        })
+      : "";
+    const missingSkills = (options.skills ?? []).filter(
+      (id) => !loadedSkills.includes(`<${id}>\n`),
+    );
+    if (missingSkills.length) {
+      return {
+        value: null,
+        failed: true,
+        error: `Unknown skill(s): ${missingSkills.join(", ")}.`,
+      };
+    }
     if (signal.aborted) {
       return {
         value: null,
@@ -535,7 +545,7 @@ export function createSdkSpawner(
     let query: SdkQuery;
     try {
       query = client.query({
-        prompt,
+        prompt: loadedSkills ? `${loadedSkills}\n\n${prompt}` : prompt,
         options: {
           ...buildQueryOptions(options, model, config, request.callIndex),
           ...(resumeId ? { conversationId: resumeId } : {}),
@@ -600,6 +610,7 @@ export function createSdkSpawner(
               hooks?.onStarted?.(id);
             }
           },
+          model,
         ),
         stopped,
       ]);

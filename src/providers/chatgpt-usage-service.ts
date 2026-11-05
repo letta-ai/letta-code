@@ -1,25 +1,30 @@
-import { hostname } from "node:os";
-import {
-  LETTA_CLOUD_API_URL,
-  refreshAccessToken as refreshLettaAccessToken,
-  type TokenResponse,
-} from "@/auth/oauth";
-import { getLettaCodeHeaders } from "@/backend/api/http-headers";
-import {
-  getLocalOAuthApiKey,
-  getLocalProviderRecordByName,
-  LOCAL_CHATGPT_PROVIDER_NAME,
-  type LocalProviderRecord,
-} from "@/backend/local/local-provider-auth-store";
+import type { TokenResponse } from "@/auth/oauth";
 import type { ProviderStorageTarget } from "@/providers/byok-providers";
-import { type Settings, settingsManager } from "@/settings-manager";
+import {
+  asRecord,
+  CHATGPT_PROVIDER_CACHE_TTL_MS,
+  CHATGPT_PROVIDER_REQUEST_TIMEOUT_MS,
+  type ChatGPTUsageError,
+  type CloudCredentialSettings,
+  chatGPTProviderError,
+  cloudBaseUrl,
+  cloudRequestHeaders,
+  findLocalChatGPTOAuthRecord,
+  getNumber,
+  getString,
+  getValue,
+  type JsonRecord,
+  localChatGPTRequestHeaders,
+  readCloudCredentialSettings,
+  readJsonRecord,
+  resolveCloudApiKey,
+  responseMessage,
+  retryAfterMs,
+  retryAfterMsFromBody,
+} from "@/providers/chatgpt-provider-auth";
 
 const CHATGPT_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 const CLOUD_CHATGPT_USAGE_PATH = "/v1/providers/chatgpt-usage";
-const OPENAI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
-const CACHE_TTL_MS = 30_000;
-const DEFAULT_TIMEOUT_MS = 15_000;
-const TOKEN_REFRESH_BUFFER_MS = 5 * 60 * 1000;
 
 export interface ChatGPTUsageWindow {
   label: string;
@@ -56,23 +61,6 @@ export interface ChatGPTUsageSnapshot {
   individualLimit?: ChatGPTUsageIndividualLimit | null;
 }
 
-export type ChatGPTUsageErrorCode =
-  | "bad_request"
-  | "not_connected"
-  | "unsupported_target"
-  | "refresh_failed"
-  | "unauthorized"
-  | "forbidden"
-  | "rate_limited"
-  | "network_error"
-  | "bad_response";
-
-export interface ChatGPTUsageError {
-  code: ChatGPTUsageErrorCode;
-  message: string;
-  retryAfterMs?: number;
-}
-
 export type ChatGPTUsageReadResult =
   | { success: true; usage: ChatGPTUsageSnapshot }
   | { success: false; error: ChatGPTUsageError };
@@ -85,9 +73,7 @@ export interface ReadChatGPTUsageInput {
   timeoutMs?: number;
   fetch?: typeof fetch;
   now?: () => number;
-  getSettings?: () => Promise<
-    Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">
-  >;
+  getSettings?: () => Promise<CloudCredentialSettings>;
   refreshAccessToken?: (
     refreshToken: string,
     deviceId: string,
@@ -95,29 +81,12 @@ export interface ReadChatGPTUsageInput {
   ) => Promise<TokenResponse>;
 }
 
-type JsonRecord = Record<string, unknown>;
-
 type CachedUsage = {
   expiresAt: number;
   result: Extract<ChatGPTUsageReadResult, { success: true }>;
 };
 
 const usageCache = new Map<string, CachedUsage>();
-
-function asRecord(value: unknown): JsonRecord | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as JsonRecord)
-    : undefined;
-}
-
-function getValue(record: JsonRecord | undefined, keys: string[]): unknown {
-  if (!record) return undefined;
-  for (const key of keys) {
-    const value = record[key];
-    if (value !== undefined && value !== null) return value;
-  }
-  return undefined;
-}
 
 function getRecord(
   record: JsonRecord | undefined,
@@ -133,29 +102,6 @@ function getRecordArray(
   const value = getValue(record, keys);
   if (!Array.isArray(value)) return [];
   return value.map(asRecord).filter((item): item is JsonRecord => !!item);
-}
-
-function getNumber(
-  record: JsonRecord | undefined,
-  keys: string[],
-): number | null {
-  const value = getValue(record, keys);
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) return parsed;
-  }
-  return null;
-}
-
-function getString(
-  record: JsonRecord | undefined,
-  keys: string[],
-): string | null {
-  const value = getValue(record, keys);
-  if (typeof value === "string" && value.trim()) return value.trim();
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return null;
 }
 
 function getBoolean(
@@ -637,166 +583,23 @@ export function normalizeCloudChatGPTUsageResponse(input: {
   };
 }
 
-function retryAfterMs(response: Response): number | undefined {
-  const value = response.headers.get("retry-after");
-  if (!value) return undefined;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
-
-  const retryAt = Date.parse(value);
-  return Number.isFinite(retryAt)
-    ? Math.max(0, retryAt - Date.now())
-    : undefined;
-}
-
-function retryAfterMsFromBody(raw: JsonRecord | null): number | undefined {
-  const value = getNumber(raw ?? undefined, ["retryAfterMs", "retry_after_ms"]);
-  return value === null ? undefined : Math.max(0, value);
-}
-
-async function readJsonRecord(response: Response): Promise<JsonRecord | null> {
-  try {
-    return asRecord(await response.json()) ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function responseMessage(raw: JsonRecord | null, fallback: string): string {
-  return (
-    getString(raw ?? undefined, ["message", "error", "detail"]) ?? fallback
-  );
-}
-
-function chatGPTUsageError(
-  code: ChatGPTUsageErrorCode,
-  message: string,
-  retryAfter?: number,
-): ChatGPTUsageReadResult {
-  return {
-    success: false,
-    error: {
-      code,
-      message,
-      ...(retryAfter !== undefined ? { retryAfterMs: retryAfter } : {}),
-    },
-  };
-}
-
-function cloudBaseUrl(settings: Pick<Settings, "env">): string {
-  return (
-    process.env.LETTA_BASE_URL ||
-    settings.env?.LETTA_BASE_URL ||
-    LETTA_CLOUD_API_URL
-  ).replace(/\/+$/, "");
-}
-
-async function cloudApiKey(input: {
-  settings: Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">;
-  now: number;
-  refreshAccessToken?: ReadChatGPTUsageInput["refreshAccessToken"];
-}): Promise<{ apiKey: string | null; error?: ChatGPTUsageError }> {
-  const settings = input.settings;
-  const envApiKey = process.env.LETTA_API_KEY;
-  let apiKey = envApiKey || settings.env?.LETTA_API_KEY || null;
-
-  if (
-    !envApiKey &&
-    settings.refreshToken &&
-    (!apiKey ||
-      (settings.tokenExpiresAt !== undefined &&
-        settings.tokenExpiresAt - input.now < TOKEN_REFRESH_BUFFER_MS))
-  ) {
-    try {
-      const refresh = input.refreshAccessToken ?? refreshLettaAccessToken;
-      const tokens = await refresh(
-        settings.refreshToken,
-        settingsManager.getOrCreateDeviceId(),
-        hostname(),
-      );
-      apiKey = tokens.access_token;
-      settingsManager.updateSettings({
-        env: { LETTA_API_KEY: tokens.access_token },
-        refreshToken: tokens.refresh_token || settings.refreshToken,
-        tokenExpiresAt: input.now + tokens.expires_in * 1000,
-      });
-    } catch (error) {
-      return {
-        apiKey: null,
-        error: {
-          code: "refresh_failed",
-          message:
-            error instanceof Error
-              ? error.message
-              : "Failed to refresh the Letta Cloud access token.",
-        },
-      };
-    }
-  }
-
-  if (!apiKey) {
-    return {
-      apiKey: null,
-      error: {
-        code: "unauthorized",
-        message: "Sign in with Letta to read ChatGPT usage.",
-      },
-    };
-  }
-
-  return { apiKey };
-}
-
-function localProviderNames(providerName: string | undefined): string[] {
-  if (providerName?.trim()) return [providerName.trim()];
-  return [LOCAL_CHATGPT_PROVIDER_NAME, OPENAI_CODEX_OAUTH_PROVIDER_ID];
-}
-
-function isChatGPTOAuthRecord(
-  record: LocalProviderRecord,
-): record is LocalProviderRecord & {
-  auth: { type: "oauth"; accountId?: string };
-} {
-  return (
-    record.auth.type === "oauth" &&
-    (record.provider_type === "chatgpt_oauth" ||
-      record.provider_type === OPENAI_CODEX_OAUTH_PROVIDER_ID)
-  );
-}
-
-function isConnectedChatGPTOAuthRecord(
-  record: LocalProviderRecord | null,
-): record is LocalProviderRecord & {
-  auth: { type: "oauth"; accountId?: string };
-} {
-  return !!record && isChatGPTOAuthRecord(record);
-}
-
 async function readCloudChatGPTUsage(
   input: ReadChatGPTUsageInput,
   now: number,
 ): Promise<ChatGPTUsageReadResult> {
   const providerName = input.providerName?.trim();
   if (!providerName) {
-    return chatGPTUsageError(
+    return chatGPTProviderError(
       "bad_request",
       "A ChatGPT provider name is required for cloud usage.",
     );
   }
 
-  let settings: Pick<Settings, "env" | "refreshToken" | "tokenExpiresAt">;
-  try {
-    settings = await (
-      input.getSettings ?? (() => settingsManager.getSettingsWithSecureTokens())
-    )();
-  } catch (error) {
-    return chatGPTUsageError(
-      "unauthorized",
-      error instanceof Error
-        ? error.message
-        : "Failed to read Letta Cloud credentials.",
-    );
-  }
+  const credentialSettings = await readCloudCredentialSettings(
+    input.getSettings,
+  );
+  if (!credentialSettings.success) return credentialSettings;
+  const { settings } = credentialSettings;
 
   const baseUrl = cloudBaseUrl(settings);
   const cacheKey = `api:${baseUrl}:${providerName}`;
@@ -805,20 +608,13 @@ async function readCloudChatGPTUsage(
     return cached.result;
   }
 
-  const auth = await cloudApiKey({
+  const auth = await resolveCloudApiKey({
     settings,
     now,
+    unauthorizedMessage: "Sign in with Letta to read ChatGPT usage.",
     refreshAccessToken: input.refreshAccessToken,
   });
-  if (auth.error || !auth.apiKey) {
-    return {
-      success: false,
-      error: auth.error ?? {
-        code: "unauthorized",
-        message: "Sign in with Letta to read ChatGPT usage.",
-      },
-    };
-  }
+  if (!auth.success) return auth;
 
   const url = new URL(`${baseUrl}${CLOUD_CHATGPT_USAGE_PATH}`);
   url.searchParams.set("provider_name", providerName);
@@ -828,21 +624,18 @@ async function readCloudChatGPTUsage(
   const timeout = setTimeout(() => {
     didTimeOut = true;
     controller.abort();
-  }, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  }, input.timeoutMs ?? CHATGPT_PROVIDER_REQUEST_TIMEOUT_MS);
 
   let response: Response;
   try {
     response = await (input.fetch ?? fetch)(url, {
       method: "GET",
-      headers: {
-        ...getLettaCodeHeaders(auth.apiKey),
-        Accept: "application/json",
-      },
+      headers: cloudRequestHeaders(auth.apiKey),
       signal: controller.signal,
     });
   } catch (error) {
     clearTimeout(timeout);
-    return chatGPTUsageError(
+    return chatGPTProviderError(
       "network_error",
       didTimeOut
         ? "Letta Cloud ChatGPT usage request timed out."
@@ -855,7 +648,7 @@ async function readCloudChatGPTUsage(
   try {
     if (response.status === 400) {
       const raw = await readJsonRecord(response);
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         didTimeOut ? "network_error" : "bad_request",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -867,7 +660,7 @@ async function readCloudChatGPTUsage(
     }
     if (response.status === 401) {
       const raw = await readJsonRecord(response);
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         didTimeOut ? "network_error" : "unauthorized",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -876,7 +669,7 @@ async function readCloudChatGPTUsage(
     }
     if (response.status === 403) {
       const raw = await readJsonRecord(response);
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         didTimeOut ? "network_error" : "forbidden",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -889,25 +682,25 @@ async function readCloudChatGPTUsage(
     if (response.status === 404) {
       const raw = await readJsonRecord(response);
       if (didTimeOut) {
-        return chatGPTUsageError(
+        return chatGPTProviderError(
           "network_error",
           "Letta Cloud ChatGPT usage request timed out.",
         );
       }
       if (!raw) {
-        return chatGPTUsageError(
+        return chatGPTProviderError(
           "network_error",
           "Letta Cloud ChatGPT usage endpoint is unavailable.",
         );
       }
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "not_connected",
         responseMessage(raw, "No cloud ChatGPT OAuth provider is connected."),
       );
     }
     if (response.status === 429) {
       const raw = await readJsonRecord(response);
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "rate_limited",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -920,7 +713,7 @@ async function readCloudChatGPTUsage(
     }
     if (!response.ok) {
       const raw = await readJsonRecord(response);
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "network_error",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -933,7 +726,7 @@ async function readCloudChatGPTUsage(
 
     const raw = await readJsonRecord(response);
     if (!raw) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         didTimeOut ? "network_error" : "bad_response",
         didTimeOut
           ? "Letta Cloud ChatGPT usage request timed out."
@@ -947,7 +740,7 @@ async function readCloudChatGPTUsage(
       nowMs: now,
     });
     if (!usage) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "bad_response",
         "Letta Cloud ChatGPT usage returned an invalid payload.",
       );
@@ -957,7 +750,10 @@ async function readCloudChatGPTUsage(
       success: true,
       usage,
     };
-    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    usageCache.set(cacheKey, {
+      expiresAt: now + CHATGPT_PROVIDER_CACHE_TTL_MS,
+      result,
+    });
     return result;
   } finally {
     clearTimeout(timeout);
@@ -973,19 +769,19 @@ export async function readChatGPTUsage(
     return readCloudChatGPTUsage(input, now);
   }
   if (target !== "local") {
-    return chatGPTUsageError(
+    return chatGPTProviderError(
       "unsupported_target",
       "ChatGPT usage is only available for local or cloud ChatGPT OAuth providers.",
     );
   }
 
-  const providerNames = localProviderNames(input.providerName);
-  const record = providerNames
-    .map((name) => getLocalProviderRecordByName(name, input.storageDir))
-    .find(isConnectedChatGPTOAuthRecord);
+  const record = findLocalChatGPTOAuthRecord(
+    input.providerName,
+    input.storageDir,
+  );
 
   if (!record) {
-    return chatGPTUsageError(
+    return chatGPTProviderError(
       "not_connected",
       "No local ChatGPT OAuth provider is connected.",
     );
@@ -997,57 +793,29 @@ export async function readChatGPTUsage(
     return cached.result;
   }
 
-  let oauthApiKey: Awaited<ReturnType<typeof getLocalOAuthApiKey>>;
-  try {
-    oauthApiKey = await getLocalOAuthApiKey({
-      providerId: OPENAI_CODEX_OAUTH_PROVIDER_ID,
-      providerNames: [record.name],
-      storageDir: input.storageDir,
-    });
-  } catch (error) {
-    return chatGPTUsageError(
-      "refresh_failed",
-      error instanceof Error
-        ? error.message
-        : "Failed to refresh the ChatGPT OAuth token.",
-    );
-  }
+  const localHeaders = await localChatGPTRequestHeaders(
+    record,
+    input.storageDir,
+  );
+  if (!localHeaders.success) return localHeaders;
 
-  if (!oauthApiKey) {
-    return chatGPTUsageError(
-      "not_connected",
-      "No local ChatGPT OAuth token is available.",
-    );
-  }
-
-  const accountId =
-    typeof oauthApiKey.credentials.accountId === "string"
-      ? oauthApiKey.credentials.accountId
-      : typeof record.auth.accountId === "string"
-        ? record.auth.accountId
-        : undefined;
   const controller = new AbortController();
   let didTimeOut = false;
   const timeout = setTimeout(() => {
     didTimeOut = true;
     controller.abort();
-  }, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  }, input.timeoutMs ?? CHATGPT_PROVIDER_REQUEST_TIMEOUT_MS);
 
   let response: Response;
   try {
     response = await (input.fetch ?? fetch)(CHATGPT_USAGE_URL, {
       method: "GET",
-      headers: {
-        Accept: "application/json",
-        Authorization: `Bearer ${oauthApiKey.apiKey}`,
-        "User-Agent": "letta-code",
-        ...(accountId ? { "chatgpt-account-id": accountId } : {}),
-      },
+      headers: localHeaders.headers,
       signal: controller.signal,
     });
   } catch (error) {
     clearTimeout(timeout);
-    return chatGPTUsageError(
+    return chatGPTProviderError(
       "network_error",
       didTimeOut
         ? "ChatGPT usage request timed out."
@@ -1059,26 +827,26 @@ export async function readChatGPTUsage(
 
   try {
     if (response.status === 401) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "unauthorized",
         "ChatGPT rejected the OAuth token. Reconnect ChatGPT Plus/Pro and try again.",
       );
     }
     if (response.status === 403) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "forbidden",
         "ChatGPT usage is not available for this account.",
       );
     }
     if (response.status === 429) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "rate_limited",
         "ChatGPT usage is rate limited. Try again later.",
         retryAfterMs(response),
       );
     }
     if (!response.ok) {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         "network_error",
         `ChatGPT usage request failed with HTTP ${response.status}.`,
       );
@@ -1088,7 +856,7 @@ export async function readChatGPTUsage(
     try {
       raw = await response.json();
     } catch {
-      return chatGPTUsageError(
+      return chatGPTProviderError(
         didTimeOut ? "network_error" : "bad_response",
         didTimeOut
           ? "ChatGPT usage request timed out."
@@ -1104,7 +872,10 @@ export async function readChatGPTUsage(
         nowMs: now,
       }),
     };
-    usageCache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, result });
+    usageCache.set(cacheKey, {
+      expiresAt: now + CHATGPT_PROVIDER_CACHE_TTL_MS,
+      result,
+    });
     return result;
   } finally {
     clearTimeout(timeout);

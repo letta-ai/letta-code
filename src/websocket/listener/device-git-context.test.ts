@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import type { LightGitContext } from "@/cli/helpers/git-context";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
+import {
+  getGitContextAsync,
+  type LightGitContext,
+} from "@/cli/helpers/git-context";
 import { DeviceGitContextCache } from "./device-git-context";
 
 type PendingLoad = {
@@ -95,4 +101,56 @@ describe("DeviceGitContextCache", () => {
 
     expect(cache.read("/repo")?.branch).toBe("feature");
   });
+
+  test("a failed load is not cached, so the next refresh retries", async () => {
+    let calls = 0;
+    const cache = new DeviceGitContextCache(async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("git timed out");
+      return { branch: "main", recent_branches: [] };
+    });
+
+    expect(await cache.refresh("/repo")).toBeNull();
+    expect(await cache.refresh("/repo")).toEqual({
+      branch: "main",
+      recent_branches: [],
+    });
+    expect(calls).toBe(2);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a hung git call times out and does not wedge later refreshes",
+    async () => {
+      const binDir = await mkdtemp(join(tmpdir(), "letta-hung-git-"));
+      const invocations = join(binDir, "invocations");
+      const fakeGit = join(binDir, "git");
+      await writeFile(
+        fakeGit,
+        `#!/bin/sh\necho "$1" >> "${invocations}"\nexec sleep 30\n`,
+      );
+      await chmod(fakeGit, 0o755);
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+      try {
+        await expect(
+          getGitContextAsync(binDir, { timeoutMs: 100 }),
+        ).rejects.toThrow("timed out");
+
+        const cache = new DeviceGitContextCache((cwd) =>
+          getGitContextAsync(cwd, { timeoutMs: 100 }),
+        );
+        const started = Date.now();
+        expect(await cache.refresh(binDir)).toBeNull();
+        expect(await cache.refresh(binDir)).toBeNull();
+        expect(Date.now() - started).toBeLessThan(5_000);
+
+        // Direct call plus one fresh git spawn per cache refresh.
+        const lines = (await readFile(invocations, "utf-8")).trim().split("\n");
+        expect(lines).toEqual(["rev-parse", "rev-parse", "rev-parse"]);
+      } finally {
+        process.env.PATH = originalPath;
+        await rm(binDir, { recursive: true, force: true });
+      }
+    },
+  );
 });

@@ -172,7 +172,8 @@ export async function watchDiskSpaceDuring<T>(
     intervalMs?: number;
   } = {},
 ): Promise<T> {
-  if (!isManagedCloudRuntime(options.env)) return work();
+  // The listener's sandbox watcher already covers this process.
+  if (!isManagedCloudRuntime(options.env) || sandboxPollTimer) return work();
   const check = () =>
     void checkDiskSpaceNow(path, options).then((text) => {
       if (text) deliver(text);
@@ -188,6 +189,50 @@ export async function watchDiskSpaceDuring<T>(
     clearInterval(timer);
     check();
   }
+}
+
+let sandboxPollTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Poll the sandbox disk for the life of the listener process. The disk is
+ * shared by everything in the sandbox (foreground and background commands,
+ * subagents, external coding workers), so one process-wide timer sees every
+ * writer. Returns a stop function; never throws.
+ */
+export function watchSandboxDiskSpace(
+  getPath: () => string,
+  deliver: (reminder: string) => void,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    statfsFn?: StatfsFn;
+    intervalMs?: number;
+  } = {},
+): () => void {
+  try {
+    if (!isManagedCloudRuntime(options.env)) return () => {};
+    if (sandboxPollTimer) clearInterval(sandboxPollTimer);
+    const timer = setInterval(() => {
+      try {
+        void checkDiskSpaceNow(getPath(), options)
+          .then((text) => {
+            if (text) deliver(text);
+          })
+          .catch(() => {});
+      } catch {}
+    }, options.intervalMs ?? DISK_SPACE_POLL_INTERVAL_MS);
+    timer.unref?.();
+    sandboxPollTimer = timer;
+    return () => {
+      clearInterval(timer);
+      if (sandboxPollTimer === timer) sandboxPollTimer = null;
+    };
+  } catch {
+    return () => {};
+  }
+}
+
+export function isSandboxDiskWatchRunning(): boolean {
+  return sandboxPollTimer !== null;
 }
 
 // Alert waiting for the next model request in loops with no queue consumer
@@ -222,6 +267,8 @@ export function takePendingDiskSpaceReminder(): string | null {
 
 export function resetDiskSpaceAlertForTests(): void {
   pushedLevel = 0;
+  if (sandboxPollTimer) clearInterval(sandboxPollTimer);
+  sandboxPollTimer = null;
   pendingRequestReminder = null;
 }
 

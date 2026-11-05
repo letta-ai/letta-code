@@ -19,6 +19,7 @@ import { migratePermissionMode } from "@/permissions/mode";
 import { canonicalizeRoot } from "@/permissions/sandbox-policy";
 import { resolveWorkspaceSandbox } from "@/permissions/workspace-sandbox";
 import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import type { RuntimeScope, RuntimeStartCommand } from "@/types/protocol_v2";
 import {
   getOrCreateProcessTransport,
@@ -408,14 +409,19 @@ async function applyRuntimeStartState(
     parsed.preserve_skill_sources !== true
   ) {
     scopedRuntime.skillSources = undefined;
+    scopedRuntime.bundledSkills = undefined;
     context.runtime.skillSourcesByConversation.delete(scopedRuntime.key);
   } else if (parsed.skill_sources !== undefined) {
     const skillSources = [...new Set(parsed.skill_sources)];
+    const bundledSkills = parsed.bundled_skills
+      ? [...new Set(parsed.bundled_skills)]
+      : undefined;
     scopedRuntime.skillSources = skillSources;
-    context.runtime.skillSourcesByConversation.set(
-      scopedRuntime.key,
-      skillSources,
-    );
+    scopedRuntime.bundledSkills = bundledSkills;
+    context.runtime.skillSourcesByConversation.set(scopedRuntime.key, {
+      sources: skillSources,
+      ...(bundledSkills ? { bundledSkills } : {}),
+    });
   }
 
   if (parsed.mode) {
@@ -428,8 +434,24 @@ async function applyRuntimeStartState(
       scope.agent_id,
       scope.conversation_id,
     );
-    state.mode = mode;
-    persistPermissionModeMapForRuntime(context.runtime);
+    // A default-only mode (e.g. a channel account's default) must not
+    // override a mode explicitly chosen for this conversation.
+    if (!(parsed.mode_is_default && state.explicit)) {
+      const previousMode = state.mode;
+      state.mode = mode;
+      if (!parsed.mode_is_default) state.explicit = true;
+      persistPermissionModeMapForRuntime(context.runtime);
+      if (previousMode !== mode) {
+        telemetry.trackPermissionModeChanged({
+          agent_id: scope.agent_id,
+          conversation_id: scope.conversation_id,
+          prev_mode: previousMode,
+          new_mode: mode,
+          source: "runtime_start",
+          mode_is_default: parsed.mode_is_default === true,
+        });
+      }
+    }
   }
 
   if (parsed.cwd !== undefined || workspaceSandbox) {

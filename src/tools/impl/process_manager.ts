@@ -42,7 +42,7 @@ export interface BackgroundProcess {
   actingUserId?: string | null;
   kind?: "monitor" | "workflow";
   description?: string;
-  monitorSource?: "command" | "websocket" | "github_pull_request";
+  monitorSource?: "command" | "websocket" | "script" | "github_pull_request";
   persistent?: boolean;
   secrets?: Readonly<Record<string, string>>;
   /**
@@ -109,6 +109,11 @@ export function getNextMonitorId() {
 let workflowIdCounter = 1;
 export function getNextWorkflowId() {
   return `workflow_${workflowIdCounter++}`;
+}
+
+let codeModeIdCounter = 1;
+export function getNextCodeModeId() {
+  return `code_mode_${codeModeIdCounter++}`;
 }
 
 let execSessionIdCounter = 1;

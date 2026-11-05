@@ -5,10 +5,16 @@ export type CronTaskStatus =
   | "missed"
   | "cancelled";
 export type CronCancelReason = "conversation_not_found" | "expired";
-export type CronRunOutcome = "queued" | "missed" | "failed" | "skipped";
+export type CronRunOutcome =
+  | "queued"
+  | "delivered"
+  | "missed"
+  | "failed"
+  | "skipped";
 export type CronRunReason =
   | "scheduled_time_matched"
   | "one_off_due"
+  | "dequeued"
   | "scheduler_inactive"
   | "started_too_late"
   | "queue_full"

@@ -1,3 +1,6 @@
+// Must match cloud-api’s 1008 reason in letta-cloud/libs/utils-server/src/lib/handleEnvironmentConnection/handleEnvironmentConnection.ts:114.
+export const CLOUD_ENVIRONMENT_NOT_FOUND_CLOSE_REASON = "Environment not found";
+
 export const MAX_RETRY_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 export const INITIAL_RETRY_DELAY_MS = 1000; // 1 second
 export const MAX_RETRY_DELAY_MS = 30000; // 30 seconds
@@ -9,6 +12,27 @@ export const MAX_RETRY_ATTEMPTS = Math.ceil(
 // tear down the incomplete pair and let the normal reconnect path build a
 // coherent replacement instead of awaiting the stream socket forever.
 export const LISTENER_STREAM_OPEN_TIMEOUT_MS = 30000; // 30 seconds
+
+// ws has no default opening-handshake timeout. If the TCP connect or HTTP
+// upgrade hangs (e.g. a NAT silently drops packets after a network blip), a
+// listener socket stays CONNECTING forever and never emits error/close, so no
+// retry is scheduled. Bound the handshake so the normal close path retries.
+export const LISTENER_HANDSHAKE_TIMEOUT_MS = 30000; // 30 seconds
+
+/** Options for every listener WebSocket, so a hung handshake errors and closes. */
+export function getListenerSocketOptions(apiKey: string): {
+  headers: Record<string, string>;
+  handshakeTimeout: number;
+} {
+  const configured = Number(process.env.LETTA_LISTENER_HANDSHAKE_TIMEOUT_MS);
+  return {
+    headers: { Authorization: `Bearer ${apiKey}` },
+    handshakeTimeout:
+      Number.isFinite(configured) && configured > 0
+        ? configured
+        : LISTENER_HANDSHAKE_TIMEOUT_MS,
+  };
+}
 
 // Listener heartbeat: app-level ping/pong over the cloud relay. Each `ping`
 // refreshes the environment's lastHeartbeat (the relay marks an env offline

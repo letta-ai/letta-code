@@ -4,6 +4,10 @@ export function telemetryChannel(value: unknown): string | undefined {
   if (typeof value !== "string" || !value) return undefined;
   return [
     "slack",
+    // 'microsoftteams' is the channel-id contract value rendered by the
+    // letta-cloud webhook; 'microsoftTeams' is kept for notifications emitted
+    // before that lowercase fix deployed.
+    "microsoftteams",
     "microsoftTeams",
     "telegram",
     "discord",

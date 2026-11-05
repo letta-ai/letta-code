@@ -1,6 +1,7 @@
 // src/agent/approval-execution.ts
 // Shared logic for executing approval batches (used by both interactive and headless modes)
 import * as path from "node:path";
+import { APIUserAbortError } from "@letta-ai/letta-client/core/error";
 import type {
   ApprovalReturn,
   TextContent,
@@ -21,6 +22,84 @@ import {
   type ToolExecutionResult,
   type ToolReturnContent,
 } from "@/tools/manager";
+
+/** Grace period an aborted batch waits for signal-honoring tools to unwind
+ * before discarding stragglers (ms). */
+export const ABORT_GRACE_MS = 500;
+
+/** True when an error represents a user-initiated abort of a tool batch. */
+export function isUserAbortError(error: unknown): boolean {
+  return (
+    error instanceof APIUserAbortError ||
+    (error instanceof Error &&
+      (error.name === "AbortError" ||
+        error.message === INTERRUPTED_BY_USER ||
+        error.message === "The operation was aborted"))
+  );
+}
+
+/** Overlay real partial results over queued synthetic interrupted results:
+ * settled tools' actual outputs win; stragglers keep their synthetics.
+ * Partials for tools never present in the queue (denials, precomputed
+ * results) are appended so real work is not silently dropped. */
+export function overlayPartialResults(
+  queued: ApprovalResult[] | null,
+  partials: ApprovalResult[] | undefined,
+): ApprovalResult[] {
+  const realById = new Map((partials ?? []).map((r) => [r.tool_call_id, r]));
+  const overlaid = (queued ?? []).map((r) => realById.get(r.tool_call_id) ?? r);
+  const queuedIds = new Set((queued ?? []).map((r) => r.tool_call_id));
+  const extras = (partials ?? []).filter((r) => !queuedIds.has(r.tool_call_id));
+  return [...overlaid, ...extras];
+}
+
+/** Map auto-denied decisions to their wire form. Denials are decisions, not
+ * tool executions: they must reach the server even when the batch aborts. */
+export function buildDeniedResults(
+  autoDenied: Array<{ approval: ApprovalRequest; reason: string }>,
+): ApprovalResult[] {
+  return autoDenied.map((ad) => ({
+    type: "approval" as const,
+    tool_call_id: ad.approval.toolCallId,
+    approve: false,
+    reason: ad.reason,
+  }));
+}
+
+/** Results for decisions that never execute client-side: auto-handled tools
+ * with precomputed results and auto-denied calls. They must ride along on
+ * both the fulfilled path and the grace-expiry overlay, or the server's
+ * approval batch goes out incomplete. */
+export function buildCompanionResults(
+  autoHandled: Array<{
+    toolCallId: string;
+    result: ToolExecutionResult;
+  }>,
+  autoDenied: Array<{ approval: ApprovalRequest; reason: string }>,
+): ApprovalResult[] {
+  return [
+    ...autoHandled.map((ar) => ({
+      type: "tool" as const,
+      tool_call_id: ar.toolCallId,
+      tool_return: ar.result.toolReturn,
+      status: ar.result.status,
+      stdout: ar.result.stdout,
+      stderr: ar.result.stderr,
+    })),
+    ...buildDeniedResults(autoDenied),
+  ];
+}
+
+/** Attach extra decisions (e.g. pre-built denials) to an abort error's
+ * partials so the recovery queue carries a complete approval batch. */
+export function appendAbortPartials(
+  error: unknown,
+  extras: ApprovalResult[],
+): void {
+  if (extras.length === 0 || !isUserAbortError(error)) return;
+  const abortError = error as Error & { partialResults?: ApprovalResult[] };
+  abortError.partialResults = [...(abortError.partialResults ?? []), ...extras];
+}
 
 /**
  * Extract displayable text from tool return content (for UI display).
@@ -367,8 +446,97 @@ export async function executeApprovalBatch(
 export async function settleApprovalExecutionTasks(
   tasks: readonly Promise<void>[],
   partialResults: () => ApprovalResult[] = () => [],
+  options?: { abortSignal?: AbortSignal },
 ): Promise<void> {
-  const settled = await Promise.allSettled(tasks);
+  const signal = options?.abortSignal;
+  if (!signal || signal.aborted) {
+    // No signal, or one aborted before the batch started: every executor
+    // returns its interrupted result without running tools (freeze
+    // semantics), so settle normally instead of racing the signal.
+    throwFirstSettledRejection(await Promise.allSettled(tasks), partialResults);
+    return;
+  }
+
+  // Record each task's settlement as it happens so an abort can unwind the
+  // batch without waiting for a tool that ignores the abort signal. Without
+  // this race, cancelling a turn waits for the slowest signal-ignoring tool
+  // to finish ("abort waits for the tool" bug).
+  const settled: PromiseSettledResult<void>[] = new Array(tasks.length);
+  let remaining = tasks.length;
+  const tracked = tasks.map((task, index) =>
+    task
+      .then(
+        () => {
+          settled[index] = { status: "fulfilled", value: undefined };
+        },
+        (reason) => {
+          settled[index] = { status: "rejected", reason };
+        },
+      )
+      .finally(() => {
+        remaining -= 1;
+      }),
+  );
+
+  let onAbort: () => void = () => {};
+  const aborted = new Promise<void>((resolve) => {
+    onAbort = resolve;
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  try {
+    await Promise.race([Promise.all(tracked).then(() => undefined), aborted]);
+  } finally {
+    signal.removeEventListener("abort", onAbort);
+  }
+
+  if (remaining === 0) {
+    throwFirstSettledRejection(settled, partialResults);
+    return;
+  }
+
+  // Aborted while tools are still in flight. Give signal-honoring tools a
+  // short grace window to unwind so a well-behaved batch settles exactly as
+  // fast as the base implementation and callers observe real results instead
+  // of a spurious "This operation was aborted" error.
+  let graceTimer: ReturnType<typeof setTimeout> | undefined;
+  const graceExpired = new Promise<void>((resolve) => {
+    graceTimer = setTimeout(resolve, ABORT_GRACE_MS);
+  });
+  try {
+    await Promise.race([
+      Promise.all(tracked).then(() => undefined),
+      graceExpired,
+    ]);
+  } finally {
+    clearTimeout(graceTimer);
+  }
+  if (remaining === 0) {
+    throwFirstSettledRejection(settled, partialResults);
+    return;
+  }
+
+  // Grace expired with stragglers still running and ignoring the abort
+  // signal. Prefer an actual rejection (a tool that honored the signal)
+  // over a synthesized abort error so callers observe the same error shape
+  // as a signal-honoring cancel; the straggler keeps running detached and
+  // its late result is discarded (or CAS-upgraded by the listener's effect
+  // boundary if it settles later).
+  throwFirstSettledRejection(
+    settled.filter((result) => result !== undefined),
+    partialResults,
+  );
+  const error =
+    signal.reason instanceof Error
+      ? signal.reason
+      : new Error(INTERRUPTED_BY_USER);
+  Object.assign(error, { partialResults: partialResults() });
+  throw error;
+}
+
+function throwFirstSettledRejection(
+  settled: PromiseSettledResult<void>[],
+  partialResults: () => ApprovalResult[],
+): void {
   for (const result of settled) {
     if (result.status !== "rejected") continue;
     const error =
@@ -399,6 +567,30 @@ async function executeApprovalBatchUnwatched(
   const results: (ApprovalResult | null)[] = new Array(decisions.length).fill(
     null,
   );
+  // Once the settle race throws (grace-expiry abort), the batch's results
+  // are discarded: suppress late onChunk/onStreamingOutput callbacks from
+  // detached straggler tools so they cannot overwrite the tool lines the
+  // interrupt already marked cancelled.
+  let batchDiscarded = false;
+  const guardedOnChunk = onChunk
+    ? (chunk: ToolReturnMessage) => {
+        if (!batchDiscarded) onChunk(chunk);
+      }
+    : undefined;
+  const guardedOptions = options?.onStreamingOutput
+    ? {
+        ...options,
+        onStreamingOutput: (
+          toolCallId: string,
+          chunk: string,
+          isStderr?: boolean,
+        ) => {
+          if (!batchDiscarded) {
+            options.onStreamingOutput?.(toolCallId, chunk, isStderr);
+          }
+        },
+      }
+    : options;
 
   // Categorize decisions by execution strategy
   const parallelIndices: number[] = [];
@@ -449,11 +641,11 @@ async function executeApprovalBatchUnwatched(
     const decision = decisions[i];
     if (decision) {
       let crossedEffectBoundary = false;
-      const result = await executeSingleDecision(decision, onChunk, {
-        ...options,
+      const result = await executeSingleDecision(decision, guardedOnChunk, {
+        ...guardedOptions,
         toolContextId,
         beforeToolExecution: async (toolCallId) => {
-          await options?.beforeToolExecution?.(toolCallId);
+          await guardedOptions?.beforeToolExecution?.(toolCallId);
           crossedEffectBoundary = true;
         },
       });
@@ -474,20 +666,27 @@ async function executeApprovalBatchUnwatched(
   //
   // Do not fail fast here. A sibling may already have crossed its effect boundary;
   // callers must retain their claim/lease until every started group has settled.
-  await settleApprovalExecutionTasks(
-    [
-      // Parallel-safe tools + denials: all run in parallel
-      ...parallelIndices.map(execute),
-      ...denyIndices.map(execute),
-      // Write tools: sequential within each resource group, parallel across groups
-      ...Array.from(writeToolsByResource.values()).map(async (indices) => {
-        for (const i of indices) {
-          await execute(i);
-        }
-      }),
-    ],
-    () => results.filter((result): result is ApprovalResult => result !== null),
-  );
+  try {
+    await settleApprovalExecutionTasks(
+      [
+        // Parallel-safe tools + denials: all run in parallel
+        ...parallelIndices.map(execute),
+        ...denyIndices.map(execute),
+        // Write tools: sequential within each resource group, parallel across groups
+        ...Array.from(writeToolsByResource.values()).map(async (indices) => {
+          for (const i of indices) {
+            await execute(i);
+          }
+        }),
+      ],
+      () =>
+        results.filter((result): result is ApprovalResult => result !== null),
+      { abortSignal: options?.abortSignal },
+    );
+  } catch (error) {
+    batchDiscarded = true;
+    throw error;
+  }
 
   // Filter out nulls (shouldn't happen, but TypeScript needs this)
   return results.filter((r): r is ApprovalResult => r !== null);

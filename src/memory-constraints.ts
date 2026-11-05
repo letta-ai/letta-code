@@ -31,6 +31,13 @@ export interface MemoryTreeConstraintsOptions {
   requireRootMarker: boolean;
   /** Trusted tree before this change; required when readOnlyFiles is non-empty. */
   acceptedTree?: MemoryTreeReader;
+  /** Paths this change adds, modifies or removes. When set, problems confined
+   * to other paths predate the change: they go to `warnings` instead of the
+   * returned errors. Omit to validate the complete tree.
+   */
+  changedPaths?: Iterable<string>;
+  /** Receives problems outside `changedPaths`; ignored without it. */
+  warnings?: string[];
 }
 
 /** Shared budget/index checks. Caller supplies trusted policy and layout.
@@ -41,6 +48,14 @@ export async function validateMemoryTreeConstraints(
   options: MemoryTreeConstraintsOptions,
 ): Promise<string[]> {
   const errors: string[] = [];
+  const changed = options.changedPaths ? new Set(options.changedPaths) : null;
+  // A problem blocks the change when it involves a changed path. Otherwise it
+  // already existed, so blocking would only stop unrelated edits.
+  function report(message: string, involvedPaths: string[]): void {
+    if (!changed || involvedPaths.some((path) => changed.has(path)))
+      errors.push(message);
+    else options.warnings?.push(message);
+  }
   const allFiles = await reader.listFiles();
   const files = allFiles.filter((file) => file.path.endsWith(".md"));
   const paths = new Set(files.map((file) => file.path));
@@ -66,7 +81,7 @@ export async function validateMemoryTreeConstraints(
         current = current ? `${current}/${directory}` : directory;
         const index = `${current}/MEMORY.md`;
         if (!paths.has(index)) {
-          errors.push(`${path}: missing required index ${index}`);
+          report(`${path}: missing required index ${index}`, [path, index]);
           break;
         }
       }
@@ -128,9 +143,10 @@ export async function validateMemoryTreeConstraints(
     }
   }
   let coreCharacters = 0;
+  const corePaths: string[] = [];
   for (const { path, mode } of memoryFiles) {
     if (!mode.startsWith("100")) {
-      errors.push(`${path}: memory Markdown must be a regular file`);
+      report(`${path}: memory Markdown must be a regular file`, [path]);
       continue;
     }
     const depth = path.split("/").length - 1;
@@ -138,8 +154,9 @@ export async function validateMemoryTreeConstraints(
       options.config.maxDepth !== undefined &&
       depth > options.config.maxDepth
     ) {
-      errors.push(
+      report(
         `${path}: depth ${depth} exceeds maxDepth ${options.config.maxDepth}`,
+        [path],
       );
     }
     const override = overrides.find((item) => item.regex.test(path));
@@ -166,10 +183,14 @@ export async function validateMemoryTreeConstraints(
       }).decode(bytes))
         characters++;
     }
-    if (countCore) coreCharacters += characters;
+    if (countCore) {
+      coreCharacters += characters;
+      corePaths.push(path);
+    }
     if (limit !== undefined && limit !== null && characters > limit) {
-      errors.push(
+      report(
         `${path}: ${characters} characters exceeds ${limit} from ${source}`,
+        [path],
       );
     }
   }
@@ -178,8 +199,10 @@ export async function validateMemoryTreeConstraints(
     options.config.maxCoreMemoryCharacters !== undefined &&
     coreCharacters > options.config.maxCoreMemoryCharacters
   ) {
-    errors.push(
+    // Only an added or changed root file can push the combined budget over.
+    report(
       `core memory: ${coreCharacters} characters exceeds ${options.config.maxCoreMemoryCharacters} from maxCoreMemoryCharacters`,
+      corePaths,
     );
   }
   return errors;

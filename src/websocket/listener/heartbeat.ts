@@ -1,3 +1,4 @@
+import type WebSocket from "ws";
 import { isDebugEnabled } from "@/utils/debug";
 import {
   LISTENER_HEARTBEAT_INTERVAL_MS,
@@ -57,6 +58,44 @@ export function createMissedPongWatchdog(
   };
 }
 
+/**
+ * Last observed `pong` per transport.
+ *
+ * A listener runtime can hold several live connections at once (the cloud
+ * relay socket plus every `--channels` app-server socket), so a runtime-wide
+ * `lastPongAt` cannot say which socket is still answering. Keying by transport
+ * mirrors the app-server's own `lastPongAtBySocket`, and lets a closed socket
+ * drop its entry without a separate cleanup path.
+ */
+const lastPongAtByTransport = new WeakMap<ListenerTransport, number>();
+
+/**
+ * Record a `pong` against the transport it actually arrived on.
+ *
+ * Attribution cannot go through `runtime.socket`: that handle is null whenever
+ * more than one connection is live, so an identity check against it drops every
+ * relay pong and starves the relay socket's own watchdog.
+ */
+export function recordListenerPong(
+  runtime: ListenerRuntime,
+  transport: ListenerTransport,
+  at: number = Date.now(),
+): void {
+  lastPongAtByTransport.set(transport, at);
+  // Legacy single-connection diagnostic, kept exactly as it was: it stays null
+  // while a second connection is live, which is why it cannot drive the watchdog.
+  if (runtime.socket === transport) runtime.lastPongAt = at;
+}
+
+/** Epoch ms of the last `pong` seen on `transport`, or null if none yet. */
+function getListenerPongAt(transport: ListenerTransport): number | null {
+  return lastPongAtByTransport.get(transport) ?? null;
+}
+
+function getListenerSocket(transport: ListenerTransport): WebSocket | null {
+  return "kind" in transport ? null : transport;
+}
+
 function getCurrentStreamTransport(
   runtime: ListenerRuntime,
   controlTransport: ListenerTransport,
@@ -88,7 +127,7 @@ export function startConnectionHeartbeat(
   runtime.heartbeatInterval = setInterval(() => {
     if (
       getListenerTransportKind(transport) === "websocket" &&
-      watchdog.shouldTerminate(runtime.lastPongAt)
+      watchdog.shouldTerminate(getListenerPongAt(transport))
     ) {
       onStale();
       return;
@@ -134,6 +173,7 @@ export function startListenerPongHeartbeat(
   runtime: ListenerRuntime,
   transport: ListenerTransport,
   report: ReportListenerError,
+  options: ConnectionHeartbeatOptions = {},
 ): void {
   startConnectionHeartbeat(
     runtime,
@@ -146,8 +186,11 @@ export function startListenerPongHeartbeat(
         ),
         "listener_heartbeat",
       );
-      runtime.socket?.terminate();
+      // Terminate the socket this watchdog pings, not `runtime.socket`: the
+      // latter is null whenever a second connection is live.
+      (getListenerSocket(transport) ?? runtime.socket)?.terminate();
     },
     (heartbeatTransport) => sendHeartbeatPing(heartbeatTransport, report),
+    options,
   );
 }

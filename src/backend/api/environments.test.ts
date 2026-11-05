@@ -249,7 +249,7 @@ describe("Desktop environment resolution", () => {
     })) as typeof listEnvironments;
 
     await expect(resolveDesktopEnvironmentConnectionId(list)).rejects.toThrow(
-      "wait for its computer connection",
+      "No Desktop Local computer is online",
     );
   });
 

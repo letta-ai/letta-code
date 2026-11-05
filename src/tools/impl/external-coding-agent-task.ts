@@ -1,4 +1,3 @@
-import { addToolCall } from "@/agent/subagent-state";
 import type { SubagentResult } from "@/agent/subagents";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import {
@@ -16,6 +15,7 @@ import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
 } from "./task";
+import { externalWorkerProgressListeners } from "./task-transcript";
 
 export function trackExternalFollowupCompletion(args: {
   type: ExternalCodingAgentType;
@@ -31,6 +31,15 @@ export function trackExternalFollowupCompletion(args: {
   captureReservation?: NativeSessionCaptureReservation;
   toolCallId?: string;
   publishResult?: boolean;
+  /**
+   * Set to false when this follow-up runs on a remote worker rather than on
+   * the caller's own machine: the notice belongs to the caller's conversation
+   * and must be delivered there, not emitted locally against a parent runtime
+   * this machine only holds as a sideband control scope.
+   */
+  emitCompletionNotification?: boolean;
+  /** False for remote workers, which must never become the parent's harness. */
+  claimsParentRuntime?: boolean;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
     subagentType: args.type,
@@ -40,6 +49,8 @@ export function trackExternalFollowupCompletion(args: {
     existingAgentId: args.agentId,
     toolCallId: args.toolCallId,
     publishResult: args.publishResult,
+    emitCompletionNotification: args.emitCompletionNotification,
+    claimsParentRuntime: args.claimsParentRuntime,
     parentScope: args.parentScope,
     actingUserId: args.parentScope.actingUserId,
     deps: {
@@ -65,7 +76,10 @@ export function trackExternalFollowupCompletion(args: {
           signal?.removeEventListener("abort", interrupt);
         }
         const target = parseExternalCodingAgentId(args.agentId);
-        if (target && target.type !== "opencode") {
+        if (
+          target &&
+          (target.type === "claude-code" || target.type === "codex")
+        ) {
           const source =
             target.type === "claude-code" ? "claude_code" : "codex";
           try {
@@ -122,7 +136,7 @@ export function spawnExternalCodingAgentFollowup(args: {
           resumeSessionId: target.sessionId,
           cwd: getCurrentWorkingDirectory(),
           signal,
-          onToolCall: (c) => addToolCall(subagentId, c.id, c.name, c.args),
+          ...externalWorkerProgressListeners(subagentId),
         }),
     },
   });

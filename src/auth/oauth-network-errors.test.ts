@@ -363,3 +363,42 @@ describe("OAuth network errors", () => {
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
   });
 });
+
+describe("refreshAccessToken abort bound (evil-shub round-9 P1)", () => {
+  test("fetch always receives an abort signal (static ceiling), and a caller signal composes into it", async () => {
+    const seenSignals: (AbortSignal | null | undefined)[] = [];
+    globalThis.fetch = mock((_url: unknown, init?: RequestInit) => {
+      seenSignals.push(init?.signal);
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            access_token: "fresh",
+            refresh_token: "rotated",
+            token_type: "Bearer",
+            expires_in: 3600,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    }) as unknown as typeof fetch;
+
+    // No caller signal: the static ceiling still bounds the fetch — the
+    // single-flight waiters can never hang forever on a dead connection.
+    await refreshAccessToken("refresh-token", "device-id", "device-name");
+    expect(seenSignals[0]).toBeInstanceOf(AbortSignal);
+
+    // A caller signal composes: aborting it aborts the signal the fetch
+    // received (AbortSignal.any fan-in).
+    const controller = new AbortController();
+    const pending = refreshAccessToken(
+      "refresh-token",
+      "device-id",
+      "device-name",
+      controller.signal,
+    );
+    controller.abort(new Error("budget exceeded"));
+    await pending; // the mock resolves regardless; the signal wiring is the assertion
+    expect(seenSignals[1]).toBeInstanceOf(AbortSignal);
+    expect(seenSignals[1]?.aborted).toBe(true);
+  });
+});

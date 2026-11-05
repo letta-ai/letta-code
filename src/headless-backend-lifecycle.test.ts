@@ -30,7 +30,9 @@ describe("headless backend lifecycle wiring", () => {
 
     expect(source).toContain("const backend = getBackend();");
     const backendReadyIndex = source.indexOf("const backend = getBackend();");
-    const agentLookupIndex = source.indexOf("// Priority 0: --conversation");
+    const agentLookupIndex = source.indexOf(
+      "await retrieveHeadlessConversation(",
+    );
     expect(backendReadyIndex).toBeGreaterThan(-1);
     expect(agentLookupIndex).toBeGreaterThan(backendReadyIndex);
     expect(source.slice(backendReadyIndex, agentLookupIndex)).not.toContain(

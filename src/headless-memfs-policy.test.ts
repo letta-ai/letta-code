@@ -40,4 +40,29 @@ describe("headless MemFS policy", () => {
       isStatelessSession: false,
     });
   });
+
+  test("keeps a resumed subagent stateless like a fresh one", () => {
+    expect(
+      resolveHeadlessMemfsPolicy({
+        statelessRequested: false,
+        isSubagentRole: true,
+        newAgentRequested: false,
+        agentTags: ["origin:letta-code", "role:subagent", "type:general"],
+      }),
+    ).toEqual({
+      isFreshStatelessSubagent: false,
+      isStatelessSession: true,
+    });
+  });
+
+  test("leaves a subagent that already has MemFS as it is", () => {
+    expect(
+      resolveHeadlessMemfsPolicy({
+        statelessRequested: false,
+        isSubagentRole: true,
+        newAgentRequested: false,
+        agentTags: ["role:subagent", "git-memory-enabled"],
+      }).isStatelessSession,
+    ).toBe(false);
+  });
 });

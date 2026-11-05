@@ -9,8 +9,8 @@
  */
 
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import type { SubagentOutcome } from "./types.ts";
 
 export type JournalEntry =
@@ -44,7 +44,7 @@ export type JournalEntry =
     };
 
 export function defaultExecutionsDir(): string {
-  return join(homedir(), ".letta", "workflows", "executions");
+  return join(resolveGlobalConfigDir(), "workflows", "executions");
 }
 
 export function newExecutionId(): string {

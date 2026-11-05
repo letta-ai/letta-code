@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   buildCloudScheduleInput,
   CLOUD_CRON_UTC_NOTE,
-  CLOUD_DEVICE_FALLBACK_NOTE,
+  CLOUD_DEVICE_OFFLINE_NOTE,
   isManagedCloudSandbox,
   resolveCronRunner,
   validateTargetDevice,
@@ -125,7 +125,7 @@ describe("buildCloudScheduleInput", () => {
       targetDeviceId: "device-railway-1",
     });
     expect(built.input.target_device_id).toBe("device-railway-1");
-    expect(built.notes).toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+    expect(built.notes).toContain(CLOUD_DEVICE_OFFLINE_NOTE);
   });
 
   test("untargeted schedules omit target_device_id entirely", () => {
@@ -135,7 +135,7 @@ describe("buildCloudScheduleInput", () => {
       recurring: true,
     });
     expect("target_device_id" in built.input).toBe(false);
-    expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+    expect(built.notes).not.toContain(CLOUD_DEVICE_OFFLINE_NOTE);
   });
 
   test("whitespace-only computer target is treated as absent", () => {
@@ -146,7 +146,7 @@ describe("buildCloudScheduleInput", () => {
       targetDeviceId: "   ",
     });
     expect("target_device_id" in built.input).toBe(false);
-    expect(built.notes).not.toContain(CLOUD_DEVICE_FALLBACK_NOTE);
+    expect(built.notes).not.toContain(CLOUD_DEVICE_OFFLINE_NOTE);
   });
 });
 

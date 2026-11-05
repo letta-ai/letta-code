@@ -3,6 +3,7 @@
 
 import { homedir } from "node:os";
 import { dirname, relative, resolve, win32 } from "node:path";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   canonicalToolName,
   isFileToolName,
@@ -451,8 +452,10 @@ function normalizePathSeparators(path: string): string {
   return path.replace(/\\/g, "/");
 }
 
-function parseAbsoluteCommandPaths(command: string): string[] {
-  const normalized = command.replace(/\\"/g, '"').replace(/\\'/g, "'");
+export function parseAbsoluteCommandPaths(command: string): string[] {
+  const normalized = normalizePathSeparators(
+    command.replace(/\\"/g, '"').replace(/\\'/g, "'"),
+  );
   const candidates: string[] = [];
 
   // Prefer explicit quoted paths first.
@@ -493,10 +496,9 @@ function detectSkillScript(
     /\/$/,
     "",
   );
-  const normalizedHomeDir = normalizePathSeparators(homedir()).replace(
-    /\/$/,
-    "",
-  );
+  const normalizedConfigDir = normalizePathSeparators(
+    resolveGlobalConfigDir(),
+  ).replace(/\/$/, "");
 
   const detect = (
     source: SkillSourceLabel,
@@ -523,7 +525,7 @@ function detectSkillScript(
   }
 
   const agentRegex = new RegExp(
-    `^${escapeRegex(normalizedHomeDir)}/\\.letta/agents/[^/]+/(?:memory/)?skills/(.+?)/scripts/`,
+    `^${escapeRegex(normalizedConfigDir)}/agents/[^/]+/(?:memory/)?skills/(.+?)/scripts/`,
   );
   const agentSkill = detect("agent-scoped", agentRegex);
   if (agentSkill) {
@@ -531,7 +533,7 @@ function detectSkillScript(
   }
 
   const globalRegex = new RegExp(
-    `^${escapeRegex(normalizedHomeDir)}/\\.letta/skills/(.+?)/scripts/`,
+    `^${escapeRegex(normalizedConfigDir)}/skills/(.+?)/scripts/`,
   );
   const globalSkill = detect("global", globalRegex);
   if (globalSkill) {
@@ -550,16 +552,21 @@ function detectSkillScript(
 }
 
 function buildSkillScriptRule(command: string, skillRootPath: string): string {
-  const normalizedCommand = normalizePathSeparators(command).trim();
-  const rootIndex = normalizedCommand.indexOf(skillRootPath);
+  const originalCommand = command.trim();
+  const normalizedCommand = normalizePathSeparators(originalCommand);
+  // Bind the rule to the occurrence that actually enters the skill's scripts
+  // directory. A bare textual mention of the root earlier in a compound command
+  // must not truncate the persisted prefix and authorize unrelated suffixes.
+  const rootIndex = normalizedCommand.indexOf(`${skillRootPath}/scripts/`);
   if (rootIndex === -1) {
-    return `Bash(${normalizedCommand})`;
+    return `Bash(${originalCommand})`;
   }
 
-  const rulePrefix = normalizedCommand.slice(
-    0,
-    rootIndex + skillRootPath.length,
-  );
+  // Separator normalization is only for locating the skill root. Replacing a
+  // slash is length-preserving, so slice the original command at the same
+  // index; persisted Windows rules must retain the backslashes of the command
+  // they are expected to match.
+  const rulePrefix = originalCommand.slice(0, rootIndex + skillRootPath.length);
   return `Bash(${rulePrefix}:*)`;
 }
 

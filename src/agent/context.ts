@@ -145,6 +145,15 @@ export function getSkillsDirectory(): string | null {
 }
 
 /**
+ * Bundled skill IDs exposed by the current runtime scope when its skill
+ * sources omit "bundled". Undefined means no allowlist.
+ */
+export function getBundledSkillAllowlist(): string[] | undefined {
+  const bundledSkills = getRuntimeContext()?.bundledSkills;
+  return bundledSkills ? [...bundledSkills] : undefined;
+}
+
+/**
  * Get enabled skill sources for discovery/injection.
  */
 export function getSkillSources(): SkillSource[] {

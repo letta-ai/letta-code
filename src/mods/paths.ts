@@ -1,22 +1,38 @@
 import { existsSync } from "node:fs";
-import { homedir } from "node:os";
 import path from "node:path";
+import {
+  hasGlobalConfigDirOverride,
+  resolveGlobalConfigDir,
+} from "@/utils/settings-path";
 
 export const LETTA_MODS_DIR_ENV = "LETTA_MODS_DIR";
 export const LEGACY_LETTA_EXTENSIONS_DIR_ENV = "LETTA_EXTENSIONS_DIR";
 
-export function getGlobalModsDirectory(homeDirectory = homedir()): string {
-  return path.join(homeDirectory, ".letta", "mods");
+function getModsStateRoot(
+  homeDirectory: string | undefined,
+  env: NodeJS.ProcessEnv,
+): string {
+  return homeDirectory === undefined || hasGlobalConfigDirOverride(env)
+    ? resolveGlobalConfigDir(env, homeDirectory)
+    : path.join(homeDirectory, ".letta");
+}
+
+export function getGlobalModsDirectory(
+  homeDirectory?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return path.join(getModsStateRoot(homeDirectory, env), "mods");
 }
 
 export function getLegacyGlobalExtensionsDirectory(
-  homeDirectory = homedir(),
+  homeDirectory?: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): string {
-  return path.join(homeDirectory, ".letta", "extensions");
+  return path.join(getModsStateRoot(homeDirectory, env), "extensions");
 }
 
 export function resolveDefaultGlobalModsDirectory(
-  homeDirectory = homedir(),
+  homeDirectory?: string,
   env: NodeJS.ProcessEnv = process.env,
 ): string {
   const environmentDirectory =
@@ -24,15 +40,21 @@ export function resolveDefaultGlobalModsDirectory(
     env[LEGACY_LETTA_EXTENSIONS_DIR_ENV]?.trim();
   if (environmentDirectory) return environmentDirectory;
 
-  const modsDirectory = getGlobalModsDirectory(homeDirectory);
+  const modsDirectory = getGlobalModsDirectory(homeDirectory, env);
   if (existsSync(modsDirectory)) return modsDirectory;
 
-  const legacyDirectory = getLegacyGlobalExtensionsDirectory(homeDirectory);
+  const legacyDirectory = getLegacyGlobalExtensionsDirectory(
+    homeDirectory,
+    env,
+  );
   if (existsSync(legacyDirectory)) return legacyDirectory;
 
   return modsDirectory;
 }
 
-export function getModCacheDirectory(homeDirectory = homedir()): string {
-  return path.join(homeDirectory, ".letta", "mod-cache");
+export function getModCacheDirectory(
+  homeDirectory?: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return path.join(getModsStateRoot(homeDirectory, env), "mod-cache");
 }

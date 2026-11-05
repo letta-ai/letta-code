@@ -7,15 +7,15 @@ import {
   openSync,
   readdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { getServerUrl } from "@/backend/api/server-url";
 import type { TurnFinishedMessage } from "@/types/protocol_v2";
 import { debugWarn } from "@/utils/debug";
+import { renameSyncWithRetry } from "@/utils/rename-sync-with-retry";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { toListenerConnection } from "./connection";
 import { acquireDurableFileLock } from "./durable-file-lock";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
@@ -25,7 +25,10 @@ import {
 } from "./protocol-outbound";
 import { getConversationRuntimeKey } from "./runtime";
 import type { ListenerTransport } from "./transport";
-import type { ConversationRuntime } from "./types";
+import type {
+  ConversationRuntime,
+  InterruptedTerminalAuthority,
+} from "./types";
 
 export type ReplayableTurnFinished = Omit<
   TurnFinishedMessage,
@@ -128,6 +131,47 @@ function terminalAuthorityStatus(
   }
 }
 
+export function isInterruptedTerminalAuthorityCurrent(
+  runtime: ConversationRuntime,
+  authority: InterruptedTerminalAuthority,
+): "current" | "stale" | "unknown" {
+  if (!authority.recoveryLineageId) return "current";
+  if (!runtime.agentId) return "unknown";
+  try {
+    const store = createInterruptedTurnStore();
+    const snapshot = store.readRecoverySnapshot(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    if (snapshot) {
+      return snapshot.record.revision ===
+        (authority.recoveryAuthorityBaseRevision ??
+          authority.interruptedRevision) &&
+        snapshot.revisionToken === authority.authorityRevision
+        ? "current"
+        : snapshot.record.recoveryClaimCompletion?.state === "pending"
+          ? "unknown"
+          : "stale";
+    }
+    const retired = store.readRetiredRecoveryAuthority(
+      runtime.agentId,
+      runtime.conversationId,
+      authority.recoveryLineageId,
+    );
+    return retired?.interruptedRevision ===
+      (authority.recoveryAuthorityBaseRevision ??
+        authority.interruptedRevision) &&
+      retired.authorityRevision === authority.authorityRevision
+      ? "current"
+      : retired
+        ? "stale"
+        : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 type DeliveryClaim = {
   token: string;
   pid: number;
@@ -160,7 +204,7 @@ const DELIVERY_CLAIM_MS = 30_000;
  */
 export const TURN_FINISHED_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 
-function defaultDirectory(): string {
+export function defaultTurnFinishedDirectory(): string {
   let serverUrl: string;
   try {
     serverUrl = getServerUrl();
@@ -171,8 +215,7 @@ function defaultDirectory(): string {
     serverUrl = process.env.LETTA_BASE_URL ?? "uninitialized";
   }
   return join(
-    homedir(),
-    ".letta",
+    resolveGlobalConfigDir(),
     "listener-terminal-state",
     Buffer.from(serverUrl).toString("base64url"),
   );
@@ -223,7 +266,7 @@ function fsyncDirectory(directory: string): void {
 }
 
 export function createTurnFinishedStore(
-  directory = defaultDirectory(),
+  directory = defaultTurnFinishedDirectory(),
   options: { lockAttempts?: number } = {},
 ) {
   const claimantToken = randomUUID();
@@ -290,7 +333,7 @@ export function createTurnFinishedStore(
         mode: 0o600,
         flush: true,
       });
-      renameSync(temporary, destination);
+      renameSyncWithRetry(temporary, destination);
       fsyncDirectory(directory);
     } finally {
       rmSync(temporary, { force: true });

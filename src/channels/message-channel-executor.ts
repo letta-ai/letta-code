@@ -100,7 +100,12 @@ function normalizeChatTarget(
   value: string,
 ): string {
   const trimmed = value.trim();
-  if (channel === "signal") return trimmed;
+  // Signal and Microsoft Teams conversation ids natively contain ':' segments
+  // (Teams direct chats are `a:...`; channels are `19:...@thread.tacv2`), so
+  // the channel-name prefix stripping below must not run for them: it would
+  // corrupt `a:...` ids into their suffix and break chat_id comparisons
+  // against turn sources and stored routes.
+  if (channel === "signal" || channel === "microsoftteams") return trimmed;
   const parts = trimmed
     .split(":")
     .map((part) => part.trim())

@@ -178,7 +178,7 @@ describe("Bash tool", () => {
 
   test("times out long-running command", async () => {
     const result = await bash({
-      command: "tail -f /dev/null",
+      command: 'node -e "setInterval(() => {}, 1000)"',
       description: "Test timeout",
       timeout: 100,
     });
@@ -219,6 +219,21 @@ describe("Bash tool", () => {
 
     expect(result.status).toBe("success");
     expect(result.content[0]?.text).toContain("running in background");
+  });
+
+  test("blocks a background wait loop whose pgrep -f pattern matches itself", async () => {
+    if (process.platform !== "linux") return;
+    const before = backgroundProcesses.size;
+    const result = await bash({
+      command: "while pgrep -f runall.py >/dev/null; do sleep 3; done",
+      description: "Test self-matching pgrep block",
+      run_in_background: true,
+    });
+
+    expect(result.status).toBe("error");
+    expect(result.content[0]?.text).toContain("wait <pid>");
+    // Nothing was started, so no leftover process can hold the conversation.
+    expect(backgroundProcesses.size).toBe(before);
   });
 
   test("does not block sleep in argument or quoted position", async () => {

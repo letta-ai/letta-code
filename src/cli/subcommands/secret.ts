@@ -12,6 +12,7 @@ import {
   refreshAndListSecrets,
   setSecretOnServer,
 } from "@/utils/secrets-store";
+import { readStdin } from "@/utils/stdin";
 
 export interface SecretSubcommandDeps {
   deleteSecret?: typeof deleteSecretOnServer;
@@ -72,18 +73,6 @@ function printError(error: unknown): void {
   console.error(error instanceof Error ? error.message : String(error));
 }
 
-async function readProcessStdin(): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      data += chunk;
-    });
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", reject);
-  });
-}
-
 export async function runSecretSubcommand(
   argv: string[],
   deps: SecretSubcommandDeps = {},
@@ -91,7 +80,7 @@ export async function runSecretSubcommand(
   const listSecrets = deps.listSecrets ?? refreshAndListSecrets;
   const setSecret = deps.setSecret ?? setSecretOnServer;
   const deleteSecret = deps.deleteSecret ?? deleteSecretOnServer;
-  const readStdin = deps.readStdin ?? readProcessStdin;
+  const readInput = deps.readStdin ?? readStdin;
   const initializeSettings =
     deps.initializeSettings ?? (async () => settingsManager.initialize());
 
@@ -186,7 +175,7 @@ export async function runSecretSubcommand(
           );
           return 1;
         }
-        const piped = (await readStdin()).replace(/\r?\n$/, "");
+        const piped = (await readInput()).replace(/\r?\n$/, "");
         if (!piped) {
           console.error("No value received on stdin.");
           return 1;

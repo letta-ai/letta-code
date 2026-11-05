@@ -36,6 +36,7 @@ describe("runtime_start skill sources", () => {
           agent_id: agent.id,
           conversation_id: "default",
           skill_sources: [],
+          bundled_skills: ["maintaining-deferred-memory"],
           recover_approvals: false,
         },
         {
@@ -51,12 +52,17 @@ describe("runtime_start skill sources", () => {
 
       const scoped = getOrCreateScopedRuntime(listener, agent.id, "default");
       expect(scoped.skillSources).toEqual([]);
-      expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual([]);
+      expect(scoped.bundledSkills).toEqual(["maintaining-deferred-memory"]);
+      expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual({
+        sources: [],
+        bundledSkills: ["maintaining-deferred-memory"],
+      });
       expect(evictConversationRuntimeIfIdle(scoped)).toBe(true);
 
       const restored = getOrCreateScopedRuntime(listener, agent.id, "default");
       expect(restored).not.toBe(scoped);
       expect(restored.skillSources).toEqual([]);
+      expect(restored.bundledSkills).toEqual(["maintaining-deferred-memory"]);
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
@@ -111,10 +117,9 @@ describe("runtime_start skill sources", () => {
 
       const scoped = getOrCreateScopedRuntime(listener, agent.id, "default");
       expect(scoped.skillSources).toEqual(["global", "project"]);
-      expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual([
-        "global",
-        "project",
-      ]);
+      expect(listener.skillSourcesByConversation.get(scoped.key)).toEqual({
+        sources: ["global", "project"],
+      });
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }

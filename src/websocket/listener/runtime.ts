@@ -300,7 +300,12 @@ export function createConversationRuntime(
     key: runtimeKey,
     agentId: normalizedAgentId,
     conversationId: normalizedConversationId,
-    skillSources: listener.skillSourcesByConversation.get(runtimeKey)?.slice(),
+    skillSources: listener.skillSourcesByConversation
+      .get(runtimeKey)
+      ?.sources.slice(),
+    bundledSkills: listener.skillSourcesByConversation
+      .get(runtimeKey)
+      ?.bundledSkills?.slice(),
     workspaceSandbox: undefined,
     activeConnectionId: null,
     turnLifecycle,

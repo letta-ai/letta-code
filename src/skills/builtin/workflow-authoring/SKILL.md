@@ -80,7 +80,9 @@ Cloud decisions service.
   `phase` (progress group — use this inside concurrent stages), `schema`,
   `json`, `model`, `effort` (`'low'` for mechanical stages, higher for the
   hardest verify/judge stages), `allowedTools`, `systemPrompt` (extra system
-  prompt for this subagent), `timeoutMs` (default 10 minutes), `maxToolCalls`
+  prompt for this subagent), `skills` (skill names whose full content is
+  loaded into the subagent's prompt; workers otherwise have no skills),
+  `timeoutMs` (default 10 minutes), `maxToolCalls`
   (positive safe integer; default 1000 unique tool calls for this subagent),
   `conversationId` (resume a worker — see "Diagnosing a run").
 - `pipeline(items, stage1, stage2, ...)` → run each item through all stages
@@ -254,7 +256,7 @@ quick checks.
 
 Every run persists its script, args, and a `journal.jsonl` with one line per
 completed subagent call (prompt, outcome, conversation id) under
-`~/.letta/workflows/executions/<id>/`; the tool result names the paths. Before
+`${LETTA_CONFIG_DIR:-$HOME/.letta}/workflows/executions/<id>/`; the tool result names the paths. Before
 diagnosing why a workflow returned an empty or unexpected result, read that
 journal — it records each agent's actual return value and failure detail.
 A failed run is not resumable: fix the script and launch it again.

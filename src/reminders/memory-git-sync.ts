@@ -21,7 +21,7 @@ export interface RunPostTurnMemorySyncParams {
   agentId: string;
   conversationId?: string | null;
   isEnabled?: (agentId: string) => boolean;
-  enqueueReminder?: (text: string) => void;
+  /** Host diagnostics only; never route memory sync status into model context. */
   emitWarning?: (text: string) => void | Promise<void>;
   onMemoryPushed?: () => void;
   debugLabel?: string;
@@ -36,7 +36,7 @@ export interface RunPostTurnMemorySyncDependencies {
   syncAttachedRepositories?: typeof syncPendingAttachedRepositoryCommitsAfterTurn;
 }
 
-/** Tell the primary only how to avoid colliding with the background writer. */
+/** Host diagnostic for an active background repair; never injected into context. */
 export function formatMemoryRepairInProgressReminder(
   result: MemoryPostTurnSyncResult,
 ): string {
@@ -51,7 +51,7 @@ ${SYSTEM_REMINDER_CLOSE}`;
 }
 
 /**
- * Reminders for the primary's own post-turn MemFS sync. Repairable states are
+ * Host diagnostics for post-turn MemFS sync. Repairable states are
  * normally handed to a background worker. If that worker could not finish,
  * report the failure without assigning repository work to the foreground.
  */
@@ -206,7 +206,7 @@ export async function runPostTurnMemorySync(
             ? formatMemoryRepairInProgressReminder(result)
             : formatMemoryPostTurnSyncReminder(result);
           if (reminder) {
-            params.enqueueReminder?.(reminder);
+            debugWarn("memfs-git", reminder);
             await params.emitWarning?.(reminder);
           }
         } finally {
@@ -228,7 +228,7 @@ export async function runPostTurnMemorySync(
     for (const reminder of formatAttachedRepositoriesPostTurnSyncReminders(
       repositorySyncResult,
     )) {
-      params.enqueueReminder?.(reminder);
+      debugWarn("memfs-git", reminder);
       await params.emitWarning?.(reminder);
     }
   } catch (error) {

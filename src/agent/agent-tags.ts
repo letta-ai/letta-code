@@ -42,6 +42,16 @@ export function buildCreatedAgentTags(
   return Array.from(new Set(tags));
 }
 
+/** True for a subagent without its own MemFS; it must stay stateless. */
+export function isStatelessSubagentTags(
+  tags: readonly string[] | null | undefined,
+): boolean {
+  return Boolean(
+    tags?.includes(LETTA_CODE_SUBAGENT_TAG) &&
+      !tags.includes(GIT_MEMORY_ENABLED_TAG),
+  );
+}
+
 /** True when the agent was created with an explicit `memfs: false`. */
 export function isMemfsOptOutCreateTags(tags: unknown): boolean {
   return Array.isArray(tags) && tags.includes(MEMFS_DISABLED_TAG);

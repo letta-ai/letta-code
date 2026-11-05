@@ -15,9 +15,9 @@ import {
   readFileSync,
   unlinkSync,
 } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { format } from "node:util";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
 // ---------------------------------------------------------------------------
 // Screen-output helpers (unchanged behaviour)
@@ -65,7 +65,7 @@ function printDebugLine(line: string, level: "log" | "warn" = "log"): void {
 // Always-on debug log file
 // ---------------------------------------------------------------------------
 
-const DEBUG_LOG_DIR = join(homedir(), ".letta", "logs", "debug");
+const DEBUG_LOG_DIR = join(resolveGlobalConfigDir(), "logs", "debug");
 const MAX_SESSION_FILES = 5;
 const MAX_LOG_BYTES = 10 * 1024 * 1024; // 10 MB per session file
 const DEFAULT_TAIL_LINES = 50;

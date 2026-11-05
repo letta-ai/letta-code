@@ -2,7 +2,7 @@ import { expect, mock, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { QueueRuntime } from "@/queue/queue-runtime";
+import type { ModContinueQueueItem } from "@/queue/queue-runtime";
 import { openListenerConnection } from "./connection";
 import {
   getOrCreateScopedRuntime,
@@ -196,10 +196,11 @@ function durableIncoming(clientMessageId: string): IncomingMessage {
   };
 }
 
-function approvalBarrier(text: string): Parameters<QueueRuntime["enqueue"]>[0] {
-  return { kind: "approval_result", source: "system", text } as Parameters<
-    QueueRuntime["enqueue"]
-  >[0];
+function systemFiller(
+  text: string,
+  scope: { agentId?: string; conversationId?: string } = {},
+): Omit<ModContinueQueueItem, "id" | "enqueuedAt"> {
+  return { kind: "mod_continue", source: "system", text, ...scope };
 }
 
 function admitQueuedInputs(
@@ -391,36 +392,30 @@ test("durable rehydration preserves paused work when admitted and ordinary ingre
   expect(runtime.queueRuntime.length).toBe(3);
 });
 
-test.each([
-  ["soft", 100],
-  ["hard", 300],
-] as const)(
-  "durable rehydration rejection at %s capacity is observational on paused work",
-  (_boundary, capacity) => {
-    const runtime = createDurableRuntime();
+test("durable rehydration rejection at queue capacity is observational on paused work", () => {
+  const runtime = createDurableRuntime();
+  expect(
+    enqueueInboundUserMessage(runtime, durableIncoming("paused-existing")),
+  ).toBe(true);
+  for (let index = 1; index < 100; index += 1) {
     expect(
-      enqueueInboundUserMessage(runtime, durableIncoming("paused-existing")),
-    ).toBe(true);
-    for (let index = 1; index < capacity; index += 1) {
-      expect(
-        runtime.queueRuntime.enqueue(approvalBarrier(`barrier-${index}`)),
-      ).not.toBeNull();
-    }
-    expect(runtime.queueRuntime.pause()).toBe(1);
-    admitQueuedInputs(runtime, 1, `rejected-${capacity}`);
-    const itemIds = runtime.queueRuntime.items.map((item) => item.id);
-    const trackedMessages = runtime.queuedMessagesByItemId.size;
+      runtime.queueRuntime.enqueue(systemFiller(`filler-${index}`)),
+    ).not.toBeNull();
+  }
+  expect(runtime.queueRuntime.pause()).toBe(1);
+  admitQueuedInputs(runtime, 1, "rejected-soft");
+  const itemIds = runtime.queueRuntime.items.map((item) => item.id);
+  const trackedMessages = runtime.queuedMessagesByItemId.size;
 
-    expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(0);
-    expect(runtime.queueRuntime.pausedCount).toBe(1);
-    expect(runtime.queueRuntime.items.map((item) => item.id)).toEqual(itemIds);
-    expect(runtime.queuedMessagesByItemId.size).toBe(trackedMessages);
-    expect(loadDurableQueuedInputEntries(runtime.listener)).toHaveLength(1);
-    expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(0);
-    expect(runtime.queueRuntime.items.map((item) => item.id)).toEqual(itemIds);
-    expect(runtime.queueRuntime.pausedCount).toBe(1);
-  },
-);
+  expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(0);
+  expect(runtime.queueRuntime.pausedCount).toBe(1);
+  expect(runtime.queueRuntime.items.map((item) => item.id)).toEqual(itemIds);
+  expect(runtime.queuedMessagesByItemId.size).toBe(trackedMessages);
+  expect(loadDurableQueuedInputEntries(runtime.listener)).toHaveLength(1);
+  expect(restoreDurableQueuedInputs(runtime.listener, undefined, [])).toBe(0);
+  expect(runtime.queueRuntime.items.map((item) => item.id)).toEqual(itemIds);
+  expect(runtime.queueRuntime.pausedCount).toBe(1);
+});
 
 async function waitFor(
   assertion: () => void,
@@ -454,10 +449,10 @@ test("lifecycle refill contains async failures and retries one coalesced bounded
   }) as never;
   try {
     for (let index = 0; index < 20; index += 1) {
-      runtime.queueRuntime.enqueue(approvalBarrier(`release-${index}`));
+      runtime.queueRuntime.enqueue(systemFiller(`release-${index}`));
     }
     for (let index = 0; index < 20; index += 1) {
-      runtime.queueRuntime.tryDequeue(null);
+      runtime.queueRuntime.consumeItems(1);
     }
     await waitFor(() => expect(calls).toBe(3));
     await Bun.sleep(50);
@@ -483,7 +478,7 @@ test("lifecycle refill persists beyond a transient failure burst without another
     return 0;
   }) as never;
   try {
-    runtime.queueRuntime.enqueue(approvalBarrier("single-capacity-release"));
+    runtime.queueRuntime.enqueue(systemFiller("single-capacity-release"));
     runtime.queueRuntime.tryDequeue(null);
     await waitFor(() => expect(calls).toBe(8), 4_000);
     await Bun.sleep(300);
@@ -496,7 +491,7 @@ test("lifecycle refill persists beyond a transient failure burst without another
       calls += 1;
       throw new Error("shutdown failure");
     }) as never;
-    runtime.queueRuntime.enqueue(approvalBarrier("shutdown-cancel"));
+    runtime.queueRuntime.enqueue(systemFiller("shutdown-cancel"));
     runtime.queueRuntime.tryDequeue(null);
     await waitFor(() => expect(calls).toBe(9));
     stopRuntime(runtime.listener, true);
@@ -615,25 +610,25 @@ test("malformed live sidecars retain predecessor and successor replay ownership"
   }
 });
 
-test("lifecycle refill drains hard overflow without duplicates or forgets", async () => {
+test("lifecycle refill drains a full queue's overflow without duplicates or forgets", async () => {
   const runtime = createDurableRuntime();
-  admitQueuedInputs(runtime, 301, "cm-hard");
-  for (let index = 0; index < 300; index += 1) {
-    const barrier = {
-      kind: "approval_result" as const,
-      source: "system" as const,
-      text: `barrier-${index}`,
-      agentId: runtime.agentId ?? undefined,
-      conversationId: runtime.conversationId,
-    } as Parameters<QueueRuntime["enqueue"]>[0];
-    expect(runtime.queueRuntime.enqueue(barrier)).not.toBeNull();
+  admitQueuedInputs(runtime, 301, "cm-full");
+  for (let index = 0; index < 100; index += 1) {
+    expect(
+      runtime.queueRuntime.enqueue(
+        systemFiller(`filler-${index}`, {
+          agentId: runtime.agentId ?? undefined,
+          conversationId: runtime.conversationId,
+        }),
+      ),
+    ).not.toBeNull();
   }
   const restore = await installLifecycleRefill(runtime);
   try {
     expect(restore).toHaveBeenCalledTimes(1);
-    expect(runtime.queueRuntime.length).toBe(300);
-    for (let index = 0; index < 300; index += 1) {
-      expect(runtime.queueRuntime.tryDequeue(null)?.items).toHaveLength(1);
+    expect(runtime.queueRuntime.length).toBe(100);
+    for (let index = 0; index < 100; index += 1) {
+      expect(runtime.queueRuntime.consumeItems(1)?.items).toHaveLength(1);
     }
     await Promise.resolve();
     expect(restore).toHaveBeenCalledTimes(2);

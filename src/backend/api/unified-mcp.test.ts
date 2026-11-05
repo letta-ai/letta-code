@@ -236,4 +236,71 @@ describe("unified MCP API adapter", () => {
       { path: runPath, body: { args: { title: "Bug" } } },
     ]);
   });
+
+  test("sends isolation compatibility only alongside the current originator token", async () => {
+    const runPath = "/v1/agents/agent-1/mcp-servers/mcp-1/tools/tool-1/run";
+    const requests: Array<{
+      path: string;
+      body: unknown;
+      headers?: Record<string, string>;
+    }> = [];
+    const client: UnifiedMcpClient = {
+      get: async () => [],
+      post: async (path, options) => {
+        requests.push({ path, body: options?.body, headers: options?.headers });
+        return { status: "success", func_return: "ok" };
+      },
+    };
+
+    // Unattributed call: no token, and the header must be absent entirely.
+    await runUnifiedMcpTool({
+      client,
+      agentId: "agent-1",
+      mcpServerId: "mcp-1",
+      toolId: "tool-1",
+      args: { title: "Bug" },
+    });
+    expect(requests).toEqual([
+      { path: runPath, body: { args: { title: "Bug" } }, headers: undefined },
+    ]);
+
+    // Attributed call: the held token rides the originator header verbatim.
+    await runUnifiedMcpTool({
+      client,
+      agentId: "agent-1",
+      mcpServerId: "mcp-1",
+      toolId: "tool-1",
+      args: { title: "Bug" },
+      originatorToken: "mst_one.secret-a",
+    });
+    expect(requests[1]).toEqual({
+      path: runPath,
+      body: { args: { title: "Bug" } },
+      headers: {
+        "x-letta-mcp-originator-token": "mst_one.secret-a",
+        "x-letta-mcp-originator-isolation": "1",
+      },
+    });
+
+    // Tool arguments cannot advertise compatibility, borrow the preceding
+    // call's bearer, or turn an empty token into an attributed request.
+    const args = {
+      "x-letta-mcp-originator-token": "untrusted-argument",
+      "x-letta-mcp-originator-isolation": "1",
+    };
+    for (const originatorToken of [undefined, ""]) {
+      await runUnifiedMcpTool({
+        client,
+        agentId: "agent-1",
+        mcpServerId: "mcp-1",
+        toolId: "tool-1",
+        args,
+        originatorToken,
+      });
+    }
+    expect(requests.slice(2)).toEqual([
+      { path: runPath, body: { args }, headers: undefined },
+      { path: runPath, body: { args }, headers: undefined },
+    ]);
+  });
 });

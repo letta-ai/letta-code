@@ -399,4 +399,81 @@ describe("external MessageChannel gateway boundary", () => {
       }),
     );
   });
+
+  test("preserves Microsoft Teams `a:`-prefixed chat ids through normalization", async () => {
+    // Teams direct-chat conversation ids natively start with `a:`. The
+    // channel-name prefix stripping that helps Slack (`channel:C123`) must
+    // not run for Teams, or the id no longer matches the turn source or the
+    // stored route and every routed reply fails account/route inference.
+    const sendMessage = mock(async () => ({ messageId: "teams-response-1" }));
+    const transport: ChannelMessageActionTransport = { sendMessage };
+    const teamsChatId = "a:1ZYJteams-conv-1";
+    const resolveRoutedContext = mock(
+      async (): Promise<
+        Exclude<
+          Awaited<
+            ReturnType<MessageChannelExecutionResolver["resolveRoutedContext"]>
+          >,
+          string | null
+        >
+      > => ({
+        route: {
+          accountId: "teams-integration-1",
+          chatId: teamsChatId,
+          chatType: "direct",
+          threadId: null,
+          agentId: "agent-1",
+          conversationId: "conv-1",
+        },
+        transport,
+        messageActions: createSlackActions(),
+      }),
+    );
+    const resolver: MessageChannelExecutionResolver = {
+      isSupportedChannel: (channel) => channel === "microsoftteams",
+      resolveRoutedContext,
+      resolveProactiveContext: () =>
+        "Error: Proactive sends are disabled in this test host.",
+    };
+
+    const result = await executeMessageChannel(
+      {
+        action: "send",
+        channel: "microsoftteams",
+        chat_id: teamsChatId,
+        message: "hello from Teams",
+      },
+      {
+        resolver,
+        scope: { agentId: "agent-1", conversationId: "conv-1" },
+        channelTurnSources: [
+          {
+            channel: "microsoftteams",
+            accountId: "teams-integration-1",
+            chatId: teamsChatId,
+            chatType: "direct",
+            messageId: "1699999999999",
+            threadId: null,
+            agentId: "agent-1",
+            conversationId: "conv-1",
+          },
+        ],
+      },
+    );
+
+    // The action adapter is Slack's test bundle, so the display name in the
+    // success text is not meaningful here; the id-preservation assertions
+    // below are the contract under test.
+    expect(result).toContain("Message sent to");
+    expect(result).toContain("teams-response-1");
+    expect(resolveRoutedContext).toHaveBeenCalledWith({
+      channel: "microsoftteams",
+      chatId: teamsChatId,
+      accountId: "teams-integration-1",
+      scope: { agentId: "agent-1", conversationId: "conv-1" },
+    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ chatId: teamsChatId }),
+    );
+  });
 });

@@ -80,7 +80,7 @@ export const FIRST_PARTY_CHANNEL_IDS = [
 export type FirstPartyChannelId = (typeof FIRST_PARTY_CHANNEL_IDS)[number];
 /**
  * Built-in channels shipped with Letta Code. Custom channel IDs are discovered
- * at runtime from ~/.letta/channels/<id>/channel.json.
+ * at runtime from the active product's channels directory.
  */
 export const SUPPORTED_CHANNEL_IDS = FIRST_PARTY_CHANNEL_IDS;
 export type SupportedChannelId = string;

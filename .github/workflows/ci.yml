@@ -17,7 +17,7 @@ concurrency:
 jobs:
   classify:
     name: Classify change
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -83,7 +83,7 @@ jobs:
 
   check:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -120,7 +120,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v6
         with:
-          node-version: "22"
+          node-version: "22.23.4"
 
       - name: Install dependencies
         env:
@@ -138,13 +138,13 @@ jobs:
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Unit / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: ${{ matrix.runner == 'windows-latest' && 15 || 10 }}
     permissions:
       contents: read
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
         shard: [1, 2, 3, 4]
         # Windows subprocess-heavy tests need more runners, not concurrent
         # tests sharing cwd, environment, module mocks, or the same CPU.
@@ -187,7 +187,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
         shard: [1, 2, 3, 4]
         # Four Windows shards put the input-format, model CLI, and teleport
         # files together (244 seconds before setup). Split that group again.
@@ -215,7 +215,29 @@ jobs:
         shell: bash
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun test src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+        run: bun run scripts/run-api-integration-tests.ts src/integration-tests --timeout 15000 --shard=${{ matrix.shard }}/${{ runner.os == 'Windows' && 8 || 4 }}
+
+  worker-model-discovery:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' }}
+    name: External worker model discovery
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install native worker CLIs
+        run: npm install --prefix "$RUNNER_TEMP/workers" @anthropic-ai/claude-code@2.1.310 @openai/codex@0.164.0 opencode-ai@1.19.0
+      - name: Discover models without inference
+        run: |
+          export PATH="$RUNNER_TEMP/workers/node_modules/.bin:$PATH"
+          bun test ./src/tools/impl/external-worker-models.integration.ts
+          bun run build
+          LETTA_TEST_CLI_BUNDLE="$PWD/letta.js" bun test ./src/tools/impl/external-worker-models.integration.ts
 
   opencode-integration:
     needs: classify
@@ -241,6 +263,28 @@ jobs:
           bun build src/tools/impl/opencode-session.node-test.ts --target=node --format=esm --outfile="$RUNNER_TEMP/opencode-node-test.mjs"
           node --test "$RUNNER_TEMP/opencode-node-test.mjs"
 
+  cursor-integration:
+    needs: classify
+    if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    name: Cursor native lifecycle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run native Cursor tests
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+        run: |
+          bun test ./src/tools/impl/cursor-session.integration.ts
+          bun run build
+          bun build src/tools/impl/cursor-session.node-test.ts --target=node --format=esm --outfile=cursor-lifecycle-test.mjs
+          node --test cursor-lifecycle-test.mjs
+
   build:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
@@ -251,8 +295,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: macOS arm64 (macos-14)
-            runner: macos-14
+          - name: macOS arm64 (macos-15)
+            runner: macos-15
           - name: Linux x64 (ubuntu-24.04)
             runner: ubuntu-24.04
           - name: Linux arm64 (ubuntu-24.04-arm)
@@ -420,10 +464,10 @@ jobs:
         if: ${{ github.event_name != 'push' }}
         run: bun pm pack
 
-  node18-smoke:
+  node22-smoke:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
-    name: Node 18 Smoke Test
+    name: Node 22 Smoke Test
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -444,22 +488,22 @@ jobs:
       - name: Build bundle
         run: bun run build
 
-      - name: Setup Node 18
+      - name: Setup Node 22
         uses: actions/setup-node@v6
         with:
-          node-version: "18"
+          node-version: "22.23.4"
 
       - name: Verify Node version
         run: node --version
 
-      - name: CLI smoke test (Node 18)
+      - name: CLI smoke test (Node 22)
         run: node ./letta.js --help
 
   headless:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Headless / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -493,7 +537,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Headless Local / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -527,7 +571,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Ollama Smoke / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Land non-blocking while we observe CPU inference timing + reliability;
     # flip to a required check once stable.
     continue-on-error: true
@@ -594,7 +638,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This is live Cloud/model coverage. Keep its diagnostics visible without
     # letting a provider outage block packaging and release readiness.
     continue-on-error: true

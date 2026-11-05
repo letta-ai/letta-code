@@ -1,9 +1,33 @@
 import { readFileSync } from "node:fs";
+import { uptime } from "node:os";
+import {
+  getProcessCommand,
+  isPidReusedByNonLetta,
+} from "@/utils/process-liveness";
 
 interface ProcessIdentity {
   startTicks: string | null;
   bootId: string | null;
 }
+
+interface PidReuseProbe {
+  platform: NodeJS.Platform;
+  /** Epoch ms of the current OS boot. */
+  bootTimeMs: () => number;
+  /** The pid's command line, or null when it cannot be determined. */
+  getProcessCommand: (pid: number) => string | null;
+}
+
+// Tolerates clock jitter between `started_at` and the uptime-derived boot time.
+const BOOT_TIME_SLACK_MS = 60_000;
+
+const defaultPidReuseProbe: PidReuseProbe = {
+  platform: process.platform,
+  bootTimeMs: () => Date.now() - uptime() * 1000,
+  getProcessCommand,
+};
+
+let pidReuseProbe: PidReuseProbe = defaultPidReuseProbe;
 
 let readProcessIdentityOverride:
   | ((pid: number) => ProcessIdentity | null)
@@ -66,6 +90,7 @@ export function isProcessAlive(
   owner?: {
     process_start_ticks?: string | null;
     boot_id?: string | null;
+    started_at?: string;
   } | null,
 ): boolean {
   try {
@@ -96,7 +121,34 @@ export function isProcessAlive(
     }
   }
 
+  if (owner && pidReuseProbe.platform !== "linux") {
+    return !isPidReusedSinceBoot(pid, owner.started_at);
+  }
+
   return true;
+}
+
+/**
+ * Without /proc identity (macOS, Windows), a live pid recorded before the
+ * current boot may belong to an unrelated process after a reboot. The boot
+ * estimate moves with the wall clock, so it only prompts a closer look: the
+ * owner is stale only when its pid is positively identified as non-letta.
+ */
+function isPidReusedSinceBoot(pid: number, startedAt?: string): boolean {
+  const startedAtMs = startedAt ? Date.parse(startedAt) : Number.NaN;
+  if (
+    !Number.isFinite(startedAtMs) ||
+    startedAtMs >= pidReuseProbe.bootTimeMs() - BOOT_TIME_SLACK_MS
+  ) {
+    return false;
+  }
+  return isPidReusedByNonLetta(pid, pidReuseProbe.getProcessCommand);
+}
+
+export function __testOverridePidReuseProbe(
+  overrides: Partial<PidReuseProbe> | null,
+): void {
+  pidReuseProbe = { ...defaultPidReuseProbe, ...overrides };
 }
 
 export function __testOverrideReadProcessIdentity(

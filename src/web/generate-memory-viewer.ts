@@ -8,10 +8,10 @@
 
 import { execFile as execFileCb } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
+import { detectMemoryFormat, isCoreMemoryPath } from "@/agent/memory-format";
 import {
   getFileNodes,
   readFileContent,
@@ -21,6 +21,7 @@ import { getAgentContextOverview } from "@/backend/api/agents";
 import { getClient } from "@/backend/api/client";
 import { apiRequest } from "@/backend/api/request";
 import { getServerUrl } from "@/backend/api/server-url";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import {
   applyContextUsageSnapshot,
   type ContextUsageSnapshot,
@@ -38,7 +39,7 @@ import type {
 
 const execFile = promisify(execFileCb);
 
-const VIEWERS_DIR = join(homedir(), ".letta", "viewers");
+const VIEWERS_DIR = join(resolveGlobalConfigDir(), "viewers");
 const MAX_COMMITS = 500;
 const RECENT_DIFF_COUNT = 50;
 const PER_DIFF_CAP = 100_000; // 100KB per diff
@@ -161,7 +162,8 @@ function parseFrontmatter(raw: string): {
 }
 
 /** Collect memory files from the working tree on disk. */
-function collectFiles(memoryRoot: string): MemoryFile[] {
+export function collectMemoryViewerFiles(memoryRoot: string): MemoryFile[] {
+  const format = detectMemoryFormat(memoryRoot, false);
   const treeNodes = scanMemoryFilesystem(memoryRoot);
   const fileNodes = getFileNodes(treeNodes);
 
@@ -172,9 +174,7 @@ function collectFiles(memoryRoot: string): MemoryFile[] {
       const { frontmatter, body } = parseFrontmatter(raw);
       return {
         path: n.relativePath,
-        isSystem:
-          n.relativePath.startsWith("system/") ||
-          n.relativePath.startsWith("system\\"),
+        isSystem: isCoreMemoryPath(n.relativePath, format),
         frontmatter,
         content: body,
       };
@@ -302,7 +302,7 @@ async function collectMemoryData(
   conversationId?: string,
 ): Promise<MemoryViewerData> {
   // Filesystem scan (synchronous)
-  const files = collectFiles(memoryRoot);
+  const files = collectMemoryViewerFiles(memoryRoot);
 
   // Git calls (parallel)
   const [metadata, statsMap, diffsMap, totalCount] = await Promise.all([

@@ -15,7 +15,7 @@ import { createRuntime } from "./lifecycle";
 import { getOutboundQueueStats, OUTBOUND_QUEUE_LIMITS } from "./outbound-wire";
 import { startRecoveredApprovalContinuation } from "./recovery";
 import { createRecoveryEvidenceCheckpoint } from "./recovery-evidence";
-import { clearConversationRuntimeState } from "./runtime";
+import { clearConversationRuntimeState, setActiveRuntime } from "./runtime";
 import type { ListenerTransport } from "./transport";
 import { finishListenerTurn } from "./turn-terminal";
 import type { RecoveredApprovalState, StartListenerOptions } from "./types";
@@ -618,80 +618,10 @@ describe("recovered approval lease boundaries", () => {
     expect(queued?.approvalMessage.otid).toBe(recordedOtids[0]);
   });
 
-  test("a queued user's identity survives recovered denial continuation", async () => {
-    const runtime = getOrCreateScopedRuntime(
-      createRuntime(),
-      "agent-1",
-      "conv-1",
-    );
-    runtime.recoveredApprovalState = createRecoveredState();
-    enqueueInboundUserMessage(
-      runtime,
-      {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [{ role: "user", content: "message from Charles" }],
-      },
-      "cloud-user-charles",
-    );
-    let receivedActingUserId: string | undefined;
-    let receivedMessages: unknown;
-    const recordedToolCallIds: string[][] = [];
-    const recordedActingUserIds: Array<string | undefined> = [];
-
-    const handled = await startRecoveredApprovalContinuation(
-      runtime,
-      createTransport([]),
-      async (
-        message,
-        _socket,
-        ownerRuntime,
-        _onStatusChange,
-        _connectionId,
-        _batchId,
-        turnLease,
-      ) => {
-        receivedActingUserId = message.actingUserId;
-        receivedMessages = message.messages;
-        if (turnLease) ownerRuntime.turnLifecycle.finish(turnLease, "end_turn");
-      },
-      {
-        dependencies: {
-          ensureSecretsHydrated: async () => {},
-          ensureModAdapters: async () => [],
-          prepareToolExecutionContext: async () => createPreparedToolContext(),
-          executeApprovalBatch: async () => createDenialResults(),
-          recordListenerWork: (_runtime, update) => {
-            if (update.toolCallIds)
-              recordedToolCallIds.push(update.toolCallIds);
-            if (update.durableInputIdentities)
-              recordedActingUserIds.push(update.actingUserId);
-          },
-        },
-      },
-    );
-
-    expect(handled).toBe(true);
-    expect(receivedActingUserId).toBe("cloud-user-charles");
-    expect(receivedMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: "approval",
-          approvals: createDenialResults(),
-        }),
-      ]),
-    );
-    expect(JSON.stringify(receivedMessages)).toContain(
-      '"attribution":{"acting_user_id":"cloud-user-charles"}',
-    );
-    expect(recordedToolCallIds).toEqual([["call-1"]]);
-    expect(recordedActingUserIds).toEqual(["cloud-user-charles"]);
-  });
-
-  test("claim loss after dequeue checkpoints the queued user before retry", async () => {
+  test("recovered denial returns results then drains attributed queued work as a new turn", async () => {
     const listener = createRuntime();
     const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
+    setActiveRuntime(listener);
     runtime.recoveredApprovalState = createRecoveredState();
     enqueueInboundUserMessage(
       runtime,
@@ -699,78 +629,84 @@ describe("recovered approval lease boundaries", () => {
         type: "message",
         agentId: "agent-1",
         conversationId: "conv-1",
-        durableInputIdentities: [{ domain: "input", id: "cm-must-survive" }],
-        terminalConsumerIds: ["slack:agent-1"],
-        messages: [{ role: "user", content: "must survive" }],
+        mcpOriginatorSuperRunId: "B",
+        mcpOriginatorTokenPresent: true,
+        durableInputIdentities: [{ domain: "input", id: "queued-B" }],
+        messages: [{ role: "user", content: "message from B" }],
       },
-      "cloud-user-charles",
+      "B-actor",
     );
-    const scheduleRecordedRecovery = mock(() => {});
-    listener.scheduleRecordedRecovery = scheduleRecordedRecovery;
-    const processTurn = mock(async () => {});
-    const ownershipCheckpoints: unknown[] = [];
-
-    expect(
-      await startRecoveredApprovalContinuation(
-        runtime,
-        createTransport([]),
-        processTurn,
-        {
-          dependencies: {
-            ensureSecretsHydrated: async () => {},
-            ensureModAdapters: async () => [],
-            prepareToolExecutionContext: async () =>
-              createPreparedToolContext(),
-            executeApprovalBatch: async () => createDenialResults(),
-            recordListenerWork: (_runtime, update) => {
-              if (update.durableInputIdentities) {
-                ownershipCheckpoints.push(update);
-              }
-            },
-            acquireRecoveryClaim: (async (
-              _runtime: unknown,
-              onLost: () => void,
-            ) => {
-              let lossReported = false;
-              return {
-                get owned() {
-                  // Ownership is lost in the exact destructive-dequeue window.
-                  const owned = !runtime.queueRuntime.isEmpty;
-                  if (!owned && !lossReported) {
-                    lossReported = true;
-                    onLost();
-                  }
-                  return owned;
-                },
-                complete: async () => false,
-                release: async () => {},
-                abandon: () => {},
-              };
-            }) as never,
+    const processed: Array<{
+      messages: unknown;
+      actor: unknown;
+      origin: unknown;
+      state: string;
+      batch: unknown;
+    }> = [];
+    try {
+      expect(
+        await startRecoveredApprovalContinuation(
+          runtime,
+          createTransport([]),
+          async (
+            message,
+            _socket,
+            owner,
+            _status,
+            _connection,
+            batch,
+            lease,
+          ) => {
+            processed.push({
+              messages: message.messages,
+              actor: message.actingUserId,
+              origin: message.mcpOriginatorSuperRunId,
+              state: owner.turnLifecycle.kind,
+              batch,
+            });
+            if (processed.length === 1) {
+              expect(owner.queueRuntime.length).toBe(1);
+              expect(message.durableInputIdentities).not.toContainEqual({
+                domain: "input",
+                id: "queued-B",
+              });
+            } else {
+              expect(message.durableInputIdentities).toContainEqual({
+                domain: "input",
+                id: "queued-B",
+              });
+            }
+            if (lease) owner.turnLifecycle.finish(lease, "end_turn");
           },
-        },
-      ),
-    ).toBe(true);
-    expect(processTurn).toHaveBeenCalledTimes(0);
-    expect(
-      ownershipCheckpoints.some((checkpoint) => {
-        const value = checkpoint as {
-          durableInputIdentities?: Array<{ domain: string; id: string }>;
-          terminalConsumerIds?: string[];
-          actingUserId?: string;
-        };
-        return (
-          value.actingUserId === "cloud-user-charles" &&
-          value.durableInputIdentities?.some(
-            (identity) => identity.id === "cm-must-survive",
-          ) === true &&
-          value.terminalConsumerIds?.includes("slack:agent-1") === true
-        );
-      }),
-    ).toBe(true);
-    expect(runtime.queueRuntime.length).toBe(0);
-    await new Promise((resolve) => setImmediate(resolve));
-    expect(scheduleRecordedRecovery).toHaveBeenCalledTimes(1);
+          {
+            dependencies: {
+              ensureSecretsHydrated: async () => {},
+              ensureModAdapters: async () => [],
+              prepareToolExecutionContext: async () =>
+                createPreparedToolContext(),
+              executeApprovalBatch: async () => createDenialResults(),
+              recordListenerWork: () => {},
+            },
+          },
+        ),
+      ).toBe(true);
+      await runtime.messageQueue;
+      expect(processed).toHaveLength(2);
+      expect(JSON.stringify(processed[0]?.messages)).toContain("call-1");
+      expect(JSON.stringify(processed[0]?.messages)).not.toContain(
+        "message from B",
+      );
+      expect(processed[0]?.origin).toBeUndefined();
+      expect(processed[1]?.origin).toBe("B");
+      expect(processed[1]?.actor).toBe("B-actor");
+      expect(processed[1]?.state).toBe("idle");
+      expect(processed[1]?.batch).not.toBe(processed[0]?.batch);
+      expect(runtime.queueRuntime.length).toBe(0);
+      expect(runtime.queuedMessagesByItemId.size).toBe(0);
+      expect(runtime.recoveredApprovalState).toBeNull();
+    } finally {
+      setActiveRuntime(null);
+    }
   });
 
   test("stale recovered denial processing emits nothing into a replacement run", async () => {

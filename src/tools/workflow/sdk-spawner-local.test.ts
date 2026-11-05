@@ -147,3 +147,36 @@ describe("createSdkSpawner local continuation", () => {
     expect(calls).toBe(3);
   });
 });
+
+describe("createSdkSpawner skills", () => {
+  test("loads named skills into the worker prompt and fails on unknown names", async () => {
+    const prompts: string[] = [];
+    const spawner = createSdkSpawner(
+      {
+        query: ({ prompt }) => {
+          prompts.push(prompt);
+          return completedQuery([
+            { type: "result", success: true, result: "" },
+          ]);
+        },
+      },
+      CONFIG,
+    );
+    await spawner(
+      request({ skills: ["creating-skills"] }),
+      new AbortController().signal,
+    );
+    expect(prompts[0]).toStartWith("<loaded_skills>\n<creating-skills>\n---\n");
+    expect(prompts[0]).toEndWith("</loaded_skills>\n\ninspect");
+
+    const outcome = await spawner(
+      request({ skills: ["creating-skills", "no-such-skill"] }),
+      new AbortController().signal,
+    );
+    expect(outcome).toMatchObject({
+      failed: true,
+      error: "Unknown skill(s): no-such-skill.",
+    });
+    expect(prompts).toHaveLength(1);
+  });
+});

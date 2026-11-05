@@ -39,6 +39,7 @@ import {
 } from "./local-agent-record";
 import { readAgentRecordFiles } from "./local-agent-record-file";
 import { selectLocalMessagesForFork } from "./local-conversation-fork";
+import { localConversationKey } from "./local-conversation-key";
 import { listLocalConversations } from "./local-conversation-list";
 import {
   agentFreeExecutionRecord,
@@ -107,7 +108,6 @@ import {
   overlayResidentLocalMessageSuffix,
   overlayResidentLocalMessageTail,
   readJsonFile,
-  readJsonlFile,
   readJsonlFileSuffix,
   readLocalTranscriptTailWindow,
   repairSyntheticConversationTimestamps,
@@ -123,6 +123,7 @@ import {
   validateUnreadTranscriptHead,
   writeLocalTranscriptManifest,
 } from "./local-transcript";
+import { readLocalTranscriptRowsForHistory } from "./local-transcript-history";
 import type {
   LocalAgentRecord,
   StoredConversation,
@@ -441,6 +442,7 @@ export class LocalStore {
   listAgents(body?: AgentListBody): { items: AgentState[] } {
     this.refreshLoadedAgentRecordsFromStorage();
     const bodyRecord = (body ?? {}) as Record<string, unknown>;
+    const name = optionalString(bodyRecord.name);
     const queryText = optionalString(bodyRecord.query_text)?.toLowerCase();
     const tags = isStringArray(bodyRecord.tags) ? bodyRecord.tags : [];
     const after = optionalString(bodyRecord.after);
@@ -449,6 +451,9 @@ export class LocalStore {
       .filter((agent) => !isHiddenLocalAgentRecord(agent))
       .map((agent) => this.projectAgent(agent));
 
+    if (name) {
+      agents = agents.filter((agent) => agent.name === name);
+    }
     if (tags.length > 0) {
       agents = agents.filter((agent) =>
         tags.every((tag) => agent.tags?.includes(tag)),
@@ -463,15 +468,9 @@ export class LocalStore {
         return haystack.includes(queryText);
       });
     }
-    agents.sort((a, b) => {
-      const aDate =
-        (a as { last_run_completion?: string | null }).last_run_completion ??
-        "";
-      const bDate =
-        (b as { last_run_completion?: string | null }).last_run_completion ??
-        "";
-      return bDate.localeCompare(aDate);
-    });
+    agents.sort((a, b) =>
+      (b.last_run_completion ?? "").localeCompare(a.last_run_completion ?? ""),
+    );
     if (after) {
       const afterIndex = agents.findIndex((agent) => agent.id === after);
       if (afterIndex >= 0) agents = agents.slice(afterIndex + 1);
@@ -2135,12 +2134,12 @@ export class LocalStore {
     const metadata = this.validateTranscriptMetadata(key);
     if (!metadata) return undefined;
 
-    const rawRows = readJsonlFile<unknown>(metadata.messagesPath);
     const conversation = this.conversations.get(key);
+    const inContextIds = conversation?.in_context_message_ids ?? [];
     const transcript = localTranscriptRowsResult(
-      rawRows,
+      readLocalTranscriptRowsForHistory(metadata.messagesPath, inContextIds),
       metadata.messageFormat,
-      conversation?.in_context_message_ids ?? [],
+      inContextIds,
     );
     assertNoLegacyUiMessageRows(
       transcript.messages,
@@ -3254,8 +3253,6 @@ export class LocalStore {
   }
 
   private conversationKey(conversationId: string, agentId: string): string {
-    return conversationId === "default"
-      ? `default:${agentId}`
-      : `conversation:${conversationId}`;
+    return localConversationKey(conversationId, agentId);
   }
 }

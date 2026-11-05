@@ -21,33 +21,33 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-NODE = "22.19.0"
+NODE = "22.23.4"
 # Official nodejs.org SHASUMS256.txt; pin the archive, not only the version.
 TARGETS = {
     ("Linux", "x86_64"): (
         "linux-x64",
         "manylinux_2_28_x86_64",
-        "d36e56998220085782c0ca965f9d51b7726335aed2f5fc7321c6c0ad233aa96d",
+        "b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406",
     ),
     ("Linux", "aarch64"): (
         "linux-arm64",
         "manylinux_2_28_aarch64",
-        "d32817b937219b8f131a28546035183d79e7fd17a86e38ccb8772901a7cd9009",
+        "f7a1e486dbc8b286847815b477d4fb5e9fb963ed4489c3e1588853d685f589f9",
     ),
     ("Darwin", "arm64"): (
         "darwin-arm64",
         "macosx_14_0_arm64",
-        "c59006db713c770d6ec63ae16cb3edc11f49ee093b5c415d667bb4f436c6526d",
+        "c9e1dbc748b33ed2d14f42445191ecaf14c56259c7a9a26d0042c49ec2b66428",
     ),
     ("Darwin", "x86_64"): (
         "darwin-x64",
         "macosx_14_0_x86_64",
-        "3cfed4795cd97277559763c5f56e711852d2cc2420bda1cea30c8aa9ac77ce0c",
+        "efcc2b0db6f94bf53eddb038fe2b370277a042bd29e4f19b8f8e23598795b819",
     ),
     ("Windows", "AMD64"): (
         "win-x64",
         "win_amd64",
-        "ea3fad0e67a991d8477d8c01344b56e69c676ccb733f065b22436994b1253f86",
+        "cbc74b5e0982c9dbb41525fd8fb5dcd32fbee237863f7829072f4639a1ce5f20",
     ),
 }
 

@@ -32,6 +32,8 @@ export function isRuntimeStartCommand(
       isStringArray(c.conversation_source_tags)) &&
     (c.cwd === undefined || c.cwd === null || typeof c.cwd === "string") &&
     (c.mode === undefined || isDevicePermissionMode(c.mode)) &&
+    (c.mode_is_default === undefined ||
+      typeof c.mode_is_default === "boolean") &&
     (c.execution_settings === undefined ||
       isRuntimeExecutionSettings(c.execution_settings)) &&
     (c.workspace_sandbox === undefined ||
@@ -39,6 +41,7 @@ export function isRuntimeStartCommand(
     (c.skill_sources === undefined || isSkillSourceArray(c.skill_sources)) &&
     (c.preserve_skill_sources === undefined ||
       typeof c.preserve_skill_sources === "boolean") &&
+    (c.bundled_skills === undefined || isStringArray(c.bundled_skills)) &&
     (c.client_info === undefined || isRuntimeStartClientInfo(c.client_info)) &&
     (c.recover_approvals === undefined ||
       typeof c.recover_approvals === "boolean") &&

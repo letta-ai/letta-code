@@ -19,7 +19,7 @@ function rootMemoryBlockPath(label: string): string {
   return `${normalized.replaceAll("/", "_")}.md`;
 }
 
-function memoryNameFromPath(relativePath: string): string {
+export function memoryNameFromPath(relativePath: string): string {
   return relativePath
     .replace(/\.md$/, "")
     .split(/[-_]+/)

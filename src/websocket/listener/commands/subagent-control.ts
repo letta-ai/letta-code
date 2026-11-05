@@ -6,12 +6,19 @@ import {
 } from "@/runtime-context";
 import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
 import { sendCodexMessage } from "@/tools/impl/codex-app-server";
+import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
+  buildExternalWorkerResumeEnv,
+  type ExternalWorkerLaunchEnv,
+  type ExternalWorkerResumeEnvDependencies,
   isExternalCodingAgentType,
   parseExternalCodingAgentId,
+  resolveExternalCodingAgentSecretEnv,
+  scrubExternalWorkerResult,
 } from "@/tools/impl/external-coding-agent";
 import { trackExternalFollowupCompletion } from "@/tools/impl/external-coding-agent-task";
 import {
+  getNativeSessionOwner,
   type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
@@ -71,6 +78,28 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   );
 }
 
+/**
+ * Completed background tasks and their subagent rows are evicted within
+ * minutes, but the native session stays resumable on disk. Fall back to the
+ * record of which conversation launched it.
+ */
+function ownsNativeSession(
+  runtime: ConversationRuntime,
+  agentId: string,
+): boolean {
+  const target = parseExternalCodingAgentId(agentId);
+  if (!target || target.computer) return false;
+  if (target.type !== "claude-code" && target.type !== "codex") return false;
+  const owner = getNativeSessionOwner(
+    target.type === "claude-code" ? "claude_code" : "codex",
+    target.sessionId,
+  );
+  return (
+    owner?.agentId === runtime.agentId &&
+    owner.conversationId === runtime.conversationId
+  );
+}
+
 function runtimeContext(
   parent: ConversationRuntime,
   command: SubagentMessageCommand,
@@ -85,6 +114,7 @@ function runtimeContext(
       parent.conversationId,
     ),
     skillSources: parent.skillSources,
+    bundledSkills: parent.bundledSkills,
     workspaceSandbox: parent.workspaceSandbox,
     executionSettings: parent.executionSettings,
   };
@@ -98,6 +128,7 @@ export async function handleSubagentMessageCommand(
     sendCodex?: typeof sendCodexMessage;
     track?: typeof trackExternalFollowupCompletion;
     reserveCapture?: typeof reserveNativeSessionCapture;
+    workerEnv?: ExternalWorkerResumeEnvDependencies;
     now?: () => number;
   } = {},
 ): Promise<SubagentMessageResponse> {
@@ -121,7 +152,10 @@ export async function handleSubagentMessageCommand(
         parent.conversationId !== command.runtime.conversation_id
       )
         throw new Error("Parent runtime does not match the message request");
-      if (!findOwnedTask(parent, command.agent_id))
+      if (
+        !findOwnedTask(parent, command.agent_id) &&
+        !ownsNativeSession(parent, command.agent_id)
+      )
         throw new Error("Subagent does not belong to this conversation");
       const target = parseExternalCodingAgentId(command.agent_id);
       if (!target || target.computer || !isExternalCodingAgentType(target.type))
@@ -134,45 +168,84 @@ export async function handleSubagentMessageCommand(
 
       let captureReservation: NativeSessionCaptureReservation | undefined;
       const source = target.type === "claude-code" ? "claude_code" : "codex";
+      const secrets =
+        target.type === "cursor"
+          ? await resolveExternalCodingAgentSecretEnv(parent.agentId)
+          : {};
+      // A resumed worker process needs the same environment as a launch.
+      let worker: ExternalWorkerLaunchEnv | undefined;
       const receipt = await runOutsideRuntimeContext(() =>
-        runWithRuntimeContext(runtimeContext(parent, command), () =>
-          target.type === "claude-code"
-            ? (deps.sendClaude ?? sendClaudeMessage)({
-                sessionId: target.sessionId,
-                prompt: command.message,
+        runWithRuntimeContext(runtimeContext(parent, command), async () => {
+          if (target.type !== "cursor")
+            worker = await buildExternalWorkerResumeEnv(
+              {
                 parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
+                actingUserId: command.runtime.acting_user_id,
+              },
+              deps.workerEnv,
+            );
+          return target.type === "cursor"
+            ? sendCursorMessage(
+                {
+                  sessionId,
+                  prompt: command.message,
+                  parentAgentId: command.runtime.agent_id,
+                  cwd: getCurrentWorkingDirectory(),
                 },
-              })
-            : (deps.sendCodex ?? sendCodexMessage)({
-                threadId: target.sessionId,
-                prompt: command.message,
-                parentAgentId: command.runtime.agent_id,
-                cwd: getCurrentWorkingDirectory(),
-                beforeStart: async () => {
-                  captureReservation = await (
-                    deps.reserveCapture ?? reserveNativeSessionCapture
-                  )(source, sessionId, {
-                    agentId: command.runtime.agent_id,
-                    conversationId: command.runtime.conversation_id,
-                    actingUserId: command.runtime.acting_user_id,
-                  });
-                },
-              }),
-        ),
+                { ...process.env, ...secrets },
+                secrets,
+              )
+            : target.type === "claude-code"
+              ? (deps.sendClaude ?? sendClaudeMessage)(
+                  {
+                    sessionId: target.sessionId,
+                    prompt: command.message,
+                    parentAgentId: command.runtime.agent_id,
+                    cwd: getCurrentWorkingDirectory(),
+                    mcpReminder: worker?.mcpReminder,
+                    beforeStart: async () => {
+                      captureReservation = await (
+                        deps.reserveCapture ?? reserveNativeSessionCapture
+                      )(source, sessionId, {
+                        agentId: command.runtime.agent_id,
+                        conversationId: command.runtime.conversation_id,
+                        actingUserId: command.runtime.acting_user_id,
+                      });
+                    },
+                  },
+                  { env: worker?.env },
+                )
+              : (deps.sendCodex ?? sendCodexMessage)(
+                  {
+                    threadId: target.sessionId,
+                    prompt: command.message,
+                    parentAgentId: command.runtime.agent_id,
+                    cwd: getCurrentWorkingDirectory(),
+                    mcpReminder: worker?.mcpReminder,
+                    beforeStart: async () => {
+                      captureReservation = await (
+                        deps.reserveCapture ?? reserveNativeSessionCapture
+                      )(source, sessionId, {
+                        agentId: command.runtime.agent_id,
+                        conversationId: command.runtime.conversation_id,
+                        actingUserId: command.runtime.acting_user_id,
+                      });
+                    },
+                  },
+                  { env: worker?.env },
+                );
+        }),
       );
       if (receipt.mode === "steered")
         return { ...base, success: true, delivery: "steered" };
       if (!receipt.completion || !receipt.interrupt)
         throw new Error("External coding agent returned an incomplete receipt");
+      const secretEnv = worker?.secretEnv;
+      const completion = secretEnv
+        ? receipt.completion.then((result) =>
+            scrubExternalWorkerResult(result, secretEnv),
+          )
+        : receipt.completion;
       try {
         (deps.track ?? trackExternalFollowupCompletion)({
           type: target.type,
@@ -183,16 +256,25 @@ export async function handleSubagentMessageCommand(
             conversationId: parent.conversationId,
             actingUserId: command.runtime.acting_user_id,
           },
-          completion: receipt.completion,
+          completion,
           interrupt: receipt.interrupt,
           captureReservation,
           toolCallId: command.tool_call_id,
+          // This handler always runs on the worker, for a parent runtime that
+          // only exists here as a sideband control scope. Mirror the
+          // `notify: "caller"` launch contract: publish the result back to the
+          // caller and let its own listener raise the notice. Emitting it here
+          // would start a turn on the caller's conversation from the worker's
+          // machine, and claiming the runtime would make Cloud route the
+          // caller's deliveries to this sandbox.
           publishResult: true,
+          emitCompletionNotification: false,
+          claimsParentRuntime: false,
         });
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);
         finishUntrackedNativeCapture(
-          receipt.completion,
+          completion,
           captureReservation,
           source,
           sessionId,
@@ -236,8 +318,12 @@ export async function handleSubagentStopCommand(
   )
     return { ...base, error: "Parent runtime does not match the stop request" };
   const owned = findOwnedTask(parent, command.agent_id);
-  if (!owned)
+  if (!owned) {
+    // Its task was evicted after it finished: nothing is left to stop.
+    if (ownsNativeSession(parent, command.agent_id))
+      return { ...base, success: true };
     return { ...base, error: "Subagent does not belong to this conversation" };
+  }
   const [, task] = owned;
   if (task.status !== "running") return { ...base, success: true };
   if (!task.abortController)

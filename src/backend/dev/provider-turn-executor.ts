@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
+  Api,
   AssistantMessage,
   AssistantMessageEvent,
+  Model,
   Usage,
 } from "@earendil-works/pi-ai";
 import type { Stream } from "@letta-ai/letta-client/core/streaming";
@@ -24,6 +26,8 @@ import {
   markLocalStateChunkOnly,
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
+import type { UsageStatistics } from "@/types/protocol";
+import { calculateUsageCost } from "@/usage/cost";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,
@@ -79,15 +83,16 @@ export interface LlmEndInfo {
 }
 
 export type ProviderStreamEvent =
-  | { type: "provider-part"; part: ProviderStreamPart }
+  | { type: "provider-part"; part: ProviderStreamPart; model?: Model<Api> }
   | { type: "local-message"; message: LocalMessage }
   | { type: "letta-chunk"; chunk: LettaStreamingResponse }
   | { type: "error"; error: unknown };
 
 export function providerStreamPart(
   part: ProviderStreamPart,
+  model?: Model<Api>,
 ): ProviderStreamEvent {
-  return { type: "provider-part", part };
+  return { type: "provider-part", part, model };
 }
 
 export function providerLocalMessage(
@@ -302,8 +307,10 @@ export function estimateProviderRequestBytes(
 
 function createUsageStatisticsChunk(
   usage: Usage | undefined,
+  model: Model<Api> | undefined,
   contextTokensEstimate?: number,
-): LettaStreamingResponse | undefined {
+): UsageStatistics {
+  const costUsd = usage ? calculateUsageCost(model, usage) : null;
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -312,19 +319,15 @@ function createUsageStatisticsChunk(
   const cachedInputTokens = usage?.cacheRead;
   const cacheWriteTokens = usage?.cacheWrite;
   const reasoningTokens = usage?.reasoning;
-  if (
-    promptTokens === undefined &&
-    completionTokens === undefined &&
-    totalTokens === undefined &&
-    cachedInputTokens === undefined &&
-    cacheWriteTokens === undefined &&
-    reasoningTokens === undefined &&
-    contextTokens === undefined
-  ) {
-    return undefined;
-  }
   return {
     message_type: "usage_statistics",
+    // One chunk per completed provider step (see the `done` handler), so each
+    // reports exactly one step, matching Cloud's per-step usage_statistics.
+    step_count: 1,
+    api_cost_usd: costUsd,
+    ...(usage?.cacheWrite1h !== undefined
+      ? { cache_write_1h_tokens: usage.cacheWrite1h }
+      : {}),
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
@@ -340,7 +343,7 @@ function createUsageStatisticsChunk(
       ? { reasoning_tokens: reasoningTokens }
       : {}),
     ...(contextTokens !== undefined ? { context_tokens: contextTokens } : {}),
-  } as unknown as LettaStreamingResponse;
+  } as unknown as UsageStatistics;
 }
 
 function errorFromAssistantEvent(part: AssistantMessageEvent): Error {
@@ -508,14 +511,12 @@ function createProviderLettaStream(
 
           if (part.type === "done") {
             if (!sawUsageStatistics) {
-              const usageChunk = createUsageStatisticsChunk(
+              sawUsageStatistics = true;
+              yield createUsageStatisticsChunk(
                 part.message.usage,
+                event.model,
                 contextTokensEstimate,
               );
-              if (usageChunk) {
-                sawUsageStatistics = true;
-                yield usageChunk;
-              }
             }
             pendingStopReason = {
               message_type: "stop_reason",

@@ -53,6 +53,31 @@ describe("WS event redaction", () => {
     });
   });
 
+  test("redacts MCP originator token material while keeping its run id", () => {
+    // USER_SCOPED_MCP_CONNECTIONS: the relay delivers bearer originator
+    // tokens on top-level input frames. They must never reach debug logs or
+    // serialized event dumps; the super run id is not secret and stays.
+    expect(
+      redactWsEventForLogging({
+        type: "input",
+        super_run_id: "sr-1",
+        mcp_originator_token: "mst_one.secret-a",
+        payload: {
+          kind: "create_message",
+          messages: [{ role: "user", content: "hello" }],
+        },
+      }),
+    ).toEqual({
+      type: "input",
+      super_run_id: "sr-1",
+      mcp_originator_token: "[REDACTED]",
+      payload: {
+        kind: "create_message",
+        messages: [{ role: "user", content: "hello" }],
+      },
+    });
+  });
+
   test("never copies identifiable malformed OAuth payloads into debug collectors", () => {
     const collected: unknown[] = [];
     setActiveRuntime({

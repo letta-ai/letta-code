@@ -24,6 +24,7 @@ export type ProviderManageAction =
   | { type: "connect-another" }
   | { type: "reconnect" }
   | { type: "refresh-usage" }
+  | { type: "use-reset"; name: string }
   | { type: "back" };
 
 export function providerApiKeyFromInput(
@@ -162,6 +163,8 @@ export function providerManageActions(
   provider: ByokProvider,
   target: ProviderStorageTarget,
   connectedRecords: readonly ProviderResponse[],
+  /** ChatGPT connections that currently have a spendable reset credit. */
+  resettableProviderNames: readonly string[] = [],
 ): ProviderManageAction[] {
   const actions: ProviderManageAction[] = connectedRecords.map((record) => ({
     type: "disconnect",
@@ -174,10 +177,29 @@ export function providerManageActions(
     actions.push({ type: "reconnect" });
   }
   if (isChatGPTUsageProvider(provider) && connectedRecords.length > 0) {
+    for (const record of connectedRecords) {
+      if (resettableProviderNames.includes(record.name)) {
+        actions.push({ type: "use-reset", name: record.name });
+      }
+    }
     actions.push({ type: "refresh-usage" });
   }
   actions.push({ type: "back" });
   return actions;
+}
+
+/**
+ * Cursor position after a reset returns to the manage menu. Row 0 is
+ * Disconnect, which runs immediately; a repeated Enter from the confirm
+ * screen must land on a harmless row ("Refresh usage") instead.
+ */
+export function postResetOptionIndex(
+  actions: readonly ProviderManageAction[],
+): number {
+  const refresh = actions.findIndex(
+    (action) => action.type === "refresh-usage",
+  );
+  return refresh >= 0 ? refresh : Math.max(0, actions.length - 1);
 }
 
 export function providerManageActionLabel(
@@ -193,6 +215,8 @@ export function providerManageActionLabel(
       return reconnectProviderOption(provider);
     case "refresh-usage":
       return "Refresh usage";
+    case "use-reset":
+      return `Use a reset on ${action.name}`;
     case "back":
       return "Back";
   }

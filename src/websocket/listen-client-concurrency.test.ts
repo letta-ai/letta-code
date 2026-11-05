@@ -35,7 +35,6 @@ import {
 } from "@/utils/secrets-store";
 import { handleSecretsCommand } from "@/websocket/listener/commands/secrets";
 import { enqueueInboundUserMessage } from "@/websocket/listener/inbound-queue";
-import { shouldProcessInboundMessageDirectly } from "@/websocket/listener/queue";
 import { startRecoveredApprovalContinuation } from "@/websocket/listener/recovery";
 import { clearConversationRuntimeState } from "@/websocket/listener/runtime";
 import { injectQueuedSkillContent } from "@/websocket/listener/skill-injection";
@@ -943,34 +942,6 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtimeB.queuedMessagesByItemId.size).toBe(0);
   });
 
-  test("idle inbound user messages bypass the queue runtime", () => {
-    const listener = __listenClientTestUtils.createListenerRuntime();
-    const runtime = __listenClientTestUtils.getOrCreateScopedRuntime(
-      listener,
-      "agent-1",
-      "conv-idle",
-    );
-    const incoming = makeIncomingMessage("agent-1", "conv-idle", "hello");
-
-    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(true);
-
-    const queueInput = {
-      kind: "message",
-      source: "user",
-      content: "queued",
-      clientMessageId: "cm-queued",
-      agentId: "agent-1",
-      conversationId: "conv-idle",
-    } satisfies Omit<MessageQueueItem, "id" | "enqueuedAt">;
-    const queuedItem = runtime.queueRuntime.enqueue(queueInput);
-    if (!queuedItem) {
-      throw new Error("Expected queued item to be created");
-    }
-    runtime.queuedMessagesByItemId.set(queuedItem.id, incoming);
-
-    expect(shouldProcessInboundMessageDirectly(runtime, incoming)).toBe(false);
-  });
-
   test("task_notification-only queue items re-enter the listener loop as standalone turns", async () => {
     const listener = __listenClientTestUtils.createListenerRuntime();
     __listenClientTestUtils.setActiveRuntime(listener);
@@ -1140,7 +1111,7 @@ describe("listen-client multi-worker concurrency", () => {
     expect(runtime.queueRuntime.length).toBe(0);
   });
 
-  test("resolveStaleApprovals injects stale denials and queued turns without replaying tools", async () => {
+  test("resolveStaleApprovals keeps queued turns separate without replaying tools", async () => {
     const runtime = __listenClientTestUtils.createRuntime();
     runtime.agentId = "agent-1";
     runtime.conversationId = "conv-1";
@@ -1157,11 +1128,12 @@ describe("listen-client multi-worker concurrency", () => {
       toolName: "Write",
       toolArgs: '{"file_path":"foo.ts"}',
     };
-    getResumeDataMock.mockResolvedValueOnce({
+    const r = {
       pendingApproval: approval,
       pendingApprovals: [approval],
       messageHistory: [],
-    });
+    };
+    getResumeDataMock.mockResolvedValueOnce(r).mockResolvedValueOnce(r);
 
     const queuedMessageInput = {
       kind: "message",
@@ -1211,7 +1183,7 @@ describe("listen-client multi-worker concurrency", () => {
     const continuationMessages = sendMessageStreamMock.mock.calls[0]?.[1] as
       | Array<Record<string, unknown>>
       | undefined;
-    expect(continuationMessages).toHaveLength(4);
+    expect(continuationMessages).toHaveLength(2);
     expect(continuationMessages?.[0]).toEqual(
       expect.objectContaining({
         type: "approval",
@@ -1228,17 +1200,6 @@ describe("listen-client multi-worker concurrency", () => {
     );
     expect(continuationMessages?.[1]).toEqual({
       role: "user",
-      content: "queued user",
-      otid: expect.any(String),
-    });
-    expect(continuationMessages?.[2]).toEqual({
-      role: "user",
-      content: "<task-notification>done</task-notification>",
-      attribution: {},
-      otid: expect.any(String),
-    });
-    expect(continuationMessages?.[3]).toEqual({
-      role: "user",
       content: [
         {
           type: "text",
@@ -1248,16 +1209,13 @@ describe("listen-client multi-worker concurrency", () => {
       otid: expect.any(String),
     });
     expect(runtime.loopStatus as string).toBe("PROCESSING_API_RESPONSE");
-    expect(runtime.queueRuntime.length).toBe(0);
-    expect(runtime.queuedMessagesByItemId.size).toBe(0);
-    expect(
-      socket.sentPayloads.some((payload) => payload.includes("queued user")),
-    ).toBe(true);
-    expect(
-      socket.sentPayloads.some((payload) =>
-        payload.includes("<task-notification>done</task-notification>"),
-      ),
-    ).toBe(true);
+    expect(runtime.queueRuntime.peek().map((item) => item.id)).toEqual([
+      queuedMessageItem.id,
+      queuedTaskItem.id,
+    ]);
+    expect(runtime.queuedMessagesByItemId.has(queuedMessageItem.id)).toBe(true);
+    expect(socket.sentPayloads.join("")).not.toContain("queued user");
+    expect(socket.sentPayloads.join("")).not.toContain("<task-notification>");
     expect(classifyApprovalsMock).not.toHaveBeenCalled();
     expect(executeApprovalBatchMock).not.toHaveBeenCalled();
 
@@ -1272,6 +1230,17 @@ describe("listen-client multi-worker concurrency", () => {
       approvals: [],
       apiDurationMs: 0,
     });
+    const next = __listenClientTestUtils.consumeQueuedTurn(runtime);
+    expect(
+      next?.dequeuedBatch.items.map((item: { id: string }) => item.id),
+    ).toEqual([queuedMessageItem.id, queuedTaskItem.id]);
+    expect(next?.queuedTurn.messages).toEqual([
+      expect.objectContaining({ content: "queued user" }),
+      expect.objectContaining({
+        content: "<task-notification>done</task-notification>",
+      }),
+    ]);
+    expect(runtime.queueRuntime.length).toBe(0);
   });
 
   test("interrupt-queue approval continuation appends skill content as trailing user message", async () => {
@@ -2256,21 +2225,14 @@ describe("listen-client multi-worker concurrency", () => {
       ),
     );
 
-    getResumeDataMock.mockResolvedValueOnce({
-      pendingApproval: {
-        toolCallId: "tool-1",
-        toolName: "Read",
-        toolArgs: "{}",
-      },
-      pendingApprovals: [
-        {
-          toolCallId: "tool-1",
-          toolName: "Read",
-          toolArgs: "{}",
-        },
-      ],
+    const pending = { toolCallId: "tool-1", toolName: "Read", toolArgs: "{}" };
+    const r = {
+      pendingApproval: pending,
+      pendingApprovals: [pending],
       messageHistory: [],
-    });
+    };
+    // Initial fetch, then the still-pending re-check before the denial.
+    getResumeDataMock.mockResolvedValueOnce(r).mockResolvedValueOnce(r);
 
     const parentAbortController = new AbortController();
     const turnLease = runtime.turnLifecycle.begin({

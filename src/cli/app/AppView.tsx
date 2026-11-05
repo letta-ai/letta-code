@@ -250,6 +250,7 @@ type AppViewProps = {
   inputEnabled: boolean;
   inputVisible: boolean;
   interruptRequested: boolean;
+  hasStopFailedTasks: boolean;
   isAgentBusy: () => boolean;
   liveItems: Line[];
   liveTrajectoryElapsedBaseMs: number;
@@ -420,6 +421,7 @@ export function AppView(props: AppViewProps) {
     inputEnabled,
     inputVisible,
     interruptRequested,
+    hasStopFailedTasks,
     isAgentBusy,
     liveItems,
     liveTrajectoryElapsedBaseMs,
@@ -751,6 +753,7 @@ export function AppView(props: AppViewProps) {
                 queueMode={queueMode}
                 deferModeSupported={deferModeSupported}
                 interruptRequested={interruptRequested}
+                hasStopFailedTasks={hasStopFailedTasks}
                 agentId={agentId}
                 agentName={agentName}
                 currentModel={currentModelDisplay}

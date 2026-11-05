@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  getCommandProcessFactory,
   getPackageManagerProcessFactory,
   type PackageManagerProcessFactory,
 } from "@/utils/package-manager-spawn";
@@ -162,3 +163,64 @@ test("keeps native spawn selected off Windows", () => {
     },
   ]);
 });
+
+test("routes bare command names through the Windows launcher on Windows", () => {
+  const child = createChildProcess();
+  const calls: Array<{
+    args: string[];
+    command: string;
+    options: SpawnOptions;
+  }> = [];
+  const nativeSpawn: PackageManagerProcessFactory = () => {
+    throw new Error("spawn codex ENOENT");
+  };
+  const windowsSpawn: PackageManagerProcessFactory = (
+    command,
+    args,
+    options,
+  ) => {
+    calls.push({ args, command, options });
+    return child;
+  };
+
+  const launcher = getCommandProcessFactory({
+    nativeSpawn,
+    platform: "win32",
+    windowsSpawn,
+  });
+
+  expect(
+    launcher("codex", ["app-server", "--stdio"], { windowsHide: true }),
+  ).toBe(child);
+  expect(calls).toEqual([
+    {
+      command: "codex",
+      args: ["app-server", "--stdio"],
+      options: { windowsHide: true },
+    },
+  ]);
+});
+
+test.each(["linux", "darwin"] as const)(
+  "keeps native spawn for bare command names on %s",
+  (platform) => {
+    const child = createChildProcess();
+    const calls: string[] = [];
+    const nativeSpawn: PackageManagerProcessFactory = (command) => {
+      calls.push(command);
+      return child;
+    };
+    const windowsSpawn: PackageManagerProcessFactory = () => {
+      throw new Error("windows launcher should not run");
+    };
+
+    const launcher = getCommandProcessFactory({
+      nativeSpawn,
+      platform,
+      windowsSpawn,
+    });
+
+    expect(launcher("codex", ["--version"], { detached: true })).toBe(child);
+    expect(calls).toEqual(["codex"]);
+  },
+);

@@ -4,6 +4,17 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getClient } from "@/backend/api/client";
+import {
+  type EnqueueReceipt,
+  getExactSuperRun,
+  listEnqueuedRunMessages,
+} from "@/backend/api/conversation-enqueue";
+import { resolveEnvironmentConnectionId } from "@/backend/api/environments";
+import { createEphemeralConversation } from "@/backend/api/ephemeral-conversations";
+import { apiRequest } from "@/backend/api/request";
+import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
+import { settingsManager } from "@/settings-manager";
 import {
   createAuthenticatedCliTestEnv,
   createIsolatedCliTestEnv,
@@ -21,6 +32,10 @@ import {
  */
 
 const projectRoot = process.cwd();
+const cliCommand = process.env.LETTA_TEST_CLI_BUNDLE ? "node" : "bun";
+const cliArgs = process.env.LETTA_TEST_CLI_BUNDLE
+  ? [process.env.LETTA_TEST_CLI_BUNDLE]
+  : ["run", "dev"];
 
 async function runCli(
   args: string[],
@@ -45,10 +60,9 @@ async function runCli(
     new Promise<{ stdout: string; stderr: string; exitCode: number | null }>(
       (resolve, reject) => {
         const proc = spawn(
-          "bun",
+          cliCommand,
           [
-            "run",
-            "dev",
+            ...cliArgs,
             ...(includeMemfsStartup ? ["--memfs-startup", "skip"] : []),
             ...args,
           ],
@@ -158,12 +172,8 @@ function parseJsonFromStdout(stdout: string) {
 
 async function runCliJson(
   args: string[],
-  options: {
-    timeoutMs?: number;
-    retryOnTimeouts?: number;
+  options: Parameters<typeof runCli>[1] & {
     retryOnParseErrors?: number;
-    env?: NodeJS.ProcessEnv;
-    includeMemfsStartup?: boolean;
   } = {},
 ): Promise<{
   stdout: string;
@@ -302,6 +312,212 @@ describe("Startup Flow - Integration", () => {
       }
     },
     { timeout: 190000 },
+  );
+
+  test.each(["standalone", "listener"])(
+    "--conversation resumes the same worker history: %s",
+    async (mode) => {
+      await settingsManager.initialize();
+      const homeDir = await mkdtemp(join(tmpdir(), "letta-listener-resume-"));
+      const name = `resume-test-${crypto.randomUUID()}`;
+      const env = createAuthenticatedCliTestEnv({
+        HOME: homeDir,
+        LETTA_DEBUG: "0",
+        DEBUG: undefined,
+        LETTA_SKIP_KEYCHAIN_CHECK: "1",
+        LETTA_LISTENER_DEVICE_ID: undefined,
+        LETTA_LISTENER_INSTANCE_ID: undefined,
+        LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID: undefined,
+        LETTA_RUNTIME_LISTENER_CONNECTION_ID: undefined,
+      });
+      const listener =
+        mode === "listener"
+          ? spawn(
+              cliCommand,
+              [
+                ...cliArgs,
+                "server",
+                "--computer-name",
+                name,
+                "--lifecycle-output",
+                "jsonl",
+              ],
+              { env },
+            )
+          : undefined;
+      let listenerOutput = "";
+      listener?.stderr.on("data", (chunk) => {
+        listenerOutput += chunk;
+      });
+      let parentId: string | undefined;
+      let conversationId: string | undefined;
+      try {
+        let connectionId: string | undefined;
+        if (listener) {
+          await new Promise<void>((resolve, reject) => {
+            const timer = setTimeout(
+              () =>
+                reject(
+                  new Error(`Listener startup timed out: ${listenerOutput}`),
+                ),
+              60000,
+            );
+            listener.once("error", (error) => {
+              clearTimeout(timer);
+              reject(error);
+            });
+            listener.once("exit", (code) => {
+              clearTimeout(timer);
+              reject(new Error(`Listener exited ${code}: ${listenerOutput}`));
+            });
+            listener.stdout.on("data", (chunk) => {
+              listenerOutput += chunk;
+              if (listenerOutput.includes('"state":"connected"')) {
+                clearTimeout(timer);
+                resolve();
+              }
+            });
+          });
+          ({ connectionId } = await resolveEnvironmentConnectionId(name));
+          const parent = await apiRequest<{ id: string }>(
+            "POST",
+            "/v1/agents/",
+            {
+              name,
+              model: "openai/gpt-5.6-luna",
+              system: "Test parent agent.",
+              memory_blocks: [],
+              include_base_tools: false,
+              hidden: true,
+            },
+          );
+          parentId = parent.id;
+        }
+        const workerSystem =
+          "You are a worker helping with a history resume test.";
+        const conversation = await createEphemeralConversation({
+          model: "openai/gpt-5.6-luna",
+          system: workerSystem,
+          ...(parentId ? { parent_agent_id: parentId } : {}),
+          is_subagent: true,
+          name,
+        });
+        conversationId = conversation.id;
+        const runTurn = (prompt: string, connection?: string) =>
+          runCliJson(
+            [
+              "--conversation",
+              conversation.id,
+              "-p",
+              prompt,
+              "--tools=",
+              "--output-format",
+              "json",
+            ],
+            {
+              timeoutMs: 180000,
+              expectExit: 0,
+              includeMemfsStartup: false,
+              retryOnTimeouts: 0,
+              retryOnParseErrors: 0,
+              env: {
+                ...env,
+                LETTA_CODE_AGENT_ROLE: "subagent",
+                LETTA_SUBAGENT_LAUNCH: "1",
+                LETTA_RUNTIME_LISTENER_CONNECTION_ID: connection,
+              },
+            },
+          );
+        const client = await getClient();
+        const firstPrompt = `First turn ${crypto.randomUUID()}. Acknowledge briefly.`;
+        const secondPrompt = `Second turn ${crypto.randomUUID()}. Acknowledge briefly.`;
+        await runTurn(firstPrompt);
+        const originalHistory =
+          await client.conversations.messages.list(conversationId);
+        expect(
+          originalHistory.items.filter(
+            (message) => message.message_type === "user_message",
+          ).length,
+        ).toBeGreaterThan(0);
+        const resumed = await runTurn(secondPrompt, connectionId);
+        expect(resumed.output).toMatchObject({
+          agent_id: null,
+          conversation_id: conversationId,
+        });
+        if (connectionId) {
+          expect(resumed.output).toMatchObject({
+            status: "queued",
+            parent_agent_id: parentId,
+            connection_id: connectionId,
+          });
+          await waitForAcceptedSuperRun(
+            resumed.output as unknown as EnqueueReceipt,
+            AbortSignal.timeout(180000),
+            {
+              exact: getExactSuperRun,
+              run: (id, signal) => client.runs.retrieve(id, { signal }),
+              messages: listEnqueuedRunMessages,
+            },
+          );
+        }
+        expect(
+          await client.conversations.retrieve(conversationId),
+        ).toMatchObject({
+          agent_id: null,
+          parent_agent_id: parentId ?? null,
+          is_subagent: true,
+        });
+        // Assert durable history, not whether a model follows competing wording
+        // instructions. The second CLI process must append to the same history.
+        const history =
+          await client.conversations.messages.list(conversationId);
+        expect(history.items.map((message) => message.id)).toEqual(
+          expect.arrayContaining(
+            originalHistory.items.map((message) => message.id),
+          ),
+        );
+        // The conversation response has no system field. Its persisted prompt
+        // is exposed as a system message by the conversation messages endpoint.
+        expect(
+          history.items.flatMap((message) =>
+            message.message_type === "system_message" ? [message.content] : [],
+          ),
+        ).toEqual(
+          expect.arrayContaining([expect.stringContaining(workerSystem)]),
+        );
+        const userTexts = history.items.flatMap((message) => {
+          if (message.message_type !== "user_message") return [];
+          return typeof message.content === "string"
+            ? [message.content]
+            : [
+                message.content
+                  .flatMap((part) => ("text" in part ? [part.text] : []))
+                  .join(""),
+              ];
+        });
+        for (const prompt of [firstPrompt, secondPrompt]) {
+          expect(userTexts).toEqual(
+            expect.arrayContaining([expect.stringContaining(prompt)]),
+          );
+        }
+      } finally {
+        listener?.kill();
+        if (
+          listener &&
+          listener.exitCode === null &&
+          listener.signalCode === null
+        ) {
+          await new Promise<void>((resolve) =>
+            listener.once("exit", () => resolve()),
+          );
+        }
+        if (conversationId)
+          await apiRequest("DELETE", `/v1/conversations/${conversationId}`);
+        if (parentId) await apiRequest("DELETE", `/v1/agents/${parentId}`);
+        await rm(homeDir, { recursive: true, force: true });
+      }
+    },
+    { timeout: 420000 },
   );
 
   test(
@@ -478,6 +694,7 @@ describe("Startup Flow - Integration", () => {
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.status).toBe("queued");
+      // The conversation is not read; the server's enqueue receipt names its agent.
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(testConversationId);
     },

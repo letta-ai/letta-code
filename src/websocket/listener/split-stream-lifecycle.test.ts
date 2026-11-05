@@ -23,6 +23,7 @@ import {
   setActiveRuntime,
 } from "@/websocket/listener/runtime";
 import {
+  formatListenerSocketClose,
   handleListenerSocketOpenFailure,
   isCurrentSocketPair,
   terminateControlAfterStreamClose,
@@ -65,6 +66,20 @@ test("normal stream close retains pair identity until control revokes its genera
   expect(isCurrentSocketPair(runtime, control, stream)).toBe(true);
   expect(terminate).toHaveBeenCalledTimes(1);
   setActiveRuntime(null);
+});
+
+test("socket close log line carries code and truncated reason only", () => {
+  expect(
+    formatListenerSocketClose("control", 1006, Buffer.from("Connection ended")),
+  ).toBe('control socket closed (code=1006, reason="Connection ended")');
+  const line = formatListenerSocketClose(
+    "stream",
+    4000,
+    Buffer.from("x".repeat(500)),
+  );
+  expect(line).toBe(
+    `stream socket closed (code=4000, reason="${"x".repeat(120)}...")`,
+  );
 });
 
 describe("split stream listener lifecycle", () => {
@@ -258,6 +273,7 @@ describe("split stream listener lifecycle", () => {
     onDisconnected?: () => void;
     onNeedsReregister?: () => void;
     onError?: (error: Error) => void;
+    onLog?: (message: string) => void;
     supportsPairedListenerGenerations?: boolean;
   }) {
     return startListenerClient({
@@ -272,6 +288,7 @@ describe("split stream listener lifecycle", () => {
       onDisconnected: overrides.onDisconnected ?? mock(() => {}),
       onNeedsReregister: overrides.onNeedsReregister ?? mock(() => {}),
       onError: overrides.onError ?? mock(() => {}),
+      onLog: overrides.onLog,
     });
   }
 
@@ -487,6 +504,30 @@ describe("split stream listener lifecycle", () => {
     expect(getActiveRuntime()?.streamSocket).not.toBe(staleClientStream);
   });
 
+  test("stream and control close codes and reasons reach the session log", async () => {
+    const logs: string[] = [];
+    const onConnected = mock(() => {});
+    await startClient({ onConnected, onLog: (message) => logs.push(message) });
+    await waitFor(
+      () => onConnected.mock.calls.length === 1,
+      "listener did not connect",
+    );
+
+    connections[lastConnectionIndexForChannel("stream")]?.close(
+      4000,
+      "stream going away",
+    );
+    await waitFor(
+      () =>
+        logs.some((line) => line.startsWith("[Listen] control socket closed")),
+      "control close was not logged",
+    );
+
+    expect(logs).toContain(
+      '[Listen] stream socket closed (code=4000, reason="stream going away")',
+    );
+  });
+
   test("split stream upgrade rejection retries the paired listener sockets", async () => {
     process.env.LETTA_LISTENER_STREAM_OPEN_TIMEOUT_MS = "1000";
     const onConnected = mock(() => {});
@@ -603,7 +644,8 @@ describe("split stream listener lifecycle", () => {
     await waitFor(
       () =>
         countConnectionsForChannel("control") === 1 &&
-        countConnectionsForChannel("stream") === 1,
+        countConnectionsForChannel("stream") === 1 &&
+        onConnected.mock.calls.length === 1,
       "initial split sockets did not open",
     );
     expect(onConnected).toHaveBeenCalledTimes(1);

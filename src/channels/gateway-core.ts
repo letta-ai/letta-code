@@ -704,7 +704,7 @@ export class ChannelGateway {
           ? { conversation_source_tags: conversationTags }
           : {}),
         ...(delivery.defaultPermissionMode
-          ? { mode: delivery.defaultPermissionMode }
+          ? { mode: delivery.defaultPermissionMode, mode_is_default: true }
           : {}),
         recover_approvals: true,
         force_device_status: false,
@@ -786,7 +786,7 @@ export class ChannelGateway {
     message: QueueUpdateMessage & { runtime: RuntimeScope },
   ): void {
     const state = this.getState(message.runtime);
-    for (const transition of message.removed) {
+    for (const transition of message.removed ?? []) {
       const pending = state.pendingSourcesByClientMessageId.get(
         transition.client_message_id,
       );

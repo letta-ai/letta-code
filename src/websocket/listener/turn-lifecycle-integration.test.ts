@@ -25,7 +25,6 @@ import {
   recordedToolResults,
 } from "./interrupted-turn-record";
 import { createRuntime } from "./lifecycle";
-import { shouldProcessInboundMessageDirectly } from "./queue";
 import { finalizeHandledRecoveryTurn } from "./recovery";
 import { clearConversationRuntimeState } from "./runtime";
 import { finishDrainedTeleport, handleTeleportRequest } from "./teleport";
@@ -195,6 +194,7 @@ describe("listener turn lifecycle integration", () => {
           auto_allowed_tool_call_ids: [],
           auto_denied_tool_call_ids: [],
           user_input_tool_call_ids: ["call-1"],
+          permission_mode: "strict",
         }),
       }),
     ]);
@@ -227,15 +227,6 @@ describe("listener turn lifecycle integration", () => {
     expect(runtime.activeRunId).toBeNull();
     expect(runtime.turnLifecycle.currentLease).toBeNull();
     expect(runtime.pendingApprovalResolvers.size).toBe(0);
-
-    expect(
-      shouldProcessInboundMessageDirectly(runtime, {
-        type: "message",
-        agentId: "agent-1",
-        conversationId: "conv-1",
-        messages: [{ role: "user", content: "follow up" }],
-      }),
-    ).toBe(true);
   });
 
   test("an old approval unwind cannot mutate a replacement turn", async () => {

@@ -98,7 +98,7 @@ test("routes scheduler lease failures through the listener logger", () => {
     "[Cron] Failed to claim scheduler lease after 4 attempts",
   );
   expect(logged[1]).toBe(
-    "[Cron] Another process may hold the lease. Restart Letta Code to retry.",
+    "[Cron] Another process may hold the lease. Retrying every 5 minutes.",
   );
 });
 

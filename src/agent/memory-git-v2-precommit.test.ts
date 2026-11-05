@@ -384,6 +384,72 @@ describe("MemFS v2 pre-commit hook", () => {
     );
   });
 
+  test("blocks only size problems in files the commit changes", () => {
+    repo = initRepo("memfs-v2-changed-size-");
+    seedConstraints(repo, { maxFileCharacters: 80 });
+    mkdirSync(join(repo, "skills", "demo"), { recursive: true });
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "a.md"), v2Memory("Short.\n", "A"));
+    writeFileSync(join(repo, "b.md"), v2Memory("Short.\n", "B"));
+    writeFileSync(join(repo, "skills", "demo", "SKILL.md"), "Skill.\n");
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
+    // B passes the limit through a path that skipped the hook.
+    writeFileSync(join(repo, "b.md"), v2Memory("b".repeat(100), "B"));
+    execFileSync("git", ["add", "b.md"], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "grow b without hook"], {
+      cwd: repo,
+    });
+    installPreCommitHook(repo, true);
+
+    for (const path of ["a.md", "skills/demo/SKILL.md"]) {
+      writeFileSync(join(repo, path), v2Memory(`Edited ${path}.\n`, "A"));
+      execFileSync("git", ["add", path], { cwd: repo });
+      const unrelated = tryCommit(repo, `edit ${path}`);
+      const output = unrelated.stdout + unrelated.stderr;
+      expect(unrelated.status).toBe(0);
+      expect(output).toContain(
+        "Memory validation warnings (existing problems this commit does not change):",
+      );
+      expect(output).toContain(
+        "b.md: 141 characters exceeds 80 from maxFileCharacters",
+      );
+    }
+
+    writeFileSync(join(repo, "b.md"), v2Memory("b".repeat(120), "B"));
+    execFileSync("git", ["add", "b.md"], { cwd: repo });
+    const grown = tryCommit(repo, "grow b again");
+    const output = grown.stdout + grown.stderr;
+    expect(grown.status).not.toBe(0);
+    expect(output).toContain("Memory validation blocked this commit.");
+    expect(output).toContain(
+      "These problems are in files this commit adds, changes or removes.",
+    );
+    expect(output).toContain(
+      "b.md: 161 characters exceeds 80 from maxFileCharacters",
+    );
+  });
+
+  test("blocks a commit that grows an unrelated file past the limit", () => {
+    repo = initRepo("memfs-v2-new-overflow-");
+    seedConstraints(repo, { maxFileCharacters: 80 });
+    writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+    writeFileSync(join(repo, "a.md"), v2Memory("Short.\n", "A"));
+    writeFileSync(join(repo, "b.md"), v2Memory("Short.\n", "B"));
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-qm", "seed memory"], { cwd: repo });
+    installPreCommitHook(repo, true);
+
+    writeFileSync(join(repo, "a.md"), v2Memory("Edited.\n", "A"));
+    writeFileSync(join(repo, "b.md"), v2Memory("b".repeat(100), "B"));
+    execFileSync("git", ["add", "a.md", "b.md"], { cwd: repo });
+    const result = tryCommit(repo, "edit a and overflow b");
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "b.md: 141 characters exceeds 80 from maxFileCharacters",
+    );
+  });
+
   test("streams staged files larger than the default child-process buffer", () => {
     repo = initRepo("memfs-v2-large-file-");
     seedConstraints(repo, {

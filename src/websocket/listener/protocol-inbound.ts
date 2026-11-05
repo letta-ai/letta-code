@@ -37,7 +37,6 @@ import type {
   ChannelsListCommand,
   ChannelTargetBindCommand,
   ChannelTargetsListCommand,
-  ChatGPTUsageReadCommand,
   CheckoutBranchCommand,
   ConversationCompactCommand,
   ConversationCreateCommand,
@@ -95,6 +94,17 @@ import type {
   WriteFileCommand,
   WriteMemoryFileCommand,
 } from "@/types/protocol_v2";
+import {
+  isChatGPTRateLimitResetCreditConsumeCommand,
+  isChatGPTRateLimitResetCreditsListCommand,
+  isChatGPTUsageReadCommand,
+} from "@/websocket/listener/chatgpt-usage-protocol-inbound";
+
+export {
+  isChatGPTRateLimitResetCreditConsumeCommand,
+  isChatGPTRateLimitResetCreditsListCommand,
+  isChatGPTUsageReadCommand,
+} from "@/websocket/listener/chatgpt-usage-protocol-inbound";
 
 const EXPERIMENT_IDS = new Set<ExperimentId>([
   "conversation_titles",
@@ -838,25 +848,6 @@ export function isDisconnectProviderCommand(
   );
 }
 
-export function isChatGPTUsageReadCommand(
-  value: unknown,
-): value is ChatGPTUsageReadCommand {
-  if (!value || typeof value !== "object") return false;
-  const c = value as {
-    type?: unknown;
-    request_id?: unknown;
-    target?: unknown;
-    provider_name?: unknown;
-    force_refresh?: unknown;
-  };
-  return (
-    c.type === "chatgpt_usage_read" &&
-    typeof c.request_id === "string" &&
-    (c.target === "local" || c.target === "api") &&
-    (c.provider_name === undefined || typeof c.provider_name === "string") &&
-    (c.force_refresh === undefined || typeof c.force_refresh === "boolean")
-  );
-}
 export function isUpdateModelCommand(
   value: unknown,
 ): value is UpdateModelCommand {
@@ -1974,6 +1965,8 @@ export function parseServerMessage(
       isConnectProviderCommand(parsed) ||
       isDisconnectProviderCommand(parsed) ||
       isChatGPTUsageReadCommand(parsed) ||
+      isChatGPTRateLimitResetCreditsListCommand(parsed) ||
+      isChatGPTRateLimitResetCreditConsumeCommand(parsed) ||
       isUpdateModelCommand(parsed) ||
       isUpdateToolsetCommand(parsed) ||
       isCronListCommand(parsed) ||

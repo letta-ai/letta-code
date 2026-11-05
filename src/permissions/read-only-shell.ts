@@ -572,8 +572,8 @@ function isSafeEnvInvocation(
     }
 
     if (parseScopedAssignmentToken(token)) {
-      index += 1;
-      continue;
+      // Assignments may change how an otherwise read-only command behaves.
+      return false;
     }
 
     return isReadOnlyShellCommand(tokens.slice(index).join(" "), options);

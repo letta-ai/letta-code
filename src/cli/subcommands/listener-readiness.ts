@@ -19,6 +19,7 @@ export async function completeListenerConnectionStartup(
   expectedConnection: import("@/websocket/listener/types").ListenerConnectionState,
   readiness: ListenerReadinessController,
   startGateway: () => Promise<void> = async () => {},
+  onGatewayError: (error: unknown) => void = console.error,
 ): Promise<boolean> {
   const { getActiveRuntime } = await import("@/websocket/listener/runtime");
   const runtime = getActiveRuntime();
@@ -36,7 +37,6 @@ export async function completeListenerConnectionStartup(
     "@/websocket/listener/transport"
   );
   if (!isListenerTransportOpen(connection.writer)) return false;
-  await startGateway();
   if (getActiveRuntime()?.connections.get(connection.id) !== connection)
     return false;
   if (
@@ -47,6 +47,9 @@ export async function completeListenerConnectionStartup(
   )
     return false;
   readiness.completeCloudStartup(epoch);
+  // Gateway health is tracked separately. A slow child must not hold the
+  // listener's ready callback (or its startup deadline) open.
+  void Promise.resolve().then(startGateway).catch(onGatewayError);
   return true;
 }
 
@@ -113,9 +116,9 @@ export function createListenerReadinessController(
 }
 
 /**
- * Memoize a gateway start per listener runtime. Re-registration replaces the
- * active runtime and stops the old one, so a gateway bound to the old runtime
- * can never become ready again; close it and start fresh on the new runtime.
+ * Memoize a gateway start per listener runtime. Re-registration resumes the
+ * same runtime and keeps its gateway; replacing the runtime closes the old
+ * gateway and starts a new one.
  */
 export function createRuntimeBoundGatewayStarter<R extends object>(options: {
   getRuntime: () => R | null;

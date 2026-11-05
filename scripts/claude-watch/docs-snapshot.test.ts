@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   captureDocsSnapshot,
+  DEFAULT_LLMS_URL,
   deterministicSourcePath,
   diffDocsSnapshots,
   extractNamedChanges,
   hashDocsMarkdown,
   isWatchedDocsUrl,
   normalizeDocsMarkdown,
+  OFFICIAL_CHANGELOG_URL,
   parseLlmsTxt,
   sha256,
   unifiedDiff,
@@ -108,6 +110,69 @@ describe("official docs capture", () => {
         fetch: redirectingFetch,
       }),
     ).rejects.toThrow("outside https://docs.example");
+  });
+
+  test("captures the official Claude Tag redirect without adding a second source", async () => {
+    const page = "https://code.claude.com/docs/en/claude-tag.md";
+    const target = "https://claude.com/docs/claude-tag";
+    const overview = "https://claude.com/docs/claude-tag/overview";
+    const calls: string[] = [];
+    const fetcher = fixtureFetch(
+      {
+        [DEFAULT_LLMS_URL]: page,
+        [OFFICIAL_CHANGELOG_URL]: "# Changelog\n",
+        [overview]: "# Work with Claude Tag\n",
+      },
+      calls,
+    );
+    const captured = await captureDocsSnapshot({
+      retries: 0,
+      fetch: (input, init) =>
+        String(input) === page || String(input) === target
+          ? Promise.resolve(
+              new Response(null, {
+                status: 307,
+                headers: {
+                  location: String(input) === page ? target : overview,
+                },
+              }),
+            )
+          : fetcher(input, init),
+    });
+    expect(captured.snapshot.pages[page]?.hash).toBe(
+      hashDocsMarkdown("# Work with Claude Tag\n"),
+    );
+    expect(Object.keys(captured.snapshot.pages).sort()).toEqual(
+      [page, OFFICIAL_CHANGELOG_URL].sort(),
+    );
+    expect(calls.filter((url) => url === overview)).toHaveLength(1);
+  });
+
+  test.each([
+    [DEFAULT_LLMS_URL, "https://claude.com/docs/other-page"],
+    [DEFAULT_LLMS_URL, "https://claude.com/docs/claude-tag?redirect=other"],
+    [INDEX, "https://claude.com/docs/claude-tag"],
+  ])("rejects unapproved redirects from %s to %s", async (indexUrl, target) => {
+    const calls: string[] = [];
+    await expect(
+      captureDocsSnapshot({
+        indexUrl,
+        retries: 0,
+        fetch: async (input) => {
+          const url = String(input);
+          calls.push(url);
+          if (url === indexUrl)
+            return new Response(new URL("/en/tools.md", indexUrl).toString());
+          if (url === OFFICIAL_CHANGELOG_URL)
+            return new Response("# Changelog");
+          return new Response(null, {
+            status: 307,
+            headers: { location: target },
+          });
+        },
+      }),
+    ).rejects.toThrow("Refusing documentation URL");
+    expect(calls).not.toContain(target);
   });
 
   test("detects added, removed, and changed pages with watched source previews", async () => {

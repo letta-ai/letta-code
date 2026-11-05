@@ -97,10 +97,6 @@ Returns the raw API response with full agent details. Key fields:
 - `tags` - Agent tags
 - `blocks` - Memory blocks (if `--include-blocks` used)
 
-## Related Skills
-
-- **migrating-memory** - Once you find an agent, use this skill to copy/share memory blocks
-
 ### Finding Agents by Topic
 
 If you need to find which agent worked on a specific topic:

@@ -104,6 +104,7 @@ const input = Buffer.from(
 function connect() {
   return startConnectedListenerRuntime(listener, socket, opts, async () => {}, {
     startHeartbeat: false,
+    startStartupDeadline: false,
     startCronScheduler: false,
     startProcessServices: false,
     emitInitialState: false,

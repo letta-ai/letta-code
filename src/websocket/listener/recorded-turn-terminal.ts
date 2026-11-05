@@ -109,18 +109,24 @@ export function prepareRecordedInputTerminal(
     agentId: record.agentId,
     conversationId: record.conversationId,
   };
-  const terminalAuthority = authority
-    ? {
-        interruptedRevision: record.revision,
-        authorityRevision: authority.revisionToken,
-        recoveryLineageId: authority.lineageId,
-      }
-    : undefined;
+  const terminalAuthority =
+    record.teleport?.terminalAuthority ??
+    (authority
+      ? {
+          interruptedRevision: record.revision,
+          authorityRevision: authority.revisionToken,
+          recoveryLineageId: authority.lineageId,
+        }
+      : undefined);
+  const suppressTeleportConsumers =
+    record.teleport?.activeTurn === true && record.teleport.ready === false;
+  const proofRevision =
+    terminalAuthority?.interruptedRevision || record.revision;
   const existingPrepared = loadPreparedInputTerminals(listener).find(
     (prepared) =>
       prepared.scope.agentId === scope.agentId &&
       prepared.scope.conversationId === scope.conversationId &&
-      prepared.owner.interruptedRevision === record.revision &&
+      prepared.owner.interruptedRevision === proofRevision &&
       (terminalAuthority
         ? prepared.owner.recoveryLineageId ===
             terminalAuthority.recoveryLineageId &&
@@ -134,13 +140,14 @@ export function prepareRecordedInputTerminal(
         "recorded-turn-terminal-v1",
         record.agentId,
         record.conversationId,
-        record.revision,
+        proofRevision,
         terminalAuthority?.recoveryLineageId ?? null,
         terminalAuthority?.authorityRevision ?? null,
       ]),
     )
     .digest("hex");
-  const terminalIdentity = `recorded:${terminalDigest}`;
+  const terminalIdentity =
+    terminalAuthority?.terminalIdentity ?? `recorded:${terminalDigest}`;
   let existingPersisted:
     | NonNullable<ReturnType<typeof terminalStore.read>>["terminals"][number]
     | undefined;
@@ -169,7 +176,7 @@ export function prepareRecordedInputTerminal(
           listener,
           runtime.key,
           identities,
-          record.revision,
+          proofRevision,
         )
   ) {
     return true;
@@ -193,7 +200,7 @@ export function prepareRecordedInputTerminal(
   const persistedEvidence = existingPrepared ?? existingPersisted;
   const owner = persistedEvidence
     ? { ...persistedEvidence.owner }
-    : getTurnFinishedOwner(runtime, record.revision);
+    : getTurnFinishedOwner(runtime, proofRevision);
   if (!persistedEvidence) {
     if (terminalAuthority) {
       owner.recoveryLineageId = terminalAuthority.recoveryLineageId;
@@ -211,13 +218,14 @@ export function prepareRecordedInputTerminal(
       "",
     )}`,
     stop_reason: stopReason,
-    ...(record.terminalConsumerIds?.length
+    ...(!suppressTeleportConsumers && record.terminalConsumerIds?.length
       ? { terminal_consumer_ids: [...new Set(record.terminalConsumerIds)] }
       : {}),
     ...(runId ? { run_id: runId } : {}),
   };
   if (!identities.length) {
-    if (!message.terminal_consumer_ids?.length) return true;
+    if (!message.terminal_consumer_ids?.length && !suppressTeleportConsumers)
+      return true;
     if (owner.connectionId === null) owner.canRotate = true;
     return (
       prepareTurnFinished(runtime, message, terminalStore, owner, true).kind ===
@@ -229,6 +237,9 @@ export function prepareRecordedInputTerminal(
       scope,
       message,
       owner,
+      ...(suppressTeleportConsumers
+        ? { suppressConsumerPublication: true }
+        : {}),
     })
   ) {
     return false;
@@ -236,5 +247,5 @@ export function prepareRecordedInputTerminal(
   promotePreparedInputTerminals(listener, terminalStore, scope);
   return terminalAuthority
     ? !hasPreparedInputTerminalAuthority(listener, scope, terminalAuthority)
-    : !hasPreparedInputTerminalRevision(listener, scope, record.revision);
+    : !hasPreparedInputTerminalRevision(listener, scope, proofRevision);
 }

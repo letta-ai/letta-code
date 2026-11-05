@@ -512,14 +512,14 @@ describe("isReadOnlyShellCommand", () => {
 
     test("handles env safely", () => {
       expect(isReadOnlyShellCommand("env")).toBe(true);
-      expect(isReadOnlyShellCommand("env --help")).toBe(true);
-      expect(isReadOnlyShellCommand("env ls -la")).toBe(true);
-      expect(isReadOnlyShellCommand("env bash -lc 'touch /tmp/pwn'")).toBe(
-        false,
-      );
-      expect(
-        isReadOnlyShellCommand("env FOO=1 bash -lc 'touch /tmp/pwn'"),
-      ).toBe(false);
+      expect(isReadOnlyShellCommand("less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env -u VAR less f")).toBe(true);
+      expect(isReadOnlyShellCommand("env ls")).toBe(true);
+      expect(isReadOnlyShellCommand("env VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env -i VAR=x less f")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x git log")).toBe(false);
+      expect(isReadOnlyShellCommand("env VAR=x ls")).toBe(false);
     });
   });
 

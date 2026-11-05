@@ -42,6 +42,7 @@ import {
   getActiveBackgroundAgents,
   getSubagentByToolCallId,
   getSnapshot as getSubagentSnapshot,
+  hasStopFailedSubagents,
   subscribe as subscribeToSubagents,
 } from "@/agent/subagent-state";
 import { getBackend, isLocalBackendEnabled } from "@/backend";
@@ -199,7 +200,10 @@ import {
   type QueuedMessage,
   setMessageQueueAdder,
 } from "@/utils/message-queue-bridge";
-import { appendTaskNotificationEventsToBuffer } from "@/utils/task-notifications";
+import {
+  appendTaskNotificationEventsToBuffer,
+  selectStopFailedNotifications,
+} from "@/utils/task-notifications";
 import { recordTuiPerf } from "@/utils/tui-perf";
 import { getVersion } from "@/version";
 import { AppView } from "./AppView";
@@ -3711,6 +3715,7 @@ export function App({
     precomputedDiffsRef,
     prepareScopedToolExecutionContext,
     processingConversationRef,
+    queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
     quotaAutoSwapAttemptedRef,
@@ -4661,6 +4666,30 @@ export function App({
     getSubagentSnapshot,
   );
 
+  // A background task whose remote stop failed is still running: idle Esc
+  // must reach the interrupt handler so it can retry the stop, and the
+  // failure must surface as a transcript event instead of letting the
+  // promoted "interrupted" line claim the stop succeeded.
+  const hasStopFailedTasks = hasStopFailedSubagents({
+    agentId,
+    conversationId,
+  });
+  const stopFailedNotifiedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const { failures, stops } = selectStopFailedNotifications(
+      subagents,
+      stopFailedNotifiedRef.current,
+      // Match the Esc retry's scoping: a failure (or its correction) must
+      // land in the transcript of the agent that owns the row, never be
+      // consumed by whichever agent the user switched to mid-flight.
+      { agentId, conversationId },
+    );
+    const messages = [...failures, ...stops];
+    if (messages.length > 0) {
+      appendTaskNotificationEvents(messages);
+    }
+  }, [subagents, conversationId, appendTaskNotificationEvents, agentId]);
+
   // Estimate live area height for overflow detection.
   const estimatedLiveHeight = useMemo(() => {
     // Count actual lines in live content by counting newlines
@@ -5022,6 +5051,7 @@ export function App({
         interruptRequested={
           interruptRequested || !!abortControllerRef.current?.signal.aborted
         }
+        hasStopFailedTasks={hasStopFailedTasks}
         isAgentBusy={isAgentBusy}
         liveItems={liveItems}
         liveTrajectoryElapsedBaseMs={liveTrajectoryElapsedBaseMs}

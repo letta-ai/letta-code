@@ -162,9 +162,8 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
       expect(request?.path).toBe(
         `/v1/conversations/${CONV.recipient}/messages/enqueue`,
       );
-      expect(request?.body).toMatchObject({
-        agent_id: "agent-recipient",
-      });
+      // The server derives the agent from the conversation ID.
+      expect(request?.body).not.toHaveProperty("agent_id");
       if (computer?.trim()) {
         expect(request?.body.computer).toBe(computer.trim());
       } else {
@@ -192,12 +191,8 @@ test.each(computers)("HTTP send: computer %j", async (computer) => {
         "wrong-global",
       );
       expect(JSON.stringify(request?.body.messages)).not.toContain("spoofed");
-      expect(lookups).toContainEqual(
-        expect.objectContaining({
-          headers: { "X-Letta-Acting-User-Id": `user-${id}` },
-        }),
-      );
     }
+    expect(lookups).toHaveLength(0);
     expect(requests[0]?.body.client_message_id).not.toBe(
       requests[1]?.body.client_message_id,
     );

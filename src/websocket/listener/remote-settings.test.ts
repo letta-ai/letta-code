@@ -24,6 +24,7 @@ import {
 
 describe("remote settings cwd repair", () => {
   const originalHome = process.env.HOME;
+  const originalConfigDir = process.env.LETTA_CONFIG_DIR;
   let tempRoot: string | null = null;
 
   afterEach(async () => {
@@ -34,6 +35,8 @@ describe("remote settings cwd repair", () => {
     } else {
       process.env.HOME = originalHome;
     }
+    if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+    else process.env.LETTA_CONFIG_DIR = originalConfigDir;
     if (tempRoot) {
       await rm(tempRoot, { recursive: true, force: true });
       tempRoot = null;
@@ -108,6 +111,29 @@ describe("remote settings cwd repair", () => {
     await mkdir(deletedDirectory);
     resetRemoteSettingsCache();
     expect(loadRemoteSettings().cwdMap).toEqual({});
+  });
+
+  test("product override does not import legacy HOME listener state", async () => {
+    tempRoot = await mkdtemp(path.join(tmpdir(), "letta-remote-product-"));
+    const fakeHome = path.join(tempRoot, "home");
+    const productRoot = path.join(fakeHome, ".dream");
+    const liveDirectory = path.join(tempRoot, "legacy-project");
+    process.env.HOME = fakeHome;
+    process.env.LETTA_CONFIG_DIR = productRoot;
+    await mkdir(liveDirectory, { recursive: true });
+    await mkdir(path.join(fakeHome, ".letta"), { recursive: true });
+    await writeFile(
+      path.join(fakeHome, ".letta", "cwd-cache.json"),
+      JSON.stringify({ "conversation:legacy": liveDirectory }),
+    );
+
+    expect(getRemoteSettingsPath()).toBe(
+      path.join(productRoot, "remote-settings.json"),
+    );
+    expect(loadRemoteSettings().cwdMap).toEqual({});
+    expect(
+      JSON.parse(await readFile(getRemoteSettingsPath(), "utf-8")),
+    ).toEqual({ cwdMap: {} });
   });
 
   test("coalesces asynchronous updates while preserving merged settings", async () => {

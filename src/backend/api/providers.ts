@@ -1,5 +1,5 @@
 import { debugWarn } from "@/utils/debug";
-import { apiRequest } from "./request";
+import { ApiRequestError, apiRequest } from "./request";
 
 export interface ProviderResponse {
   id: string;
@@ -14,18 +14,79 @@ export interface ProviderResponse {
   region?: string;
 }
 
-export async function listProviders(): Promise<ProviderResponse[]> {
+export interface ProviderListOptions {
+  name?: string;
+  providerType?: string;
+}
+
+const PROVIDER_PAGE_LIMIT = 50;
+
+async function listProviderPages(
+  options: ProviderListOptions,
+  request: typeof apiRequest,
+): Promise<ProviderResponse[]> {
+  const providers: ProviderResponse[] = [];
+  let after: string | undefined;
+
+  while (true) {
+    const page = await request<ProviderResponse[]>(
+      "GET",
+      "/v1/providers",
+      undefined,
+      {
+        query: {
+          after,
+          limit: PROVIDER_PAGE_LIMIT,
+          ...(options.name ? { name: options.name } : {}),
+          ...(options.providerType
+            ? { provider_type: options.providerType }
+            : {}),
+        },
+      },
+    );
+    providers.push(...page);
+
+    if (page.length < PROVIDER_PAGE_LIMIT) break;
+    const nextAfter = page.at(-1)?.id;
+    if (!nextAfter || nextAfter === after) break;
+    after = nextAfter;
+  }
+
+  return providers;
+}
+
+export async function listProviders(
+  options: ProviderListOptions = {},
+  request: typeof apiRequest = apiRequest,
+): Promise<ProviderResponse[]> {
   try {
-    return await apiRequest<ProviderResponse[]>("GET", "/v1/providers");
+    return await listProviderPages(options, request);
   } catch {
     return [];
   }
 }
 
+export async function getProviderById(
+  providerId: string,
+  request: typeof apiRequest = apiRequest,
+): Promise<ProviderResponse | null> {
+  try {
+    const provider = await request<ProviderResponse>(
+      "GET",
+      `/v1/providers/${encodeURIComponent(providerId)}`,
+    );
+    return provider.provider_category === "base" ? null : provider;
+  } catch (error) {
+    if (error instanceof ApiRequestError && error.status === 404) return null;
+    throw error;
+  }
+}
+
 export async function getProviderByName(
   providerName: string,
+  request: typeof apiRequest = apiRequest,
 ): Promise<ProviderResponse | null> {
-  const providers = await listProviders();
+  const providers = await listProviders({ name: providerName }, request);
   return providers.find((provider) => provider.name === providerName) ?? null;
 }
 

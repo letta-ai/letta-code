@@ -186,6 +186,69 @@ describe("sandbox subcommand", () => {
     ).toThrow("requires a Letta Cloud agent");
   });
 
+  test("exposes a port from the current managed sandbox without targeting by ID", async () => {
+    const calls: number[] = [];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => true,
+          createPublicExposure: async (port, expiry) => {
+            calls.push(
+              port,
+              "expiresInSeconds" in expiry ? expiry.expiresInSeconds : -1,
+            );
+            return {
+              url: "https://opaque.dream.site",
+              port,
+              expiresAt: "2026-11-04T20:00:00.000Z",
+            };
+          },
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(calls).toEqual([3000, 7200]);
+      expect(JSON.parse(output[0] ?? "{}")).toEqual({
+        url: "https://opaque.dream.site",
+        port: 3000,
+        expiresAt: "2026-11-04T20:00:00.000Z",
+      });
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("rejects exposure outside the current managed sandbox", async () => {
+    let exposed = false;
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => false,
+          createPublicExposure: async () => {
+            exposed = true;
+            throw new Error("Must not expose");
+          },
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(exposed).toBe(false);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("uploads a local file after ensuring the sandbox", async () => {
     const calls: string[] = [];
     const output: string[] = [];
@@ -236,50 +299,58 @@ describe("sandbox subcommand", () => {
     }
   });
 
-  test("prints a chat desktop viewer link for the conversation sandbox", async () => {
-    const calls: string[] = [];
-    const output: string[] = [];
-    const originalLog = console.log;
-    console.log = (message?: unknown) => output.push(String(message));
-    try {
-      const exitCode = await withEnvironment(CLOUD_ENV, () =>
-        runSandboxSubcommand(["desktop-link"], {
-          initializeSettings: async () => {},
-          isCloud: async () => true,
-          getLastSession: () => null,
-          ensureSandbox: async (agentId, conversationId) => {
-            calls.push(`ensure:${agentId}:${conversationId}`);
-            return {
-              sandboxId: "sandbox-1",
-              deviceId: "device-1",
-              connectionName: "Cloud",
-            };
-          },
-          createDesktopSession: async (sandboxId) => {
-            calls.push(`desktop:${sandboxId}`);
-            return {
-              url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
-              expiresAt: "2026-09-28T23:00:00.000Z",
-            };
-          },
-        }),
-      );
+  test.each([undefined, "https://viewer.example.com/desktop#path=server-path"])(
+    "prints the desktop viewer link (server URL: %s)",
+    async (viewerUrl) => {
+      const calls: string[] = [];
+      const output: string[] = [];
+      const originalLog = console.log;
+      console.log = (message?: unknown) => output.push(String(message));
+      try {
+        const exitCode = await withEnvironment(CLOUD_ENV, () =>
+          runSandboxSubcommand(["desktop-link"], {
+            initializeSettings: async () => {},
+            isCloud: async () => true,
+            getLastSession: () => null,
+            ensureSandbox: async (agentId, conversationId) => {
+              calls.push(`ensure:${agentId}:${conversationId}`);
+              return {
+                sandboxId: "sandbox-1",
+                deviceId: "device-1",
+                connectionName: "Cloud",
+              };
+            },
+            createDesktopSession: async (sandboxId) => {
+              calls.push(`desktop:${sandboxId}`);
+              return {
+                url: "https://api.letta.test/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+                expiresAt: "2026-09-28T23:00:00.000Z",
+                viewerUrl,
+              };
+            },
+          }),
+        );
 
-      expect(exitCode).toBe(0);
-      expect(calls).toEqual(["ensure:agent-1:conv-1", "desktop:sandbox-1"]);
-      const result = JSON.parse(output[0] ?? "{}");
-      expect(result.expiresAt).toBe("2026-09-28T23:00:00.000Z");
-      const viewer = new URL(result.url);
-      expect(viewer.origin + viewer.pathname).toBe(
-        "https://chat.letta.com/desktop",
-      );
-      expect(new URLSearchParams(viewer.hash.slice(1)).get("path")).toBe(
-        "/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
-      );
-    } finally {
-      console.log = originalLog;
-    }
-  });
+        expect(exitCode).toBe(0);
+        expect(calls).toEqual(["ensure:agent-1:conv-1", "desktop:sandbox-1"]);
+        const result = JSON.parse(output[0] ?? "{}");
+        expect(result.expiresAt).toBe("2026-09-28T23:00:00.000Z");
+        if (viewerUrl) {
+          expect(result.url).toBe(viewerUrl);
+          return;
+        }
+        const viewer = new URL(result.url);
+        expect(viewer.origin + viewer.pathname).toBe(
+          "https://chat.letta.com/desktop",
+        );
+        expect(new URLSearchParams(viewer.hash.slice(1)).get("path")).toBe(
+          "/v1/sandboxes/sandbox-1/desktop-session/ws?token=t0k",
+        );
+      } finally {
+        console.log = originalLog;
+      }
+    },
+  );
 
   test("rejects a path argument for desktop-link", async () => {
     const originalError = console.error;

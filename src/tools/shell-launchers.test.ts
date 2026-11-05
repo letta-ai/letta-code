@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import * as fs from "node:fs";
 import { rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -150,6 +151,41 @@ describe("Shell Launchers", () => {
       });
       expect(hookLaunchers[0]?.at(-1)).toContain(POWERSHELL_EXIT_CODE_SUFFIX);
     } finally {
+      if (originalPlatform) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    }
+  });
+
+  test("selects pwsh from an MSIX app execution alias", () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const windowsApps =
+      "C:\\Users\\test\\AppData\\Local\\Microsoft\\WindowsApps";
+    const alias = join(windowsApps, "pwsh.exe");
+    const exists = spyOn(fs, "existsSync").mockReturnValue(false);
+    const lstat = spyOn(fs, "lstatSync").mockImplementation(((
+      candidate: fs.PathLike,
+    ) => {
+      if (candidate === alias) return {};
+      throw new Error("ENOENT");
+    }) as typeof fs.lstatSync);
+
+    try {
+      Object.defineProperty(process, "platform", { value: "win32" });
+      expect(fs.existsSync(alias)).toBe(false);
+      expect(
+        selectAvailableShellLauncher(buildShellLaunchers("echo test"), {
+          PATH: windowsApps,
+          PATHEXT: ".exe",
+        })?.[0],
+      ).toBe(alias);
+      expect(lstat).toHaveBeenCalledWith(alias);
+    } finally {
+      exists.mockRestore();
+      lstat.mockRestore();
       if (originalPlatform) {
         Object.defineProperty(process, "platform", originalPlatform);
       }

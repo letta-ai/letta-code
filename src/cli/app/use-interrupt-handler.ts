@@ -8,7 +8,11 @@ import {
   useRef,
 } from "react";
 import type { ApprovalResult } from "@/agent/approval-execution";
-import { getSubagents, interruptActiveSubagents } from "@/agent/subagent-state";
+import {
+  getSubagents,
+  interruptActiveSubagents,
+  interruptStopFailedSubagents,
+} from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
 import type { Buffers } from "@/cli/helpers/accumulator";
 import { markIncompleteToolsAsCancelled } from "@/cli/helpers/accumulator";
@@ -70,17 +74,34 @@ type InterruptHandlerContext = {
   waitingForQueueCancelRef: MutableRefObject<boolean>;
 };
 
-function hasActiveReflectionSubagentForAgent(agentId: string): boolean {
+function hasActiveReflectionSubagentForAgent(
+  agentId: string,
+  conversationId?: string,
+): boolean {
   return getSubagents().some((agent) => {
     if (agent.type.toLowerCase() !== "reflection") return false;
     if (agent.status !== "pending" && agent.status !== "running") return false;
-    return agent.parentAgentId === agentId;
+    if (agent.parentAgentId !== agentId) return false;
+    return (
+      conversationId === undefined ||
+      agent.parentConversationId === undefined ||
+      agent.parentConversationId === conversationId
+    );
   });
 }
 
-function interruptSubagentsAndReleaseReflection(agentId: string): void {
-  const interruptedReflection = hasActiveReflectionSubagentForAgent(agentId);
-  interruptActiveSubagents(INTERRUPTED_BY_USER);
+function interruptSubagentsAndReleaseReflection(
+  agentId: string,
+  conversationId?: string,
+): void {
+  const interruptedReflection = hasActiveReflectionSubagentForAgent(
+    agentId,
+    conversationId,
+  );
+  interruptActiveSubagents(INTERRUPTED_BY_USER, {
+    agentId,
+    conversationId,
+  });
   if (interruptedReflection) {
     releaseReflectionLaunch(agentId);
   }
@@ -249,7 +270,13 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // background reflection, also release its launch reservation so ESC does
       // not leave future reflections blocked waiting for an onComplete callback
       // that may never fire.
-      interruptSubagentsAndReleaseReflection(agentId);
+      interruptSubagentsAndReleaseReflection(
+        agentId,
+        // Pass the conversation id as-is: "default" must scope to tasks whose
+        // parentConversationId is "default" (or unset for legacy rows), not
+        // to every subagent of this agent.
+        conversationIdRef.current,
+      );
 
       // Show interrupt feedback (yellow message if no tools were cancelled)
       if (!toolsCancelled) {
@@ -304,6 +331,29 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
           bumpDequeueEpoch: () => setDequeueEpoch((e) => e + 1),
         });
       }
+      // Idle: no turn is streaming or unwinding, but a background task whose
+      // remote stop failed is still running. Esc retries its stop through
+      // the re-armed hook — the only user-reachable retry, because the row's
+      // Task line was promoted and no longer renders the live row. Only the
+      // failed rows are retried: a healthy same-scope background task must
+      // survive its sibling's stop retry.
+      const retried = interruptStopFailedSubagents(INTERRUPTED_BY_USER, {
+        agentId,
+        conversationId: conversationIdRef.current,
+      });
+      if (retried.length > 0) {
+        if (
+          retried.some(
+            (id) =>
+              getSubagents()
+                .find((agent) => agent.id === id)
+                ?.type.toLowerCase() === "reflection",
+          )
+        ) {
+          releaseReflectionLaunch(agentId);
+        }
+        appendError("Retrying stop of background task...", true);
+      }
       return;
     }
 
@@ -333,7 +383,10 @@ export function useInterruptHandler(ctx: InterruptHandlerContext) {
       // background reflection, also release its launch reservation so ESC does
       // not leave future reflections blocked waiting for an onComplete callback
       // that may never fire.
-      interruptSubagentsAndReleaseReflection(agentId);
+      interruptSubagentsAndReleaseReflection(
+        agentId,
+        conversationIdRef.current,
+      );
 
       // NOW abort the stream - interrupted flag is already set. The controller
       // stays set until the turn's finally block clears it: isAgentBusy() must

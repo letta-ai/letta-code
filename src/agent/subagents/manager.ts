@@ -69,6 +69,7 @@ import { spawnSubagentProcess } from "./subagent-process";
 import {
   describeSubagentExit,
   type ExecutionState,
+  flushPendingProgressText,
   hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -84,7 +85,6 @@ import {
  * fetch_webpage). These agents operate on local memory/git state and have
  * no use for internet access. Spawning them with `--base-tools none`
  * keeps their tool list minimal.
- *
  * fork/recall are excluded because they deploy the parent agent and
  * never trigger fresh agent creation, so base tools are out of scope.
  */
@@ -198,14 +198,11 @@ export function buildSubagentArgs(
       args.push("--model", model);
     }
 
-    // Reflection-specific startup flags: match the memory_reflection training
-    // environment everywhere except Windows. On Windows, the startup reminder
-    // identifies the native shell so the Bash-named tool's PowerShell/cmd
-    // behavior does not conflict with the reflection procedure.
-    if (type === "reflection") {
-      if (runtimePlatform !== "win32") {
-        args.push("--no-system-info-reminder");
-      }
+    // Keep native shell guidance on Windows; named preloads need no skill catalog.
+    if (type === "reflection" && runtimePlatform !== "win32") {
+      args.push("--no-system-info-reminder");
+    }
+    if (type === "reflection" || type === "memory") {
       args.push("--no-skills");
     }
 
@@ -522,6 +519,7 @@ async function executeSubagent(
     if (stdoutBuffer.length > 0) {
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
+    flushPendingProgressText(state, subagentId);
 
     // Check if process was aborted by user
     if (runningProcess.wasAborted()) {
