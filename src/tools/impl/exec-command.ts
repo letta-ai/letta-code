@@ -23,6 +23,7 @@ import {
   getNextExecSessionId,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
+  settleBackgroundWork,
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
 import {
@@ -526,6 +527,8 @@ function markSessionFailed(session: ExecSession, detail: string): void {
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) settleBackgroundWork(bgProcess);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -552,6 +555,8 @@ function markSessionClosed(
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) settleBackgroundWork(bgProcess);
   scheduleExecSessionCleanup(session.id);
 }
 

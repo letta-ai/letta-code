@@ -31,9 +31,9 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
-  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
+  settleBackgroundWork,
 } from "./process_manager.js";
 import {
   findSelfMatchingPgrepPattern,
@@ -585,7 +585,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
       });
       // Publish the lower running count only after the notification is
       // queued, so the conversation never looks drained with nothing pending.
-      notifyBackgroundProcessStateChanged(parentScope);
+      settleBackgroundWork(bgProcess, status);
       scheduleBackgroundProcessCleanup(bashId);
     });
   };

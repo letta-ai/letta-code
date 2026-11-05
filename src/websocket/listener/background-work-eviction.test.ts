@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
+import { exec_command } from "@/tools/impl/exec-command";
+import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   addToMessageQueue,
@@ -168,6 +170,98 @@ const timer = setInterval(() => {
     // is released.
     writeFileSync(releaseFile, "");
     await waitFor(() => turns === 2, "notification turn");
+    await waitFor(
+      () => !listener.conversationRuntimes.has(runtimeKey),
+      "conversation eviction",
+    );
+  } finally {
+    clearProcessServices(listener);
+  }
+}, 15_000);
+
+function writeWaitScript(): { script: string; releaseFile: string } {
+  const dir = mkdtempSync(join(tmpdir(), "bg-evict-"));
+  fixtureDir = dir;
+  const releaseFile = join(dir, "release");
+  const script = join(dir, "wait.cjs");
+  writeFileSync(
+    script,
+    `const fs = require("node:fs");
+setInterval(() => {
+  if (fs.existsSync(${JSON.stringify(releaseFile)})) process.exit(0);
+}, 20);`,
+  );
+  return { script, releaseFile };
+}
+
+/** Run one turn that leaves an exec_command session running in the background. */
+async function holdConversationWithExecSession(script: string) {
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const runtimeKey = getConversationRuntimeKey(AGENT_ID, CONVERSATION_ID);
+  let turnDone = false;
+  installProcessEventRouting({
+    runtime: listener,
+    processTransport: new MockTransport(),
+    opts: options,
+    processQueuedTurn: async () => {
+      if (turnDone) return;
+      await exec_command({
+        cmd: `"${process.execPath}" "${script}"`,
+        yield_time_ms: 250,
+        parentScope: { agentId: AGENT_ID, conversationId: CONVERSATION_ID },
+      });
+      turnDone = true;
+    },
+  });
+  const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
+  addToMessageQueue({
+    kind: "task_notification",
+    text: "<task-notification>start</task-notification>",
+    agentId: AGENT_ID,
+    conversationId: CONVERSATION_ID,
+  });
+  await waitFor(() => turnDone, "exec turn");
+  await waitFor(
+    () => !runtime.queuePumpActive && !runtime.queuePumpScheduled,
+    "queue pump to finish",
+  );
+  const sessionId = [...backgroundProcesses.entries()].find(
+    ([, proc]) =>
+      proc.runtimeScope?.conversationId === CONVERSATION_ID &&
+      proc.status === "running",
+  )?.[0];
+  expect(sessionId).toBeDefined();
+  expect(listener.conversationRuntimes.get(runtimeKey)).toBe(runtime);
+  return { listener, runtimeKey, sessionId: sessionId as string };
+}
+
+test("a stopped exec_command session releases its held conversation", async () => {
+  const { script } = writeWaitScript();
+  const { listener, runtimeKey, sessionId } =
+    await holdConversationWithExecSession(script);
+  try {
+    // TaskStop must not leave the conversation held after the session ends.
+    expect(killBackgroundProcess(sessionId)).toBe(true);
+    await waitFor(
+      () => !listener.conversationRuntimes.has(runtimeKey),
+      "conversation eviction",
+    );
+  } finally {
+    clearProcessServices(listener);
+  }
+}, 15_000);
+
+test("an exec_command session that exits with its notification suppressed releases its held conversation", async () => {
+  const { script, releaseFile } = writeWaitScript();
+  const { listener, runtimeKey, sessionId } =
+    await holdConversationWithExecSession(script);
+  try {
+    const proc = backgroundProcesses.get(sessionId);
+    if (!proc) throw new Error("exec session missing");
+    proc.completionNotificationSuppressed = true;
+    writeFileSync(releaseFile, "");
+    await waitFor(() => proc.status !== "running", "session exit");
     await waitFor(
       () => !listener.conversationRuntimes.has(runtimeKey),
       "conversation eviction",

@@ -12,6 +12,7 @@ import {
   backgroundProcesses,
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
+  settleBackgroundWork,
 } from "./process_manager.js";
 import {
   REMOTE_EXTERNAL_WORKER_STOPPED,
@@ -209,7 +210,7 @@ export async function task_stop(
           if (!remoteExternalStopped)
             throw new Error("Subagent process exit was not confirmed");
           // The owning worker confirmed its process exit; only this follower's result is late.
-          task.status = "failed";
+          settleBackgroundWork(task, "failed");
           scheduleBackgroundTaskCleanup(task_id);
           return {
             killed: true,
@@ -242,7 +243,7 @@ export async function task_stop(
             return { killed: false, output: getErrorMessage(error) };
           }
           // Process exit is confirmed even if schedule cleanup needs a retry.
-          task.status = "failed";
+          settleBackgroundWork(task, "failed");
           scheduleBackgroundTaskCleanup(task_id);
           task.cancelPendingWakes = () =>
             runWithRuntimeContext(
@@ -257,7 +258,7 @@ export async function task_stop(
           if (!cleaned.killed) return cleaned;
         }
       }
-      task.status = "failed";
+      settleBackgroundWork(task, "failed");
       scheduleBackgroundTaskCleanup(task_id);
       return remote ?? { killed: true };
     }
