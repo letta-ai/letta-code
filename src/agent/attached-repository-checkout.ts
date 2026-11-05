@@ -46,7 +46,7 @@ export async function syncAttachedRepositoryCheckout(
     if (fresh) {
       await ops.gitWithRetry(
         directory,
-        ["clone", "--no-checkout", args.remoteUrl, "."],
+        ["clone", "--depth", "1", "--no-checkout", args.remoteUrl, "."],
         args.token,
         {
           operation: `clone repository ${args.repositoryName}`,
