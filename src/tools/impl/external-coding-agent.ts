@@ -722,6 +722,7 @@ export async function runExternalCodingAgent(
             traceContext: scope
               ? {
                   actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),
@@ -788,6 +789,7 @@ export async function runExternalCodingAgent(
             traceContext: scope
               ? {
                   actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
                   parent_agent_id: scope.agentId,
                   parent_conversation_id: scope.conversationId,
                   task_id: options.taskId ?? randomUUID(),

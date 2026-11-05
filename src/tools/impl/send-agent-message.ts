@@ -280,6 +280,7 @@ export async function send_agent_message(
         deps.workerEnv,
       );
       const traceContext = {
+        secretValues: Object.values(worker.secretEnv),
         parent_agent_id: parentScope.agentId,
         parent_conversation_id: parentScope.conversationId,
         task_id: getNextTaskId(),

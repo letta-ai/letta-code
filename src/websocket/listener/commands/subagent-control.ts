@@ -204,7 +204,10 @@ export async function handleSubagentMessageCommand(
             : target.type === "claude-code"
               ? (deps.sendClaude ?? sendClaudeMessage)(
                   {
-                    traceContext,
+                    traceContext: {
+                      ...traceContext,
+                      secretValues: Object.values(worker?.secretEnv ?? {}),
+                    },
                     sessionId: target.sessionId,
                     prompt: command.message,
                     parentAgentId: command.runtime.agent_id,
@@ -224,7 +227,10 @@ export async function handleSubagentMessageCommand(
                 )
               : (deps.sendCodex ?? sendCodexMessage)(
                   {
-                    traceContext,
+                    traceContext: {
+                      ...traceContext,
+                      secretValues: Object.values(worker?.secretEnv ?? {}),
+                    },
                     threadId: target.sessionId,
                     prompt: command.message,
                     parentAgentId: command.runtime.agent_id,

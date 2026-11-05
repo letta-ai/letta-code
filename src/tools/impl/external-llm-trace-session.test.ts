@@ -1,4 +1,16 @@
-import { expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
+
+let previousMode = resolveBackendMode();
+beforeEach(() => {
+  previousMode = resolveBackendMode();
+  setConfiguredBackendMode("api");
+});
+afterEach(() => setConfiguredBackendMode(previousMode));
+
 import { once } from "node:events";
 import { createServer } from "node:http";
 import type { ExternalTraceRow } from "./external-llm-trace-proxy";
@@ -9,6 +21,7 @@ const context = {
   parent_conversation_id: "conv-test",
   task_id: "task-test",
   actingUserId: "user-test",
+  secretValues: ["vault-value-from-arbitrary-name"],
 };
 test("opt-out never resolves credentials or starts an upload", async () => {
   let calls = 0;
@@ -31,6 +44,18 @@ test("opt-out never resolves credentials or starts an upload", async () => {
       deps,
     ),
   ).toBeUndefined();
+  setConfiguredBackendMode("local");
+  expect(
+    await createTraceSession(
+      "codex",
+      context,
+      {},
+      "https://api.openai.com/v1",
+      "session",
+      deps,
+    ),
+  ).toBeUndefined();
+  setConfiguredBackendMode("api");
   expect(calls).toBe(0);
   expect(
     await createTraceSession(
@@ -84,11 +109,15 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     for (let i = 0; i < 2; i++) {
       const response = await fetch(`${trace?.url}/responses`, {
         method: "POST",
-        body: '{"model":"test"}',
+        body: '{"model":"test","messages":[{"content":"vault-value-from-arbitrary-name"}]}',
       });
       await response.text();
     }
     await trace?.close();
+    expect(JSON.stringify(batches)).not.toContain(
+      "vault-value-from-arbitrary-name",
+    );
+    expect(batches[0]?.[0]).not.toHaveProperty("secretValues");
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(2);
     expect(batches[0]?.[0]?.worker_session_id).toBe("session-test");

@@ -3,6 +3,7 @@ import {
   apiRequest,
   getApiRequestConfig,
 } from "@/backend/api/request";
+import { resolveBackendMode } from "@/backend/backend-mode";
 import { traceCaptureEnabled } from "./external-llm-trace-payload";
 import {
   type ExternalTraceRow,
@@ -13,7 +14,7 @@ import {
 export type ExternalTraceContext = Omit<
   ExternalTraceScope,
   "worker_session_id"
-> & { actingUserId?: string | null };
+> & { actingUserId?: string | null; secretValues?: string[] };
 
 const sessionScopes = new Map<string, ExternalTraceScope>();
 export function updateExternalTraceTask(
@@ -65,6 +66,7 @@ export async function createTraceSession(
 ) {
   if (
     !context ||
+    resolveBackendMode() !== "api" ||
     env.LETTA_CODE_TELEM === "0" ||
     env.LETTA_CODE_TELEM === "false" ||
     env.DO_NOT_TRACK === "1"
@@ -76,7 +78,7 @@ export async function createTraceSession(
     });
     if (!traceCaptureEnabled(env, config.baseUrl, config.apiKey))
       return undefined;
-    const { actingUserId: _actingUserId, ...ids } = context;
+    const { actingUserId: _actingUserId, secretValues = [], ...ids } = context;
     const scope = { ...ids, worker_session_id: workerSessionId };
     sessionScopes.set(workerSessionId, scope);
     const queue: ExternalTraceRow[] = [];
@@ -133,9 +135,12 @@ export async function createTraceSession(
       });
       return draining;
     };
-    const secrets = Object.entries(env)
-      .filter(([key]) => /token|secret|password|api[_-]?key/i.test(key))
-      .map(([, value]) => value ?? "");
+    const secrets = [
+      ...secretValues,
+      ...Object.entries(env)
+        .filter(([key]) => /token|secret|password|api[_-]?key/i.test(key))
+        .map(([, value]) => value ?? ""),
+    ];
     const proxy = await startTraceProxy({
       upstream,
       harness,
