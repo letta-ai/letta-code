@@ -147,6 +147,10 @@ async function runListWithLatest(
 ) {
   const log = spyOn(console, "log").mockImplementation(() => {});
   const error = spyOn(console, "error").mockImplementation(() => {});
+  const deviceId = spyOn(
+    settingsManager,
+    "getOrCreateDeviceId",
+  ).mockReturnValue("test-current-device");
   try {
     expect(
       await runEnvironmentsSubcommand(["list", ...args], {
@@ -161,6 +165,7 @@ async function runListWithLatest(
       hints: error.mock.calls.map((call) => String(call[0])),
     };
   } finally {
+    deviceId.mockRestore();
     log.mockRestore();
     error.mockRestore();
   }
