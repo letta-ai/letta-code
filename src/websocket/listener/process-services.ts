@@ -20,7 +20,12 @@ import {
   emitSubagentStateUpdate,
 } from "./protocol-outbound";
 import { scheduleQueuePump } from "./queue";
-import { clearRuntimeTimers, getActiveRuntime } from "./runtime";
+import {
+  clearRuntimeTimers,
+  evictConversationRuntimeIfIdle,
+  getActiveRuntime,
+  getConversationRuntime,
+} from "./runtime";
 import { clearSubagentSnapshotCache } from "./subagent-state-cache";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
@@ -114,6 +119,15 @@ export function installProcessEventRouting(params: {
           agent_id: scope.agentId,
           conversation_id: scope.conversationId,
         });
+        // A conversation held only for its background work can go now.
+        const conversationRuntime = getConversationRuntime(
+          runtime,
+          scope.agentId,
+          scope.conversationId,
+        );
+        if (conversationRuntime) {
+          evictConversationRuntimeIfIdle(conversationRuntime);
+        }
         return;
       }
       if (runtime.conversationRuntimes.size === 0) {
