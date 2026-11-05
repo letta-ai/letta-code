@@ -105,6 +105,7 @@ export {
 } from "@/agent/subagents/background-link";
 
 export interface SpawnBackgroundSubagentTaskArgs {
+  taskId?: string;
   subagentType: string;
   /** Configuration resolved by the caller; omitted by legacy internal callers. */
   config?: SubagentConfig;
@@ -313,7 +314,7 @@ export function spawnBackgroundSubagentTask(
     claimsParentRuntime,
   );
 
-  const taskId = getNextTaskId();
+  const taskId = args.taskId ?? getNextTaskId();
   const outputFile = createBackgroundOutputFile(taskId);
   const abortController = new AbortController();
 
@@ -815,6 +816,9 @@ export async function launchSubagent(
         ) =>
           runExternalCodingAgent({
             type: externalCodingAgentType,
+            taskId: [...backgroundTasks].find(
+              ([, task]) => task.subagentId === workerSubagentId,
+            )?.[0],
             prompt,
             model,
             parentAgentId,

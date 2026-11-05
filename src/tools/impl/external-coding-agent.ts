@@ -68,6 +68,7 @@ export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
+  taskId?: string;
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
@@ -718,6 +719,14 @@ export async function runExternalCodingAgent(
       return capture(
         await (deps.runCodexTurn ?? runCodexTurn)(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
@@ -776,6 +785,14 @@ export async function runExternalCodingAgent(
       return capture(
         await runClaudeTurn(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,

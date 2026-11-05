@@ -23,6 +23,11 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
+import { traceCodexLaunch } from "./external-llm-trace-launch";
+import {
+  type ExternalTraceContext,
+  updateExternalTraceTask,
+} from "./external-llm-trace-session";
 import {
   type ExternalTextListener,
   type ExternalToolCallListener,
@@ -110,6 +115,7 @@ interface CodexSession {
 
 export interface CodexTurnOptions
   extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
+  traceContext?: ExternalTraceContext;
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -234,11 +240,12 @@ function textInput(text: string): Array<{ type: "text"; text: string }> {
 }
 
 function spawnTransport(options: {
+  configArgs?: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): CodexAppServerTransport {
   const [command = "codex", ...args] = wrapManagedWorkloadLauncher(
-    ["codex", "app-server", "--stdio"],
+    ["codex", ...(options.configArgs ?? []), "app-server", "--stdio"],
     { env: options.env },
   );
   const child = getCommandProcessFactory()(command, args, {
@@ -604,29 +611,51 @@ async function createSession(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
   });
-  const transport = (deps.createTransport ?? spawnTransport)({
+  let transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
   });
   let session: CodexSession | undefined;
   const pendingNotifications: JsonRpcMessage[] = [];
-  const client = new CodexAppServerClient(
-    transport,
-    (message) => {
-      if (!session) pendingNotifications.push(message);
-      // Replay swaps in a new queue, so always push to the current one.
-      else if (!handleNotification(session, message)) {
-        session.pendingNotifications.push(message);
-      }
-    },
-    (error) => {
-      if (session) failSession(session, error);
-    },
-  );
+  const makeClient = () => {
+    const owner = new CodexAppServerClient(
+      transport,
+      (message) => {
+        if (!session) pendingNotifications.push(message);
+        // Replay swaps in a new queue, so always push to the current one.
+        else if (!handleNotification(session, message)) {
+          session.pendingNotifications.push(message);
+        }
+      },
+      (error) => {
+        if (session?.client === owner) failSession(session, error);
+      },
+    );
+    return owner;
+  };
+  let client = makeClient();
+  let trace: Awaited<ReturnType<typeof traceCodexLaunch>>;
   let response: Record<string, unknown>;
   try {
     await client.initialize();
     await assertCodexSignedIn(client);
+    trace = deps.createTransport
+      ? undefined
+      : await traceCodexLaunch(options.traceContext, env, client);
+    if (trace) {
+      client.dispose();
+      transport = spawnTransport({
+        cwd: options.cwd,
+        env,
+        configArgs: trace.args,
+      });
+      client = makeClient();
+      await client.initialize();
+    }
+    if (trace)
+      void transport.exited
+        ?.finally(() => trace?.close())
+        .catch(() => undefined);
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {
@@ -642,8 +671,9 @@ async function createSession(
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
-    response = await client.request(method, params);
+    response = await client.request(method, { ...params, ...trace?.params });
   } catch (error) {
+    void trace?.close();
     client.dispose();
     throw error;
   }
@@ -653,6 +683,7 @@ async function createSession(
     client.dispose();
     throw new Error("Codex app-server returned no native thread ID");
   }
+  trace?.setSessionId(threadId);
   session = {
     threadId,
     client,
@@ -906,6 +937,7 @@ export async function sendCodexMessage(
         }
       }
       options.signal?.throwIfAborted();
+      updateExternalTraceTask(session.threadId, options.traceContext);
       await options.beforeStart?.(session.threadId);
       const handle = await startTurnUnlocked(
         session,

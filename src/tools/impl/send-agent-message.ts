@@ -44,6 +44,7 @@ import {
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { sendOpenCodeMessage } from "./opencode-session";
+import { getNextTaskId } from "./process_manager";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
@@ -278,12 +279,19 @@ export async function send_agent_message(
         },
         deps.workerEnv,
       );
+      const traceContext = {
+        parent_agent_id: parentScope.agentId,
+        parent_conversation_id: parentScope.conversationId,
+        task_id: getNextTaskId(),
+        actingUserId: getRuntimeActingUserAttribution(),
+      };
       if (externalTarget.type === "codex") {
         let captureReservation: NativeSessionCaptureReservation | undefined;
         let receipt: Awaited<ReturnType<typeof sendCodexMessage>>;
         try {
           receipt = await (deps.sendCodexMessage ?? sendCodexMessage)(
             {
+              traceContext,
               threadId: externalTarget.sessionId,
               prompt: args.message,
               parentAgentId: parentScope.agentId,
@@ -335,6 +343,7 @@ export async function send_agent_message(
           taskReceipt = (
             deps.trackExternalFollowup ?? trackExternalFollowupCompletion
           )({
+            taskId: traceContext.task_id,
             type: "codex",
             agentId: args.agent_id as string,
             message: args.message,
@@ -373,6 +382,7 @@ export async function send_agent_message(
       try {
         receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)(
           {
+            traceContext,
             sessionId: externalTarget.sessionId,
             prompt: args.message,
             parentAgentId: parentScope.agentId,
@@ -423,6 +433,7 @@ export async function send_agent_message(
         taskReceipt = (
           deps.trackExternalFollowup ?? trackExternalFollowupCompletion
         )({
+          taskId: traceContext.task_id,
           type: "claude-code",
           agentId: args.agent_id as string,
           message: args.message,
