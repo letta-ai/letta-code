@@ -29,6 +29,7 @@ describe("sandbox file API", () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
     const result = await createSandboxPublicExposure(
       3000,
+      { expiresInSeconds: 7200 },
       createDeps(
         Response.json({
           url: "https://opaque.dream.site",
@@ -42,7 +43,10 @@ describe("sandbox file API", () => {
     expect(result.url).toBe("https://opaque.dream.site");
     expect(calls[0]?.input).toBe("https://api.letta.test/v1/sandbox-exposures");
     expect(calls[0]?.init?.method).toBe("POST");
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ port: 3000 });
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({
+      port: 3000,
+      expiresInSeconds: 7200,
+    });
     expect(new Headers(calls[0]?.init?.headers).get("Authorization")).toBe(
       "Bearer secret",
     );

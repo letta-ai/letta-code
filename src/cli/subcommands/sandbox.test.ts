@@ -192,22 +192,28 @@ describe("sandbox subcommand", () => {
     const originalLog = console.log;
     console.log = (message?: unknown) => output.push(String(message));
     try {
-      const exitCode = await runSandboxSubcommand(["expose", "3000"], {
-        initializeSettings: async () => {},
-        isCloud: async () => true,
-        isManagedRuntime: () => true,
-        createPublicExposure: async (port) => {
-          calls.push(port);
-          return {
-            url: "https://opaque.dream.site",
-            port,
-            expiresAt: "2026-11-04T20:00:00.000Z",
-          };
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => true,
+          createPublicExposure: async (port, expiry) => {
+            calls.push(
+              port,
+              "expiresInSeconds" in expiry ? expiry.expiresInSeconds : -1,
+            );
+            return {
+              url: "https://opaque.dream.site",
+              port,
+              expiresAt: "2026-11-04T20:00:00.000Z",
+            };
+          },
         },
-      });
+      );
 
       expect(exitCode).toBe(0);
-      expect(calls).toEqual([3000]);
+      expect(calls).toEqual([3000, 7200]);
       expect(JSON.parse(output[0] ?? "{}")).toEqual({
         url: "https://opaque.dream.site",
         port: 3000,
@@ -223,15 +229,18 @@ describe("sandbox subcommand", () => {
     const originalError = console.error;
     console.error = () => {};
     try {
-      const exitCode = await runSandboxSubcommand(["expose", "3000"], {
-        initializeSettings: async () => {},
-        isCloud: async () => true,
-        isManagedRuntime: () => false,
-        createPublicExposure: async () => {
-          exposed = true;
-          throw new Error("Must not expose");
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => false,
+          createPublicExposure: async () => {
+            exposed = true;
+            throw new Error("Must not expose");
+          },
         },
-      });
+      );
 
       expect(exitCode).toBe(1);
       expect(exposed).toBe(false);
