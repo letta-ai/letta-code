@@ -66,6 +66,7 @@ import {
   createBackgroundOutputFile,
   getNextTaskId,
   scheduleBackgroundTaskCleanup,
+  settleBackgroundWork,
 } from "./process_manager.js";
 import { launchRemoteExternalCodingAgent } from "./remote-external-coding-agent";
 import { resolveLaunchComputer } from "./subagent-computer";
@@ -619,7 +620,11 @@ export function spawnBackgroundSubagentTask(
         // Silently ignore hook errors
       });
     })
-    .finally(unsubscribe);
+    .finally(() => {
+      unsubscribe();
+      // After any completion notification was queued on either path above.
+      settleBackgroundWork(bgTask);
+    });
 
   // Memory drains wait for the whole lifecycle (sync, cleanup), not just the child.
   const swallow = () => undefined;

@@ -75,6 +75,7 @@ import {
   getNextWorkflowId,
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
+  settleBackgroundWork,
 } from "./process_manager.js";
 
 interface WorkflowArgs {
@@ -584,9 +585,11 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       status: processState.status === "completed" ? "completed" : "failed",
       error: outcome.error,
     });
-    notifyBackgroundProcessStateChanged(scope);
     scheduleBackgroundProcessCleanup(taskId);
-    if (processState.completionNotificationSuppressed) return;
+    if (processState.completionNotificationSuppressed) {
+      settleBackgroundWork(processState);
+      return;
+    }
     const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
     // The summary is what the transcript shows for the notification, so it
     // carries the same numbers as /workflows.
@@ -616,6 +619,8 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       actingUserId: scope?.actingUserId,
       clientMessageIds: scope?.clientMessageIds,
     });
+    // Publish after queuing so the work never looks drained with nothing pending.
+    settleBackgroundWork(processState);
   };
 
   // Runs detached from this tool call; the abort signal of the *call* is

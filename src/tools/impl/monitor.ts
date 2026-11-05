@@ -41,6 +41,7 @@ import {
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
+  settleBackgroundWork,
   unrefTimer,
 } from "./process_manager.js";
 import { getShellEnv } from "./shell-env.js";
@@ -436,7 +437,7 @@ export function markMonitorFinished(
   processState.exitCode = exitCode;
   void cancelMonitorBackup(taskId);
   scrubCompletedBackgroundOutput(processState);
-  notifyBackgroundProcessStateChanged(processState.runtimeScope);
+  settleBackgroundWork(processState);
   scheduleBackgroundProcessCleanup(taskId);
 }
 

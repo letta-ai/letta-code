@@ -23,6 +23,7 @@ import {
   getNextCodeModeId,
   notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
+  settleBackgroundWork,
 } from "./process_manager.js";
 
 interface CodeModeArgs {
@@ -156,9 +157,11 @@ export async function code_mode(args: CodeModeArgs) {
   const notifyWhenSettled = () => {
     notifyBackgroundProcessStateChanged(notificationScope);
     void settled.then((outcome) => {
-      notifyBackgroundProcessStateChanged(notificationScope);
       scheduleBackgroundProcessCleanup(taskId);
-      if (processState.completionNotificationSuppressed) return;
+      if (processState.completionNotificationSuppressed) {
+        settleBackgroundWork(processState);
+        return;
+      }
       const status = outcome.ok ? "completed" : "failed";
       const durationMs = Date.now() - (processState.startTime?.getTime() ?? 0);
       addToMessageQueue({
@@ -175,6 +178,8 @@ export async function code_mode(args: CodeModeArgs) {
         }),
         ...notificationScope,
       });
+      // Publish after queuing so the work never looks drained with nothing pending.
+      settleBackgroundWork(processState);
     });
   };
 
