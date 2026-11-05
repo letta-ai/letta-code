@@ -74,6 +74,7 @@ import {
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
 import { isHeadlessStartup } from "./cli/startup-mode";
+import { expandDreamCommand } from "./cli/subcommands/dream";
 import {
   runSubcommand,
   subcommandNeedsEarlyBackendMode,
@@ -102,7 +103,6 @@ const EMPTY_APPROVAL_ARRAY: ApprovalRequest[] = [];
 const EMPTY_MESSAGE_ARRAY: Message[] = [];
 function normalizeUpdateCommandAliases(args: string[]): string[] {
   const [command, ...rest] = args;
-
   if (
     command === "upgrade" ||
     command === "--update" ||
@@ -575,7 +575,7 @@ async function main(): Promise<void> {
   await initializeDesktopCredentials();
   startOrphanDetection(); // Exit when the owning Desktop or terminal process dies.
 
-  const rawCliArgs = process.argv.slice(2);
+  const rawCliArgs = expandDreamCommand(process.argv.slice(2));
   let subcommandArgs = rawCliArgs;
   let explicitBackendMode: BackendMode | undefined;
   try {
