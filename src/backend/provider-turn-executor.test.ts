@@ -104,7 +104,7 @@ describe("ProviderTurnExecutor", () => {
     },
   );
 
-  test("forwards priced Anthropic usage including cache reads and writes", async () => {
+  test("recalculates priced Anthropic usage including cache reads and writes", async () => {
     const model = ANTHROPIC_MODELS["claude-sonnet-4-5"];
     const usage = {
       ...emptyLocalUsage(),
@@ -116,6 +116,8 @@ describe("ProviderTurnExecutor", () => {
       totalTokens: 390,
     };
     calculateCost(model, usage);
+    const expectedCost = usage.cost.total;
+    usage.cost.total = 99;
     const adapter: ProviderStreamAdapter = {
       async *stream() {
         yield providerStreamPart(
@@ -139,7 +141,8 @@ describe("ProviderTurnExecutor", () => {
     ).toEqual<UsageStatistics>({
       message_type: "usage_statistics",
       step_count: 1,
-      cost_usd: usage.cost.total,
+      cost_usd: expectedCost,
+      cache_write_1h_tokens: 20,
       prompt_tokens: 100,
       completion_tokens: 40,
       total_tokens: 390,

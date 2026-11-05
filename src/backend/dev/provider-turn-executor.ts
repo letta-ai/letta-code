@@ -27,6 +27,7 @@ import {
   type ProviderStreamPart,
 } from "@/backend/local/local-stream-chunks";
 import type { UsageStatistics } from "@/types/protocol";
+import { calculateUsageCost } from "@/usage/cost";
 import type {
   HeadlessTurnBody,
   HeadlessTurnExecutor,
@@ -309,22 +310,7 @@ function createUsageStatisticsChunk(
   model: Model<Api> | undefined,
   contextTokensEstimate?: number,
 ): UsageStatistics {
-  // pi-ai owns cache, context-tier, and service-tier pricing. Forward its
-  // total; zero catalog rates alone do not establish that a model is free.
-  const rates = model?.cost;
-  const hasPrice = [rates, ...(rates?.tiers ?? [])].some((rate) =>
-    [rate?.input, rate?.output, rate?.cacheRead, rate?.cacheWrite].some(
-      (value) => typeof value === "number" && value > 0,
-    ),
-  );
-  const isFreeLocalEndpoint =
-    model !== undefined &&
-    ["ollama", "lmstudio", "llama-cpp"].includes(model.provider);
-  const costUsd = hasPrice
-    ? (usage?.cost?.total ?? null)
-    : isFreeLocalEndpoint
-      ? 0
-      : null;
+  const costUsd = usage ? calculateUsageCost(model, usage) : null;
   const promptTokens = usage?.input;
   const completionTokens = usage?.output;
   const totalTokens = usage?.totalTokens;
@@ -339,6 +325,9 @@ function createUsageStatisticsChunk(
     // reports exactly one step, matching Cloud's per-step usage_statistics.
     step_count: 1,
     cost_usd: costUsd,
+    ...(usage?.cacheWrite1h !== undefined
+      ? { cache_write_1h_tokens: usage.cacheWrite1h }
+      : {}),
     ...(promptTokens !== undefined ? { prompt_tokens: promptTokens } : {}),
     ...(completionTokens !== undefined
       ? { completion_tokens: completionTokens }
