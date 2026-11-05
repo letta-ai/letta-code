@@ -115,3 +115,12 @@ test("cloud credentials and telemetry consent are both required", () => {
   expect(traceCaptureEnabled({}, "http://localhost:8283", "key")).toBe(false);
   expect(traceCaptureEnabled({}, "https://api.letta.com", "")).toBe(false);
 });
+
+test("malformed provider events cannot break the forwarding path", () => {
+  expect(
+    assembleTraceResponse(
+      'data: {"type":"message_start","message":null}\n\ndata: {"type":"message_delta","delta":{}}\n\n',
+      true,
+    ).complete,
+  ).toBe(false);
+});

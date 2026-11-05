@@ -38,7 +38,7 @@ export function sanitizeTraceJson(raw: string, secrets: string[]): string {
 }
 
 /** Preserve every SSE JSON event as well as the assembled provider response. */
-export function assembleTraceResponse(
+function assembleResponse(
   raw: string,
   streaming: boolean,
 ): { response: JsonObject; events: JsonObject[]; complete: boolean } {
@@ -119,4 +119,19 @@ export function assembleTraceResponse(
     }
   }
   return { response, events, complete };
+}
+
+export function assembleTraceResponse(
+  raw: string,
+  streaming: boolean,
+): ReturnType<typeof assembleResponse> {
+  try {
+    return assembleResponse(raw, streaming);
+  } catch {
+    return {
+      response: { omitted: "malformed_response" },
+      events: [],
+      complete: false,
+    };
+  }
 }

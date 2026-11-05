@@ -137,7 +137,9 @@ export async function startTraceProxy(options: {
 
       let request: Record<string, unknown> = {};
       try {
-        request = JSON.parse(requestRaw);
+        const parsed = JSON.parse(requestRaw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
+          request = parsed;
       } catch {
         /* mark incomplete below */
       }
