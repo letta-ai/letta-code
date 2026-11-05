@@ -113,15 +113,20 @@ export interface SandboxPublicExposure {
   expiresAt: string;
 }
 
+export type SandboxPublicExposureExpiry =
+  | { expiresInSeconds: number }
+  | { extendBySeconds: number };
+
 export async function createSandboxPublicExposure(
   port: number,
+  expiry: SandboxPublicExposureExpiry,
   deps: SandboxFilesApiDeps = defaultDeps,
 ): Promise<SandboxPublicExposure> {
   const response = await request(
     "/v1/sandbox-exposures",
     {
       method: "POST",
-      body: JSON.stringify({ port }),
+      body: JSON.stringify({ port, ...expiry }),
       headers: { "Content-Type": "application/json" },
     },
     deps,
