@@ -97,10 +97,18 @@ letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 After starting an HTTP, WebSocket, or SSE app on a sandbox port, expose it at a public Letta URL:
 
 ```bash
-letta sandbox expose <port>
+letta sandbox expose <port> --expires-in <duration>
 ```
 
-This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt }`. Anyone holding the URL can access the app until `expiresAt` (about 24 hours), so share it only where the user requested. Rerun the command to renew the exposure before it expires.
+Choose the lifetime explicitly with a whole-second, minute, or hour duration such as `30m`, `2h`, or `24h`. The supported range is 1 minute through 24 hours; there is no implicit default. This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt }`. Anyone holding the URL can access the app until the exact `expiresAt`, so share it only where the user requested.
+
+To add time to the same URL and port, extend the active exposure before it expires:
+
+```bash
+letta sandbox expose <port> --extend-by <duration>
+```
+
+Extension adds to the current deadline, preserves the bearer URL, and fails if there is no active exposure or the port changed. The resulting remaining lifetime cannot exceed 24 hours. Use `--expires-in` instead when intentionally resetting the remaining lifetime from now; never pass both expiry flags.
 
 ## Share a live view of a Cloud sandbox desktop
 
