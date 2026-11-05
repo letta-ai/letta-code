@@ -1,4 +1,4 @@
-import { expect, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import type {
   EnvironmentConnection,
   listEnvironments,
@@ -32,6 +32,9 @@ async function runList(args: string[], list: typeof listEnvironments) {
       await runEnvironmentsSubcommand(["list", ...args], {
         initializeSettings: async () => {},
         listEnvironments: list,
+        fetchLatestVersion: async () => {
+          throw new Error("no registry in unit tests");
+        },
       }),
     ).toBe(0);
     return JSON.parse(String(log.mock.calls[0]?.[0]));
@@ -116,4 +119,112 @@ test("help explains the record id and filtered-page cursor", async () => {
   } finally {
     log.mockRestore();
   }
+});
+
+function versioned(
+  id: string,
+  version: string,
+  options: { online?: boolean; supported?: boolean } = {},
+): EnvironmentConnection {
+  return {
+    ...environment(id, options.online ?? true),
+    deviceId: `device-${id}`,
+    connectionName: `Computer (${id})`,
+    metadata: {
+      lettaCodeVersion: version,
+      supported_commands:
+        (options.supported ?? true)
+          ? ["doctor", "upgrade-letta-code"]
+          : ["doctor"],
+    },
+  };
+}
+
+async function runListWithLatest(
+  connections: EnvironmentConnection[],
+  fetchLatestVersion: () => Promise<string>,
+  args: string[] = [],
+) {
+  const log = spyOn(console, "log").mockImplementation(() => {});
+  const error = spyOn(console, "error").mockImplementation(() => {});
+  try {
+    expect(
+      await runEnvironmentsSubcommand(["list", ...args], {
+        initializeSettings: async () => {},
+        listEnvironments: async () => ({ connections, hasNextPage: false }),
+        fetchLatestVersion,
+      }),
+    ).toBe(0);
+    expect(log.mock.calls).toHaveLength(1);
+    return {
+      json: JSON.parse(String(log.mock.calls[0]?.[0])),
+      hints: error.mock.calls.map((call) => String(call[0])),
+    };
+  } finally {
+    log.mockRestore();
+    error.mockRestore();
+  }
+}
+
+describe("upgrade hints in computers list", () => {
+  test("marks an outdated computer that supports remote upgrade and prints a hint", async () => {
+    const { json, hints } = await runListWithLatest(
+      [versioned("old", "0.34.13")],
+      async () => "0.40.0",
+    );
+
+    expect(json.connections[0]).toMatchObject({
+      deviceId: "device-old",
+      lettaCodeVersion: "0.34.13",
+      outdated: true,
+      latestVersion: "0.40.0",
+    });
+    expect(hints).toEqual([
+      "Update available for Computer (old) (0.34.13 → 0.40.0): letta computers upgrade device-old",
+    ]);
+  });
+
+  test("--json keeps the extra fields and prints no hint", async () => {
+    const { json, hints } = await runListWithLatest(
+      [versioned("old", "0.34.13")],
+      async () => "0.40.0",
+      ["--json"],
+    );
+
+    expect(json.connections[0]).toMatchObject({
+      outdated: true,
+      latestVersion: "0.40.0",
+    });
+    expect(hints).toEqual([]);
+  });
+
+  test("current, unsupported, and offline computers get no hint", async () => {
+    const { json, hints } = await runListWithLatest(
+      [
+        versioned("current", "0.40.0"),
+        versioned("unsupported", "0.10.0", { supported: false }),
+        versioned("offline", "0.34.13", { online: false }),
+      ],
+      async () => "0.40.0",
+    );
+
+    for (const row of json.connections) {
+      expect(row.outdated).toBeUndefined();
+      expect(row.latestVersion).toBeUndefined();
+    }
+    expect(hints).toEqual([]);
+  });
+
+  test("a failed latest-version check skips hints silently", async () => {
+    const { json, hints } = await runListWithLatest(
+      [versioned("old", "0.34.13")],
+      async () => {
+        throw new Error("registry unavailable");
+      },
+    );
+
+    expect(json.connections[0].outdated).toBeUndefined();
+    expect(json.connections[0].latestVersion).toBeUndefined();
+    expect(hints).toEqual([]);
+  });
 });
