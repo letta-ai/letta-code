@@ -5,7 +5,9 @@ import { join } from "node:path";
 import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import type { HeadlessTurnExecutorInput } from "@/backend/dev/headless-turn-executor";
 import {
+  buildProviderTurnInput,
   contextCompactionThreshold,
+  estimateProviderContextTokens,
   type ProviderStreamAdapter,
   ProviderTurnExecutor,
   providerLocalMessage,
@@ -69,6 +71,69 @@ function assistantMessage(usage = emptyLocalUsage()): LocalAssistantMessage {
 }
 
 describe("ProviderTurnExecutor", () => {
+  test("includes pending memory updates on top of usage and trailing messages (#4893)", () => {
+    const base = buildProviderTurnInput({
+      ...input(),
+      uiMessages: [
+        assistantMessage({
+          ...emptyLocalUsage(),
+          input: 72_000,
+          totalTokens: 72_000,
+        }),
+        {
+          id: "user-next",
+          role: "user",
+          content: "next",
+          timestamp: Date.now(),
+        },
+      ],
+    });
+    const update = `<memory_update>\n${"x".repeat(118_000)}\n</memory_update>`;
+
+    expect(estimateProviderContextTokens(base)).toBe(72_001);
+    expect(
+      estimateProviderContextTokens({
+        ...base,
+        midConversationSystemPrompt: update,
+      }),
+    ).toBe(72_001 + Math.ceil(update.length / 4));
+  });
+
+  test("includes pending memory updates when no provider usage is available (#4893)", () => {
+    const base = buildProviderTurnInput({
+      ...input(),
+      systemPrompt: "base prompt",
+      uiMessages: [
+        {
+          id: "user-hello",
+          role: "user",
+          content: "hello",
+          timestamp: Date.now(),
+        },
+      ],
+    });
+    const update = "updated memory";
+    const before = estimateProviderContextTokens(base);
+
+    expect(before).toBe(6);
+    expect(
+      estimateProviderContextTokens({
+        ...base,
+        midConversationSystemPrompt: update,
+      }),
+    ).toBe(6 + Math.ceil(update.length / 4));
+  });
+
+  test.each([undefined, ""])(
+    "preserves estimates with an absent or empty memory update (%p)",
+    (midConversationSystemPrompt) => {
+      const base = buildProviderTurnInput(input());
+      expect(
+        estimateProviderContextTokens({ ...base, midConversationSystemPrompt }),
+      ).toBe(estimateProviderContextTokens(base));
+    },
+  );
+
   test("reserves Pi's output headroom before the context window is full", () => {
     expect(contextCompactionThreshold(100_000)).toBe(83_616);
     expect(
