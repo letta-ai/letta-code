@@ -31,7 +31,7 @@ describe("sandbox file API", () => {
       3000,
       createDeps(
         Response.json({
-          url: "https://opaque.preview.dream.site",
+          url: "https://opaque.dream.site",
           port: 3000,
           expiresAt: "2026-11-04T20:00:00.000Z",
         }),
@@ -39,7 +39,7 @@ describe("sandbox file API", () => {
       ),
     );
 
-    expect(result.url).toBe("https://opaque.preview.dream.site");
+    expect(result.url).toBe("https://opaque.dream.site");
     expect(calls[0]?.input).toBe("https://api.letta.test/v1/sandbox-exposures");
     expect(calls[0]?.init?.method).toBe("POST");
     expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ port: 3000 });
