@@ -35,6 +35,7 @@ const dirs = [
   "src/types",
   "src/updater",
   "src/utils",
+  "src/usage",
   "src/web",
   "src/websocket",
 ];

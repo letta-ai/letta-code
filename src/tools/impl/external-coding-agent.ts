@@ -82,8 +82,11 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
+/** `fork` marks a worker launched with the parent's transcript, which, like a
+ * Letta fork, keeps it off the ambient default computer. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
+  fork = false,
 ): SubagentConfig {
   return {
     name: type,
@@ -92,7 +95,7 @@ export function createExternalCodingAgentConfig(
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    fork: false,
+    fork,
     launchProfile: "default",
   };
 }

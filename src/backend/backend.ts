@@ -26,6 +26,7 @@ import {
   type ReflectionRunRequest,
 } from "./api/reflection-runs";
 import { isCloudServerUrl } from "./api/server-url";
+import { conversationCostModel, withClientUsageCost } from "./api/usage-cost";
 import {
   type BackendMode,
   resolveBackendMode,
@@ -664,6 +665,14 @@ export class APIBackend implements Backend {
         message: `Connection error: expected text/event-stream, received ${contentType || "no content type"} (HTTP ${response.status}).`,
       });
     }
+    withClientUsageCost(stream, () =>
+      conversationCostModel(
+        client,
+        conversationId,
+        body?.agent_id,
+        body.override_model,
+      ),
+    );
     return stream;
   }
 
@@ -673,15 +682,20 @@ export class APIBackend implements Backend {
     options?: ConversationMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    // Resumes a run started by an earlier request; it can carry a compaction.
-    return tapConversationCompaction(
-      await client.conversations.messages.stream(conversationId, body, options),
-      {
-        backend: this,
-        conversationId,
-        agentId: (body as { agent_id?: string | null }).agent_id,
-      },
+    const stream = await client.conversations.messages.stream(
+      conversationId,
+      body,
+      options,
     );
+    withClientUsageCost(stream, () =>
+      conversationCostModel(client, conversationId, body?.agent_id),
+    );
+    // Resumes a run started by an earlier request; it can carry a compaction.
+    return tapConversationCompaction(stream, {
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
   }
 
   async cancelConversation(conversationIdOrAgentId: string) {
@@ -728,7 +742,16 @@ export class APIBackend implements Backend {
     options?: RunMessageStreamOptions,
   ) {
     const client = await this.getClient();
-    return client.runs.messages.stream(runId, body, options);
+    const stream = await client.runs.messages.stream(runId, body, options);
+    withClientUsageCost(stream, async () => {
+      const run = await client.runs.retrieve(runId);
+      return conversationCostModel(
+        client,
+        run.conversation_id ?? "default",
+        run.agent_id,
+      );
+    });
+    return stream;
   }
 
   async forkConversation(

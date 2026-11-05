@@ -92,6 +92,32 @@ describe("built-in subagents", () => {
     expect(descriptors.map(({ name }) => name)).not.toContain("memory");
   });
 
+  test("Available Agents lists only model-selectable subagent types", async () => {
+    tempDir = createTempProjectDir();
+    const names = (await getModelFacingSubagentDescriptors(tempDir)).map(
+      ({ name }) => name,
+    );
+    expect(names).toContain("recall");
+    for (const hidden of [
+      "general-purpose",
+      "fork",
+      "init",
+      "reflection",
+      "memory",
+      "letta",
+      "claude-code",
+      "codex",
+      "cursor",
+      "opencode",
+    ]) {
+      expect(names).not.toContain(hidden);
+    }
+    // Internal types stay loadable for harness launches.
+    const configs = await getAllSubagentConfigs(tempDir);
+    expect(configs.init).toBeDefined();
+    expect(configs.reflection).toBeDefined();
+  });
+
   test("memory-related built-ins use the memory-subagent launch profile", async () => {
     const configs = await getAllSubagentConfigs();
 

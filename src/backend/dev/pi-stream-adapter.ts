@@ -742,7 +742,7 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
           finalLocalMessage = toLocalAssistantMessage(part.message, input);
           yield providerLocalMessage(finalLocalMessage);
         }
-        yield providerStreamPart(part);
+        yield providerStreamPart(part, resolved.model);
       }
 
       if (streamError) throw streamError;
