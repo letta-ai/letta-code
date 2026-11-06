@@ -59,6 +59,7 @@ afterEach(() => {
 function launch(type: "claude-code" | "codex") {
   return launchSubagent({
     harness: type,
+    fork_context: false,
     prompt: "Fix the bug",
     description: "Fix the bug",
     mcp: { inherit: false },

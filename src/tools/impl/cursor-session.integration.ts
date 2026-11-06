@@ -146,6 +146,7 @@ test("Agent returns a native Cursor handle and TaskStop terminates its running s
     async () => {
       const launch = await launchSubagent({
         harness: "cursor",
+        fork_context: false,
         model,
         description: "Cursor cancellation proof",
         prompt:
