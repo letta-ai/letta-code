@@ -1,7 +1,7 @@
 // src/permissions/matcher.ts
 // Pattern matching logic for permission rules
 
-import { resolve } from "node:path";
+import { resolve, win32 } from "node:path";
 import { minimatch } from "minimatch";
 import { canonicalToolName } from "./canonical";
 import {
@@ -198,9 +198,20 @@ export function matchesFilePattern(
   // 1. Relative path from working directory
   // 2. Absolute path (for patterns that might match absolute paths)
   const normalizedWorkingDir = normalizePath(workingDirectory);
-  const relativeFilePath = filePath.startsWith("/")
-    ? absoluteFilePath.replace(`${normalizedWorkingDir}/`, "")
-    : filePath;
+  const windowsWorkingDir =
+    process.platform === "win32"
+      ? normalizePath(resolve(workingDirectory))
+      : normalizedWorkingDir;
+  const relativeFilePath = isWindowsAbsolutePath(filePath)
+    ? normalizePath(
+        win32.relative(
+          canonicalizeWindowsAbsolutePath(windowsWorkingDir),
+          absoluteFilePath,
+        ),
+      )
+    : filePath.startsWith("/")
+      ? absoluteFilePath.replace(`${normalizedWorkingDir}/`, "")
+      : filePath;
 
   return (
     minimatch(relativeFilePath, globPattern) ||

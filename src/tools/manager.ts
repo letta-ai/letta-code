@@ -38,7 +38,7 @@ import type {
   ModToolRunContext,
   ModToolStartEvent,
 } from "@/mods/types";
-import { canonicalizeFilePathArgs } from "@/permissions/file-path-args";
+import { expandPathArgs } from "@/permissions/file-path-args";
 import type {
   PermissionDecision,
   PermissionRuleType,
@@ -2223,7 +2223,7 @@ async function executeToolInner(
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
-      let enhancedArgs = canonicalizeFilePathArgs(args, workingDirectory);
+      let enhancedArgs = expandPathArgs(internalName, args, workingDirectory);
 
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };

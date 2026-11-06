@@ -399,6 +399,16 @@ test("File pattern: Windows absolute path in working directory", () => {
   ).toBe(true);
 });
 
+test("File pattern: canonical Windows path matches a relative rule", () => {
+  expect(
+    matchesFilePattern(
+      "Read(C:/Users/test/project/.env)",
+      "Read(.env)",
+      "C:/Users/test/project",
+    ),
+  ).toBe(true);
+});
+
 test("File pattern: Windows absolute variants are equivalent", () => {
   const query =
     "Edit(C:\\Users\\Aaron\\.letta\\agents\\agent-1\\memory\\system\\project\\tech_stack.md)";
