@@ -120,6 +120,39 @@ test("allows own writes and broad reads but denies peer access", () => {
   }
 });
 
+test("expands file paths before applying the workspace guard", () => {
+  const dirs = fixture();
+  const sandbox = { root: dirs.root, isolationRoot: dirs.isolationRoot };
+  const previousPwd = process.env.PWD;
+  const previousHome = process.env.HOME;
+  process.env.PWD = dirs.root;
+  process.env.HOME = dirs.base;
+  try {
+    const cases = [
+      ["$PWD/../run-b/secret", "workspace sandbox"],
+      [`\${PWD}/../run-b/x`, "workspace sandbox"],
+      ["~/x", "workspace sandbox"],
+      ["memory/x.md", null],
+    ] as const;
+    for (const [filePath, expectedRule] of cases) {
+      expect(
+        evaluateWorkspaceSandboxGuard(
+          "Write",
+          { file_path: filePath },
+          dirs.root,
+          sandbox,
+        )?.matchedRule ?? null,
+      ).toBe(expectedRule);
+    }
+  } finally {
+    if (previousPwd === undefined) delete process.env.PWD;
+    else process.env.PWD = previousPwd;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(dirs.base, { recursive: true, force: true });
+  }
+});
+
 test("follows symlinks before allowing a write", () => {
   const dirs = fixture();
   const link = join(dirs.root, "peer-link");
