@@ -11,6 +11,7 @@ import type {
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { createSubagentConversation } from "@/agent/subagents/subagent-conversation";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -1507,12 +1508,8 @@ export async function handleHeadlessCommand(
       }
     }
   } else if (forceNewConversation) {
-    // --new creates a conversation for concurrent sessions. With
-    // --from-agent (agent-to-agent messaging), mark it hidden so it
-    // doesn't clutter the target agent's conversation list. `hidden` is
-    // missing from @letta-ai/letta-client@1.10.1 types; the core endpoint
-    // accepts it and the SDK forwards unknown body fields — drop the cast
-    // once the SDK is bumped.
+    // Hide concurrent agent-to-agent sessions from the conversation list.
+    // The SDK forwards `hidden` until its types include it.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
       ...conversationModel,
@@ -1524,9 +1521,12 @@ export async function handleHeadlessCommand(
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
-    // Freshly created subagents have no concurrency risk — use the default
-    // conversation so it's easy to inspect in the ADE.
-    conversationId = "default";
+    conversationId = await createSubagentConversation(
+      backend.capabilities.environmentRouting,
+      process.env.LETTA_PARENT_CONVERSATION_ID,
+      agent.id,
+      startupBackend.createConversation,
+    );
     conversationOpenReason = "startup";
   } else {
     // Headless default: new conversation, avoiding 409 "conversation busy"
