@@ -303,8 +303,6 @@ Claude Code builds each assistant message from the usage the API reported when t
 
 The API reports the real output count at the end of the response, and Claude Code adds it to the result message. Read output tokens from the result's `usage`, or from `modelUsage` for a per-model breakdown.
 
-To watch a response's output count grow while it streams, set `includePartialMessages`, or `include_partial_messages` in Python, and read `usage` from each `message_delta` stream event, typed as [`SDKPartialAssistantMessage`](https://code.claude.com/docs/en/agent-sdk/typescript#sdkpartialassistantmessage) in TypeScript and [`StreamEvent`](https://code.claude.com/docs/en/agent-sdk/python#streamevent) in Python.
-
 ### Track costs on failed conversations
 
 Both success and error result messages include `usage` and `total_cost_usd`; in Python both fields are typed as optional, so check that they aren't `None` before you read them.
