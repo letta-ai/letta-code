@@ -74,7 +74,7 @@ describe("interactive reflection transcript wiring", () => {
     const loopSource = readFileSync(conversationLoopPath, "utf-8");
 
     expect(submitSource).toContain(
-      "const transcriptStartLineIndex = userTextForInput",
+      "userTextForInput || isSystemOnly ? transcriptTurnFirstLineIndex : null",
     );
     expect(submitSource).toContain("transcriptStartLineIndex,");
     expect(loopSource).toContain("const transcriptTurnStartLineIndex =");
@@ -85,5 +85,31 @@ describe("interactive reflection transcript wiring", () => {
     expect(
       loopSource.indexOf('if (stopReasonToHandle === "end_turn")'),
     ).toBeLessThan(loopSource.indexOf("appendTranscriptDeltaJsonl("));
+  });
+
+  test("notification-only TUI turns append their rows, and typed rows start at the user line", () => {
+    const submitHandlerPath = fileURLToPath(
+      new URL("./use-submit-handler.ts", import.meta.url),
+    );
+    const source = readFileSync(submitHandlerPath, "utf-8");
+
+    const firstLineIndex = source.indexOf(
+      "const transcriptTurnFirstLineIndex = toLines(buffersRef.current).length;",
+    );
+    const userLineIndex = source.indexOf(
+      "appendOptimisticUserLine(",
+      firstLineIndex,
+    );
+    const notificationIndex = source.indexOf(
+      "appendTaskNotificationEvents(taskNotifications);",
+      firstLineIndex,
+    );
+
+    // Captured before the user line and the notification events, so a turn
+    // keeps its user row when notifications are appended after it, and a turn
+    // with only notifications still has a start.
+    expect(firstLineIndex).toBeGreaterThanOrEqual(0);
+    expect(userLineIndex).toBeGreaterThan(firstLineIndex);
+    expect(notificationIndex).toBeGreaterThan(firstLineIndex);
   });
 });
