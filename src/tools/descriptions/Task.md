@@ -8,7 +8,7 @@ Choose a preset or configure the launch yourself:
 
 - `subagent_type` selects a preset from Available Agents (for example `recall`, or a custom agent in `.letta/agents/`). Only `description` and `prompt` are required alongside it. The preset determines the launch settings; all other optional Agent fields are ignored.
 - Without `subagent_type`, `harness` selects the runner: `letta` (the default), `claude-code`, `codex`, `cursor`, or `opencode`. The default Letta agent can research, plan, and implement.
-- Without `subagent_type`, `fork_context: true` gives the default Letta agent, or an external coding worker, this conversation's history. Otherwise it starts fresh with your prompt.
+- Without `subagent_type`, the default Letta agent, or an external coding worker, inherits this conversation's history. Pass `fork_context: false` for fresh context.
 
 ```typescript
 // Default Letta agent
@@ -38,10 +38,10 @@ Agent({ harness: "codex", description: "Fix flaky test", prompt: "..." })
 - To check on a running agent of any type, Read its output file. It logs each tool call (`tool:`), its outcome (`result: ok, 3.2 KB`, or `result: error, …` with the line naming the error), and each message (`text:`) as they happen, with timestamps, and ends with `[Task completed]` or `[Task failed]`. To get each step as an event, arm a Monitor on `tail -f` of the file. A tool call writes nothing until it returns, so a quiet log under a long-running `tool:` line usually means busy, not stuck; don't call an agent stalled or dead from a quiet log alone.
 - For exact details, such as which test failed and its error, a file's contents, or a command's full output, read the event log next to the output file (the `Event log:` path in the tool result, `<task>.jsonl`). It has one JSON object per line, in order and untruncated: `tool_call` (`id`, `name`, `input`), `tool_result` (`tool_call_id`, `name`, `is_error`, `output`), `text`, `reasoning`, and `notification` (a background command's completion notice, with its output). Search it with Grep or `jq` instead of reading it whole when it is large. For a Letta subagent, `letta messages list --agent <agent_id> --conversation <conversation_id>` reads its full conversation, including turns after this task.
 - Agents can be resumed using the `conversation_id` parameter by passing the conversation ID from a previous invocation. When resumed, the agent continues with its full previous context preserved.
-- Make the prompt self-contained: unless the agent inherits your conversation (`fork_context: true`), the prompt is all it knows. Narrow it to the concrete output you need back.
-- Make each subtask concrete, well defined, and self-contained: what to do, where, and what a finished result looks like.
+- The agent is forked from this conversation by default, so it already knows what you know. Keep the prompt short: the task in the requester's words, what finished looks like, and pointers (paths, links, conversation IDs) to anything it should read. Don't summarize the conversation or restate rules it already has.
+- Pass `fork_context: false` only when the history would mislead it (an unrelated task) or must not leave this conversation; then the prompt is all it knows.
 - Point the agent at the repository and file paths to read rather than passing your own summary of them. An agent on this machine shares your filesystem, so make sure the checkout exists before you launch it. An agent on another machine or a fresh Cloud sandbox starts empty, so tell it what to clone.
-- A forked agent sees the full conversation history before the tool call, so you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. Presets determine whether they fork; otherwise use `fork_context: true`.
+- A forked agent sees the full conversation history before the tool call, so you can write concise prompts that reference earlier context (e.g., "investigate the error discussed above") instead of repeating information. Presets determine whether they fork; otherwise new agents fork by default.
 - The agent's outputs should generally be trusted
 - Clearly tell the agent whether you expect it to write code or just to do research (search, file reads, web fetches, etc.), since it is not aware of the user's intent
 - If the agent description mentions that it should be used proactively, then you should try your best to use it without the user having to ask for it first. Use your judgement.
@@ -85,7 +85,7 @@ Instead of spawning a fresh subagent from a template, you can deploy an existing
 
 ### Access Levels
 
-When deploying an existing agent, use the default harness `letta` and omit `subagent_type`: the agent keeps its own system prompt and memory, with full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. `fork_context` cannot be combined with `agent_id` or `conversation_id`.
+When deploying an existing agent, use the default harness `letta` and omit `subagent_type`: the agent keeps its own system prompt and memory, with full read-write access (Bash, Edit, Write, etc.) for implementation and research tasks. Explicit `fork_context: true` cannot be combined with `agent_id` or `conversation_id`; omitting it resumes the existing target.
 
 ### Parameters
 
@@ -154,7 +154,7 @@ Agent({
 
 ## Forking Parent Context
 
-Omit `subagent_type` and set `fork_context: true` to start the default Letta agent with this conversation's full history. It runs against a forked copy of the current conversation, so it has all accumulated context without you serializing it into the prompt.
+Omit `subagent_type` to start the default Letta agent with this conversation's full history. It runs against a forked copy of the current conversation, so it has all accumulated context without you serializing it into the prompt.
 
 This is useful when:
 - The agent needs deep context that would be expensive to re-explain in the prompt

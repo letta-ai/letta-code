@@ -3,16 +3,26 @@ import {
   applySubagentPreset,
   listSubagentTypes,
   resolveTaskAgentSelection,
+  shouldForkTaskContext,
 } from "./task-agent-selection";
 
 describe("Agent launch selection", () => {
   test.each([
-    [{}, { kind: "letta", subagentType: "general-purpose" }],
-    [{ fork_context: true }, { kind: "letta", subagentType: "fork" }],
+    [{}, { kind: "letta", subagentType: "fork" }],
     [
-      { harness: " letta " },
+      { agent_id: "existing" },
       { kind: "letta", subagentType: "general-purpose" },
     ],
+    [
+      { conversation_id: "conv-existing" },
+      { kind: "letta", subagentType: "general-purpose" },
+    ],
+    [
+      { fork_context: false },
+      { kind: "letta", subagentType: "general-purpose" },
+    ],
+    [{ fork_context: true }, { kind: "letta", subagentType: "fork" }],
+    [{ harness: " letta " }, { kind: "letta", subagentType: "fork" }],
     [
       { subagent_type: " recall ", harness: "codex", fork_context: false },
       { kind: "letta", subagentType: "recall" },
@@ -31,6 +41,17 @@ describe("Agent launch selection", () => {
     [{ harness: "opencode" }, { kind: "external", type: "opencode" }],
   ] as const)("resolves %j", (args, selection) => {
     expect(resolveTaskAgentSelection(args)).toEqual({ selection });
+  });
+
+  test("new launches inherit context, existing targets and presets do not", () => {
+    expect(shouldForkTaskContext({})).toBe(true);
+    expect(shouldForkTaskContext({ fork_context: false })).toBe(false);
+    expect(shouldForkTaskContext({ agent_id: "existing" })).toBe(false);
+    expect(shouldForkTaskContext({ conversation_id: "default" })).toBe(false);
+    expect(shouldForkTaskContext({ subagent_type: "reviewer" })).toBe(false);
+    expect(
+      shouldForkTaskContext({ agent_id: "existing", fork_context: true }),
+    ).toBe(true);
   });
 
   test.each([

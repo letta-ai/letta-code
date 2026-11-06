@@ -75,6 +75,7 @@ import {
   listSubagentTypes,
   preparedConversationConfig,
   resolveTaskAgentSelection,
+  shouldForkTaskContext,
 } from "./task-agent-selection";
 import {
   buildTaskResultHeader,
@@ -699,7 +700,7 @@ export async function launchSubagent(
   const config: SubagentConfig | undefined = isExternalCodingAgent
     ? createExternalCodingAgentConfig(
         externalCodingAgentType,
-        args.fork_context === true,
+        shouldForkTaskContext(args),
       )
     : prepared
       ? preparedConversationConfig()
@@ -761,7 +762,7 @@ export async function launchSubagent(
           type: externalCodingAgentType,
           computer: resolvedComputer.computer,
           prompt: inputPrompt,
-          forkContext: args.fork_context === true,
+          forkContext: shouldForkTaskContext(args),
           description,
           model,
           mcp: args.mcp,
@@ -777,7 +778,7 @@ export async function launchSubagent(
     }
     const worker = await prepareExternalWorkerPrompt({
       prompt: inputPrompt,
-      forkContext: args.fork_context === true,
+      forkContext: shouldForkTaskContext(args),
       parentAgentId,
       parentConversationId: resolvedParentScope?.conversationId,
       signal,
