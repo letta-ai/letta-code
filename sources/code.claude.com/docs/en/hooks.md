@@ -294,7 +294,7 @@ Each event type matches on a different field:
 | `SessionStart` | how the session started | `startup`, `resume`, `clear`, `compact`, `fork` |
 | `Setup` | which CLI flag triggered setup | `init`, `maintenance` |
 | `SessionEnd` | why the session ended | `clear`, `resume`, `logout`, `prompt_input_exit`, `other` |
-| `Notification` | notification type | `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`, `elicitation_url_dialog`, `elicitation_complete`, `elicitation_response`, `agent_needs_input`, `agent_completed`, `quota_auto_resume_fired`, `quota_auto_resume_stale`, `quota_auto_resume_disabled`, `plugin_notification` |
+| `Notification` | notification type | `permission_prompt`, `idle_prompt`, `auth_success`, `auth_storage_failure`, `elicitation_dialog`, `elicitation_url_dialog`, `elicitation_complete`, `elicitation_response`, `agent_needs_input`, `agent_completed`, `quota_auto_resume_fired`, `quota_auto_resume_stale`, `quota_auto_resume_disabled`, `plugin_notification` |
 | `SubagentStart` | agent type | `general-purpose`, `Explore`, `Plan`, custom agent names, or plugin-scoped names like `^my-plugin:reviewer$` |
 | `PreCompact`, `PostCompact` | what triggered compaction | `manual`, `auto` |
 | `PreModelSwitch`, `PostModelSwitch` | canonical name of the model the session switches to, as described under [PreModelSwitch](#premodelswitch) | `claude-opus-5`, `claude-opus-4-6\|claude-opus-5`, `.*opus.*` |
@@ -2479,6 +2479,7 @@ You receive these hook events even with desktop notifications turned off: the `p
 | `permission_prompt` | Claude needs you to approve a tool use or a sandboxed command's [network request](https://code.claude.com/docs/en/sandboxing.md#network-isolation), and the prompt has waited about six seconds |
 | `idle_prompt` | Claude finished responding about 60 seconds ago and you haven't typed since |
 | `auth_success` | Authentication completes |
+| `auth_storage_failure` | Your sign-in completes, but Claude Code can't save the new credentials to its [credential storage](https://code.claude.com/docs/en/authentication.md#credential-management). Fires in place of `auth_success` |
 | `elicitation_dialog` | An MCP server opens an elicitation form and you haven't typed for about six seconds |
 | `elicitation_url_dialog` | An MCP server asks you to open a browser URL and you haven't typed for about six seconds |
 | `elicitation_complete` | An MCP server reports that a [URL-mode elicitation](#elicitation-input) is complete |
@@ -2490,7 +2491,7 @@ You receive these hook events even with desktop notifications turned off: the `p
 | `quota_auto_resume_disabled` | Claude Code ends its wait for a claude.ai usage limit without continuing your task: [`autoContinueAtUsageLimit`](https://code.claude.com/docs/en/settings-reference#autocontinueatusagelimit) turned off or the reset moved more than 24 hours away during a wait Claude Code started on its own, the continued task kept hitting the limit, or the continuation was blocked before it reached the model. Doesn't fire when you press `Esc` or `Ctrl+C`, or pick **Don't continue automatically** |
 | `plugin_notification` | A [mod](https://code.claude.com/docs/en/plugins/mods/api.md#show-something-without-starting-a-turn) raises a notification with `$.ui.notify`. The hook's `title` is the mod's name unless the mod set one |
 
-The `quota_auto_resume_fired`, `quota_auto_resume_stale`, and `quota_auto_resume_disabled` types require Claude Code v2.1.234 or later.
+The `quota_auto_resume_fired`, `quota_auto_resume_stale`, and `quota_auto_resume_disabled` types require Claude Code v2.1.234 or later. The `auth_storage_failure` type requires v2.1.288 or later.
 
 In terminal sessions, `permission_prompt` for a sandboxed command's network request requires Claude Code v2.1.246 or later.
 

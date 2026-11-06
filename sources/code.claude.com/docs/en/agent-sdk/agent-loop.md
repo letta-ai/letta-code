@@ -167,7 +167,7 @@ Beyond built-in tools, you can:
 
 ### Tool permissions
 
-Claude determines which tools to call based on the task, but you control whether those calls are allowed to execute. You can auto-approve specific tools, block others entirely, or require approval for everything. Three options work together to determine what runs:
+Claude determines which tools to call based on the task, but you control whether those calls are allowed to execute. Use these options to auto-approve tools, block tools, and set the permission mode:
 
 * **`allowed_tools` / `allowedTools`** auto-approves listed tools. A read-only agent with `["Read", "Glob", "Grep"]` in its allowed tools list runs those tools without prompting, apart from reads from [network paths](https://code.claude.com/docs/en/permissions.md#network-paths). Tools not listed are still available, and calls to them that need approval fall through to the permission mode and `canUseTool`.
 * **`disallowed_tools` / `disallowedTools`** blocks listed tools, regardless of other settings. See [Permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) for the order that rules are checked before a tool runs.

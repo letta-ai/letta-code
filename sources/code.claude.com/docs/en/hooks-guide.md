@@ -177,13 +177,14 @@ Each tab below uses the platform's native notification command. Add this to `~/.
 > >
 > > If you run Claude Code inside WSL, `powershell.exe` must be available on your `PATH` through Windows interop.
 
-The empty `matcher` fires on all notification types. To fire only on specific events, set it to one of these values:
+The empty `matcher` fires on all notification types. To fire only on specific events, set it to a notification type, such as one of these:
 
 | Matcher | Fires when |
 | :- | :- |
 | `permission_prompt` | Claude needs you to approve a tool use or a sandboxed command's [network request](https://code.claude.com/docs/en/sandboxing.md#network-isolation), and the prompt has waited about six seconds |
 | `idle_prompt` | Claude finished responding about 60 seconds ago and you haven't typed since |
 | `auth_success` | Authentication completes |
+| `auth_storage_failure` | Your sign-in completes, but Claude Code can't save the new credentials to its [credential storage](https://code.claude.com/docs/en/authentication.md#credential-management). Fires in place of `auth_success` |
 | `elicitation_dialog` | An MCP server opens an elicitation form and you haven't typed for about six seconds |
 | `elicitation_url_dialog` | An MCP server asks you to open a browser URL and you haven't typed for about six seconds |
 | `elicitation_complete` | An MCP server reports that a [URL-mode elicitation](https://code.claude.com/docs/en/hooks.md#elicitation-input) is complete |
@@ -197,7 +198,7 @@ The empty `matcher` fires on all notification types. To fire only on specific ev
 
 Claude Code times `permission_prompt` differently in a terminal and in Claude Desktop, the VS Code extension, and other hosts that answer permission requests through the Agent SDK. See [when each notification type fires](https://code.claude.com/docs/en/hooks.md#notification) for both timings.
 
-The `quota_auto_resume_fired`, `quota_auto_resume_stale`, and `quota_auto_resume_disabled` matchers require Claude Code v2.1.234 or later.
+The `quota_auto_resume_fired`, `quota_auto_resume_stale`, and `quota_auto_resume_disabled` matchers require Claude Code v2.1.234 or later. The `auth_storage_failure` matcher requires v2.1.288 or later.
 
 In terminal sessions, `permission_prompt` for a sandboxed command's network request requires Claude Code v2.1.246 or later.
 
@@ -688,7 +689,7 @@ Each event type matches on a specific field:
 | `SessionStart` | how the session started | `startup`, `resume`, `clear`, `compact`, `fork` |
 | `Setup` | which CLI flag triggered setup | `init`, `maintenance` |
 | `SessionEnd` | why the session ended | `clear`, `resume`, `logout`, `prompt_input_exit`, `other` |
-| `Notification` | notification type | `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`, `elicitation_url_dialog`, `elicitation_complete`, `elicitation_response`, `agent_needs_input`, `agent_completed`, `quota_auto_resume_fired`, `quota_auto_resume_stale`, `quota_auto_resume_disabled`, `plugin_notification` |
+| `Notification` | notification type | `permission_prompt`, `idle_prompt`, `auth_success`, `auth_storage_failure`, `elicitation_dialog`, `elicitation_url_dialog`, `elicitation_complete`, `elicitation_response`, `agent_needs_input`, `agent_completed`, `quota_auto_resume_fired`, `quota_auto_resume_stale`, `quota_auto_resume_disabled`, `plugin_notification` |
 | `SubagentStart` | agent type | `general-purpose`, `Explore`, `Plan`, or custom agent names |
 | `PreCompact`, `PostCompact` | what triggered compaction | `manual`, `auto` |
 | `PreModelSwitch`, `PostModelSwitch` | canonical name of the model the session switches to, as described under [PreModelSwitch](https://code.claude.com/docs/en/hooks.md#premodelswitch) | `claude-opus-5`, `claude-opus-4-6\|claude-opus-5`, `.*opus.*` |

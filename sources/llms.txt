@@ -54,7 +54,7 @@
 - [Claude Desktop on Linux (beta)](https://code.claude.com/docs/en/desktop-linux.md): Install and update the Claude desktop app on Ubuntu and Debian
 - [Claude Code Desktop in WSL](https://code.claude.com/docs/en/desktop-wsl.md): Run Code sessions inside a WSL 2 distribution on Windows
 - [Schedule recurring tasks in Claude Code Desktop](https://code.claude.com/docs/en/desktop-scheduled-tasks.md): Set up scheduled tasks in Claude Code Desktop to run Claude automatically on a recurring basis for daily code reviews, dependency audits, or morning briefings.
-- [Test iOS apps in the simulator](https://code.claude.com/docs/en/desktop-ios-simulator.md): Claude Code Desktop opens your app in the iOS Simulator pane when Claude builds, runs, or checks it, with a separate simulator for each session.
+- [Test iOS apps in the simulator](https://code.claude.com/docs/en/desktop-ios-simulator.md): Claude Code Desktop opens your app in the iOS Simulator pane when Claude builds, runs, or checks it.
 
 #### Code review and pull requests
 

@@ -446,7 +446,9 @@ Unlike most array settings, this key doesn't merge across settings files: the hi
 
 ### `fastMode`
 
-Turn [fast mode](https://code.claude.com/docs/en/fast-mode.md) on for sessions where it's available, for interactive work like rapid iteration or live debugging where you want speed at a higher cost per token. You don't usually edit this key by hand: running `/fast` writes `fastMode: true` to `~/.claude/settings.json`, and running it again to turn fast mode off removes the key. Fast mode runs only on Opus 5.5, Opus 5, and Opus 4.8: turning it on from another model switches you to Opus, and switching to an unsupported model turns it off. See [Switch models while fast mode is on](https://code.claude.com/docs/en/fast-mode.md#switch-models-while-fast-mode-is-on).
+Turn [fast mode](https://code.claude.com/docs/en/fast-mode.md) on for sessions where it's available, for interactive work such as rapid iteration or live debugging where you want speed at a higher cost per token. You don't usually edit this key yourself. Running `/fast` writes `fastMode: true` to `~/.claude/settings.json`, and running it again to turn fast mode off removes the key.
+
+Only Opus 5.5, Opus 5, and Opus 4.8 support fast mode. Running `/fast` from another model switches you to Opus, and switching to an unsupported model turns fast mode off. See [Switch models while fast mode is on](https://code.claude.com/docs/en/fast-mode.md#switch-models-while-fast-mode-is-on).
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
@@ -463,14 +465,14 @@ Turn [fast mode](https://code.claude.com/docs/en/fast-mode.md) on for sessions w
 
 ### `fastModePerSessionOptIn`
 
-Normally, running `/fast` saves [`fastMode`](#fastmode) to a person's user settings, so fast mode is on at the start of every later session. Set this key to `true` to stop that: a saved `fastMode: true` no longer turns fast mode on at session start, and each person has to run `/fast` in each session they want it. Claude Code leaves the `fastMode` key in their file, so turning this key off restores the old behavior.
+Normally, running `/fast` saves [`fastMode`](#fastmode) to a person's user settings, so new sessions on a supported model start with fast mode on. Set this key to `true` to stop that: a saved `fastMode: true` no longer turns fast mode on at session start, and each person runs `/fast` in each session they want it. Claude Code leaves `fastMode` in their file, so turning this key off restores the old behavior.
 
 Owners on Team or Enterprise plans can deploy it organization-wide through [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md). When managed settings set the key, `/fast on` is refused outside interactive terminal sessions and reports that your organization has disabled fast mode. That covers [non-interactive mode](https://code.claude.com/docs/en/headless.md), the [VS Code extension](https://code.claude.com/docs/en/vs-code.md), and [cloud sessions](https://code.claude.com/docs/en/claude-code-on-the-web.md).
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean
   * `true`: a saved `fastMode: true` no longer turns fast mode on at session start, so each person runs `/fast` in each session they want it; a `fastMode: true` passed with `--settings` still counts for that session unless managed settings set this key
-  * `false`: a saved `fastMode: true` turns fast mode on at the start of every later session
+  * `false`: a saved `fastMode: true` turns fast mode on at the start of each new session on a supported model
 * **Default**: `false`
 
 ```json settings.json theme={null}
@@ -5827,7 +5829,9 @@ Claude Code ignores this key in `settings.json`.
 
 ### `autoInstallIdeExtension`
 
-Let [`/ide`](https://code.claude.com/docs/en/commands) install the Claude Code IDE extension in a running VS Code, Cursor, or Devin Desktop when you run the command from an external terminal. Claude Code doesn't install the extension when you start it. Appears in `/config` as **Auto-install IDE extension** when you run Claude Code inside a VS Code or JetBrains terminal.
+Let [`/ide`](https://code.claude.com/docs/en/commands) install the Claude Code IDE extension in a running VS Code, Cursor, or Devin Desktop when you run the command from an external terminal. Claude Code doesn't install or update the extension when you start `claude`. Before v2.1.318, Claude Code installs or updates the extension when you start `claude` in one of those editors' terminals, unless this key is `false`.
+
+Appears in `/config` as **Auto-install IDE extension** when you run Claude Code inside a VS Code or JetBrains terminal.
 
 * **Scope**: [`Global config`](#scopes)
 * **Type**: Boolean
