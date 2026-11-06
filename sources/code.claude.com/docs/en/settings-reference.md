@@ -4986,7 +4986,7 @@ Choose how Claude Code notifies you when a task completes or a permission prompt
 
 * **Scope**: [`Any file`](#scopes). Claude Code also reads a value left in `~/.claude.json` by older versions.
 * **Type**: string, one of:
-  * `"auto"`: Claude Code sends a desktop notification in iTerm2, Ghostty, and Kitty, rings the bell in Terminal.app only when its audible bell is off, and does nothing elsewhere
+  * `"auto"`: Claude Code sends a desktop notification when it detects iTerm2, Ghostty, or Kitty, rings the bell in Terminal.app only when its audible bell is off, and does nothing elsewhere
   * `"terminal_bell"`: Claude Code rings the bell character in any terminal
   * `"iterm2"`: Claude Code sends an iTerm2 desktop notification
   * `"iterm2_with_bell"`: Claude Code sends an iTerm2 desktop notification and rings the bell
@@ -5001,7 +5001,7 @@ Choose how Claude Code notifies you when a task completes or a permission prompt
 }
 ```
 
-With `"auto"`, Claude Code sends a desktop notification in iTerm2, Ghostty, and Kitty. In Terminal.app it rings the bell character only when you have turned Terminal's audible bell off, and in other terminals it does nothing. Set `"terminal_bell"` to ring the bell character in any terminal. See [Get a terminal bell or notification](https://code.claude.com/docs/en/terminal-config.md#get-a-terminal-bell-or-notification).
+With `"auto"`, Claude Code sends a desktop notification when it detects iTerm2, Ghostty, or Kitty. In Terminal.app it rings the bell character only when you have turned Terminal's audible bell off, and in other terminals it does nothing. Set `"terminal_bell"` to ring the bell character in any terminal. See [Get a terminal bell or notification](https://code.claude.com/docs/en/terminal-config.md#get-a-terminal-bell-or-notification).
 
 ### `remote.defaultEnvironmentId`
 
