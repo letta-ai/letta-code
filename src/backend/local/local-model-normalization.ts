@@ -1,5 +1,6 @@
 import {
   mapModelHandleToLlmConfigPatch,
+  normalizeKnownModelHandle,
   resolveModelHandleFromLlmConfig,
 } from "@/agent/model-handles";
 import { resolveRegisteredPiProviderFromModelHandle } from "@/backend/dev/pi-provider-mod-registry";
@@ -74,6 +75,23 @@ export function modelHandleFromLegacyLlmConfig(
   });
 }
 
+export function normalizeStoredLocalModelHandle(
+  model: string,
+  modelSettings?: Record<string, unknown>,
+  legacyLlmConfig?: Record<string, unknown>,
+): string {
+  if (
+    isResolvablePiModelHandle(model) ||
+    resolveRegisteredPiProviderFromModelHandle(model)
+  ) {
+    return model;
+  }
+  // Stored handles must retain their provider even before mods are loaded.
+  return model.includes("/")
+    ? normalizeKnownModelHandle(model)
+    : normalizeLocalModelHandle(model, modelSettings, legacyLlmConfig);
+}
+
 export function supportedConversationModelSettingsFromBody(
   bodyRecord: Record<string, unknown>,
 ): Record<string, unknown> | null | undefined {
@@ -104,7 +122,7 @@ export function normalizeStoredLocalModelRecord<
   const modelSettings = isRecord(record.model_settings)
     ? record.model_settings
     : {};
-  const normalizedModel = normalizeLocalModelHandle(
+  const normalizedModel = normalizeStoredLocalModelHandle(
     record.model,
     modelSettings,
   );
