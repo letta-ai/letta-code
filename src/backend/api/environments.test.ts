@@ -4,8 +4,10 @@ import type {
   listEnvironments,
 } from "@/backend/api/environments";
 import {
+  cloudSandboxSelectorRepositories,
   createAgentSandbox,
   getTeleportStatus,
+  parseSandboxRepositorySpecs,
   resolveDesktopEnvironmentConnectionId,
   resolveEnvironmentConnectionId,
   teleportToEnvironment,
@@ -188,6 +190,47 @@ describe("Cloud sandbox environment resolution", () => {
     ]);
   });
 
+  test("sends a cloud selector's repositories as githubRepositories", async () => {
+    const bodies: Array<Record<string, unknown> | undefined> = [];
+    const request = (async (
+      _method: string,
+      _path: string,
+      body?: Record<string, unknown>,
+    ) => {
+      bodies.push(body);
+      return {
+        sandboxId: "sandbox-1",
+        deviceId: "device-1",
+        connectionName: "Cloud",
+      };
+    }) as typeof apiRequest;
+    const sha = "0123456789abcdef0123456789abcdef01234567";
+
+    for (const selector of [
+      `cloud:letta-ai/letta-code,letta-ai/letta@${sha}`,
+      "cloud",
+    ])
+      await createAgentSandbox(
+        "agent-1",
+        {
+          conversationId: "conv-1",
+          githubRepositories: cloudSandboxSelectorRepositories(selector),
+        },
+        request,
+      );
+
+    expect(bodies).toEqual([
+      {
+        conversationId: "conv-1",
+        githubRepositories: [
+          { owner: "letta-ai", repo: "letta-code" },
+          { owner: "letta-ai", repo: "letta", commit: sha },
+        ],
+      },
+      { conversationId: "conv-1" },
+    ]);
+  });
+
   test("keeps the virtual default conversation agent-scoped", async () => {
     const bodies: Array<Record<string, unknown> | undefined> = [];
     const request = (async (
@@ -206,6 +249,57 @@ describe("Cloud sandbox environment resolution", () => {
     await createAgentSandbox("agent-1", { conversationId: "default" }, request);
 
     expect(bodies).toEqual([{}]);
+  });
+});
+
+describe("parseSandboxRepositorySpecs", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+
+  test("accepts repos, commits, and branch refs", () => {
+    expect(
+      parseSandboxRepositorySpecs([
+        "owner/app",
+        `owner/lib@${sha}`,
+        "owner/web@feature/wip-1",
+        "owner/docs@release-2.0",
+      ]),
+    ).toEqual({
+      repositories: [
+        { owner: "owner", repo: "app" },
+        { owner: "owner", repo: "lib", commit: sha },
+        { owner: "owner", repo: "web", branch: "feature/wip-1" },
+        { owner: "owner", repo: "docs", branch: "release-2.0" },
+      ],
+    });
+  });
+
+  test.each([
+    "owner/app@-upload-pack=x",
+    "owner/app@a..b",
+    "owner/app@topic.lock",
+    "owner/app@topic/",
+    "owner/app@has space",
+    "owner/app@x@{1}",
+    "owner/app@",
+  ])("rejects the unsafe or invalid ref %j", (spec) => {
+    expect(parseSandboxRepositorySpecs([spec])).toEqual({
+      error: expect.stringContaining('"owner/repo@<branch>"'),
+    });
+  });
+
+  test("rejects two repos that would clone to the same directory", () => {
+    expect(parseSandboxRepositorySpecs(["owner/app", "fork/app"])).toEqual({
+      error: expect.stringContaining('lists "app" twice'),
+    });
+  });
+
+  test("a cloud selector carries only resolved commits, never branches", () => {
+    expect(cloudSandboxSelectorRepositories(`cloud:owner/app@${sha}`)).toEqual([
+      { owner: "owner", repo: "app", commit: sha },
+    ]);
+    expect(() =>
+      cloudSandboxSelectorRepositories("cloud:owner/app@main"),
+    ).toThrow("Invalid repo");
   });
 });
 

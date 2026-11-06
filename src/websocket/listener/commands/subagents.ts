@@ -63,11 +63,13 @@ export async function handleLaunchSubagentCommand(
             agentId: parent.agentId,
             conversationId: parent.conversationId,
             actingUserId: command.runtime.acting_user_id,
-            workingDirectory: getConversationWorkingDirectory(
-              parent.listener,
-              parent.agentId,
-              parent.conversationId,
-            ),
+            workingDirectory:
+              command.cwd ??
+              getConversationWorkingDirectory(
+                parent.listener,
+                parent.agentId,
+                parent.conversationId,
+              ),
             skillSources: parent.skillSources,
             bundledSkills: parent.bundledSkills,
             workspaceSandbox: parent.workspaceSandbox,

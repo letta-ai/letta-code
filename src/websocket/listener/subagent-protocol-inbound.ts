@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import type {
   LaunchSubagentCommand,
   LaunchSubagentWireArgs,
@@ -19,6 +20,7 @@ const ARGUMENTS = new Set([
   "conversation_id",
   "client_message_id",
   "computer",
+  "repos",
   "max_turns",
   "mcp",
 ]);
@@ -40,6 +42,8 @@ export function isLaunchSubagentCommand(
     (c.tool_call_id !== undefined &&
       (typeof c.tool_call_id !== "string" || !c.tool_call_id.trim())) ||
     (c.notify !== undefined && c.notify !== "caller") ||
+    (c.cwd !== undefined &&
+      (typeof c.cwd !== "string" || !isAbsolute(c.cwd))) ||
     !c.args ||
     typeof c.args !== "object" ||
     Array.isArray(c.args)
@@ -71,7 +75,8 @@ export function isLaunchSubagentCommand(
     )
       return false;
   }
-  // launchSubagent validates the MCP selection's contents.
+  // launchSubagent validates the MCP selection's and repos' contents.
+  if (args.repos !== undefined && !Array.isArray(args.repos)) return false;
   if (
     args.mcp !== undefined &&
     (!args.mcp || typeof args.mcp !== "object" || Array.isArray(args.mcp))

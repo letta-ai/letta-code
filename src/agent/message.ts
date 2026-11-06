@@ -443,6 +443,8 @@ export async function sendMessageStreamWithBackend(
         executionRuntimeContext?.workingDirectory ??
         undefined,
       skillsDirectory: executionRuntimeContext?.skillsDirectory,
+      additionalSkillsDirectories:
+        executionRuntimeContext?.executionSettings?.skill_directories,
       skillSources: opts.skillSources ?? getSkillSources(),
       bundledSkills: executionRuntimeContext?.bundledSkills,
     });

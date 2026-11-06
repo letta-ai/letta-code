@@ -728,14 +728,14 @@ export async function launchSubagent(
   ) {
     return { success: false, error: "max_turns must be a positive integer" };
   }
-  const resolvedComputer = resolveLaunchComputer({
+  const resolvedComputer = await resolveLaunchComputer({
     requested: args.computer,
+    repos: args.repos,
     subagentType: configName,
     config,
   });
-  if (resolvedComputer.error) {
+  if (resolvedComputer.error)
     return { success: false, error: resolvedComputer.error };
-  }
 
   let effectiveAgentId = args.agent_id;
   let effectiveConversationId = args.conversation_id;

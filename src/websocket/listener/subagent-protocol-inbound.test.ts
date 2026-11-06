@@ -27,6 +27,15 @@ const command = {
 };
 
 describe("launch_subagent protocol", () => {
+  test("accepts an absolute cwd outside args, so older listeners ignore it", () => {
+    const input = { ...command, cwd: "/root/workspace/app" };
+    expect(isLaunchSubagentCommand(input)).toBe(true);
+    expect(parseServerMessage(Buffer.from(JSON.stringify(input)))).toEqual(
+      input,
+    );
+    for (const cwd of ["", "app", 42])
+      expect(isLaunchSubagentCommand({ ...command, cwd })).toBe(false);
+  });
   test("parses the command with explicit parent and independent child", () => {
     expect(parseServerMessage(Buffer.from(JSON.stringify(command)))).toEqual(
       command,

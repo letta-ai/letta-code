@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { AttachedAgentRepository } from "@/agent/attached-repositories";
 import {
+  getAdditionalSkillsDirectories,
   getCurrentAgentId,
   getSkillSources,
   getSkillsDirectory,
@@ -146,7 +147,7 @@ function listSkillResources(skillMdPath: string): SkillResources {
  * Returns both content and the path to the SKILL.md file
  *
  * Search order (highest priority first):
- * 1. Project skills (.agents/skills/, then legacy .skills/ fallback)
+ * 1. Project skills (.agents/skills/, legacy .skills/, then additional roots)
  * 2. Agent memory skills (~/.letta/agents/{id}/memory/skills/)
  * 3. Agent memory skills fallback ($MEMORY_DIR/skills/)
  * 4. Attached shared-memory skills
@@ -163,6 +164,7 @@ export async function readSkillContent(
   const projectSkillsDirs = new Set<string>([
     join(getCurrentWorkingDirectory(), PROJECT_SKILLS_DIR),
     skillsDir,
+    ...getAdditionalSkillsDirectories(),
   ]);
   for (const projectSkillsDir of projectSkillsDirs) {
     const result = await readSkillFromRoot(projectSkillsDir, skillId);

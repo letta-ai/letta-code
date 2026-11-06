@@ -52,6 +52,115 @@ export interface SendEnvironmentMessageResponse {
   message: string;
 }
 
+/** A repository the Cloud sandbox clones to `/root/workspace/<repo>`. */
+export interface SandboxGithubRepository {
+  owner: string;
+  repo: string;
+  /** Full 40-character commit SHA to check out. */
+  commit?: string;
+}
+
+/**
+ * A requested repository before branch resolution. The sandbox endpoint only
+ * takes a commit SHA, so a `branch` is resolved to one before the request.
+ */
+export type SandboxRepositorySpec = SandboxGithubRepository & {
+  branch?: string;
+};
+
+/** Cloud accepts at most this many repositories per sandbox request. */
+export const MAX_SANDBOX_GITHUB_REPOSITORIES = 10;
+
+const SANDBOX_REPOSITORY_SPEC =
+  /^([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+)(?:@(.+))?$/;
+const COMMIT_SHA = /^[0-9a-fA-F]{40}$/;
+/**
+ * A conservative subset of `git check-ref-format --branch`: no leading `-`
+ * (it is never read as an option), no `..`, `@{`, `//`, or `.lock` suffix.
+ */
+const BRANCH_NAME =
+  /^(?![-/.])(?!.*\.\.)(?!.*@\{)(?!.*\/\/)(?!.*[/.]$)(?!.*\.lock$)[A-Za-z0-9._/+@#=-]{1,200}$/;
+
+function invalidRepoSpec(spec: unknown): { error: string } {
+  return {
+    error: `Invalid repo ${JSON.stringify(spec)}: use "owner/repo", "owner/repo@<branch>", or "owner/repo@<40-character commit SHA>"`,
+  };
+}
+
+/**
+ * Parse `owner/repo`, `owner/repo@<commit>`, or `owner/repo@<branch>` specs.
+ * A 40-character hex ref is always a commit. Owner, repo, and commit patterns
+ * mirror what the Cloud sandbox endpoint accepts, so a bad spec fails here
+ * with a readable message instead of as a 400.
+ */
+export function parseSandboxRepositorySpecs(
+  specs: unknown,
+  options: { allowBranches?: boolean } = {},
+): { repositories: SandboxRepositorySpec[] } | { error: string } {
+  if (specs === undefined) return { repositories: [] };
+  if (!Array.isArray(specs) || specs.length > MAX_SANDBOX_GITHUB_REPOSITORIES)
+    return {
+      error: `repos must be a list of at most ${MAX_SANDBOX_GITHUB_REPOSITORIES} repositories`,
+    };
+  const allowBranches = options.allowBranches ?? true;
+  const repositories: SandboxRepositorySpec[] = [];
+  for (const spec of specs) {
+    const match =
+      typeof spec === "string"
+        ? SANDBOX_REPOSITORY_SPEC.exec(spec.trim())
+        : null;
+    if (!match?.[1] || !match[2]) return invalidRepoSpec(spec);
+    const ref = match[3];
+    const base = { owner: match[1], repo: match[2] };
+    if (ref === undefined) repositories.push(base);
+    else if (COMMIT_SHA.test(ref)) repositories.push({ ...base, commit: ref });
+    else if (allowBranches && BRANCH_NAME.test(ref))
+      repositories.push({ ...base, branch: ref });
+    else return invalidRepoSpec(spec);
+  }
+  const names = repositories.map(({ repo }) => repo);
+  const duplicate = names.find((name, index) => names.indexOf(name) !== index);
+  if (duplicate)
+    return {
+      error: `repos lists "${duplicate}" twice; each repository clones to /root/workspace/<repo>, so repo names must be unique`,
+    };
+  return { repositories };
+}
+
+const CLOUD_SANDBOX_REPOSITORIES_PREFIX = "cloud:";
+
+/**
+ * Selector for a fresh Cloud sandbox that clones `repositories`. A Letta
+ * subagent receives its computer as one `--computer` value, so the requested
+ * repositories travel inside it: `cloud:owner/repo,owner/repo@<commit>`.
+ */
+export function cloudSandboxSelector(
+  repositories: SandboxGithubRepository[],
+): string {
+  if (repositories.length === 0) return "cloud";
+  const specs = repositories.map(
+    ({ owner, repo, commit }) =>
+      `${owner}/${repo}${commit ? `@${commit}` : ""}`,
+  );
+  return `${CLOUD_SANDBOX_REPOSITORIES_PREFIX}${specs.join(",")}`;
+}
+
+/** Repositories carried by a `cloud:` selector; plain `cloud` has none. */
+export function cloudSandboxSelectorRepositories(
+  selector: string,
+): SandboxGithubRepository[] {
+  const value = selector.trim();
+  if (!value.toLowerCase().startsWith(CLOUD_SANDBOX_REPOSITORIES_PREFIX))
+    return [];
+  // Branches are resolved to commits before the selector is built.
+  const parsed = parseSandboxRepositorySpecs(
+    value.slice(CLOUD_SANDBOX_REPOSITORIES_PREFIX.length).split(","),
+    { allowBranches: false },
+  );
+  if ("error" in parsed) throw new Error(parsed.error);
+  return parsed.repositories;
+}
+
 export interface CreateAgentSandboxResponse {
   sandboxId: string;
   deviceId: string;
@@ -97,15 +206,22 @@ export async function getEnvironmentConnection(
 
 export async function createAgentSandbox(
   agentId: string,
-  options: { conversationId?: string } = {},
+  options: {
+    conversationId?: string;
+    githubRepositories?: SandboxGithubRepository[];
+  } = {},
   request: typeof apiRequest = apiRequest,
 ): Promise<CreateAgentSandboxResponse> {
   const conversationId =
     options.conversationId === "default" ? undefined : options.conversationId;
+  const githubRepositories = options.githubRepositories ?? [];
   return request<CreateAgentSandboxResponse>(
     "POST",
     `/v1/agents/${encodeURIComponent(agentId)}/sandboxes`,
-    conversationId ? { conversationId } : {},
+    {
+      ...(conversationId ? { conversationId } : {}),
+      ...(githubRepositories.length > 0 ? { githubRepositories } : {}),
+    },
   );
 }
 
@@ -230,6 +346,7 @@ export async function resolveAgentSandboxConnectionId(
   agentId: string,
   options: {
     conversationId?: string;
+    githubRepositories?: SandboxGithubRepository[];
     timeoutMs?: number;
     pollIntervalMs?: number;
   } = {},
@@ -238,6 +355,7 @@ export async function resolveAgentSandboxConnectionId(
   const pollIntervalMs = options.pollIntervalMs ?? 2_000;
   const sandbox = await createAgentSandbox(agentId, {
     conversationId: options.conversationId,
+    githubRepositories: options.githubRepositories,
   });
   const deviceId = sandbox.deviceId || `sandbox-${agentId}`;
   const deadline = Date.now() + timeoutMs;

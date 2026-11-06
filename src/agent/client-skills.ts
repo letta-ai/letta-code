@@ -6,6 +6,7 @@ import { getCheckoutGeneration } from "@/utils/checkout-readiness";
 import type { AttachedAgentRepository } from "./attached-repositories";
 import { ClientSkillsWatcher } from "./client-skills-watcher";
 import {
+  getAdditionalSkillsDirectories,
   getBundledSkillAllowlist,
   getSkillSources,
   getSkillsDirectory,
@@ -106,7 +107,7 @@ function getWatcher(): ClientSkillsWatcher {
  *  - agentId
  *  - sorted skill sources
  *  - cwd (affects `.agents/skills` and `.skills` resolution)
- *  - configured skills directory
+ *  - configured and additional skills directories
  *  - legacy and primary project skills directories
  *  - resolved memory skills dirs (scoped or env-fallback)
  *  - attached shared-memory skill dirs and attachment-resolution errors
@@ -120,6 +121,7 @@ function computeCacheKey(components: {
   bundledSkills: string[] | undefined;
   cwd: string;
   configuredSkillsDirectory: string | null;
+  additionalSkillsDirectories: string[];
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
@@ -134,6 +136,7 @@ function computeCacheKey(components: {
       : "*",
     components.cwd,
     components.configuredSkillsDirectory ?? "",
+    components.additionalSkillsDirectories.join(","),
     components.legacySkillsDirectory,
     components.primaryProjectSkillsDirectory,
     [...components.memorySkillsDirs].sort().join(","),
@@ -149,6 +152,7 @@ function getSkillRoots(components: {
   agentId: string | undefined;
   skillSources: SkillSource[];
   configuredSkillsDirectory: string | null;
+  additionalSkillsDirectories: string[];
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   memorySkillsDirs: string[];
@@ -161,6 +165,7 @@ function getSkillRoots(components: {
     if (components.configuredSkillsDirectory) {
       roots.add(components.configuredSkillsDirectory);
     }
+    for (const dir of components.additionalSkillsDirectories) roots.add(dir);
     roots.add(components.legacySkillsDirectory);
     roots.add(components.primaryProjectSkillsDirectory);
   }
@@ -365,6 +370,11 @@ export interface BuildClientSkillsPayloadOptions {
   agentId?: string;
   workingDirectory?: string;
   skillsDirectory?: string | null;
+  /**
+   * Extra project skill roots, scanned like `.agents/skills`. Defaults to the
+   * runtime scope's `skill_directories` launch setting.
+   */
+  additionalSkillsDirectories?: readonly string[];
   skillSources?: SkillSource[];
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
@@ -397,6 +407,7 @@ function resolveSkillDiscoveryContext(
 ): {
   workingDirectory: string;
   configuredSkillsDirectory: string | null;
+  additionalSkillsDirectories: string[];
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   skillSources: SkillSource[];
@@ -415,9 +426,14 @@ function resolveSkillDiscoveryContext(
   const bundledSkills = skillSources.includes("bundled")
     ? undefined
     : (options.bundledSkills ?? getBundledSkillAllowlist());
+  const additionalSkillsDirectories = [
+    ...(options.additionalSkillsDirectories ??
+      getAdditionalSkillsDirectories()),
+  ];
   return {
     workingDirectory,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
@@ -429,6 +445,11 @@ export interface DiscoverClientSideSkillsOptions {
   agentId?: string;
   workingDirectory?: string;
   skillsDirectory?: string | null;
+  /**
+   * Extra project skill roots, scanned like `.agents/skills`. Defaults to the
+   * runtime scope's `skill_directories` launch setting.
+   */
+  additionalSkillsDirectories?: readonly string[];
   skillSources?: SkillSource[];
   /** Bundled skill IDs to expose when skillSources omits "bundled". */
   bundledSkills?: string[];
@@ -437,8 +458,9 @@ export interface DiscoverClientSideSkillsOptions {
 }
 
 interface CollectClientSideSkillsOptions
-  extends DiscoverClientSideSkillsOptions {
+  extends Omit<DiscoverClientSideSkillsOptions, "additionalSkillsDirectories"> {
   configuredSkillsDirectory: string | null;
+  additionalSkillsDirectories: string[];
   legacySkillsDirectory: string;
   primaryProjectSkillsDirectory: string;
   sharedMemorySkillsDirs: string[];
@@ -516,6 +538,13 @@ async function collectClientSideSkills(
       path: options.configuredSkillsDirectory,
       sources: ["project"],
     });
+  }
+
+  // Runs later in this list win, so the working directory's own project
+  // skills override same-named skills from additional roots.
+  if (includeProjectSource) {
+    for (const path of options.additionalSkillsDirectories)
+      addDiscoveryRun({ path, sources: ["project"] });
   }
 
   if (
@@ -601,6 +630,7 @@ export async function discoverClientSideSkills(
 ): Promise<SkillDiscoveryResult> {
   const {
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
@@ -614,6 +644,7 @@ export async function discoverClientSideSkills(
   return collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     skillSources,
     bundledSkills,
@@ -644,6 +675,7 @@ export async function buildClientSkillsPayload(
   const {
     workingDirectory,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     skillSources,
@@ -665,6 +697,7 @@ export async function buildClientSkillsPayload(
     agentId: options.agentId,
     skillSources,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
@@ -679,6 +712,7 @@ export async function buildClientSkillsPayload(
     bundledSkills,
     cwd: workingDirectory,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     primaryProjectSkillsDirectory,
     memorySkillsDirs,
@@ -700,6 +734,7 @@ export async function buildClientSkillsPayload(
   const discovery = await collectClientSideSkills({
     ...options,
     configuredSkillsDirectory,
+    additionalSkillsDirectories,
     legacySkillsDirectory,
     skillSources,
     bundledSkills,

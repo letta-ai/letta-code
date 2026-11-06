@@ -10,18 +10,20 @@ import {
 } from "@/backend/api/agents";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
+  cloudSandboxSelectorRepositories,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
   resolveAgentSandboxConnectionId,
   resolveEnvironmentConnectionId,
+  type SandboxGithubRepository,
   type SendEnvironmentMessageBody,
 } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { toolFilter } from "@/tools/filter";
 import type { ResultMessage, UsageStatistics } from "@/types/protocol";
 
-export type ListenerLaunchResult =
+export type ListenerLaunchResult = (
   | {
       status: "completed";
       text: string;
@@ -29,7 +31,11 @@ export type ListenerLaunchResult =
       runIds: string[];
       usage: UsageStatistics;
     }
-  | { status: "queued"; receipt: EnqueueReceipt };
+  | { status: "queued"; receipt: EnqueueReceipt }
+) & {
+  /** Non-fatal launch problems, such as a repository still cloning. */
+  warnings?: string[];
+};
 
 export type ReplyEnvironmentMetadata =
   | {
@@ -96,6 +102,9 @@ export function buildEnvironmentLaunchResult(
     usage: reply?.usage ?? null,
     uuid: `result-${base.internalAgentId}-${Date.now()}`,
     ...(outcome.status === "queued" ? outcome.receipt : {}),
+    ...("warnings" in outcome && outcome.warnings?.length
+      ? { warnings: outcome.warnings }
+      : {}),
     ...(outcome.status === "error"
       ? { error: outcome.error, stop_reason: "error" as const }
       : {}),
@@ -110,7 +119,11 @@ export function isCloudEnvironmentSelector(
 ): boolean {
   if (typeof selector !== "string") return false;
   const normalized = selector.trim().toLowerCase();
-  return normalized === "cloud" || normalized === "cloud-sandbox";
+  return (
+    normalized === "cloud" ||
+    normalized === "cloud-sandbox" ||
+    normalized.startsWith("cloud:")
+  );
 }
 
 type EnvironmentRouting = {
@@ -133,10 +146,18 @@ export async function resolveListenerLaunchTarget(input: {
   resolveComputer?: (selector: string) => Promise<EnvironmentRouting>;
   resolveCloudSandbox?: (
     agentId: string,
-    options: { conversationId: string },
+    options: {
+      conversationId: string;
+      githubRepositories: SandboxGithubRepository[];
+    },
   ) => Promise<EnvironmentRouting>;
 }): Promise<
-  | { connectionId: string; responseEnvironment: ReplyEnvironmentMetadata }
+  | {
+      connectionId: string;
+      responseEnvironment: ReplyEnvironmentMetadata;
+      /** Repositories the fresh Cloud sandbox is cloning, if any. */
+      sandboxRepositories: SandboxGithubRepository[];
+    }
   | { error: string }
 > {
   const { selector, agentId } = input;
@@ -147,12 +168,18 @@ export async function resolveListenerLaunchTarget(input: {
     };
   const useCloudSandbox = isCloudEnvironmentSelector(selector);
   let routing: EnvironmentRouting | null = null;
+  let sandboxRepositories: SandboxGithubRepository[] = [];
   try {
+    if (useCloudSandbox)
+      sandboxRepositories = cloudSandboxSelectorRepositories(selector);
     if (selector)
       routing = useCloudSandbox
         ? await (input.resolveCloudSandbox ?? resolveAgentSandboxConnectionId)(
             agentId,
-            { conversationId: input.conversationId },
+            {
+              conversationId: input.conversationId,
+              githubRepositories: sandboxRepositories,
+            },
           )
         : await (input.resolveComputer ?? resolveEnvironmentConnectionId)(
             selector,
@@ -165,6 +192,7 @@ export async function resolveListenerLaunchTarget(input: {
     return { error: "No listener connection was resolved for this launch" };
   return {
     connectionId,
+    sandboxRepositories,
     responseEnvironment: routing
       ? buildEnvironmentResponseMetadata({
           source: useCloudSandbox ? "cloud-sandbox" : "explicit",

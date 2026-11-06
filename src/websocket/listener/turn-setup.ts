@@ -369,6 +369,7 @@ export async function prepareListenerTurn(params: {
       ...(agentId ? { agentId } : {}),
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
+      additionalSkillsDirectories: runtime.executionSettings?.skill_directories,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
     })
@@ -388,6 +389,7 @@ export async function prepareListenerTurn(params: {
       ...(agentId ? { agentId } : {}),
       workingDirectory,
       skillsDirectory: listenerOptions?.skillsDirectory,
+      additionalSkillsDirectories: runtime.executionSettings?.skill_directories,
       skillSources: runtime.skillSources,
       bundledSkills: runtime.bundledSkills,
     },

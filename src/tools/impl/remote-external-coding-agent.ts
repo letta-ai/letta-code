@@ -17,6 +17,7 @@ import {
 } from "@/app-server-client";
 import { getClient } from "@/backend/api/client";
 import {
+  cloudSandboxSelectorRepositories,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
@@ -24,6 +25,11 @@ import {
   resolveEnvironmentConnectionId,
 } from "@/backend/api/environments";
 import { getApiRequestConfig } from "@/backend/api/request";
+import {
+  sandboxCloneWarningReminder,
+  sandboxRepositoryLayout,
+  waitForSandboxRepositoryClones,
+} from "@/cloud-sandbox-workspace";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
@@ -88,6 +94,7 @@ export interface RemoteExternalCodingAgentDeps {
   ) => Promise<AppServerClient>;
   reconnectDelayMs?: number;
   agentIdWaitMs?: number;
+  waitForClones?: typeof waitForSandboxRepositoryClones;
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
@@ -123,11 +130,13 @@ async function defaultResolveComputer(computer: string, scope: ParentScope) {
   if (!isCloudEnvironmentSelector(computer))
     return resolveEnvironmentConnectionId(computer);
 
+  const githubRepositories = cloudSandboxSelectorRepositories(computer);
   const client = await getClient();
   const createParams = { agent_id: scope.agentId, hidden: true };
   const conversation = await client.conversations.create(createParams);
   return resolveAgentSandboxConnectionId(scope.agentId, {
     conversationId: conversation.id,
+    githubRepositories,
   });
 }
 
@@ -395,6 +404,31 @@ export async function launchRemoteExternalCodingAgent(
       error: `Can't reach ${computer}: ${errorMessage(error)}`,
     };
   }
+  // A fresh Cloud sandbox clones the requested repositories as it starts.
+  // Start the worker in the first one once the clones finish, so its
+  // AGENTS.md, CLAUDE.md, and skills resolve from that checkout.
+  const repositories = isCloudEnvironmentSelector(computer)
+    ? cloudSandboxSelectorRepositories(computer)
+    : [];
+  const { cwd } = sandboxRepositoryLayout(repositories);
+  let cloneWarning: string | undefined;
+  if (repositories.length > 0) {
+    try {
+      cloneWarning = (
+        await (deps.waitForClones ?? waitForSandboxRepositoryClones)(
+          client,
+          repositories,
+          { signal: params.signal },
+        )
+      ).warning;
+    } catch (error) {
+      client.close();
+      throw error;
+    }
+  }
+  const prompt = cloneWarning
+    ? `${sandboxCloneWarningReminder(cloneWarning)}\n\n${params.prompt}`
+    : params.prompt;
   const follower = new RemoteSubagentFollower(
     parentScope,
     toolCallId,
@@ -420,13 +454,14 @@ export async function launchRemoteExternalCodingAgent(
         ...(params.forkContext
           ? { harness: type, fork_context: true }
           : { subagent_type: type }),
-        prompt: params.prompt,
+        prompt,
         description: params.description,
         ...(params.model ? { model: params.model } : {}),
         ...(params.mcp ? { mcp: params.mcp } : {}),
       },
       tool_call_id: toolCallId,
       notify: "caller",
+      ...(cwd ? { cwd } : {}),
     });
   } catch (error) {
     follower.close();
@@ -496,7 +531,9 @@ export async function launchRemoteExternalCodingAgent(
           return {
             agentId: workerAgentId(),
             model: final.model ?? model,
-            report: final.result ?? "",
+            report: cloneWarning
+              ? `Warning: ${cloneWarning}\n\n${final.result ?? ""}`
+              : (final.result ?? ""),
             success: final.status === "completed",
             ...(final.status === "error"
               ? { error: final.error ?? `${type} failed on ${computer}` }

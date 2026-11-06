@@ -44,6 +44,45 @@ test("an offline --computer resolves to a reportable error instead of throwing",
   });
 });
 
+test("a cloud selector's repositories reach the sandbox request", async () => {
+  const calls: unknown[] = [];
+  const environment: EnvironmentConnection = {
+    id: "env-1",
+    connectionId: "conn-1",
+    deviceId: "sandbox-agent-1",
+    connectionName: "Cloud",
+    organizationId: "org-1",
+    podId: null,
+    connectedAt: null,
+    lastHeartbeat: null,
+    lastSeenAt: 0,
+    firstSeenAt: 0,
+  };
+  const result = await resolveListenerLaunchTarget({
+    selector: "cloud:letta-ai/letta-code",
+    agentId: "agent-1",
+    conversationId: "conv-1",
+    resolveCloudSandbox: async (...args) => {
+      calls.push(args);
+      return { connectionId: "conn-1", environment };
+    },
+  });
+  expect(result).toMatchObject({
+    connectionId: "conn-1",
+    // The launch waits for these clones and starts in the first.
+    sandboxRepositories: [{ owner: "letta-ai", repo: "letta-code" }],
+  });
+  expect(calls).toEqual([
+    [
+      "agent-1",
+      {
+        conversationId: "conv-1",
+        githubRepositories: [{ owner: "letta-ai", repo: "letta-code" }],
+      },
+    ],
+  ]);
+});
+
 test("launch envelopes preserve queued identity, failure text, and completed usage", () => {
   const base = {
     sessionId: "session",

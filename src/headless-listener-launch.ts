@@ -15,7 +15,13 @@ import {
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
+import type { SandboxGithubRepository } from "@/backend/api/environments";
 import { getApiRequestConfig } from "@/backend/api/request";
+import {
+  sandboxCloneWarningReminder,
+  sandboxRepositoryLayout,
+  waitForSandboxRepositoryClones,
+} from "@/cloud-sandbox-workspace";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type {
   ConversationRuntimeScope,
@@ -157,6 +163,11 @@ export async function launchListenerConversation(
     backend: Pick<Backend, "retrieveRun">;
     settings: RuntimeExecutionSettings;
     cwd?: string;
+    /**
+     * Repositories a fresh Cloud sandbox is cloning. The launch waits for the
+     * clones, starts in the first repository, and adds the others' skills.
+     */
+    sandboxRepositories?: readonly SandboxGithubRepository[];
     mode: RuntimeStartCommand["mode"];
     skillSources?: RuntimeStartCommand["skill_sources"];
     onMessage?: (message: MessageDelta) => void;
@@ -176,6 +187,7 @@ export async function launchListenerConversation(
     listRunMessages?: typeof listEnqueuedRunMessages;
     pollMs?: number;
     waitDeadline?: AbortSignal;
+    waitForClones?: typeof waitForSandboxRepositoryClones;
   } = {},
 ): Promise<ListenerLaunchResult> {
   const agentId = params.scope.agent_id ?? params.parentAgentId;
@@ -272,12 +284,36 @@ export async function launchListenerConversation(
   }
   try {
     await client.connect();
+    const repositories = params.sandboxRepositories ?? [];
+    const layout = sandboxRepositoryLayout(repositories);
+    // Skills are discovered when the first turn starts, so wait for the
+    // clones before it. A slow clone warns instead of failing the launch.
+    const { warning } =
+      repositories.length > 0
+        ? await (deps.waitForClones ?? waitForSandboxRepositoryClones)(
+            client,
+            repositories,
+            { signal: interruptReads.signal },
+          )
+        : {};
+    const warnings = warning ? [warning] : [];
+    const content: MessageCreate["content"] = warning
+      ? [
+          { type: "text", text: sandboxCloneWarningReminder(warning) },
+          ...(typeof params.content === "string"
+            ? [{ type: "text" as const, text: params.content }]
+            : params.content),
+        ]
+      : params.content;
     const runtime = await client.runtimeStart({
       agent_id: params.scope.agent_id ?? undefined,
       conversation_id: params.scope.conversation_id,
-      cwd: params.cwd,
+      cwd: params.cwd ?? layout.cwd,
       mode: params.mode,
-      execution_settings: params.settings,
+      execution_settings:
+        layout.skillDirectories.length > 0
+          ? { ...params.settings, skill_directories: layout.skillDirectories }
+          : params.settings,
       ...(params.skillSources !== undefined
         ? { skill_sources: params.skillSources }
         : { preserve_skill_sources: true }),
@@ -296,7 +332,7 @@ export async function launchListenerConversation(
         agentId,
         conversationId: params.scope.conversation_id,
         clientMessageId,
-        content: params.content,
+        content,
         computer: params.connectionId,
         actingUserId: params.scope.acting_user_id,
       },
@@ -307,6 +343,7 @@ export async function launchListenerConversation(
     if (params.noWait)
       return {
         status: "queued",
+        ...(warnings.length > 0 ? { warnings } : {}),
         receipt: {
           ...accepted,
           connection_id: params.connectionId,
@@ -400,6 +437,7 @@ export async function launchListenerConversation(
               if (text.trim())
                 return {
                   status: "completed",
+                  ...(warnings.length > 0 ? { warnings } : {}),
                   text,
                   stopReason: run.stop_reason ?? null,
                   runIds: [...runIds],

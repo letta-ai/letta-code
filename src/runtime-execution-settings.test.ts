@@ -120,7 +120,14 @@ describe("runtime execution settings", () => {
 
   test("invalid wire settings cannot reach runtime execution", () => {
     expect(isRuntimeExecutionSettings(child("parent"))).toBe(true);
+    expect(
+      isRuntimeExecutionSettings({
+        ...child("p"),
+        skill_directories: ["/root/workspace/lib/.agents/skills"],
+      }),
+    ).toBe(true);
     for (const value of [
+      { ...child("p"), skill_directories: "/root/workspace/lib" },
       null,
       {},
       { ...child("p"), max_turns: 0 },

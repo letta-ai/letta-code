@@ -4,7 +4,8 @@ import type { JsonSchema } from "./model-facing-tool";
 const COMPUTER_SECTION_HEADING = "## Running on Another Computer";
 
 /**
- * Remove the `computer` parameter from the Task tool schema. Used when the
+ * Remove the `computer` parameter, and the Cloud-sandbox-only `repos`
+ * parameter, from the Task tool schema. Used when the
  * backend has no environment routing (local backend, self-hosted or remote
  * app server): the computers concept only exists on Letta Cloud, so the
  * option should not be advertised to the model at all.
@@ -14,7 +15,7 @@ export function stripComputerFromTaskSchema(schema: JsonSchema): JsonSchema {
   if (!properties || !Object.hasOwn(properties, "computer")) {
     return schema;
   }
-  const { computer: _computer, ...rest } = properties;
+  const { computer: _computer, repos: _repos, ...rest } = properties;
   return { ...schema, properties: rest };
 }
 
