@@ -35,6 +35,7 @@ import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { SANDBOX_ENV_VAR } from "@/sandbox/policy";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
+import { canonicalizeFilePathArgs } from "./file-path-args";
 import { deriveAgentId, resolveMemoryTargetPath } from "./memory-paths";
 import {
   canonicalizeRoot,
@@ -372,6 +373,7 @@ export function evaluateCrossAgentGuard(
 ): CrossAgentGuardResult | null {
   const env = options.env ?? process.env;
   const homeDir = env.HOME ?? homedir();
+  toolArgs = canonicalizeFilePathArgs(toolArgs, workingDirectory, env, homeDir);
 
   if (isMemoryGuardDisabled(options)) {
     return null;

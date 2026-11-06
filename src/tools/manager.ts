@@ -38,6 +38,7 @@ import type {
   ModToolRunContext,
   ModToolStartEvent,
 } from "@/mods/types";
+import { canonicalizeFilePathArgs } from "@/permissions/file-path-args";
 import type {
   PermissionDecision,
   PermissionRuleType,
@@ -2222,9 +2223,8 @@ async function executeToolInner(
     let outputStreamer: ScrubbedOutputStreamer | null = null;
 
     try {
-      let enhancedArgs = args;
+      let enhancedArgs = canonicalizeFilePathArgs(args, workingDirectory);
 
-      // Cancellation is internal, not part of model-facing tool schemas.
       if (options?.signal) {
         enhancedArgs = { ...enhancedArgs, signal: options.signal };
       }

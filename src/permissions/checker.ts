@@ -24,6 +24,7 @@ import {
 } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
+import { canonicalizeFilePathArgs } from "./file-path-args";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -125,6 +126,7 @@ export function checkPermission(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
+  toolArgs = canonicalizeFilePathArgs(toolArgs, workingDirectory);
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
     engine,
@@ -861,6 +863,7 @@ export async function checkPermissionWithHooks(
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
+  toolArgs = canonicalizeFilePathArgs(toolArgs, workingDirectory);
   // First, check permission using normal rules
   let result = checkPermission(
     toolName,

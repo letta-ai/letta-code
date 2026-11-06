@@ -9,6 +9,7 @@ import {
 import { buildFsSandboxPolicy, type FsSandboxPolicy } from "@/sandbox/policy";
 import { canonicalToolName, isShellToolName } from "./canonical";
 import { extractApplyPatchPaths, extractFilePath } from "./cross-agent-guard";
+import { canonicalizeFilePathArgs } from "./file-path-args";
 import { canonicalizeRoot } from "./sandbox-policy";
 
 type ToolArgs = Record<string, unknown>;
@@ -111,6 +112,7 @@ export function evaluateWorkspaceSandboxGuard(
   sandbox?: RuntimeWorkspaceSandbox,
 ): WorkspaceSandboxGuardResult | null {
   if (!sandbox || isShellToolName(toolName)) return null;
+  toolArgs = canonicalizeFilePathArgs(toolArgs, workingDirectory);
   const paths = targetPaths(toolName, toolArgs, workingDirectory);
   for (const path of paths) {
     const insideWorkspace = isWithin(path, sandbox.root);

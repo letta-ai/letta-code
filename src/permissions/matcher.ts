@@ -170,7 +170,7 @@ export function matchesFilePattern(
 
   // Handle tilde expansion
   if (globPattern.startsWith("~/")) {
-    const homedir = require("node:os").homedir();
+    const homedir = process.env.HOME ?? require("node:os").homedir();
     globPattern = globPattern.replace(/^~/, homedir);
   }
 
