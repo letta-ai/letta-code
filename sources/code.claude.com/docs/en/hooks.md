@@ -2063,7 +2063,12 @@ An MCP tool whose server marks it with [`_meta["anthropic/requiresUserInteractio
 
 #### Defer a tool call for later
 
-`"defer"` is for integrations that run `claude -p` as a subprocess and read its JSON output, such as an Agent SDK app or a custom UI built on top of Claude Code. It lets that calling process pause Claude at a tool call, collect input through its own interface, and resume where it left off. Claude Code honors this value only in [non-interactive mode](https://code.claude.com/docs/en/headless.md) with the `-p` flag. In interactive sessions it logs a warning and ignores the hook result.
+`"defer"` is for integrations that run `claude -p` as a subprocess and read its JSON output, such as an Agent SDK app or a custom UI built on top of Claude Code. It lets that calling process pause Claude at a tool call, collect input through its own interface, and resume where it left off.
+
+Claude Code honors `"defer"` only in [non-interactive mode](https://code.claude.com/docs/en/headless.md) with the `-p` flag, and only when Claude makes a single tool call in the turn:
+
+* **In interactive sessions**: it logs a warning and ignores the hook result
+* **Several tool calls at once**: `"defer"` is ignored with a warning and the tool proceeds through the normal permission flow
 
 The `AskUserQuestion` tool is the typical case: Claude wants to ask the user something, but there is no terminal to answer in. A `-p` run offers `AskUserQuestion` only when it has a [permission host](https://code.claude.com/docs/en/headless.md#turn-off-permission-prompts-in-unattended-runs), such as an MCP tool you pass with `--permission-prompt-tool`, so start the run with one. The round trip works like this:
 
@@ -2073,7 +2078,7 @@ The `AskUserQuestion` tool is the typical case: Claude wants to ask the user som
 4. The calling process runs `claude -p --resume <session-id>` with the same permission host. The same tool call fires `PreToolUse` again.
 5. The hook returns `permissionDecision: "allow"` with the answer in `updatedInput`. The tool executes and Claude continues.
 
-The `deferred_tool_use` field carries the tool's `id`, `name`, and `input`. The `input` is the parameters Claude generated for the tool call, captured before execution:
+The `deferred_tool_use` field carries the tool's `id`, `name`, and `input`:
 
 ```json theme={null}
 {
@@ -2089,22 +2094,28 @@ The `deferred_tool_use` field carries the tool's `id`, `name`, and `input`. The 
 }
 ```
 
-There is no timeout or retry limit. The session remains on disk until you resume it, subject to the [`cleanupPeriodDays`](https://code.claude.com/docs/en/settings-reference#cleanupperioddays) retention sweep, which deletes session files after 30 days by default, following the [retention sweep rules](https://code.claude.com/docs/en/claude-directory.md#cleaned-up-automatically).
+There is no timeout or retry limit. The session stays on disk until the [`cleanupPeriodDays`](https://code.claude.com/docs/en/settings-reference#cleanupperioddays) [retention sweep](https://code.claude.com/docs/en/claude-directory.md#cleaned-up-automatically) deletes it, after 30 days by default.
 
-If the deferred tool is no longer available when you resume, the resume's first result has `stop_reason: "tool_deferred_unavailable"` and `is_error: true`, and the hook doesn't fire. This happens when an MCP server that provided the tool is not connected for the resumed session. The `deferred_tool_use` payload is still included so you can identify which tool went missing.
-
-* **If you sent no prompt, with the resume or after it**, the call is still pending. Resume again with the tool available and it runs first.
-* **If you sent a prompt, with the resume or after it**, Claude Code answers it without the tool's result and drops the deferred call. Send a new prompt once the tool is available if you still need it called.
-
-If the answer you're waiting for is not ready when you resume without a prompt, the hook can return `"defer"` again. If you sent a prompt and the hook defers again, Claude Code treats the prompt the same way: it answers without the tool's result and drops the call. Resume without a prompt until the hook returns `"allow"` or `"deny"`, which is how the calling process breaks the loop.
-
-`"defer"` only works when Claude makes a single tool call in the turn. If Claude makes several tool calls at once, `"defer"` is ignored with a warning and the tool proceeds through the normal permission flow. The constraint exists because resume can only re-run one tool: there is no way to defer one call from a batch without leaving the others unresolved.
+If the answer isn't ready when you resume, the hook can return `"defer"` again. If you sent a prompt with that resume, Claude answers it without the tool's result and doesn't run the call. Resume without a prompt until the hook returns `"allow"` or `"deny"`.
 
 > [!NOTE]
 >
 > To resume a deferred session in plan mode, pass [`--permission-prompt-tool`](https://code.claude.com/docs/en/cli-reference#cli-flags) along with `--resume` so that Claude Code can present the plan for approval. For the other conditions, see [Resume in plan mode with `-p`](https://code.claude.com/docs/en/sessions#resume-in-plan-mode-with-p). Requires Claude Code v2.1.246 or later.
 >
-> When you resume with `-p`, Claude Code doesn't restore any other stored permission mode. It starts the run in the permission mode a new `claude -p` run would start in, so pass `--permission-mode` or `--dangerously-skip-permissions` again if the deferred session used one. When you resume with `claude --resume <session-id>` without `-p`, Claude Code restores the stored permission mode, with the exceptions listed in [permission mode on resume](https://code.claude.com/docs/en/sessions.md#permission-mode-on-resume).
+> When you resume with `-p`, Claude Code doesn't restore any other stored permission mode. It starts the run in the permission mode a new `claude -p` run would start in, so pass `--permission-mode` or `--dangerously-skip-permissions` again if the deferred session used one.
+
+##### Resume when a deferred tool is unavailable
+
+A result with `stop_reason: "tool_deferred_unavailable"` means a deferred call's tool isn't available in the resumed session, for example because its MCP server isn't connected. Your `PreToolUse` hook doesn't fire, and the result's `deferred_tool_use` field names the tool.
+
+While the call is pending, any prompt you send doesn't reach Claude and the run exits with code 1. The `result` field starts with `<tool> isn't available, so its deferred call didn't run.` Run the call, or drop it so that it doesn't run:
+
+* **To run the call**: make the tool available and resume again.
+* **To drop the call**: resume with a prompt and [`CLAUDE_CODE_DROP_UNAVAILABLE_DEFERRED_TOOL`](https://code.claude.com/docs/en/env-vars#variables) set to `1`. Claude receives an error as the call's result and answers your prompt. When you resume later, no call is pending.
+
+When you drop the call, the run writes the `tool_deferred_unavailable` result with an empty `result` field, then Claude's answer in a second result. It exits with code 0 unless that answer is an error. If you set the variable and send no prompt, the run still drops the call and exits with code 1.
+
+Before v2.1.319, Claude Code answered a prompt without the tool's result and dropped the call. On those versions, send a new prompt once the tool is available.
 
 ### PermissionRequest
 
@@ -2218,6 +2229,18 @@ Match more broadly when the tool name isn't the right filter:
 
 * To run a hook after any tool completes successfully, omit the `matcher` or set it to `"*"`. Your hook can then discover what changed itself, for example by running `git status --porcelain`, which also lists untracked files that `git diff` misses. For tool calls that fail, add the same hook under [PostToolUseFailure](#posttoolusefailure).
 * To run a hook when a specific file changes on disk, whatever wrote it, use [FileChanged](#filechanged). Claude Code doesn't run a `PostToolUse` hook matching `Edit|Write` when a `Bash` command or a process outside Claude Code rewrites the same file.
+
+#### PostToolUse after an interrupt
+
+If a `PostToolUse` hook stops early after you send a message or interrupt during a tool call, check whether you pressed `Ctrl+Enter`, `Enter`, or `Esc`:
+
+* **`Ctrl+Enter`**: if pressing it [ends the turn](https://code.claude.com/docs/en/interactive-mode.md#when-claude-code-sends-what-you-queued) while a tool is running and the tool finishes, your `PostToolUse` hooks run on its result and have 10 seconds to finish. The key acts as `Esc` if you queued a `!` command ahead of your messages or background tasks are disabled, for example with [`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`](https://code.claude.com/docs/en/env-vars#variables).
+* **`Enter`**: a message you queue with `Enter` doesn't interrupt the turn, so the hooks keep their usual `timeout`.
+* **`Esc`**: you cancel the hooks at once, so send the message with `Enter` or `Ctrl+Enter` when the hooks have to run.
+
+When the 10 seconds are up, Claude Code kills a command hook that is still running, whatever its [`timeout`](#common-fields). To let a longer command hook finish, run it with [`async: true`](#run-hooks-in-the-background), which means the hook can't block or rewrite the result.
+
+Before v2.1.319, the hooks didn't start after you interrupted the turn with a message, and a running hook was stopped.
 
 #### PostToolUse input
 
