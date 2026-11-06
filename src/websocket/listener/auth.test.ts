@@ -303,6 +303,7 @@ describe("listener auth", () => {
     );
 
     expect(result.apiKey).toBe("org-access-token");
+    expect(result.onCredentialBootstrap).toBeUndefined();
     expect(requestDeviceCodeMock).toHaveBeenCalledWith("org-123");
     expect(pollForTokenMock).toHaveBeenCalledWith(
       "device-code",

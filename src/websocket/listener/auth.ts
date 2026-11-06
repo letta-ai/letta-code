@@ -370,6 +370,7 @@ async function resolveListenerAuth(
       ...credentials,
       apiKey,
     });
+    if (credentials.refreshToken) return { serverUrl, apiKey };
     const onCredentialBootstrap = async (
       bootstrap: CredentialBootstrap,
     ): Promise<void> => {
