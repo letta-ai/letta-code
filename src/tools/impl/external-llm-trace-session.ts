@@ -44,7 +44,7 @@ const productionDependencies: TraceSessionDependencies = {
   async upload(rows, config, context) {
     await apiRequest(
       "POST",
-      `/v1/conversations/${encodeURIComponent(context.parent_conversation_id)}/external-agent-llm-traces`,
+      `/v1/conversations/${encodeURIComponent(context.parent_conversation_id)}/llm-trace`,
       { rows },
       {
         ...config,
