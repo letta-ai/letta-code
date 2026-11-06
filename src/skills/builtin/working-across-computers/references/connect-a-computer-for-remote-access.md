@@ -67,10 +67,11 @@ already current is also success.
 For a computer connected through a Slack organization, mint a fresh connect
 token with Option 1, then dispatch a remote subagent to the **same device ID**
 and have it run the generated `letta server --org ... --token ...
---computer-name ...` command. Keep the one-time token out of shared channels,
-logs, and the final response. Credential exchange happens before the
-duplicate-listener check, so `Authenticated successfully` followed by “already
-running” is the expected result when the original listener is still healthy.
+--computer-name ...` command. Keep the one-time token out of shared channels
+and the final response, and tell the subagent not to echo it. Credential
+exchange happens before the duplicate-listener check, so
+`Authenticated successfully` followed by “already running” is the expected
+result when the original listener is still healthy.
 
 Finally, run `letta teleport list` again. Require the device to be online with
 a fresh `connectedAt` and a current `lettaCodeVersion` before relying on it.
