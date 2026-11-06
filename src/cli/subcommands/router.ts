@@ -22,6 +22,7 @@ import { runInstallSubcommand, runSkillsSubcommand } from "./skills";
 import { runStepsSubcommand } from "./steps";
 import { runTeleportSubcommand } from "./teleport";
 import { runTrajectoriesSubcommand } from "./trajectories";
+import { runTrajectoryImportSubcommand } from "./trajectory-import";
 import { runUsageSubcommand } from "./usage";
 
 async function runUpdateSubcommand(): Promise<number> {
@@ -49,6 +50,7 @@ export function subcommandNeedsEarlyBackendMode(
     case "environments":
     case "envs":
     case "feedback":
+    case "import":
     case "install":
     case "memfs":
     case "memory":
@@ -133,6 +135,8 @@ export async function runSubcommand(argv: string[]): Promise<number | null> {
       return runBackendSubcommand(rest);
     case "setup":
       return runSetupSubcommand(rest);
+    case "import":
+      return runTrajectoryImportSubcommand(rest);
     case "install":
       return runInstallSubcommand(rest);
     case "shared-memory":
