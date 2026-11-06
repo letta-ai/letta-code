@@ -10,7 +10,7 @@ and create draft parity PRs when warranted.
 - Selective upgrade policy: only upgrade when there's concrete Letta Code
   benefit, a consumed contract fix, or a specific risk avoidance. Default is
   `no_upgrade`.
-- Slack notifications post to `#code-reviews` only for `pr_created` outcomes.
+- Slack notifications post to the code-review channel only for `pr_created` outcomes.
   One random owner selected per notification.
 
 ## CI Workflow Patterns
@@ -28,7 +28,7 @@ and create draft parity PRs when warranted.
 
 ## Review Workflow
 
-- `review.yml` runs on ALL non-draft PRs (not just Caren's).
+- `review.yml` runs on ALL non-draft PRs.
 - Silent by default: only posts inline review comments when flagging issues.
 - Final response: `LGTM` or `Left comments`.
 - Conversation persistence via `summary_search` API lookup.
@@ -43,4 +43,4 @@ and create draft parity PRs when warranted.
 Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
-(`amelia-letta` has read-only access to downstream repos).
+(the release bot account has read-only access to downstream repos).

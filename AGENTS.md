@@ -308,8 +308,8 @@ directory first. Otherwise the run reads and mutates your real
 - **Headless duplicates App.tsx logic.** `headless.ts` has its own approval
   handling loop (not shared with App.tsx). When making changes to
   streaming/approval logic, check if headless.ts needs matching changes.
-- **`protocol_v2.ts` changes propagate to consumers.** Used by LCD (Letta Cloud
-  Desktop). Changes likely need to propagate upstream.
+- **`protocol_v2.ts` changes propagate to consumers.** Used by the desktop app.
+  Changes likely need to propagate upstream.
 - **Agent loop naming is confusing.** `letta_agent_v1` is the agent_type name
   but runs on `letta_agent_v3.py`. `letta_agent_v2.py` is summarization retry
   wrapper. Don't mix up naming in code review.
@@ -338,8 +338,8 @@ directory first. Otherwise the run reads and mutates your real
   main -- bun.lock` when the PR has no real package.json change.
 - **Desktop setup: never bare `npm install`.** Running bare `npm install` in the
   letta-code workspace can prune `nx-electron` (installed `--no-save` at repo
-  root), breaking the electron IPC bridge. Always use canonical setup steps
-  (`just setup-code-desktop`).
+  root), breaking the electron IPC bridge. Always use the desktop workspace's
+  canonical setup steps.
 - **Remote log rotation.** `~/.letta/logs/remote/` grows unbounded. Long
   desktop sessions can produce 50GB+ in a single log file. Not yet fixed.
 - **TUI-specific gotchas** (`*Rich.tsx` naming, the glyph registry, threading
@@ -458,7 +458,7 @@ protocol for Desktop/app-server. It replaces the v1 session/headless protocol.
 5. Update `src/websocket/listener/protocol-inbound.ts` for outbound parsing.
 6. Add an `AppServerClient` helper method + tests in the same PR. Don't ship
    protocol commands without their client ergonomic.
-7. Cloud relay forwarding (`FORWARDABLE_COMMAND_TYPES` in letta-cloud) is a
+7. Cloud relay forwarding (`FORWARDABLE_COMMAND_TYPES` in the cloud relay service) is a
    separate PR.
 
 **Naming:** No "codex" references in codebase/commits/identifiers. Use
@@ -637,22 +637,22 @@ params; using `summary` returns ALL conversations for the agent.
 
 ---
 
-## Shared Remote Server (lettamate)
+## Shared Remote Server
 
-`/Users/lettamate/letta-code` is a shared remote macOS server. Multiple
+Some checkouts live on a shared remote macOS server. Multiple
 agents/people share worktrees here.
 
 1. **Never use someone else's git credentials.** Set `GIT_AUTHOR_NAME`,
    `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` explicitly
    when committing.
 2. **Never commit directly on main.** Always work in worktrees.
-3. **Use clearly-named worktrees** prefixed with `amelia-` (e.g.
-   `.letta/worktrees/amelia-rebase-2184`).
+3. **Use clearly-named worktrees** prefixed with your own name (e.g.
+   `.letta/worktrees/<name>-rebase-2184`).
 4. **Check existing worktrees** before creating new ones.
 5. **Secrets** available via `$SECRET_NAME` substitution at exec time (not
    persistent env vars): `GITHUB_TOKEN`, `LETTA_API_KEY`, `SLACK_BOT_TOKEN`,
    `SLACK_APP_TOKEN`.
-6. **Pre-existing `gh` auth** is for `just-cameron`, do NOT use it.
+6. **Pre-existing `gh` auth** belongs to another user, do NOT use it.
 7. **Fine-grained PATs don't work for org repos.** Use a classic PAT (`ghp_`
    prefix) with `repo` scope.
 
@@ -663,9 +663,9 @@ agents/people share worktrees here.
 ### Secret Injection Syntax
 
 The harness only supports literal `$NAME` references for secret injection:
-- `$AMELIA_GITHUB_TOKEN` injected
-- `${AMELIA_GITHUB_TOKEN}` not expanded
-- `${AMELIA_GITHUB_TOKEN:?}` not supported
+- `$GITHUB_TOKEN` injected
+- `${GITHUB_TOKEN}` not expanded
+- `${GITHUB_TOKEN:?}` not supported
 
 ### Repositories API Write Gotcha
 
