@@ -4,11 +4,42 @@ import {
   getModelUpdateArgs,
   getResumeRefreshArgs,
   preservableContextWindow,
+  shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import { buildModelSettings, updateAgentLLMConfig } from "@/agent/modify";
 import type { ConversationCreateBody } from "@/backend";
 
-export async function prepareExistingHeadlessModel(options: {
+/**
+ * The agent's current context window when `--model` selects a tier of the
+ * variant the agent is already on, or undefined when the selected entry's
+ * window applies. Same rule as `/model` in the TUI and the listener.
+ */
+function contextWindowToPreserve(
+  agent: AgentState,
+  modelHandle: string,
+  updateArgs: Record<string, unknown> | undefined,
+): number | undefined {
+  const selectedContextWindow = updateArgs?.context_window;
+  const shouldPreserve = shouldPreserveContextWindowForModelSelection({
+    currentModelHandle: agent.model,
+    currentLlmConfig: agent.llm_config,
+    selectedModelHandle: modelHandle,
+    selectedContextWindow:
+      typeof selectedContextWindow === "number"
+        ? selectedContextWindow
+        : undefined,
+  });
+  return shouldPreserve
+    ? preservableContextWindow(agent.llm_config?.context_window, modelHandle)
+    : undefined;
+}
+
+/**
+ * Applies `--model`, or the preset refresh when no model is given, to an agent
+ * that interactive or headless startup is resuming. With `createsConversation`
+ * the model goes on the new conversation and the agent is left unchanged.
+ */
+export async function prepareResumedAgentModel(options: {
   agent: AgentState;
   modelIdentifier?: string;
   modelHandle?: string;
@@ -28,8 +59,14 @@ export async function prepareExistingHeadlessModel(options: {
 
   if (modelHandle) {
     const updateArgs = getModelUpdateArgs(modelIdentifier);
+    const preservedContextWindow = contextWindowToPreserve(
+      agent,
+      modelHandle,
+      updateArgs,
+    );
     if (createsConversation) {
-      const contextWindow = updateArgs?.context_window;
+      const contextWindow =
+        preservedContextWindow ?? updateArgs?.context_window;
       return {
         agent,
         conversationModel: {
@@ -47,7 +84,14 @@ export async function prepareExistingHeadlessModel(options: {
     }
 
     return {
-      agent: await updateAgentLLMConfig(agent.id, modelHandle, updateArgs),
+      agent: await updateAgentLLMConfig(
+        agent.id,
+        modelHandle,
+        updateArgs,
+        preservedContextWindow !== undefined
+          ? { contextWindowOverride: preservedContextWindow }
+          : undefined,
+      ),
     };
   }
 

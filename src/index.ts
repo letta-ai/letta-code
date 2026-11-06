@@ -18,18 +18,16 @@ import {
 } from "./agent/context";
 import type { AgentProvenance } from "./agent/create";
 import {
-  getModelPresetUpdateForAgent,
   getModelUpdateArgs,
-  getResumeRefreshArgs,
   type ModelReasoningSelection,
-  preservableContextWindow,
   resolveModel,
   withReasoningEffortUpdateArg,
 } from "./agent/model";
-import { updateAgentLLMConfig, updateAgentSystemPrompt } from "./agent/modify";
+import { updateAgentSystemPrompt } from "./agent/modify";
 import { buildCreateAgentOptionsForPersonality } from "./agent/personality";
 import { resolvePersonalityId } from "./agent/personality-presets";
 import type { MemoryPromptMode } from "./agent/prompt-assets";
+import { prepareResumedAgentModel } from "./agent/resumed-agent-model";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import { initializeDesktopCredentials } from "./auth/desktop-credentials";
 import { LETTA_CLOUD_API_URL, refreshAccessToken } from "./auth/oauth";
@@ -2165,48 +2163,18 @@ async function main(): Promise<void> {
         // preset-derived fields in sync, then apply optional command-line
         // overrides (model/system prompt).
         if (resuming) {
-          if (model) {
-            const modelHandle = resolveModel(model);
-            if (!modelHandle) {
-              console.error(`Error: Invalid model "${model}"`);
-              process.exit(1);
-            }
-
-            // Always apply model update - different model IDs can share the same
-            // handle but have different settings (e.g., gpt-5.2-medium vs gpt-5.2-xhigh)
-            const updateArgs = getModelUpdateArgs(model);
-            agent = await updateAgentLLMConfig(
-              agent.id,
-              modelHandle,
-              updateArgs,
-            );
-          } else {
-            const presetRefresh = getModelPresetUpdateForAgent(agent);
-            if (presetRefresh) {
-              const { updateArgs: resumeRefreshUpdateArgs, needsUpdate } =
-                getResumeRefreshArgs(presetRefresh.updateArgs, agent);
-
-              if (needsUpdate) {
-                // Resume refresh must not reset the context window; preserve
-                // it by re-sending the agent's current value explicitly
-                // (omitting it makes the server re-derive + clamp to a legacy
-                // 128k default — LET-9786). A current value that looks like
-                // that clamp is not preserved, letting the agent heal.
-                const preservedContextWindow = preservableContextWindow(
-                  agent.llm_config?.context_window,
-                  presetRefresh.modelHandle,
-                );
-                agent = await updateAgentLLMConfig(
-                  agent.id,
-                  presetRefresh.modelHandle,
-                  resumeRefreshUpdateArgs,
-                  preservedContextWindow !== undefined
-                    ? { contextWindowOverride: preservedContextWindow }
-                    : undefined,
-                );
-              }
-            }
+          const modelHandle = model ? resolveModel(model) : undefined;
+          if (model && !modelHandle) {
+            console.error(`Error: Invalid model "${model}"`);
+            process.exit(1);
           }
+          ({ agent } = await prepareResumedAgentModel({
+            agent,
+            modelIdentifier: model,
+            modelHandle: modelHandle ?? undefined,
+            createsConversation: false,
+            localModelCatalog: backend.capabilities.localModelCatalog,
+          }));
 
           if (systemPromptPreset) {
             // Rebuilding the prompt needs the reconciled memory mode so we

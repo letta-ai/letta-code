@@ -65,7 +65,6 @@ import {
 } from "./agent/chatgpt-plan-rotation";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { prepareExistingHeadlessModel } from "./agent/headless-model-startup";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs, resolveModel } from "./agent/model";
@@ -76,6 +75,7 @@ import {
   INTERRUPT_RECOVERY_ALERT,
   type MemoryPromptMode,
 } from "./agent/prompt-assets";
+import { prepareResumedAgentModel } from "./agent/resumed-agent-model";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
@@ -1269,7 +1269,7 @@ export async function handleHeadlessCommand(
       console.error(`Error: Invalid model "${model}"`);
       process.exit(1);
     }
-    const prepared = await prepareExistingHeadlessModel({
+    const prepared = await prepareResumedAgentModel({
       agent,
       modelIdentifier: model,
       modelHandle: modelHandle ?? undefined,
