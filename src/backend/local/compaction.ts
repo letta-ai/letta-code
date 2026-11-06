@@ -59,10 +59,36 @@ export class LocalIrreducibleContextError extends Error {
   }
 }
 
+export function assertLocalPressureBudget(
+  tokens: number,
+  mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
+): void {
+  if (tokens <= maxMessageTokens) return;
+  const ErrorType =
+    mode === "all"
+      ? LocalIrreducibleContextError
+      : LocalSlidingWindowCompactionPlanningError;
+  throw new ErrorType("Compaction would still exceed the pressure threshold.");
+}
+
+export interface LocalCompactionResult {
+  numMessagesBefore: number;
+  numMessagesAfter: number;
+  summary: string;
+  stats: LocalCompactionStats;
+}
+
 export function assertLocalCompactionProgress(
   stats: LocalCompactionStats,
   mode: LocalCompactionMode,
+  maxMessageTokens = Number.POSITIVE_INFINITY,
 ): void {
+  assertLocalPressureBudget(
+    stats.context_tokens_after ?? 0,
+    mode,
+    maxMessageTokens,
+  );
   const hasProgress =
     (stats.messages_count_after ?? Number.POSITIVE_INFINITY) <
       (stats.messages_count_before ?? 0) ||
@@ -833,4 +859,19 @@ export function packageLocalSummaryMessage(
     time: new Date().toISOString(),
     ...(stats ? { compaction_stats: stats } : {}),
   });
+}
+
+export function localCompactionSettingsForStorage(
+  settings: Record<string, unknown> | null | undefined,
+): Record<string, unknown> | null | undefined {
+  if (settings === undefined || settings === null) return settings;
+
+  const hasLocalSetting =
+    Object.hasOwn(settings, "mode") ||
+    Object.hasOwn(settings, "prompt") ||
+    Object.hasOwn(settings, "clip_chars") ||
+    Object.hasOwn(settings, "sliding_window_percentage");
+  if (!hasLocalSetting) return undefined;
+
+  return { ...settings };
 }
