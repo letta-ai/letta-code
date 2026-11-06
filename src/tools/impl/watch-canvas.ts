@@ -32,7 +32,7 @@ export async function watch_canvas(args: {
   canvas_id: string;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
-}) {
+}): Promise<Awaited<ReturnType<typeof monitor>>> {
   args.signal?.throwIfAborted();
   if (
     typeof args.canvas_id !== "string" ||
