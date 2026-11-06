@@ -59,9 +59,9 @@ import {
   type LocalUserMessage,
   localToolArgumentsFromUnknown,
 } from "./local-message";
+import { applyLocalMessageListOptions } from "./local-message-list";
 import {
   getCursor,
-  getIncludedMessageTypes,
   getListLimit,
   getListOrder,
 } from "./local-message-list-options";
@@ -70,6 +70,7 @@ import {
   cloneLocalMessage,
   isLocalToolCallContent,
   mergeSnapshotContentWithExistingToolCalls,
+  projectedMessageCursorIndex,
   projectedMessageLookupKeys,
   projectLocalMessageToStoredMessages,
   removeOrphanLocalToolResults,
@@ -1086,8 +1087,9 @@ export class LocalStore {
     const messages = this.projectedMessagesForConversation(
       conversationId,
       agentId,
+      [getCursor(body, "before"), getCursor(body, "after")],
     );
-    return this.applyListOptions(messages, body);
+    return applyLocalMessageListOptions(messages, body);
   }
 
   listAgentMessages(
@@ -1729,44 +1731,6 @@ export class LocalStore {
     } as StoredMessage;
   }
 
-  private applyListOptions(
-    messages: StoredMessage[],
-    body?: ConversationMessageListBody | AgentMessageListBody,
-  ): StoredMessage[] {
-    let items = messages;
-    const includedMessageTypes = getIncludedMessageTypes(body);
-    if (includedMessageTypes) {
-      items = items.filter((message) =>
-        includedMessageTypes.has(message.message_type),
-      );
-    }
-
-    const before = getCursor(body, "before");
-    if (before) {
-      const beforeIndex = items.findIndex((message) => message.id === before);
-      if (beforeIndex >= 0) {
-        items = items.slice(0, beforeIndex);
-      }
-    }
-
-    const after = getCursor(body, "after");
-    if (after) {
-      const afterIndex = items.findIndex((message) => message.id === after);
-      if (afterIndex >= 0) {
-        items = items.slice(afterIndex + 1);
-      }
-    }
-
-    if (getListOrder(body) === "desc") {
-      items = [...items].reverse();
-    } else {
-      items = [...items];
-    }
-
-    const limit = getListLimit(body);
-    return limit === undefined ? items : items.slice(0, limit);
-  }
-
   private projectLocalMessages(
     localMessages: readonly LocalMessage[],
     agentId: string,
@@ -1851,7 +1815,7 @@ export class LocalStore {
         localTranscriptTailMessages(
           tail.items,
           metadata.messageFormat,
-          conversation?.in_context_message_ids ?? [],
+          before ? [] : (conversation?.in_context_message_ids ?? []),
           this.storageDir ?? "",
           metadata.conversationDir,
         );
@@ -1868,8 +1832,9 @@ export class LocalStore {
         { sourceStartIndex: transcript.sourceStartIndex, updateIndex: false },
       );
       const cursorFound =
-        !before || projected.some((message) => message.id === before);
-      const items = this.applyListOptions(projected, body);
+        !before ||
+        projectedMessageCursorIndex(projected, before, "before") >= 0;
+      const items = applyLocalMessageListOptions(projected, body);
       if (cursorFound && (items.length >= limit || tail.reachedStart)) {
         return items;
       }
@@ -1881,6 +1846,7 @@ export class LocalStore {
   private projectedMessagesForConversation(
     conversationId: string,
     agentId: string,
+    cursors: (string | undefined)[] = [],
   ): StoredMessage[] {
     const key = this.conversationKey(conversationId, agentId);
     const conversation = this.conversations.get(key);
@@ -1888,6 +1854,7 @@ export class LocalStore {
     const localMessages = this.localMessagesForConversation(
       resolvedConversationId,
       agentId,
+      cursors,
     );
     return this.projectLocalMessages(
       localMessages,
@@ -2023,6 +1990,7 @@ export class LocalStore {
   private localMessagesForConversation(
     conversationId: string,
     agentId: string,
+    cursors: (string | undefined)[] = [],
   ): LocalMessage[] {
     this.findConversation(conversationId, agentId);
     const key = this.conversationKey(conversationId, agentId);
@@ -2030,7 +1998,16 @@ export class LocalStore {
     if (this.loadedConversationKeys.has(key) || !this.storageDir) {
       return [...resident];
     }
+    // Cursor reads outside the active window need the full transcript.
     if (
+      cursors.every(
+        (cursor) =>
+          !cursor ||
+          resident.some(
+            (message) =>
+              message.id === sourceLocalMessageIdFromStoredMessageId(cursor),
+          ),
+      ) &&
       residentCoversIds(
         resident,
         this.conversations.get(key)?.in_context_message_ids ?? [],
@@ -2038,7 +2015,11 @@ export class LocalStore {
     ) {
       return [...resident];
     }
-    const read = this.readConversationMessagesFromDisk(key, agentId);
+    const read = this.readConversationMessagesFromDisk(
+      key,
+      agentId,
+      cursors.some(Boolean),
+    );
     if (!read) return [...resident];
     return overlayResidentLocalMessageTail(read.messages, resident);
   }
@@ -2063,6 +2044,7 @@ export class LocalStore {
   private readConversationMessagesFromDisk(
     key: string,
     agentId: string,
+    fullHistory = false,
   ):
     | {
         messages: LocalMessage[];
@@ -2078,7 +2060,7 @@ export class LocalStore {
     const transcript = localTranscriptRowsResult(
       readLocalTranscriptRowsForHistory(metadata.messagesPath, inContextIds),
       metadata.messageFormat,
-      inContextIds,
+      fullHistory ? [] : inContextIds,
     );
     assertNoLegacyUiMessageRows(
       transcript.messages,
@@ -2095,6 +2077,7 @@ export class LocalStore {
       toolResultRepair.messages,
     );
     const localMessages = toolResultClip.messages;
+    if (fullHistory) return { messages: localMessages, transcript, metadata };
     if (toolResultClip.clippedToolResultIds.length > 0) {
       this.loadRepairedConversationKeys.add(key);
     } else {
