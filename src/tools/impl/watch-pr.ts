@@ -1,4 +1,12 @@
-import { rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import {
@@ -7,6 +15,7 @@ import {
   getRuntimeContext,
 } from "@/runtime-context";
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { resolveNotificationScope } from "@/utils/task-notifications";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import {
@@ -28,7 +37,11 @@ import {
   markMonitorFinished,
   queueMonitorEvent,
 } from "./monitor";
-import { createMonitorEventStream } from "./monitor-event-stream";
+import {
+  createMonitorEventStream,
+  MONITOR_EVENT_BATCH_CHARS,
+  MONITOR_EVENT_LINE_CHARS,
+} from "./monitor-event-stream";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
 import {
   assertBackgroundProcessCapacity,
@@ -85,6 +98,93 @@ async function defaultWait(
   await delay(milliseconds, undefined, { signal });
 }
 
+// Cache failures must never prevent a watch from starting or polling.
+function saveSnapshot(
+  path: string | undefined,
+  snapshot: GitHubPullRequestSnapshot,
+): void {
+  if (!path) return;
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    if (snapshot.state !== "OPEN") {
+      rmSync(path, { force: true });
+      return;
+    }
+    mkdirSync(dirname(path), { recursive: true });
+    // Previous discussion bodies and authors are not needed by the diff.
+    const compact = {
+      ...snapshot,
+      ref: undefined,
+      checks: snapshot.checks.map(({ key, phase }) => ({ key, phase })),
+      checkAttempts: snapshot.checkAttempts.map(({ key }) => ({ key })),
+      comments: snapshot.comments.map(({ id, updatedAt }) => ({
+        id,
+        updatedAt,
+      })),
+      reviews: snapshot.reviews.map(({ id, updatedAt, state }) => ({
+        id,
+        updatedAt,
+        state,
+      })),
+      reviewThreads: snapshot.reviewThreads.map(
+        ({ id, isResolved, comments }) => ({
+          id,
+          isResolved,
+          comments: comments.map(({ id, updatedAt, outdated }) => ({
+            id,
+            updatedAt,
+            outdated,
+          })),
+        }),
+      ),
+    };
+    writeFileSync(
+      temporary,
+      JSON.stringify({ savedAt: Date.now(), snapshot: compact }),
+      { mode: 0o600 },
+    );
+    renameSync(temporary, path);
+  } catch {
+    // Best effort: GitHub remains the source of truth.
+  } finally {
+    try {
+      rmSync(temporary, { force: true });
+    } catch {
+      /* Best effort cleanup. */
+    }
+  }
+}
+
+function resumedChanges(
+  path: string | undefined,
+  initial: GitHubPullRequestSnapshot,
+): string {
+  if (!path) return "";
+  try {
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    const age = Date.now() - saved.savedAt;
+    if (!Number.isFinite(age) || age < 0 || age > 7 * 24 * 3_600_000) return "";
+    const changes = diffGitHubPullRequestSnapshots(
+      saved.snapshot,
+      initial,
+    ).events;
+    if (!changes.length) return "";
+    // Use the same line and notification limits as live monitor events.
+    let text = changes
+      .map((line) =>
+        line.length > MONITOR_EVENT_LINE_CHARS
+          ? `${line.slice(0, MONITOR_EVENT_LINE_CHARS)}...(truncated)`
+          : line,
+      )
+      .join("\n");
+    if (text.length > MONITOR_EVENT_BATCH_CHARS)
+      text = `${text.slice(0, MONITOR_EVENT_BATCH_CHARS)}\n...(truncated)`;
+    return `\n\nChanges since the previous watch ended:\n${text}`;
+  } catch {
+    return "";
+  }
+}
+
 export async function watch_pr(
   args: WatchPullRequestArgs,
   deps: WatchPullRequestDeps = {},
@@ -99,9 +199,39 @@ export async function watch_pr(
     deps.fetchSnapshot ??
     ((pullRequestRef, options) =>
       fetchGitHubPullRequestSnapshot(pullRequestRef, options));
+  const runtimeContext = getRuntimeContext();
+  const parentScope =
+    args.parentScope ??
+    (runtimeContext?.agentId
+      ? {
+          agentId: runtimeContext.agentId,
+          conversationId: runtimeContext.conversationId ?? "default",
+        }
+      : undefined);
+  const scope = resolveNotificationScope(parentScope);
+  const snapshotPath = scope
+    ? join(
+        resolveGlobalConfigDir(),
+        "cache",
+        "watch-pr",
+        `${createHash("sha256")
+          .update(
+            JSON.stringify([
+              scope.agentId,
+              scope.conversationId,
+              ref.owner.toLowerCase(),
+              ref.repo.toLowerCase(),
+              ref.number,
+            ]),
+          )
+          .digest("hex")}.json`,
+      )
+    : undefined;
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
+  const changesSincePreviousWatch = resumedChanges(snapshotPath, initial);
   if (initial.state !== "OPEN") {
+    saveSnapshot(snapshotPath, initial);
     throw new Error(
       `WatchPR did not start because ${ref.url} is already ${initial.state.toLowerCase()}.`,
     );
@@ -116,22 +246,13 @@ export async function watch_pr(
     new MonitorOutputWriter(outputFile);
   if (
     !output.append(
-      `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}\n`,
+      `[initial snapshot]\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n`,
     )
   ) {
     rmSync(outputFile, { force: true });
     throw new Error(`WatchPR could not write its output file: ${outputFile}`);
   }
-  const runtimeContext = getRuntimeContext();
-  const parentScope =
-    args.parentScope ??
-    (runtimeContext?.agentId
-      ? {
-          agentId: runtimeContext.agentId,
-          conversationId: runtimeContext.conversationId ?? "default",
-        }
-      : undefined);
-  const scope = resolveNotificationScope(parentScope);
+  saveSnapshot(snapshotPath, initial);
   const actingUserId = getRuntimeActingUserAttribution();
   const description = `PR ${ref.owner}/${ref.repo}#${ref.number} checks, reviews, and mergeability`;
   const controller = new AbortController();
@@ -239,6 +360,7 @@ export async function watch_pr(
             hasGitHubPullRequestReadyConditions(previous) &&
             hasGitHubPullRequestReadyConditions(stableCurrent),
         );
+        saveSnapshot(snapshotPath, stableCurrent);
         const diff = diffGitHubPullRequestSnapshots(previous, stableCurrent);
         emit(diff.events);
         previous = stableCurrent;
@@ -282,7 +404,7 @@ export async function watch_pr(
     content: [
       {
         type: "text",
-        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}\n\nOutput file: ${outputFile}`,
+        text: `WatchPR started (task ${taskId}). It will keep watching after CI finishes and report new failures, reviews, comments, conflicts, head changes, merge-state changes, and watcher errors. It stops when the PR merges/closes, on TaskStop, or when this session ends.${persistent ? "" : ` A hard ${maxTimeoutMs / 3_600_000}-hour limit applies in this Cloud sandbox; call WatchPR again to re-arm it, or use Wake or cron for much longer waits.`}\n\nCurrent state:\n${describeGitHubPullRequestSnapshot(initial)}${changesSincePreviousWatch}\n\nOutput file: ${outputFile}`,
       },
     ],
     taskId,
