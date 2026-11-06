@@ -22,6 +22,7 @@ import {
   getLocalProviderRecordByName,
   localProviderApiKeyFromRecord,
 } from "@/backend/local/local-provider-auth-store";
+import { OpenRouterAccountModels } from "@/backend/local/openrouter-user-models";
 import {
   createLlamaCppPiProvider,
   LLAMA_CPP_PI_PROVIDER_ID,
@@ -210,6 +211,7 @@ export class LocalPiModelsRuntime {
   private readonly credentials: CredentialStore;
   private readonly dynamicBuiltinIds: ReadonlySet<string>;
   private readonly credentialSignatures = new Map<string, string>();
+  private readonly openRouterAccountModels: OpenRouterAccountModels;
 
   constructor(options: LocalPiModelsRuntimeOptions = {}) {
     this.storageDir = options.storageDir;
@@ -232,6 +234,24 @@ export class LocalPiModelsRuntime {
         .filter((provider) => provider.refreshModels !== undefined)
         .map((provider) => provider.id),
     );
+    this.openRouterAccountModels = new OpenRouterAccountModels({
+      getAuth: () => this.models.getAuth("openrouter"),
+      ...(options.storageDir ? { storageDir: options.storageDir } : {}),
+      ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    });
+  }
+
+  /**
+   * OpenRouter model ids the connected account may use (`/models/user`),
+   * cached per key and endpoint; undefined when unknown or not connected.
+   */
+  openRouterAccountModelIds(): Promise<ReadonlySet<string> | undefined> {
+    return this.openRouterAccountModels.allowedModelIds();
+  }
+
+  /** The next account-model read refetches instead of serving the cache. */
+  markAccountModelsStale(): void {
+    this.openRouterAccountModels.markStale();
   }
 
   /**

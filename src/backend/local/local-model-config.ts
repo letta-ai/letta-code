@@ -34,6 +34,7 @@ import {
   type LocalProviderRecord,
   listLocalProviderRecords,
 } from "./local-provider-auth-store";
+import { filterOpenRouterModelsForAccount } from "./openrouter-user-models";
 
 export interface LocalModelConfig {
   provider: PiProvider;
@@ -275,6 +276,12 @@ export async function listLocalModels(
     });
   const records = listLocalProviderRecords(storageDir);
   const providerNames = localProviderNamesFromRecords(records);
+  // The account list depends only on auth, so fetch it alongside discovery.
+  const openRouterAccountModelIds = listConfiguredPiProviders(
+    providerNames,
+  ).includes("openrouter")
+    ? modelsRuntime.openRouterAccountModelIds()
+    : Promise.resolve(undefined);
   // One collection-wide refresh (pi-ai 0.81 semantics): configured dynamic
   // providers re-fetch, per-provider failures keep last-known lists.
   await modelsRuntime.refreshAll();
@@ -421,5 +428,10 @@ export async function listLocalModels(
       });
     }
   }
-  return models;
+  // Applied last so the provider default cannot reintroduce a model the
+  // account disallows; the first allowed catalog model then leads instead.
+  return filterOpenRouterModelsForAccount(
+    models,
+    await openRouterAccountModelIds,
+  );
 }
