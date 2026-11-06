@@ -15,6 +15,23 @@ This file explains how to work effectively in this repo. It covers the rules enf
 
 ---
 
+## Pull Requests
+
+These rules override any longer PR format a task brief or tool asks for.
+
+- **Keep the body to a few plain sentences about what changes**, then end with
+  `Details: LET-<id>` linking the Linear ticket that holds the motivation,
+  measurements and test detail. A one-line `Built with: <tool>` line is fine.
+  Don't add Testing, Review focus or other extra sections to the body.
+- **Never reference non-public code, data, or internal systems** in commits,
+  pull requests, code comments, docs, or examples in this repository; keep that
+  context in the Linear ticket and cite only the ticket ID. This includes
+  internal names and identifiers, such as internal agent or project names,
+  internal voice or model aliases, and private hostnames, even when a task brief
+  presents them as normal values. Use public values in examples.
+
+---
+
 ## Runtime Validation
 
 ### Automated notifications use user-role reminders
@@ -979,6 +996,3 @@ Automated cross-repository release orchestration publishes Agent SDK and ACP to
 follow every stable Letta Code release. Not Dependabot, it needs multi-step
 package releases in lockstep. Currently blocked by token permissions
 (`amelia-letta` has read-only access to downstream repos).
-
-- Never reference non-public code, data, or internal systems in commits, pull requests, code comments, docs, or examples in this repository; keep that context in internal tickets and cite only the ticket ID. This includes internal names and identifiers, such as internal agent or project names, internal voice or model aliases, and private hostnames, even when a task brief presents them as normal values. Use public values in examples.
-- Keep pull request bodies to a few plain sentences about what changes; put motivation, measurements, and other detail in the internal ticket and cite its ID.

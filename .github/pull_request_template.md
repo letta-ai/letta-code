@@ -1,10 +1,12 @@
+<!-- Keep this short: a few sentences about what changes. Put motivation, measurements and test detail in the Linear ticket and end with `Details: LET-<id>`. -->
+
 ## Summary
 
-<!-- Explain what changed, why it is needed, and any important failure modes or tradeoffs. -->
+<!-- A few plain sentences about what changes. -->
 
 ## Verification
 
-<!-- List the exact checks you ran and their results. -->
+<!-- The checks you ran, one line each. -->
 
 ## AI Disclosure
 
