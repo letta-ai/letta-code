@@ -49,6 +49,7 @@ export interface CreateCloudScheduleResponse {
 
 export interface CloudSchedule {
   id: string;
+  model?: string | null;
   agent_id: string;
   name?: string | null;
   description?: string | null;
