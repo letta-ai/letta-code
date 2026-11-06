@@ -192,7 +192,7 @@ async function executeScript(
     costUnavailable = true;
     if (maxCostUsd !== undefined) {
       stopForBudget(
-        `Workflow cost budget cannot be enforced: ${source} reported usage without a cost estimate. Cost budgets require Letta Cloud.`,
+        `Workflow cost budget cannot be enforced: ${source} reported usage without a cost estimate.`,
         "cost_unavailable",
       );
     }

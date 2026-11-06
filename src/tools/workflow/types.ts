@@ -76,8 +76,8 @@ export interface SubagentOutcome {
   /** Total tokens consumed by the subagent session (prompt + completion). */
   totalTokens?: number;
   /**
-   * Server-estimated list-price USD for the session: the sum of each step's
-   * `cost_usd`. Null once any step reported usage without one.
+   * Client-estimated list-price USD for the session: the sum of each step's
+   * `api_cost_usd`. Null once any step reported usage without one.
    */
   costUsd?: number | null;
 }

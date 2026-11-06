@@ -86,17 +86,17 @@ describe("Workflow tool cost budget", () => {
     expect(factoryCalls).toBe(0);
   });
 
-  test("rejects a budget on the local backend, which reports no cost", async () => {
+  test("enforces a budget on the local backend", async () => {
     installSpawner(0.1);
     setConfiguredBackendMode("local");
     const result = await workflow({
-      script: `${META}return 1`,
-      maxCostUsd: 5,
+      script: `${META}await agent("inspect")`,
+      maxCostUsd: 0.05,
       wait: true,
     });
     expect(result.status).toBe("error");
-    expect(result.toolReturn).toContain("requires Letta Cloud");
-    expect(factoryCalls).toBe(0);
+    expect(result.toolReturn).toContain("Workflow cost budget");
+    expect(factoryCalls).toBe(1);
   });
 
   test("a foreground run stops at the budget and reports the spend", async () => {

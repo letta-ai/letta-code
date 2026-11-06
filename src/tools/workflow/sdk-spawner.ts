@@ -249,7 +249,7 @@ interface DrainedTurn {
 interface RunningUsage {
   totalTokens?: number;
   costUsd?: number;
-  /** A usage record arrived without `cost_usd`. */
+  /** A usage record arrived without `api_cost_usd`. */
   unpriced?: boolean;
 }
 
@@ -275,16 +275,15 @@ function usageTokensFromEvent(
 }
 
 /**
- * Letta Cloud adds the step's list-price USD as `cost_usd`; it is
- * null for unpriced models and absent on servers and backends that do not
- * report cost. Both leave the run without an enforceable cost.
+ * The shared client pricing path adds `api_cost_usd` for local and cloud
+ * usage. A null estimate leaves the run without an enforceable cost.
  */
 function recordUsageCost(
   event: Record<string, unknown> | undefined,
   usage: RunningUsage,
 ): boolean {
   if (!event || event.message_type !== "usage_statistics") return false;
-  const cost = event.cost_usd;
+  const cost = event.api_cost_usd;
   if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) {
     usage.costUsd = (usage.costUsd ?? 0) + cost;
   } else {

@@ -404,16 +404,6 @@ export async function workflow(args: WorkflowArgs): Promise<WorkflowResult> {
       status: "error",
     };
   }
-  // Only Letta Cloud reports per-step cost; a budget nothing can measure
-  // must not look enforced.
-  if (args.maxCostUsd !== undefined && resolveBackendMode() === "local") {
-    return {
-      toolReturn:
-        "maxCostUsd requires Letta Cloud: the local backend does not report per-step cost.",
-      status: "error",
-    };
-  }
-
   // Validate up front so authoring mistakes surface in the tool result
   // instead of as a failed background task.
   let meta: WorkflowMeta;

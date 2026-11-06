@@ -4,7 +4,7 @@ import type { SdkClient, SdkStreamMessage, SubagentRequest } from "./types.ts";
 
 const CONFIG: SdkSpawnerConfig = {
   parentAgentId: "agent-parent",
-  model: "openai/gpt-5.6-luna",
+  model: "anthropic/claude-sonnet-4-5",
 };
 
 function request(): SubagentRequest {
@@ -31,7 +31,9 @@ function usage(totalTokens: number, cost?: number | null): SdkStreamMessage {
     event: {
       message_type: "usage_statistics",
       total_tokens: totalTokens,
-      ...(cost !== undefined ? { cost_usd: cost } : {}),
+      prompt_tokens: cost == null ? undefined : cost / 0.000003,
+      completion_tokens: 0,
+      cost_usd: 99,
     },
   };
 }
@@ -43,7 +45,7 @@ const RESULT: SdkStreamMessage = {
 };
 
 describe("createSdkSpawner cost reporting", () => {
-  test("sums per-step cost_usd and reports it live", async () => {
+  test("sums client-priced api_cost_usd and reports it live", async () => {
     const seen: Array<[number, number | null | undefined]> = [];
     const outcome = await createSdkSpawner(
       fakeClient([usage(1_000, 0.01), usage(2_000, 0.025), RESULT]),
