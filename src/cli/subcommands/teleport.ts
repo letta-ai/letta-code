@@ -130,6 +130,8 @@ function formatEnvironmentForList(
     deviceId: environment.deviceId,
     connectionName: environment.connectionName,
     connectionId: environment.connectionId ?? null,
+    connectedAt: environment.connectedAt,
+    lettaCodeVersion: environment.metadata?.lettaCodeVersion ?? null,
   };
 }
 
