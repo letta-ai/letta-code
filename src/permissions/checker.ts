@@ -816,6 +816,7 @@ function getDefaultDecision(
     "write_artifact_file",
     "Wake",
     "WatchPR",
+    "WatchCanvas",
     "AskUserQuestion",
     "AskUserQuestionAsync",
   ];

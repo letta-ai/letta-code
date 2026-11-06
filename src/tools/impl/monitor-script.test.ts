@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,9 +9,12 @@ import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import {
   clearCapturedToolExecutionContexts,
+  clearExternalTools,
   executeTool,
   getExecutionContextById,
+  registerExternalTools,
   releaseToolExecutionContext,
+  setExternalToolExecutor,
 } from "@/tools/manager";
 import { prepareToolExecutionContextForResolvedTarget } from "@/tools/toolset";
 import {
@@ -60,6 +63,7 @@ afterEach(async () => {
   setMessageQueueAdder(null);
   clearPendingMessages();
   clearCapturedToolExecutionContexts();
+  clearExternalTools();
   await settingsManager.reset();
   configureBackendMode(originalMode);
   for (const [key, value] of [
@@ -85,11 +89,18 @@ async function waitFor(condition: () => boolean, timeoutMs = 8000) {
 async function launch(
   input: Record<string, unknown>,
   mode: "unrestricted" | "strict" = "unrestricted",
+  toolName: "Monitor" | "WatchCanvas" = "Monitor",
 ) {
   const { preparedToolContext } =
     await prepareToolExecutionContextForResolvedTarget({
       toolsetPreference: "letta",
-      clientToolAllowlist: ["Monitor", "Read", "Write"],
+      clientToolAllowlist: [
+        "Monitor",
+        "WatchCanvas",
+        "Read",
+        "Write",
+        "read_canvas",
+      ],
       workingDirectory: home,
       permissionModeState: { mode },
       runtimeContext: { agentId, conversationId, workingDirectory: home },
@@ -104,8 +115,10 @@ async function launch(
     },
     () =>
       executeTool(
-        "Monitor",
-        { description: "script test", ...input },
+        toolName,
+        toolName === "Monitor"
+          ? { description: "script test", ...input }
+          : input,
         { toolContextId: contextId },
       ),
   );
@@ -265,4 +278,91 @@ test("requires exactly one source and excludes Monitor from nested tools", async
   await waitFor(() => queued.some((m) => m.text.includes("<status>completed")));
   expect(queued.at(-1)?.text).toContain('["undefined","function","function"]');
   expect(backgroundProcesses.get(taskId)?.status).toBe("completed");
+}, 15000);
+
+test("WatchCanvas wakes its conversation, retains its harness, and TaskStop aborts an in-flight poll", async () => {
+  registerExternalTools([
+    {
+      name: "read_canvas",
+      description: "Read a canvas",
+      parameters: {
+        type: "object",
+        properties: {
+          canvas_id: { type: "string" },
+          watch: { type: "boolean" },
+        },
+      },
+    },
+  ]);
+  let reads = 0;
+  let aborted = false;
+  setExternalToolExecutor(async (_id, _name, input, options) => {
+    expect(input).toEqual({ canvas_id: "F123", watch: true });
+    if (++reads === 1)
+      return {
+        isError: false,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              watch_events: [{ kind: "editing started", diff: "+hello" }],
+            }),
+          },
+        ],
+      };
+    await new Promise<void>((resolve) => {
+      options?.signal?.addEventListener(
+        "abort",
+        () => {
+          aborted = true;
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    return {
+      isError: false,
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            watch_events: [{ kind: "editing settled", diff: "+too late" }],
+          }),
+        },
+      ],
+    };
+  });
+  const originalTimeout = globalThis.setTimeout;
+  const timers = spyOn(globalThis, "setTimeout").mockImplementation(
+    Object.assign(
+      (...[callback, ms, ...args]: Parameters<typeof setTimeout>) =>
+        originalTimeout(callback, ms === 10000 ? 50 : ms, ...args),
+      { __promisify__: originalTimeout.__promisify__ },
+    ),
+  );
+  try {
+    const { taskId, contextId, outputFile } = await launch(
+      { canvas_id: "F123" },
+      "unrestricted",
+      "WatchCanvas",
+    );
+    expect(taskId).toStartWith("monitor_");
+    await waitFor(() => reads === 2);
+    releaseToolExecutionContext(contextId);
+    expect(getExecutionContextById(contextId)).toBeDefined();
+    await waitFor(() =>
+      queued.some((message) => message.text.includes("editing started")),
+    );
+    expect(queued[0]).toMatchObject({ agentId, conversationId });
+    expect(readFileSync(outputFile, "utf8")).toContain("+hello");
+    expect((await task_stop({ task_id: taskId })).killed).toBe(true);
+    await waitFor(
+      () => aborted && getExecutionContextById(contextId) === undefined,
+    );
+    expect(queued.some((message) => message.text.includes("too late"))).toBe(
+      false,
+    );
+  } finally {
+    timers.mockRestore();
+  }
 }, 15000);

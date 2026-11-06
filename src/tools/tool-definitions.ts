@@ -28,6 +28,7 @@ import TaskUpdateDescription from "./descriptions/TaskUpdate.md";
 import UpdatePlanDescription from "./descriptions/UpdatePlan.md";
 import ViewImageDescription from "./descriptions/ViewImage.md";
 import WakeDescription from "./descriptions/Wake.md";
+import WatchCanvasDescription from "./descriptions/WatchCanvas.md";
 import WatchPRDescription from "./descriptions/WatchPR.md";
 import WorkflowDescription from "./descriptions/Workflow.md";
 import WriteDescription from "./descriptions/Write.md";
@@ -62,10 +63,10 @@ import { task_update } from "./impl/task-update";
 import { update_plan } from "./impl/update-plan";
 import { view_image } from "./impl/view-image";
 import { wake } from "./impl/wake";
+import { watch_canvas } from "./impl/watch-canvas";
 import { watch_pr } from "./impl/watch-pr";
 import { workflow } from "./impl/workflow";
 import { write } from "./impl/write";
-
 import ApplyPatchSchema from "./schemas/ApplyPatch.json";
 import AskUserQuestionSchema from "./schemas/AskUserQuestion.json";
 import BashSchema from "./schemas/Bash.json";
@@ -94,6 +95,7 @@ import TaskUpdateSchema from "./schemas/TaskUpdate.json";
 import UpdatePlanSchema from "./schemas/UpdatePlan.json";
 import ViewImageSchema from "./schemas/ViewImage.json";
 import WakeSchema from "./schemas/Wake.json";
+import WatchCanvasSchema from "./schemas/WatchCanvas.json";
 import WatchPRSchema from "./schemas/WatchPR.json";
 import WorkflowSchema from "./schemas/Workflow.json";
 import WriteSchema from "./schemas/Write.json";
@@ -180,6 +182,11 @@ const toolDefinitions = {
     ) as typeof MonitorSchema,
     description: applyMonitorMaxTimeout(MonitorDescription.trim()),
     impl: monitor,
+  }),
+  WatchCanvas: defineTool({
+    schema: WatchCanvasSchema,
+    description: WatchCanvasDescription.trim(),
+    impl: watch_canvas,
   }),
   WatchPR: defineTool({
     schema: WatchPRSchema,
