@@ -44,44 +44,6 @@ Keep the server process running and the computer awake and online. The named com
 
 No inbound ports, public IP, or reverse proxy are required: the server connects outward to Letta Cloud. Use plain `letta server`, not `letta server --listen`; `--listen` starts the separate App Server interface for direct application connections.
 
-## Refresh a long-lived computer link
-
-`letta teleport list` reports `connectedAt` and `lettaCodeVersion` for each
-online remote computer. Before using a user-managed computer whose current
-connection is more than 24 hours old, update and relink it. Use the exact
-`deviceId` from the listing; names can be ambiguous and connection IDs change
-during this flow.
-
-First, ask the existing listener to update itself and restart safely:
-
-```bash
-letta -p "/upgrade-letta-code" --computer <deviceId>
-```
-
-Do not replace this with a global package install or by killing the listener.
-The remote command uses Letta Code's updater and replacement-listener handoff.
-It may briefly disconnect while restarting. Re-run `letta teleport list` and
-continue only after the same device is online again. A response saying it is
-already current is also success.
-
-For a computer connected through a Slack organization, mint a fresh connect
-token with Option 1, then dispatch a remote subagent to the **same device ID**
-and have it run the generated `letta server --org ... --token ...
---computer-name ...` command. Keep the one-time token out of shared channels
-and the final response, and tell the subagent not to echo it. Credential
-exchange happens before the duplicate-listener check, so
-`Authenticated successfully` followed by “already running” is the expected
-result when the original listener is still healthy.
-
-Finally, run `letta teleport list` again. Require the device to be online with
-a fresh `connectedAt` and a current `lettaCodeVersion` before relying on it.
-Do not reuse a connect token or loop on the command if the connection does not
-rotate; inspect the exact exchange or reconnect error instead.
-
-Browser-sign-in connections still require the user to approve OAuth. Do not
-clear credentials, simulate browser approval, or downgrade to a raw API key to
-make that path unattended.
-
 ## Verify access or reconnect an existing computer
 
 After the user completes setup, run:

@@ -185,11 +185,10 @@ describe("teleport subcommand", () => {
                 connectionName: "Laptop",
                 organizationId: "org-1",
                 podId: null,
-                connectedAt: 1_762_000_000_000,
+                connectedAt: null,
                 lastHeartbeat: Date.now(),
                 lastSeenAt: Date.now(),
                 firstSeenAt: Date.now(),
-                metadata: { lettaCodeVersion: "0.34.41" },
               },
               {
                 id: "env-offline",
@@ -216,8 +215,6 @@ describe("teleport subcommand", () => {
           deviceId: "device-1",
           connectionName: "Laptop",
           connectionId: "conn-1",
-          connectedAt: 1_762_000_000_000,
-          lettaCodeVersion: "0.34.41",
         },
       ]);
       expect(parsed.hasNextPage).toBe(false);

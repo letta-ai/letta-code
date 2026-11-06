@@ -471,6 +471,15 @@ describe("listener auth", () => {
 
     expect(result.apiKey).toBe("org-access-token");
     expect(requestDeviceCodeMock).not.toHaveBeenCalled();
+    await result.onCredentialBootstrap?.({
+      refreshToken: "rt-let-computer-bootstrap",
+      expiresIn: 72_000,
+    });
+    expect(orgCredentials["org-123"]).toEqual({
+      apiKey: "org-access-token",
+      refreshToken: "rt-let-computer-bootstrap",
+      tokenExpiresAt: expect.any(Number),
+    });
   });
 
   test("refreshes an organization token into its own slot on reconnect", async () => {

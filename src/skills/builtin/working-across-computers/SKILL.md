@@ -9,10 +9,6 @@ description: Guides work across Cloud, local, and other available computers, inc
 
 The current filesystem is not the full set of computers you can use. When a request needs another computer, run `letta teleport list`. If a suitable computer is available, delegate there; otherwise follow the [connection instructions](references/connect-a-computer-for-remote-access.md). Do not infer that another computer is inaccessible merely because you are running in Cloud.
 
-Before using an online user-managed computer, inspect its `connectedAt` and
-`lettaCodeVersion` from `letta teleport list`. If the current connection is
-more than 24 hours old, follow [Refresh a long-lived computer link](references/connect-a-computer-for-remote-access.md#refresh-a-long-lived-computer-link) before starting substantial work. This keeps active computers on a current Letta Code build and opportunistically replaces legacy, non-refreshable links. Do not apply this maintenance to managed Cloud sandboxes or Desktop-local connections.
-
 ## Choose where to work
 
 - When running in Cloud, prefer staying there and delegating local work to subagents on the relevant computer.
