@@ -534,18 +534,17 @@ export type InputDispositionAdmission =
   | { kind: "untracked" }
   | { kind: "duplicate"; disposition: AcceptedInputDisposition }
   | { kind: "reserved"; reservation: InputDispositionReservation }
-  | { kind: "full" };
+  | { kind: "full"; reason?: string };
 
 function reserveDurably(
   ledger: AcceptedInputDispositionLedger,
   runtimeKey: string,
   key: string,
 ): InputDispositionAdmission {
-  const path = ledger.persistentPath;
-  if (!path) return { kind: "full" };
   try {
+    if (!ledger.persistentPath) throw new Error("Missing persistent path");
     const result = durableTransaction<InputDispositionAdmission>(
-      path,
+      ledger.persistentPath,
       (store) => {
         syncMemoryFromDurable(ledger, store);
         const existing = store.entries[key];
@@ -608,8 +607,9 @@ function reserveDurably(
     );
     if (result.kind === "reserved") ledger.abandonedReservations.delete(key);
     return result;
-  } catch {
-    return { kind: "full" };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { kind: "full", reason: `Input ledger unavailable: ${message}` };
   }
 }
 
