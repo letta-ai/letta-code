@@ -30,6 +30,11 @@
 
           bunDeps = pkgs.bun2nix.fetchBunDeps {
             bunNix = ./bun.nix;
+            overrides = pkgs.bun2nix.patchedDependenciesToOverrides {
+              patchedDependencies = lib.mapAttrs
+                (_: path: "${src}/${path}")
+                packageJson.patchedDependencies;
+            };
           };
 
           nativeBuildInputs = [
@@ -55,7 +60,8 @@
           preBuild = ''
             export HOME="$TMPDIR"
             substituteInPlace build.js \
-              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true'
+              --replace-fail 'await Bun.$`bunx tsc -p tsconfig.types.json`' 'true' \
+              --replace-fail 'rewriteDeclarationAliases(join(__dirname, "dist/types"));' ""
           '';
 
           buildPhase = ''
