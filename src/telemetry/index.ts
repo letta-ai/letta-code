@@ -16,6 +16,7 @@ import {
 import { extractInputChannel } from "./channel";
 import { isPermanentRejection, TelemetryEventQueueCap } from "./event-queue";
 import { installFatalErrorHandlers } from "./fatal-error-handler";
+import type { PermissionModeChangedData } from "./permission-mode";
 
 export type TelemetrySurface =
   | "letta_code_tui"
@@ -33,7 +34,6 @@ export type TelemetryBackend =
 export interface TelemetryInitOptions {
   handleSigint?: boolean;
 }
-
 export interface TelemetryEvent {
   type:
     | "session_start"
@@ -45,18 +45,17 @@ export interface TelemetryEvent {
     | "reflection_start"
     | "reflection_end"
     | "reflection_worktree_cleanup"
-    | "reflection_arena_vote";
+    | "reflection_arena_vote"
+    | "permission_mode_changed";
   timestamp: string;
   data: Record<string, unknown>;
 }
-
 export interface SessionStartData {
   startup_command: string;
   version: string;
   platform: string;
   node_version: string;
 }
-
 export interface SessionEndData {
   duration: number; // in seconds
   message_count: number;
@@ -74,7 +73,6 @@ export interface SessionEndData {
   context_tokens?: number;
   step_count?: number;
 }
-
 export interface ToolUsageData {
   tool_name: string;
   channel?: string;
@@ -85,7 +83,6 @@ export interface ToolUsageData {
   error_type?: string;
   stderr?: string;
 }
-
 export interface ErrorData {
   error_type: string;
   error_message: string;
@@ -493,6 +490,7 @@ class TelemetryManager {
       | ErrorData
       | UserInputData
       | ChannelGatewayLifecycleData
+      | PermissionModeChangedData
       | ReflectionStartData
       | ReflectionEndData
       | ReflectionWorktreeCleanupData
@@ -508,7 +506,10 @@ class TelemetryManager {
       data: {
         ...data,
         session_id: this.sessionId,
-        agent_id: this.currentAgentId || undefined,
+        agent_id:
+          type === "permission_mode_changed"
+            ? (data as PermissionModeChangedData).agent_id
+            : this.currentAgentId || undefined,
         agent_origin: this.currentAgentOrigin || undefined,
         surface: this.surface,
         backend: resolveTelemetryBackend(),
@@ -755,6 +756,10 @@ class TelemetryManager {
       version: getVersion(),
       platform: process.platform,
     });
+  }
+
+  trackPermissionModeChanged(data: PermissionModeChangedData) {
+    this.track("permission_mode_changed", data);
   }
 
   trackError(

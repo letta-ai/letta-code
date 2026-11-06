@@ -1,5 +1,6 @@
 import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import {
+  contextWindowToPreserveForModelSelection,
   getModelPresetUpdateForAgent,
   getModelUpdateArgs,
   getResumeRefreshArgs,
@@ -8,7 +9,12 @@ import {
 import { buildModelSettings, updateAgentLLMConfig } from "@/agent/modify";
 import type { ConversationCreateBody } from "@/backend";
 
-export async function prepareExistingHeadlessModel(options: {
+/**
+ * Applies `--model`, or the preset refresh when no model is given, to an agent
+ * that interactive or headless startup is resuming. With `createsConversation`
+ * the model goes on the new conversation and the agent is left unchanged.
+ */
+export async function prepareResumedAgentModel(options: {
   agent: AgentState;
   modelIdentifier?: string;
   modelHandle?: string;
@@ -28,8 +34,19 @@ export async function prepareExistingHeadlessModel(options: {
 
   if (modelHandle) {
     const updateArgs = getModelUpdateArgs(modelIdentifier);
+    const selectedContextWindow = updateArgs?.context_window;
+    const preservedContextWindow = contextWindowToPreserveForModelSelection({
+      currentModelHandle: agent.model,
+      currentLlmConfig: agent.llm_config,
+      selectedModelHandle: modelHandle,
+      selectedContextWindow:
+        typeof selectedContextWindow === "number"
+          ? selectedContextWindow
+          : undefined,
+    });
     if (createsConversation) {
-      const contextWindow = updateArgs?.context_window;
+      const contextWindow =
+        preservedContextWindow ?? updateArgs?.context_window;
       return {
         agent,
         conversationModel: {
@@ -47,7 +64,14 @@ export async function prepareExistingHeadlessModel(options: {
     }
 
     return {
-      agent: await updateAgentLLMConfig(agent.id, modelHandle, updateArgs),
+      agent: await updateAgentLLMConfig(
+        agent.id,
+        modelHandle,
+        updateArgs,
+        preservedContextWindow !== undefined
+          ? { contextWindowOverride: preservedContextWindow }
+          : undefined,
+      ),
     };
   }
 

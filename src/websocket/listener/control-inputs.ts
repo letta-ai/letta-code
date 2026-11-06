@@ -4,6 +4,7 @@ import type WebSocket from "ws";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
+import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
@@ -110,10 +111,21 @@ export function handleModeChange(
       return;
     }
 
+    const previousMode = current.mode;
     current.mode = incomingMode;
     current.explicit = true;
 
     persistPermissionModeMapForRuntime(runtime);
+    if (previousMode !== incomingMode) {
+      telemetry.trackPermissionModeChanged({
+        agent_id: agentId,
+        conversation_id: conversationId,
+        prev_mode: previousMode,
+        new_mode: incomingMode,
+        source: "user_toggle",
+        mode_is_default: false,
+      });
+    }
 
     emitRuntimeStateUpdates(runtime, scope);
 

@@ -169,7 +169,8 @@ function getPageItems<T>(page: unknown): T[] {
   return [];
 }
 
-const AGENT_LIST_PAGE_LIMIT = 1000;
+// The server's maximum page size.
+const AGENT_LIST_PAGE_LIMIT = 200;
 const AGENT_SEARCH_PAGE_LIMIT = 50;
 
 function isAgentShapedId(model: string): boolean {
