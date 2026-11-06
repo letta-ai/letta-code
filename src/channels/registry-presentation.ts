@@ -210,6 +210,22 @@ export function buildSignalConversationSummary(
   return `[Signal] Group${channelLabel || ` ${msg.chatId}`}`;
 }
 
+export function buildFeishuConversationSummary(
+  msg: Pick<
+    InboundChannelMessage,
+    "chatId" | "chatLabel" | "chatType" | "senderId" | "senderName" | "text"
+  >,
+): string {
+  if (msg.chatType === "direct") {
+    return `[Feishu] DM with ${msg.senderName?.trim() || msg.senderId}`;
+  }
+  const preview = truncateChannelSummaryPreview(msg.text);
+  const channelLabel =
+    msg.chatLabel && msg.chatLabel !== msg.chatId ? ` in ${msg.chatLabel}` : "";
+  if (preview) return `[Feishu] Group${channelLabel}: ${preview}`;
+  return `[Feishu] Group${channelLabel || ` ${msg.chatId}`}`;
+}
+
 export function buildChannelTurnSource(
   route: ChannelRoute,
   msg: Pick<
