@@ -2517,7 +2517,7 @@ class AsyncHookJSONOutput(TypedDict):
 
 ### Hook Usage Example
 
-This example registers two hooks: one that blocks dangerous Bash commands like `rm -rf /`, and another that logs all tool usage for auditing. The security hook only runs on Bash commands (via the `matcher`), while the logging hook runs on all tools.
+This example registers two hooks: one that blocks dangerous Bash commands like `rm -rf /`, and another that logs all tool usage for auditing. With its [`Bash` matcher](https://code.claude.com/docs/en/agent-sdk/hooks#matchers), the security hook runs on Bash tool calls. The logging hook has no matcher, so it runs on every tool call.
 
 ```python theme={null}
 import asyncio

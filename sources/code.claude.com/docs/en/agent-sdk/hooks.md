@@ -226,7 +226,7 @@ SDK matchers follow the same rules as [matchers in settings files](https://code.
 | `timeout` | `number` | `undefined` | Timeout in seconds. When omitted, Claude Code applies the [event's default timeout](#hook-timeout). Your SDK callbacks follow the `command` hook defaults |
 | `onFailure` | `"continue" \| "block"` | `undefined` | What a failed callback does. Set `"block"` to [block the action when a callback fails](#block-the-action-when-a-callback-fails). In Python, use `on_failure` |
 
-Use the `matcher` pattern to target specific tools whenever possible. A matcher with `'Bash'` only runs for Bash commands, while omitting the pattern runs your callbacks for every occurrence of the event.
+Use the `matcher` pattern to target specific tools whenever possible. With a `'Bash'` matcher, your callbacks run for Bash commands. On Claude Code v2.1.314 or later, they also run on `PreToolUse` and `PermissionRequest` for Monitor commands, which they [can deny but not approve](https://code.claude.com/docs/en/hooks.md#match-monitor-commands). With no matcher, they run for every occurrence of the event.
 
 ### Callback functions
 
