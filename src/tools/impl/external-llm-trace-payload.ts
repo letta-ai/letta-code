@@ -2,7 +2,7 @@ import { isCloudServerUrl } from "@/backend/api/server-url";
 
 export const MAX_TRACE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 const SENSITIVE =
-  /^(authorization|proxy-authorization|x-api-key|api[_-]?key|cookies?|set-cookie|x-auth-token|access_token|refresh_token|password|secret)$/i;
+  /^(authorization|proxy-authorization|x-api-key|api[_-]?key|cookies?|set-cookie|x-auth-token|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|secret)$/i;
 type JsonObject = Record<string, any>;
 
 export function traceCaptureEnabled(
@@ -81,6 +81,13 @@ function assembleResponse(
     }
     if (event.type === "message_start")
       response = structuredClone(event.message);
+    if (
+      String(event.type).startsWith("content_block_") &&
+      (!Number.isInteger(event.index) ||
+        event.index < 0 ||
+        event.index > events.length)
+    )
+      throw new Error("Invalid content block index");
     if (event.type === "content_block_start") {
       response.content ??= [];
       response.content[event.index] = structuredClone(event.content_block);

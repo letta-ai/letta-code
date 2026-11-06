@@ -67,7 +67,7 @@ test("forwards request and streaming response bytes unchanged without storing au
 test("compressed responses pass through and oversized payloads keep a metadata row", async () => {
   const { gzipSync } = await import("node:zlib");
   const body = JSON.stringify({
-    model: "test",
+    model: "private-model",
     text: "é",
     usage: { input_tokens: 3, output_tokens: 4 },
   });
@@ -98,7 +98,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
       task_id: "t",
       worker_session_id: "s",
     },
-    secrets: [],
+    secrets: ["private-model"],
     emit: (row) => rows.push(row),
   });
   try {
@@ -116,10 +116,55 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(rows).toHaveLength(2);
     expect(rows[0]?.prompt_tokens).toBe(3);
+    expect(JSON.stringify(rows)).not.toContain("private-model");
     expect(rows[1]?.capture_status).toBe("size_limit");
     expect(JSON.parse(rows[1]?.response_json ?? "{}")).toEqual({
       omitted: "size_limit",
     });
+  } finally {
+    await proxy.close();
+    upstream.close();
+  }
+});
+
+test("upstream aborts retain an incomplete trace without changing delivered bytes", async () => {
+  const partial = 'data: {"type":"response.created"}\n\n';
+  const upstream = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(partial);
+    setTimeout(() => res.destroy(), 20);
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const rows: ExternalTraceRow[] = [];
+  const proxy = await startTraceProxy({
+    upstream: `http://127.0.0.1:${address.port}`,
+    harness: "codex",
+    scope: {
+      parent_agent_id: "a",
+      parent_conversation_id: "c",
+      task_id: "t",
+      worker_session_id: "s",
+    },
+    secrets: [],
+    emit: (row) => rows.push(row),
+  });
+  try {
+    const reply = await fetch(`${proxy.url}/responses`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (!reply.body) throw new Error("Missing response body");
+    const reader = reply.body.getReader();
+    const first = await reader.read();
+    expect(new TextDecoder().decode(first.value)).toBe(partial);
+    await expect(reader.read()).rejects.toThrow();
+    await proxy.close();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.capture_status).toBe("incomplete");
+    expect(rows[0]?.error_type).toBe("transport_error");
   } finally {
     await proxy.close();
     upstream.close();

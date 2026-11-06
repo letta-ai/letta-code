@@ -55,6 +55,7 @@ export async function startTraceProxy(options: {
     throw new Error("Unsupported trace upstream");
   const prefix = `/${randomUUID()}`;
   let activeCaptures = 0;
+  const pending = new Set<Promise<void>>();
   const server = createServer((req, res) => {
     if (!req.url?.startsWith(`${prefix}/`)) {
       res.writeHead(404).end();
@@ -91,7 +92,24 @@ export async function startTraceProxy(options: {
       if (finished) return;
       finished = true;
       if (!capture) return;
-      activeCaptures--;
+      // Let pipe deliver its final bytes before processing the captured copy.
+      // Keep the slot until processing finishes so deferred buffers stay bounded.
+      const work = new Promise<void>((resolve) =>
+        setImmediate(() => {
+          try {
+            processCapture(transportError);
+          } catch {
+            // Malformed/deep JSON and telemetry callbacks must never break transport.
+          } finally {
+            activeCaptures--;
+            resolve();
+          }
+        }),
+      );
+      pending.add(work);
+      void work.finally(() => pending.delete(work));
+    };
+    const processCapture = (transportError: boolean) => {
       let oversized =
         !captureBody ||
         requestBytes > MAX_TRACE_PAYLOAD_BYTES ||
@@ -156,7 +174,7 @@ export async function startTraceProxy(options: {
       const written = token(usage.cache_creation_input_tokens);
       let input = token(usage.input_tokens);
       if (options.harness === "claude_code" && input !== null)
-        input += (cached ?? 0) + (written ?? 0);
+        input = token(input + (cached ?? 0) + (written ?? 0));
       const output = token(usage.output_tokens);
       const error =
         transportError ||
@@ -167,7 +185,12 @@ export async function startTraceProxy(options: {
         ...scope,
         id: randomUUID(),
         harness: options.harness,
-        model: String(response.model ?? request.model ?? "").slice(0, 255),
+        model: JSON.parse(
+          sanitizeTraceJson(
+            JSON.stringify(String(response.model ?? request.model ?? "")),
+            credentials,
+          ),
+        ).slice(0, 255),
         request_json: sanitizeTraceJson(
           oversized ? '{"omitted":"size_limit"}' : requestRaw,
           credentials,
@@ -177,7 +200,8 @@ export async function startTraceProxy(options: {
         response_size_bytes: Math.min(responseBytes, 0xffffffff),
         prompt_tokens: input,
         completion_tokens: output,
-        total_tokens: input !== null && output !== null ? input + output : null,
+        total_tokens:
+          input !== null && output !== null ? token(input + output) : null,
         cached_input_tokens: cached,
         cache_write_tokens: written,
         reasoning_tokens: token(usage.output_tokens_details?.reasoning_tokens),
@@ -270,10 +294,12 @@ export async function startTraceProxy(options: {
     throw new Error("Trace proxy failed to listen");
   return {
     url: `http://127.0.0.1:${address.port}${prefix}`,
-    close: () =>
-      new Promise<void>((resolve) => {
+    close: async () => {
+      await new Promise<void>((resolve) => {
         server.close(() => resolve());
         server.closeAllConnections();
-      }),
+      });
+      await Promise.all(pending);
+    },
   };
 }

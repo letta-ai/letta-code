@@ -124,3 +124,24 @@ test("malformed provider events cannot break the forwarding path", () => {
     ).complete,
   ).toBe(false);
 });
+
+test("redacts camel-case credential fields", () => {
+  const clean = sanitizeTraceJson(
+    JSON.stringify({
+      accessToken: "credential",
+      refreshToken: "credential",
+      client_secret: "credential",
+    }),
+    [],
+  );
+  expect(clean).not.toContain("credential");
+});
+
+test("malformed block indexes cannot create huge sparse capture arrays", () => {
+  const result = assembleTraceResponse(
+    'data: {"type":"content_block_start","index":4294967294,"content_block":{"type":"text","text":"x"}}\n\n',
+    true,
+  );
+  expect(result.complete).toBe(false);
+  expect(result.response.content?.length ?? 0).toBeLessThan(10);
+});

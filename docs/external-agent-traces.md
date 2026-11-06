@@ -9,6 +9,8 @@ captured JSON; forwarded request and response bytes are unchanged.
 Set `LETTA_CODE_TELEM=0`, `LETTA_CODE_TELEM=false`, or `DO_NOT_TRACK=1` to disable
 capture and upload. Self-hosted and unauthenticated sessions do not upload.
 
+Batches upload to `POST /v1/conversations/:conversationId/llm-trace`.
+
 Each row includes the harness, model, parent agent/conversation, background task,
 native worker session, request/response JSON, usage, latency, HTTP status, errors,
 and creation time. Unknown usage/cost values are null. For streaming responses,
