@@ -72,7 +72,10 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     usage: { input_tokens: 3, output_tokens: 4 },
   });
   let large = false;
-  const upstream = createServer((_req, res) => {
+  const upstream = createServer(async (req, res) => {
+    for await (const _chunk of req) {
+      /* consume each request before reusing the connection */
+    }
     if (large) {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ text: "a".repeat(2 * 1024 * 1024) }));
@@ -112,7 +115,8 @@ test("compressed responses pass through and oversized payloads keep a metadata r
       method: "POST",
       body: "{}",
     });
-    await second.text();
+    expect(second.status).toBe(200);
+    expect((await second.text()).length).toBeGreaterThan(2 * 1024 * 1024);
     await new Promise((resolve) => setTimeout(resolve, 10));
     expect(rows).toHaveLength(2);
     expect(rows[0]?.prompt_tokens).toBe(3);
@@ -126,6 +130,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
       method: "POST",
       body: JSON.stringify({ text: "a".repeat(300000) }),
     });
+    expect(third.status).toBe(200);
     await third.text();
     await proxy.close();
     expect(rows[2]?.capture_status).toBe("size_limit");
