@@ -132,7 +132,7 @@ jobs:
           mv package.json.tmp package.json
           bun run runtime-graph:generate
 
-          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Commit version bump
         run: |
