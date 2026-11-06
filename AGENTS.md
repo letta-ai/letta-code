@@ -731,6 +731,15 @@ like catalog rows.
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
 
+**Adding a model:** add it at the source that owns it. Hosted presets belong in
+the server's catalog; local models belong in pi-ai or that provider's discovery
+runtime. Change this repository only for Letta Code-specific compatibility, such
+as an established CLI alias in `model-catalog.ts` or provider detection for
+toolset selection in `src/tools/manager.ts`, and derive handles and metadata
+from the runtime catalog instead of copying model definitions. Smoke-test with
+`bun run src/index.ts --new --model <id> -p "hi"`; the headless CI model matrix
+lives in `.github/workflows/ci.yml`.
+
 **Test fixture pattern:** The `models` array is shared mutable state across the
 test suite. Use `setupRuntimeModelCatalogFixture()` (bundles setup + cleanup) from
 `src/test-utils/runtime-model-catalog.ts`. All test files touching the model
