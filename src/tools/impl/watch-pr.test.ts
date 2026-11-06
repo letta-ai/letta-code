@@ -115,6 +115,53 @@ describe("WatchPR background lifecycle", () => {
     }
   });
 
+  test("restarting after a merge-ready poll reports no readiness change", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "watch-pr-readiness-"));
+    const previousConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = configDir;
+    const args = {
+      url,
+      parentScope: { agentId: "agent-ready", conversationId: "conv-ready" },
+    };
+    let pollFinished!: () => void;
+    const polled = new Promise<void>((resolve) => {
+      pollFinished = resolve;
+    });
+    let waits = 0;
+    const wait = async (signal: AbortSignal) => {
+      if (++waits === 1) return;
+      pollFinished();
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+    try {
+      const first = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await polled;
+      await task_stop({ task_id: first.taskId });
+      const second = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await task_stop({ task_id: second.taskId });
+      expect(second.content[0]?.text).not.toContain(
+        "PR is no longer merge-ready",
+      );
+      expect(second.content[0]?.text).not.toContain(
+        "Changes since the previous watch ended",
+      );
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = "86400";

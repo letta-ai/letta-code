@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   mkdirSync,
   readFileSync,
@@ -104,7 +104,7 @@ function saveSnapshot(
   snapshot: GitHubPullRequestSnapshot,
 ): void {
   if (!path) return;
-  const temporary = `${path}.${process.pid}.tmp`;
+  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`;
   try {
     if (snapshot.state !== "OPEN") {
       rmSync(path, { force: true });
@@ -115,6 +115,7 @@ function saveSnapshot(
     const compact = {
       ...snapshot,
       ref: undefined,
+      readinessConfirmed: false,
       checks: snapshot.checks.map(({ key, phase }) => ({ key, phase })),
       checkAttempts: snapshot.checkAttempts.map(({ key }) => ({ key })),
       comments: snapshot.comments.map(({ id, updatedAt }) => ({
@@ -209,24 +210,29 @@ export async function watch_pr(
         }
       : undefined);
   const scope = resolveNotificationScope(parentScope);
-  const snapshotPath = scope
-    ? join(
-        resolveGlobalConfigDir(),
-        "cache",
-        "watch-pr",
-        `${createHash("sha256")
-          .update(
-            JSON.stringify([
-              scope.agentId,
-              scope.conversationId,
-              ref.owner.toLowerCase(),
-              ref.repo.toLowerCase(),
-              ref.number,
-            ]),
-          )
-          .digest("hex")}.json`,
-      )
-    : undefined;
+  let snapshotPath: string | undefined;
+  try {
+    snapshotPath = scope
+      ? join(
+          resolveGlobalConfigDir(),
+          "cache",
+          "watch-pr",
+          `${createHash("sha256")
+            .update(
+              JSON.stringify([
+                scope.agentId,
+                scope.conversationId,
+                ref.owner.toLowerCase(),
+                ref.repo.toLowerCase(),
+                ref.number,
+              ]),
+            )
+            .digest("hex")}.json`,
+        )
+      : undefined;
+  } catch {
+    // Invalid config paths disable persistence, not the watch.
+  }
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
   const changesSincePreviousWatch = resumedChanges(snapshotPath, initial);
