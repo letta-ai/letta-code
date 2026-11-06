@@ -21,6 +21,7 @@ export function followRemoteSubagentEvents(
   const pull = (target: number) => {
     requested = target;
     draining = draining.then(async () => {
+      if (cursor >= requested) return;
       try {
         while (cursor < requested) {
           const page = await read(cursor);
