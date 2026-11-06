@@ -292,6 +292,7 @@ async function executeSubagent(
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
+  // Check if already aborted before starting
   if (signal?.aborted) {
     return withModel({
       agentId: "",
@@ -300,6 +301,7 @@ async function executeSubagent(
       error: INTERRUPTED_BY_USER,
     });
   }
+  // Update the state with the model being used (may differ on retry/fallback)
   if (model) {
     updateSubagent(subagentId, { model });
   }
@@ -309,7 +311,6 @@ async function executeSubagent(
       ? "local"
       : "api";
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
-
     let parentAgentId = parentAgentIdOverride;
     if (!parentAgentId) {
       try {
@@ -406,7 +407,6 @@ async function executeSubagent(
           ? undefined
           : allocateSubagentName(parentAgentName),
     });
-
     // Optionally confine subagents with the memory-subagent profile to an OS filesystem sandbox.
     // Returns null (spawn unchanged) when disabled, not applicable, or no
     // backend is available on this host.
