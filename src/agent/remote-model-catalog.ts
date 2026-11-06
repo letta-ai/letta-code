@@ -342,7 +342,30 @@ export function toRuntimeCatalogModels(
       });
     }
   }
-  return catalog;
+  return withUniqueIds(catalog);
+}
+
+/**
+ * Reasoning variants get `<id>-<effort>` ids, which can collide with a real
+ * model already named that way (e.g. `o3-mini` + high vs `o3-mini-high`).
+ * applyCatalogModels rejects the whole catalog on any duplicate id, so
+ * disambiguate later duplicates instead of dropping every model.
+ */
+function withUniqueIds(catalog: CatalogModel[]): CatalogModel[] {
+  const used = new Set<string>();
+  return catalog.map((entry) => {
+    if (!used.has(entry.id)) {
+      used.add(entry.id);
+      return entry;
+    }
+    const effort = entry.updateArgs?.reasoning_effort;
+    const base =
+      typeof effort === "string" ? `${entry.handle}-${effort}` : entry.handle;
+    let id = base;
+    for (let n = 2; used.has(id); n++) id = `${base}-${n}`;
+    used.add(id);
+    return { ...entry, id };
+  });
 }
 
 async function refreshRuntimeModelCatalog(
@@ -356,9 +379,15 @@ async function refreshRuntimeModelCatalog(
     const available = await getAvailableModelHandles(
       options?.force ? { forceRefresh: true } : undefined,
     );
-    return applyCatalogModels(toRuntimeCatalogModels(available.models), {
-      requireManagedDefault: false,
-    });
+    const next = toRuntimeCatalogModels(available.models);
+    const applied = applyCatalogModels(next, { requireManagedDefault: false });
+    if (!applied && next.length > 0) {
+      debugWarn("remote-model-catalog", "runtime catalog rejected", {
+        source,
+        entries: next.length,
+      });
+    }
+    return applied;
   } catch (error) {
     debugLog("remote-model-catalog", "runtime catalog refresh errored", {
       source,

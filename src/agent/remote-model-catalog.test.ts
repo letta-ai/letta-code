@@ -291,6 +291,33 @@ describe("refreshModelCatalog", () => {
     });
   });
 
+  test("keeps the runtime catalog when a reasoning variant id collides with a real model", () => {
+    const projected = toRuntimeCatalogModels([
+      {
+        handle: "openrouter/openai/o3-mini",
+        modelId: "openai/o3-mini",
+        label: "o3-mini",
+        reasoningLevels: ["low", "high"],
+      },
+      {
+        handle: "openrouter/openai/o3-mini-high",
+        modelId: "openai/o3-mini-high",
+        label: "o3-mini-high",
+      },
+    ]);
+
+    const ids = projected.map((model) => model.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(
+      applyCatalogModels(projected, { requireManagedDefault: false }),
+    ).toBe(true);
+    expect(models.map((model) => model.handle)).toEqual([
+      "openrouter/openai/o3-mini",
+      "openrouter/openai/o3-mini",
+      "openrouter/openai/o3-mini-high",
+    ]);
+  });
+
   test("applies a valid remote catalog", async () => {
     mockCatalogResponse({
       models: [
