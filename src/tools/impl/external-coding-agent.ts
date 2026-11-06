@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { getConversationId } from "@/agent/context";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
@@ -499,7 +500,7 @@ export interface ExternalWorkerLaunchEnv {
 export async function buildExternalWorkerLaunchEnv(
   options: Pick<
     ExternalCodingAgentRunOptions,
-    "parentAgentId" | "actingUserId" | "mcpReminder"
+    "parentAgentId" | "parentConversationId" | "actingUserId" | "mcpReminder"
   >,
   deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
 ): Promise<ExternalWorkerLaunchEnv> {
@@ -523,6 +524,8 @@ export async function buildExternalWorkerLaunchEnv(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_PARENT_CONVERSATION_ID:
+      options.parentConversationId ?? getConversationId() ?? "default",
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
