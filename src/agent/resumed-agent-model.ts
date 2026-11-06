@@ -34,7 +34,12 @@ function contextWindowToPreserve(
     : undefined;
 }
 
-export async function prepareExistingHeadlessModel(options: {
+/**
+ * Applies `--model`, or the preset refresh when no model is given, to an agent
+ * that interactive or headless startup is resuming. With `createsConversation`
+ * the model goes on the new conversation and the agent is left unchanged.
+ */
+export async function prepareResumedAgentModel(options: {
   agent: AgentState;
   modelIdentifier?: string;
   modelHandle?: string;

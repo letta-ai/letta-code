@@ -3,9 +3,8 @@ import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents"
 import type { Backend, ConversationCreateBody } from "@/backend";
 import { __testSetBackend } from "@/backend/backend";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
-import { clearAvailableModelsCache } from "./available-models";
-import { prepareExistingHeadlessModel } from "./headless-model-startup";
 import { resolveModel } from "./model";
+import { prepareResumedAgentModel } from "./resumed-agent-model";
 
 type UpdateCall = { id: string; body: Record<string, unknown> };
 
@@ -30,19 +29,16 @@ beforeEach(() => {
   updateAgentCalls = [];
   __testSetBackend({
     capabilities: { localModelCatalog: false },
-    listModels: async () => [],
     updateAgent: async (id: string, body: Record<string, unknown>) => {
       updateAgentCalls.push({ id, body });
       return {};
     },
     retrieveAgent: async () => makeAgent(0),
   } as unknown as Backend);
-  clearAvailableModelsCache();
 });
 
 afterEach(() => {
   __testSetBackend(null);
-  clearAvailableModelsCache();
 });
 
 // The SDK's conversation create type doesn't declare context_window_limit,
@@ -63,7 +59,7 @@ async function prepare(
   if (typeof modelHandle !== "string") {
     throw new Error(`fixture has no model ${modelIdentifier}`);
   }
-  return prepareExistingHeadlessModel({
+  return prepareResumedAgentModel({
     agent,
     modelIdentifier,
     modelHandle,
@@ -72,7 +68,7 @@ async function prepare(
   });
 }
 
-describe("prepareExistingHeadlessModel context window", () => {
+describe("prepareResumedAgentModel context window", () => {
   test("keeps the agent's window on a tier change within the same variant", async () => {
     const { conversationModel } = await prepare(
       makeAgent(262_144),
