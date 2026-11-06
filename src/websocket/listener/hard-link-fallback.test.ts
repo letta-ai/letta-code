@@ -148,6 +148,8 @@ describe("manual listener lock without hard links", () => {
       lockRoot: root,
       processId,
       isProcessAlive: (pid: number) => alive.has(pid),
+      // Fake pids have no real start time; liveness alone decides here.
+      getOwnProcessStartTime: async () => null,
     });
 
     const first = await acquireManualListenerLock(scope, deps(111));
