@@ -153,6 +153,14 @@ export async function startTraceProxy(options: {
         responseJson = '{"omitted":"size_limit"}';
       }
 
+      let requestJson = sanitizeTraceJson(
+        oversized ? '{"omitted":"size_limit"}' : requestRaw,
+        credentials,
+      );
+      if (Buffer.byteLength(requestJson) > MAX_TRACE_PAYLOAD_BYTES) {
+        oversized = true;
+        requestJson = '{"omitted":"size_limit"}';
+      }
       let request: Record<string, unknown> = {};
       try {
         const parsed = JSON.parse(requestRaw);
@@ -191,10 +199,7 @@ export async function startTraceProxy(options: {
             credentials,
           ),
         ).slice(0, 255),
-        request_json: sanitizeTraceJson(
-          oversized ? '{"omitted":"size_limit"}' : requestRaw,
-          credentials,
-        ),
+        request_json: requestJson,
         response_json: responseJson,
         request_size_bytes: Math.min(requestBytes, 0xffffffff),
         response_size_bytes: Math.min(responseBytes, 0xffffffff),

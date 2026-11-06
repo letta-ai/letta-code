@@ -98,7 +98,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
       task_id: "t",
       worker_session_id: "s",
     },
-    secrets: ["private-model"],
+    secrets: ["private-model", "a"],
     emit: (row) => rows.push(row),
   });
   try {
@@ -119,6 +119,17 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     expect(JSON.stringify(rows)).not.toContain("private-model");
     expect(rows[1]?.capture_status).toBe("size_limit");
     expect(JSON.parse(rows[1]?.response_json ?? "{}")).toEqual({
+      omitted: "size_limit",
+    });
+    large = false;
+    const third = await fetch(`${proxy.url}/responses`, {
+      method: "POST",
+      body: JSON.stringify({ text: "a".repeat(300000) }),
+    });
+    await third.text();
+    await proxy.close();
+    expect(rows[2]?.capture_status).toBe("size_limit");
+    expect(JSON.parse(rows[2]?.request_json ?? "{}")).toEqual({
       omitted: "size_limit",
     });
   } finally {

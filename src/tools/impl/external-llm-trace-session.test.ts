@@ -96,7 +96,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     {
       getConfig: async () => ({
         baseUrl: "https://api.letta.com",
-        apiKey: "key",
+        apiKey: "upload-credential",
       }),
       upload: async (rows, _config, scope) => {
         expect(scope.actingUserId).toBe("user-test");
@@ -109,7 +109,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     for (let i = 0; i < 2; i++) {
       const response = await fetch(`${trace?.url}/responses`, {
         method: "POST",
-        body: '{"model":"test","messages":[{"content":"vault-value-from-arbitrary-name"}]}',
+        body: '{"model":"test","messages":[{"content":"vault-value-from-arbitrary-name upload-credential"}]}',
       });
       await response.text();
     }
@@ -117,6 +117,7 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     expect(JSON.stringify(batches)).not.toContain(
       "vault-value-from-arbitrary-name",
     );
+    expect(JSON.stringify(batches)).not.toContain("upload-credential");
     expect(batches[0]?.[0]).not.toHaveProperty("secretValues");
     expect(batches).toHaveLength(1);
     expect(batches[0]).toHaveLength(2);

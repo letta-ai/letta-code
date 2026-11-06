@@ -136,6 +136,7 @@ export async function createTraceSession(
       return draining;
     };
     const secrets = [
+      config.apiKey,
       ...secretValues,
       ...Object.entries(env)
         .filter(([key]) => /token|secret|password|api[_-]?key/i.test(key))
