@@ -17,6 +17,6 @@ export function buildHeadlessSenderReminder(
           conversationId: env.LETTA_PARENT_CONVERSATION_ID,
         }
       : { agentId: fromAgentId },
-    false,
+    isAgentLaunch && env.LETTA_SUBAGENT_REPLY_VIA_MESSAGE === "1",
   );
 }

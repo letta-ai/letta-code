@@ -3,6 +3,10 @@ import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
 import { composeSubagentChildEnv } from "@/agent/subagents/subagent-launcher";
 import { buildAgentSendReminder } from "@/backend/api/agent-message";
 import { consumeSubagentLaunch } from "@/utils/subagent-launch-marker";
+import {
+  isLaunchSubagentCommand,
+  toSubagentLaunchArgs,
+} from "@/websocket/listener/subagent-protocol-inbound";
 import { buildHeadlessSenderReminder } from "./headless-message-sender";
 
 test("nested launches use the immediate parent scope without changing the acting user", () => {
@@ -75,4 +79,64 @@ test("memory workers receive a silent task-log contract instead of a reply instr
   expect(buildHeadlessSenderReminder(false, "agent-sender", env)).toBe(
     buildAgentSendReminder({ agentId: "agent-sender" }, false),
   );
+});
+
+test("message replies survive launch validation and child environment composition", () => {
+  for (const replyViaMessage of [true, false, undefined]) {
+    const command = {
+      type: "launch_subagent",
+      request_id: "request-launch",
+      runtime: { agent_id: "agent-parent", conversation_id: "conv-parent" },
+      args: {
+        subagent_type: "custom",
+        prompt: "Send output to another channel",
+        description: "Worker",
+        ...(replyViaMessage !== undefined && {
+          reply_via_message: replyViaMessage,
+        }),
+      },
+    };
+    expect(isLaunchSubagentCommand(command)).toBe(true);
+    if (!isLaunchSubagentCommand(command)) throw new Error("Launch rejected");
+    const args = toSubagentLaunchArgs(command.args);
+    const env = composeSubagentChildEnv({
+      parentProcessEnv: { LETTA_SUBAGENT_REPLY_VIA_MESSAGE: "1" },
+      parentAgentId: command.runtime.agent_id,
+      parentConversationId: command.runtime.conversation_id,
+      replyViaMessage: args.reply_via_message,
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+    const reminder = buildHeadlessSenderReminder(
+      consumeSubagentLaunch(env),
+      undefined,
+      env,
+    );
+    expect(reminder).toBe(
+      buildAgentSendReminder(
+        { agentId: "agent-parent", conversationId: "conv-parent" },
+        replyViaMessage === true,
+      ),
+    );
+    if (replyViaMessage) {
+      expect(reminder).toContain(
+        "Ordinary assistant output is not forwarded to the sender.",
+      );
+      expect(reminder).not.toContain(
+        "Include your answer in your final response",
+      );
+    }
+  }
+  expect(
+    isLaunchSubagentCommand({
+      type: "launch_subagent",
+      request_id: "request-invalid",
+      runtime: { agent_id: "agent-parent", conversation_id: "conv-parent" },
+      args: {
+        prompt: "Work",
+        description: "Worker",
+        reply_via_message: "true",
+      },
+    }),
+  ).toBe(false);
 });

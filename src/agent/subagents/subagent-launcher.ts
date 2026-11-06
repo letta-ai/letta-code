@@ -151,6 +151,7 @@ export interface ComposeSubagentChildEnvOptions {
    * scripts, and the cross-agent guard can identify the immediate parent. */
   parentAgentId: string | undefined;
   parentConversationId?: string;
+  replyViaMessage?: boolean;
   /** Subagent config type, used for type-specific child process isolation. */
   subagentType?: string;
   /** The subagent config's declared launch profile. Subagents with the memory-subagent profile
@@ -250,6 +251,7 @@ export function composeSubagentChildEnv(
     // Replace inherited parent addresses even when the new scope is unknown.
     LETTA_PARENT_AGENT_ID: parentAgentId,
     LETTA_PARENT_CONVERSATION_ID: options.parentConversationId,
+    LETTA_SUBAGENT_REPLY_VIA_MESSAGE: options.replyViaMessage ? "1" : undefined,
     // Children are one level below the process (or listener turn) launching them.
     [SUBAGENT_DEPTH_ENV]: String(readSubagentDepth(parentProcessEnv) + 1),
     ...(transcriptPath && { TRANSCRIPT_PATH: transcriptPath }),

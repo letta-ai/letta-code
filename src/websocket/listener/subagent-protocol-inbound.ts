@@ -12,6 +12,7 @@ const ARGUMENTS = new Set([
   "harness",
   "subagent_type",
   "fork_context",
+  "reply_via_message",
   "prompt",
   "description",
   "model",
@@ -55,6 +56,11 @@ export function isLaunchSubagentCommand(
   )
     return false;
   if (args.fork_context !== undefined && typeof args.fork_context !== "boolean")
+    return false;
+  if (
+    args.reply_via_message !== undefined &&
+    typeof args.reply_via_message !== "boolean"
+  )
     return false;
   for (const key of [
     "harness",

@@ -8,6 +8,8 @@ export interface SubagentLaunchArgs {
   subagent_type?: string;
   /** Start the child with the parent conversation's context. */
   fork_context?: boolean;
+  /** The parent does not consume final text; replies require SendAgentMessage. */
+  reply_via_message?: boolean;
   prompt: string;
   description: string;
   /** Identity of the initial assignment input, not the launch command request_id. */

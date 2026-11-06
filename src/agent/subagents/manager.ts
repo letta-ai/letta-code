@@ -288,11 +288,10 @@ async function executeSubagent(
   parentAgentName?: string | null,
   parentConversationId?: string,
   clientMessageId?: string,
+  replyViaMessage?: boolean,
 ): Promise<SubagentResult> {
   const withModel = (result: SubagentResult): SubagentResult =>
     model ? { ...result, model } : result;
-
-  // Check if already aborted before starting
   if (signal?.aborted) {
     return withModel({
       agentId: "",
@@ -301,12 +300,9 @@ async function executeSubagent(
       error: INTERRUPTED_BY_USER,
     });
   }
-
-  // Update the state with the model being used (may differ on retry/fallback)
   if (model) {
     updateSubagent(subagentId, { model });
   }
-
   try {
     const activeBackend = getBackend();
     const backendMode: BackendMode = activeBackend.capabilities.localMemfs
@@ -396,6 +392,7 @@ async function executeSubagent(
       parentAgentId,
       subagentType: type,
       parentConversationId,
+      replyViaMessage,
       launchProfile: effectiveLaunchProfile,
       inheritedPrimaryRoot,
       memoryScope,
@@ -570,6 +567,7 @@ async function executeSubagent(
             parentAgentName,
             parentConversationId,
             clientMessageId,
+            replyViaMessage,
           );
         }
       }
@@ -602,6 +600,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          replyViaMessage,
         );
       }
 
@@ -721,6 +720,7 @@ async function executeSubagent(
           parentAgentName,
           parentConversationId,
           clientMessageId,
+          replyViaMessage,
         );
       }
     }
@@ -834,6 +834,7 @@ async function spawnSubagentInContext(
   actingUserId?: string | null,
   resolvedConfig?: SubagentConfig,
   clientMessageId?: string,
+  replyViaMessage?: boolean,
 ): Promise<SubagentResult> {
   const launchActingUserId =
     actingUserId !== undefined
@@ -983,6 +984,7 @@ async function spawnSubagentInContext(
     parentAgent?.name,
     resolvedParentConversationId,
     clientMessageId,
+    replyViaMessage,
   );
 }
 

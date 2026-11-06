@@ -120,6 +120,7 @@ export interface SpawnBackgroundSubagentTaskArgs {
   existingConversationId?: string;
   /** Identity for this child's initial input only. */
   clientMessageId?: string;
+  replyViaMessage?: boolean;
   maxTurns?: number;
   forkedContext?: boolean;
   /** Parent conversation scope for routing notifications in listener mode. */
@@ -376,6 +377,7 @@ export function spawnBackgroundSubagentTask(
       actingUserId,
       args.config,
       args.clientMessageId,
+      args.replyViaMessage,
     );
   };
   const memoryTask =
@@ -926,6 +928,7 @@ export async function launchSubagent(
     existingConversationId: effectiveConversationId,
     maxTurns: args.max_turns,
     clientMessageId: args.client_message_id,
+    replyViaMessage: args.reply_via_message,
     forkedContext: config.fork,
     parentScope: resolvedParentScope,
     ...callerNotification,
