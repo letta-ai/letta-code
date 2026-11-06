@@ -280,6 +280,11 @@ describe("refreshModelCatalog", () => {
       "claude-sonnet-4-6-medium",
       "claude-sonnet-4-6-high",
     ]);
+    expect(projected.map((model) => model.description)).toEqual([
+      "Claude Sonnet 4.6 (no reasoning) via anthropic",
+      "Claude Sonnet 4.6 (med reasoning) via anthropic",
+      "Claude Sonnet 4.6 (high reasoning) via anthropic",
+    ]);
     expect(
       applyCatalogModels(projected, { requireManagedDefault: false }),
     ).toBe(true);
