@@ -165,6 +165,11 @@
       "reason": "Mutates the settings singleton, HOME, and the secrets service name."
     },
     {
+      "path": "src/browser-discovery-server.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Builds and launches real Node fixtures and opens live sockets; an isolated process prevents shared-batch load from exhausting the Windows fixture-output deadline."
+    },
+    {
       "path": "src/settings-manager-auth-cache.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates the settings singleton, keychain test overrides, HOME, and the secrets service name."
@@ -277,6 +282,11 @@
       "path": "src/websocket/listener/remote-settings.test.ts",
       "timeoutMs": 15000,
       "reason": "Mutates HOME and the remote-settings singleton to verify startup cwd-map repair."
+    },
+    {
+      "path": "src/websocket/listener/turn-durability.test.ts",
+      "timeoutMs": 30000,
+      "reason": "Performs hundreds of synchronous durable writes and lock operations; isolate it so shared-batch load does not make Windows lock-budget assertions hit the generic 15-second timeout."
     },
     {
       "path": "src/tools/impl/task-external-fork.test.ts",
