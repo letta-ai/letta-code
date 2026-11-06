@@ -51,6 +51,8 @@ function getMockMemfsGitProxyRewriteConfig(
 
 mock.module("../backend/api/client", () => ({
   getClient: mockGetClient,
+  clearLastSDKDiagnostic: () => {},
+  consumeLastSDKDiagnostic: () => null,
   getServerUrl: () => "http://localhost:8283",
   getMemfsServerUrl: getMockMemfsServerUrl,
   getMemfsGitProxyRewriteConfig: getMockMemfsGitProxyRewriteConfig,

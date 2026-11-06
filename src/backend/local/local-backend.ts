@@ -79,12 +79,17 @@ import type {
   StoredMessage,
 } from "./local-store";
 import {
+  listImportedLocalConversations,
+  writeImportedLocalConversation,
+} from "./local-trajectory-import";
+import {
   getLocalBackendMemoryFilesystemRoot,
   isLocalBackendMemfsDisabledForProcess,
 } from "./paths";
 import {
   appendAvailableSkillsBlock,
   compileLocalSystemPrompt,
+  formatMidConversationMemoryUpdate,
   getCommittedMemfsRevision,
   hashRawSystemPrompt,
   type LocalCompiledSystemPrompt,
@@ -125,19 +130,6 @@ export interface LocalBackendModEventHooks {
   }) => void | Promise<void>;
   onLlmStart?: (info: LlmStartInfo) => void | Promise<void>;
   onLlmEnd?: (info: LlmEndInfo) => void | Promise<void>;
-}
-
-function formatMidConversationMemoryUpdate(
-  compiled: LocalCompiledSystemPrompt,
-): string {
-  return [
-    "<memory_update>",
-    `The local memory filesystem has been edited and committed at revision ${compiled.memfsRevision ?? "unknown"}.`,
-    "This updates part of your persona/system memory. Treat the following freshly rendered memory context as authoritative from now on; where it conflicts with earlier memory context, this newer memory context wins.",
-    "",
-    compiled.coreMemory.trimEnd(),
-    "</memory_update>",
-  ].join("\n");
 }
 
 export class LocalBackend extends HeadlessBackend {
@@ -361,6 +353,23 @@ export class LocalBackend extends HeadlessBackend {
       }
     }
     return agent;
+  }
+
+  /** Persist a validated trajectory in an out-of-context local conversation. */
+  async importHistoricalConversation(input: {
+    agentId: string;
+    summary: string;
+    tags: string[];
+    messages: LocalMessage[];
+  }): Promise<Awaited<ReturnType<HeadlessBackend["createConversation"]>>> {
+    await this.retrieveAgent(input.agentId);
+    const imported = writeImportedLocalConversation(this.storageDir, input);
+    return imported;
+  }
+
+  /** Scan the disk inventory, including conversations imported after store hydration. */
+  listAllLocalAgentConversations(agentId: string) {
+    return listImportedLocalConversations(this.storageDir, agentId);
   }
 
   override async createConversation(
