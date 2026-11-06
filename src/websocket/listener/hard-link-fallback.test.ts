@@ -135,6 +135,10 @@ describe("durable file lock without hard links", () => {
   });
 });
 
+// Fake pids have no real start time, so these locks record none and
+// liveness alone decides ownership, as on platforms without a lookup.
+const noStartTime = async () => null;
+
 describe("manual listener lock without hard links", () => {
   const scope = {
     serverUrl: "https://api.letta.com",
@@ -147,9 +151,8 @@ describe("manual listener lock without hard links", () => {
     const deps = (processId: number) => ({
       lockRoot: root,
       processId,
+      getOwnProcessStartTime: noStartTime,
       isProcessAlive: (pid: number) => alive.has(pid),
-      // Fake pids have no real start time; liveness alone decides here.
-      getOwnProcessStartTime: async () => null,
     });
 
     const first = await acquireManualListenerLock(scope, deps(111));
@@ -171,6 +174,7 @@ describe("manual listener lock without hard links", () => {
     const first = await acquireManualListenerLock(scope, {
       lockRoot: root,
       processId: 111,
+      getOwnProcessStartTime: noStartTime,
     });
     await first.release();
     writeFileSync(first.lockPath, '{"version":1,"pid":');
@@ -179,6 +183,7 @@ describe("manual listener lock without hard links", () => {
       acquireManualListenerLock(scope, {
         lockRoot: root,
         processId: 222,
+        getOwnProcessStartTime: noStartTime,
         isProcessAlive: () => false,
       }),
     ).rejects.toThrow(ManualListenerLockUnavailableError);
@@ -189,6 +194,7 @@ describe("manual listener lock without hard links", () => {
     const first = await acquireManualListenerLock(scope, {
       lockRoot: root,
       processId: 111,
+      getOwnProcessStartTime: noStartTime,
     });
     await first.release();
 
@@ -199,6 +205,7 @@ describe("manual listener lock without hard links", () => {
       const next = await acquireManualListenerLock(scope, {
         lockRoot: root,
         processId: 222,
+        getOwnProcessStartTime: noStartTime,
         isProcessAlive: () => false,
       });
       expect(JSON.parse(readFileSync(next.lockPath, "utf-8")).pid).toBe(222);
@@ -216,6 +223,7 @@ describe("manual listener lock without hard links", () => {
     const first = await acquireManualListenerLock(scope, {
       lockRoot: root,
       processId: 111,
+      getOwnProcessStartTime: noStartTime,
     });
     await first.release();
     writeFileSync(first.lockPath, '{"version":1,"pid":');
@@ -226,6 +234,7 @@ describe("manual listener lock without hard links", () => {
         acquireManualListenerLock(scope, {
           lockRoot: root,
           processId: 300 + index,
+          getOwnProcessStartTime: noStartTime,
           isProcessAlive: (pid) => pid >= 300,
         }),
       ),
@@ -239,6 +248,7 @@ describe("manual listener lock without hard links", () => {
     const first = await acquireManualListenerLock(scope, {
       lockRoot: root,
       processId: 111,
+      getOwnProcessStartTime: noStartTime,
     });
     await first.release();
     const foreign = JSON.stringify({
@@ -254,6 +264,7 @@ describe("manual listener lock without hard links", () => {
       acquireManualListenerLock(scope, {
         lockRoot: root,
         processId: 222,
+        getOwnProcessStartTime: noStartTime,
         isProcessAlive: () => false,
       }),
     ).rejects.toThrow(/incompatible version/);
