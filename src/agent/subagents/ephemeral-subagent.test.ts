@@ -1,14 +1,18 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { setAgentContext } from "@/agent/context";
 import { buildEphemeralConversationCreateBody } from "@/agent/ephemeral-conversation";
 import type { SubagentConfig } from "@/agent/subagents";
 import {
   EPHEMERAL_SUBAGENTS_ENV,
+  getEffectiveAgentId,
   lookupDetachedConversationParent,
   resolveDetachedSubagentEnvAgentId,
+  resolveEffectiveAgentId,
   resolveEphemeralSubagentLink,
   shouldRunSubagentEphemerally,
 } from "@/agent/subagents/ephemeral-subagent";
 import { buildSubagentArgs } from "@/agent/subagents/manager";
+import { composeSubagentChildEnv } from "@/agent/subagents/subagent-launcher";
 import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend/backend";
 import { parseCliArgs } from "@/cli/args";
@@ -458,5 +462,42 @@ describe("tool env identity", () => {
         LETTA_PARENT_AGENT_ID: PARENT,
       }),
     ).toBeUndefined();
+  });
+});
+
+describe("nested launches from a detached subagent", () => {
+  afterEach(() => {
+    setAgentContext("");
+  });
+
+  test("a grandchild links to the real parent agent, not the conversation", () => {
+    // Inside an ephemeral child, the session's own ID is its conversation.
+    setAgentContext(EPHEMERAL);
+    const nestedParent = getEffectiveAgentId(subagentEnv);
+    expect(nestedParent).toBe(PARENT);
+    // Task passes its notification scope (the conversation ID) explicitly.
+    expect(resolveEffectiveAgentId(EPHEMERAL, subagentEnv)).toBe(PARENT);
+
+    const grandchildEnv = composeSubagentChildEnv({
+      parentProcessEnv: { ...subagentEnv },
+      backendMode: "api",
+      localBackendStorageDir: null,
+      parentAgentId: nestedParent,
+      subagentType: "explore",
+      launchProfile: "default",
+      inheritedPrimaryRoot: null,
+    });
+    expect(grandchildEnv.LETTA_PARENT_AGENT_ID).toBe(PARENT);
+    expect(resolveEphemeralSubagentLink(grandchildEnv)?.parent_agent_id).toBe(
+      PARENT,
+    );
+  });
+
+  test("ordinary sessions keep their own agent ID", () => {
+    setAgentContext("agent-top");
+    expect(getEffectiveAgentId({})).toBe("agent-top");
+    expect(getEffectiveAgentId(subagentEnv)).toBe("agent-top");
+    expect(resolveEffectiveAgentId(EPHEMERAL, {})).toBe(EPHEMERAL);
+    expect(resolveEffectiveAgentId(undefined, subagentEnv)).toBeUndefined();
   });
 });

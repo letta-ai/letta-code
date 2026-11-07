@@ -5,6 +5,7 @@
  * (which supplies MCP servers, secrets and permissions), and its toolset is
  * the client-side preset allowlist (`--tools`).
  */
+import { getCurrentAgentId } from "@/agent/context";
 import type { BackendMode } from "@/backend";
 import { SUBAGENT_NAME_ENV } from "@/utils/subagent-launch-marker";
 import { resolveCreatedAgentName } from "./names";
@@ -80,6 +81,35 @@ export function resolveDetachedSubagentEnvAgentId(
   if (!sessionId.startsWith("conv-")) return undefined;
   if (env.LETTA_CODE_AGENT_ROLE !== "subagent") return undefined;
   return env.LETTA_PARENT_AGENT_ID?.trim() || undefined;
+}
+
+/**
+ * The real agent behind an agent ID taken from this session's context. A
+ * detached subagent's own ID is its conversation ID, so anything that hands
+ * an agent identity to a child or the API (nested subagent launches, external
+ * coding agents) uses the parent agent instead, matching `AGENT_ID`.
+ */
+export function resolveEffectiveAgentId(
+  agentId: string,
+  env?: NodeJS.ProcessEnv,
+): string;
+export function resolveEffectiveAgentId(
+  agentId: string | undefined,
+  env?: NodeJS.ProcessEnv,
+): string | undefined;
+export function resolveEffectiveAgentId(
+  agentId: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!agentId) return agentId;
+  return resolveDetachedSubagentEnvAgentId(agentId, env) ?? agentId;
+}
+
+/** `getCurrentAgentId()`, resolved to the real agent for detached subagents. */
+export function getEffectiveAgentId(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  return resolveEffectiveAgentId(getCurrentAgentId(), env);
 }
 
 interface DetachedConversationLookup {

@@ -9,7 +9,7 @@
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { getConversationId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
 import { updateSubagent } from "@/agent/subagent-state.js";
@@ -45,7 +45,11 @@ import {
   type SubagentResult,
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
-import { shouldRunSubagentEphemerally } from "./ephemeral-subagent";
+import {
+  getEffectiveAgentId,
+  resolveEffectiveAgentId,
+  shouldRunSubagentEphemerally,
+} from "./ephemeral-subagent";
 import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import { resolveSubagentHarnessTools } from "./subagent-depth";
@@ -320,10 +324,10 @@ async function executeSubagent(
       : "api";
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
 
-    let parentAgentId = parentAgentIdOverride;
+    let parentAgentId = resolveEffectiveAgentId(parentAgentIdOverride);
     if (!parentAgentId) {
       try {
-        parentAgentId = getCurrentAgentId();
+        parentAgentId = getEffectiveAgentId();
       } catch {
         // Context not available — subagent will have no parent scope.
       }
@@ -758,7 +762,7 @@ async function executeSubagent(
  * @param existingAgentId - Optional ID of an existing agent to deploy
  * @param existingConversationId - Optional conversation ID to resume
  * @param parentAgentId - Parent agent ID captured at the synchronous call
- *   site. Preferred over reading `getCurrentAgentId()` here because this
+ *   site. Preferred over reading `getEffectiveAgentId()` here because this
  *   function runs after several async yields and the in-process context
  *   may have drifted (e.g., the listener processing another agent's turn).
  */
@@ -808,10 +812,12 @@ async function spawnSubagentInContext(
     : "api";
   // Resolve parent scope before model selection so local subagents inherit the
   // active conversation's model override, not just the agent default.
-  let resolvedParentAgentId = parentAgentId;
+  // A detached subagent's context ID is its conversation; children link to
+  // the real parent agent instead.
+  let resolvedParentAgentId = resolveEffectiveAgentId(parentAgentId);
   if (!resolvedParentAgentId) {
     try {
-      resolvedParentAgentId = getCurrentAgentId();
+      resolvedParentAgentId = getEffectiveAgentId();
     } catch {
       // Context unavailable — carry forward undefined.
     }
