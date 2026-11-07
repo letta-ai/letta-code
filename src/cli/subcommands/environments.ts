@@ -5,12 +5,64 @@ import {
   listEnvironments,
 } from "@/backend/api/environments";
 import { settingsManager } from "@/settings-manager";
+import { isVersionBelow } from "@/utils/version";
 import { getVersion } from "@/version.ts";
+import {
+  type ComputersUpgradeDeps,
+  runComputersUpgrade,
+  UPGRADE_COMMAND_ID,
+} from "./computers-upgrade";
 
 type EnvironmentsSubcommandDeps = {
   initializeSettings?: () => Promise<void>;
   listEnvironments?: typeof listEnvironments;
+  upgrade?: Omit<ComputersUpgradeDeps, "listEnvironments">;
+  /** Latest published letta-code version; rejects when the check fails. */
+  fetchLatestVersion?: () => Promise<string>;
 };
+
+const LATEST_VERSION_TIMEOUT_MS = 5000;
+
+async function defaultFetchLatestVersion(): Promise<string> {
+  const { fetchLatestPublishedVersion } = await import("@/updater/auto-update");
+  return fetchLatestPublishedVersion(fetch, LATEST_VERSION_TIMEOUT_MS);
+}
+
+/** Resolve the latest version, or null when the check fails or times out. */
+async function resolveLatestVersion(
+  fetchLatestVersion: () => Promise<string>,
+): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      fetchLatestVersion(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), LATEST_VERSION_TIMEOUT_MS);
+      }),
+    ]);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Online computers that can be upgraded remotely and run an older version. */
+function isUpgradeable(
+  environment: EnvironmentWithOnlineStatus,
+  latestVersion: string | null,
+): boolean {
+  const version = environment.metadata?.lettaCodeVersion;
+  const supported = environment.metadata?.supported_commands;
+  return (
+    latestVersion !== null &&
+    environment.isOnline &&
+    typeof version === "string" &&
+    Array.isArray(supported) &&
+    supported.includes(UPGRADE_COMMAND_ID) &&
+    isVersionBelow(version, latestVersion)
+  );
+}
 
 type EnvironmentWithOnlineStatus = EnvironmentConnection & {
   isOnline: boolean;
@@ -22,6 +74,7 @@ function printUsage(): void {
 Usage:
   letta computers list [options]
   letta computers current
+  letta computers upgrade <computer> [options]
 
 Legacy aliases:
   letta environments list
@@ -33,9 +86,21 @@ List options:
   --limit <n>       Max results (default: 50)
   --after <id>      The id of the last record from the previous page
   --online-only     Only include computers with a fresh active connection
+  --json            Print only JSON (no upgrade hints on stderr)
+
+Upgrade options:
+  --agent <id>          Agent scope for the request (defaults to LETTA_AGENT_ID,
+                        then the last agent used on this machine)
+  --conversation <id>   Conversation scope (defaults to LETTA_CONVERSATION_ID,
+                        then "default")
+  --json                Print the result as JSON
 
 Notes:
-  - Output is JSON only.
+  - list/current print JSON on stdout. list marks online computers running
+    an older letta-code with "outdated": true and "latestVersion", and
+    prints an upgrade hint for each on stderr unless --json is set.
+  - upgrade tells an online computer's listener to update letta-code in
+    place and restart. <computer> is a name, deviceId, id, or connectionId.
   - Pass nextCursor to --after to advance, including with --online-only.
   - Uses CLI auth; override with LETTA_API_KEY/LETTA_BASE_URL if needed.
   - Use letta computers current to get this computer's stable deviceId.
@@ -130,6 +195,9 @@ const ENVIRONMENTS_OPTIONS = {
   limit: { type: "string" },
   after: { type: "string" },
   "online-only": { type: "boolean" },
+  agent: { type: "string" },
+  conversation: { type: "string" },
+  json: { type: "boolean" },
 } as const;
 
 function parseEnvironmentsArgs(argv: string[]) {
@@ -139,6 +207,43 @@ function parseEnvironmentsArgs(argv: string[]) {
     strict: true,
     allowPositionals: true,
   });
+}
+
+function runUpgradeAction(
+  parsed: ReturnType<typeof parseEnvironmentsArgs>,
+  list: typeof listEnvironments,
+  deps: EnvironmentsSubcommandDeps["upgrade"] = {},
+): Promise<number> | number {
+  const selector = parsed.positionals[1];
+  if (!selector) {
+    console.error("Error: letta computers upgrade requires a <computer>.");
+    printUsage();
+    return 1;
+  }
+  const agentId =
+    parsed.values.agent ||
+    process.env.LETTA_AGENT_ID ||
+    settingsManager.getGlobalLastAgentId();
+  if (!agentId) {
+    console.error(
+      "Error: --agent is required (or set LETTA_AGENT_ID); the listener scopes remote commands to an agent.",
+    );
+    return 1;
+  }
+  return runComputersUpgrade(
+    {
+      selector,
+      scope: {
+        agent_id: agentId,
+        conversation_id:
+          parsed.values.conversation ||
+          process.env.LETTA_CONVERSATION_ID ||
+          "default",
+      },
+      json: parsed.values.json ?? false,
+    },
+    { ...deps, listEnvironments: list },
+  );
 }
 
 export async function runEnvironmentsSubcommand(
@@ -161,7 +266,7 @@ export async function runEnvironmentsSubcommand(
     return 0;
   }
 
-  if (action !== "list" && action !== "current") {
+  if (action !== "list" && action !== "current" && action !== "upgrade") {
     console.error(`Unknown action: ${action}`);
     printUsage();
     return 1;
@@ -169,6 +274,9 @@ export async function runEnvironmentsSubcommand(
 
   await (deps.initializeSettings ?? (() => settingsManager.initialize()))();
   const list = deps.listEnvironments ?? listEnvironments;
+  if (action === "upgrade") {
+    return runUpgradeAction(parsed, list, deps.upgrade);
+  }
   const deviceId = getRuntimeEnvironmentDeviceId();
   const savedName = settingsManager.getListenerEnvName();
   const currentVersion = getVersion();
@@ -201,11 +309,14 @@ export async function runEnvironmentsSubcommand(
 
   const limit = parseLimit(parsed.values.limit, 50);
   const onlineOnly = parsed.values["online-only"] ?? false;
-  const result = await list({
-    limit,
-    after: parsed.values.after,
-    onlineOnly,
-  });
+  const [result, latestVersion] = await Promise.all([
+    list({
+      limit,
+      after: parsed.values.after,
+      onlineOnly,
+    }),
+    resolveLatestVersion(deps.fetchLatestVersion ?? defaultFetchLatestVersion),
+  ]);
   const current = findCurrentEnvironment(result.connections, {
     deviceId,
     savedName,
@@ -213,16 +324,25 @@ export async function runEnvironmentsSubcommand(
   });
   const currentConnectionId = current?.connectionId ?? null;
 
-  const connections = result.connections
+  const visible = result.connections
     .map((environment) => ({
       ...environment,
       isOnline: isOnline(environment),
     }))
     .filter((environment) => !onlineOnly || environment.isOnline)
-    .slice(0, limit)
-    .map((environment) =>
-      formatEnvironmentForCli(environment, { onlineOnly, currentConnectionId }),
-    );
+    .slice(0, limit);
+  const outdated = visible.filter((environment) =>
+    isUpgradeable(environment, latestVersion),
+  );
+  const connections = visible.map((environment) => ({
+    ...formatEnvironmentForCli(environment, {
+      onlineOnly,
+      currentConnectionId,
+    }),
+    ...(latestVersion && outdated.includes(environment)
+      ? { outdated: true, latestVersion }
+      : {}),
+  }));
 
   console.log(
     JSON.stringify(
@@ -237,5 +357,12 @@ export async function runEnvironmentsSubcommand(
       2,
     ),
   );
+  if (!parsed.values.json) {
+    for (const environment of outdated) {
+      console.error(
+        `Update available for ${environment.connectionName} (${environment.metadata?.lettaCodeVersion} → ${latestVersion}): letta computers upgrade ${environment.deviceId}`,
+      );
+    }
+  }
   return 0;
 }
