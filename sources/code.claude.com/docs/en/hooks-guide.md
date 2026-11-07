@@ -421,7 +421,7 @@ See the [CwdChanged](https://code.claude.com/docs/en/hooks.md#cwdchanged) and [F
 
 Skip the approval dialog for tool calls you always allow. This example auto-approves `ExitPlanMode`, the tool Claude calls when it finishes presenting a plan and asks to proceed, so you aren't prompted every time a plan is ready.
 
-Unlike the exit-code examples above, auto-approval requires your hook to write a JSON decision to stdout. Claude Code runs `PermissionRequest` hooks when it's about to ask you for permission, and if your hook returns `"behavior": "allow"`, Claude Code answers the request on your behalf.
+Unlike the exit-code examples above, auto-approval requires your hook to write a JSON decision to stdout. Claude Code runs `PermissionRequest` hooks when it's about to ask you for permission, and if your hook returns `"behavior": "allow"`, Claude Code answers the request on your behalf. For a tool that [requires user interaction](https://code.claude.com/docs/en/hooks.md#allow-with-updatedinput), such as `ExitPlanMode`, the allow also needs `updatedInput`, or Claude Code ignores it and still shows the prompt.
 
 The matcher scopes the hook to `ExitPlanMode` only, so no other prompts are affected. Add this to `~/.claude/settings.json`:
 
@@ -434,7 +434,7 @@ The matcher scopes the hook to `ExitPlanMode` only, so no other prompts are affe
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"hookSpecificOutput\": {\"hookEventName\": \"PermissionRequest\", \"decision\": {\"behavior\": \"allow\"}}}'"
+            "command": "jq -c '{hookSpecificOutput: {hookEventName: \"PermissionRequest\", decision: {behavior: \"allow\", updatedInput: .tool_input}}}'"
           }
         ]
       }
@@ -453,20 +453,10 @@ To set a specific permission mode instead, your hook's output can include an `up
 >
 > Claude Code never saves it as `defaultMode`.
 
-To switch the session to `acceptEdits`, your hook writes this JSON to stdout:
+To switch the session to `acceptEdits`, replace the `command` line in that hook with this one:
 
 ```json theme={null}
-{
-  "hookSpecificOutput": {
-    "hookEventName": "PermissionRequest",
-    "decision": {
-      "behavior": "allow",
-      "updatedPermissions": [
-        { "type": "setMode", "mode": "acceptEdits", "destination": "session" }
-      ]
-    }
-  }
-}
+"command": "jq -c '{hookSpecificOutput: {hookEventName: \"PermissionRequest\", decision: {behavior: \"allow\", updatedInput: .tool_input, updatedPermissions: [{type: \"setMode\", mode: \"acceptEdits\", destination: \"session\"}]}}}'"
 ```
 
 Keep the matcher as narrow as possible. Matching on `.*` or leaving the matcher empty would auto-approve every tool permission prompt, including file writes and shell commands. See the [PermissionRequest reference](https://code.claude.com/docs/en/hooks.md#permissionrequest-decision-control) for the full set of decision fields.
