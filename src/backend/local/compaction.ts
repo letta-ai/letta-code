@@ -635,6 +635,9 @@ async function runGenerateText(
     // those models reject with a 400 invalid_request_error — breaking every
     // compaction (automatic and manual /compact).
     ...(reasoning ? { reasoning } : {}),
+    ...(isRecord(localModel.modelSettings.sampling_params)
+      ? { samplingParams: localModel.modelSettings.sampling_params }
+      : {}),
     maxRetries: 0,
     sessionId: input.conversationId,
   };
