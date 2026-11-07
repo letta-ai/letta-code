@@ -17,7 +17,7 @@ import {
   unlinkSync,
   writeSync,
 } from "node:fs";
-import { readdir, rm } from "node:fs/promises";
+import { readdir, rm, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -383,7 +383,7 @@ export async function checkForUpdate(
 }
 
 /**
- * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20/lib)
+ * Get the npm global prefix path (e.g., /Users/name/.npm-global or ~/.nvm/versions/node/v20)
  */
 async function getNpmGlobalPath(
   runCommand: RunUpdateCommand,
@@ -404,20 +404,72 @@ async function getNpmGlobalPath(
  * Clean up orphaned temp directories left by interrupted npm installs.
  * These look like: .letta-code-lnWEqMep (npm's temp rename targets)
  */
-async function cleanupOrphanedDirs(globalPath: string): Promise<void> {
-  const lettaAiDir = join(globalPath, "lib/node_modules/@letta-ai");
+export async function cleanupOrphanedDirs(
+  globalPath: string,
+  platform: NodeJS.Platform = process.platform,
+): Promise<void> {
+  const lettaAiDir = join(
+    globalPath,
+    ...(platform === "win32" ? [] : ["lib"]),
+    "node_modules",
+    "@letta-ai",
+  );
   try {
     const entries = await readdir(lettaAiDir);
     for (const entry of entries) {
       // Match orphaned temp dirs like .letta-code-lnWEqMep
       if (entry.startsWith(".letta-code-")) {
         const orphanPath = join(lettaAiDir, entry);
+        const livePath = join(lettaAiDir, "letta-code");
+        // A closed terminal can leave the renamed directory as the only intact
+        // install. Be conservative: retain it if any backed-up file is missing
+        // or truncated to zero in the replacement (including dependencies).
+        if (!(await hasReplacementFiles(orphanPath, livePath))) {
+          debugLog(
+            "Keeping orphaned install; live install is incomplete:",
+            orphanPath,
+          );
+          continue;
+        }
         debugLog("Cleaning orphaned temp directory:", orphanPath);
         await rm(orphanPath, { recursive: true, force: true });
       }
     }
   } catch {
     // Directory might not exist or not readable, ignore
+  }
+}
+
+async function hasReplacementFiles(
+  backup: string,
+  live: string,
+  root = true,
+): Promise<boolean> {
+  try {
+    // Require both core files even if the backup itself is incomplete/empty.
+    if (root) {
+      for (const file of ["package.json", "letta.js"]) {
+        const info = await stat(join(live, file));
+        if (!info.isFile() || info.size === 0) return false;
+      }
+    }
+    const entries = await readdir(backup, { withFileTypes: true });
+    for (const entry of entries) {
+      const source = join(backup, entry.name);
+      const replacement = join(live, entry.name);
+      if (entry.isDirectory()) {
+        if (!(await hasReplacementFiles(source, replacement, false)))
+          return false;
+      } else {
+        const original = await stat(source);
+        const current = await stat(replacement);
+        if (!current.isFile() || (original.size > 0 && current.size === 0))
+          return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
   }
 }
 

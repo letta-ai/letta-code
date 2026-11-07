@@ -24,7 +24,7 @@ export function startStartupAutoUpdateCheck(
       if (result?.enotemptyFailed) {
         logError("\nAuto-update failed due to filesystem issue (ENOTEMPTY).");
         logError(
-          "Fix: rm -rf $(npm prefix -g)/lib/node_modules/@letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
+          "Fix: npm uninstall -g @letta-ai/letta-code && npm i -g @letta-ai/letta-code\n",
         );
       }
       // Return notification payload for the TUI to consume
