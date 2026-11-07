@@ -4,7 +4,7 @@ For ordinary one-shot commands, omit `yield_time_ms` and let the default wait fo
 
 If a command is still running when this tool yields, you will receive a notification when it completes. Do not poll the session just to check whether it has finished. Use `write_stdin` only when you need to send input, interrupt the process, or obtain output before you can continue.
 
-Git commits: commit only when the user asks. Pass the message as a single-quoted string with embedded newlines; do not wrap it in `$(...)` or backticks. End commit messages with:
+Git commits: commit only when the user asks. Do not amend, skip hooks, force-push, or run other destructive git commands unless the user asks; if a pre-commit hook fails, fix the issue and create a new commit. Pass the message as a single-quoted string with embedded newlines; do not wrap it in `$(...)` or backticks. End commit messages with:
 {{COMMIT_TRAILER}}
 <example>
 git commit -m 'Commit message here.
