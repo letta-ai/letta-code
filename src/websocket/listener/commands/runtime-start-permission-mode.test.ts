@@ -1,10 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type WebSocket from "ws";
 import { __testSetBackend, type AgentCreateBody } from "@/backend";
 import { LocalBackend } from "@/backend/local";
+import { type PermissionMode, permissionMode } from "@/permissions/mode";
+import { telemetry } from "@/telemetry";
 import type { RuntimeStartCommand } from "@/types/runtime-start-protocol";
 import { handleModeChange } from "@/websocket/listener/control-inputs";
 import { getOrCreateScopedRuntime } from "@/websocket/listener/conversation-runtime";
@@ -40,10 +42,20 @@ function runtimeStart(
 }
 
 describe("runtime_start default permission mode", () => {
+  let previousMode: PermissionMode;
+  let modeChanged: ReturnType<
+    typeof spyOn<typeof telemetry, "trackPermissionModeChanged">
+  >;
   let storageDir: string;
   let previousConfigDir: string | undefined;
 
   beforeEach(async () => {
+    previousMode = permissionMode.getMode();
+    permissionMode.setMode("unrestricted");
+    modeChanged = spyOn(
+      telemetry,
+      "trackPermissionModeChanged",
+    ).mockImplementation(() => {});
     storageDir = await mkdtemp(join(tmpdir(), "runtime-mode-"));
     previousConfigDir = process.env.LETTA_CONFIG_DIR;
     process.env.LETTA_CONFIG_DIR = join(storageDir, "config");
@@ -54,6 +66,8 @@ describe("runtime_start default permission mode", () => {
   });
 
   afterEach(async () => {
+    modeChanged.mockRestore();
+    permissionMode.setMode(previousMode);
     __testSetBackend(null);
     if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
     else process.env.LETTA_CONFIG_DIR = previousConfigDir;
@@ -92,7 +106,7 @@ describe("runtime_start default permission mode", () => {
     ).toBe("unrestricted");
   });
 
-  test("applies the channel default to a conversation without an explicit mode", async () => {
+  test("first registration applies the default mode without reporting a change", async () => {
     const agentId = await createAgentId();
     const listener = createRuntime();
     await runtimeStart(listener, {
@@ -105,5 +119,37 @@ describe("runtime_start default permission mode", () => {
     expect(
       getConversationPermissionModeState(listener, agentId, "default").mode,
     ).toBe("standard");
+    expect(modeChanged).not.toHaveBeenCalled();
+  });
+
+  test("reports a mode change for an existing conversation", async () => {
+    const agentId = await createAgentId();
+    const listener = createRuntime();
+    await runtimeStart(listener, {
+      agent_id: agentId,
+      conversation_id: "default",
+      mode: "standard",
+      mode_is_default: true,
+    });
+    modeChanged.mockClear();
+
+    await runtimeStart(listener, {
+      agent_id: agentId,
+      conversation_id: "default",
+      mode: "strict",
+    });
+
+    expect(modeChanged).toHaveBeenCalledTimes(1);
+    expect(modeChanged).toHaveBeenCalledWith({
+      agent_id: agentId,
+      conversation_id: "default",
+      prev_mode: "standard",
+      new_mode: "strict",
+      source: "runtime_start",
+      mode_is_default: false,
+    });
+    expect(
+      getConversationPermissionModeState(listener, agentId, "default").mode,
+    ).toBe("strict");
   });
 });
