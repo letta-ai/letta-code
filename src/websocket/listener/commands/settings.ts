@@ -3,6 +3,7 @@ import {
   getReflectionSettings,
   persistReflectionSettingsForAgent,
 } from "@/cli/helpers/memory-reminder";
+import { clearAutomaticReflectionSuppression } from "@/cli/helpers/reflection-launcher";
 import { experimentManager } from "@/experiments/manager";
 import type {
   GetExperimentsCommand,
@@ -46,6 +47,7 @@ function toReflectionSettingsResponse(
   step_count: number;
   merge: "auto" | "explicit";
   merge_instructions: string;
+  model: string | null;
 } {
   const settings = getReflectionSettings(agentId, workingDirectory);
   return {
@@ -54,6 +56,7 @@ function toReflectionSettingsResponse(
     step_count: settings.stepCount,
     merge: settings.merge,
     merge_instructions: settings.mergeInstructions,
+    model: settings.model,
   };
 }
 
@@ -83,6 +86,16 @@ function resolveReflectionSettingsScope(
     persistGlobal: true,
     normalizedScope: "both",
   };
+}
+
+export function clearSuppressionForReflectionModelChange(
+  agentId: string,
+  currentModel: string | null,
+  nextModel: string | null,
+): void {
+  if (nextModel !== currentModel) {
+    clearAutomaticReflectionSuppression(agentId);
+  }
 }
 
 export async function handleExperimentCommand(
@@ -196,6 +209,9 @@ export async function handleReflectionSettingsCommand(
 
   try {
     const currentSettings = getReflectionSettings(agentId, workingDirectory);
+    const requestedModel = parsed.settings.model;
+    const nextModel =
+      requestedModel === undefined ? currentSettings.model : requestedModel;
     await persistReflectionSettingsForAgent(
       agentId,
       {
@@ -205,6 +221,7 @@ export async function handleReflectionSettingsCommand(
         mergeInstructions:
           parsed.settings.merge_instructions ??
           currentSettings.mergeInstructions,
+        model: nextModel,
       },
       {
         workingDirectory,
@@ -212,6 +229,13 @@ export async function handleReflectionSettingsCommand(
         persistGlobal,
       },
     );
+    if (requestedModel !== undefined) {
+      clearSuppressionForReflectionModelChange(
+        agentId,
+        currentSettings.model,
+        nextModel,
+      );
+    }
     safeSocketSend(
       socket,
       {

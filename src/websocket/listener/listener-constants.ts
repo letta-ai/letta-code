@@ -11,6 +11,9 @@ export const SUPPORTED_REMOTE_COMMANDS: readonly string[] = [
   // durable input ledger. Clients start a fresh conversation with /new.
   "doctor",
   "dream",
+  // Capability marker: model selection uses set_reflection_settings rather
+  // than execute_command, but remote command pickers gate on this list.
+  "dream-model",
   "reflect",
   "reflection",
   "init",

@@ -12,6 +12,13 @@ export type {
   ReflectionTrigger,
 } from "@/reflection-settings";
 
+export function resolveReflectionModel(
+  explicitModel: string | undefined,
+  persistedModel: string | null | undefined,
+): string | undefined {
+  return explicitModel ?? persistedModel ?? undefined;
+}
+
 const DEFAULT_STEP_COUNT = 25;
 
 export type MemoryReminderMode =
@@ -25,11 +32,13 @@ export interface ReflectionSettings {
   stepCount: number;
   merge?: ReflectionMergeMode;
   mergeInstructions?: string;
+  model?: string | null;
 }
 
 export interface ResolvedReflectionSettings extends ReflectionSettings {
   merge: ReflectionMergeMode;
   mergeInstructions: string;
+  model: string | null;
 }
 
 type PersistedReflectionSettings = {
@@ -37,6 +46,7 @@ type PersistedReflectionSettings = {
   stepCount?: unknown;
   merge?: unknown;
   mergeInstructions?: unknown;
+  model?: unknown;
 };
 
 interface ReflectionSettingsCarrier {
@@ -53,6 +63,7 @@ const DEFAULT_REFLECTION_SETTINGS: ResolvedReflectionSettings = {
   stepCount: DEFAULT_STEP_COUNT,
   merge: "auto",
   mergeInstructions: "",
+  model: null,
 };
 
 function isValidStepCount(value: unknown): value is number {
@@ -93,6 +104,15 @@ function normalizeMergeInstructions(value: unknown, fallback: string): string {
   return typeof value === "string" ? value.trim() : fallback;
 }
 
+function normalizeModel(
+  value: unknown,
+  fallback: string | null,
+): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") return fallback;
+  return value.trim() || fallback;
+}
+
 function applyExplicitReflectionOverrides(
   base: ResolvedReflectionSettings,
   raw: {
@@ -110,6 +130,7 @@ function applyExplicitReflectionOverrides(
       raw.reflectionMergeInstructions,
       base.mergeInstructions,
     ),
+    model: base.model,
   };
 }
 
@@ -129,6 +150,7 @@ function applyPersistedAgentScopedSettings(
       raw.mergeInstructions,
       base.mergeInstructions,
     ),
+    model: normalizeModel(raw.model, base.model),
   };
 }
 
@@ -141,6 +163,7 @@ function legacyModeToReflectionSettings(
       stepCount: normalizeStepCount(mode, DEFAULT_STEP_COUNT),
       merge: DEFAULT_REFLECTION_SETTINGS.merge,
       mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
+      model: DEFAULT_REFLECTION_SETTINGS.model,
     };
   }
 
@@ -150,6 +173,7 @@ function legacyModeToReflectionSettings(
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       merge: DEFAULT_REFLECTION_SETTINGS.merge,
       mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
+      model: DEFAULT_REFLECTION_SETTINGS.model,
     };
   }
 
@@ -159,6 +183,7 @@ function legacyModeToReflectionSettings(
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       merge: DEFAULT_REFLECTION_SETTINGS.merge,
       mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
+      model: DEFAULT_REFLECTION_SETTINGS.model,
     };
   }
 
@@ -168,6 +193,7 @@ function legacyModeToReflectionSettings(
       stepCount: DEFAULT_REFLECTION_SETTINGS.stepCount,
       merge: DEFAULT_REFLECTION_SETTINGS.merge,
       mergeInstructions: DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
+      model: DEFAULT_REFLECTION_SETTINGS.model,
     };
   }
 
@@ -268,6 +294,8 @@ export async function persistReflectionSettingsForAgent(
     settings.mergeInstructions,
     DEFAULT_REFLECTION_SETTINGS.mergeInstructions,
   );
+  const currentModel = getReflectionSettings(agentId, workingDirectory).model;
+  const model = normalizeModel(settings.model, currentModel);
   const legacyMode = reflectionSettingsToLegacyMode(settings);
 
   if (persistLocalProject) {
@@ -293,6 +321,7 @@ export async function persistReflectionSettingsForAgent(
             stepCount: settings.stepCount,
             merge,
             mergeInstructions,
+            model,
           },
         },
       },
@@ -315,6 +344,7 @@ export async function persistReflectionSettingsForAgent(
           stepCount: settings.stepCount,
           merge,
           mergeInstructions,
+          model,
         },
       },
     });

@@ -53,6 +53,7 @@ describe("memoryReminder", () => {
       stepCount: 33,
       merge: "auto",
       mergeInstructions: "",
+      model: null,
     });
   });
 
@@ -75,6 +76,7 @@ describe("memoryReminder", () => {
       stepCount: 25,
       merge: "auto",
       mergeInstructions: "",
+      model: null,
     });
   });
 
@@ -87,6 +89,7 @@ describe("memoryReminder", () => {
             stepCount: 13,
             merge: "explicit",
             mergeInstructions: "Review conservatively.",
+            model: null,
           },
         },
       }) as unknown as ReturnType<
@@ -99,6 +102,7 @@ describe("memoryReminder", () => {
             trigger: "step-count",
             stepCount: 9,
             merge: "auto",
+            model: "letta/auto-memory",
           },
         },
       }) as unknown as ReturnType<
@@ -110,6 +114,7 @@ describe("memoryReminder", () => {
       stepCount: 13,
       merge: "explicit",
       mergeInstructions: "Review conservatively.",
+      model: null,
     });
   });
 
@@ -128,6 +133,7 @@ describe("memoryReminder", () => {
           "agent-1": {
             trigger: "compaction-event",
             stepCount: 17,
+            model: "letta/auto-memory",
           },
         },
       }) as unknown as ReturnType<
@@ -139,6 +145,7 @@ describe("memoryReminder", () => {
       stepCount: 17,
       merge: "auto",
       mergeInstructions: "",
+      model: "letta/auto-memory",
     });
   });
 
@@ -229,6 +236,7 @@ describe("memoryReminder", () => {
       stepCount: 11,
       merge: "explicit",
       mergeInstructions: "Preserve exact user wording.",
+      model: "anthropic/claude-haiku-4-5",
     });
 
     expect(localUpdates).toHaveLength(1);
@@ -240,6 +248,7 @@ describe("memoryReminder", () => {
         stepCount: 11,
         merge: "explicit",
         mergeInstructions: "Preserve exact user wording.",
+        model: "anthropic/claude-haiku-4-5",
       },
     });
     expect(globalUpdates[0]?.reflectionSettingsByAgent).toEqual({
@@ -249,6 +258,7 @@ describe("memoryReminder", () => {
         stepCount: 11,
         merge: "explicit",
         mergeInstructions: "Preserve exact user wording.",
+        model: "anthropic/claude-haiku-4-5",
       },
     });
   });
