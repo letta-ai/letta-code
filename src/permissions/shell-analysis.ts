@@ -126,7 +126,12 @@ export function splitShellSegments(input: string): string[] | null {
       continue;
     }
 
-    if (input.startsWith(">>", i) || ch === ">") {
+    if (
+      input.startsWith("<(", i) ||
+      input.startsWith(">(", i) ||
+      input.startsWith(">>", i) ||
+      ch === ">"
+    ) {
       const skipLen = tryConsumeSafeRedirect(input, i);
       if (skipLen > 0) {
         i += skipLen;
