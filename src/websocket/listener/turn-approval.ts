@@ -1,5 +1,3 @@
-import type { Stream } from "@letta-ai/letta-client/core/streaming";
-import type { LettaStreamingResponse } from "@letta-ai/letta-client/resources/agents/messages";
 import {
   type ApprovalResult,
   executeApprovalBatch,
@@ -75,6 +73,11 @@ import {
 import { injectQueuedSkillContent } from "./skill-injection";
 import { claimPendingTeleportAtBoundary } from "./teleport";
 import { isListenerTransportOpen, type ListenerTransport } from "./transport";
+import type {
+  ApprovalBranchProgress,
+  ApprovalBranchResult,
+  Decision,
+} from "./turn-approval-types";
 import type { TurnCorrelation } from "./turn-correlation";
 import {
   createTurnInputState,
@@ -83,59 +86,9 @@ import {
 } from "./turn-input-state";
 import type { TurnLease } from "./turn-lifecycle";
 import { setTurnLoopStatus } from "./turn-status";
-import type {
-  ConversationRuntime,
-  IncomingMessage,
-  PendingTeleport,
-} from "./types";
+import type { ConversationRuntime, IncomingMessage } from "./types";
 
-type Decision =
-  | {
-      type: "approve";
-      approval: {
-        toolCallId: string;
-        toolName: string;
-        toolArgs: string;
-      };
-      reason?: string;
-    }
-  | {
-      type: "deny";
-      approval: {
-        toolCallId: string;
-        toolName: string;
-        toolArgs: string;
-      };
-      reason: string;
-    };
-type ApprovalBranchProgress = {
-  turnInput: TurnInputState;
-  dequeuedBatchId: string;
-  pendingNormalizationInterruptedToolCallIds: string[];
-  turnToolContextId: string | null;
-  lastExecutionResults: ApprovalResult[] | null;
-  lastExecutingToolCallIds: string[];
-  lastNeedsUserInputToolCallIds: string[];
-  lastApprovalContinuationAccepted: boolean;
-};
-export type ApprovalBranchResult =
-  | ({
-      kind: "continue";
-      stream: Stream<LettaStreamingResponse>;
-    } & ApprovalBranchProgress)
-  | ({ kind: "interrupted" } & ApprovalBranchProgress)
-  | ({
-      kind: "teleport";
-      pendingTeleport: PendingTeleport;
-    } & ApprovalBranchProgress)
-  | ({
-      kind: "terminal";
-      drainResult: Extract<
-        ApprovalContinuationSendResult,
-        { kind: "terminal" }
-      >["drainResult"];
-    } & ApprovalBranchProgress)
-  | { kind: "error"; message: string };
+export type { ApprovalBranchResult } from "./turn-approval-types";
 export async function handleApprovalStop(params: {
   approvals: Array<{
     toolCallId: string;
