@@ -1,14 +1,12 @@
 # SendAgentMessage
 
-Send a message without waiting for its answer. Letta-to-Letta messages require
-the Cloud backend and fail on the local backend (`agent-local-` IDs). Use this
-to coordinate with an agent already working, including an Agent child, or to
-contact any conversation you are authorized to access.
+Send a message without waiting for its answer. Use this to coordinate with an
+agent already working, including an Agent child, or to contact any conversation
+you are authorized to access.
 
 External coding workers return IDs backed by their native sessions. Use the
 receipt to distinguish steering from a new or queued follow-up. An idle follow-up
-starts one tracked local background turn. These messages do not use the Cloud
-messaging backend.
+starts one tracked local background turn.
 Computer-qualified IDs returned by remote launches can be steered too.
 
 An agent has a persistent identity and shared memory. It can have multiple
@@ -21,8 +19,9 @@ conversations, each with its own message history.
 - Your agent and conversation IDs are attached automatically as the return address.
   To reply, the recipient must explicitly send to that address. Ordinary assistant
   output is not forwarded back to you.
-- A successful send means Cloud accepted the message; the recipient may not have
-  read it yet. Continue working rather than waiting for the answer.
+- A successful send means the message was accepted or delivery started; the
+  recipient may not have read it yet. Continue working rather than waiting for
+  the answer.
 - Omit `computer` unless a particular computer is needed. If the conversation is
   active on A, selecting B is rejected rather than moving the conversation.
 - If delivery cannot be confirmed, check the recipient's messages before resending
@@ -47,16 +46,3 @@ completion notification. Letta-to-Letta sends create no local task ID. External
 coding-agent follow-ups may return one when they start a new native turn; an
 active external-agent steer remains part of the existing task. SendAgentMessage does not
 change the recipient's tools, model, or permissions.
-
-On the local backend (`agent-local-` IDs), or from a script, send with the CLI
-instead. It waits for the recipient's turn and prints its final message as
-`result`, with the thread to continue in `conversation_id`:
-
-```bash
-letta -p --from-agent $LETTA_AGENT_ID --conversation <conversation-id> --output-format json "message"
-letta -p --from-agent $LETTA_AGENT_ID --agent <agent-id> --output-format json "message"   # new thread
-```
-
-Add `--backend local` after `letta` when your agent ID starts with `agent-local-`.
-`letta messages list --conversation <id> --limit 10` reads a thread on either
-backend; `letta -p --help` and `letta messages --help` list the other options.
