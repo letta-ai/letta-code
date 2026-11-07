@@ -762,10 +762,10 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       userModel: "inherit",
       recommendedModel: "inherit",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/glm");
   });
 
   test("inherits parent when recommended is inherit", async () => {
@@ -781,16 +781,16 @@ describe("resolveSubagentModel", () => {
   test("uses auto default when available", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "sonnet-4.5",
-      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      availableHandles: new Set(["letta/glm", "anthropic/test-model"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/glm");
   });
 
   test("uses auto-fast default for free tier when available", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
-      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+      availableHandles: new Set(["letta/auto-fast", "letta/glm"]),
     });
 
     expect(result).toBe("letta/auto-fast");
@@ -802,7 +802,7 @@ describe("resolveSubagentModel", () => {
       recommendedModel: "inherit",
       parentModelHandle: "openai/gpt-5",
       billingTier: "free",
-      availableHandles: new Set(["letta/auto-fast", "letta/auto"]),
+      availableHandles: new Set(["letta/auto-fast", "letta/glm"]),
     });
 
     expect(result).toBe("openai/gpt-5");
@@ -811,10 +811,10 @@ describe("resolveSubagentModel", () => {
   test("free tier falls back to auto when auto-fast is unavailable", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/glm");
   });
 
   test("falls back when auto is unavailable", async () => {
@@ -840,7 +840,7 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       userModel: "openai/gpt-5",
       recommendedModel: "sonnet-4.5",
-      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
+      availableHandles: new Set(["letta/glm", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");
@@ -901,10 +901,10 @@ describe("resolveSubagentModel", () => {
       recommendedModelSource: "user",
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/glm");
   });
 
   test("explicit Task models override user-configured models", async () => {
@@ -915,7 +915,7 @@ describe("resolveSubagentModel", () => {
       recommendedModelSource: "user",
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
-      availableHandles: new Set(["letta/auto", "openai/gpt-5"]),
+      availableHandles: new Set(["letta/glm", "openai/gpt-5"]),
     });
 
     expect(result).toBe("openai/gpt-5");
@@ -946,10 +946,10 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
       recommendedModel: "auto",
-      availableHandles: new Set(["letta/auto"]),
+      availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/auto");
+    expect(result).toBe("letta/glm");
   });
 
   test("does not override an explicit user model for reflection subagents", async () => {
@@ -967,7 +967,7 @@ describe("resolveSubagentModel", () => {
     const result = await resolveSubagentModel({
       subagentType: "general-purpose",
       recommendedModel: "anthropic/test-model",
-      availableHandles: new Set(["letta/auto", "anthropic/test-model"]),
+      availableHandles: new Set(["letta/glm", "anthropic/test-model"]),
     });
 
     expect(result).toBe("anthropic/test-model");

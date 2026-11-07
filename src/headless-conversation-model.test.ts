@@ -45,7 +45,7 @@ test.each([
   {
     model: "auto",
     explicitNew: true,
-    expectedModel: "letta/auto",
+    expectedModel: "letta/glm",
     expectedSettings: {
       provider_type: "openai",
       parallel_tool_calls: true,

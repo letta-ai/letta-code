@@ -30,7 +30,8 @@ export interface CatalogModel {
 export const models: CatalogModel[] = [];
 
 const BUILTIN_MODEL_ALIASES = new Map([
-  ["auto", "letta/auto"],
+  ["auto", "letta/glm"],
+  ["glm", "letta/glm"],
   ["auto-chat", "letta/auto-chat"],
   ["auto-fast", "letta/auto-fast"],
 ]);
@@ -80,6 +81,12 @@ export function resolveCatalogModel(
   const cliAlias = resolveEstablishedCliAlias(modelIdentifier);
   if (cliAlias) return cliAlias;
 
+  const builtinHandle = BUILTIN_MODEL_ALIASES.get(modelIdentifier);
+  const builtinEntry = builtinHandle
+    ? models.find((model) => model.handle === builtinHandle)
+    : undefined;
+  if (builtinEntry) return builtinEntry;
+
   // Runtime catalogs use provider-native model IDs as their short names.
   // Resolve one only when it identifies exactly one handle.
   const matches = models.filter(
@@ -103,7 +110,7 @@ export function resolveModel(modelIdentifier: string): string | null {
 
 /** Get the default model handle from the active catalog. */
 export function getDefaultModel(): string {
-  if (models.length === 0) return "letta/auto";
+  if (models.length === 0) return "letta/glm";
 
   const autoModel = models.find((model) => model.id === "auto");
   if (autoModel) return autoModel.handle;

@@ -117,7 +117,7 @@ describe("reconcileExistingAgentState", () => {
     expect(update).toHaveBeenCalledWith("agent-test", {
       compaction_settings: {
         mode: "sliding_window",
-        model: "letta/auto",
+        model: "letta/glm",
       },
       tool_ids: ["tool-web", "tool-convo", "tool-fetch"],
     });

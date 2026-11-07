@@ -5,12 +5,12 @@
 /**
  * Default model ID to use when no model is specified
  */
-export const DEFAULT_MODEL_ID = "auto";
+export const DEFAULT_MODEL_ID = "letta/glm";
 
 /**
  * Default model handle to use for conversation compaction / summarization.
  */
-export const DEFAULT_SUMMARIZATION_MODEL = "letta/auto";
+export const DEFAULT_SUMMARIZATION_MODEL = "letta/glm";
 
 /**
  * Default model handle for lightweight conversation title generation.

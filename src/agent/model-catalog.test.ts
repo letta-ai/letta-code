@@ -26,9 +26,10 @@ describe("runtime model catalog", () => {
   });
 
   test("keeps managed Auto aliases available before cloud hydration", () => {
-    expect(resolveModel("auto")).toBe("letta/auto");
+    expect(resolveModel("auto")).toBe("letta/glm");
+    expect(resolveModel("glm")).toBe("letta/glm");
     expect(resolveModel("auto-chat")).toBe("letta/auto-chat");
-    expect(getDefaultModel()).toBe("letta/auto");
+    expect(getDefaultModel()).toBe("letta/glm");
   });
 
   test("resolves unique local pi-ai model IDs", () => {

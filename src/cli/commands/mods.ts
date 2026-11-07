@@ -18,7 +18,7 @@ import {
 } from "@/tools/impl/shell-env";
 
 const DEFAULT_TARGET = "memory-citations";
-const DEFAULT_MODEL = "auto";
+const DEFAULT_MODEL = "glm";
 const DEFAULT_OPTIMIZATION_ITERATIONS = 5;
 const MOD_OPTIMIZATION_PULSE = BRAILLE_ANIMATIONS.pulse;
 const MOD_OPTIMIZATION_RUNNING_LABELS = [

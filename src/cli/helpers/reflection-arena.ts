@@ -46,7 +46,6 @@ const REFLECTION_ARENA_COMPARISON_MODEL_POOL: Array<{
   { model: "lc-anthropic/claude-sonnet-5", weight: 1 },
   { model: "lc-anthropic/claude-opus-4-8", weight: 3 },
   { model: "lc-anthropic/claude-fable-5", weight: 1 },
-  { model: "letta/auto", weight: 1 },
   { model: "deepseek/deepseek-v4-pro", weight: 1 },
   { model: "minimax-m3", weight: 1 },
   { model: "gpt-5.5-plus-pro-high", weight: 3 },
@@ -63,14 +62,14 @@ export function sampleReflectionArenaComparisonModel(
     (sum, entry) => sum + Math.max(0, entry.weight),
     0,
   );
-  if (totalWeight <= 0) return "letta/auto";
+  if (totalWeight <= 0) return "letta/glm";
 
   let offset = randomInt(totalWeight);
   for (const candidate of candidates) {
     offset -= Math.max(0, candidate.weight);
     if (offset < 0) return candidate.model;
   }
-  return candidates[0]?.model ?? "letta/auto";
+  return candidates[0]?.model ?? "letta/glm";
 }
 
 const ANSI_BOLD = "\u001b[1m";
