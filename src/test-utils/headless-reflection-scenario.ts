@@ -91,7 +91,7 @@ export function isAcceptedScenarioExit(summary: {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    model: "glm",
+    model: "sonnet-4.6-low",
     reflectionModel: DEFAULT_REFLECTION_MODEL,
   };
   for (let i = 0; i < argv.length; i += 1) {
@@ -102,7 +102,7 @@ function parseArgs(argv: string[]): Args {
       args.reflectionModel = argv[++i] ?? args.reflectionModel;
     } else if (value === "--help" || value === "-h") {
       console.log(
-        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model glm] [--reflection-model gpt-5.4-mini-low]",
+        "Usage: bun run src/test-utils/headless-reflection-scenario.ts [--model sonnet-4.6-low] [--reflection-model gpt-5.4-mini-low]",
       );
       process.exit(0);
     } else {

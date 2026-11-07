@@ -39,6 +39,9 @@ const REFLECTION_ARENA_TELEMETRY_TRANSCRIPT_MAX_CHARS = 1_000_000;
 
 export const REFLECTION_ARENA_MODEL_A_DEFAULT = "letta/auto-memory";
 
+const REFLECTION_ARENA_COMPARISON_FALLBACK_MODEL =
+  "lc-anthropic/claude-sonnet-5";
+
 const REFLECTION_ARENA_COMPARISON_MODEL_POOL: Array<{
   model: string;
   weight: number;
@@ -62,14 +65,14 @@ export function sampleReflectionArenaComparisonModel(
     (sum, entry) => sum + Math.max(0, entry.weight),
     0,
   );
-  if (totalWeight <= 0) return "letta/glm";
+  if (totalWeight <= 0) return REFLECTION_ARENA_COMPARISON_FALLBACK_MODEL;
 
   let offset = randomInt(totalWeight);
   for (const candidate of candidates) {
     offset -= Math.max(0, candidate.weight);
     if (offset < 0) return candidate.model;
   }
-  return candidates[0]?.model ?? "letta/glm";
+  return candidates[0]?.model ?? REFLECTION_ARENA_COMPARISON_FALLBACK_MODEL;
 }
 
 const ANSI_BOLD = "\u001b[1m";

@@ -43,7 +43,7 @@ await handleHeadlessCommand(parseCliArgs([
 
 test.each([
   {
-    model: "auto",
+    model: "glm",
     explicitNew: true,
     expectedModel: "letta/glm",
     expectedSettings: {

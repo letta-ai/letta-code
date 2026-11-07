@@ -60,6 +60,7 @@ describe("reconcileExistingAgentState", () => {
 
   test("adds missing base tool while preserving existing non-base tools", async () => {
     const initialAgent = mkAgentState({
+      model: "openai/gpt-5",
       tools: [
         mkTool("tool-web", "web_search"),
         mkTool("tool-convo", "conversation_search"),
@@ -117,7 +118,7 @@ describe("reconcileExistingAgentState", () => {
     expect(update).toHaveBeenCalledWith("agent-test", {
       compaction_settings: {
         mode: "sliding_window",
-        model: "letta/glm",
+        model: "openai/gpt-5",
       },
       tool_ids: ["tool-web", "tool-convo", "tool-fetch"],
     });

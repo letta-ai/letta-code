@@ -176,7 +176,7 @@ jobs:
           letta_args: --new
           track_progress: ""
           tracking_comment: "false"
-          model: letta/glm
+          model: anthropic/claude-sonnet-4-6
           prompt: ${{ steps.prompt.outputs.prompt }}
 
       - name: Name watcher conversation

@@ -30,7 +30,6 @@ import {
   persistReflectionSettingsForAgent,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { experimentManager } from "@/experiments/manager";
 import type { ExperimentId } from "@/experiments/types";
 import { OPENAI_CODEX_PROVIDER_NAME } from "@/providers/openai-codex-provider";
@@ -1088,13 +1087,13 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
 
         try {
           // Spread existing compaction_settings to preserve model/other fields,
-          // only override the mode. If no model is configured, default to
-          // letta/auto so compaction uses a consistent summarization model.
+          // only override the mode. If no model is configured, compact with
+          // the agent's own model.
           const existing = agentState?.compaction_settings;
           const existingModel = existing?.model?.trim();
           const nextCompactionSettings = {
             ...existing,
-            model: existingModel || DEFAULT_SUMMARIZATION_MODEL,
+            model: existingModel || agentState?.model || undefined,
             mode: mode as
               | "all"
               | "sliding_window"
@@ -1125,6 +1124,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
       isAgentBusy,
       withCommandLock,
       agentState?.compaction_settings,
+      agentState?.model,
       setActiveOverlay,
       setAgentState,
       setQueuedOverlayAction,

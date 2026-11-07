@@ -758,14 +758,14 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("openai/parent-model");
   });
 
-  test("explicit user inherit still allows default fallback without a parent model", async () => {
+  test("explicit user inherit without a parent model skips Letta-hosted defaults", async () => {
     const result = await resolveSubagentModel({
       userModel: "inherit",
       recommendedModel: "inherit",
       availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/glm");
+    expect(result).toBeNull();
   });
 
   test("inherits parent when recommended is inherit", async () => {
@@ -778,13 +778,13 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("lc-anthropic/parent-model");
   });
 
-  test("uses auto default when available", async () => {
+  test("does not default to a Letta-hosted model", async () => {
     const result = await resolveSubagentModel({
       recommendedModel: "sonnet-4.5",
       availableHandles: new Set(["letta/glm", "anthropic/test-model"]),
     });
 
-    expect(result).toBe("letta/glm");
+    expect(result).toBeNull();
   });
 
   test("uses auto-fast default for free tier when available", async () => {
@@ -808,13 +808,13 @@ describe("resolveSubagentModel", () => {
     expect(result).toBe("openai/gpt-5");
   });
 
-  test("free tier falls back to auto when auto-fast is unavailable", async () => {
+  test("free tier does not fall back to a Letta-hosted default", async () => {
     const result = await resolveSubagentModel({
       billingTier: "free",
       availableHandles: new Set(["letta/glm"]),
     });
 
-    expect(result).toBe("letta/glm");
+    expect(result).toBeNull();
   });
 
   test("falls back when auto is unavailable", async () => {
@@ -897,14 +897,14 @@ describe("resolveSubagentModel", () => {
   test("user-configured models override local parent inheritance", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
-      recommendedModel: "auto",
+      recommendedModel: "anthropic/test-model",
       recommendedModelSource: "user",
       parentModelHandle: "lmstudio/local-model",
       backendMode: "local",
-      availableHandles: new Set(["letta/glm"]),
+      availableHandles: new Set(["anthropic/test-model"]),
     });
 
-    expect(result).toBe("letta/glm");
+    expect(result).toBe("anthropic/test-model");
   });
 
   test("explicit Task models override user-configured models", async () => {
@@ -945,11 +945,11 @@ describe("resolveSubagentModel", () => {
   test("resolves reflection subagent model aliases before honoring overrides", async () => {
     const result = await resolveSubagentModel({
       subagentType: "reflection",
-      recommendedModel: "auto",
-      availableHandles: new Set(["letta/glm"]),
+      recommendedModel: "auto-fast",
+      availableHandles: new Set(["letta/auto-fast"]),
     });
 
-    expect(result).toBe("letta/glm");
+    expect(result).toBe("letta/auto-fast");
   });
 
   test("does not override an explicit user model for reflection subagents", async () => {
