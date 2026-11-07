@@ -50,6 +50,7 @@ export async function applyStartupPermissionMode(options: {
   const configuredMode = await loadPermissionMode(
     options.workingDirectory ?? process.cwd(),
   );
+
   if (configuredMode) {
     permissionMode.setMode(configuredMode);
     return { ok: true, mode: configuredMode, source: "settings" };
