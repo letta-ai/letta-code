@@ -15,6 +15,7 @@ import { ACTING_USER_ID_ENV, ACTING_USER_ID_HEADER } from "@/agent/acting-user";
 import { getMcpOriginatorToken } from "@/agent/mcp-originator-tokens";
 import type { SkillSource } from "@/agent/skill-sources";
 import { type Backend, getBackend } from "@/backend";
+import { isCompactionSummaryChunk } from "@/backend/compaction-events";
 import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
@@ -41,10 +42,8 @@ import {
   type ApprovalNormalizationOptions,
   normalizeOutgoingApprovalMessages,
 } from "./approval-result-normalization";
-import {
-  buildClientSkillsPayload,
-  buildClientSkillsUpdateReminder,
-} from "./client-skills";
+import { buildClientSkillsPayload } from "./client-skills";
+import { planClientSkillsRequest } from "./client-skills-baseline";
 import { getSkillSources } from "./context";
 import { parseRetryAfterHeaderMs } from "./turn-recovery-policy";
 
@@ -58,12 +57,6 @@ const MCP_ORIGINATOR_SUPER_RUN_HEADER = "x-letta-mcp-originator-super-run-id";
 const CLOUD_API_SHUTDOWN_MAX_RETRIES = 3;
 const CLOUD_API_SHUTDOWN_DEFAULT_RETRY_DELAY_MS = 1000;
 const responseStateIdsByScope = new Map<string, string>();
-// Backend identity and agent/default-conversation scope must not share a
-// notification baseline. Discovery cache invalidation must not clear it either.
-const sentClientSkillsByBackend = new WeakMap<
-  Backend,
-  Map<string, NonNullable<ConversationMessageCreateParams["client_skills"]>>
->();
 
 function getCloudApiShutdownRetryDelayMs(error: { headers?: unknown }): number {
   const headers = error.headers;
@@ -173,6 +166,7 @@ function attachResponseStateTracking(
     scope: string;
     conversationId: string;
     agentId: string | null;
+    onCompaction?: () => void;
   },
 ): Stream<LettaStreamingResponse> {
   const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
@@ -187,6 +181,9 @@ function attachResponseStateTracking(
       async next() {
         const result = await iterator.next();
         if (!result.done) {
+          if (isCompactionSummaryChunk(result.value)) {
+            params.onCompaction?.();
+          }
           const responseId = getResponseStateId(result.value);
           if (responseId) {
             responseStateIdsByScope.set(params.scope, responseId);
@@ -435,36 +432,33 @@ export async function sendMessageStreamWithBackend(
   const executionRuntimeContext = getExecutionContextById(
     preparedToolContext.contextId,
   )?.runtimeContext;
-  const { clientSkills, errors: clientSkillDiscoveryErrors } =
-    await buildClientSkillsPayload({
-      agentId: opts.agentId,
-      workingDirectory:
-        opts.workingDirectory ??
-        executionRuntimeContext?.workingDirectory ??
-        undefined,
-      skillsDirectory: executionRuntimeContext?.skillsDirectory,
-      skillSources: opts.skillSources ?? getSkillSources(),
-      bundledSkills: executionRuntimeContext?.bundledSkills,
-    });
+  const {
+    clientSkills: discoveredClientSkills,
+    errors: clientSkillDiscoveryErrors,
+  } = await buildClientSkillsPayload({
+    agentId: opts.agentId,
+    workingDirectory:
+      opts.workingDirectory ??
+      executionRuntimeContext?.workingDirectory ??
+      undefined,
+    skillsDirectory: executionRuntimeContext?.skillsDirectory,
+    skillSources: opts.skillSources ?? getSkillSources(),
+    bundledSkills: executionRuntimeContext?.bundledSkills,
+  });
 
   const resolvedConversationId = conversationId;
   const responseStateScope = buildResponseStateScope(
     resolvedConversationId,
     opts.agentId ?? null,
   );
-  const skillScope = buildResponseStateScope(
-    resolvedConversationId,
-    conversationId === "default" ? opts.agentId : null,
+  // Keep the prompt prefix byte-stable: send the conversation's frozen
+  // catalog and announce changes through a skill-delta reminder instead.
+  const skillPlan = planClientSkillsRequest(
+    backend,
+    { conversationId: resolvedConversationId, agentId: opts.agentId },
+    discoveredClientSkills,
   );
-  let sentClientSkills = sentClientSkillsByBackend.get(backend);
-  if (!sentClientSkills) {
-    sentClientSkills = new Map();
-    sentClientSkillsByBackend.set(backend, sentClientSkills);
-  }
-  const skillReminder = buildClientSkillsUpdateReminder(
-    sentClientSkills.get(skillScope),
-    clientSkills,
-  );
+  const { clientSkills, reminder: skillReminder } = skillPlan;
   // Deliver at the next model boundary (including tool continuations), not by
   // launching an unsolicited run from a filesystem watcher. Keep approvals and
   // the original input/otid in place, then append the runtime reminder.
@@ -633,11 +627,12 @@ export async function sendMessageStreamWithBackend(
         },
       );
       // A rejected request must not consume the notification; retries need it.
-      sentClientSkills.set(skillScope, clientSkills);
+      const onSkillsCompaction = skillPlan.accept();
       stream = attachResponseStateTracking(stream, {
         scope: responseStateScope,
         conversationId: resolvedConversationId,
         agentId: opts.agentId ?? null,
+        onCompaction: onSkillsCompaction,
       });
       break;
     } catch (error) {
