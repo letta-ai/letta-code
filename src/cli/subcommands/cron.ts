@@ -155,6 +155,7 @@ function formatCloudScheduleOutput(
     ...(targetDeviceId && { target_device_id: targetDeviceId }),
     agent_id: schedule.agent_id,
     conversation_id: schedule.conversation_id ?? "default",
+    model: schedule.model ?? null,
     name: schedule.name ?? null,
     description: schedule.description ?? null,
     prompt: extractPromptFromCloudSchedule(schedule),
