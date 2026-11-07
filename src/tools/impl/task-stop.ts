@@ -6,6 +6,7 @@ import { killBackgroundProcess } from "./kill-bash.js";
 import {
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
+  settleBackgroundWork,
 } from "./process_manager.js";
 import {
   REMOTE_EXTERNAL_WORKER_STOPPED,
@@ -99,7 +100,7 @@ export async function task_stop(
       );
       task.error = "Aborted by user";
       await task.completion;
-      task.status = "failed";
+      settleBackgroundWork(task, "failed");
       scheduleBackgroundTaskCleanup(task_id);
       return remote ?? { killed: true };
     }

@@ -7,6 +7,7 @@ import {
   createBackgroundOutputFile,
   getNextDownloadId,
   scheduleBackgroundProcessCleanup,
+  settleBackgroundWork,
 } from "@/tools/impl/process_manager";
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import {
@@ -101,6 +102,7 @@ export async function runSlackAttachmentDownloadTask(params: {
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("completed", line);
+      settleBackgroundWork(processState);
       return { outcome: "completed" as const, attachment };
     })
     .catch((error: unknown) => {
@@ -111,6 +113,7 @@ export async function runSlackAttachmentDownloadTask(params: {
       appendToOutputFile(outputFile, `${line}\n`);
       scheduleBackgroundProcessCleanup(taskId);
       notifyIfBackgrounded("failed", line);
+      settleBackgroundWork(processState);
       return { outcome: "failed" as const, error: message };
     });
 
