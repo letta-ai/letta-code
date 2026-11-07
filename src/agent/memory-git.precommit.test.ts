@@ -336,6 +336,7 @@ describe("pre-commit hook: paths with spaces and non-ASCII", () => {
     expect(result.success).toBe(false);
     expect(result.output).toContain("system/My Notes.md: missing frontmatter");
   });
+
   test("validates and then commits a non-ASCII system path", () => {
     const path = "system/café notes.md";
     writeAndStage(path, "no frontmatter here\n");
