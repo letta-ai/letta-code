@@ -126,6 +126,7 @@ describe("external coding agent MCP metadata", () => {
 
   test("inherits local and cloud MCP discovery by default, with explicit opt-out", async () => {
     const deps = {
+      lookupParentAgent: async () => undefined,
       getLocalServerNames: (id: string) => {
         expect(id).toBe("parent");
         return ["filesystem"];
