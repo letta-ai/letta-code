@@ -2,7 +2,9 @@
  * Cross-process lock for remote-settings.json.
  *
  * Primary locks and recovery claims are fully initialized before hard-link
- * publication, so another process never observes an ownerless lock. Recovery
+ * publication, so another process never observes an ownerless lock. Volumes
+ * without hard links publish with an exclusive-create copy instead; a fresh
+ * malformed token is then treated as a live owner that is still writing. Recovery
  * claims form an immutable chain scoped to one dead primary token: a live
  * claim owner blocks recovery, while a crashed recovery owner is bypassed at
  * the next depth. This prevents two recoverers from unlinking different
@@ -15,15 +17,20 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import {
-  linkSync,
   mkdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
-import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isDebugEnabled } from "@/utils/debug";
+import {
+  isWithinPartialPublishGrace,
+  publishExclusive,
+  publishExclusiveSync,
+} from "@/utils/exclusive-publish";
 
 export interface RemoteSettingsLockHandle {
   lockPath: string;
@@ -79,10 +86,27 @@ function isLockOwnerProcessAlive(ownerToken: string): boolean {
   }
 }
 
+/**
+ * Tokens are `<pid>-<uuid>`. A copy-published file can be read before it is
+ * complete; once the separator is visible the pid is complete and the normal
+ * liveness check applies. Before that, a fresh file is a live owner that is
+ * still writing (a truncated pid could name an unrelated, dead process).
+ */
+function isTokenFileOwnerAlive(filePath: string, ownerToken: string): boolean {
+  if (!ownerToken.includes("-")) {
+    try {
+      if (isWithinPartialPublishGrace(statSync(filePath).mtimeMs)) return true;
+    } catch {
+      // Gone or unreadable: fall through to the process check.
+    }
+  }
+  return isLockOwnerProcessAlive(ownerToken);
+}
+
 function getRecoverableLockTokenSync(lockPath: string): string | null {
   try {
     const ownerToken = readFileSync(lockPath, "utf-8");
-    return isLockOwnerProcessAlive(ownerToken) ? null : ownerToken;
+    return isTokenFileOwnerAlive(lockPath, ownerToken) ? null : ownerToken;
   } catch {
     return null;
   }
@@ -93,7 +117,7 @@ async function getRecoverableLockToken(
 ): Promise<string | null> {
   try {
     const ownerToken = await readFile(lockPath, "utf-8");
-    return isLockOwnerProcessAlive(ownerToken) ? null : ownerToken;
+    return isTokenFileOwnerAlive(lockPath, ownerToken) ? null : ownerToken;
   } catch {
     return null;
   }
@@ -119,7 +143,7 @@ function createInitializedTokenLinkSync(
   let acquisitionError: unknown;
   try {
     writeFileSync(candidatePath, ownerToken, { flag: "wx" });
-    linkSync(candidatePath, targetPath);
+    publishExclusiveSync(candidatePath, targetPath);
   } catch (error) {
     acquisitionError = error;
   }
@@ -142,7 +166,7 @@ async function createInitializedTokenLink(
   let acquisitionError: unknown;
   try {
     await writeFile(candidatePath, ownerToken, { flag: "wx" });
-    await link(candidatePath, targetPath);
+    await publishExclusive(candidatePath, targetPath);
   } catch (error) {
     acquisitionError = error;
   }
@@ -208,7 +232,7 @@ function recoverStaleLockSync(
         ownedClaimDepth = depth;
         break;
       }
-      if (isLockOwnerProcessAlive(claimOwner)) return false;
+      if (isTokenFileOwnerAlive(claimPath, claimOwner)) return false;
     }
     if (ownedClaimDepth === -1) {
       if (isDebugEnabled()) {
@@ -257,7 +281,7 @@ async function recoverStaleLock(
         ownedClaimDepth = depth;
         break;
       }
-      if (isLockOwnerProcessAlive(claimOwner)) return false;
+      if (isTokenFileOwnerAlive(claimPath, claimOwner)) return false;
     }
     if (ownedClaimDepth === -1) {
       if (isDebugEnabled()) {

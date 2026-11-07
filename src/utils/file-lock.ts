@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { link, readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { readFile, stat, unlink, writeFile } from "node:fs/promises";
+import { publishExclusive as publishFileExclusive } from "@/utils/exclusive-publish";
 import {
   getOwnProcessStartTime,
   isSameProcessRunning,
@@ -94,7 +95,9 @@ async function ownerRecord(): Promise<string> {
 /**
  * Create `path` holding `payload` only if it does not exist. The record is
  * written to a private file and published with a hard link, so it is never
- * seen half-written and cannot overwrite a file that appeared meanwhile.
+ * seen half-written and cannot overwrite a file that appeared meanwhile. On
+ * volumes without hard links it is published with an exclusive-create copy,
+ * which can be seen half-written: readers give unparsable files a grace.
  */
 async function publishExclusive(
   path: string,
@@ -103,7 +106,7 @@ async function publishExclusive(
   const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
   await writeFile(temporaryPath, payload, "utf-8");
   try {
-    await link(temporaryPath, path);
+    await publishFileExclusive(temporaryPath, path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
@@ -260,7 +263,14 @@ async function acquireReapMarker(
   try {
     owner = JSON.parse(raw) as { pid?: unknown; started?: unknown };
   } catch {
-    // Not one of ours; leave it to the corrupt-lock path on the next attempt.
+    // A marker published by copy (no hard links) can be read half-written.
+    // Treat a fresh unparsable marker as held; reap it only once it is old.
+    try {
+      if (Date.now() - (await stat(reapPath)).mtimeMs <= CORRUPT_LOCK_GRACE_MS)
+        return null;
+    } catch {
+      return null;
+    }
   }
   const alive =
     typeof owner.pid === "number" &&
