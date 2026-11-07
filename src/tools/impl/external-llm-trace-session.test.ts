@@ -13,6 +13,7 @@ afterEach(() => setConfiguredBackendMode(previousMode));
 
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { ApiRequestError } from "@/backend/api/request";
 import type { ExternalTraceRow } from "./external-llm-trace-proxy";
 import { createTraceSession } from "./external-llm-trace-session";
 
@@ -130,3 +131,67 @@ test("flush batches retain native session/task IDs and acting-user attribution",
     upstream.close();
   }
 });
+
+test("a 503 upload logs a single metadata-only warning per interval", async () => {
+  const previous = process.env.LETTA_CODE_TELEM;
+  process.env.LETTA_CODE_TELEM = "1";
+  const upstream = createServer((_req, res) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end('{"model":"test"}');
+  }).listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string")
+    throw new Error("Missing address");
+  const warnings: string[] = [];
+  let uploads = 0;
+  const trace = await createTraceSession(
+    "claude_code",
+    context,
+    {},
+    `http://127.0.0.1:${address.port}`,
+    "session-503",
+    {
+      getConfig: async () => ({
+        baseUrl: "https://api.letta.com",
+        apiKey: "upload-credential",
+      }),
+      upload: async () => {
+        uploads++;
+        throw new ApiRequestError(
+          "API error (503)",
+          503,
+          '{"detail":"service unavailable upload-credential"}',
+        );
+      },
+      warn: (message) => warnings.push(message),
+    },
+  );
+  try {
+    // Two size-triggered batches (10 rows each), each failing all retries.
+    for (let batch = 0; batch < 2; batch++) {
+      for (let i = 0; i < 10; i++) {
+        const response = await fetch(`${trace?.url}/responses`, {
+          method: "POST",
+          body: '{"model":"test","input":"secret prompt text"}',
+        });
+        await response.text();
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+    await trace?.close();
+    expect(uploads).toBeGreaterThanOrEqual(6);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("status=503");
+    expect(warnings[0]).toContain("service unavailable");
+    expect(warnings[0]).toContain("harness=claude_code");
+    expect(warnings[0]).toContain("conversation=conv-test");
+    expect(warnings[0]).toMatch(/rows=\d+/);
+    expect(warnings[0]).not.toContain("upload-credential");
+    expect(warnings[0]).not.toContain("secret prompt text");
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_CODE_TELEM;
+    else process.env.LETTA_CODE_TELEM = previous;
+    upstream.close();
+  }
+}, 15000);
