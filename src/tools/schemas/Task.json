@@ -7,7 +7,7 @@
     },
     "prompt": {
       "type": "string",
-      "description": "The task for the agent to perform. A forked agent already has this conversation: state the goal, what finished looks like, and paths, links, or IDs to read. Without forked context, the prompt is all it knows."
+      "description": "The task for the agent to perform. A forked agent already has this conversation: state the goal, what finished looks like as checks the agent can verify (a measurable threshold, not \"no bad output\"), and paths, links, or IDs to read. Without forked context, the prompt is all it knows."
     },
     "harness": {
       "type": "string",
