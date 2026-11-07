@@ -91,7 +91,7 @@ export function isAcceptedScenarioExit(summary: {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
-    model: "auto",
+    model: "letta/glm",
     reflectionModel: DEFAULT_REFLECTION_MODEL,
   };
   for (let i = 0; i < argv.length; i += 1) {

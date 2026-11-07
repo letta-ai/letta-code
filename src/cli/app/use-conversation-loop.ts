@@ -2358,7 +2358,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               kind: "status",
               id: statusId,
               lines: [
-                "Quota limit reached; temporarily switching to Auto and continuing...",
+                "Quota limit reached; temporarily switching to letta/glm and continuing...",
               ],
             });
             buffersRef.current.order.push(statusId);

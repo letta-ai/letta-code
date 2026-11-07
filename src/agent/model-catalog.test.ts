@@ -25,10 +25,10 @@ describe("runtime model catalog", () => {
     expect(reference[0]?.id).toBe("runtime-model");
   });
 
-  test("keeps managed Auto aliases available before cloud hydration", () => {
-    expect(resolveModel("auto")).toBe("letta/auto");
-    expect(resolveModel("auto-chat")).toBe("letta/auto-chat");
-    expect(getDefaultModel()).toBe("letta/auto");
+  test("maps retired Auto aliases to the hosted fallback before cloud hydration", () => {
+    expect(resolveModel("auto")).toBe("letta/glm");
+    expect(resolveModel("auto-chat")).toBe("letta/glm");
+    expect(getDefaultModel()).toBe("letta/glm");
   });
 
   test("resolves unique local pi-ai model IDs", () => {

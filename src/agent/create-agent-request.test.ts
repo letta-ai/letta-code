@@ -49,7 +49,7 @@ describe("buildCreateAgentRequest", () => {
       include_base_tool_rules: false,
       initial_message_sequence: [],
       parallel_tool_calls: true,
-      compaction_settings: { model: "letta/auto" },
+      compaction_settings: { model: "letta/glm" },
     });
     expect(request).not.toHaveProperty("name");
     expect(request).not.toHaveProperty("description");
@@ -252,7 +252,7 @@ describe("buildCreateAgentRequestForPersonality", () => {
       expect(request.include_base_tool_rules).toBe(false);
       expect(request.initial_message_sequence).toEqual([]);
       expect(request.parallel_tool_calls).toBe(true);
-      expect(request.compaction_settings).toEqual({ model: "letta/auto" });
+      expect(request.compaction_settings).toEqual({ model: "letta/glm" });
     }
   });
 

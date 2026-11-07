@@ -1089,7 +1089,7 @@ export function useConfigurationHandlers(ctx: ConfigurationHandlersContext) {
         try {
           // Spread existing compaction_settings to preserve model/other fields,
           // only override the mode. If no model is configured, default to
-          // letta/auto so compaction uses a consistent summarization model.
+          // letta/glm so compaction uses a consistent summarization model.
           const existing = agentState?.compaction_settings;
           const existingModel = existing?.model?.trim();
           const nextCompactionSettings = {

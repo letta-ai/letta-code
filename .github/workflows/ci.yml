@@ -652,4 +652,4 @@ jobs:
       - name: Run headless reflection scenario
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun run src/test-utils/headless-reflection-scenario.ts --model auto
+        run: bun run src/test-utils/headless-reflection-scenario.ts --model letta/glm

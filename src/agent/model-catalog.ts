@@ -30,8 +30,8 @@ export interface CatalogModel {
 export const models: CatalogModel[] = [];
 
 const BUILTIN_MODEL_ALIASES = new Map([
-  ["auto", "letta/auto"],
-  ["auto-chat", "letta/auto-chat"],
+  ["auto", "letta/glm"],
+  ["auto-chat", "letta/glm"],
   ["auto-fast", "letta/auto-fast"],
 ]);
 
@@ -103,7 +103,7 @@ export function resolveModel(modelIdentifier: string): string | null {
 
 /** Get the default model handle from the active catalog. */
 export function getDefaultModel(): string {
-  if (models.length === 0) return "letta/auto";
+  if (models.length === 0) return "letta/glm";
 
   const autoModel = models.find((model) => model.id === "auto");
   if (autoModel) return autoModel.handle;
