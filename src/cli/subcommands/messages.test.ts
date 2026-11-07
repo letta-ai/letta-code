@@ -173,4 +173,33 @@ describe("messages subcommand conversation scoping", () => {
       capture.restore();
     }
   });
+
+  test.each([
+    ["list", "--out"],
+    ["list", "--output"],
+    ["search", "--out"],
+  ])("%s rejects %s instead of ignoring it", async (action, flag) => {
+    const capture = captureConsole();
+    try {
+      const code = await runMessages([
+        action,
+        "--conversation",
+        "local-conv-1",
+        "--query",
+        "needle",
+        flag,
+        "messages.json",
+      ]);
+
+      expect(code).toBe(1);
+      expect(backendMock.listConversationMessages).not.toHaveBeenCalled();
+      expect(searchMessagesForBackendMock).not.toHaveBeenCalled();
+      expect(capture.stdout).toEqual([]);
+      expect(capture.stderr.join("\n")).toContain(
+        '--out is only supported by "letta messages transcript"',
+      );
+    } finally {
+      capture.restore();
+    }
+  });
 });
