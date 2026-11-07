@@ -12,6 +12,10 @@ import maintainingCoreMemory from "@/skills/builtin/maintaining-core-memory/SKIL
 import maintainingDeferredMemory from "@/skills/builtin/maintaining-deferred-memory/SKILL.md";
 import syncingMemory from "@/skills/builtin/syncing-memory-filesystem/SKILL.md";
 import reflectionPrompt from "./reflection.md";
+import reflectionV2Prompt from "./reflection-v2.md";
+
+const scratchpadGuidance =
+  "Use the subagent scratchpad (`$LETTA_SCRATCHPAD` on Unix, `$env:LETTA_SCRATCHPAD` in PowerShell) for temporary files, helper scripts, and intermediate artifacts; keep durable memory and skill edits under `$MEMORY_DIR` and do not commit scratchpad contents.";
 
 test.each([
   ["reflection", "memfs-v1", "Bash,Edit"],
@@ -66,6 +70,20 @@ test.each([
 );
 
 describe("reflection prompt shell guidance", () => {
+  test.each([
+    ["memfs-v1", reflectionPrompt],
+    ["memfs-v2", reflectionV2Prompt],
+  ] as const)(
+    "keeps %s scratch artifacts out of the memory worktree",
+    (_format, prompt) => {
+      expect(prompt).toContain(scratchpadGuidance);
+      expect(prompt).not.toContain("$MEMORY_DIR/.tmp/");
+      expect(prompt).not.toContain(
+        "Keep all filesystem writes under the memory repo",
+      );
+    },
+  );
+
   test("gives native Windows alternatives for terminal operations", () => {
     expect(reflectionPrompt).toContain(
       "the tool runs native PowerShell or cmd.exe on Windows",

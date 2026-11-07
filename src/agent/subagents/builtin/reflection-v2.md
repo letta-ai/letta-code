@@ -40,7 +40,7 @@ Skip anything ephemeral (one-off task state, line numbers, exact errors, tempora
 
 Write each change the way the preloaded skills describe. Before editing, read the relevant existing files so you integrate rather than duplicate. For skills, prefer updating or extending an existing skill over creating one, make at most one skill change per run, and when unsure whether a procedure deserves a skill, make none.
 
-Use Edit for files that already exist. Create new files with a quoted heredoc on Unix, or on Windows a single-quoted here-string piped to `Set-Content -Encoding utf8`; memory files must stay UTF-8. Edit does not expand environment variables: resolve absolute paths first (`printf "%s/persona.md\n" "$MEMORY_DIR"`, or `Join-Path $env:MEMORY_DIR "persona.md"` in PowerShell) and pass the printed path. Keep all writes inside `$MEMORY_DIR`.
+Use Edit for files that already exist. Create new files with a quoted heredoc on Unix, or on Windows a single-quoted here-string piped to `Set-Content -Encoding utf8`; memory files must stay UTF-8. Edit does not expand environment variables: resolve absolute paths first (`printf "%s/persona.md\n" "$MEMORY_DIR"`, or `Join-Path $env:MEMORY_DIR "persona.md"` in PowerShell) and pass the printed path. Use the subagent scratchpad (`$LETTA_SCRATCHPAD` on Unix, `$env:LETTA_SCRATCHPAD` in PowerShell) for temporary files, helper scripts, and intermediate artifacts; keep durable memory and skill edits under `$MEMORY_DIR` and do not commit scratchpad contents.
 
 ## Commit
 

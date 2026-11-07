@@ -261,7 +261,7 @@ describe("reflection worktree completion messaging", () => {
     });
 
     expect(result.integration.status).toBe("dirty_uncommitted");
-    expect(result.integration.summary).toContain("uncommitted changes");
+    expect(result.integration.summary).toContain("not committed cleanly");
     expect(result.completionSuccess).toBe(false);
     expect(existsSync(worktree.worktreeDir)).toBe(false);
     expect(telemetryState.events).toHaveLength(1);
@@ -369,26 +369,40 @@ describe("reflection worktree completion messaging", () => {
     });
   });
 
-  test("dirty reflection worktree retries transcript with dirty message", async () => {
+  test("untracked reflection helper retries a committed memory update with dirty message", async () => {
     const worktree = await createReflectionMemoryWorktree({
       parentMemoryDir: memoryDir,
     });
-    writeFileSync(join(worktree.worktreeDir, "scratch.md"), "dirty\n", "utf-8");
+    writeFileSync(
+      join(worktree.worktreeDir, "reflection.md"),
+      "durable memory\n",
+      "utf-8",
+    );
+    git(worktree.worktreeDir, ["add", "reflection.md"]);
+    git(worktree.worktreeDir, ["commit", "-m", "reflection"]);
+    writeFileSync(
+      join(worktree.worktreeDir, "inspect_transcript.py"),
+      'print("inspect")\n',
+      "utf-8",
+    );
 
     const result = await finalizeLaunch(worktree, true);
 
     expect(result.integration.status).toBe("dirty_uncommitted");
-    expect(result.integration.summary).toContain("uncommitted changes");
+    expect(result.integration.summary).toContain("not committed cleanly");
+    expect(result.integration.commitCount).toBe(1);
     expect(result.completionSuccess).toBe(false);
-    expect(result.completionMessage).toBe(
+    expect(result.completionMessage).toContain(
       "Tried to reflect, but memory changes were not committed cleanly; will retry later.",
     );
+    expect(result.completionMessage).toContain("Uncommitted status:");
+    expect(result.completionMessage).toContain("?? inspect_transcript.py");
     expect(telemetryState.events).toHaveLength(1);
     expect(telemetryState.events[0]?.data).toMatchObject({
       outcome: "reflection_worktree_dirty",
       integration_status: "dirty_uncommitted",
       reflection_worktree_id: worktree.id,
-      commit_count: 0,
+      commit_count: 1,
     });
   });
 
