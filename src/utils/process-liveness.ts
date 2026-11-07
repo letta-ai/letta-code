@@ -56,10 +56,27 @@ export async function getProcessStartTime(pid: number): Promise<string | null> {
 
 let ownStartTime: Promise<string | null> | undefined;
 
-/** This process's own start time, resolved once; it cannot change. */
+/**
+ * This process's own start time, resolved once; it cannot change. A null
+ * result (lookup failed or timed out, e.g. a slow PowerShell start on Windows)
+ * is not cached, so the next caller retries instead of recording "unknown"
+ * for the rest of the process's life.
+ */
 export function getOwnProcessStartTime(): Promise<string | null> {
-  ownStartTime ??= getProcessStartTime(process.pid);
+  if (!ownStartTime) {
+    const lookup = getProcessStartTime(process.pid);
+    ownStartTime = lookup;
+    void lookup.then((started) => {
+      if (started === null && ownStartTime === lookup) {
+        ownStartTime = undefined;
+      }
+    });
+  }
   return ownStartTime;
+}
+
+export function resetOwnProcessStartTimeForTests(): void {
+  ownStartTime = undefined;
 }
 
 export interface ProcessIdentity {
