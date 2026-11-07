@@ -1,5 +1,6 @@
 import type WebSocket from "ws";
 import type { ExperimentId } from "@/experiments/types";
+import { isValidReflectionModelSetting } from "@/reflection-settings";
 import { isToolsetPreference } from "@/tools/toolset-catalog";
 import {
   CHANNEL_ACCOUNT_CREATE_FIELDS,
@@ -112,7 +113,6 @@ const EXPERIMENT_IDS = new Set<ExperimentId>([
   "memory_palace",
   "tui_cron",
 ]);
-
 function isExperimentId(value: unknown): value is ExperimentId {
   return typeof value === "string" && EXPERIMENT_IDS.has(value as ExperimentId);
 }
@@ -1345,15 +1345,9 @@ export function isSetReflectionSettingsCommand(
     !isAgentRuntimeScope(c.runtime) ||
     !c.settings ||
     typeof c.settings !== "object"
-  ) {
+  )
     return false;
-  }
-  const settings = c.settings as {
-    trigger?: unknown;
-    step_count?: unknown;
-    merge?: unknown;
-    merge_instructions?: unknown;
-  };
+  const settings = c.settings as Record<string, unknown>;
   return (
     (settings.trigger === "off" ||
       settings.trigger === "step-count" ||
@@ -1366,6 +1360,7 @@ export function isSetReflectionSettingsCommand(
       settings.merge === "explicit") &&
     (settings.merge_instructions === undefined ||
       typeof settings.merge_instructions === "string") &&
+    isValidReflectionModelSetting(settings.model) &&
     (c.scope === undefined ||
       c.scope === "local_project" ||
       c.scope === "global" ||

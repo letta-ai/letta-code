@@ -25,6 +25,7 @@ import {
   getReflectionSettings,
   type ReflectionSettings,
   type ReflectionTrigger,
+  resolveReflectionModel,
   shouldFireStepCountTrigger,
 } from "@/cli/helpers/memory-reminder";
 import {
@@ -270,7 +271,6 @@ export interface ReflectionLaunchOptions {
   ) => void | Promise<void>;
   feedbackContext?: ReflectionFeedbackContext;
 }
-
 function isReflectionSubagentActiveForAgent(agentId: string): boolean {
   return getSubagents().some((agent) => {
     if (agent.type.toLowerCase() !== "reflection") {
@@ -869,7 +869,7 @@ export async function launchReflectionSubagent(
         conversationId,
         startMessageId: autoPayload.startMessageId,
         endMessageId: autoPayload.endMessageId,
-        model: options.model,
+        model: resolveReflectionModel(options.model, reflectionSettings.model),
       });
     };
 
@@ -877,7 +877,7 @@ export async function launchReflectionSubagent(
       subagentType: "reflection",
       prompt: reflectionPrompt,
       description,
-      model: options.model,
+      model: resolveReflectionModel(options.model, reflectionSettings.model),
       systemPromptOverride: options.reflectionSystemPromptOverride,
       silentCompletion: true,
       transcriptPath: autoPayload.payloadPath,
