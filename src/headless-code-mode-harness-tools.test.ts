@@ -36,10 +36,12 @@ const backend = new FakeHeadlessBackend("agent-code-mode-harness", {
 });
 setConfiguredBackendMode("local");
 __testSetBackend(backend);
+// Skill discovery can fetch attached repositories from the cloud before the
+// fake backend runs; this test only exercises the harness tool transport.
 await handleHeadlessCommand(parseCliArgs([
   "bun", "letta", "--agent", "agent-code-mode-harness", "--conversation", "default",
   "--input-format", "stream-json", "--output-format", "stream-json",
-  "--permission-mode", "unrestricted", "--memfs-startup", "skip", "--no-mods"
+  "--permission-mode", "unrestricted", "--memfs-startup", "skip", "--no-mods", "--no-skills"
 ], true), undefined, undefined, undefined, false);
 `;
 
