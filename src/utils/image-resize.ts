@@ -70,6 +70,9 @@ function resizeWithSharpWorker(
   return new Promise((resolve, reject) => {
     const workerPath = resolveImageWorkerPath();
     const child = spawn(process.execPath, [workerPath, inputMediaType], {
+      // Electron must execute the worker script in Node mode. Native GLib
+      // diagnostics stay isolated in its stderr pipe. Node and Bun ignore this flag.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,

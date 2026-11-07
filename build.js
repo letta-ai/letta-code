@@ -131,11 +131,11 @@ await Bun.build({
   naming: {
     entry: "image-resize-worker.js",
   },
-  // Both Sharp variants load native bindings from their installed packages.
-  // Keep their JS and native bindings together in the worker: bundling one
+  // Sharp loads native bindings from its installed package.
+  // Keep its JS and native bindings together in the worker: bundling one
   // version's JS can otherwise resolve another version's @img binding from
   // an ancestor node_modules directory at runtime.
-  external: ["sharp", "@janhapke/sharp-electron"],
+  external: ["sharp"],
 });
 
 await Bun.build({
