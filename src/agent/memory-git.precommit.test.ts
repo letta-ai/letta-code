@@ -7,7 +7,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -36,7 +36,10 @@ function writeAndStage(relativePath: string, content: string): void {
   const fullPath = join(tempDir, relativePath);
   mkdirSync(join(fullPath, ".."), { recursive: true });
   writeFileSync(fullPath, content, "utf-8");
-  git(`add ${relativePath}`);
+  execFileSync("git", ["add", "--", relativePath], {
+    cwd: tempDir,
+    env: GIT_ENV,
+  });
 }
 
 function tryCommit(): { success: boolean; output: string } {
@@ -310,12 +313,12 @@ describe("pre-commit hook: non-memory files", () => {
   });
 });
 
-describe("pre-commit hook: paths with spaces", () => {
+describe("pre-commit hook: paths with spaces and non-ASCII", () => {
   test("validates staged files whose names contain spaces and quotes", () => {
-    const fullPath = join(tempDir, "system", "Circe's Deep Core.md");
+    const fullPath = join(tempDir, "system", "User's Core Notes.md");
     mkdirSync(join(tempDir, "system"), { recursive: true });
     writeFileSync(fullPath, `${VALID_FM}Block content here.\n`, "utf-8");
-    execSync(`git add -- "system/Circe's Deep Core.md"`, {
+    execSync(`git add -- "system/User's Core Notes.md"`, {
       cwd: tempDir,
       env: GIT_ENV,
     });
@@ -333,4 +336,24 @@ describe("pre-commit hook: paths with spaces", () => {
     expect(result.success).toBe(false);
     expect(result.output).toContain("system/My Notes.md: missing frontmatter");
   });
+  test("validates and then commits a non-ASCII system path", () => {
+    const path = "system/café notes.md";
+    writeAndStage(path, "no frontmatter here\n");
+    const invalid = tryCommit();
+    expect(invalid.success).toBe(false);
+    expect(invalid.output).toContain(`${path}: missing frontmatter`);
+
+    writeAndStage(path, `${VALID_FM}Valid content.\n`);
+    expect(tryCommit().success).toBe(true);
+  });
+
+  test.each(["skills/my skill.md", "skills/café.md"])(
+    "rejects flat skill path %s intact",
+    (path) => {
+      writeAndStage(path, "# Skill\n");
+      const result = tryCommit();
+      expect(result.success).toBe(false);
+      expect(result.output).toContain(`${path}: invalid skill path`);
+    },
+  );
 });
