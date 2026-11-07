@@ -78,6 +78,7 @@ import {
   getRetryStatusMessage,
   isEncryptedContentError,
   isProviderStreamDisconnectErrorText,
+  KEY_OR_CREDITS_REQUIRED_MESSAGE,
 } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import {
@@ -129,7 +130,6 @@ import {
   ERROR_FEEDBACK_HINT,
   INTERRUPT_MESSAGE,
   LLM_API_ERROR_MAX_RETRIES,
-  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
 import { uid } from "./ids";
@@ -241,7 +241,6 @@ type ConversationLoopContext = {
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
-  quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
   refreshDerived: () => void;
   refreshDerivedThrottled: () => void;
   resetTrajectoryBases: () => void;
@@ -338,7 +337,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
-    quotaAutoSwapAttemptedRef,
     refreshDerived,
     refreshDerivedThrottled,
     resetTrajectoryBases,
@@ -366,7 +364,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setRestoredInput,
     setStreaming,
     setConversationSummary,
-    setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
@@ -616,7 +613,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
-        quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
         chatgptExhaustedProvidersRef.current.clear();
       }
@@ -2327,60 +2323,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-            // No sibling plan available; try the hosted Auto fallback below.
           }
 
-          // Quota-limit fallback: hosted Letta API can recover by switching to
-          // Auto. Local/embedded mode has no hosted Auto router, so surface the
-          // provider quota error and let the user choose/connect a local model.
-          const autoSwapOnQuotaLimitEnabled =
-            settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
-          const supportsHostedAutoQuotaFallback =
-            !getBackend().capabilities.localModelCatalog;
-          const isQuotaLimit = isQuotaLimitErrorDetail(
-            detailFromRun ?? fallbackError,
-          );
-          const alreadyOnTempAuto =
-            tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
-          const canAttemptQuotaAutoSwap =
-            autoSwapOnQuotaLimitEnabled &&
-            supportsHostedAutoQuotaFallback &&
-            isQuotaLimit &&
-            !alreadyOnTempAuto &&
-            !quotaAutoSwapAttemptedRef.current;
-
-          if (canAttemptQuotaAutoSwap) {
-            quotaAutoSwapAttemptedRef.current = true;
-            setTempModelOverride(TEMP_QUOTA_OVERRIDE_MODEL);
-
-            const statusId = uid("status");
-            buffersRef.current.byId.set(statusId, {
-              kind: "status",
-              id: statusId,
-              lines: [
-                "Quota limit reached; temporarily switching to Auto and continuing...",
-              ],
-            });
-            buffersRef.current.order.push(statusId);
-            refreshDerived();
-
-            currentInput = [
-              ...currentInput,
-              {
-                type: "message",
-                role: "user",
-                content: "Keep going.",
-              },
-            ];
-
-            buffersRef.current.byId.delete(statusId);
-            buffersRef.current.order = buffersRef.current.order.filter(
-              (id: string) => id !== statusId,
-            );
-            refreshDerived();
-
-            buffersRef.current.interrupted = false;
-            continue;
+          // Quota/credits limits are not recoverable by switching models
+          // implicitly; tell the user how to continue.
+          if (
+            !getBackend().capabilities.localModelCatalog &&
+            isQuotaLimitErrorDetail(detailFromRun ?? fallbackError)
+          ) {
+            appendError(KEY_OR_CREDITS_REQUIRED_MESSAGE, true);
           }
 
           // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).

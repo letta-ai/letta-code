@@ -12,6 +12,9 @@ import { getErrorContext } from "./error-context";
 import { checkZaiError } from "./zai-errors";
 
 const LETTA_USAGE_URL = buildChatWebUrl("/preferences/usage");
+
+/** Shown when a turn needs a provider key or credits to continue. */
+export const KEY_OR_CREDITS_REQUIRED_MESSAGE = `This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at ${LETTA_USAGE_URL}.`;
 const LETTA_AGENTS_URL = buildChatWebUrl("/agents");
 
 export type ErrorDisplaySurface = "plain" | "terminal";
@@ -790,7 +793,7 @@ export function formatErrorDetails(
       const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
       if (lettaHostedQuotaMsg) return lettaHostedQuotaMsg;
 
-      return `Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.`;
+      return KEY_OR_CREDITS_REQUIRED_MESSAGE;
     }
 
     const lettaHostedQuotaMsg = getLettaHostedQuotaMessage(e, reasons);
