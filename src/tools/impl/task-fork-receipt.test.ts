@@ -379,3 +379,55 @@ describe("nested Agent launch", () => {
     }
   }, 2000);
 });
+
+describe("background startup deadline", () => {
+  test("returns a receipt when the child never publishes a link", async () => {
+    const started = Date.now();
+    const receipt = await runWithRuntimeContext(
+      { workingDirectory: testHome },
+      () =>
+        launchSubagent(
+          {
+            harness: "letta",
+            prompt: "Work",
+            description: "Stalled startup",
+          },
+          50,
+        ),
+    );
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+    expect(receipt).toMatchObject({
+      success: true,
+      agent_id: null,
+      conversation_id: null,
+    });
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    if (!receipt.success) throw new Error(receipt.error);
+    const background = backgroundTasks.get(receipt.task_id);
+    expect(background?.status).toBe("running");
+    expect(background?.abortController?.signal.aborted).toBe(false);
+    await task_stop({ task_id: receipt.task_id });
+  }, 2000);
+
+  test("aborting a stalled startup ends the wait before its deadline", async () => {
+    const controller = new AbortController();
+    const reason = new Error("Startup cancelled");
+    const launched = runWithRuntimeContext({ workingDirectory: testHome }, () =>
+      launchSubagent({
+        harness: "letta",
+        prompt: "Work",
+        description: "Stalled startup",
+        signal: controller.signal,
+      }),
+    );
+    const outcome = launched.catch((error: unknown) => error);
+    while (!spawnProcess.mock.calls.length) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    controller.abort(reason);
+    expect(await outcome).toBe(reason);
+    const [background] = backgroundTasks.values();
+    expect(background?.abortController?.signal.aborted).toBe(true);
+    await background?.completion;
+  }, 2000);
+});
