@@ -3,10 +3,7 @@ import TaskDescriptionRaw from "./descriptions/Task.md";
 import { TASK_HARNESSES } from "./impl/task-agent-selection";
 import type { JsonSchema } from "./model-facing-tool";
 import TaskSchema from "./schemas/Task.json";
-import {
-  stripComputerFromTaskDescription,
-  stripComputerFromTaskSchema,
-} from "./task-tool-assets";
+import { stripComputerFromTaskSchema } from "./task-tool-assets";
 
 const taskSchema = TaskSchema as JsonSchema;
 const taskDescription = (TaskDescriptionRaw as string).trim();
@@ -29,35 +26,6 @@ describe("stripComputerFromTaskSchema", () => {
   test("returns schemas without a computer property unchanged", () => {
     const schema: JsonSchema = { properties: { prompt: { type: "string" } } };
     expect(stripComputerFromTaskSchema(schema)).toBe(schema);
-  });
-});
-
-describe("stripComputerFromTaskDescription", () => {
-  test("removes the Running on Another Computer section from the real description", () => {
-    expect(taskDescription).toContain("## Running on Another Computer");
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).not.toContain("## Running on Another Computer");
-    expect(stripped).not.toContain("computer:");
-    expect(stripped).not.toContain("`computer`");
-  });
-
-  test("keeps external coding agent docs but drops their computer routing", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## External Coding Agents");
-    expect(stripped).toContain('harness: "claude-code"');
-    expect(stripped).not.toMatch(/\bcomputer\b(?!s)/i);
-  });
-
-  test("keeps the surrounding sections intact", () => {
-    const stripped = stripComputerFromTaskDescription(taskDescription);
-    expect(stripped).toContain("## Forking Parent Context");
-    expect(stripped).toContain("## Concurrency and Safety:");
-    expect(stripped).not.toContain("\n\n\n");
-  });
-
-  test("returns descriptions without the section unchanged", () => {
-    const description = "## Intro\n\nBody text.";
-    expect(stripComputerFromTaskDescription(description)).toBe(description);
   });
 });
 
@@ -109,10 +77,8 @@ describe("Task agent selection fields", () => {
     expect(taskSchema.properties?.agent_type).toBeUndefined();
     expect(taskSchema.additionalProperties).toBe(false);
   });
-  test("the model-facing description uses harness and subagent_type", () => {
+  test("the model-facing description does not mention agent_type", () => {
     expect(taskDescription).not.toMatch(/\bagent_type\b/);
-    expect(taskDescription).toContain('harness: "codex"');
-    expect(taskDescription).toContain('subagent_type: "recall"');
   });
   // Launch behavior is covered by the existing routing and fork-receipt suites.
 });
@@ -139,9 +105,7 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeUndefined();
-    expect(resolved.description).not.toContain(
-      "## Running on Another Computer",
-    );
+    expect(resolved.description).toBe(taskDescription);
   });
 
   test("keeps computer for the Cloud server", async () => {
@@ -155,6 +119,6 @@ describe("resolveBackendSpecificToolAssets Task dispatch", () => {
       taskSchema,
     );
     expect(resolved.inputSchema.properties?.computer).toBeDefined();
-    expect(resolved.description).toContain("## Running on Another Computer");
+    expect(resolved.description).toBe(taskDescription);
   });
 });

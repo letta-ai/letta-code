@@ -10,7 +10,9 @@ import {
 } from "@/tools/impl/artifact-files";
 import {
   clearCapturedToolExecutionContexts,
+  executeTool,
   prepareToolExecutionContextForModel,
+  prepareToolExecutionContextForSpecificTools,
 } from "@/tools/manager";
 
 const originalHome = process.env.HOME;
@@ -90,6 +92,28 @@ describe("artifact file tools", () => {
       content: "<h1>Todo</h1>",
       encoding: "utf8",
     });
+  });
+
+  test("keeps paths relative to the artifacts root during execution", async () => {
+    experimentManager.set("artifacts", true);
+    const { contextId } = await prepareToolExecutionContextForSpecificTools([
+      "read_artifact_file",
+      "write_artifact_file",
+    ]);
+    const writeResult = await executeTool(
+      "write_artifact_file",
+      { path: "notes/test.txt", content: "relative artifact" },
+      { toolContextId: contextId },
+    );
+    expect(writeResult.status).toBe("success");
+
+    const readResult = await executeTool(
+      "read_artifact_file",
+      { path: "notes/test.txt" },
+      { toolContextId: contextId },
+    );
+    expect(readResult.status).toBe("success");
+    expect(String(readResult.toolReturn)).toContain("relative artifact");
   });
 
   test("rejects paths that escape the artifacts root", async () => {

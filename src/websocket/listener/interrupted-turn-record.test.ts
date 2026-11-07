@@ -595,7 +595,10 @@ test("retirements leave no per-scope tombstones or inode growth", () => {
   const directory = mkdtempSync(join(tmpdir(), "listener-retirement-bounded-"));
   try {
     const store = createInterruptedTurnStore(directory);
-    for (let index = 0; index < 50; index += 1) {
+    // Every write and removal fsyncs; on a slow Windows runner 50 scopes took
+    // 15-42s. Any leftover entry fails the assertion, so 10 scopes still
+    // catch a per-scope tombstone.
+    for (let index = 0; index < 10; index += 1) {
       const agentId = `agent-${index}`;
       const conversationId = `conversation-${index}`;
       const record = store.write({

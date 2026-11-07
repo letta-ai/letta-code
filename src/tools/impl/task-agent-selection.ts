@@ -29,6 +29,22 @@ export function applySubagentPreset<T extends Partial<SubagentLaunchArgs>>(
   };
 }
 
+/** Presets own context; existing targets resume without an implicit fork. */
+export function shouldForkTaskContext(args: {
+  fork_context?: unknown;
+  subagent_type?: unknown;
+  agent_id?: unknown;
+  conversation_id?: unknown;
+}): boolean {
+  return (
+    args.subagent_type === undefined &&
+    (args.fork_context === true ||
+      (args.fork_context === undefined &&
+        !args.agent_id &&
+        !args.conversation_id))
+  );
+}
+
 type TaskAgentSelection =
   | { kind: "external"; type: ExternalCodingAgentType }
   | { kind: "letta"; subagentType: string };
@@ -38,6 +54,8 @@ export function resolveTaskAgentSelection(args: {
   harness?: unknown;
   subagent_type?: unknown;
   fork_context?: unknown;
+  agent_id?: unknown;
+  conversation_id?: unknown;
 }): { selection: TaskAgentSelection } | { error: string } {
   if (args.subagent_type !== undefined) {
     if (typeof args.subagent_type !== "string" || !args.subagent_type.trim())
@@ -68,7 +86,7 @@ export function resolveTaskAgentSelection(args: {
   return {
     selection: {
       kind: "letta",
-      subagentType: args.fork_context ? "fork" : "general-purpose",
+      subagentType: shouldForkTaskContext(args) ? "fork" : "general-purpose",
     },
   };
 }

@@ -46,5 +46,17 @@ Use Agent to launch or resume a managed Letta child task and receive its
 completion notification. Letta-to-Letta sends create no local task ID. External
 coding-agent follow-ups may return one when they start a new native turn; an
 active external-agent steer remains part of the existing task. SendAgentMessage does not
-change the recipient's tools, model, or permissions. Load the messaging-agents
-skill for additional CLI options and troubleshooting.
+change the recipient's tools, model, or permissions.
+
+On the local backend (`agent-local-` IDs), or from a script, send with the CLI
+instead. It waits for the recipient's turn and prints its final message as
+`result`, with the thread to continue in `conversation_id`:
+
+```bash
+letta -p --from-agent $LETTA_AGENT_ID --conversation <conversation-id> --output-format json "message"
+letta -p --from-agent $LETTA_AGENT_ID --agent <agent-id> --output-format json "message"   # new thread
+```
+
+Add `--backend local` after `letta` when your agent ID starts with `agent-local-`.
+`letta messages list --conversation <id> --limit 10` reads a thread on either
+backend; `letta -p --help` and `letta messages --help` list the other options.

@@ -1900,7 +1900,7 @@ describe("listen-client multi-worker concurrency", () => {
   test.each([
     [
       "pre-stream",
-      "Your account does not have credits for this model. Add your own API keys or upgrade your plan to purchase credits.",
+      "This model needs your own API key or Letta credits. Run /connect to add a provider key, or buy credits at https://chat.letta.com/preferences/usage.",
     ],
     ["approval", "The request failed. Please try again."],
   ])("%s failures expose safe terminal errors", async (stage, expected) => {

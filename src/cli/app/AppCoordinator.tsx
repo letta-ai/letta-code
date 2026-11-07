@@ -1392,7 +1392,6 @@ export function App({
 
   // Retry counter for transient LLM API errors (ref for synchronous access in loop)
   const llmApiErrorRetriesRef = useRef(0);
-  const quotaAutoSwapAttemptedRef = useRef(false);
   const emptyResponseRetriesRef = useRef(0);
   const chatgptPlanSwapsRef = useRef(0);
   const chatgptExhaustedProvidersRef = useRef(new Set<string>());
@@ -3714,7 +3713,6 @@ export function App({
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
-    quotaAutoSwapAttemptedRef,
     refreshDerived,
     refreshDerivedThrottled,
     resetTrajectoryBases,

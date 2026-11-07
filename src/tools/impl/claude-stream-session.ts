@@ -8,6 +8,8 @@ import {
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import { traceClaudeLaunch } from "./external-llm-trace-launch";
+import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
   type ExternalTextListener,
   type ExternalToolCallListener,
@@ -45,9 +47,7 @@ interface ClaudeSession {
   report: string;
   protocolError?: string;
   settled: boolean;
-  /** True once the transport's process has exited. */
   exited: boolean;
-  /** Resolves when the transport's process has exited. */
   exit: Promise<void>;
   /** UUID of the most recent user input written to stdin. */
   latestInputUuid?: string;
@@ -88,6 +88,7 @@ interface ClaudeSession {
 
 export interface ClaudeTurnOptions
   extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
+  traceContext?: ExternalTraceContext;
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -97,9 +98,7 @@ export interface ClaudeTurnOptions
   resumeSessionId?: string;
   sessionId?: string;
   onStarted?: (sessionId: string) => void;
-  /** Called once per `tool_use` block the worker emits. */
   onToolCall?: ExternalToolCallListener;
-  /** Called once per non-empty assistant `text` block the worker emits. */
   onText?: ExternalTextListener;
   beforeStart?: () => Promise<void>;
 }
@@ -586,6 +585,9 @@ async function launchSession(
   if (options.signal?.aborted) abortFromUpstream();
   const removeUpstreamAbort = () =>
     options.signal?.removeEventListener("abort", abortFromUpstream);
+  const trace = deps.createTransport
+    ? undefined
+    : await traceClaudeLaunch(options.traceContext, env, sessionId);
   let transport: ClaudeSessionTransport;
   try {
     transport = (deps.createTransport ?? createTransport)({
@@ -600,6 +602,7 @@ async function launchSession(
       signal: abortController.signal,
     });
   } catch (error) {
+    void trace?.close();
     removeUpstreamAbort();
     throw new Error(`Failed to start Claude Code: ${errorMessage(error)}`);
   }
@@ -691,6 +694,9 @@ async function launchSession(
       session.protocolError ??= `${errorMessage(error)}: ${line.slice(0, 500)}`;
     }
   });
+  void transport.completion
+    .finally(() => trace?.close())
+    .catch(() => undefined);
   transport.completion
     .then(({ exitCode, exitSignal }) => {
       if (session.settled) return;

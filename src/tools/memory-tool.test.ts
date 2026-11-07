@@ -160,6 +160,13 @@ describe("Memory tool", () => {
     );
   });
 
+  test("keeps paths relative to the memory directory", async () => {
+    const { status, text } = await callMemory("reference/new.md");
+    expect(status).toBe("success");
+    expect(text).toContain('<memory_content path="reference/new.md"');
+    expect(text).toContain("new");
+  });
+
   test("caps listings and truncates long files like Read", async () => {
     const listing = await callMemory("bulk");
     expect(listing.text).toContain("<note>No MEMORY.md index");
