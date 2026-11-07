@@ -19,7 +19,7 @@ test("CodeMode and Monitor scripts call tools Letta Cloud executes", async () =>
   const agent = await client.agents.create({
     name: "Script server-tool integration",
     agent_type: "letta_v1_agent",
-    model: "letta/auto",
+    model: "letta/glm",
     include_base_tools: false,
     include_base_tool_rules: false,
     tools: ["fetch_webpage"],
