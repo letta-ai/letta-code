@@ -418,6 +418,7 @@ test("unleased scoped retry clears jitter timers and does not fire", () => {
   );
   updateTask(task.id, (t) => {
     t.jitter_offset_ms = 30_000;
+    t.created_at = new Date(Date.now() - 120_000).toISOString();
   });
 
   try {
@@ -494,6 +495,7 @@ test("jitter fire logs lock errors without terminating the listener", () => {
   );
   updateTask(task.id, (t) => {
     t.jitter_offset_ms = 30_000;
+    t.created_at = new Date(Date.now() - 120_000).toISOString();
   });
   const logged: string[] = [];
   try {
