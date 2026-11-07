@@ -6,6 +6,10 @@ export interface EphemeralConversationCreateBody {
   system: string;
   model_settings?: Record<string, unknown>;
   context_window_limit?: number | null;
+  /** Supplies MCP servers, secrets and permissions; does not own history. */
+  parent_agent_id?: string;
+  is_subagent?: boolean;
+  name?: string;
 }
 
 export interface EphemeralConversation {

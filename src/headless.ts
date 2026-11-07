@@ -130,6 +130,7 @@ import {
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
+  initHeadlessSecrets,
   prepareHeadlessEphemeralBackend,
   retrieveHeadlessConversation,
 } from "./headless-ephemeral-startup";
@@ -1125,7 +1126,7 @@ export async function handleHeadlessCommand(
         systemPromptPreset,
         systemPromptCustom: systemCustom,
       });
-      agent = result.agent;
+      ({ agent, parentAgentId } = result);
       ephemeralConversationId = result.conversationId;
     } catch (error) {
       await reportStartupErrorAndExit(
@@ -1316,12 +1317,7 @@ export async function handleHeadlessCommand(
   let memfsBgPromise: Promise<unknown> | undefined;
 
   // Init secrets cache — runs in parallel with memfs sync below.
-  const secretsAgentId = isDetached ? undefined : agent?.id;
-  const secretsInitPromise = secretsAgentId
-    ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
-      )
-    : Promise.resolve();
+  const secretsReady = initHeadlessSecrets(agent.id, isDetached, parentAgentId);
 
   // Apply MemFS startup policy only to agent-backed sessions.
   if (isStatelessSession || isDetached) {
@@ -1409,7 +1405,7 @@ export async function handleHeadlessCommand(
 
   // Ensure secrets cache is populated (non-fatal).
   try {
-    await secretsInitPromise;
+    await secretsReady;
   } catch (error) {
     import("@/utils/debug").then(({ debugLog }) =>
       debugLog(
