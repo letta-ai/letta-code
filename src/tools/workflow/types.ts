@@ -196,6 +196,8 @@ export interface SdkStreamMessage {
   errorDetail?: string;
   structuredOutput?: unknown;
   durationMs?: number;
+  /** Agent loop state for `type: "loop_status"` messages. */
+  status?: string;
   /** Raw Letta stream payload for `type: "stream_event"` messages. */
   event?: Record<string, unknown>;
   /** Tool call details for `type: "tool_call"` / `"tool_result"` messages. */

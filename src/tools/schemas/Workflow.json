@@ -20,7 +20,7 @@
     "maxCostUsd": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Cost budget in US dollars (Letta Cloud only). Reaching it stops the run: new agent()/decide() calls reject and running subagents are interrupted. A subagent step that reports no cost estimate also stops the run. Omit for no budget."
+      "description": "Cost budget in US dollars. Reaching it stops the run: new agent()/decide() calls reject and running subagents are interrupted once any model request already in flight returns, so the reported spend includes it. A subagent step that reports no cost estimate also stops the run. Omit for no budget."
     },
     "model": {
       "type": "string",

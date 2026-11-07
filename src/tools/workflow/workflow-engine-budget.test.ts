@@ -118,4 +118,37 @@ return [budget.limit, budget.spent, budget.remaining]`;
     const unbudgeted = await executeWorkflow(pricedSpawner(0.25), { script });
     expect(unbudgeted.result).toEqual([null, 0.25, null]);
   });
+
+  test("budget.spent is null once any usage was unpriced", async () => {
+    let calls = 0;
+    const run = await executeWorkflow(
+      async (_request, _signal, hooks) => {
+        const costUsd = calls++ === 0 ? 0.25 : null;
+        hooks?.onUsage?.(100, costUsd);
+        return { value: "ok", failed: false, costUsd };
+      },
+      {
+        script: `${META}await agent('a')
+const before = budget.spent
+await agent('b')
+return [before, budget.spent, budget.remaining]`,
+      },
+    );
+    expect(run.result).toEqual([0.25, null, null]);
+    expect(run.totalCostUsd).toBeNull();
+  });
+
+  test("the budget error points at the journal", async () => {
+    await expect(
+      executeWorkflow(pricedSpawner(1), {
+        script: `${META}await agent('a'); await agent('b')`,
+        maxCostUsd: 1,
+        journalPath: "/tmp/workflow-budget-test/journal.jsonl",
+      }),
+    ).rejects.toMatchObject({
+      message: expect.stringContaining(
+        "Completed calls are in /tmp/workflow-budget-test/journal.jsonl.",
+      ),
+    });
+  });
 });

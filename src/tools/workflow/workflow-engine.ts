@@ -220,11 +220,12 @@ async function executeScript(
     get limit() {
       return maxCostUsd ?? null;
     },
+    /** Null once any usage was unpriced, matching `totalCostUsd`. */
     get spent() {
-      return totalCostUsd;
+      return costUnavailable ? null : totalCostUsd;
     },
     get remaining() {
-      return maxCostUsd === undefined
+      return maxCostUsd === undefined || costUnavailable
         ? null
         : Math.max(0, maxCostUsd - totalCostUsd);
     },
@@ -655,15 +656,19 @@ async function executeScript(
     };
   } catch (error) {
     await drain();
-    // Report the final spend: subagents interrupted by the stop still settle
-    // their usage while the run drains.
+    // Report the final spend: the spawner holds each interrupt until a model
+    // request already in flight reports its usage, so the drain meters it.
     if (
       budgetError &&
       error === budgetError &&
       maxCostUsd !== undefined &&
       !costUnavailable
     ) {
-      budgetError.message = `${budgetError.message} ${formatUsd(totalCostUsd)} spent of ${formatUsd(maxCostUsd)}.`;
+      budgetError.message = `${budgetError.message} ${formatUsd(totalCostUsd)} spent of ${formatUsd(maxCostUsd)}.${
+        options.journalPath
+          ? ` Completed calls are in ${options.journalPath}.`
+          : ""
+      }`;
     }
     throw error;
   } finally {

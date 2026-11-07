@@ -107,8 +107,8 @@ describe("Workflow tool cost budget", () => {
       wait: true,
     });
     expect(result.status).toBe("error");
-    expect(result.toolReturn).toBe(
-      "Workflow failed: Workflow cost budget of $0.2500 reached. $0.3000 spent of $0.2500.",
+    expect(result.toolReturn).toMatch(
+      /^Workflow failed: Workflow cost budget of \$0\.2500 reached\. \$0\.3000 spent of \$0\.2500\. Completed calls are in .+journal\.jsonl\.$/,
     );
   });
 
