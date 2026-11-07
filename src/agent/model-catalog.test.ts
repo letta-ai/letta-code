@@ -6,6 +6,7 @@ import {
   models,
   resolveCatalogModel,
   resolveModel,
+  UNSELECTED_MODEL_HANDLE,
 } from "@/agent/model-catalog";
 import * as agentPresets from "@/agent-presets";
 
@@ -25,10 +26,29 @@ describe("runtime model catalog", () => {
     expect(reference[0]?.id).toBe("runtime-model");
   });
 
-  test("keeps managed Auto aliases available before cloud hydration", () => {
-    expect(resolveModel("auto")).toBe("letta/auto");
+  test("rejects the retired auto alias and has no implicit default before hydration", () => {
+    expect(resolveModel("auto")).toBeNull();
     expect(resolveModel("auto-chat")).toBe("letta/auto-chat");
-    expect(getDefaultModel()).toBe("letta/auto");
+    expect(getDefaultModel()).toBe(UNSELECTED_MODEL_HANDLE);
+  });
+
+  test("never picks a Letta-hosted model as the default", () => {
+    models.push(
+      {
+        id: "glm",
+        handle: "letta/glm",
+        label: "GLM",
+        description: "",
+        isDefault: true,
+      },
+      {
+        id: "provider-model",
+        handle: "openai/provider-model",
+        label: "Provider Model",
+        description: "",
+      },
+    );
+    expect(getDefaultModel()).toBe("openai/provider-model");
   });
 
   test("resolves unique local pi-ai model IDs", () => {

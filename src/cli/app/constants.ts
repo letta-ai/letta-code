@@ -19,7 +19,6 @@ export const LLM_API_ERROR_MAX_RETRIES = 3;
 // Retry config for empty response errors (Opus 4.6 SADs)
 // Retry 1: same input. Retry 2: with system reminder nudge.
 export const EMPTY_RESPONSE_MAX_RETRIES = 2;
-export const TEMP_QUOTA_OVERRIDE_MODEL = "letta/auto";
 
 // Retry config for 409 "conversation busy" errors (exponential backoff)
 export const CONVERSATION_BUSY_MAX_RETRIES = 3; // 10s -> 20s -> 40s
