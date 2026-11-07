@@ -73,6 +73,22 @@ export function initHeadlessSecrets(
   });
 }
 
+/**
+ * The ambient agent (`LETTA_AGENT_ID`/`AGENT_ID`) a routed headless launch
+ * should target when no explicit target was given. An `--ephemeral` session
+ * has no agent, so an inherited AGENT_ID (set in Cloud sandboxes and passed
+ * down to subagents) must not become `--agent` there.
+ */
+export function resolveAmbientAgentId(
+  params: { routed: unknown; ephemeral: unknown; explicitTarget: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!params.routed || params.ephemeral || params.explicitTarget) {
+    return undefined;
+  }
+  return (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim() || undefined;
+}
+
 export function clearHeadlessClientToolRules(agent: AgentState): void {
   void clearPersistedClientToolRules(agent.id, agent)
     .then((cleanup) => {

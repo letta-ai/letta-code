@@ -68,6 +68,20 @@ export function resolveEphemeralSubagentLink(
   };
 }
 
+/**
+ * The agent ID a detached subagent session exports as `AGENT_ID` /
+ * `LETTA_AGENT_ID` to its tools: the parent agent, since the session's own ID
+ * is a conversation ID. Undefined for any other session.
+ */
+export function resolveDetachedSubagentEnvAgentId(
+  sessionId: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!sessionId.startsWith("conv-")) return undefined;
+  if (env.LETTA_CODE_AGENT_ROLE !== "subagent") return undefined;
+  return env.LETTA_PARENT_AGENT_ID?.trim() || undefined;
+}
+
 interface DetachedConversationLookup {
   retrieveConversation(conversationId: string): Promise<object>;
 }

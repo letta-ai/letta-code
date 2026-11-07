@@ -4,6 +4,7 @@ import type { SubagentConfig } from "@/agent/subagents";
 import {
   EPHEMERAL_SUBAGENTS_ENV,
   lookupDetachedConversationParent,
+  resolveDetachedSubagentEnvAgentId,
   resolveEphemeralSubagentLink,
   shouldRunSubagentEphemerally,
 } from "@/agent/subagents/ephemeral-subagent";
@@ -12,7 +13,10 @@ import type { Backend } from "@/backend";
 import { __testSetBackend } from "@/backend/backend";
 import { parseCliArgs } from "@/cli/args";
 import { validatePrimaryStartupFlagConflicts } from "@/cli/startup-flag-validation";
-import { initHeadlessSecrets } from "@/headless-ephemeral-startup";
+import {
+  initHeadlessSecrets,
+  resolveAmbientAgentId,
+} from "@/headless-ephemeral-startup";
 import { getMcpScopeAgentId } from "@/mcp-scope";
 import { setupRuntimeModelCatalogFixture } from "@/test-utils/runtime-model-catalog";
 import { resolveSecretEnvFromCommand } from "@/tools/secret-substitution";
@@ -193,6 +197,46 @@ describe("child arguments", () => {
     ).not.toThrow();
     expect(values.ephemeral).toBe(true);
     expect(values["base-tools"]).toBeUndefined();
+  });
+
+  test("an inherited AGENT_ID/LETTA_AGENT_ID does not become --agent", () => {
+    const args = buildSubagentArgs(
+      "general-purpose",
+      presetConfig,
+      "anthropic/claude-haiku-4-5",
+      "hello",
+      undefined,
+      undefined,
+      3,
+      { backendMode: "api", promptTransport: "stdin", ephemeral: true },
+    );
+    const { values } = parseCliArgs(args, true);
+    expect(values.backend).toBe("api");
+    const parentEnv = { AGENT_ID: PARENT, LETTA_AGENT_ID: PARENT };
+    const routed = { routed: true, explicitTarget: false };
+    // The non-ephemeral route still infers the ambient agent.
+    expect(
+      resolveAmbientAgentId({ ...routed, ephemeral: false }, parentEnv),
+    ).toBe(PARENT);
+    const ambient = resolveAmbientAgentId(
+      { ...routed, ephemeral: Boolean(values.ephemeral) },
+      parentEnv,
+    );
+    expect(ambient).toBeUndefined();
+    expect(() =>
+      validatePrimaryStartupFlagConflicts({
+        specifiedConversationId: values.conversation,
+        specifiedAgentId: values.agent ?? ambient,
+        specifiedAgentName: values.name,
+        forceNewAgent: values["new-agent"],
+        forceNewConversation: values.new,
+        stateless: values.stateless,
+        ephemeral: values.ephemeral,
+        isHeadless: true,
+        memfs: values.memfs,
+        memfsStartup: values["memfs-startup"],
+      }),
+    ).not.toThrow();
   });
 
   test("agent_id and conversation_id deployments are unchanged", () => {
@@ -394,5 +438,25 @@ describe("secrets", () => {
     await initHeadlessSecrets("conv-plain", true, PARENT, {});
     expect(requested).toEqual(["agent-own"]);
     expect(loadSecrets("conv-plain")).toEqual({});
+  });
+});
+
+describe("tool env identity", () => {
+  test("a detached subagent exports its parent agent as AGENT_ID", () => {
+    expect(resolveDetachedSubagentEnvAgentId(EPHEMERAL, subagentEnv)).toBe(
+      PARENT,
+    );
+  });
+
+  test("other sessions keep their own ID", () => {
+    expect(
+      resolveDetachedSubagentEnvAgentId("agent-child", subagentEnv),
+    ).toBeUndefined();
+    expect(resolveDetachedSubagentEnvAgentId(EPHEMERAL, {})).toBeUndefined();
+    expect(
+      resolveDetachedSubagentEnvAgentId(EPHEMERAL, {
+        LETTA_PARENT_AGENT_ID: PARENT,
+      }),
+    ).toBeUndefined();
   });
 });

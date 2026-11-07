@@ -132,6 +132,7 @@ import {
   createHeadlessEphemeralConversation,
   initHeadlessSecrets,
   prepareHeadlessEphemeralBackend,
+  resolveAmbientAgentId,
   retrieveHeadlessConversation,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
@@ -930,21 +931,18 @@ export async function handleHeadlessCommand(
     );
   }
 
-  const ambientAgentId = (
-    process.env.LETTA_AGENT_ID ||
-    process.env.AGENT_ID ||
-    ""
-  ).trim();
   // Infer the calling agent (ambient AGENT_ID) for --backend/--computer routes.
-  if (
-    (startupOptions.requestedBackendMode || usesRemoteEnvironment) &&
-    ambientAgentId &&
-    !specifiedAgentId &&
-    !specifiedAgentName &&
-    !specifiedConversationId &&
-    !forceNew &&
-    !fromAgentId
-  ) {
+  const ambientAgentId = resolveAmbientAgentId({
+    routed: startupOptions.requestedBackendMode || usesRemoteEnvironment,
+    ephemeral: ephemeralFlag,
+    explicitTarget:
+      specifiedAgentId ||
+      specifiedAgentName ||
+      specifiedConversationId ||
+      forceNew ||
+      fromAgentId,
+  });
+  if (ambientAgentId) {
     specifiedAgentId = ambientAgentId;
     specifiedAgentIdFromAmbient = true;
   }
