@@ -757,6 +757,68 @@ describe("app-server OpenAI-compatible API", () => {
     expect(deleted).toEqual(["conv-test-1"]);
   });
 
+  test("headerless conversations are removed from the local backend", async () => {
+    const storageDir = await mkdtemp(
+      join(tmpdir(), "letta-openai-headerless-"),
+    );
+    try {
+      const backend = new LocalBackend({
+        storageDir,
+        executor: {
+          async execute() {
+            return createAssistantMessageStream({
+              content: [{ type: "text", text: "done" }],
+            });
+          },
+        },
+        memfsEnabled: false,
+      });
+      const agent = await backend.createAgent({
+        name: "stateless-agent",
+      } as never);
+      __testSetBackend(backend);
+      handle = await startAppServer({
+        listen: "ws://127.0.0.1:0",
+        openaiApi: true,
+      });
+      const listConversations = async () =>
+        (await backend.listConversations({
+          agent_id: agent.id,
+        } as never)) as unknown as Array<{ id: string }>;
+
+      const response = await fetch(httpUrl(handle, "/v1/chat/completions"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "stateless-agent",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(
+        (
+          (await response.json()) as {
+            choices: Array<{ message: { content: string } }>;
+          }
+        ).choices[0]?.message.content,
+      ).toBe("done");
+
+      let remaining = await listConversations();
+      const deadline = Date.now() + 2000;
+      while (remaining.length > 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        remaining = await listConversations();
+      }
+      expect(remaining).toEqual([]);
+    } finally {
+      if (handle) {
+        await handle.close();
+        handle = null;
+      }
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("image_url parts pass through as Letta image content", async () => {
     __testSetBackend(fakeBackend());
     let capturedContent: unknown = null;
