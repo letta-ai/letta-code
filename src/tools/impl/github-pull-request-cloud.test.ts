@@ -10,6 +10,7 @@ import {
 import { readFileSync, rmSync } from "node:fs";
 import Letta from "@letta-ai/letta-client";
 import { __testOverrideGetClient } from "@/backend/api/client";
+import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { telemetry } from "@/telemetry";
 import {
   type CloudSnapshotResponse,
@@ -179,15 +180,15 @@ afterEach(() => {
 describe("Cloud snapshot fetcher", () => {
   test("default selection follows the configured Cloud URL and excludes local backend", async () => {
     const previousUrl = process.env.LETTA_BASE_URL;
-    const previousLocal = process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
     try {
-      for (const [url, local, cloud] of [
-        ["https://api.letta.com", "0", true],
-        ["http://localhost:8283", "0", false],
-        ["https://api.letta.com", "1", false],
+      for (const [url, mode, cloud] of [
+        ["https://api.letta.com", "api", true],
+        ["http://localhost:8283", "api", false],
+        ["https://api.letta.com", "local", false],
       ] as const) {
         process.env.LETTA_BASE_URL = url;
-        process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = local;
+        // The backend mode is process-global, so set it explicitly per case.
+        setConfiguredBackendMode(mode);
         const request = mock(async () => success());
         const fetchGh = mock(async () => expected);
         await createGitHubPullRequestSnapshotFetcher({ request, fetchGh })(
@@ -198,11 +199,9 @@ describe("Cloud snapshot fetcher", () => {
         expect(fetchGh).toHaveBeenCalledTimes(cloud ? 0 : 1);
       }
     } finally {
+      setConfiguredBackendMode("api");
       if (previousUrl === undefined) delete process.env.LETTA_BASE_URL;
       else process.env.LETTA_BASE_URL = previousUrl;
-      if (previousLocal === undefined)
-        delete process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL;
-      else process.env.LETTA_LOCAL_BACKEND_EXPERIMENTAL = previousLocal;
     }
   });
 
