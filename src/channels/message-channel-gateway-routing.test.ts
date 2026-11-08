@@ -14,7 +14,7 @@ import { prepareToolExecutionContextForScope } from "@/tools/toolset";
  * MessageChannel as a listener external tool with a composite
  * registrationKey, a runtime owner, and the registering connection id —
  * exactly what toExternalToolDefinition produces for a runtimeStart
- * external_tools group without a scope_id.
+ * external_tools group.
  *
  * These tests pin how a model-facing "MessageChannel" call resolves in the
  * two execution shapes a listener can see:
