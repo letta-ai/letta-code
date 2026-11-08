@@ -5427,7 +5427,7 @@ Any other value leaves Claude's tools on, and a non-empty string that isn't one 
 
 ### `disableBrowserExternalNavigation`
 
-Turn off external browsing in the desktop app's [Browser pane](https://code.claude.com/docs/en/desktop.md#browse-external-sites) for people and Claude alike. Localhost dev server previews keep working. The desktop app reads this key; the terminal CLI ignores it.
+Turn off external browsing in the desktop app's [Browser pane](https://code.claude.com/docs/en/desktop.md#browse-external-sites) for people and Claude alike. Localhost dev server previews keep working. HTML previews in SSH and WSL sessions still open, but they [don't run scripts](https://code.claude.com/docs/en/desktop.md#turn-off-scripts-in-ssh-and-wsl-previews-for-your-organization). The desktop app reads this key; the terminal CLI ignores it.
 
 * **Scope**: [`Managed`](#scopes)
 * **Type**: Boolean; only the JSON Boolean `true` takes effect
@@ -5442,6 +5442,8 @@ Turn off external browsing in the desktop app's [Browser pane](https://code.clau
 ```
 
 The desktop app ignores any other value, and a value that isn't a Boolean, such as the string `"true"` or `1`, also logs a warning. To leave external browsing on but keep Claude's tools off external pages, set [`browserExternalPageTools`](#browserexternalpagetools) instead. See [Restrict external browsing for your organization](https://code.claude.com/docs/en/desktop.md#restrict-external-browsing-for-your-organization).
+
+If the computer that runs the desktop app receives no other Claude Code managed settings, also set [`parentSettingsBehavior`](#parentsettingsbehavior) to `"merge"` in the managed settings that you create. On Windows, if you create a managed settings file, users also lose WSL sessions until you [allow them](https://code.claude.com/docs/en/admin-setup.md#wsl-sessions-in-claude-code-desktop). See [Turn off scripts in SSH and WSL previews for your organization](https://code.claude.com/docs/en/desktop.md#turn-off-scripts-in-ssh-and-wsl-previews-for-your-organization) for the reasons.
 
 ### `disableMobileSimulatorTools`
 
