@@ -118,7 +118,6 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   clientPreferences?: import("@/types/client-preferences").ClientPreferences;
-  externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   responseFormat?: Record<string, unknown>;

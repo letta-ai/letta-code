@@ -197,7 +197,6 @@ function isInputCommand(value: unknown): value is InputCommand {
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
     client_preferences?: unknown;
-    external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;
@@ -238,7 +237,6 @@ function legacyEnvironmentMessageToInputCommand(
     image_failure_mode?: unknown;
     clientToolAllowlist?: unknown;
     clientToolset?: unknown;
-    externalToolScopeIds?: unknown;
   };
   if (
     candidate.type !== "message" ||
@@ -268,9 +266,6 @@ function legacyEnvironmentMessageToInputCommand(
         : undefined,
       client_toolset: isClientToolsetConfig(candidate.clientToolset)
         ? candidate.clientToolset
-        : undefined,
-      external_tool_scope_ids: isStringArray(candidate.externalToolScopeIds)
-        ? candidate.externalToolScopeIds
         : undefined,
     },
   };
@@ -304,7 +299,6 @@ function getInvalidInputReason(value: unknown): {
     client_tool_allowlist?: unknown;
     client_toolset?: unknown;
     client_preferences?: unknown;
-    external_tool_scope_ids?: unknown;
     exclude_interactive_tools?: unknown;
     request_id?: unknown;
     decision?: unknown;

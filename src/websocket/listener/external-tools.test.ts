@@ -129,7 +129,6 @@ describe("listener runtime_start external tool bridge", () => {
     for (const connection of ["client-1", "client-2"]) {
       registerRuntimeExternalTools(runtime, connection, scope, [
         {
-          scope_id: "thread-tools",
           tools: [
             {
               name: "fetch_thread",
@@ -145,7 +144,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["CodeMode", "fetch_thread"],
-        externalToolScopeIds: ["thread-tools"],
         permissionModeState: { mode: "unrestricted" },
         runtimeContext: {
           connectionId: "client-1",
@@ -171,7 +169,6 @@ describe("listener runtime_start external tool bridge", () => {
     expect(sent[0]).toMatchObject({
       type: "external_tool_call_request",
       runtime: scope,
-      scope_id: "thread-tools",
       tool_name: "fetch_thread",
       input: { id: "123" },
     });
@@ -333,7 +330,7 @@ describe("listener runtime_start external tool bridge", () => {
     ).toBe(false);
   });
 
-  test("process-owned turns execute unscoped runtime tools through their controller", async () => {
+  test("process-owned turns execute runtime tools through their controller", async () => {
     const runtime = createRuntime();
     const sent: ExternalToolCallRequestMessage[] = [];
     const transport: LocalTransport = {
@@ -431,7 +428,6 @@ describe("listener runtime_start external tool bridge", () => {
       { agent_id: "agent-1", conversation_id: "conv-1" },
       [
         {
-          scope_id: "scope-1",
           tools: [
             {
               name: "RemoteLookup",
@@ -451,7 +447,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["RemoteLookup"],
-        externalToolScopeIds: ["scope-1"],
         runtimeContext: {
           connectionId: "client-1",
           agentId: "agent-1",
@@ -472,14 +467,14 @@ describe("listener runtime_start external tool bridge", () => {
     expect(sent[0]).toMatchObject({
       type: "external_tool_call_request",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      scope_id: "scope-1",
       tool_call_id: "call-1",
       tool_name: "RemoteLookup",
       input: { id: "ABC-123" },
     });
+    expect(sent[0]).not.toHaveProperty("scope_id");
   });
 
-  test("keeps same tool name and scope id isolated across runtimes", async () => {
+  test("keeps same tool name isolated across runtimes", async () => {
     const { runtime } = createMockRuntime();
     registerRuntimeExternalTools(
       runtime,
@@ -487,7 +482,6 @@ describe("listener runtime_start external tool bridge", () => {
       { agent_id: "agent-1", conversation_id: "conv-a" },
       [
         {
-          scope_id: "search",
           tools: [
             {
               name: "lookup_ticket",
@@ -504,7 +498,6 @@ describe("listener runtime_start external tool bridge", () => {
       { agent_id: "agent-1", conversation_id: "conv-b" },
       [
         {
-          scope_id: "search",
           tools: [
             {
               name: "lookup_ticket",
@@ -520,7 +513,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["lookup_ticket"],
-        externalToolScopeIds: ["search"],
         runtimeContext: {
           connectionId: "client-1",
           agentId: "agent-1",
@@ -532,7 +524,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["lookup_ticket"],
-        externalToolScopeIds: ["search"],
         runtimeContext: {
           connectionId: "client-1",
           agentId: "agent-1",
@@ -659,7 +650,6 @@ describe("listener runtime_start external tool bridge", () => {
     const registerForConnection = (connectionId: string, description: string) =>
       registerRuntimeExternalTools(runtime, connectionId, runtimeScope, [
         {
-          scope_id: "search",
           tools: [
             {
               name: "lookup_ticket",
@@ -676,7 +666,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["lookup_ticket"],
-        externalToolScopeIds: ["search"],
         runtimeContext: {
           connectionId: "client-a",
           agentId: "agent-1",
@@ -688,7 +677,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["lookup_ticket"],
-        externalToolScopeIds: ["search"],
         runtimeContext: {
           connectionId: "client-b",
           agentId: "agent-1",
@@ -713,7 +701,6 @@ describe("listener runtime_start external tool bridge", () => {
       "anthropic/claude-sonnet-4",
       {
         clientToolAllowlist: ["lookup_ticket"],
-        externalToolScopeIds: ["search"],
         runtimeContext: {
           connectionId: "client-a",
           agentId: "agent-1",
@@ -726,7 +713,7 @@ describe("listener runtime_start external tool bridge", () => {
     ]);
   });
 
-  test("prefers the current turn controller for duplicate unscoped tool names", async () => {
+  test("prefers the current turn controller for duplicate tool names", async () => {
     const { runtime, sent: imessageSent } = createMockRuntime();
     const slackSent: ExternalToolCallRequestMessage[] = [];
     addMockConnection(runtime, "local-channels", slackSent);
