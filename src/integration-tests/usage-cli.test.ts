@@ -2,9 +2,8 @@ import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import type { ModelQuotaMetadata } from "@/backend/api/metadata";
 
-test("usage CLI reads live credits and model quota and rejects invalid auth", async () => {
+test("usage CLI reads live credits and rejects invalid auth", async () => {
   const home = await mkdtemp(join(tmpdir(), "letta-usage-api-"));
   const baseURL = process.env.LETTA_BASE_URL || "https://api.letta.com";
   async function cli(apiKey: string) {
@@ -48,30 +47,6 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toStartWith("# Letta usage overview\nCurrent plan: ");
     expect(result.stdout).toMatch(/\* Balance: -?\d+(\.\d+)? credits\n/);
-    const response = await fetch(`${baseURL}/v1/organizations/self/quotas`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    expect(response.status).toBe(200);
-    const authoritative = (await response.json()) as ModelQuotaMetadata;
-    if (authoritative.modelQuotaActive === false) {
-      expect(result.stdout).not.toContain("Usage Quota");
-      expect(result.stdout).not.toContain("Window End");
-    } else {
-      expect(result.stdout).toContain("## Usage Quota (`letta/*` models)");
-      expect(result.stdout).toContain(
-        `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket} (daily: ${authoritative.lettaTier.dailyBucket ?? "Unavailable"})\n`,
-      );
-      expect(result.stdout).toContain(
-        `* Quota Window End: ${authoritative.quotaWindowEnd}\n`,
-      );
-      expect(result.stdout).toContain(
-        `* Daily Quota Window End: ${authoritative.dailyQuotaWindowEnd ?? "Unavailable"}\n`,
-      );
-    }
-    for (const legacyTier of ["basic", "standard", "premium"]) {
-      expect(result.stdout).not.toContain(legacyTier);
-    }
-
     const denied = await cli("invalid-usage-cli-test-key");
     expect(denied.code).toBe(1);
     expect(denied.stdout).toBe("");
@@ -79,7 +54,7 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
 
     // Exercise saved OAuth initialization against the real token endpoint.
     // A deliberately invalid refresh token must fail there, not use the expired
-    // access token for the balance or quota request.
+    // access token for the balance request.
     await mkdir(join(home, ".letta"), { recursive: true });
     await writeFile(
       join(home, ".letta", "settings.json"),

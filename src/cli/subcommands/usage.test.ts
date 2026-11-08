@@ -79,54 +79,33 @@ test.each([
   },
 );
 
-// Exercise the real CLI, HTTP metadata decoding, and stdout formatting together.
-// Empty buckets are deliberate: exhaustion alone must not hide a legacy quota.
-test.each([false, true, undefined])(
-  "usage displays quota unless modelQuotaActive is explicitly false (%s)",
-  async (modelQuotaActive) => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
-        const path = new URL(request.url).pathname;
-        if (path === "/v1/metadata/balance") {
-          return Response.json({ total_balance: 1234, billing_tier: "pro" });
-        }
-        if (path === "/v1/organizations/self/quotas") {
-          return Response.json({
-            modelQuotaActive,
-            lettaTier: { bucket: "empty", dailyBucket: "empty" },
-            quotaWindowEnd: "2026-11-08T20:00:00.000Z",
-            dailyQuotaWindowEnd: "2026-11-09T00:00:00.000Z",
-          });
-        }
-        return new Response("Unexpected request", { status: 404 });
-      },
-    });
-    try {
-      const result = await cli(
-        ["--backend", "cloud", "usage"],
-        server.url.origin,
-      );
-      expect(result.code, result.stderr).toBe(0);
-      expect(result.stdout).toContain("Current plan: pro");
-      expect(result.stdout).toContain("* Balance: 1234 credits");
-      if (modelQuotaActive === false) {
-        expect(result.stdout).not.toContain("Usage Quota");
-        expect(result.stdout).not.toContain("Bucket");
-        expect(result.stdout).not.toContain("Window End");
-      } else {
-        expect(result.stdout).toContain("## Usage Quota (`letta/*` models)");
-        expect(result.stdout).toContain("empty (daily: empty)");
-        expect(result.stdout).toContain(
-          "Quota Window End: 2026-11-08T20:00:00.000Z",
-        );
-        expect(result.stdout).toContain(
-          "Daily Quota Window End: 2026-11-09T00:00:00.000Z",
-        );
+test("usage reads only plan and credits even when quota is unavailable", async () => {
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    fetch(request) {
+      const path = new URL(request.url).pathname;
+      requests.push(path);
+      if (path === "/v1/metadata/balance") {
+        return Response.json({ total_balance: -12.5, billing_tier: "pro" });
       }
-    } finally {
-      server.stop(true);
-    }
-  },
-  30_000,
-);
+      return new Response("Unexpected request", { status: 404 });
+    },
+  });
+  try {
+    const result = await cli(
+      ["--backend", "cloud", "usage"],
+      server.url.origin,
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stdout).toBe(`# Letta usage overview
+Current plan: pro
+
+## Usage Credits (non-BYOK models)
+* Balance: -12.5 credits
+`);
+    expect(requests).toEqual(["/v1/metadata/balance"]);
+  } finally {
+    server.stop(true);
+  }
+}, 30_000);
