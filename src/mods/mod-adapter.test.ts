@@ -179,7 +179,10 @@ describe("mod adapter", () => {
       expect(snapshot.capabilities).toEqual(PROVIDERS_ONLY_MOD_CAPABILITIES);
       expect(getRegisteredPiProvider("reflection-test")).toBeDefined();
       expect(snapshot.tools).toEqual({});
-      expect(snapshot.events).toEqual({});
+      // events.turns stays enabled (passive observation only); other event
+      // groups remain disabled, so the registered turn_start listener is
+      // kept while nothing else is.
+      expect(Object.keys(snapshot.events)).toEqual(["turn_start"]);
 
       adapter.dispose();
       expect(getRegisteredPiProvider("reflection-test")).toBeUndefined();
