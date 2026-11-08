@@ -38,17 +38,21 @@ Options:
       getBalanceMetadata(),
       getModelQuotaMetadata(),
     ]);
-    const usage = `# Letta usage overview
-Current plan: ${balance.billing_tier}
-
-## Usage Credits (non-BYOK models)
-* Balance: ${balance.total_balance} credits
-
+    const quotaSection =
+      quota.modelQuotaActive === false
+        ? ""
+        : `
 ## Usage Quota (\`letta/*\` models)
 * Bucket (full/high/medium/low/empty): ${quota.lettaTier.bucket} (daily: ${quota.lettaTier.dailyBucket ?? "Unavailable"})
 * Quota Window End: ${quota.quotaWindowEnd}
 * Daily Quota Window End: ${quota.dailyQuotaWindowEnd ?? "Unavailable"}
 `;
+    const usage = `# Letta usage overview
+Current plan: ${balance.billing_tier}
+
+## Usage Credits (non-BYOK models)
+* Balance: ${balance.total_balance} credits
+${quotaSection}`;
     await new Promise<void>((resolve, reject) => {
       process.stdout.write(usage, (error) =>
         error ? reject(error) : resolve(),

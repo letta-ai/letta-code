@@ -48,21 +48,26 @@ test("usage CLI reads live credits and model quota and rejects invalid auth", as
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toStartWith("# Letta usage overview\nCurrent plan: ");
     expect(result.stdout).toMatch(/\* Balance: -?\d+(\.\d+)? credits\n/);
-    expect(result.stdout).toContain("## Usage Quota (`letta/*` models)");
     const response = await fetch(`${baseURL}/v1/organizations/self/quotas`, {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     expect(response.status).toBe(200);
     const authoritative = (await response.json()) as ModelQuotaMetadata;
-    expect(result.stdout).toContain(
-      `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket} (daily: ${authoritative.lettaTier.dailyBucket ?? "Unavailable"})\n`,
-    );
-    expect(result.stdout).toContain(
-      `* Quota Window End: ${authoritative.quotaWindowEnd}\n`,
-    );
-    expect(result.stdout).toContain(
-      `* Daily Quota Window End: ${authoritative.dailyQuotaWindowEnd ?? "Unavailable"}\n`,
-    );
+    if (authoritative.modelQuotaActive === false) {
+      expect(result.stdout).not.toContain("Usage Quota");
+      expect(result.stdout).not.toContain("Window End");
+    } else {
+      expect(result.stdout).toContain("## Usage Quota (`letta/*` models)");
+      expect(result.stdout).toContain(
+        `* Bucket (full/high/medium/low/empty): ${authoritative.lettaTier.bucket} (daily: ${authoritative.lettaTier.dailyBucket ?? "Unavailable"})\n`,
+      );
+      expect(result.stdout).toContain(
+        `* Quota Window End: ${authoritative.quotaWindowEnd}\n`,
+      );
+      expect(result.stdout).toContain(
+        `* Daily Quota Window End: ${authoritative.dailyQuotaWindowEnd ?? "Unavailable"}\n`,
+      );
+    }
     for (const legacyTier of ["basic", "standard", "premium"]) {
       expect(result.stdout).not.toContain(legacyTier);
     }

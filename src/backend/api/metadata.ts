@@ -19,6 +19,8 @@ interface ModelTierQuota {
 }
 
 export interface ModelQuotaMetadata {
+  /** False means quota fields are retired placeholders; absent on older servers. */
+  modelQuotaActive?: boolean;
   lettaTier: ModelTierQuota;
   quotaWindowEnd: string;
   dailyQuotaWindowEnd?: string;
