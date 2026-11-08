@@ -1,6 +1,6 @@
 ---
 name: self-configuration
-description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage, remaining credits, asks you to change how you behave or how the harness runs you, or renames you.
+description: Inspect or modify Letta Code's own memory, model, context window, system prompt, compaction, permissions, toolsets, mods, skills, channels, schedules, agent secrets, and local runtime settings. Use when the user asks how this agent or conversation is configured, asks about account usage, remaining credits, or model quota, asks you to change how you behave or how the harness runs you, or renames you.
 license: MIT
 ---
 
@@ -56,6 +56,8 @@ Local settings, server state, and the current process are different sources of t
 `letta model` reads and writes through the active backend, so it works the same on every backend. Prefer it over the REST helper scripts for anything model-related.
 
 ### Account credits
+
+Hosted model quota has been retired; `letta usage` shows Letta credits instead, not provider subscription quota.
 
 Run `letta usage` for a Markdown overview of the current plan and remaining credit balance. Amounts are credits, not dollars; preserve negative balances.
 
