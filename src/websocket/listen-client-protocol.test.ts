@@ -1703,12 +1703,12 @@ describe("listen-client parseServerMessage", () => {
     expect(setExperiment?.type).toBe("set_experiment");
   });
 
-  test("advertises context-limit and parses the legacy set-max-context alias", () => {
+  test("advertises remote command capabilities and parses the legacy set-max-context alias", () => {
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("context-limit");
     expect(SUPPORTED_REMOTE_COMMANDS).not.toContain("set-max-context");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("compact");
     expect(SUPPORTED_REMOTE_COMMANDS).toContain("reload");
-
+    expect(SUPPORTED_REMOTE_COMMANDS).toContain("dream-model");
     const command = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -2644,7 +2644,6 @@ describe("listen-client reflection settings command handling", () => {
         "default",
         tempProjectDir,
       );
-
       await __listenClientTestUtils.handleReflectionSettingsCommand(
         {
           type: "get_reflection_settings",
@@ -2654,7 +2653,6 @@ describe("listen-client reflection settings command handling", () => {
         socket as unknown as WebSocket,
         listener,
       );
-
       const getResponse = JSON.parse(socket.sentPayloads[0] as string);
       expect(getResponse).toMatchObject({
         type: "get_reflection_settings_response",
@@ -2664,11 +2662,10 @@ describe("listen-client reflection settings command handling", () => {
           agent_id: "agent-1",
           trigger: "compaction-event",
           step_count: 25,
+          model: null,
         },
       });
-
       socket.sentPayloads.length = 0;
-
       await __listenClientTestUtils.handleReflectionSettingsCommand(
         {
           type: "set_reflection_settings",
@@ -2677,6 +2674,7 @@ describe("listen-client reflection settings command handling", () => {
           settings: {
             trigger: "step-count",
             step_count: 9,
+            model: "anthropic/claude-haiku-4-5",
           },
           scope: "local_project",
         },
@@ -2695,6 +2693,7 @@ describe("listen-client reflection settings command handling", () => {
           agent_id: "agent-1",
           trigger: "step-count",
           step_count: 9,
+          model: "anthropic/claude-haiku-4-5",
         },
       });
       expect(deviceStatusUpdate).toMatchObject({
@@ -2704,6 +2703,7 @@ describe("listen-client reflection settings command handling", () => {
             agent_id: "agent-1",
             trigger: "step-count",
             step_count: 9,
+            model: "anthropic/claude-haiku-4-5",
           },
         },
       });

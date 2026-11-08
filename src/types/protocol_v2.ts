@@ -192,7 +192,6 @@ export interface PendingControlRequest {
   request_id: string;
   request: ControlRequestBody;
 }
-
 export type ReflectionTriggerMode = "off" | "step-count" | "compaction-event";
 export type ReflectionMergeMode = "auto" | "explicit";
 export type ReflectionSettingsScope = "local_project" | "global" | "both";
@@ -202,9 +201,9 @@ export interface ReflectionSettingsSnapshot {
   step_count: number;
   merge: ReflectionMergeMode;
   merge_instructions: string;
+  model: string | null;
 }
 export type ChannelId = string;
-
 export type ChannelPluginConfig = Record<string, unknown>;
 
 export interface ChannelConfigFieldBase {
@@ -1534,6 +1533,7 @@ export interface SetReflectionSettingsCommand {
     step_count: number;
     merge?: ReflectionMergeMode;
     merge_instructions?: string;
+    model?: string | null;
   };
   scope?: ReflectionSettingsScope;
 }

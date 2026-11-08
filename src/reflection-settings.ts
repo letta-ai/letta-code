@@ -10,9 +10,18 @@ export function isAutoReflectionEnabled(): boolean {
   );
 }
 
+export function isValidReflectionModelSetting(
+  value: unknown,
+): value is string | null | undefined {
+  return (
+    value == null || (typeof value === "string" && value.trim().length > 0)
+  );
+}
+
 export interface StoredReflectionSettings {
   trigger: ReflectionTrigger;
   stepCount: number;
   merge?: ReflectionMergeMode;
   mergeInstructions?: string;
+  model?: string | null;
 }

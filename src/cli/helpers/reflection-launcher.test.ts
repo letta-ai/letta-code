@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as memoryWorktree from "@/agent/memory-worktree";
+import { resolveReflectionModel } from "@/cli/helpers/memory-reminder";
 import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import {
   clearAutomaticReflectionSuppression,
@@ -107,6 +108,16 @@ describe("shouldRunQueuedReflectionLaunch", () => {
 });
 
 describe("reflection launchers", () => {
+  test("prefers an invocation model over the persisted reflection model", () => {
+    expect(
+      resolveReflectionModel("openai/gpt-5", "anthropic/claude-haiku-4-5"),
+    ).toBe("openai/gpt-5");
+    expect(
+      resolveReflectionModel(undefined, "anthropic/claude-haiku-4-5"),
+    ).toBe("anthropic/claude-haiku-4-5");
+    expect(resolveReflectionModel(undefined, null)).toBeUndefined();
+  });
+
   test.each([
     ["win32", "step-count", undefined, true],
     ["win32", "compaction-event", undefined, true],

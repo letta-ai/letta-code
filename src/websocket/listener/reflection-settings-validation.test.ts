@@ -1,4 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import {
+  clearAutomaticReflectionSuppression,
+  isAutomaticReflectionSuppressed,
+  recordReflectionConfigurationFailure,
+} from "@/cli/helpers/reflection-launcher";
+import { clearSuppressionForReflectionModelChange } from "@/websocket/listener/commands/settings";
 import { isSetReflectionSettingsCommand } from "@/websocket/listener/protocol-inbound";
 
 function command(settings: Record<string, unknown>): Record<string, unknown> {
@@ -10,8 +16,8 @@ function command(settings: Record<string, unknown>): Record<string, unknown> {
   };
 }
 
-describe("reflection merge settings protocol", () => {
-  test("accepts explicit merge settings and optional instructions", () => {
+describe("reflection settings protocol", () => {
+  test("accepts explicit merge settings, instructions, and a model", () => {
     expect(
       isSetReflectionSettingsCommand(
         command({
@@ -19,6 +25,7 @@ describe("reflection merge settings protocol", () => {
           step_count: 25,
           merge: "explicit",
           merge_instructions: "Preserve exact wording.",
+          model: "anthropic/claude-haiku-4-5",
         }),
       ),
     ).toBe(true);
@@ -28,6 +35,18 @@ describe("reflection merge settings protocol", () => {
     expect(
       isSetReflectionSettingsCommand(
         command({ trigger: "compaction-event", step_count: 25 }),
+      ),
+    ).toBe(true);
+  });
+
+  test("accepts null to reset the reflection model", () => {
+    expect(
+      isSetReflectionSettingsCommand(
+        command({
+          trigger: "compaction-event",
+          step_count: 25,
+          model: null,
+        }),
       ),
     ).toBe(true);
   });
@@ -48,5 +67,40 @@ describe("reflection merge settings protocol", () => {
         }),
       ),
     ).toBe(false);
+  });
+
+  test("rejects empty or non-string reflection models", () => {
+    for (const model of ["", "   ", 42, false]) {
+      expect(
+        isSetReflectionSettingsCommand(
+          command({
+            trigger: "step-count",
+            step_count: 25,
+            model,
+          }),
+        ),
+      ).toBe(false);
+    }
+  });
+
+  test("clears automatic-reflection suppression when the model changes", () => {
+    const agentId = "agent-reflection-model-change";
+    clearAutomaticReflectionSuppression(agentId);
+    expect(
+      recordReflectionConfigurationFailure({
+        agentId,
+        model: "openai/removed-model",
+        error: "Model handle not found: openai/removed-model",
+      }),
+    ).toBe(true);
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(true);
+
+    clearSuppressionForReflectionModelChange(
+      agentId,
+      "openai/removed-model",
+      "anthropic/claude-haiku-4-5",
+    );
+
+    expect(isAutomaticReflectionSuppressed(agentId)).toBe(false);
   });
 });
