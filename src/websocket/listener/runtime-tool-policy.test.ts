@@ -14,6 +14,7 @@ import {
   clearExternalTools,
 } from "@/tools/manager";
 import type { RuntimeToolPolicy } from "@/types/protocol_v2";
+import { handleRuntimeStartCommand } from "./commands/runtime-start";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
   registerRuntimeExternalTools,
@@ -212,6 +213,39 @@ test("a task notification turn uses the registering connection's tools and polic
     "disconnected",
   );
   expect(await toolNames()).toEqual(unrestricted);
+});
+
+test("runtime_start applies its tool_policy to a following task notification turn", async () => {
+  expect(await toolNames()).toContain("Bash");
+
+  const responses: unknown[] = [];
+  await handleRuntimeStartCommand(
+    {
+      type: "runtime_start",
+      request_id: "runtime-start-tool-policy",
+      agent_id: agentId,
+      conversation_id: conversationId,
+      recover_approvals: false,
+      external_tools: [],
+      tool_policy: { toolset: { base: "none" }, allowlist: ["Read"] },
+    },
+    {
+      socket: { readyState: 3, send: () => {} } as never,
+      connectionId: "sdk-session",
+      runtime: listener,
+      safeSocketSend: (_socket, payload) => {
+        responses.push(payload);
+        return true;
+      },
+      runDetachedListenerTask: () => {},
+      getOrCreateScopedRuntime,
+      retrieveConversation: async (id) => ({ id, agent_id: agentId }) as never,
+      replaySyncStateForRuntime: async () => {},
+    },
+  );
+  expect(responses).toContainEqual(expect.objectContaining({ success: true }));
+
+  expect(await toolNames()).toEqual(["Read"]);
 });
 
 test("per-input tool fields apply to their own turn and only narrow the policy", async () => {
