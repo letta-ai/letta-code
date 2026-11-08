@@ -55,6 +55,7 @@ describe("app-server info protocol", () => {
         subagent_message: true,
         runtime_workspace_sandbox: true,
         runtime_external_tools_update: true,
+        runtime_tool_policy: true,
         structured_outputs: false,
         write_file_base64: true,
         split_channels: false,
