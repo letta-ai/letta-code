@@ -49,6 +49,7 @@ import {
   handleExecuteCommand,
   SUPPORTED_REMOTE_COMMANDS,
 } from "@/websocket/listener/commands";
+import { createIncomingMessage } from "@/websocket/listener/inbound-dispatch";
 import { ensureListenerModAdapter } from "@/websocket/listener/mod-adapter";
 import { isEditFileCommand } from "@/websocket/listener/protocol-inbound";
 import {
@@ -689,7 +690,6 @@ describe("listen-client parseServerMessage", () => {
             conversation_id: conversation.id,
             external_tools: [
               {
-                scope_id: "scope-1",
                 tools: [
                   {
                     name: "RemoteLookup",
@@ -721,7 +721,6 @@ describe("listen-client parseServerMessage", () => {
           "anthropic/claude-sonnet-4",
           {
             clientToolAllowlist: ["RemoteLookup"],
-            externalToolScopeIds: ["scope-1"],
             runtimeContext: {
               connectionId: "test-connection",
               agentId: agent.id,
@@ -872,7 +871,6 @@ describe("listen-client parseServerMessage", () => {
             kind: "create_message",
             messages: [],
             client_tool_allowlist: ["Read", "Grep"],
-            external_tool_scope_ids: ["scope-1"],
           },
         }),
       ),
@@ -889,7 +887,6 @@ describe("listen-client parseServerMessage", () => {
     expect(msg?.type).toBe("input");
     if (msg?.type === "input" && msg.payload.kind === "create_message") {
       expect(msg.payload.client_tool_allowlist).toEqual(["Read", "Grep"]);
-      expect(msg.payload.external_tool_scope_ids).toEqual(["scope-1"]);
     }
     expect(changeDeviceState?.type).toBe("change_device_state");
   });
@@ -916,7 +913,7 @@ describe("listen-client parseServerMessage", () => {
     }
   });
 
-  test("rejects input create_message with invalid external tool scope ids", () => {
+  test("accepts and ignores deprecated external tool scope ids", () => {
     const parsed = parseServerMessage(
       Buffer.from(
         JSON.stringify({
@@ -931,13 +928,16 @@ describe("listen-client parseServerMessage", () => {
       ),
     );
 
-    expect(parsed).not.toBeNull();
-    expect(parsed?.type).toBe("__invalid_input");
-    if (parsed?.type === "__invalid_input") {
-      expect(parsed.reason).toContain(
-        "external_tool_scope_ids must be string[]",
-      );
+    expect(parsed?.type).toBe("input");
+    if (parsed?.type !== "input" || parsed.payload.kind !== "create_message") {
+      throw new Error("expected create_message input");
     }
+    const incoming = createIncomingMessage(
+      { agent_id: "agent-1", conversation_id: "default" },
+      parsed.payload,
+      "client-1",
+    );
+    expect(incoming).not.toHaveProperty("externalToolScopeIds");
   });
 
   test("parses abort_message as the canonical abort command", () => {

@@ -13,7 +13,9 @@ import type {
   RuntimeExternalToolsUpdateGroup,
   RuntimeScope,
   RuntimeStartExternalToolsGroup,
+  RuntimeToolPolicy,
 } from "@/types/protocol_v2";
+import { debugLog } from "@/utils/debug";
 import { createConnectionRequestKey } from "@/websocket/listener/connection";
 import { getConversationRuntimeKey } from "@/websocket/listener/runtime";
 import { isListenerTransportOpen } from "@/websocket/listener/transport";
@@ -24,10 +26,26 @@ import type {
 } from "@/websocket/listener/types";
 
 const EXTERNAL_TOOL_CALL_TIMEOUT_MS = 5 * 60 * 1000;
+/** One connection's tools and tool policy for one conversation. */
+interface RuntimeToolRegistration {
+  connectionId: ListenerConnectionId;
+  runtimeKey: string;
+  tools: ExternalToolDefinition[];
+  toolPolicy?: RuntimeToolPolicy;
+  /** Monotonic registration order; the newest registration wins ties. */
+  sequence: number;
+}
+
+// Listener-level so conversation-runtime eviction keeps registrations alive.
 const registeredToolsByRuntime = new WeakMap<
   ListenerRuntime,
-  Map<string, ExternalToolDefinition[]>
+  Map<string, RuntimeToolRegistration>
 >();
+const lastSubmittingConnectionByRuntime = new WeakMap<
+  ListenerRuntime,
+  Map<string, ListenerConnectionId>
+>();
+let nextRegistrationSequence = 0;
 const connectionIdByRegistrationKey = new WeakMap<
   ListenerRuntime,
   Map<string, ListenerConnectionId>
@@ -57,6 +75,15 @@ function getRegisteredTools(runtime: ListenerRuntime) {
   return registeredTools;
 }
 
+function getLastSubmittingConnections(runtime: ListenerRuntime) {
+  let connections = lastSubmittingConnectionByRuntime.get(runtime);
+  if (!connections) {
+    connections = new Map();
+    lastSubmittingConnectionByRuntime.set(runtime, connections);
+  }
+  return connections;
+}
+
 function getConnectionIdsByRegistrationKey(runtime: ListenerRuntime) {
   let controllers = connectionIdByRegistrationKey.get(runtime);
   if (!controllers) {
@@ -73,7 +100,6 @@ function getRuntimeKey(runtime: RuntimeScope<string | null>): string {
 function getToolRegistrationKey(
   connectionId: ListenerConnectionId,
   runtime: RuntimeScope<string | null>,
-  scopeId: string | undefined,
   toolName: string,
 ): string {
   return JSON.stringify([
@@ -81,7 +107,6 @@ function getToolRegistrationKey(
     connectionId,
     runtime.agent_id,
     runtime.conversation_id,
-    scopeId ?? null,
     toolName,
   ]);
 }
@@ -133,7 +158,6 @@ function toExternalToolDefinition(
   tool: ExternalToolDefinitionPayload,
   connectionId: ListenerConnectionId,
   runtimeScope: RuntimeScope<string | null>,
-  scopeId?: string,
 ): ExternalToolDefinition {
   const toolDefinition: ExternalToolDefinition = {
     name: tool.name,
@@ -146,10 +170,8 @@ function toExternalToolDefinition(
     registrationKey: getToolRegistrationKey(
       connectionId,
       runtimeScope,
-      scopeId,
       tool.name,
     ),
-    ...(scopeId !== undefined ? { scopeId } : {}),
     runtime: {
       agentId: runtimeScope.agent_id ?? undefined,
       conversationId: runtimeScope.conversation_id,
@@ -208,9 +230,6 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
       type: "external_tool_call_request",
       request_id: requestId,
       ...(requestRuntime ? { runtime: requestRuntime } : {}),
-      ...(context?.tool.scopeId !== undefined
-        ? { scope_id: context.tool.scopeId }
-        : {}),
       tool_call_id: toolCallId,
       tool_name: toolName,
       input,
@@ -269,25 +288,24 @@ export function registerRuntimeExternalTools(
   connectionId: ListenerConnectionId,
   runtimeScope: RuntimeScope<string | null>,
   groups?: readonly RuntimeStartExternalToolsGroup[],
+  toolPolicy?: RuntimeToolPolicy,
 ): void {
   const resolvedGroups = groups ?? [];
+  if (resolvedGroups.some((group) => Object.hasOwn(group, "scope_id"))) {
+    debugLog("Listen", "Ignoring deprecated external tool scope_id");
+  }
   const registeredTools = getRegisteredTools(runtime);
-  const runtimeKey = createConnectionRequestKey(
+  const runtimeKey = getRuntimeKey(runtimeScope);
+  const registrationScope = createConnectionRequestKey(
     connectionId,
-    getRuntimeKey(runtimeScope),
+    runtimeKey,
   );
-  const previousTools = registeredTools.get(runtimeKey) ?? [];
+  const previousTools = registeredTools.get(registrationScope)?.tools ?? [];
   unregisterExternalTools(previousTools);
 
   const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
-      toExternalToolDefinition(
-        runtime,
-        tool,
-        connectionId,
-        runtimeScope,
-        group.scope_id,
-      ),
+      toExternalToolDefinition(runtime, tool, connectionId, runtimeScope),
     ),
   );
   const controllers = getConnectionIdsByRegistrationKey(runtime);
@@ -296,17 +314,79 @@ export function registerRuntimeExternalTools(
       controllers.delete(tool.registrationKey);
     }
   }
-  if (tools.length > 0) {
-    registerExternalTools(tools);
-    for (const tool of tools) {
-      if (tool.registrationKey) {
-        controllers.set(tool.registrationKey, connectionId);
+  registerExternalTools(tools);
+  for (const tool of tools) {
+    if (tool.registrationKey) {
+      controllers.set(tool.registrationKey, connectionId);
+    }
+  }
+  // Delete first so a replacement moves to the end in registration order.
+  registeredTools.delete(registrationScope);
+  if (tools.length > 0 || toolPolicy !== undefined) {
+    registeredTools.set(registrationScope, {
+      connectionId,
+      runtimeKey,
+      tools,
+      ...(toolPolicy !== undefined ? { toolPolicy } : {}),
+      sequence: ++nextRegistrationSequence,
+    });
+  }
+}
+
+/** Remember which connection last submitted input on a runtime. */
+export function recordRuntimeSubmittingConnection(
+  runtime: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+  connectionId: ListenerConnectionId,
+): void {
+  getLastSubmittingConnections(runtime).set(
+    getRuntimeKey(runtimeScope),
+    connectionId,
+  );
+}
+
+/**
+ * Pick the connection whose registration shapes a turn's tools. A client turn
+ * uses its own connection. A turn the process started (task notification,
+ * cron, recovery) uses the last connection that submitted input on this
+ * runtime if it still has a registration here, else the newest registration.
+ */
+export function resolveRuntimeToolOwner(
+  runtime: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+  submittingConnectionId?: ListenerConnectionId,
+): { connectionId?: ListenerConnectionId; toolPolicy?: RuntimeToolPolicy } {
+  const registeredTools = registeredToolsByRuntime.get(runtime);
+  const runtimeKey = getRuntimeKey(runtimeScope);
+  const registrationFor = (connectionId: ListenerConnectionId) =>
+    registeredTools?.get(createConnectionRequestKey(connectionId, runtimeKey));
+  if (submittingConnectionId !== undefined) {
+    const toolPolicy = registrationFor(submittingConnectionId)?.toolPolicy;
+    return {
+      connectionId: submittingConnectionId,
+      ...(toolPolicy ? { toolPolicy } : {}),
+    };
+  }
+  const lastSubmitter = lastSubmittingConnectionByRuntime
+    .get(runtime)
+    ?.get(runtimeKey);
+  let owner =
+    lastSubmitter !== undefined ? registrationFor(lastSubmitter) : undefined;
+  if (!owner) {
+    for (const registration of registeredTools?.values() ?? []) {
+      if (
+        registration.runtimeKey === runtimeKey &&
+        (!owner || registration.sequence > owner.sequence)
+      ) {
+        owner = registration;
       }
     }
-    registeredTools.set(runtimeKey, tools);
-  } else {
-    registeredTools.delete(runtimeKey);
   }
+  if (!owner) return {};
+  return {
+    connectionId: owner.connectionId,
+    ...(owner.toolPolicy ? { toolPolicy: owner.toolPolicy } : {}),
+  };
 }
 
 export function updateRuntimeExternalTools(
@@ -321,6 +401,7 @@ export function updateRuntimeExternalTools(
         connectionId,
         runtimeScope,
         update.external_tools,
+        update.tool_policy,
       );
     }
   }
@@ -407,23 +488,22 @@ export function rejectPendingExternalToolCallsForConnection(
     pending.reject(new Error(reason));
   }
 
+  const lastSubmitters = lastSubmittingConnectionByRuntime.get(runtime);
+  for (const [runtimeKey, submitter] of lastSubmitters ?? []) {
+    if (submitter === connectionId) lastSubmitters?.delete(runtimeKey);
+  }
   const registeredTools = registeredToolsByRuntime.get(runtime);
   if (!registeredTools) {
     return;
   }
   const controllers = getConnectionIdsByRegistrationKey(runtime);
-  for (const [registrationScope, tools] of registeredTools) {
-    const ownedByConnection = tools.some(
-      (tool) =>
-        tool.registrationKey !== undefined &&
-        controllers.get(tool.registrationKey) === connectionId,
-    );
-    if (!ownedByConnection) {
+  for (const [registrationScope, registration] of registeredTools) {
+    if (registration.connectionId !== connectionId) {
       continue;
     }
-    unregisterExternalTools(tools);
+    unregisterExternalTools(registration.tools);
     registeredTools.delete(registrationScope);
-    for (const tool of tools) {
+    for (const tool of registration.tools) {
       if (tool.registrationKey) {
         controllers.delete(tool.registrationKey);
       }
@@ -444,10 +524,11 @@ export function rejectPendingExternalToolCalls(
 
   const registeredTools = registeredToolsByRuntime.get(runtime);
   if (registeredTools) {
-    for (const tools of registeredTools.values()) {
-      unregisterExternalTools(tools);
+    for (const registration of registeredTools.values()) {
+      unregisterExternalTools(registration.tools);
     }
     registeredToolsByRuntime.delete(runtime);
   }
   connectionIdByRegistrationKey.delete(runtime);
+  lastSubmittingConnectionByRuntime.delete(runtime);
 }
