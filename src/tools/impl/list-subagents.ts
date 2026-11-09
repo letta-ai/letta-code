@@ -20,7 +20,8 @@ export interface ListedAgent {
   description: string;
   harness: "letta" | ExternalCodingAgentType;
   conversation_id?: string;
-  task_id?: string;
+  /** Only with conversation_id "default", which is addressed per agent. */
+  agent_id?: string;
   status: ListedAgentStatus;
   started_at: string;
   last_activity_at: string;
@@ -66,6 +67,9 @@ function addressKey(entry: SubagentHistoryEntry): string {
     agent.agentId,
     agent.conversationId,
   );
+  if (conversationId === "default" && agent.agentId) {
+    return `${agent.agentId}/default`;
+  }
   return conversationId && conversationId !== "default"
     ? conversationId
     : `row:${agent.id}`;
@@ -93,14 +97,13 @@ function toListedAgent(
     agentId,
     agent.conversationId ?? first.agent.conversationId,
   );
-  const taskId = agent.taskId ?? first.agent.taskId;
   const computer =
     external?.computer ?? agent.computer ?? first.agent.computer ?? undefined;
   return {
     description: first.agent.description,
     harness: harnessOf(first.agent.type, external?.type),
     ...(conversationId ? { conversation_id: conversationId } : {}),
-    ...(taskId ? { task_id: taskId } : {}),
+    ...(conversationId === "default" && agentId ? { agent_id: agentId } : {}),
     status,
     started_at: new Date(first.agent.startTime).toISOString(),
     last_activity_at: new Date(latest.lastActivityMs).toISOString(),

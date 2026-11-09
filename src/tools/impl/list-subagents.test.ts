@@ -13,9 +13,8 @@ import {
   sendAgentMessageFixture,
 } from "@/test-utils/send-agent-message-fixture";
 import { list_subagents } from "./list-subagents";
-import { backgroundTasks, createBackgroundOutputFile } from "./process_manager";
+import { backgroundTasks } from "./process_manager";
 import { send_agent_message } from "./send-agent-message";
-import { task_stop } from "./task-stop";
 
 const PARENT = { agentId: "agent-parent", conversationId: "conv-parent" };
 const scope = () => PARENT;
@@ -76,7 +75,6 @@ test("lists a background Letta subagent and an external worker by conversation I
     description: "Review the diff",
     harness: "letta",
     conversation_id: "conv-child",
-    task_id: "task_1",
     status: "running",
   });
   // An external worker's ID is its conversation ID.
@@ -84,12 +82,13 @@ test("lists a background Letta subagent and an external worker by conversation I
     description: "Fix the flaky test",
     harness: "claude-code",
     conversation_id: "claude_6062e098-ab3f-4e98-a474-f1020b0a79cb@laptop",
-    task_id: "task_2",
     status: "running",
     computer: "laptop",
   });
-  expect(letta).not.toHaveProperty("agent_id");
-  expect(external).not.toHaveProperty("agent_id");
+  for (const row of [letta, external]) {
+    expect(row).not.toHaveProperty("agent_id");
+    expect(row).not.toHaveProperty("task_id");
+  }
 });
 
 test("keeps finished agents after the live store drops them as idle, with an error only on a failed run", async () => {
@@ -157,7 +156,31 @@ test("a follow-up send to a finished child shows as one row with the latest stat
   expect(agents[0]).toMatchObject({
     description: "Draft the PR",
     status: "running",
-    task_id: "task_1",
+  });
+});
+
+test("a child on its default conversation lists its agent_id, as one row across runs", async () => {
+  launch("first", "general-purpose", "Triage the inbox");
+  updateSubagent("first", {
+    agentId: "agent-existing",
+    conversationId: "default",
+    agentURL: "x",
+  });
+  completeSubagent("first", { success: true });
+  launch("followup", "general-purpose", "follow-up");
+  updateSubagent("followup", {
+    agentId: "agent-existing",
+    conversationId: "default",
+    agentURL: "x",
+  });
+
+  const { agents } = await list_subagents({}, { scope });
+  expect(agents).toHaveLength(1);
+  expect(agents[0]).toMatchObject({
+    description: "Triage the inbox",
+    conversation_id: "default",
+    agent_id: "agent-existing",
+    status: "running",
   });
 });
 
@@ -168,7 +191,6 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
     expect.objectContaining({
       description: "Audit the logs",
       conversation_id: EPHEMERAL_CONV,
-      task_id: "task_eph",
       status: "running",
     }),
   ]);
@@ -200,26 +222,14 @@ test("resuming an ephemeral conversation keeps one row", async () => {
   expect(agents[0]).toMatchObject({
     description: "Audit the logs",
     conversation_id: EPHEMERAL_CONV,
-    task_id: "task_resume",
     status: "running",
   });
 });
 
-test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", async () => {
+test("SendAgentMessage accepts an ephemeral row's conversation ID as listed", async () => {
   launchEphemeral("eph", "task_eph");
-  const abortController = new AbortController();
-  backgroundTasks.set("task_eph", {
-    description: "Audit the logs",
-    subagentType: "general-purpose",
-    subagentId: "eph",
-    status: "running",
-    startTime: new Date(),
-    outputFile: createBackgroundOutputFile("task_eph"),
-    abortController,
-    completion: Promise.resolve(),
-  });
   const [row] = (await list_subagents({}, { scope })).agents;
-  if (!row?.conversation_id || !row.task_id) throw new Error("no address");
+  if (!row?.conversation_id) throw new Error("no address");
 
   const f = sendAgentMessageFixture();
   const sent = await runWithRuntimeContext(caller, () =>
@@ -235,14 +245,6 @@ test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", as
   expect(f.submissions).toHaveLength(1);
   expect(f.submissions[0]?.conversationId).toBe(EPHEMERAL_CONV);
   expect(f.submissions[0]?.agentId).toBeUndefined();
-
-  expect(await task_stop({ task_id: row.task_id })).toEqual({ killed: true });
-  expect(abortController.signal.aborted).toBe(true);
-  // The aborted run settles and the row goes idle.
-  completeSubagent("eph", { success: false, error: "aborted" });
-  expect(
-    (await list_subagents({ status: ["idle"] }, { scope })).agents[0]?.status,
-  ).toBe("idle");
 });
 
 test("omits other conversations' children and memory workers", async () => {
