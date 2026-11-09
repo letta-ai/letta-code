@@ -67,7 +67,11 @@ export function isRuntimeToolPolicy(
         (toolset.include === undefined || isStringList(toolset.include)))) &&
     (value.allowlist === undefined || isStringList(value.allowlist)) &&
     (value.exclude_interactive === undefined ||
-      typeof value.exclude_interactive === "boolean")
+      typeof value.exclude_interactive === "boolean") &&
+    (value.foreground_yield_ms === undefined ||
+      (typeof value.foreground_yield_ms === "number" &&
+        Number.isFinite(value.foreground_yield_ms) &&
+        value.foreground_yield_ms > 0))
   );
 }
 

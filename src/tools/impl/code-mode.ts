@@ -1,5 +1,6 @@
 import { rmSync } from "node:fs";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   createScriptToolScope,
   resolveScriptParentAgentId,
@@ -35,8 +36,6 @@ interface CodeModeArgs {
   foregroundYieldMs?: number;
 }
 
-// Match Bash and exec_command's foreground yield.
-const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 const MAX_NOTIFICATION_RESULT_CHARS = 30_000;
 
 type Outcome = { ok: true; text: string } | { ok: false; error: string };
@@ -57,7 +56,7 @@ export async function code_mode(args: CodeModeArgs) {
   const {
     run_in_background = false,
     signal,
-    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
+    foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
   if (typeof args.code !== "string" || !args.code.trim()) {
     return {

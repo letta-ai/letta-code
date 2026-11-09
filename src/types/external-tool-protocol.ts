@@ -91,4 +91,10 @@ export interface RuntimeToolPolicy {
   allowlist?: readonly string[];
   /** Same meaning as `exclude_interactive_tools`. */
   exclude_interactive?: boolean;
+  /**
+   * Milliseconds to wait before a long-running Bash, CodeMode, exec_command or
+   * external tool call is returned as a background task. Clamped to 1–30s;
+   * defaults to 10s when omitted.
+   */
+  foreground_yield_ms?: number;
 }

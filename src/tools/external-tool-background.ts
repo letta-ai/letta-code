@@ -1,4 +1,5 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import { LIMITS, truncateByChars } from "@/tools/impl/truncation";
 import { scrubAmbientSecrets } from "@/tools/secret-substitution";
 import {
@@ -10,10 +11,6 @@ import {
   formatTaskNotification,
   type NotificationScope,
 } from "@/utils/task-notifications";
-
-// Match exec_command's default foreground yield. The listener's timeout_ms
-// remains the separate, total deadline for the remote result.
-export const DEFAULT_EXTERNAL_TOOL_YIELD_MS = 10_000;
 
 type ExternalResult = {
   status: "success" | "error";
@@ -151,7 +148,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     new Promise<{ kind: "yield" }>((resolve) => {
       timer = setTimeout(
         () => resolve({ kind: "yield" }),
-        options?.yieldMs ?? DEFAULT_EXTERNAL_TOOL_YIELD_MS,
+        options?.yieldMs ?? resolveForegroundYieldMs(),
       );
     }),
     ...(abortSettled ? [abortSettled] : []),
