@@ -32,6 +32,12 @@ import type {
   SubagentStartupErrorCode,
 } from "@/types/subagent-protocol";
 import {
+  addToMessageQueue,
+  type QueuedMessage,
+} from "@/utils/message-queue-bridge";
+import { formatTaskNotification } from "@/utils/task-notifications";
+import { awaitDeferredStartup, settleWithinBudget } from "./agent-startup";
+import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
   type ExternalCodingAgentType,
@@ -88,6 +94,10 @@ export interface RemoteExternalCodingAgentDeps {
   ) => Promise<AppServerClient>;
   reconnectDelayMs?: number;
   agentIdWaitMs?: number;
+  /** Return a task receipt if startup is still running after this long. */
+  startupYieldMs?: number | null;
+  /** Queue for a task notification sent after the task finished. */
+  enqueue?: (message: QueuedMessage) => void;
 }
 
 const DISPLAY_NAMES: Record<ExternalCodingAgentType, string> = {
@@ -349,10 +359,23 @@ class RemoteSubagentFollower {
   }
 }
 
-export async function launchRemoteExternalCodingAgent(
+type RemoteStarted = {
+  success: true;
+  follower: RemoteSubagentFollower;
+  qualify: (nativeAgentId: string | null | undefined) => string | null;
+  launchedAgentId: string | null;
+  qualifiedAgentId: string | null;
+  /** Stop the launched worker (used when its task was stopped first). */
+  stop: () => Promise<void>;
+};
+type RemoteStartup =
+  | { success: false; error: string; error_code?: SubagentStartupErrorCode }
+  | RemoteStarted;
+
+async function startRemoteExternalCodingAgent(
   params: RemoteExternalCodingAgentLaunch,
   deps: RemoteExternalCodingAgentDeps,
-): Promise<SubagentLaunchResult> {
+): Promise<RemoteStartup> {
   const { type, computer, parentScope } = params;
   let connectionId: string;
   let deviceId: string;
@@ -403,17 +426,18 @@ export async function launchRemoteExternalCodingAgent(
   );
   // Listen before launching: a fast worker can finish before the response.
   follower.attach(client);
+  const runtime = {
+    agent_id: parentScope.agentId,
+    conversation_id: parentScope.conversationId,
+    ...(parentScope.actingUserId
+      ? { acting_user_id: parentScope.actingUserId }
+      : {}),
+  };
   let launched: Awaited<ReturnType<AppServerClient["launchSubagent"]>>;
   try {
     launched = await client.launchSubagent({
       request_id: `launch-subagent-${randomUUID()}`,
-      runtime: {
-        agent_id: parentScope.agentId,
-        conversation_id: parentScope.conversationId,
-        ...(parentScope.actingUserId
-          ? { acting_user_id: parentScope.actingUserId }
-          : {}),
-      },
+      runtime,
       args: {
         // Older listeners accept only `subagent_type`; current listeners
         // translate an external worker name there into `harness`.
@@ -461,14 +485,75 @@ export async function launchRemoteExternalCodingAgent(
     ? (launchedAgentId ??
       qualify(await follower.waitForAgentId(deps.agentIdWaitMs ?? 2_000)))
     : null;
+  const nativeAgentId = launched.agent_id;
+  return {
+    success: true,
+    follower,
+    qualify,
+    launchedAgentId,
+    qualifiedAgentId,
+    stop: async () => {
+      if (!nativeAgentId) throw new Error(`${computer} returned no worker ID`);
+      const response = await client.stopSubagent({
+        request_id: `subagent-stop-${randomUUID()}`,
+        runtime,
+        agent_id: nativeAgentId,
+      });
+      if (!response.success) throw new Error(response.error ?? "Stop failed");
+    },
+  };
+}
+
+/**
+ * Launch a remote worker. A launch still starting after `startupYieldMs`
+ * returns a task receipt; the task reports how startup ends.
+ */
+export async function launchRemoteExternalCodingAgent(
+  params: RemoteExternalCodingAgentLaunch,
+  deps: RemoteExternalCodingAgentDeps,
+): Promise<SubagentLaunchResult> {
+  const startup = startRemoteExternalCodingAgent(params, deps);
+  const started = await settleWithinBudget(
+    startup,
+    deps.startupYieldMs ?? null,
+  );
+  if (started && !started.success) return started;
+  return spawnRemoteFollowTask(
+    params,
+    { spawn: deps.spawn, enqueue: deps.enqueue ?? addToMessageQueue },
+    startup,
+    started,
+  );
+}
+
+/** `ready` is set when startup finished in the foreground. */
+function spawnRemoteFollowTask(
+  params: RemoteExternalCodingAgentLaunch,
+  {
+    spawn,
+    enqueue,
+  }: {
+    spawn: SpawnRemoteFollowTask;
+    enqueue: (message: QueuedMessage) => void;
+  },
+  startup: Promise<RemoteStartup>,
+  ready: RemoteStarted | undefined,
+): SubagentLaunchResult {
+  const { type, computer, parentScope } = params;
+  const qualifiedAgentId = ready?.qualifiedAgentId ?? null;
+  let follower: RemoteSubagentFollower | undefined;
+  let qualify: RemoteStarted["qualify"] = () => null;
+  let launchedAgentId: string | null = null;
+  let startedAgentId = qualifiedAgentId;
+
   // The final result names the worker, never the parent.
   const workerAgentId = () =>
-    qualify(follower.latestAgentId()) ??
-    qualifiedAgentId ??
+    qualify(follower?.latestAgentId()) ??
+    startedAgentId ??
     launchedAgentId ??
     "";
 
-  const { taskId, outputFile, subagentId } = deps.spawn({
+  const { taskId, outputFile, subagentId } = spawn({
     subagentType: type,
     config: createExternalCodingAgentConfig(type),
     prompt: params.prompt,
@@ -479,18 +564,77 @@ export async function launchRemoteExternalCodingAgent(
     deps: {
       spawnSubagentImpl: async (_type, _prompt, model, subagentId, signal) => {
         const startedAt = Date.now();
+        let started: RemoteStartup;
+        try {
+          started = await awaitDeferredStartup(startup, signal);
+        } catch (error) {
+          if (signal?.aborted) {
+            // Stopped mid-launch: stop a worker that starts afterwards, and
+            // report a failed stop so the worker is not silently left running.
+            void startup.then(
+              async (late) => {
+                if (!late.success) return;
+                try {
+                  await late.stop();
+                } catch (stopError) {
+                  const worker = late.launchedAgentId ?? "with an unknown ID";
+                  enqueue({
+                    kind: "task_notification",
+                    text: formatTaskNotification({
+                      taskId,
+                      status: "failed",
+                      summary: `Couldn't stop ${type} worker after the task was stopped`,
+                      result: `The ${type} worker ${worker} started on ${computer} after its task was stopped, and stopping it failed: ${errorMessage(stopError)}. It may still be running there.`,
+                      outputFile,
+                    }),
+                    agentId: parentScope.agentId,
+                    conversationId: parentScope.conversationId,
+                    actingUserId: parentScope.actingUserId,
+                  });
+                } finally {
+                  late.follower.close();
+                }
+              },
+              () => undefined,
+            );
+          }
+          started = {
+            success: false,
+            error: signal?.aborted
+              ? `Stopped before the ${type} worker started on ${computer}.`
+              : errorMessage(error),
+          };
+        }
+        if (!started.success)
+          return {
+            agentId: "",
+            model,
+            report: "",
+            success: false,
+            error: started.error,
+            durationMs: Date.now() - startedAt,
+          } satisfies SubagentResult;
+        ({ follower, qualify, launchedAgentId } = started);
+        if (!ready && started.qualifiedAgentId) {
+          startedAgentId = started.qualifiedAgentId;
+          updateSubagent(subagentId, { agentId: startedAgentId });
+        }
+        const activeFollower = follower;
         updateSubagent(subagentId, { status: "running" });
         const progress = followRemoteSubagentEvents(subagentId, (afterSeq) =>
-          follower.readEvents(afterSeq),
+          activeFollower.readEvents(afterSeq),
         );
         try {
-          const final = await follower.waitForTerminal(signal, (snapshot) => {
-            updateSubagent(subagentId, {
-              toolCalls: snapshot.tool_calls,
-              totalTokens: snapshot.total_tokens,
-            });
-            progress.recordSnapshot(snapshot);
-          });
+          const final = await activeFollower.waitForTerminal(
+            signal,
+            (snapshot) => {
+              updateSubagent(subagentId, {
+                toolCalls: snapshot.tool_calls,
+                totalTokens: snapshot.total_tokens,
+              });
+              progress.recordSnapshot(snapshot);
+            },
+          );
           // The terminal snapshot can carry progress no earlier update showed.
           await progress.finish(final);
           return {
@@ -521,7 +665,7 @@ export async function launchRemoteExternalCodingAgent(
             durationMs: Date.now() - startedAt,
           } satisfies SubagentResult;
         } finally {
-          follower.close();
+          activeFollower.close();
         }
       },
     },

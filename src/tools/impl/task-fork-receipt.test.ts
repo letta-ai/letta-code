@@ -381,3 +381,64 @@ describe("nested Agent launch", () => {
     }
   }, 2000);
 });
+
+describe("fork startup budget", () => {
+  function holdFork() {
+    const release = Promise.withResolvers<{ id: string }>();
+    forkConversation.mockImplementationOnce(() => release.promise);
+    return release;
+  }
+  const launchFork = (extra: { notifyCaller?: boolean } = {}) =>
+    runWithRuntimeContext({ workingDirectory: testHome }, () =>
+      launchSubagent({
+        fork_context: true,
+        prompt: "Investigate",
+        description: "Slow fork",
+        startupYieldMs: 20,
+        ...extra,
+      }),
+    );
+
+  test("a fork still pending at the budget returns a receipt; the task starts the child once it lands", async () => {
+    const fork = holdFork();
+    const receipt = await launchFork();
+    if (!receipt.success) throw new Error(receipt.error);
+    expect(receipt.conversation_id).toBeNull();
+    expect(spawnProcess).not.toHaveBeenCalled();
+
+    fork.resolve({ id: "conv-fork" });
+    for (let i = 0; i < 100 && spawnProcess.mock.calls.length === 0; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(spawnProcess).toHaveBeenCalledTimes(1);
+    expect(childInputs[0]?.args).toContain("conv-fork");
+    expect(forkConversation).toHaveBeenCalledTimes(1);
+    await task_stop({ task_id: receipt.task_id });
+  }, 2000);
+
+  test("TaskStop during a pending fork returns promptly and no child starts", async () => {
+    const fork = holdFork();
+    const receipt = await launchFork();
+    if (!receipt.success) throw new Error(receipt.error);
+    expect(await task_stop({ task_id: receipt.task_id })).toEqual({
+      killed: true,
+    });
+    fork.resolve({ id: "conv-fork" });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(spawnProcess).not.toHaveBeenCalled();
+  }, 2000);
+
+  test("App Server callers still wait for the fork", async () => {
+    const fork = holdFork();
+    let settled = false;
+    const outcome = launchFork({ notifyCaller: true }).finally(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(settled).toBe(false);
+    fork.resolve({ id: "conv-fork" });
+    expect(await outcome).toMatchObject({
+      success: true,
+      conversation_id: "conv-fork",
+    });
+  }, 2000);
+});

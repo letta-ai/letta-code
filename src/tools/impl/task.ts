@@ -29,7 +29,6 @@ import {
   waitForBackgroundSubagentLink,
 } from "@/agent/subagents/background-link";
 import { resolveEffectiveAgentId } from "@/agent/subagents/ephemeral-subagent";
-import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
 import { runSubagentStopHooks } from "@/hooks";
@@ -47,13 +46,17 @@ import {
   resolveNotificationScope,
 } from "@/utils/task-notifications.js";
 import {
+  AGENT_STARTUP_YIELD_MS,
+  awaitDeferredStartup,
+  createStartupBudget,
+  settleWithinBudget,
+} from "./agent-startup";
+import {
   classifyExternalCodingAgentStartupError,
   createExternalCodingAgentConfig,
-  resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
-import { prepareExternalWorkerPrompt } from "./external-fork-context";
 import { copyGitHubPullRequestTags } from "./github-pull-request-tracker.js";
 import {
   ensureMemoryRepair,
@@ -79,6 +82,11 @@ import {
   shouldForkTaskContext,
 } from "./task-agent-selection";
 import {
+  forkSubagentConversation,
+  prepareLocalExternalWorker,
+  spawnWhenForked,
+} from "./task-startup";
+import {
   buildTaskResultHeader,
   closeTaskProgressLog,
   externalWorkerProgressListeners,
@@ -98,6 +106,8 @@ interface TaskArgs extends Partial<SubagentLaunchArgs> {
   parentScope?: { agentId: string; conversationId: string }; // Injected by executeTool for notification routing
   /** The launching App Server client owns the completion notification. */
   notifyCaller?: boolean;
+  /** Test override for the foreground startup budget. */
+  startupYieldMs?: number;
 }
 
 export {
@@ -659,6 +669,9 @@ export async function launchSubagent(
     };
   const resolvedParentScope = resolveNotificationScope(args.parentScope);
   signal?.throwIfAborted();
+  const startupBudget = createStartupBudget(
+    args.notifyCaller ? null : (args.startupYieldMs ?? AGENT_STARTUP_YIELD_MS),
+  );
 
   const isDeployingExisting = Boolean(args.agent_id || args.conversation_id);
   const configName =
@@ -777,34 +790,28 @@ export async function launchSubagent(
           },
           signal,
         },
-        { spawn: spawnBackgroundSubagentTask },
+        {
+          spawn: spawnBackgroundSubagentTask,
+          startupYieldMs: startupBudget(),
+        },
       );
     }
-    const worker = await prepareExternalWorkerPrompt({
+    const preparation = prepareLocalExternalWorker({
       prompt: inputPrompt,
       forkContext: shouldForkTaskContext(args),
       parentAgentId,
       parentConversationId: resolvedParentScope?.conversationId,
+      mcp: args.mcp,
       signal,
     });
-    if ("error" in worker) return { success: false, error: worker.error };
-    let mcpReminder: string | undefined;
-    try {
-      mcpReminder = await resolveExternalCodingAgentMcpReminder(
-        parentAgentId,
-        args.mcp,
-      );
-    } catch (error) {
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : String(error),
-      };
-    }
+    const prepared = await settleWithinBudget(preparation, startupBudget());
+    if (prepared && "error" in prepared)
+      return { success: false, error: prepared.error };
 
     const { taskId, outputFile, subagentId } = spawnBackgroundSubagentTask({
       subagentType: configName,
       config,
-      prompt: worker.prompt,
+      prompt: prepared?.prompt ?? inputPrompt,
       description,
       model,
       toolCallId,
@@ -813,28 +820,32 @@ export async function launchSubagent(
       deps: {
         spawnSubagentImpl: async (
           _type,
-          prompt,
+          _prompt,
           model,
           workerSubagentId,
           childSignal,
-        ) =>
-          runExternalCodingAgent({
+        ) => {
+          const ready =
+            prepared ?? (await awaitDeferredStartup(preparation, childSignal));
+          if ("error" in ready) throw new Error(ready.error);
+          return runExternalCodingAgent({
             type: externalCodingAgentType,
             taskId: [...backgroundTasks].find(
               ([, task]) => task.subagentId === workerSubagentId,
             )?.[0],
-            prompt,
+            prompt: ready.prompt,
             model,
             parentAgentId,
             parentConversationId: resolvedParentScope?.conversationId,
             actingUserId: resolvedParentScope?.actingUserId,
             cwd: getCurrentWorkingDirectory(),
-            mcpReminder,
+            mcpReminder: ready.mcpReminder,
             signal: childSignal,
             onStarted: (agentId) =>
               updateSubagent(subagentId, { agentId, status: "running" }),
             ...externalWorkerProgressListeners(workerSubagentId),
-          }),
+          });
+        },
       },
     });
     let agentId: string | null = null;
@@ -845,7 +856,7 @@ export async function launchSubagent(
       if (signal?.aborted) abortStartup();
       agentId = await waitForBackgroundSubagentAgentId(
         subagentId,
-        null,
+        startupBudget(),
         signal,
       );
       signal?.throwIfAborted();
@@ -889,6 +900,7 @@ export async function launchSubagent(
     effectiveAgentId = child.agent_id ?? undefined;
   }
 
+  let spawnAfterFork: typeof spawnSubagent | undefined;
   if (config.fork) {
     if (args.agent_id || args.conversation_id) {
       return {
@@ -896,28 +908,18 @@ export async function launchSubagent(
         error: `${requestedType} forks context and cannot be combined with agent_id or conversation_id`,
       };
     }
-    try {
-      const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
-      const parentConvId =
-        resolvedParentScope?.conversationId ?? getConversationId() ?? "default";
-      const forkedConv = await forkParentConversation({
-        backend: getBackend(),
-        parentAgentId,
-        parentConversationId: parentConvId,
-        config,
-        model,
-        signal,
-      });
-      effectiveAgentId = parentAgentId;
-      effectiveConversationId = forkedConv.id;
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        error: `Failed to fork parent conversation: ${errorMessage}`,
-      };
-    }
+    const fork = forkSubagentConversation({
+      parentScope: resolvedParentScope,
+      config,
+      model,
+      signal,
+    });
+    const forked = await settleWithinBudget(fork, startupBudget());
+    if (forked && "error" in forked)
+      return { success: false, error: forked.error };
+    effectiveAgentId = forked?.agentId;
+    effectiveConversationId = forked?.conversationId;
+    if (!forked) spawnAfterFork = spawnWhenForked(fork);
   }
 
   const prompt = inputPrompt;
@@ -938,6 +940,7 @@ export async function launchSubagent(
     parentScope: resolvedParentScope,
     ...callerNotification,
     environment: resolvedComputer.computer,
+    ...(spawnAfterFork ? { deps: { spawnSubagentImpl: spawnAfterFork } } : {}),
   });
 
   const abortStartup = () =>
@@ -945,7 +948,7 @@ export async function launchSubagent(
   signal?.addEventListener("abort", abortStartup, { once: true });
   try {
     if (signal?.aborted) abortStartup();
-    await waitForBackgroundSubagentLink(subagentId, null, signal);
+    await waitForBackgroundSubagentLink(subagentId, startupBudget(), signal);
     signal?.throwIfAborted();
   } finally {
     signal?.removeEventListener("abort", abortStartup);

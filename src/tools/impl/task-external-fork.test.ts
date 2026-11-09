@@ -241,4 +241,30 @@ describe("fork_context for external coding workers", () => {
     expect(remoteLaunches).toHaveLength(0);
     expect(workerPrompts).toHaveLength(1);
   });
+
+  test("history preparation still running at the budget returns a receipt; the worker starts once it lands", async () => {
+    const history = Promise.withResolvers<void>();
+    listConversationMessages.mockImplementationOnce(async () => {
+      await history.promise;
+      return { getPaginatedItems: () => parentMessages };
+    });
+    const result = await runWithRuntimeContext(
+      { workingDirectory: scratchpad },
+      () =>
+        task({
+          ...brief,
+          harness: "codex",
+          mcp: { inherit: false },
+          startupYieldMs: 20,
+        }),
+    );
+    expect(result).toContain("Task running in background");
+    expect(workerPrompts).toHaveLength(0);
+
+    history.resolve();
+    for (let i = 0; i < 100 && workerPrompts.length === 0; i++)
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(workerPrompts).toHaveLength(1);
+    expect(workerPrompts[0]).toContain("Use Postgres.");
+  });
 });
