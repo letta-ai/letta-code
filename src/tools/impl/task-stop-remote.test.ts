@@ -149,6 +149,78 @@ describe("TaskStop for remote subagents", () => {
   });
 });
 
+function startRemoteExternalTask(taskId: string, completion: Promise<void>) {
+  const agentId = "claude_22222222-2222-4222-8222-222222222222@device-1";
+  registerSubagent(
+    `sub_${taskId}`,
+    "claude-code",
+    "remote external",
+    undefined,
+    true,
+    false,
+    { agentId: "agent-parent", conversationId: "conv-parent" },
+  );
+  updateSubagent(`sub_${taskId}`, { agentId, status: "running" });
+  const abortController = new AbortController();
+  backgroundTasks.set(taskId, {
+    description: "remote external",
+    subagentType: "claude-code",
+    subagentId: `sub_${taskId}`,
+    status: "running",
+    startTime: new Date(),
+    outputFile: createBackgroundOutputFile(taskId),
+    abortController,
+    completion,
+    runtimeScope: { agentId: "agent-parent", conversationId: "conv-parent" },
+  });
+  return abortController;
+}
+
+describe("TaskStop for remote external workers that never answer", () => {
+  afterEach(() => {
+    backgroundTasks.clear();
+    clearAllSubagents();
+  });
+
+  test("returns when the stop request never settles", async () => {
+    const abortController = startRemoteExternalTask(
+      "task_stop_hangs",
+      Promise.resolve(),
+    );
+    const result = await task_stop(
+      { task_id: "task_stop_hangs" },
+      {
+        stopRemoteExternal: () => new Promise(() => {}),
+        remoteStopTimeoutMs: 20,
+      },
+    );
+    expect(result.killed).toBe(false);
+    expect(result.output).toContain("did not answer");
+    expect(result.output).toContain("may still be running");
+    // The handle stays so a later TaskStop can retry.
+    expect(abortController.signal.aborted).toBe(false);
+    expect(backgroundTasks.get("task_stop_hangs")?.status).toBe("running");
+  });
+
+  test("returns when the stopped task's completion never settles", async () => {
+    const abortController = startRemoteExternalTask(
+      "task_completion_hangs",
+      new Promise(() => {}),
+    );
+    const result = await task_stop(
+      { task_id: "task_completion_hangs" },
+      {
+        stopRemoteExternal: async () => ({ stopped: true }),
+        completionTimeoutMs: 20,
+      },
+    );
+    expect(result.killed).toBe(true);
+    expect(result.output).toContain("stopped waiting for its result");
+    expect(abortController.signal.aborted).toBe(true);
+    expect(backgroundTasks.get("task_completion_hangs")?.status).toBe("failed");
+  });
+});
+
 describe("Background task interrupt hook", () => {
   afterEach(() => {
     backgroundTasks.clear();

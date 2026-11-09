@@ -183,6 +183,8 @@ class RemoteSubagentFollower {
   private detach: (() => void) | undefined;
   private wake = Promise.withResolvers<void>();
   private closed = false;
+  /** Aborted by close() so an in-flight reconnect stops waiting. */
+  private readonly stopping = new AbortController();
   private disconnected = false;
   /** The computer dropped the entry before this follower saw it finish. */
   private lost = false;
@@ -273,6 +275,25 @@ class RemoteSubagentFollower {
     this.detach?.();
     this.client?.close();
     this.wake.resolve();
+    this.stopping.abort();
+  }
+
+  /** Settles with `promise`, or rejects as soon as `signal` aborts or this follower closes. */
+  private untilStopped<T>(
+    promise: Promise<T>,
+    signal: AbortSignal | undefined,
+  ): Promise<T> {
+    const stop = signal
+      ? AbortSignal.any([signal, this.stopping.signal])
+      : this.stopping.signal;
+    if (stop.aborted) return Promise.reject(stop.reason);
+    return new Promise<T>((resolve, reject) => {
+      const onStop = () => reject(stop.reason);
+      stop.addEventListener("abort", onStop, { once: true });
+      promise.then(resolve, reject).finally(() => {
+        stop.removeEventListener("abort", onStop);
+      });
+    });
   }
 
   /** Resolves with the terminal snapshot, or throws once the computer is unreachable. */
@@ -318,16 +339,33 @@ class RemoteSubagentFollower {
           signal?.throwIfAborted();
           if (this.closed) throw new Error("Stopped following the subagent");
           try {
-            const client = await this.connect();
+            // Abort and close must interrupt a reconnect that never settles.
+            const connecting = this.connect();
+            const client = await this.untilStopped(connecting, signal).catch(
+              (error: unknown) => {
+                connecting.then(
+                  (late) => late.close(),
+                  () => {},
+                );
+                throw error;
+              },
+            );
+            if (this.closed) {
+              client.close();
+              throw new Error("Stopped following the subagent");
+            }
             this.attach(client);
             // Replays the snapshot, including a completion missed while offline.
-            await client.sync({
-              runtime: {
-                agent_id: this.scope.agentId,
-                conversation_id: this.scope.conversationId,
-              },
-              recover_approvals: false,
-            });
+            await this.untilStopped(
+              client.sync({
+                runtime: {
+                  agent_id: this.scope.agentId,
+                  conversation_id: this.scope.conversationId,
+                },
+                recover_approvals: false,
+              }),
+              signal,
+            );
             failedReconnects = 0;
             disconnectedSince = undefined;
           } catch (error) {
