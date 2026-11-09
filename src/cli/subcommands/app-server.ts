@@ -1,6 +1,12 @@
 import { parseArgs } from "node:util";
-import { startAppServer } from "@/websocket/app-server";
-import { parseAppServerWebsocketAuthSettings } from "@/websocket/app-server-auth";
+import {
+  type AppServerListeningInfo,
+  startAppServer,
+} from "@/websocket/app-server";
+import {
+  type AppServerWebsocketAuthSettings,
+  parseAppServerWebsocketAuthSettings,
+} from "@/websocket/app-server-auth";
 
 function printAppServerHelp(): void {
   console.log(
@@ -53,84 +59,88 @@ async function waitForShutdown(close: () => Promise<void>): Promise<number> {
   });
 }
 
+/** App Server settings parsed from `letta server --listen` arguments. */
+export interface AppServerCliOptions {
+  listen?: string;
+  websocketAuth: AppServerWebsocketAuthSettings;
+  openaiApi: boolean;
+}
+
+function stringOption(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/** Parse App Server arguments; throws on unknown or invalid options. */
+export function parseAppServerCliArgs(
+  argv: string[],
+): { help: true } | ({ help: false } & AppServerCliOptions) {
+  const { values } = parseArgs({
+    args: argv,
+    allowPositionals: false,
+    options: {
+      help: { type: "boolean", short: "h" },
+      listen: { type: "string" },
+      "openai-api": { type: "boolean" },
+      "ws-auth": { type: "string" },
+      "ws-token-file": { type: "string" },
+      "ws-token-sha256": { type: "string" },
+      "ws-shared-secret-file": { type: "string" },
+      "ws-issuer": { type: "string" },
+      "ws-audience": { type: "string" },
+      "ws-max-clock-skew-seconds": { type: "string" },
+    },
+  });
+  if (values.help) return { help: true };
+  return {
+    help: false,
+    listen: stringOption(values.listen),
+    openaiApi: values["openai-api"] === true,
+    websocketAuth: parseAppServerWebsocketAuthSettings({
+      wsAuth: stringOption(values["ws-auth"]),
+      wsTokenFile: stringOption(values["ws-token-file"]),
+      wsTokenSha256: stringOption(values["ws-token-sha256"]),
+      wsSharedSecretFile: stringOption(values["ws-shared-secret-file"]),
+      wsIssuer: stringOption(values["ws-issuer"]),
+      wsAudience: stringOption(values["ws-audience"]),
+      wsMaxClockSkewSeconds: stringOption(values["ws-max-clock-skew-seconds"]),
+    }),
+  };
+}
+
+/** Print the App Server's addresses in the format SDK launchers parse. */
+export function printAppServerListening(
+  info: AppServerListeningInfo,
+  openaiApi: boolean,
+): void {
+  console.log(`Listening on ${info.url}`);
+  console.log(`WebSocket: ${info.controlUrl}`);
+  if (openaiApi) {
+    const openaiBase = new URL(info.url);
+    openaiBase.protocol = "http:";
+    console.log(`OpenAI:  ${openaiBase.origin}/v1`);
+  }
+}
+
 export async function runAppServerSubcommand(argv: string[]): Promise<number> {
-  let parsed: ReturnType<typeof parseArgs>;
+  let parsed: ReturnType<typeof parseAppServerCliArgs>;
   try {
-    parsed = parseArgs({
-      args: argv,
-      allowPositionals: false,
-      options: {
-        help: { type: "boolean", short: "h" },
-        listen: { type: "string" },
-        "openai-api": { type: "boolean" },
-        "ws-auth": { type: "string" },
-        "ws-token-file": { type: "string" },
-        "ws-token-sha256": { type: "string" },
-        "ws-shared-secret-file": { type: "string" },
-        "ws-issuer": { type: "string" },
-        "ws-audience": { type: "string" },
-        "ws-max-clock-skew-seconds": { type: "string" },
-      },
-    });
+    parsed = parseAppServerCliArgs(argv);
   } catch (error) {
     console.error(error instanceof Error ? `Error: ${error.message}` : error);
     return 1;
   }
 
-  if (parsed.values.help) {
+  if (parsed.help) {
     printAppServerHelp();
     return 0;
   }
 
   try {
-    const websocketAuth = parseAppServerWebsocketAuthSettings({
-      wsAuth:
-        typeof parsed.values["ws-auth"] === "string"
-          ? parsed.values["ws-auth"]
-          : undefined,
-      wsTokenFile:
-        typeof parsed.values["ws-token-file"] === "string"
-          ? parsed.values["ws-token-file"]
-          : undefined,
-      wsTokenSha256:
-        typeof parsed.values["ws-token-sha256"] === "string"
-          ? parsed.values["ws-token-sha256"]
-          : undefined,
-      wsSharedSecretFile:
-        typeof parsed.values["ws-shared-secret-file"] === "string"
-          ? parsed.values["ws-shared-secret-file"]
-          : undefined,
-      wsIssuer:
-        typeof parsed.values["ws-issuer"] === "string"
-          ? parsed.values["ws-issuer"]
-          : undefined,
-      wsAudience:
-        typeof parsed.values["ws-audience"] === "string"
-          ? parsed.values["ws-audience"]
-          : undefined,
-      wsMaxClockSkewSeconds:
-        typeof parsed.values["ws-max-clock-skew-seconds"] === "string"
-          ? parsed.values["ws-max-clock-skew-seconds"]
-          : undefined,
-    });
-
-    const openaiApi = parsed.values["openai-api"] === true;
     const handle = await startAppServer({
-      listen:
-        typeof parsed.values.listen === "string"
-          ? parsed.values.listen
-          : undefined,
-      websocketAuth,
-      openaiApi,
-      onListening: (info) => {
-        console.log(`Listening on ${info.url}`);
-        console.log(`WebSocket: ${info.controlUrl}`);
-        if (openaiApi) {
-          const openaiBase = new URL(info.url);
-          openaiBase.protocol = "http:";
-          console.log(`OpenAI:  ${openaiBase.origin}/v1`);
-        }
-      },
+      listen: parsed.listen,
+      websocketAuth: parsed.websocketAuth,
+      openaiApi: parsed.openaiApi,
+      onListening: (info) => printAppServerListening(info, parsed.openaiApi),
       onLog: (message) => {
         console.error(message);
       },

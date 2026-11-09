@@ -347,9 +347,11 @@ export function recordRuntimeSubmittingConnection(
 
 /**
  * Pick the connection whose registration shapes a turn's tools. A client turn
- * uses its own connection. A turn the process started (task notification,
- * cron, recovery) uses the last connection that submitted input on this
- * runtime if it still has a registration here, else the newest registration.
+ * uses its own connection when that connection registered tools here. Any
+ * other turn (task notification, cron, recovery, or input relayed by a
+ * connection without a registration, such as Cloud delivering to a registered
+ * computer) uses the last connection that submitted input on this runtime if
+ * it still has a registration here, else the newest registration.
  */
 export function resolveRuntimeToolOwner(
   runtime: ListenerRuntime,
@@ -360,8 +362,12 @@ export function resolveRuntimeToolOwner(
   const runtimeKey = getRuntimeKey(runtimeScope);
   const registrationFor = (connectionId: ListenerConnectionId) =>
     registeredTools?.get(createConnectionRequestKey(connectionId, runtimeKey));
-  if (submittingConnectionId !== undefined) {
-    const toolPolicy = registrationFor(submittingConnectionId)?.toolPolicy;
+  const submitterRegistration =
+    submittingConnectionId !== undefined
+      ? registrationFor(submittingConnectionId)
+      : undefined;
+  if (submittingConnectionId !== undefined && submitterRegistration) {
+    const toolPolicy = submitterRegistration.toolPolicy;
     return {
       connectionId: submittingConnectionId,
       ...(toolPolicy ? { toolPolicy } : {}),
@@ -382,7 +388,11 @@ export function resolveRuntimeToolOwner(
       }
     }
   }
-  if (!owner) return {};
+  if (!owner) {
+    return submittingConnectionId !== undefined
+      ? { connectionId: submittingConnectionId }
+      : {};
+  }
   return {
     connectionId: owner.connectionId,
     ...(owner.toolPolicy ? { toolPolicy: owner.toolPolicy } : {}),
