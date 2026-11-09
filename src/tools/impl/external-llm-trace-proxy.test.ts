@@ -174,9 +174,25 @@ test("upstream aborts retain an incomplete trace without changing delivered byte
     });
     if (!reply.body) throw new Error("Missing response body");
     const reader = reply.body.getReader();
-    const first = await reader.read();
-    expect(new TextDecoder().decode(first.value)).toBe(partial);
-    await expect(reader.read()).rejects.toThrow();
+    // Read until the transport error. Some Bun versions surface a stray
+    // "\r\n" chunk before rejecting; the stream must never end cleanly.
+    const decoder = new TextDecoder();
+    let received = "";
+    let endedCleanly = false;
+    await expect(
+      (async () => {
+        for (;;) {
+          const chunk = await reader.read();
+          if (chunk.done) {
+            endedCleanly = true;
+            return;
+          }
+          received += decoder.decode(chunk.value, { stream: true });
+        }
+      })(),
+    ).rejects.toThrow();
+    expect(endedCleanly).toBe(false);
+    expect(received.replace(/\r\n$/, "")).toBe(partial);
     await proxy.close();
     expect(rows).toHaveLength(1);
     expect(rows[0]?.capture_status).toBe("incomplete");
