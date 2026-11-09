@@ -35,6 +35,6 @@
       "description": "Wait before yielding output. Defaults to 10000 ms; effective range is 250-30000 ms."
     }
   },
-  "required": ["cmd", "description"],
+  "required": ["cmd"],
   "additionalProperties": false
 }
