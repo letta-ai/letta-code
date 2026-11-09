@@ -10,5 +10,3 @@ Send a message without waiting for its answer. Use this to coordinate with an ag
 - For work already underway, treat the agent doing it as its owner. Send what it needs, then let it decide. Do not take over or redo its work. If you think ownership should change, ask the human instead of declaring it in a message.
 
 If you are a subagent, omitting both `agent_id` and `conversation_id` sends to your parent (the agent and conversation that launched you). Message your parent rarely: each message stays in both contexts, and your final report already reaches it. Send one only when a parent decision would otherwise force you to redo work, stating the default you will take, then keep working. Steering your own children is normal; message them as often as the work needs.
-
-From a script, use the CLI instead; it waits and prints the reply: `letta -p --from-agent $LETTA_AGENT_ID --conversation <conversation-id> --output-format json "message"` (add `--backend local` after `letta` for `agent-local-` IDs; `letta -p --help` lists options).
