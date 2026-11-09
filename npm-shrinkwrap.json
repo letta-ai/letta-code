@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.45",
+  "version": "0.34.46",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -2058,9 +2058,9 @@
       }
     },
     "node_modules/ansi-regex": {
-      "version": "6.5.0",
-      "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.5.0.tgz",
-      "integrity": "sha512-zhvbbbdt1kbw7EJ9OQoxmQcuaNR9P5kTj7e/YdmOSU10aHWbycofJxA6jKfoEy3vlLdctOF9ZHaxLtmSm998wQ==",
+      "version": "6.6.0",
+      "resolved": "https://registry.npmjs.org/ansi-regex/-/ansi-regex-6.6.0.tgz",
+      "integrity": "sha512-XZ5apbzreCbXSKwPjJstu8R0zOi247w3XYwWxtwBXgpZrCyc1Ka7p9/xY0A9/diMewmHbEKz+FIraWaEWjlN5g==",
       "license": "MIT",
       "engines": {
         "node": ">=12"
@@ -3411,9 +3411,9 @@
       "license": "ISC"
     },
     "node_modules/jose": {
-      "version": "6.2.15",
-      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.15.tgz",
-      "integrity": "sha512-qdF6ewcZARtef63fJ9AKKZPgxw+t7USH6HLXYcD4CrdmSvDp79rpJSPFEKc90QBeGS63u1KQtN2MZQHC0yDIzA==",
+      "version": "6.2.16",
+      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.16.tgz",
+      "integrity": "sha512-4LSJpbuBuPdGrONCdZUy0xnxtLf8eEz+EY0SMXdHQEBU7bgUHDVblU/JAjryv3wID9/LK7/YuwFwq+AQNfMscQ==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/panva"
@@ -5009,9 +5009,9 @@
       "license": "ISC"
     },
     "node_modules/ws": {
-      "version": "8.22.1",
-      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.1.tgz",
-      "integrity": "sha512-oyL6OPYme/CmiFvNuGzeoxCJ4nOrZE2O1FwM9MWM1AsGri6nLXB2pg+lNA8aLeXMSav0J6eIVS1j6vUPzUtK9g==",
+      "version": "8.22.2",
+      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.2.tgz",
+      "integrity": "sha512-/rEZ2ejown2N5gxVTHUu9bVVC7ttu0/Tgzf5hbTOixR3Fs7mbbXgn2DbdbcKgJOmpQMtrIUWivtYuVMnp/W/yA==",
       "license": "MIT",
       "engines": {
         "node": ">=10.0.0"
@@ -5080,7 +5080,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.45",
+      "version": "0.34.46",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^0.99.1",
