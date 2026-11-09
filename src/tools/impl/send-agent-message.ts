@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
+  findLaunchedChild,
   resolveChildSubagent,
   trackChildSend,
 } from "@/agent/subagents/child-send-tracking";
@@ -587,12 +588,14 @@ export async function send_agent_message(
       signal,
     );
     // A child spawned by this agent keeps doing its work; show it as running.
-    // The receipt names the conversation's agent (older servers omit it, so
-    // fall back to the passed agent); with neither, tracking is skipped. The
-    // lookup never fails the send: it was already accepted.
-    const child = receipt.agent_id
-      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
-      : null;
+    // A child launched from this conversation is matched by its conversation
+    // (ephemeral children have no agent); otherwise by the receipt's agent and
+    // its parent tag. The lookup never fails the send: it was already accepted.
+    const child =
+      findLaunchedChild(receipt.conversation_id, sender) ??
+      (receipt.agent_id
+        ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+        : null);
     if (child) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
