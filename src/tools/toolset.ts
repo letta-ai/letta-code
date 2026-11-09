@@ -315,6 +315,8 @@ export async function prepareToolExecutionContextForScope(params: {
   bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
   modEvents?: ModEvents;
@@ -343,6 +345,7 @@ export async function prepareToolExecutionContextForScope(params: {
     bundledSkills,
     workspaceSandbox,
     executionSettings,
+    foregroundYieldMs,
     cachedAgent,
     modContext,
     modEvents,
@@ -457,6 +460,8 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      // Always set so a turn never inherits another conversation's yield.
+      foregroundYieldMs,
     },
   });
   return { ...result, agent: agent as AgentState | null };

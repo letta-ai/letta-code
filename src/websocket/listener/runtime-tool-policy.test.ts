@@ -12,6 +12,7 @@ import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
 import {
   clearCapturedToolExecutionContexts,
   clearExternalTools,
+  getExecutionContextById,
 } from "@/tools/manager";
 import type { RuntimeToolPolicy } from "@/types/protocol_v2";
 import { handleRuntimeStartCommand } from "./commands/runtime-start";
@@ -168,7 +169,7 @@ async function prepareTurn(
         : {}),
     });
     if (result.kind !== "ready") throw new Error("Turn did not prepare");
-    return result.preparedToolContext.preparedToolContext.clientTools;
+    return result.preparedToolContext.preparedToolContext;
   } finally {
     finishListenerTurn(runtime, lease, {
       stopReason: "end_turn",
@@ -179,8 +180,17 @@ async function prepareTurn(
   }
 }
 
+async function prepareTools(options?: Parameters<typeof prepareTurn>[0]) {
+  return (await prepareTurn(options)).clientTools;
+}
+
 async function toolNames(options?: Parameters<typeof prepareTurn>[0]) {
-  return (await prepareTurn(options)).map((tool) => tool.name).sort();
+  return (await prepareTools(options)).map((tool) => tool.name).sort();
+}
+
+async function foregroundYield(options?: Parameters<typeof prepareTurn>[0]) {
+  const { contextId } = await prepareTurn(options);
+  return getExecutionContextById(contextId)?.runtimeContext.foregroundYieldMs;
 }
 
 test("a task notification turn uses the registering connection's tools and policy", async () => {
@@ -275,7 +285,7 @@ test("process-started turns pick duplicate tool names from the last submitting c
   const lookupDescription = async (
     options?: Parameters<typeof prepareTurn>[0],
   ) =>
-    (await prepareTurn(options)).find((tool) => tool.name === "lookup_ticket")
+    (await prepareTools(options)).find((tool) => tool.name === "lookup_ticket")
       ?.description;
 
   // No submitter yet: the newest registration wins.
@@ -301,7 +311,7 @@ test("a turn relayed by a connection without tools uses the registering connecti
 
   // Cloud delivering a queued message to this computer submits on its own
   // connection, which registered nothing for the conversation.
-  const relayed = await prepareTurn({ connectionId: "cloud", content: "hi" });
+  const relayed = await prepareTools({ connectionId: "cloud", content: "hi" });
   expect(relayed.map((tool) => tool.name).sort()).toEqual([
     "Read",
     "lookup_ticket",
@@ -309,4 +319,31 @@ test("a turn relayed by a connection without tools uses the registering connecti
   expect(
     relayed.find((tool) => tool.name === "lookup_ticket")?.description,
   ).toBe("Lookup through the SDK");
+});
+
+test("the policy's foreground yield reaches the turn's tools and clears with the policy", async () => {
+  // A policy on another conversation (e.g. the parent of a subagent running
+  // here) does not apply: this conversation keeps the default.
+  registerRuntimeExternalTools(
+    listener,
+    "gateway",
+    { agent_id: agentId, conversation_id: "conv-parent" },
+    [],
+    { foreground_yield_ms: 2_000 },
+  );
+  expect(await foregroundYield()).toBeUndefined();
+
+  registerLookup("gateway", "Lookup through the gateway", {
+    foreground_yield_ms: 5_000,
+  });
+  expect(await foregroundYield()).toBe(5_000);
+  expect(
+    await foregroundYield({ connectionId: "gateway", content: "hello" }),
+  ).toBe(5_000);
+
+  // An update without tool_policy clears it.
+  updateRuntimeExternalTools(listener, "gateway", [
+    { runtimes: [scope], external_tools: [] },
+  ]);
+  expect(await foregroundYield()).toBeUndefined();
 });

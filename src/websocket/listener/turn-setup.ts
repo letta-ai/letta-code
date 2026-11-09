@@ -386,6 +386,7 @@ export async function prepareListenerTurn(params: {
     bundledSkills: runtime.bundledSkills,
     workspaceSandbox: runtime.workspaceSandbox,
     executionSettings: runtime.executionSettings,
+    foregroundYieldMs: toolOwner.toolPolicy?.foreground_yield_ms,
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
