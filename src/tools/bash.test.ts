@@ -48,6 +48,18 @@ describe("Bash tool", () => {
     expect(result.status).toBe("success");
   });
 
+  test("runs without a description", async () => {
+    const result = await bash({
+      command:
+        process.platform === "win32"
+          ? "node -e \"console.log('no description')\""
+          : "echo 'no description'",
+    });
+
+    expect(result.content[0]?.text).toContain("no description");
+    expect(result.status).toBe("success");
+  });
+
   test("captures stderr in output", async () => {
     const result = await bash({
       command:
