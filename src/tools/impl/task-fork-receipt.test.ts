@@ -319,7 +319,7 @@ describe("fork launch receipt", () => {
       mcp: { inherit: false },
     },
   ])(
-    "%j returns both IDs before the child emits init or completes",
+    "%j returns the Conversation ID before the child emits init or completes",
     async (selection) => {
       const receipt = await runWithRuntimeContext(
         { workingDirectory: testHome },
@@ -339,8 +339,8 @@ describe("fork launch receipt", () => {
       expect(backgroundTasks.size).toBe(1);
       expect([...backgroundTasks.values()][0]?.status).toBe("running");
       expect(receipt).toContain("Task running in background with task ID:");
-      expect(receipt).toContain("\nAgent ID: agent-parent\n");
       expect(receipt).toContain("\nConversation ID: conv-fork\n");
+      expect(receipt).not.toContain("Agent ID");
       expect(getSubagentSnapshot().agents).toEqual([
         expect.objectContaining({
           agentId: "agent-parent",

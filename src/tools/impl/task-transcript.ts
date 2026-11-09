@@ -19,6 +19,7 @@ import {
   scrubSecretsDeep,
 } from "@/tools/secret-substitution";
 import type { SubagentEventRecord } from "@/types/subagent-protocol";
+import { subagentConversationId } from "./external-coding-agent";
 import {
   type ExternalToolCall,
   type ExternalWorkerListeners,
@@ -35,20 +36,36 @@ export function buildTaskResultHeader(
   >,
   status?: "success" | "error",
 ): string {
+  const conversationId = subagentConversationId(
+    result?.agentId,
+    result?.conversationId,
+  );
   return [
     `subagent_type=${subagentType}`,
     `subagent_id=${subagentId}`,
     status ? `subagent_status=${status}` : undefined,
-    result?.agentId ? `agent_id=${result.agentId}` : undefined,
-    result?.conversationId
-      ? `conversation_id=${result.conversationId}`
+    // "default" is only addressable together with its agent.
+    conversationId === "default" && result?.agentId
+      ? `agent_id=${result.agentId}`
       : undefined,
+    conversationId ? `conversation_id=${conversationId}` : undefined,
     result?.runtimeSessionId
       ? `runtime_session_id=${result.runtimeSessionId}`
       : undefined,
   ]
     .filter(Boolean)
     .join(" ");
+}
+
+/** The receipt's ID lines: the Conversation ID, plus the agent for "default". */
+export function formatReceiptIds(
+  agentId: string | null | undefined,
+  conversationId: string | null | undefined,
+): string {
+  const id = subagentConversationId(agentId, conversationId);
+  if (!id) return "";
+  const agentLine = id === "default" && agentId ? `\nAgent ID: ${agentId}` : "";
+  return `${agentLine}\nConversation ID: ${id}`;
 }
 
 export function writeTaskTranscriptStart(

@@ -10,6 +10,7 @@ import {
   registerSubagent,
 } from "@/agent/subagent-state";
 import {
+  buildTaskResultHeader,
   closeTaskProgressLog,
   externalWorkerProgressListeners,
   openTaskProgressLog,
@@ -42,6 +43,27 @@ afterEach(() => {
   closeTaskProgressLog(SUBAGENT);
   clearAllSubagents();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true });
+});
+
+describe("completion notification header", () => {
+  test("names a Letta subagent and an external worker by conversation_id only", () => {
+    expect(
+      buildTaskResultHeader(
+        "general-purpose",
+        "sub-1",
+        { agentId: "agent-child", conversationId: "conv-child" },
+        "success",
+      ),
+    ).toBe(
+      "subagent_type=general-purpose subagent_id=sub-1 subagent_status=success conversation_id=conv-child",
+    );
+    const worker = "claude_11111111-1111-4111-8111-111111111111@laptop";
+    expect(
+      buildTaskResultHeader("claude-code", "sub-2", { agentId: worker }),
+    ).toBe(
+      `subagent_type=claude-code subagent_id=sub-2 conversation_id=${worker}`,
+    );
+  });
 });
 
 describe("task progress log", () => {

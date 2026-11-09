@@ -5,7 +5,10 @@ import {
 } from "@/agent/subagent-state.js";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
-import { parseExternalCodingAgentId } from "./external-coding-agent.js";
+import {
+  parseExternalCodingAgentId,
+  subagentConversationId,
+} from "./external-coding-agent.js";
 
 export const LISTED_AGENT_STATUSES = ["running", "idle"] as const;
 
@@ -14,7 +17,6 @@ export type ListedAgentStatus = (typeof LISTED_AGENT_STATUSES)[number];
 export interface ListedAgent {
   name: string;
   type: string;
-  agent_id: string | null;
   conversation_id?: string;
   task_id?: string;
   status: ListedAgentStatus;
@@ -54,19 +56,17 @@ function statusOf(entry: SubagentHistoryEntry): ListedAgentStatus {
 }
 
 /**
- * Rows for one child share its address; a follow-up send adds a row. A child
- * running in an ephemeral conversation has no agent, so its conversation ID
- * alone is the address.
+ * Rows for one child share its conversation ID; a follow-up send adds a row.
  */
 function addressKey(entry: SubagentHistoryEntry): string {
   const { agent } = entry;
-  if (agent.agentId) {
-    return `${agent.agentId}\u0000${agent.conversationId ?? ""}`;
-  }
-  if (agent.conversationId && agent.conversationId !== "default") {
-    return `conv:${agent.conversationId}`;
-  }
-  return `row:${agent.id}`;
+  const conversationId = subagentConversationId(
+    agent.agentId,
+    agent.conversationId,
+  );
+  return conversationId && conversationId !== "default"
+    ? conversationId
+    : `row:${agent.id}`;
 }
 
 function toListedAgent(
@@ -74,20 +74,19 @@ function toListedAgent(
   latest: SubagentHistoryEntry,
 ): ListedAgent {
   const agent = latest.agent;
-  // Agentless (ephemeral-conversation) children have no agent ID.
-  const agentId = agent.agentId || first.agent.agentId || null;
-  const external = parseExternalCodingAgentId(agentId ?? undefined);
+  const agentId = agent.agentId || first.agent.agentId || undefined;
+  const external = parseExternalCodingAgentId(agentId);
   const status = statusOf(latest);
-  const conversationId = external
-    ? undefined
-    : (agent.conversationId ?? first.agent.conversationId ?? undefined);
+  const conversationId = subagentConversationId(
+    agentId,
+    agent.conversationId ?? first.agent.conversationId,
+  );
   const taskId = agent.taskId ?? first.agent.taskId;
   const computer =
     external?.computer ?? agent.computer ?? first.agent.computer ?? undefined;
   return {
     name: first.agent.description,
     type: first.agent.type,
-    agent_id: agentId,
     ...(conversationId ? { conversation_id: conversationId } : {}),
     ...(taskId ? { task_id: taskId } : {}),
     status,

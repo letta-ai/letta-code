@@ -179,6 +179,18 @@ export function parseExternalCodingAgentId(agentId: string | undefined): {
   return null;
 }
 
+/**
+ * The conversation_id a caller uses to reach a subagent. An external worker's
+ * ID is its conversation ID.
+ */
+export function subagentConversationId(
+  agentId: string | null | undefined,
+  conversationId: string | null | undefined,
+): string | undefined {
+  const id = agentId ?? undefined;
+  return parseExternalCodingAgentId(id) ? id : (conversationId ?? undefined);
+}
+
 export function validateExternalCodingAgentMcpOptions(
   mcp: ExternalCodingAgentMcpOptions | undefined,
 ): string | null {

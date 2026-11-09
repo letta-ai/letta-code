@@ -52,7 +52,7 @@ test("lists nothing before any agent is launched", async () => {
   expect(await list_subagents({}, { scope })).toEqual({ agents: [] });
 });
 
-test("lists a background Letta subagent and an external worker with their addresses", async () => {
+test("lists a background Letta subagent and an external worker by conversation ID only", async () => {
   launch("sub-1", "general-purpose", "Review the diff");
   updateSubagent("sub-1", {
     agentId: "agent-child",
@@ -75,19 +75,20 @@ test("lists a background Letta subagent and an external worker with their addres
   expect(letta).toMatchObject({
     name: "Review the diff",
     type: "General-purpose",
-    agent_id: "agent-child",
     conversation_id: "conv-child",
     task_id: "task_1",
     status: "running",
   });
+  // An external worker's ID is its conversation ID.
   expect(external).toMatchObject({
     name: "Fix the flaky test",
-    agent_id: "claude_6062e098-ab3f-4e98-a474-f1020b0a79cb@laptop",
+    conversation_id: "claude_6062e098-ab3f-4e98-a474-f1020b0a79cb@laptop",
     task_id: "task_2",
     status: "running",
     computer: "laptop",
   });
-  expect(external).not.toHaveProperty("conversation_id");
+  expect(letta).not.toHaveProperty("agent_id");
+  expect(external).not.toHaveProperty("agent_id");
 });
 
 test("keeps finished agents after the live store drops them as idle, with an error only on a failed run", async () => {
@@ -165,7 +166,6 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
   expect(live).toEqual([
     expect.objectContaining({
       name: "Audit the logs",
-      agent_id: null,
       conversation_id: EPHEMERAL_CONV,
       task_id: "task_eph",
       status: "running",
@@ -178,7 +178,6 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
     .agents;
   expect(finished).toHaveLength(1);
   expect(finished[0]).toMatchObject({
-    agent_id: null,
     conversation_id: EPHEMERAL_CONV,
     status: "idle",
   });
@@ -199,7 +198,6 @@ test("resuming an ephemeral conversation keeps one row", async () => {
   expect(agents).toHaveLength(1);
   expect(agents[0]).toMatchObject({
     name: "Audit the logs",
-    agent_id: null,
     conversation_id: EPHEMERAL_CONV,
     task_id: "task_resume",
     status: "running",
@@ -226,7 +224,6 @@ test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", as
   const sent = await runWithRuntimeContext(caller, () =>
     send_agent_message(
       {
-        ...(row.agent_id ? { agent_id: row.agent_id } : {}),
         conversation_id: row.conversation_id,
         message: "Also check the error rate.",
       },
@@ -363,7 +360,6 @@ test("status filters an agentless row the same way", async () => {
     (await list_subagents({ status: ["running"] }, { scope })).agents,
   ).toEqual([
     expect.objectContaining({
-      agent_id: null,
       conversation_id: EPHEMERAL_CONV,
       status: "running",
     }),
@@ -378,7 +374,6 @@ test("status filters an agentless row the same way", async () => {
     (await list_subagents({ status: ["idle"] }, { scope })).agents,
   ).toEqual([
     expect.objectContaining({
-      agent_id: null,
       conversation_id: EPHEMERAL_CONV,
       status: "idle",
     }),
