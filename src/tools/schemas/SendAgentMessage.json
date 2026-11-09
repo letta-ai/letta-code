@@ -8,18 +8,19 @@
     },
     "agent_id": {
       "type": "string",
-      "description": "An existing Letta agent to start a new conversation with; with conversation_id: default, targets its default conversation. Omit for agents you launched with Agent."
+      "description": "The Letta agent ID. Optional: only when creating a new conversation or interacting with the default conversation."
     },
     "conversation_id": {
-      "type": "string",
-      "description": "The conversation to send to: a conv-... ID, or the receipt's Conversation ID for an agent you launched, including claude_... and codex_... workers. A subagent that omits both conversation_id and agent_id messages its parent."
+      "type": ["string", "null"],
+      "description": "The session to interact with (supports external coding agents and Letta agents). Set to null to message the parent if a subagent."
+
     },
     "computer": {
       "type": ["string", "null"],
       "description": "Optional computer where the recipient should run: cloud, an online computer name, or its stable device ID. Omitted, null, and blank values use its active computer or saved destination (a computer or Cloud sandbox). An offline saved computer does not trigger a Cloud-sandbox fallback."
     }
   },
-  "required": ["message"],
+  "required": ["message", "conversation_id"],
   "additionalProperties": false,
   "$schema": "http://json-schema.org/draft-07/schema#"
 }

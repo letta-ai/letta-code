@@ -1,12 +1,9 @@
 Send a message without waiting for its answer. Use this to coordinate with an agent already working, including an Agent child, or to contact any conversation you are authorized to access.
 
-- For an agent you launched, including external workers, pass the receipt’s `Conversation ID` as `conversation_id`. Supply `conversation_id` to message an existing thread, or `agent_id` alone to start a new hidden thread with that agent. To use an agent's default conversation, supply its `agent_id` and `conversation_id: "default"`. Pass the full conversation ID; truncated IDs are rejected.
-- Your agent and conversation IDs are attached automatically as the return address. To reply, the recipient must explicitly send to that address. Ordinary assistant output is not forwarded back to you.
-- A successful send means the message was accepted or delivery started; the recipient may not have read it yet. Continue working rather than waiting for the answer.
-- External coding workers launched with Agent (including computer-qualified IDs from remote launches) can be messaged too. If the worker is mid-turn, the result says the message steered that turn; if it was idle, the result includes a `task_id` and you are notified when the new turn finishes.
-- Omit `computer` unless a particular computer is needed. If the conversation is active on A, selecting B is rejected rather than moving the conversation.
-- If delivery cannot be confirmed, check the recipient's messages before resending to avoid duplicates.
-- Keep sends sparse and useful: concise assignments, specific questions, or material updates. Skip status pings and repeated acknowledgments; repeat a point only when you have something new to add.
-- For work already underway, treat the agent doing it as its owner. Send what it needs, then let it decide. Do not take over or redo its work. If you think ownership should change, ask the human instead of declaring it in a message.
-
-If you are a subagent, omitting both `agent_id` and `conversation_id` sends to your parent (the agent and conversation that launched you). Message your parent rarely: each message stays in both contexts, and your final report already reaches it. Send one only when a parent decision would otherwise force you to redo work, stating the default you will take, then keep working. Steering your own children is normal; message them as often as the work needs.
+- For an agent you launched, including Claude Code and Codex workers, pass the receipt's `Conversation ID` as `conversation_id`. Use `agent_id` only to start a new conversation with an existing Letta agent (`conversation_id: null`), or with `conversation_id: "default"` to reach its default conversation. Pass full IDs; truncated IDs are rejected.
+- Your return address is attached. The recipient replies only by sending back to it; its ordinary output does not reach you.
+- Success means the message was accepted or delivery started, not that it was read. An external worker that is mid-turn is steered within that turn; an idle one starts a new turn, and the result includes a `task_id`. You are notified when an agent you launched finishes; don't poll or send "are you done?" messages.
+- As a subagent, set `conversation_id` to null and omit `agent_id` to message your parent. Do so only when a parent decision would otherwise force you to redo work; state the default you will take and continue. Your final report already reaches the parent.
+- Send assignments, specific questions, or material updates, not status pings. Don't take over work the recipient owns.
+- Omit `computer` unless a particular computer is needed. If the conversation is active on one computer, selecting another is rejected rather than moving it.
+- If delivery is unconfirmed, check the recipient's messages (`letta messages list --conversation <id>`) before resending.

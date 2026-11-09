@@ -57,7 +57,8 @@ const QUEUED_NOTE =
 interface SendAgentMessageArgs {
   message: string;
   agent_id?: string;
-  conversation_id?: string;
+  /** null: a new conversation with agent_id, or a subagent's parent. */
+  conversation_id?: string | null;
   computer?: string | null;
   signal?: AbortSignal;
 }
@@ -175,9 +176,13 @@ function resolveParentAddress(
 }
 
 export async function send_agent_message(
-  args: SendAgentMessageArgs,
+  input: SendAgentMessageArgs,
   deps: SendAgentMessageDeps = {},
 ): Promise<{ content: string; status: "success" | "error" }> {
+  const args = {
+    ...input,
+    conversation_id: input.conversation_id ?? undefined,
+  };
   const clientMessageId = randomUUID();
   let submissionAttempted = false;
   let destination: { agentId?: string; conversationId: string } | undefined;

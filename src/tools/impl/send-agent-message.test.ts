@@ -637,7 +637,13 @@ test("agent-only sends create a hidden conversation; default requires its agent"
   const send = (args: Parameters<typeof send_agent_message>[0]) =>
     runWithRuntimeContext(caller, () => send_agent_message(args, f));
   expect(
-    (await send({ agent_id: "agent-target", message: "hello" })).status,
+    (
+      await send({
+        agent_id: "agent-target",
+        conversation_id: null,
+        message: "hello",
+      })
+    ).status,
   ).toBe("success");
   expect(f.created).toEqual([{ agent_id: "agent-target", hidden: true }]);
   expect(f.submissions[0]?.conversationId).toBe("conv-new");
@@ -883,7 +889,11 @@ test("a subagent that omits the destination messages the conversation that launc
   };
   const result = await runWithRuntimeContext(
     { ...caller, executionSettings: settings },
-    () => send_agent_message({ message: "Blocked on the schema choice." }, f),
+    () =>
+      send_agent_message(
+        { message: "Blocked on the schema choice.", conversation_id: null },
+        f,
+      ),
   );
   expect(result.status).toBe("success");
   expect(f.submissions[0]).toMatchObject({
@@ -899,7 +909,11 @@ test("a subagent that omits the destination messages the conversation that launc
   };
   const root = await runWithRuntimeContext(
     { ...caller, executionSettings: rootSettings },
-    () => send_agent_message({ message: "hello" }, fixture()),
+    () =>
+      send_agent_message(
+        { message: "hello", conversation_id: null },
+        fixture(),
+      ),
   );
   expect(root.status).toBe("error");
   expect(root.content).toContain("Choose a destination");
