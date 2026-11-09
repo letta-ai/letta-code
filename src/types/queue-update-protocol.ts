@@ -1,8 +1,14 @@
+import type { QueueItemSource } from "./protocol";
 import type { ConversationRuntimeScope } from "./runtime-scope";
 
 export interface QueueRemovalTransition {
   client_message_id: string;
   disposition: "dequeued" | "cancelled";
+  /**
+   * Who produced the removed item. Lets clients tell what started a turn when
+   * the item was enqueued and dequeued before any snapshot listed it.
+   */
+  source?: QueueItemSource;
 }
 
 /**
