@@ -138,6 +138,24 @@ await Bun.build({
   external: ["sharp"],
 });
 
+// Public image-resize entrypoint. Built beside image-resize-worker.js because
+// it resolves the worker relative to its own location.
+await Bun.build({
+  entrypoints: ["./src/image-resize-public.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  minify: false,
+  sourcemap: "external",
+  naming: {
+    entry: "image-resize.js",
+  },
+  define: {
+    __USE_MAGICK__: "false",
+  },
+  external: ["sharp"],
+});
+
 await Bun.build({
   entrypoints: ["./src/tools/impl/cursor-worker.ts"],
   outdir: ".",
