@@ -18,7 +18,7 @@ When Claude requests a tool, Claude Code checks the call at these steps. Each st
 
 **1. Hooks**
 
-Run [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md). A hook can deny the call outright or pass it on. A hook that returns `allow` doesn't skip the deny and ask rules below, which are evaluated regardless of the hook result.
+Run [hooks](https://code.claude.com/docs/en/agent-sdk/hooks.md). A hook can deny the call outright or pass it on. A hook that returns `allow` doesn't skip the deny-rule and ask-rule steps, which are evaluated regardless of the hook result.
 
 A `PreToolUse` hook that returns `allow` also can't approve an `rm` or `rmdir` command whose target Claude Code recognizes as a [critical path](https://code.claude.com/docs/en/permission-modes.md#critical-paths), such as `rm -rf ~`. For what that `allow` does in plan mode, see [Hook approvals in plan mode](https://code.claude.com/docs/en/permissions.md#hook-approvals-in-plan-mode).
 
@@ -58,7 +58,7 @@ An allow rule doesn't approve a read from a [network path](https://code.claude.c
 
 **6. canUseTool callback**
 
-If not resolved by any of the above, call your [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input) for a decision. In `dontAsk` mode, this step is skipped and the tool is denied, though a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you installed can still approve [some such calls](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods).
+If no earlier step resolves the request, call your [`canUseTool` callback](https://code.claude.com/docs/en/agent-sdk/user-input) for a decision. In `dontAsk` mode, this step is skipped and the tool is denied, though a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) you installed can still approve [some such calls](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods).
 
 In the TypeScript SDK, if you set [`permissionPrompts: 'none'`](https://code.claude.com/docs/en/agent-sdk/typescript#options), your callback isn't called at this step. A [`PermissionRequest` hook](https://code.claude.com/docs/en/hooks#permissionrequest) still gets a chance to decide, and if it doesn't, Claude Code denies the call. The option requires Claude Code v2.1.259 or later.
 
@@ -80,14 +80,14 @@ This page focuses on **allow and deny rules** and **permission modes**. For the 
 
 ## Allow and deny rules
 
-`allowed_tools` and `disallowed_tools` (TypeScript: `allowedTools` / `disallowedTools`) add entries to the allow and deny rule lists in the evaluation flow above. If you name one of the [task-tracking tools](https://code.claude.com/docs/en/agent-sdk/todo-tracking.md#model-availability) in `allowed_tools`, Claude Code also opts the session in. Any other tool not listed in `allowed_tools` is still available to Claude, and a call to it that needs approval falls through to the permission mode. Deny rules behave differently depending on whether they name a tool or scope a pattern within one.
+When you set `allowedTools` and `disallowedTools` (TypeScript) or `allowed_tools` and `disallowed_tools` (Python), Claude Code adds their entries to the allow and deny rule lists in the [permission evaluation flow](#how-permissions-are-evaluated). Any other tool not listed in `allowed_tools` is still available to Claude, and a call to it that needs approval falls through to the permission mode.
 
 | Option | Effect |
 | :- | :- |
 | `allowed_tools=["Read", "Grep"]` | `Read` and `Grep` are auto-approved, apart from [reads from network paths](https://code.claude.com/docs/en/permissions.md#network-paths). Other tools not listed here still exist, and calls to them that need approval fall through to the permission mode and `canUseTool`. |
-| `disallowed_tools=["Bash"]` | The `Bash` tool definition is removed from the request. Claude does not see the tool and cannot attempt it. |
+| `disallowed_tools=["Bash"]` | The `Bash` tool definition is removed from the request. |
 | `disallowed_tools=["Bash(rm *)"]` | `Bash` stays available. Calls matching `rm *` [as written](https://code.claude.com/docs/en/permissions.md#bash-rule-limits) are denied in every permission mode, including `bypassPermissions`. Other `Bash` calls, including `/bin/rm`, fall through to the permission mode. |
-| `disallowed_tools=["*"]` | Every tool definition is removed from the request. Tool-name globs are supported in deny rules: `"*"` matches every tool and `"mcp__*"` matches every MCP tool across all servers. |
+| `disallowed_tools=["*"]` | Tool-name globs are supported in deny rules: `"*"` matches every tool and `"mcp__*"` matches every MCP tool across all servers. |
 
 Allow rules accept tool-name globs only after a literal `mcp__<server>__` prefix. The server segment must be glob-free so the rule names a specific server you configured: `mcp__puppeteer__*` matches every tool from the `puppeteer` server, and `mcp__github__get_*` matches its `get_` tools. An unanchored entry like `allowed_tools=["*"]` or `allowed_tools=["mcp__*"]` is ignored and doesn't auto-approve anything.
 

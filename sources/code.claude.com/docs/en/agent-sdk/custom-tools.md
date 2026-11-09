@@ -56,7 +56,7 @@ Python examples on this page that make HTTP requests use [httpx](https://www.pyt
 
 ### Weather tool example
 
-This example defines a `get_temperature` tool and wraps it in an MCP server, without passing the server to `query`. To run the tool, see [Call a custom tool](#call-a-custom-tool) below.
+This example defines a `get_temperature` tool and wraps it in an MCP server, without passing the server to `query`. To run the tool, see [Call a custom tool](#call-a-custom-tool).
 
 ```python Python theme={null}
 from typing import Annotated, Any
@@ -148,11 +148,14 @@ To make a parameter optional, declare it optional in the schema and apply the de
 * **TypeScript**: add `.optional()` to the Zod field.
 * **Python**: the dict schema requires every key. Use the JSON Schema form, leave the parameter out of `required`, and read it with `args.get()`. For a typed schema with optional keys, see [TypedDict class](https://code.claude.com/docs/en/agent-sdk/python.md#input-schema-options).
 
-The [`get_precipitation_chance` tool below](#add-more-tools) shows both patterns.
+The [`get_precipitation_chance` tool](#add-more-tools) shows both patterns.
 
 ### Call a custom tool
 
-Pass the MCP server you created to `query` via the `mcpServers` option, and list each tool's [fully qualified name](https://code.claude.com/docs/en/agent-sdk/mcp.md#tool-naming-convention) in `allowedTools` so the tool runs without a permission prompt. That name is `mcp__{server_name}__{tool_name}`, where `{server_name}` is the key you give the server in `mcpServers`. If the key contains characters such as `.` or spaces, replace them with `_` when you write `{server_name}`.
+To call a custom tool, follow these steps:
+
+1. Pass the MCP server you created to `query` using the `mcpServers` option.
+2. List the tool's [fully qualified name](https://code.claude.com/docs/en/agent-sdk/mcp.md#tool-naming-convention) in `allowedTools` to [pre-approve](https://code.claude.com/docs/en/agent-sdk/permissions.md#allow-and-deny-rules) its calls. That name follows the convention `mcp__{server_name}__{tool_name}`, where `{server_name}` is the key you give the server in `mcpServers`. If the key contains characters such as `.` or spaces, replace them with `_` when you write `{server_name}`.
 
 These snippets reuse the `weatherServer` from the [weather tool example](#weather-tool-example) to ask Claude what the weather is in a specific location.
 
@@ -329,8 +332,8 @@ const weatherServer = createSdkMcpServer({
 | :- | :- | :- |
 | `readOnlyHint` | `false` | Tool does not modify its environment. Controls whether the tool can be called in parallel with other read-only tools. |
 | `destructiveHint` | `true` | Tool may perform destructive updates. Set it to `true` explicitly on any tool you [mark `always_ask`](#require-approval-for-specific-tools). |
-| `idempotentHint` | `false` | Repeated calls with the same arguments have no additional effect. Informational only. |
-| `openWorldHint` | `true` | Tool reaches systems outside your process. Informational only. |
+| `idempotentHint` | `false` | Repeated calls with the same arguments have no additional effect. |
+| `openWorldHint` | `true` | Tool reaches systems outside your process. |
 
 Annotations are metadata, not enforcement. A tool marked `readOnlyHint: true` can still write to disk if that's what the handler does. Keep the annotation accurate to the handler.
 
@@ -373,16 +376,19 @@ The [weather tool example](#weather-tool-example) registered a server and listed
 
 ### Configure allowed tools
 
-The `tools` option and the allowed/disallowed lists affect two layers: availability, which controls whether a tool appears in Claude's context, and permission, which controls whether a call is approved once Claude attempts it. `tools` and bare-name `disallowedTools` entries change availability. `allowedTools` and scoped `disallowedTools` rules change permission. If you name one of the [task-tracking tools](https://code.claude.com/docs/en/agent-sdk/todo-tracking.md#model-availability) in `allowedTools`, Claude Code also opts the session in.
+You control two layers with the `tools`, `allowedTools`, and `disallowedTools` options:
+
+* **Availability**: whether a tool appears in Claude's context. To change it, use the `tools` option or list a bare built-in name such as `"Bash"` in `disallowedTools`.
+* **Permission**: whether Claude Code approves a call when Claude makes it. To change it, use `allowedTools` or a scoped `disallowedTools` rule such as `"Bash(rm *)"`.
 
 | Option | Layer | Effect |
 | :- | :- | :- |
 | `tools: ["Read", "Grep"]` | Availability | Only the listed built-ins are in Claude's context. Unlisted built-ins are removed. MCP tools are unaffected. |
 | `tools: []` | Availability | All built-ins are removed. Claude can only use your MCP tools. |
-| allowed tools | Permission | Listed tools run without a permission prompt. Other unlisted tools remain available; calls go through the [permission flow](https://code.claude.com/docs/en/agent-sdk/permissions.md). |
-| disallowed tools | Both | A bare tool name such as `"Bash"` removes the tool from Claude's context, the same as omitting it from `tools`. A scoped rule such as `"Bash(rm *)"` leaves the tool in context and denies only calls that match [as written](https://code.claude.com/docs/en/permissions.md#bash-rule-limits). |
+| allowed tools | Permission | Listed tools are pre-approved, apart from the [calls that no allow rule approves](https://code.claude.com/docs/en/agent-sdk/permissions.md#calls-an-allow-rule-never-approves). Calls to tools you leave out of the list go through the [permission flow](https://code.claude.com/docs/en/agent-sdk/permissions.md). |
+| disallowed tools | Both | A bare built-in name such as `"Bash"` removes the tool from Claude's context. A scoped rule such as `"Bash(rm *)"` leaves the tool in context and denies the calls that match it [as written](https://code.claude.com/docs/en/permissions.md#bash-rule-limits). |
 
-To remove a built-in entirely, omit it from `tools` or list its bare name in `disallowedTools` (Python: `disallowed_tools`); both keep the tool out of context so Claude never attempts it. A scoped `disallowedTools` rule blocks matching calls but leaves the tool visible, so Claude may waste a turn trying it. See [Configure permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md) for the full evaluation order.
+To remove a built-in from Claude's context, omit it from `tools` or list its bare name in `disallowedTools` (TypeScript) or `disallowed_tools` (Python). For the full evaluation order, see [Configure permissions](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated).
 
 ### Require approval for specific tools
 
@@ -637,9 +643,9 @@ These block shapes come from the MCP `CallToolResult` type. See the [MCP specifi
 
 ## Return structured data
 
-`structuredContent` is an optional JSON object on the result, separate from the `content` array. Use it to return raw values that Claude can read as exact fields instead of parsing them out of a text string or image.
+`structuredContent` is an optional JSON object on the result, separate from the `content` array. Use it to return raw values that Claude can read as exact fields instead of parsing them out of a text string or image. For Python handlers, see [Structured content in Python](#structured-content-in-python).
 
-When `structuredContent` is set, Claude receives the JSON plus any image or resource blocks from `content`. Text blocks in `content` are not forwarded, since they are assumed to duplicate the structured data. The example below renders a chart as an image block and returns the data points behind it in `structuredContent` from the same handler. In the snippet, `chartPngBuffer` is a `Buffer` holding the rendered PNG bytes.
+When a TypeScript `tool()` handler sets `structuredContent`, Claude receives the JSON plus the image and resource blocks in `content`, and the text blocks in `content` don't reach Claude. The example below renders a chart as an image block and returns the data points behind it in `structuredContent` from the same handler. In the snippet, `chartPngBuffer` is a `Buffer` holding the rendered PNG bytes.
 
 ```typescript TypeScript theme={null}
 return {
