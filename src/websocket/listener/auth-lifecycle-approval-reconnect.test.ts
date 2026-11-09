@@ -26,6 +26,7 @@ import { handleExternalToolCallResponseCommand } from "@/websocket/listener/exte
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
 import { finalizeHandledRecoveryTurn } from "@/websocket/listener/recovery";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
+import { settleWithin } from "@/websocket/listener/settle-within.test-helpers";
 import { MAX_PENDING_STARTUP_FRAMES } from "@/websocket/listener/startup-frame-buffer";
 import {
   isListenerTransportOpen,
@@ -629,7 +630,7 @@ describe("listener approval reconnect timing", () => {
       connectedCount += 1;
       if (connectedCount !== 2) return;
       reportReplacementStartup();
-      await replacementStartupReady;
+      await settleWithin(replacementStartupReady, "startup never released");
     });
     await waitFor(
       () =>
@@ -705,7 +706,7 @@ describe("listener approval reconnect timing", () => {
         countConnectionsForChannel("stream") === 2,
       "listener did not reconnect after service restart",
     );
-    await replacementStartup;
+    await settleWithin(replacementStartup, "replacement startup never began");
     expect(listener.connections.get("connection-id")?.initialized).toBe(false);
     addSecondInitializedSubscriber(listener);
     expect(isListenerTransportOpen(capturedTransport)).toBe(true);
@@ -727,7 +728,9 @@ describe("listener approval reconnect timing", () => {
     );
 
     releaseReplacementStartup();
-    await expect(approvalStop).rejects.toThrow("client tool failed");
+    await expect(
+      settleWithin(approvalStop, "approval stop never settled"),
+    ).rejects.toThrow("client tool failed");
     await waitFor(
       () => countToolStreamDeltas("client_tool_end", approval.toolCallId) === 1,
       "aborted tool result did not reach the replacement listener connection",
