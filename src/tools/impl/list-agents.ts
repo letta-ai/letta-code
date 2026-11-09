@@ -79,11 +79,20 @@ function statusOf(entry: SubagentHistoryEntry): ListedAgentStatus {
     : "failed";
 }
 
-/** Rows for one child share its address; a follow-up send adds a row. */
+/**
+ * Rows for one child share its address; a follow-up send adds a row. A child
+ * running in an ephemeral conversation has no agent, so its conversation ID
+ * alone is the address.
+ */
 function addressKey(entry: SubagentHistoryEntry): string {
   const { agent } = entry;
-  if (!agent.agentId) return `row:${agent.id}`;
-  return `${agent.agentId}\u0000${agent.conversationId ?? ""}`;
+  if (agent.agentId) {
+    return `${agent.agentId}\u0000${agent.conversationId ?? ""}`;
+  }
+  if (agent.conversationId && agent.conversationId !== "default") {
+    return `conv:${agent.conversationId}`;
+  }
+  return `row:${agent.id}`;
 }
 
 function toListedAgent(
@@ -91,7 +100,8 @@ function toListedAgent(
   latest: SubagentHistoryEntry,
 ): ListedAgent {
   const agent = latest.agent;
-  const agentId = agent.agentId ?? first.agent.agentId ?? null;
+  // Agentless (ephemeral-conversation) children have no agent ID.
+  const agentId = agent.agentId || first.agent.agentId || null;
   const external = parseExternalCodingAgentId(agentId ?? undefined);
   const status = statusOf(latest);
   const conversationId = external

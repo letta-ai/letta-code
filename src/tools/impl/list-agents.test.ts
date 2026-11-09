@@ -11,7 +11,15 @@ import {
 } from "@/agent/subagent-state";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
+import { runWithRuntimeContext } from "@/runtime-context";
+import {
+  caller,
+  sendAgentMessageFixture,
+} from "@/test-utils/send-agent-message-fixture";
 import { list_agents } from "./list-agents";
+import { backgroundTasks, createBackgroundOutputFile } from "./process_manager";
+import { send_agent_message } from "./send-agent-message";
+import { task_stop } from "./task-stop";
 
 const PARENT = { agentId: "agent-parent", conversationId: "conv-parent" };
 const scope = () => PARENT;
@@ -26,7 +34,22 @@ function launch(
 }
 
 beforeEach(() => clearAllSubagents());
-afterEach(() => clearAllSubagents());
+afterEach(() => {
+  backgroundTasks.clear();
+  clearAllSubagents();
+});
+
+const EPHEMERAL_CONV = "conv-66666666-6666-4666-8666-666666666666";
+
+/**
+ * A fresh Cloud subagent in an ephemeral conversation: the child's init event
+ * carries a conversation ID and no agent ID, so the row never gets one.
+ */
+function launchEphemeral(id: string, taskId: string) {
+  launch(id, "general-purpose", "Audit the logs");
+  updateSubagent(id, { taskId });
+  updateSubagent(id, { conversationId: EPHEMERAL_CONV });
+}
 
 test("lists nothing before any agent is launched", async () => {
   expect(await list_agents({}, { scope })).toEqual({ agents: [] });
@@ -126,6 +149,91 @@ test("a follow-up send to a finished child shows as one row with the latest stat
     status: "running",
     task_id: "task_1",
   });
+});
+
+test("lists an ephemeral-conversation subagent by its conversation ID, live and finished", async () => {
+  launchEphemeral("eph", "task_eph");
+  const live = (await list_agents({}, { scope })).agents;
+  expect(live).toEqual([
+    expect.objectContaining({
+      name: "Audit the logs",
+      agent_id: null,
+      conversation_id: EPHEMERAL_CONV,
+      task_id: "task_eph",
+      status: "running",
+    }),
+  ]);
+
+  completeSubagent("eph", { success: true });
+  clearCompletedSubagents();
+  const finished = (await list_agents({}, { scope })).agents;
+  expect(finished).toHaveLength(1);
+  expect(finished[0]).toMatchObject({
+    agent_id: null,
+    conversation_id: EPHEMERAL_CONV,
+    status: "completed",
+  });
+});
+
+test("resuming an ephemeral conversation keeps one row", async () => {
+  launchEphemeral("eph", "task_eph");
+  completeSubagent("eph", { success: true });
+  // Agent with conversation_id deploys the same agentless conversation again.
+  launch("resume", "general-purpose", "resume");
+  updateSubagent("resume", {
+    agentId: undefined,
+    conversationId: EPHEMERAL_CONV,
+    taskId: "task_resume",
+  });
+
+  const { agents } = await list_agents({}, { scope });
+  expect(agents).toHaveLength(1);
+  expect(agents[0]).toMatchObject({
+    name: "Audit the logs",
+    agent_id: null,
+    conversation_id: EPHEMERAL_CONV,
+    task_id: "task_resume",
+    status: "running",
+  });
+});
+
+test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", async () => {
+  launchEphemeral("eph", "task_eph");
+  const abortController = new AbortController();
+  backgroundTasks.set("task_eph", {
+    description: "Audit the logs",
+    subagentType: "general-purpose",
+    subagentId: "eph",
+    status: "running",
+    startTime: new Date(),
+    outputFile: createBackgroundOutputFile("task_eph"),
+    abortController,
+    completion: Promise.resolve(),
+  });
+  const [row] = (await list_agents({}, { scope })).agents;
+  if (!row?.conversation_id || !row.task_id) throw new Error("no address");
+
+  const f = sendAgentMessageFixture();
+  const sent = await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      {
+        ...(row.agent_id ? { agent_id: row.agent_id } : {}),
+        conversation_id: row.conversation_id,
+        message: "Also check the error rate.",
+      },
+      f,
+    ),
+  );
+  expect(sent.status).toBe("success");
+  expect(f.submissions).toHaveLength(1);
+  expect(f.submissions[0]?.conversationId).toBe(EPHEMERAL_CONV);
+  expect(f.submissions[0]?.agentId).toBeUndefined();
+
+  expect(await task_stop({ task_id: row.task_id })).toEqual({ killed: true });
+  expect(abortController.signal.aborted).toBe(true);
+  // The aborted run settles as a failure; the row reads as a deliberate stop.
+  completeSubagent("eph", { success: false, error: "aborted" });
+  expect((await list_agents({}, { scope })).agents[0]?.status).toBe("stopped");
 });
 
 test("omits other conversations' children and memory workers", async () => {
