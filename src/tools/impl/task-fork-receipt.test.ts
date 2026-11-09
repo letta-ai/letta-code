@@ -193,7 +193,9 @@ describe("prepared conversation launch", () => {
           );
         } else {
           expect(spawnProcess).toHaveBeenCalledTimes(2);
-          expect(childInputs[1]?.args).toContain("--new-agent");
+          // The retry is a fresh subagent: an ephemeral Cloud conversation.
+          expect(childInputs[1]?.args).toContain("--ephemeral");
+          expect(childInputs[1]?.args).not.toContain("--new-agent");
           expect(childInputs[1]?.args).toContain("anthropic/test");
         }
       } finally {

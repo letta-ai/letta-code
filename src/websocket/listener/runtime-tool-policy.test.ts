@@ -292,3 +292,21 @@ test("process-started turns pick duplicate tool names from the last submitting c
   );
   expect(await lookupDescription()).toBe("Lookup through the gateway");
 });
+
+test("a turn relayed by a connection without tools uses the registering connection's tools and policy", async () => {
+  registerLookup("sdk-session", "Lookup through the SDK", {
+    toolset: { base: "none" },
+    allowlist: ["Read", "lookup_ticket"],
+  });
+
+  // Cloud delivering a queued message to this computer submits on its own
+  // connection, which registered nothing for the conversation.
+  const relayed = await prepareTurn({ connectionId: "cloud", content: "hi" });
+  expect(relayed.map((tool) => tool.name).sort()).toEqual([
+    "Read",
+    "lookup_ticket",
+  ]);
+  expect(
+    relayed.find((tool) => tool.name === "lookup_ticket")?.description,
+  ).toBe("Lookup through the SDK");
+});

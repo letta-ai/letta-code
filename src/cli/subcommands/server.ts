@@ -1,16 +1,31 @@
-import { runAppServerSubcommand } from "@/cli/subcommands/app-server";
+import {
+  parseAppServerCliArgs,
+  runAppServerSubcommand,
+} from "@/cli/subcommands/app-server";
 import { runListenSubcommand } from "@/cli/subcommands/listen.tsx";
 
 type ServerCommand =
   | { kind: "remote"; argv: string[] }
-  | { kind: "app-server"; argv: string[] };
+  | { kind: "app-server"; argv: string[] }
+  | { kind: "registered-app-server"; argv: string[]; appServerArgv: string[] };
+
+// Computer-registration options that may accompany --listen. The App Server
+// then runs on the registered computer's runtime instead of its own.
+const REGISTRATION_OPTIONS = new Set([
+  "--computer-name",
+  "--env-name",
+  "--org",
+  "--token",
+]);
 
 function printServerHelp(): void {
   console.log(`Usage:
   letta server [remote options]
   letta server --listen [url] [App Server options]
+  letta server --listen [url] --computer-name <name> [--org <id>] [App Server options]
 
 Run the local agent server as a remote computer, with messaging channels, or as an App Server.
+With --listen plus --computer-name, --org or --token, the App Server also registers this machine as a computer, so Cloud delivers its conversations' queued messages here.
 
 Remote computer options:
   --computer-name <name>  Friendly name for this computer (uses hostname if not provided)
@@ -41,7 +56,8 @@ Examples:
   letta server --channels telegram
   letta server --listen
   letta server --listen ws://127.0.0.1:4500
-  letta server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token`);
+  letta server --listen ws://0.0.0.0:4500 --ws-auth capability-token --ws-token-file /path/to/token
+  letta server --listen --computer-name "gpu-box"`);
 }
 
 function isListenOption(arg: string): boolean {
@@ -50,11 +66,23 @@ function isListenOption(arg: string): boolean {
 
 export function resolveServerCommand(argv: string[]): ServerCommand {
   const appServerArgv: string[] = [];
+  const registrationArgv: string[] = [];
   let foundListen = false;
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === undefined) break;
+
+    const optionName = arg.split("=")[0] ?? arg;
+    if (REGISTRATION_OPTIONS.has(optionName)) {
+      registrationArgv.push(arg);
+      const value = argv[index + 1];
+      if (!arg.includes("=") && value !== undefined) {
+        registrationArgv.push(value);
+        index += 1;
+      }
+      continue;
+    }
 
     if (!isListenOption(arg)) {
       appServerArgv.push(arg);
@@ -87,14 +115,6 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
   if (foundListen) {
     const conflictingOption = argv.find(
       (arg) =>
-        arg === "--computer-name" ||
-        arg.startsWith("--computer-name=") ||
-        arg === "--env-name" ||
-        arg.startsWith("--env-name=") ||
-        arg === "--org" ||
-        arg.startsWith("--org=") ||
-        arg === "--token" ||
-        arg.startsWith("--token=") ||
         arg === "--channels" ||
         arg.startsWith("--channels=") ||
         arg === "--lifecycle-output" ||
@@ -104,6 +124,13 @@ export function resolveServerCommand(argv: string[]): ServerCommand {
       throw new Error(
         `${conflictingOption.split("=")[0]} cannot be used with --listen`,
       );
+    }
+    if (registrationArgv.length > 0) {
+      return {
+        kind: "registered-app-server",
+        argv: registrationArgv,
+        appServerArgv,
+      };
     }
     return { kind: "app-server", argv: appServerArgv };
   }
@@ -137,6 +164,21 @@ export async function runServerSubcommand(argv: string[]): Promise<number> {
 
   if (command.kind === "app-server") {
     return runAppServerSubcommand(command.argv);
+  }
+
+  if (command.kind === "registered-app-server") {
+    let appServer: ReturnType<typeof parseAppServerCliArgs>;
+    try {
+      appServer = parseAppServerCliArgs(command.appServerArgv);
+    } catch (error) {
+      console.error(error instanceof Error ? `Error: ${error.message}` : error);
+      return 1;
+    }
+    if (appServer.help) {
+      printServerHelp();
+      return 0;
+    }
+    return runListenSubcommand(command.argv, appServer);
   }
 
   return runListenSubcommand(command.argv);

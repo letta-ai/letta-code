@@ -28,6 +28,7 @@ import {
   waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
 } from "@/agent/subagents/background-link";
+import { resolveEffectiveAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
@@ -755,7 +756,9 @@ export async function launchSubagent(
       }
     : {};
   if (isExternalCodingAgent) {
-    const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+    const parentAgentId = resolveEffectiveAgentId(
+      resolvedParentScope?.agentId ?? getCurrentAgentId(),
+    );
     if (!parentAgentId) {
       return {
         success: false,
