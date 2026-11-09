@@ -556,9 +556,11 @@ export function acquireDurableFileLock(
   // charging it to the acquisition deadline left no budget for acquisition
   // itself and every recovery path that yields once threw on its first retry —
   // a lock left behind by a dead process stayed unreclaimable. Resolve the
-  // owner under its own bounded budget and start the deadline after it.
-  const owner =
-    options.owner ?? currentDurableLockOwner(Math.max(1, Math.ceil(waitMs)));
+  // owner under its own short probe budget and start the deadline after it.
+  // The probe is synchronous, so its budget must not scale with waitMs: a
+  // multi-second PowerShell probe blocks the whole event loop. A timed-out
+  // probe records a null start and is retried after the cooldown.
+  const owner = options.owner ?? currentDurableLockOwner();
   // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
   const startedAt = now();
