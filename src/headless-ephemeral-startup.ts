@@ -24,7 +24,11 @@ export async function createHeadlessEphemeralConversation(params: {
   model: string | undefined;
   systemPromptPreset: string | undefined;
   systemPromptCustom: string | undefined;
-}): Promise<{ agent: AgentState; conversationId: string }> {
+}): Promise<{
+  agent: AgentState;
+  conversationId: string;
+  parentAgentId: string | null;
+}> {
   if (params.personality) {
     throw new Error(
       "--ephemeral cannot be used with --personality because it has no memory blocks",
@@ -37,8 +41,52 @@ export async function createHeadlessEphemeralConversation(params: {
     memoryPromptMode: "standard" as const,
   };
   return params.backendMode === "local"
-    ? createLocalEphemeralConversation(options)
+    ? {
+        ...(await createLocalEphemeralConversation(options)),
+        parentAgentId: null,
+      }
     : createEphemeralConversation(options);
+}
+
+/**
+ * Warm the secrets cache for a headless session. An agent-backed session uses
+ * its own vault. A detached subagent conversation has no vault, so it reads
+ * its parent agent's (the vault the parent's own tools would use); other
+ * detached sessions get none.
+ */
+export function initHeadlessSecrets(
+  agentId: string,
+  detached: boolean,
+  parentAgentId: string | null,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  const vaultAgentId = !detached
+    ? agentId
+    : env.LETTA_CODE_AGENT_ROLE === "subagent"
+      ? parentAgentId
+      : null;
+  if (!vaultAgentId) return Promise.resolve();
+  return import("@/utils/secrets-store").then((secrets) => {
+    if (vaultAgentId !== agentId)
+      secrets.linkSecretsVault(agentId, vaultAgentId);
+    return secrets.initSecretsFromServer(vaultAgentId);
+  });
+}
+
+/**
+ * The ambient agent (`LETTA_AGENT_ID`/`AGENT_ID`) a routed headless launch
+ * should target when no explicit target was given. An `--ephemeral` session
+ * has no agent, so an inherited AGENT_ID (set in Cloud sandboxes and passed
+ * down to subagents) must not become `--agent` there.
+ */
+export function resolveAmbientAgentId(
+  params: { routed: unknown; ephemeral: unknown; explicitTarget: unknown },
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  if (!params.routed || params.ephemeral || params.explicitTarget) {
+    return undefined;
+  }
+  return (env.LETTA_AGENT_ID || env.AGENT_ID || "").trim() || undefined;
 }
 
 export function clearHeadlessClientToolRules(agent: AgentState): void {
