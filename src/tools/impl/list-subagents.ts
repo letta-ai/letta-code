@@ -3,6 +3,7 @@ import {
   getSubagentHistory,
   type SubagentHistoryEntry,
 } from "@/agent/subagent-state.js";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 
@@ -93,8 +94,14 @@ function toListedAgent(
     started_at: new Date(first.agent.startTime).toISOString(),
     last_activity_at: new Date(latest.lastActivityMs).toISOString(),
     ...(computer ? { computer } : {}),
-    // An idle row keeps the error its last run failed with.
-    ...(agent.status === "error" && agent.error ? { error: agent.error } : {}),
+    // An idle row keeps the error its last run failed with, unless it was
+    // stopped or interrupted rather than failing.
+    ...(agent.status === "error" &&
+    agent.error &&
+    !agent.stoppedByCaller &&
+    agent.error !== INTERRUPTED_BY_USER
+      ? { error: agent.error }
+      : {}),
   };
 }
 

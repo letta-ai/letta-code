@@ -90,7 +90,7 @@ test("lists a background Letta subagent and an external worker with their addres
   expect(external).not.toHaveProperty("conversation_id");
 });
 
-test("keeps finished agents after the live store drops them as idle, with a failed run's error", async () => {
+test("keeps finished agents after the live store drops them as idle, with an error only on a failed run", async () => {
   for (const id of ["done", "broken", "interrupted", "stopped"]) {
     launch(id, "general-purpose", id);
     updateSubagent(id, {
@@ -128,7 +128,9 @@ test("keeps finished agents after the live store drops them as idle, with a fail
     error: "model error",
   });
   expect(byName.interrupted?.status).toBe("idle");
+  expect(byName.interrupted).not.toHaveProperty("error");
   expect(byName.stopped?.status).toBe("idle");
+  expect(byName.stopped).not.toHaveProperty("error");
 });
 
 test("a follow-up send to a finished child shows as one row with the latest status", async () => {
