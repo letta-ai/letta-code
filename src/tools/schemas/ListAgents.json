@@ -1,10 +1,10 @@
 {
   "type": "object",
   "properties": {
-    "scope": {
-      "type": "string",
-      "enum": ["subagents", "all"],
-      "description": "subagents (default): agents this conversation launched. all: also this agent's other recent conversations."
+    "subagents_only": {
+      "type": "boolean",
+      "default": true,
+      "description": "true (default): agents this conversation launched. false: all agents you can access, like `letta agents list`."
     }
   },
   "additionalProperties": false,

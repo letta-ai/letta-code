@@ -4,4 +4,4 @@ Lists the agents this conversation launched with Agent, running and finished, ne
 
 You are notified when a background agent finishes. Never call ListAgents in a loop or send "are you done?" messages to check on one.
 
-`scope: "all"` also lists this agent's other recent conversations.
+`subagents_only: false` instead lists all agents you can access (`agent_id`, `name`, `model`), up to 50; `truncated: true` means more exist.
