@@ -339,3 +339,130 @@ test("the default never calls the backend", async () => {
     await list_agents({ subagents_only: true }, { scope, backend }),
   ).toEqual({ agents: [] });
 });
+
+/** One child per reported status. */
+function launchOnePerStatus() {
+  for (const id of ["run", "done", "broken", "halted"]) {
+    launch(id, "general-purpose", id);
+    updateSubagent(id, {
+      agentId: `agent-${id}`,
+      conversationId: `conv-${id}`,
+      agentURL: "x",
+    });
+  }
+  completeSubagent("done", { success: true });
+  completeSubagent("broken", { success: false, error: "model error" });
+  updateSubagent("halted", { stoppedByCaller: true });
+  completeSubagent("halted", { success: false, error: "aborted" });
+}
+
+const names = (agents: { name: string }[]) => agents.map((a) => a.name).sort();
+
+test("status filters to running agents", async () => {
+  launchOnePerStatus();
+  const { agents } = await list_agents({ status: ["running"] }, { scope });
+  expect(agents).toEqual([
+    expect.objectContaining({ name: "run", status: "running" }),
+  ]);
+});
+
+test("status accepts several values", async () => {
+  launchOnePerStatus();
+  const { agents } = await list_agents(
+    { status: ["stopped", "failed"] },
+    { scope },
+  );
+  expect(names(agents)).toEqual(["broken", "halted"]);
+});
+
+test("omitting status lists every status", async () => {
+  launchOnePerStatus();
+  const { agents } = await list_agents({}, { scope });
+  expect(names(agents)).toEqual(["broken", "done", "halted", "run"]);
+});
+
+test("status filters after merging rows, on the latest status", async () => {
+  launch("first", "general-purpose", "Draft the PR");
+  updateSubagent("first", {
+    agentId: "agent-child",
+    conversationId: "conv-child",
+    agentURL: "x",
+  });
+  completeSubagent("first", { success: true });
+  launch("followup", "general-purpose", "follow-up");
+  updateSubagent("followup", {
+    agentId: "agent-child",
+    conversationId: "conv-child",
+    agentURL: "x",
+  });
+
+  expect(
+    (await list_agents({ status: ["completed"] }, { scope })).agents,
+  ).toEqual([]);
+  expect(
+    (await list_agents({ status: ["running"] }, { scope })).agents,
+  ).toEqual([expect.objectContaining({ name: "Draft the PR" })]);
+});
+
+test("status filters an agentless row the same way", async () => {
+  launchEphemeral("eph", "task_eph");
+  expect(
+    (await list_agents({ status: ["running"] }, { scope })).agents,
+  ).toEqual([
+    expect.objectContaining({
+      agent_id: null,
+      conversation_id: EPHEMERAL_CONV,
+      status: "running",
+    }),
+  ]);
+  expect(
+    (await list_agents({ status: ["stopped"] }, { scope })).agents,
+  ).toEqual([]);
+
+  updateSubagent("eph", { stoppedByCaller: true });
+  completeSubagent("eph", { success: false, error: "aborted" });
+  expect(
+    (await list_agents({ status: ["stopped"] }, { scope })).agents,
+  ).toEqual([
+    expect.objectContaining({
+      agent_id: null,
+      conversation_id: EPHEMERAL_CONV,
+    }),
+  ]);
+  expect(
+    (await list_agents({ status: ["running"] }, { scope })).agents,
+  ).toEqual([]);
+});
+
+test("an unknown status errors and lists the valid values", async () => {
+  await expect(
+    list_agents({ status: ["running", "idle"] as never }, { scope }),
+  ).rejects.toThrow(
+    'Unknown status "idle"; valid values: running, completed, failed, stopped',
+  );
+  await expect(
+    list_agents({ status: "running" as never }, { scope }),
+  ).rejects.toThrow(
+    "status must be an array of: running, completed, failed, stopped",
+  );
+});
+
+test("an empty status array errors instead of matching nothing", async () => {
+  await expect(list_agents({ status: [] }, { scope })).rejects.toThrow(
+    "status must list at least one of: running, completed, failed, stopped. Omit it to list all.",
+  );
+});
+
+test("status with subagents_only false errors without calling the backend", async () => {
+  const backend = {
+    listAgents: async () => {
+      throw new Error("must not list agents");
+    },
+  } as never;
+  await expect(
+    list_agents(
+      { subagents_only: false, status: ["running"] },
+      { scope, backend },
+    ),
+  ).rejects.toThrow("status applies only to subagents_only: true");
+});

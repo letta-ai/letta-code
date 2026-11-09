@@ -9,7 +9,14 @@ import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 
-export type ListedAgentStatus = "running" | "completed" | "failed" | "stopped";
+export const LISTED_AGENT_STATUSES = [
+  "running",
+  "completed",
+  "failed",
+  "stopped",
+] as const;
+
+export type ListedAgentStatus = (typeof LISTED_AGENT_STATUSES)[number];
 
 export interface ListedAgent {
   name: string;
@@ -46,6 +53,7 @@ export type ListAgentsResult = ListSubagentsResult | ListAllAgentsResult;
 
 interface ListAgentsArgs {
   subagents_only?: boolean;
+  status?: ListedAgentStatus[];
 }
 
 interface ListAgentsDeps {
@@ -170,6 +178,33 @@ export function listSessionSubagents(
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
+const VALID_STATUSES = LISTED_AGENT_STATUSES.join(", ");
+
+/**
+ * The statuses to keep, or null for all. An empty array is rejected rather
+ * than read as "none" or "all": omit `status` to list every agent.
+ */
+function parseStatusFilter(status: unknown): Set<ListedAgentStatus> | null {
+  if (status === undefined) return null;
+  if (!Array.isArray(status)) {
+    throw new Error(`status must be an array of: ${VALID_STATUSES}`);
+  }
+  if (status.length === 0) {
+    throw new Error(
+      `status must list at least one of: ${VALID_STATUSES}. Omit it to list all.`,
+    );
+  }
+  const invalid = status.filter(
+    (s) => !(LISTED_AGENT_STATUSES as readonly unknown[]).includes(s),
+  );
+  if (invalid.length > 0) {
+    throw new Error(
+      `Unknown status ${invalid.map((s) => JSON.stringify(s)).join(", ")}; valid values: ${VALID_STATUSES}`,
+    );
+  }
+  return new Set(status as ListedAgentStatus[]);
+}
+
 function toListedBackendAgent(agent: AgentState): ListedBackendAgent {
   const raw = agent as AgentState & {
     created_at?: string | null;
@@ -187,7 +222,7 @@ function toListedBackendAgent(agent: AgentState): ListedBackendAgent {
 }
 
 export async function list_agents(
-  args?: { subagents_only?: true },
+  args?: { subagents_only?: true; status?: ListedAgentStatus[] },
   deps?: ListAgentsDeps,
 ): Promise<ListSubagentsResult>;
 export async function list_agents(
@@ -206,14 +241,25 @@ export async function list_agents(
   if (typeof subagentsOnly !== "boolean") {
     throw new Error("subagents_only must be a boolean");
   }
+  const statusFilter = parseStatusFilter(args.status);
   if (subagentsOnly) {
     const scope = (deps.scope ?? currentScope)();
+    // Filter after merging by address, so each row's latest status decides.
+    const agents = listSessionSubagents(
+      scope,
+      (deps.history ?? getSubagentHistory)(),
+    );
     return {
-      agents: listSessionSubagents(
-        scope,
-        (deps.history ?? getSubagentHistory)(),
-      ),
+      agents: statusFilter
+        ? agents.filter((agent) => statusFilter.has(agent.status))
+        : agents,
     };
+  }
+  if (statusFilter) {
+    // All-agents rows carry no run status to filter on.
+    throw new Error(
+      "status applies only to subagents_only: true; all-agents rows have no status",
+    );
   }
 
   // Same call as `letta agents list`, with a larger page.
