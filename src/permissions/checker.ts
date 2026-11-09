@@ -812,8 +812,8 @@ function getDefaultDecision(
     "TaskGet",
     "TaskList",
     "TaskUpdate",
-    // Reads this session's subagent rows and, for scope "all", this agent's
-    // own conversation list.
+    // Reads this session's subagent rows and, with subagents_only false, the
+    // same agent list `letta agents list` returns.
     "ListAgents",
     "read_artifact_file",
     "write_artifact_file",

@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   clearAllSubagents,
   clearCompletedSubagents,
@@ -6,6 +9,7 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
+import { LocalBackend } from "@/backend/local/local-backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { list_agents } from "./list-agents";
 
@@ -136,46 +140,94 @@ test("omits other conversations' children and memory workers", async () => {
   expect(agents.map((a) => a.name)).toEqual(["mine"]);
 });
 
-test('scope "all" adds this agent\'s other conversations', async () => {
+test("subagents_only false lists all agents like `letta agents list`", async () => {
   launch("sub-1", "general-purpose", "child");
-  updateSubagent("sub-1", {
-    agentId: "agent-parent",
-    conversationId: "conv-child",
-    agentURL: "x",
-  });
   const requests: unknown[] = [];
   const backend = {
-    listConversations: async (body: unknown) => {
+    listAgents: async (body: unknown) => {
       requests.push(body);
-      return [
-        { id: "conv-parent", summary: "this one" },
-        { id: "conv-child", summary: "the child" },
-        {
-          id: "conv-older",
-          summary: " Planning ",
-          last_message_at: "2026-11-08T00:00:00Z",
-        },
-      ];
+      return {
+        getPaginatedItems: () => [
+          {
+            id: "agent-a",
+            name: "Alpha",
+            model: "anthropic/claude-opus-5-5",
+            created_at: "2026-11-01T00:00:00Z",
+            last_run_completion: "2026-11-09T00:00:00Z",
+          },
+          { id: "agent-b", name: "Beta" },
+        ],
+      };
     },
   } as never;
 
-  const result = await list_agents({ scope: "all" }, { scope, backend });
-  expect(requests[0]).toMatchObject({ agent_id: "agent-parent" });
-  expect(result.agents).toHaveLength(1);
-  expect(result.conversations).toEqual([
-    {
-      conversation_id: "conv-older",
-      summary: "Planning",
-      last_message_at: "2026-11-08T00:00:00Z",
-    },
-  ]);
+  const result = await list_agents(
+    { subagents_only: false },
+    { scope, backend },
+  );
+  expect(requests).toEqual([{ limit: 51 }]);
+  expect(result).toEqual({
+    agents: [
+      {
+        agent_id: "agent-a",
+        name: "Alpha",
+        model: "anthropic/claude-opus-5-5",
+        created_at: "2026-11-01T00:00:00Z",
+        last_run_at: "2026-11-09T00:00:00Z",
+      },
+      { agent_id: "agent-b", name: "Beta" },
+    ],
+  });
 });
 
-test("the default scope never calls the backend", async () => {
+test("subagents_only false caps the list and flags truncation", async () => {
   const backend = {
-    listConversations: async () => {
-      throw new Error("must not list conversations");
+    listAgents: async () => ({
+      items: Array.from({ length: 51 }, (_, i) => ({
+        id: `agent-${i}`,
+        name: `A${i}`,
+      })),
+    }),
+  } as never;
+  const result = await list_agents(
+    { subagents_only: false },
+    { scope, backend },
+  );
+  expect(result.agents).toHaveLength(50);
+  expect(result.truncated).toBe(true);
+});
+
+test("subagents_only false works on the local backend", async () => {
+  const storageDir = await mkdtemp(join(tmpdir(), "list-agents-local-"));
+  try {
+    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    const created = await backend.createAgent({ name: "Local" } as never);
+    const result = await list_agents(
+      { subagents_only: false },
+      { scope, backend },
+    );
+    expect(result.agents.map((agent) => agent.agent_id)).toEqual([created.id]);
+    expect(result.agents[0]?.name).toBe("Local");
+    expect(result.truncated).toBeUndefined();
+  } finally {
+    await rm(storageDir, { recursive: true, force: true });
+  }
+});
+
+test("subagents_only must be a boolean", async () => {
+  await expect(
+    list_agents({ subagents_only: "no" as never }, { scope }),
+  ).rejects.toThrow("subagents_only must be a boolean");
+});
+
+test("the default never calls the backend", async () => {
+  const backend = {
+    listAgents: async () => {
+      throw new Error("must not list agents");
     },
   } as never;
   expect(await list_agents({}, { scope, backend })).toEqual({ agents: [] });
+  expect(
+    await list_agents({ subagents_only: true }, { scope, backend }),
+  ).toEqual({ agents: [] });
 });

@@ -1,4 +1,4 @@
-import type { Conversation } from "@letta-ai/letta-client/resources/conversations/conversations";
+import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
   getSubagentHistory,
@@ -24,28 +24,38 @@ export interface ListedAgent {
   error?: string;
 }
 
-export interface ListedConversation {
-  conversation_id: string;
-  summary?: string;
-  last_message_at?: string;
+/** One row of `letta agents list`, trimmed to what a model needs. */
+export interface ListedBackendAgent {
+  agent_id: string;
+  name: string;
+  model?: string;
+  created_at?: string;
+  last_run_at?: string;
 }
 
-export interface ListAgentsResult {
+export interface ListSubagentsResult {
   agents: ListedAgent[];
-  conversations?: ListedConversation[];
 }
+
+export interface ListAllAgentsResult {
+  agents: ListedBackendAgent[];
+  truncated?: boolean;
+}
+
+export type ListAgentsResult = ListSubagentsResult | ListAllAgentsResult;
 
 interface ListAgentsArgs {
-  scope?: "subagents" | "all";
+  subagents_only?: boolean;
 }
 
 interface ListAgentsDeps {
   history?: () => SubagentHistoryEntry[];
   scope?: () => { agentId: string; conversationId: string } | null;
-  backend?: Pick<Backend, "listConversations">;
+  backend?: Pick<Backend, "listAgents">;
 }
 
-const CONVERSATION_LIMIT = 20;
+/** Rows returned when subagents_only is false; one extra detects truncation. */
+const ALL_AGENTS_LIMIT = 50;
 
 function currentScope(): { agentId: string; conversationId: string } | null {
   try {
@@ -150,49 +160,59 @@ export function listSessionSubagents(
     .sort((a, b) => b.started_at.localeCompare(a.started_at));
 }
 
+function toListedBackendAgent(agent: AgentState): ListedBackendAgent {
+  const raw = agent as AgentState & {
+    created_at?: string | null;
+    last_run_completion?: string | null;
+  };
+  return {
+    agent_id: agent.id,
+    name: agent.name,
+    ...(agent.model ? { model: agent.model } : {}),
+    ...(raw.created_at ? { created_at: raw.created_at } : {}),
+    ...(raw.last_run_completion
+      ? { last_run_at: raw.last_run_completion }
+      : {}),
+  };
+}
+
+export async function list_agents(
+  args?: { subagents_only?: true },
+  deps?: ListAgentsDeps,
+): Promise<ListSubagentsResult>;
+export async function list_agents(
+  args: { subagents_only: false },
+  deps?: ListAgentsDeps,
+): Promise<ListAllAgentsResult>;
+export async function list_agents(
+  args?: ListAgentsArgs,
+  deps?: ListAgentsDeps,
+): Promise<ListAgentsResult>;
 export async function list_agents(
   args: ListAgentsArgs = {},
   deps: ListAgentsDeps = {},
 ): Promise<ListAgentsResult> {
-  const scopeName = args.scope ?? "subagents";
-  if (scopeName !== "subagents" && scopeName !== "all") {
-    throw new Error('scope must be "subagents" or "all"');
+  const subagentsOnly = args.subagents_only ?? true;
+  if (typeof subagentsOnly !== "boolean") {
+    throw new Error("subagents_only must be a boolean");
   }
-  const scope = (deps.scope ?? currentScope)();
-  const agents = listSessionSubagents(
-    scope,
-    (deps.history ?? getSubagentHistory)(),
-  );
-  if (scopeName === "subagents" || !scope) return { agents };
+  if (subagentsOnly) {
+    const scope = (deps.scope ?? currentScope)();
+    return {
+      agents: listSessionSubagents(
+        scope,
+        (deps.history ?? getSubagentHistory)(),
+      ),
+    };
+  }
 
+  // Same call as `letta agents list`, with a larger page.
   const backend = deps.backend ?? getBackend();
-  const listed = pageItems<Conversation>(
-    await backend.listConversations({
-      agent_id: scope.agentId,
-      limit: CONVERSATION_LIMIT,
-      order: "desc",
-      order_by: "last_message_at",
-    } as never),
+  const listed = pageItems<AgentState>(
+    await backend.listAgents({ limit: ALL_AGENTS_LIMIT + 1 }),
   );
-  const childConversations = new Set(
-    agents.map((agent) => agent.conversation_id).filter(Boolean),
-  );
-  const conversations = listed
-    .filter(
-      (conversation) =>
-        conversation.id !== scope.conversationId &&
-        !childConversations.has(conversation.id),
-    )
-    .map((conversation) => {
-      const summary = conversation.summary?.trim();
-      const lastMessageAt = (
-        conversation as Conversation & { last_message_at?: string | null }
-      ).last_message_at;
-      return {
-        conversation_id: conversation.id,
-        ...(summary ? { summary } : {}),
-        ...(lastMessageAt ? { last_message_at: lastMessageAt } : {}),
-      };
-    });
-  return { agents, conversations };
+  const agents = listed.slice(0, ALL_AGENTS_LIMIT).map(toListedBackendAgent);
+  return listed.length > ALL_AGENTS_LIMIT
+    ? { agents, truncated: true }
+    : { agents };
 }
