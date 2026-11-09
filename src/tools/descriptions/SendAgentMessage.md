@@ -1,6 +1,6 @@
 Send a message without waiting for its answer. Use this to coordinate with an agent already working, including an Agent child, or to contact any conversation you are authorized to access.
 
-- Supply `conversation_id` to message an existing thread, or `agent_id` alone to start a new hidden thread with that agent. To use an agent's default conversation, supply its `agent_id` and `conversation_id: "default"`. Pass the full conversation ID; truncated IDs are rejected.
+- For an agent you launched, including external workers, pass the receipt’s `Conversation ID` as `conversation_id`. Supply `conversation_id` to message an existing thread, or `agent_id` alone to start a new hidden thread with that agent. To use an agent's default conversation, supply its `agent_id` and `conversation_id: "default"`. Pass the full conversation ID; truncated IDs are rejected.
 - Your agent and conversation IDs are attached automatically as the return address. To reply, the recipient must explicitly send to that address. Ordinary assistant output is not forwarded back to you.
 - A successful send means the message was accepted or delivery started; the recipient may not have read it yet. Continue working rather than waiting for the answer.
 - External coding workers launched with Agent (including computer-qualified IDs from remote launches) can be messaged too. If the worker is mid-turn, the result says the message steered that turn; if it was idle, the result includes a `task_id` and you are notified when the new turn finishes.

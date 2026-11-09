@@ -217,7 +217,7 @@ describe("Output file integration", () => {
     appendToOutputFile(outputFile, `[subagent_type: general-purpose]\n\n`);
     appendToOutputFile(
       outputFile,
-      `subagent_type=general-purpose agent_id=agent-123\n\n`,
+      `subagent_type=general-purpose conversation_id=conv-123\n\n`,
     );
     appendToOutputFile(outputFile, `Found authentication code in src/auth/\n`);
     appendToOutputFile(outputFile, `\n[Task completed]\n`);
@@ -226,7 +226,7 @@ describe("Output file integration", () => {
 
     expect(content).toContain("[Task started: Find auth code]");
     expect(content).toContain("[subagent_type: general-purpose]");
-    expect(content).toContain("agent_id=agent-123");
+    expect(content).toContain("conversation_id=conv-123");
     expect(content).toContain("Found authentication code");
     expect(content).toContain("[Task completed]");
 
