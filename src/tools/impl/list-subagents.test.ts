@@ -6,6 +6,7 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
+import { trackChildSend } from "@/agent/subagents/child-send-tracking";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
@@ -245,6 +246,52 @@ test("SendAgentMessage accepts an ephemeral row's conversation ID as listed", as
   expect(f.submissions).toHaveLength(1);
   expect(f.submissions[0]?.conversationId).toBe(EPHEMERAL_CONV);
   expect(f.submissions[0]?.agentId).toBeUndefined();
+});
+
+test("steering an idle ephemeral child shows it running until that run settles", async () => {
+  launchEphemeral("eph", "task_eph");
+  completeSubagent("eph", { success: true });
+  const statuses = async () =>
+    (
+      await list_subagents({ status: ["running", "idle"] }, { scope })
+    ).agents.map((a) => a.status);
+  expect(await statuses()).toEqual(["idle"]);
+
+  let settle = () => {};
+  const f = sendAgentMessageFixture();
+  const sent = await runWithRuntimeContext(
+    { ...PARENT, actingUserId: "user-parent" },
+    () =>
+      send_agent_message(
+        {
+          conversation_id: EPHEMERAL_CONV,
+          message: "Also check the error rate.",
+        },
+        {
+          ...f,
+          // An agentless conversation's receipt names no agent.
+          enqueue: async (input) => ({
+            ...(await f.enqueue(input)),
+            agent_id: null,
+          }),
+          trackChildSend: (input) =>
+            trackChildSend({
+              ...input,
+              waitForRun: () =>
+                new Promise<void>((resolve) => {
+                  settle = resolve;
+                }),
+            }),
+        },
+      ),
+  );
+  expect(sent.status).toBe("success");
+  expect(await statuses()).toEqual(["running"]);
+
+  settle();
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(await statuses()).toEqual(["idle"]);
 });
 
 test("omits other conversations' children and memory workers", async () => {
