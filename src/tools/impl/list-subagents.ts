@@ -6,6 +6,8 @@ import {
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 import {
+  type ExternalCodingAgentType,
+  isExternalCodingAgentType,
   parseExternalCodingAgentId,
   subagentConversationId,
 } from "./external-coding-agent.js";
@@ -15,8 +17,8 @@ export const LISTED_AGENT_STATUSES = ["running", "idle"] as const;
 export type ListedAgentStatus = (typeof LISTED_AGENT_STATUSES)[number];
 
 export interface ListedAgent {
-  name: string;
-  type: string;
+  description: string;
+  harness: "letta" | ExternalCodingAgentType;
   conversation_id?: string;
   task_id?: string;
   status: ListedAgentStatus;
@@ -69,6 +71,16 @@ function addressKey(entry: SubagentHistoryEntry): string {
     : `row:${agent.id}`;
 }
 
+/** The Agent `harness` value; subagent state stores a capitalized display type. */
+function harnessOf(
+  type: string,
+  external: ExternalCodingAgentType | undefined,
+): ListedAgent["harness"] {
+  if (external) return external;
+  const lower = type.toLowerCase();
+  return isExternalCodingAgentType(lower) ? lower : "letta";
+}
+
 function toListedAgent(
   first: SubagentHistoryEntry,
   latest: SubagentHistoryEntry,
@@ -85,8 +97,8 @@ function toListedAgent(
   const computer =
     external?.computer ?? agent.computer ?? first.agent.computer ?? undefined;
   return {
-    name: first.agent.description,
-    type: first.agent.type,
+    description: first.agent.description,
+    harness: harnessOf(first.agent.type, external?.type),
     ...(conversationId ? { conversation_id: conversationId } : {}),
     ...(taskId ? { task_id: taskId } : {}),
     status,

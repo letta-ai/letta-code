@@ -70,18 +70,19 @@ test("lists a background Letta subagent and an external worker by conversation I
   const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(2);
   const [external, letta] = [...agents].sort((a, b) =>
-    a.type.localeCompare(b.type),
+    a.harness.localeCompare(b.harness),
   );
   expect(letta).toMatchObject({
-    name: "Review the diff",
-    type: "General-purpose",
+    description: "Review the diff",
+    harness: "letta",
     conversation_id: "conv-child",
     task_id: "task_1",
     status: "running",
   });
   // An external worker's ID is its conversation ID.
   expect(external).toMatchObject({
-    name: "Fix the flaky test",
+    description: "Fix the flaky test",
+    harness: "claude-code",
     conversation_id: "claude_6062e098-ab3f-4e98-a474-f1020b0a79cb@laptop",
     task_id: "task_2",
     status: "running",
@@ -112,7 +113,7 @@ test("keeps finished agents after the live store drops them as idle, with an err
 
   const byName = Object.fromEntries(
     (await list_subagents({ status: ["idle"] }, { scope })).agents.map((a) => [
-      a.name,
+      a.description,
       a,
     ]),
   );
@@ -154,7 +155,7 @@ test("a follow-up send to a finished child shows as one row with the latest stat
   const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(1);
   expect(agents[0]).toMatchObject({
-    name: "Draft the PR",
+    description: "Draft the PR",
     status: "running",
     task_id: "task_1",
   });
@@ -165,7 +166,7 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
   const live = (await list_subagents({}, { scope })).agents;
   expect(live).toEqual([
     expect.objectContaining({
-      name: "Audit the logs",
+      description: "Audit the logs",
       conversation_id: EPHEMERAL_CONV,
       task_id: "task_eph",
       status: "running",
@@ -197,7 +198,7 @@ test("resuming an ephemeral conversation keeps one row", async () => {
   const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(1);
   expect(agents[0]).toMatchObject({
-    name: "Audit the logs",
+    description: "Audit the logs",
     conversation_id: EPHEMERAL_CONV,
     task_id: "task_resume",
     status: "running",
@@ -253,7 +254,7 @@ test("omits other conversations' children and memory workers", async () => {
   launch("memory", "memory", "memory upkeep");
 
   const { agents } = await list_subagents({}, { scope });
-  expect(agents.map((a) => a.name)).toEqual(["mine"]);
+  expect(agents.map((a) => a.description)).toEqual(["mine"]);
 });
 
 test("lists the most recently active agent first, even if it started earlier", async () => {
@@ -265,7 +266,7 @@ test("lists the most recently active agent first, even if it started earlier", a
   updateSubagent("older", { taskId: "task_older" });
 
   const { agents } = await list_subagents({}, { scope });
-  expect(agents.map((a) => a.name)).toEqual(["older", "newer"]);
+  expect(agents.map((a) => a.description)).toEqual(["older", "newer"]);
   expect(agents[0]?.started_at).toBe("2026-01-01T00:00:00.000Z");
   expect(agents[0]?.last_activity_at).toBe("2026-01-01T00:02:00.000Z");
 });
@@ -278,7 +279,7 @@ test("breaks last-activity ties by the newest start", async () => {
   updateSubagent("older", { taskId: "task_older" });
 
   const { agents } = await list_subagents({}, { scope });
-  expect(agents.map((a) => a.name)).toEqual(["newer", "older"]);
+  expect(agents.map((a) => a.description)).toEqual(["newer", "older"]);
 });
 
 /** One running child and one finished child per way of ending. */
@@ -297,13 +298,14 @@ function launchOnePerStatus() {
   completeSubagent("halted", { success: false, error: "aborted" });
 }
 
-const names = (agents: { name: string }[]) => agents.map((a) => a.name).sort();
+const names = (agents: { description: string }[]) =>
+  agents.map((a) => a.description).sort();
 
 test("status filters to running agents", async () => {
   launchOnePerStatus();
   const { agents } = await list_subagents({ status: ["running"] }, { scope });
   expect(agents).toEqual([
-    expect.objectContaining({ name: "run", status: "running" }),
+    expect.objectContaining({ description: "run", status: "running" }),
   ]);
 });
 
@@ -318,7 +320,7 @@ test("omitting status lists only running agents", async () => {
   launchOnePerStatus();
   const { agents } = await list_subagents({}, { scope });
   expect(agents).toEqual([
-    expect.objectContaining({ name: "run", status: "running" }),
+    expect.objectContaining({ description: "run", status: "running" }),
   ]);
 });
 
@@ -351,7 +353,7 @@ test("status filters after merging rows, on the latest status", async () => {
   ).toEqual([]);
   expect(
     (await list_subagents({ status: ["running"] }, { scope })).agents,
-  ).toEqual([expect.objectContaining({ name: "Draft the PR" })]);
+  ).toEqual([expect.objectContaining({ description: "Draft the PR" })]);
 });
 
 test("status filters an agentless row the same way", async () => {
