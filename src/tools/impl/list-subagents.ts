@@ -1,10 +1,8 @@
-import type { AgentState } from "@letta-ai/letta-client/resources/agents/agents";
 import { getConversationId, getCurrentAgentId } from "@/agent/context";
 import {
   getSubagentHistory,
   type SubagentHistoryEntry,
 } from "@/agent/subagent-state.js";
-import { type Backend, getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
@@ -31,39 +29,18 @@ export interface ListedAgent {
   error?: string;
 }
 
-/** One row of `letta agents list`, trimmed to what a model needs. */
-export interface ListedBackendAgent {
-  agent_id: string;
-  name: string;
-  model?: string;
-  created_at?: string;
-  last_run_at?: string;
-}
-
 export interface ListSubagentsResult {
   agents: ListedAgent[];
 }
 
-export interface ListAllAgentsResult {
-  agents: ListedBackendAgent[];
-  truncated?: boolean;
-}
-
-export type ListAgentsResult = ListSubagentsResult | ListAllAgentsResult;
-
-interface ListAgentsArgs {
-  subagents_only?: boolean;
+interface ListSubagentsArgs {
   status?: ListedAgentStatus[];
 }
 
-interface ListAgentsDeps {
+interface ListSubagentsDeps {
   history?: () => SubagentHistoryEntry[];
   scope?: () => { agentId: string; conversationId: string } | null;
-  backend?: Pick<Backend, "listAgents">;
 }
-
-/** Rows returned when subagents_only is false; one extra detects truncation. */
-const ALL_AGENTS_LIMIT = 50;
 
 function currentScope(): { agentId: string; conversationId: string } | null {
   try {
@@ -132,17 +109,6 @@ function toListedAgent(
   };
 }
 
-function pageItems<T>(page: unknown): T[] {
-  if (Array.isArray(page)) return page as T[];
-  const maybePage = page as
-    | { getPaginatedItems?: () => T[]; items?: T[] }
-    | undefined;
-  if (typeof maybePage?.getPaginatedItems === "function") {
-    return maybePage.getPaginatedItems();
-  }
-  return Array.isArray(maybePage?.items) ? maybePage.items : [];
-}
-
 /** This conversation's Agent launches, newest first, keyed by address. */
 export function listSessionSubagents(
   scope: { agentId: string; conversationId: string } | null,
@@ -181,17 +147,17 @@ export function listSessionSubagents(
 const VALID_STATUSES = LISTED_AGENT_STATUSES.join(", ");
 
 /**
- * The statuses to keep, or null for all. An empty array is rejected rather
- * than read as "none" or "all": omit `status` to list every agent.
+ * The statuses to keep; omitted means running only. An empty array is
+ * rejected rather than read as "none" or "all".
  */
-function parseStatusFilter(status: unknown): Set<ListedAgentStatus> | null {
-  if (status === undefined) return null;
+function parseStatusFilter(status: unknown): Set<ListedAgentStatus> {
+  if (status === undefined) return new Set(["running"]);
   if (!Array.isArray(status)) {
     throw new Error(`status must be an array of: ${VALID_STATUSES}`);
   }
   if (status.length === 0) {
     throw new Error(
-      `status must list at least one of: ${VALID_STATUSES}. Omit it to list all.`,
+      `status must list at least one of: ${VALID_STATUSES}. Omit it to list running agents.`,
     );
   }
   const invalid = status.filter(
@@ -205,70 +171,16 @@ function parseStatusFilter(status: unknown): Set<ListedAgentStatus> | null {
   return new Set(status as ListedAgentStatus[]);
 }
 
-function toListedBackendAgent(agent: AgentState): ListedBackendAgent {
-  const raw = agent as AgentState & {
-    created_at?: string | null;
-    last_run_completion?: string | null;
-  };
-  return {
-    agent_id: agent.id,
-    name: agent.name,
-    ...(agent.model ? { model: agent.model } : {}),
-    ...(raw.created_at ? { created_at: raw.created_at } : {}),
-    ...(raw.last_run_completion
-      ? { last_run_at: raw.last_run_completion }
-      : {}),
-  };
-}
-
-export async function list_agents(
-  args?: { subagents_only?: true; status?: ListedAgentStatus[] },
-  deps?: ListAgentsDeps,
-): Promise<ListSubagentsResult>;
-export async function list_agents(
-  args: { subagents_only: false },
-  deps?: ListAgentsDeps,
-): Promise<ListAllAgentsResult>;
-export async function list_agents(
-  args?: ListAgentsArgs,
-  deps?: ListAgentsDeps,
-): Promise<ListAgentsResult>;
-export async function list_agents(
-  args: ListAgentsArgs = {},
-  deps: ListAgentsDeps = {},
-): Promise<ListAgentsResult> {
-  const subagentsOnly = args.subagents_only ?? true;
-  if (typeof subagentsOnly !== "boolean") {
-    throw new Error("subagents_only must be a boolean");
-  }
+export async function list_subagents(
+  args: ListSubagentsArgs = {},
+  deps: ListSubagentsDeps = {},
+): Promise<ListSubagentsResult> {
   const statusFilter = parseStatusFilter(args.status);
-  if (subagentsOnly) {
-    const scope = (deps.scope ?? currentScope)();
-    // Filter after merging by address, so each row's latest status decides.
-    const agents = listSessionSubagents(
-      scope,
-      (deps.history ?? getSubagentHistory)(),
-    );
-    return {
-      agents: statusFilter
-        ? agents.filter((agent) => statusFilter.has(agent.status))
-        : agents,
-    };
-  }
-  if (statusFilter) {
-    // All-agents rows carry no run status to filter on.
-    throw new Error(
-      "status applies only to subagents_only: true; all-agents rows have no status",
-    );
-  }
-
-  // Same call as `letta agents list`, with a larger page.
-  const backend = deps.backend ?? getBackend();
-  const listed = pageItems<AgentState>(
-    await backend.listAgents({ limit: ALL_AGENTS_LIMIT + 1 }),
+  const scope = (deps.scope ?? currentScope)();
+  // Filter after merging by address, so each row's latest status decides.
+  const agents = listSessionSubagents(
+    scope,
+    (deps.history ?? getSubagentHistory)(),
   );
-  const agents = listed.slice(0, ALL_AGENTS_LIMIT).map(toListedBackendAgent);
-  return listed.length > ALL_AGENTS_LIMIT
-    ? { agents, truncated: true }
-    : { agents };
+  return { agents: agents.filter((agent) => statusFilter.has(agent.status)) };
 }

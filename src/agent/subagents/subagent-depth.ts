@@ -2,7 +2,7 @@
 // one. Agent is attached below MAX_SUBAGENT_DEPTH, so a root's child may launch
 // one more layer and that grandchild is a leaf. Every delegated subagent gets
 // SendAgentMessage so it can reach its parent without shelling out to the CLI;
-// children that may launch agents also get ListAgents to find them again.
+// children that may launch agents also get ListSubagents to find them again.
 
 import { getRuntimeContext } from "@/runtime-context";
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
@@ -39,6 +39,6 @@ export function resolveSubagentHarnessTools(
   const fullCapability =
     type === "general-purpose" || config.allowedTools === "all";
   return fullCapability && canLaunchSubagentsAtDepth(childDepth)
-    ? ["SendAgentMessage", "Agent", "ListAgents"]
+    ? ["SendAgentMessage", "Agent", "ListSubagents"]
     : ["SendAgentMessage"];
 }
