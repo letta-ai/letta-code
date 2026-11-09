@@ -5,6 +5,15 @@
       "type": "boolean",
       "default": true,
       "description": "true (default): agents this conversation launched. false: all agents you can access, like `letta agents list`."
+    },
+    "status": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["running", "completed", "failed", "stopped"]
+      },
+      "minItems": 1,
+      "description": "Only list agents with these statuses. Omit for all. Requires subagents_only: true."
     }
   },
   "additionalProperties": false,
