@@ -1,4 +1,4 @@
-import { getSubagents } from "@/agent/subagent-state.js";
+import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
@@ -194,6 +194,7 @@ export async function task_stop(
       } catch (error) {
         return { killed: false, output: getErrorMessage(error) };
       }
+      updateSubagent(task.subagentId, { stoppedByCaller: true });
       task.abortController.abort(
         remoteExternalStopped ? REMOTE_EXTERNAL_WORKER_STOPPED : undefined,
       );

@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "scope": {
+      "type": "string",
+      "enum": ["subagents", "all"],
+      "description": "subagents (default): agents this conversation launched. all: also this agent's other recent conversations."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -335,6 +335,10 @@ export function spawnBackgroundSubagentTask(
     actingUserId,
   };
   backgroundTasks.set(taskId, bgTask);
+  updateSubagent(subagentId, {
+    taskId,
+    ...(environment?.trim() ? { computer: environment.trim() } : {}),
+  });
   // Register the abort trigger for interruptActiveSubagents (fire-and-forget).
   registerSubagentAbortHook(
     subagentId,
