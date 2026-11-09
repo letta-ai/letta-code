@@ -812,6 +812,9 @@ function getDefaultDecision(
     "TaskGet",
     "TaskList",
     "TaskUpdate",
+    // Reads this session's subagent rows and, for scope "all", this agent's
+    // own conversation list.
+    "ListAgents",
     "read_artifact_file",
     "write_artifact_file",
     "Wake",

@@ -80,6 +80,12 @@ export interface SubagentState {
   published?: boolean;
   model?: string;
   startTime: number;
+  /** Background task ID from the Agent receipt; TaskStop takes it. */
+  taskId?: string;
+  /** Computer the child was launched on, when not this one. */
+  computer?: string;
+  /** Set by TaskStop so the failed outcome reads as a deliberate stop. */
+  stoppedByCaller?: boolean;
   toolCallId?: string; // Links this subagent to its parent Task tool call
   isBackground?: boolean; // True if running in background (fire-and-forget)
   /** False when the entry is presentation-only and must not retain the parent runtime. */
@@ -255,6 +261,38 @@ function armCompletedSubagentCleanup(id: string): void {
 let subagentCounter = 0;
 
 // ============================================================================
+// Session history
+// ============================================================================
+
+/** A subagent row as last seen, kept after the live store drops it. */
+export interface SubagentHistoryEntry {
+  agent: SubagentState;
+  lastActivityMs: number;
+}
+
+const MAX_SUBAGENT_HISTORY = 200;
+// The live store forgets finished rows within seconds so the TUI stays tidy;
+// ListAgents needs every child launched this session, so keep a bounded copy.
+const subagentHistory = new Map<string, SubagentHistoryEntry>();
+
+function putAgent(id: string, agent: SubagentState): void {
+  store.agents.set(id, agent);
+  if (
+    !subagentHistory.has(id) &&
+    subagentHistory.size >= MAX_SUBAGENT_HISTORY
+  ) {
+    const oldest = subagentHistory.keys().next().value;
+    if (oldest !== undefined) subagentHistory.delete(oldest);
+  }
+  subagentHistory.set(id, { agent, lastActivityMs: Date.now() });
+}
+
+/** Every subagent row seen this session, oldest launch first. */
+export function getSubagentHistory(): SubagentHistoryEntry[] {
+  return Array.from(subagentHistory.values());
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -324,7 +362,7 @@ export function registerSubagent(
   };
 
   clearCompletedSubagentCleanup(id);
-  store.agents.set(id, agent);
+  putAgent(id, agent);
   notifyListeners();
 }
 
@@ -359,7 +397,7 @@ export function updateSubagent(
 
   // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
   } else {
@@ -395,7 +433,7 @@ export function addToolCall(
       agent.toolCalls.length + 1,
     ),
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   notifyListeners();
 }
 
@@ -414,7 +452,7 @@ export function addProgressText(
   const previous = agent.progressTexts?.at(-1);
   if (!excerpt || previous?.text === excerpt) return;
   const count = (agent.progressTextCount ?? 0) + 1;
-  store.agents.set(subagentId, {
+  putAgent(subagentId, {
     ...agent,
     progressTexts: [
       ...(agent.progressTexts ?? []),
@@ -454,7 +492,7 @@ export function completeSubagent(
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
 }
@@ -623,6 +661,7 @@ export function clearAllSubagents(): void {
   }
   for (const id of store.agents.keys()) clearSubagentEvents(id);
   store.agents.clear();
+  subagentHistory.clear();
   notifyListeners();
 }
 
@@ -690,7 +729,7 @@ export function interruptActiveSubagents(
         // re-marks stopFailed only if this cancel fails too.
         stopFailed: undefined,
       };
-      store.agents.set(id, updatedAgent);
+      putAgent(id, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
     }
@@ -729,7 +768,7 @@ export function interruptStopFailedSubagents(
         : {}),
       stopFailed: undefined,
     };
-    store.agents.set(id, updatedAgent);
+    putAgent(id, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);
   }

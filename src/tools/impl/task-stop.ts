@@ -1,4 +1,4 @@
-import { getSubagents } from "@/agent/subagent-state.js";
+import { getSubagents, updateSubagent } from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
 import { getErrorMessage } from "@/utils/error";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
@@ -94,6 +94,7 @@ export async function task_stop(
         remote = await cancelRemoteRun(task.subagentId);
       }
       if (remote && !remote.killed) return remote;
+      updateSubagent(task.subagentId, { stoppedByCaller: true });
       task.abortController.abort(
         remoteExternalStopped ? REMOTE_EXTERNAL_WORKER_STOPPED : undefined,
       );
