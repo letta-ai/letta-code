@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, setSystemTime, test } from "bun:test";
 import {
   clearAllSubagents,
   clearCompletedSubagents,
@@ -31,15 +31,10 @@ function launch(
 
 beforeEach(() => clearAllSubagents());
 afterEach(() => {
+  setSystemTime();
   backgroundTasks.clear();
   clearAllSubagents();
 });
-
-const FINISHED: ("completed" | "failed" | "stopped")[] = [
-  "completed",
-  "failed",
-  "stopped",
-];
 
 const EPHEMERAL_CONV = "conv-66666666-6666-4666-8666-666666666666";
 
@@ -95,7 +90,7 @@ test("lists a background Letta subagent and an external worker with their addres
   expect(external).not.toHaveProperty("conversation_id");
 });
 
-test("keeps finished agents after the live store drops them and reports how they ended", async () => {
+test("keeps finished agents after the live store drops them as idle, with a failed run's error", async () => {
   for (const id of ["done", "broken", "interrupted", "stopped"]) {
     launch(id, "general-purpose", id);
     updateSubagent(id, {
@@ -115,19 +110,25 @@ test("keeps finished agents after the live store drops them and reports how they
   clearCompletedSubagents();
 
   const byName = Object.fromEntries(
-    (await list_subagents({ status: FINISHED }, { scope })).agents.map((a) => [
+    (await list_subagents({ status: ["idle"] }, { scope })).agents.map((a) => [
       a.name,
       a,
     ]),
   );
-  expect(byName.done?.status).toBe("completed");
+  expect(Object.keys(byName).sort()).toEqual([
+    "broken",
+    "done",
+    "interrupted",
+    "stopped",
+  ]);
+  expect(byName.done?.status).toBe("idle");
+  expect(byName.done).not.toHaveProperty("error");
   expect(byName.broken).toMatchObject({
-    status: "failed",
+    status: "idle",
     error: "model error",
   });
-  expect(byName.interrupted?.status).toBe("stopped");
-  expect(byName.stopped?.status).toBe("stopped");
-  expect(byName.stopped).not.toHaveProperty("error");
+  expect(byName.interrupted?.status).toBe("idle");
+  expect(byName.stopped?.status).toBe("idle");
 });
 
 test("a follow-up send to a finished child shows as one row with the latest status", async () => {
@@ -171,13 +172,13 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
 
   completeSubagent("eph", { success: true });
   clearCompletedSubagents();
-  const finished = (await list_subagents({ status: FINISHED }, { scope }))
+  const finished = (await list_subagents({ status: ["idle"] }, { scope }))
     .agents;
   expect(finished).toHaveLength(1);
   expect(finished[0]).toMatchObject({
     agent_id: null,
     conversation_id: EPHEMERAL_CONV,
-    status: "completed",
+    status: "idle",
   });
 });
 
@@ -237,12 +238,11 @@ test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", as
 
   expect(await task_stop({ task_id: row.task_id })).toEqual({ killed: true });
   expect(abortController.signal.aborted).toBe(true);
-  // The aborted run settles as a failure; the row reads as a deliberate stop.
+  // The aborted run settles and the row goes idle.
   completeSubagent("eph", { success: false, error: "aborted" });
   expect(
-    (await list_subagents({ status: ["stopped"] }, { scope })).agents[0]
-      ?.status,
-  ).toBe("stopped");
+    (await list_subagents({ status: ["idle"] }, { scope })).agents[0]?.status,
+  ).toBe("idle");
 });
 
 test("omits other conversations' children and memory workers", async () => {
@@ -257,7 +257,32 @@ test("omits other conversations' children and memory workers", async () => {
   expect(agents.map((a) => a.name)).toEqual(["mine"]);
 });
 
-/** One child per reported status. */
+test("lists the most recently active agent first, even if it started earlier", async () => {
+  setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  launch("older", "general-purpose", "older");
+  setSystemTime(new Date("2026-01-01T00:01:00Z"));
+  launch("newer", "general-purpose", "newer");
+  setSystemTime(new Date("2026-01-01T00:02:00Z"));
+  updateSubagent("older", { taskId: "task_older" });
+
+  const { agents } = await list_subagents({}, { scope });
+  expect(agents.map((a) => a.name)).toEqual(["older", "newer"]);
+  expect(agents[0]?.started_at).toBe("2026-01-01T00:00:00.000Z");
+  expect(agents[0]?.last_activity_at).toBe("2026-01-01T00:02:00.000Z");
+});
+
+test("breaks last-activity ties by the newest start", async () => {
+  setSystemTime(new Date("2026-01-01T00:00:00Z"));
+  launch("older", "general-purpose", "older");
+  setSystemTime(new Date("2026-01-01T00:01:00Z"));
+  launch("newer", "general-purpose", "newer");
+  updateSubagent("older", { taskId: "task_older" });
+
+  const { agents } = await list_subagents({}, { scope });
+  expect(agents.map((a) => a.name)).toEqual(["newer", "older"]);
+});
+
+/** One running child and one finished child per way of ending. */
 function launchOnePerStatus() {
   for (const id of ["run", "done", "broken", "halted"]) {
     launch(id, "general-purpose", id);
@@ -283,13 +308,11 @@ test("status filters to running agents", async () => {
   ]);
 });
 
-test("status accepts several values", async () => {
+test("idle lists completed, failed and stopped agents", async () => {
   launchOnePerStatus();
-  const { agents } = await list_subagents(
-    { status: ["stopped", "failed"] },
-    { scope },
-  );
-  expect(names(agents)).toEqual(["broken", "halted"]);
+  const { agents } = await list_subagents({ status: ["idle"] }, { scope });
+  expect(names(agents)).toEqual(["broken", "done", "halted"]);
+  expect(agents.every((a) => a.status === "idle")).toBe(true);
 });
 
 test("omitting status lists only running agents", async () => {
@@ -300,10 +323,10 @@ test("omitting status lists only running agents", async () => {
   ]);
 });
 
-test("passing all four statuses lists every agent", async () => {
+test("passing both statuses lists every agent", async () => {
   launchOnePerStatus();
   const { agents } = await list_subagents(
-    { status: ["running", "completed", "failed", "stopped"] },
+    { status: ["running", "idle"] },
     { scope },
   );
   expect(names(agents)).toEqual(["broken", "done", "halted", "run"]);
@@ -325,7 +348,7 @@ test("status filters after merging rows, on the latest status", async () => {
   });
 
   expect(
-    (await list_subagents({ status: ["completed"] }, { scope })).agents,
+    (await list_subagents({ status: ["idle"] }, { scope })).agents,
   ).toEqual([]);
   expect(
     (await list_subagents({ status: ["running"] }, { scope })).agents,
@@ -344,17 +367,18 @@ test("status filters an agentless row the same way", async () => {
     }),
   ]);
   expect(
-    (await list_subagents({ status: ["stopped"] }, { scope })).agents,
+    (await list_subagents({ status: ["idle"] }, { scope })).agents,
   ).toEqual([]);
 
   updateSubagent("eph", { stoppedByCaller: true });
   completeSubagent("eph", { success: false, error: "aborted" });
   expect(
-    (await list_subagents({ status: ["stopped"] }, { scope })).agents,
+    (await list_subagents({ status: ["idle"] }, { scope })).agents,
   ).toEqual([
     expect.objectContaining({
       agent_id: null,
       conversation_id: EPHEMERAL_CONV,
+      status: "idle",
     }),
   ]);
   expect(
@@ -364,19 +388,15 @@ test("status filters an agentless row the same way", async () => {
 
 test("an unknown status errors and lists the valid values", async () => {
   await expect(
-    list_subagents({ status: ["running", "idle"] as never }, { scope }),
-  ).rejects.toThrow(
-    'Unknown status "idle"; valid values: running, completed, failed, stopped',
-  );
+    list_subagents({ status: ["running", "completed"] as never }, { scope }),
+  ).rejects.toThrow('Unknown status "completed"; valid values: running, idle');
   await expect(
     list_subagents({ status: "running" as never }, { scope }),
-  ).rejects.toThrow(
-    "status must be an array of: running, completed, failed, stopped",
-  );
+  ).rejects.toThrow("status must be an array of: running, idle");
 });
 
 test("an empty status array errors instead of matching nothing", async () => {
   await expect(list_subagents({ status: [] }, { scope })).rejects.toThrow(
-    "status must list at least one of: running, completed, failed, stopped. Omit it to list running agents.",
+    "status must list at least one of: running, idle. Omit it to list running agents.",
   );
 });

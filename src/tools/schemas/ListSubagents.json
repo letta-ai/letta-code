@@ -5,11 +5,11 @@
       "type": "array",
       "items": {
         "type": "string",
-        "enum": ["running", "completed", "failed", "stopped"]
+        "enum": ["running", "idle"]
       },
       "minItems": 1,
       "default": ["running"],
-      "description": "Only list agents with these statuses. Defaults to [\"running\"]; pass every status you want (e.g. [\"completed\", \"failed\", \"stopped\"]) to see finished ones."
+      "description": "Only list agents with these statuses. Defaults to [\"running\"]; pass [\"idle\"] or [\"running\", \"idle\"] to see finished ones."
     }
   },
   "additionalProperties": false,
