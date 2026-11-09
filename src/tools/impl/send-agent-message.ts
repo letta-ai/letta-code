@@ -1,12 +1,15 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   resolveChildSubagent,
   trackChildSend,
 } from "@/agent/subagents/child-send-tracking";
+import { resolveSubagentLauncher } from "@/agent/subagents/subagent-launcher";
 import { type Backend, getBackend } from "@/backend";
 import {
   buildAgentMessageRecoveryCommands,
   buildAgentSendContent,
+  buildAgentSendReminder,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
   validateAddress,
@@ -70,6 +73,41 @@ interface SendAgentMessageDeps {
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
   sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
   workerEnv?: ExternalWorkerResumeEnvDependencies;
+  spawnLocal?: (command: string, args: string[]) => void;
+}
+
+/** CLI args that deliver a message on the local backend. */
+export function buildLocalSendArgs(
+  destination: { agentId?: string; conversationId: string },
+  message: string,
+): string[] {
+  return [
+    "--backend",
+    "local",
+    "-p",
+    ...(destination.conversationId === "default" && destination.agentId
+      ? ["--agent", destination.agentId]
+      : []),
+    "--conv",
+    destination.conversationId,
+    message,
+  ];
+}
+
+function spawnDetached(command: string, args: string[]): void {
+  const child = spawn(command, args, {
+    cwd: getCurrentWorkingDirectory(),
+    env: getRuntimeExecutionEnv(
+      process.env,
+      getRuntimeContext()?.executionSettings,
+    ),
+    detached: true,
+    stdio: "ignore",
+  });
+  child.on("error", (error) =>
+    debugLog("SendAgentMessage", "Local send failed to start", error),
+  );
+  child.unref();
 }
 
 const FULL_CONVERSATION_ID =
@@ -470,9 +508,6 @@ export async function send_agent_message(
 
     checkConversationId(args.conversation_id);
     const backend = deps.backend ?? getBackend();
-    if (!backend.capabilities.environmentRouting) {
-      throw new Error("SendAgentMessage requires a Cloud backend.");
-    }
     const computer = normalizeAgentMessageComputer(args.computer);
     const actingUserId = getRuntimeActingUserAttribution();
     if (!actingUserId) {
@@ -505,6 +540,22 @@ export async function send_agent_message(
     );
     signal.throwIfAborted();
     submissionAttempted = true;
+    if (!backend.capabilities.environmentRouting) {
+      const launcher = resolveSubagentLauncher(
+        buildLocalSendArgs(
+          destination,
+          buildAgentSendReminder(sender, true) + args.message,
+        ),
+      );
+      (deps.spawnLocal ?? spawnDetached)(launcher.command, launcher.args);
+      return {
+        content: JSON.stringify({
+          status: "spawned",
+          conversation_id: destination.conversationId,
+        }),
+        status: "success",
+      };
+    }
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
         ...destination,

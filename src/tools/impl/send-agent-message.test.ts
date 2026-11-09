@@ -9,7 +9,7 @@ import {
   message,
   TARGET_CONV,
 } from "@/test-utils/send-agent-message-fixture";
-import { send_agent_message } from "./send-agent-message";
+import { buildLocalSendArgs, send_agent_message } from "./send-agent-message";
 
 const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLAUDE_AGENT_ID = `claude_${CLAUDE_SESSION_ID}`;
@@ -753,14 +753,60 @@ test("a typed pre-admission shutdown 503 is a failed submission, not unknown acc
   });
 });
 
-test("local backend and cancellation do not dispatch or fall back to execution", async () => {
+test("local backend spawns a headless local send", async () => {
   const f = fixture();
   f.backend.capabilities.environmentRouting = false;
+  const spawned: string[][] = [];
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, {
+      ...f,
+      spawnLocal: (_command, args) => {
+        spawned.push(args);
+      },
+    }),
+  );
+  expect(JSON.parse(result.content)).toEqual({
+    status: "spawned",
+    conversation_id: TARGET_CONV,
+  });
+  const args = spawned[0] ?? [];
+  expect(args.slice(-6, -1)).toEqual([
+    "--backend",
+    "local",
+    "-p",
+    "--conv",
+    TARGET_CONV,
+  ]);
+  expect(args.at(-1)).toContain(`This message is from agent ${caller.agentId}`);
+  expect(args.at(-1)).toEndWith(message.message);
+  expect(f.submissions).toHaveLength(0);
+  const localConv = "local-conv-44444444-4444-4444-8444-444444444444";
+  await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { conversation_id: localConv, message: "hi" },
+      { ...f, spawnLocal: (_command, args) => void spawned.push(args) },
+    ),
+  );
+  expect(spawned[1]).toContain(localConv);
   expect(
-    (await runWithRuntimeContext(caller, () => send_agent_message(message, f)))
-      .status,
-  ).toBe("error");
-  f.backend.capabilities.environmentRouting = true;
+    buildLocalSendArgs(
+      { agentId: "agent-local-1", conversationId: "default" },
+      "hi",
+    ),
+  ).toEqual([
+    "--backend",
+    "local",
+    "-p",
+    "--agent",
+    "agent-local-1",
+    "--conv",
+    "default",
+    "hi",
+  ]);
+});
+
+test("cancellation does not dispatch or fall back to execution", async () => {
+  const f = fixture();
   const controller = new AbortController();
   controller.abort();
   expect(
