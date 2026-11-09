@@ -347,6 +347,10 @@ jobs:
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: node scripts/smoke-image-worker.mjs
 
+      - name: Verify packed image-resize export from CommonJS
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node scripts/smoke-image-resize-export.mjs
+
       - name: MCP OAuth NodeNext declaration smoke test
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: |

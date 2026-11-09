@@ -14,6 +14,8 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "image-resize.js",
+    "image-resize.js.map",
     "cursor-worker.js",
     "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
@@ -136,6 +138,11 @@
       "browser": "./dist/channels-telegram.js",
       "import": "./dist/channels-telegram.js",
       "default": "./dist/channels-telegram.js"
+    },
+    "./image-resize": {
+      "types": "./dist/types/image-resize-public.d.ts",
+      "import": "./image-resize.js",
+      "default": "./image-resize.js"
     }
   },
   "repository": {
@@ -269,6 +276,9 @@
       ],
       "channels/telegram": [
         "./dist/types/channels-telegram.d.ts"
+      ],
+      "image-resize": [
+        "./dist/types/image-resize-public.d.ts"
       ],
       "protocol": [
         "./dist/types/types/protocol.d.ts"
