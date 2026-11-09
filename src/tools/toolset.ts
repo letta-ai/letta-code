@@ -25,6 +25,7 @@ import {
 import type { PermissionModeState } from "./permission-mode-state";
 import { isRemovedToolName } from "./removed-tools";
 import { TOOL_DEFINITIONS, type ToolName } from "./tool-definitions";
+import { mergeClientToolsetFields } from "./tool-policy";
 import type { ToolsetName, ToolsetPreference } from "./toolset-types";
 
 export type { ToolsetName, ToolsetPreference } from "./toolset-types";
@@ -193,7 +194,8 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
   clientToolset?: ClientToolsetConfig;
   exclude?: ToolName[];
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  /** Connection whose copy wins when two connections register one tool name. */
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   modContext?: ModContext;
@@ -211,7 +213,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
     clientToolset,
     exclude,
     clientToolAllowlist: inputToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,
@@ -267,7 +269,7 @@ export async function prepareToolExecutionContextForResolvedTarget(params: {
       exclude,
       include: includedToolNames,
       clientToolAllowlist,
-      externalToolScopeIds,
+      externalToolOwnerConnectionId,
       workingDirectory,
       permissionModeState,
       modContext: scopedModContext,
@@ -304,7 +306,8 @@ export async function prepareToolExecutionContextForScope(params: {
   exclude?: ToolName[];
   clientToolset?: ClientToolsetConfig;
   clientToolAllowlist?: string[];
-  externalToolScopeIds?: string[];
+  /** Connection whose copy wins when two connections register one tool name. */
+  externalToolOwnerConnectionId?: string;
   workingDirectory?: string;
   permissionModeState?: PermissionModeState;
   skillsDirectory?: string;
@@ -332,7 +335,7 @@ export async function prepareToolExecutionContextForScope(params: {
     exclude,
     clientToolset: requestClientToolset,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     skillsDirectory,
@@ -346,9 +349,12 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
   } = params;
 
+  // Per field: a base-only request keeps the saved include, and vice versa.
   const clientToolset: ClientToolsetConfig | undefined =
-    requestClientToolset ??
-    getStoredClientPreferences(agentId, conversationId).toolset;
+    mergeClientToolsetFields(
+      requestClientToolset,
+      getStoredClientPreferences(agentId, conversationId).toolset,
+    );
   const backend = getBackend();
   const agent = agentId
     ? ((cachedAgent ??
@@ -424,7 +430,7 @@ export async function prepareToolExecutionContextForScope(params: {
     clientToolset,
     exclude,
     clientToolAllowlist,
-    externalToolScopeIds,
+    externalToolOwnerConnectionId,
     workingDirectory,
     permissionModeState,
     modContext,

@@ -528,6 +528,7 @@ export async function handleRuntimeStartCommand(
       connectionId,
       runtimeScope,
       parsed.external_tools ?? [],
+      parsed.tool_policy,
     );
 
     if (parsed.wait_for_replay) {

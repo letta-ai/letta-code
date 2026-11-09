@@ -119,7 +119,6 @@ describe("app-server protocol export", () => {
         type: "external_tool_call_request",
         request_id: "req",
         runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-        scope_id: "scope-1",
         tool_call_id: "call-1",
         tool_name: "lookup_ticket",
         input: { id: "ABC-123" },
