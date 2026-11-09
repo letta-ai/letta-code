@@ -8,11 +8,11 @@
     },
     "agent_id": {
       "type": "string",
-      "description": "The Letta agent ID. Optional: only when creating a new conversation or interacting with the default conversation."
+      "description": "The Letta agent ID. Only needed to start a new conversation with that agent (conversation_id: null) or to reach its default conversation (conversation_id: \"default\")."
     },
     "conversation_id": {
       "type": ["string", "null"],
-      "description": "The session to interact with (supports external coding agents and Letta agents). Set to null to message the parent if a subagent."
+      "description": "The conversation to send to, such as the Conversation ID returned by Agent (Letta agents and external coding agents). Use null to start a new conversation with agent_id or, as a subagent, to message your parent."
     },
     "computer": {
       "type": ["string", "null"],
