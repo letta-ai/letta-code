@@ -529,6 +529,7 @@ Numeric variables such as timeouts, token budgets, and retry counts accept scien
 | `VERTEX_REGION_CLAUDE_5_SONNET` | Override region for Claude Sonnet 5 when using Google Cloud's Agent Platform. Added in v2.1.197 |
 | `VERTEX_REGION_CLAUDE_FABLE_5` | Override region for Claude Fable 5 when using Google Cloud's Agent Platform. Added in v2.1.170 |
 | `VERTEX_REGION_CLAUDE_FABLE_5_1` | Override region for Claude Fable 5.1 when using Google Cloud's Agent Platform. Added in v2.1.257 |
+| `VERTEX_REGION_CLAUDE_FABLE_5_2` | Override region for Claude Fable 5.2 when using Google Cloud's Agent Platform. Added in v2.1.321 |
 | `VERTEX_REGION_CLAUDE_HAIKU_4_5` | Override region for Claude Haiku 4.5 when using Google Cloud's Agent Platform |
 | `VERTEX_REGION_CLAUDE_HAIKU_5_5` | Override region for Claude Haiku 5.5 when using Google Cloud's Agent Platform. Added in v2.1.293 |
 
