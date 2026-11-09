@@ -1089,7 +1089,7 @@ For `PreToolUse` and `PostToolUse` hooks, the stop applies even when the tool ca
 
 #### Emit terminal notifications
 
-Hooks run without a controlling terminal, so writing escape sequences directly to `/dev/tty` fails. Instead, return the escape sequence in the `terminalSequence` field and Claude Code emits it for you through its own terminal write path. This is race-free, works inside tmux and GNU screen, and works on Windows where there is no `/dev/tty`.
+Hooks run without a controlling terminal, so writing escape sequences directly to `/dev/tty` fails. Instead, return the escape sequence in the `terminalSequence` field and Claude Code emits it for you through its own terminal write path. This is race-free and works on Windows where there is no `/dev/tty`.
 
 The field accepts a string of one or more allowlisted escape sequences:
 
@@ -1101,12 +1101,13 @@ The field accepts a string of one or more allowlisted escape sequences:
 
 Sequences may be terminated with BEL or with ST. Anything outside the allowlist, including CSI cursor and color sequences, OSC palette sequences, OSC 8 hyperlinks, OSC 52 clipboard writes, and OSC 1337, is rejected and the field is ignored.
 
-Claude Code writes the sequence itself when it processes your hook's output, so the field works on events that discard `systemMessage` and `continue`, such as `Notification` and `StopFailure`. It has two limits:
+Claude Code writes the sequence itself when it processes your hook's output, so the field works on events that discard `systemMessage` and `continue`, such as `Notification` and `StopFailure`. It has some limits:
 
-* Claude Code writes the sequence only in an interactive session, and only while its interface is on screen. In non-interactive mode with the `-p` flag and in the Agent SDK, it ignores the field.
+* Claude Code writes the sequence only in an interactive session, and only while its interface is open. In non-interactive mode with the `-p` flag and in the Agent SDK, it ignores the field.
+* The field works only from a hook that doesn't run in the [background](#run-hooks-in-the-background), so leave `async` and `asyncRewake` off.
 * A `WorktreeCreate` command hook can't return JSON, because Claude Code reads its stdout as the worktree path. An HTTP `WorktreeCreate` hook returns JSON and can include the field.
 
-The example below fires a desktop notification from a `Notification` hook. The escape sequence is built with `printf` octal escapes so the control bytes never appear on the shell command line, and `jq -n --arg` builds the JSON output so quotes, backslashes, and newlines in the notification message are escaped correctly:
+If you use tmux or GNU screen, complete [the setup for them](#get-terminal-notifications-inside-tmux-or-gnu-screen) first. The example below fires a desktop notification from a `Notification` hook in a terminal that reads OSC `777`, such as Ghostty or Warp. The script's `jq -nc --arg` call builds the JSON output and escapes any quotes, backslashes, and newlines in the notification message:
 
 ```bash theme={null}
 #!/bin/bash
@@ -1119,6 +1120,13 @@ jq -nc --arg seq "$seq" '{terminalSequence: $seq}'
 ```
 
 The `{ "terminalSequence": "..." }` shape is the same from any shell or language.
+
+#### Get terminal notifications inside tmux or GNU screen
+
+When Claude Code runs inside tmux or GNU screen, OSC sequences need the following to reach your terminal application:
+
+* **tmux 3.3 or later**: add `set -g allow-passthrough on` to `~/.tmux.conf`, then run `tmux source-file ~/.tmux.conf` from a shell. The option applies to every program in those panes, not only Claude Code. With `on`, only panes tmux is showing can send them. To let other panes in a session you're attached to send them too, use `all` in place of `on`, on tmux 3.4 or later.
+* **GNU screen**: keep Claude Code's window showing in screen, because sequences from a background window don't reach your terminal application
 
 #### Add context for Claude
 

@@ -3389,11 +3389,13 @@ type MonitorInput = {
 
 Runs a background source and delivers each event to Claude so it can react without polling: `command` runs a script and emits one event per stdout line, and `ws` opens a WebSocket and emits one event per text frame. Provide exactly one of `command` or `ws`. The `ws` source requires Claude Code v2.1.195 or later.
 
-`timeout_ms` is the watch's deadline in milliseconds. It defaults to 300000 and accepts values up to 3600000. The effective deadline is at most 1800000, which is 30 minutes, so a larger accepted value is shortened to that. At the deadline the watch ends and Claude receives one notice so it can start a new watch if it still needs one.
+`timeout_ms` is the watch's deadline in milliseconds:
 
-The exported type marks `timeout_ms` as required because the schema fills in the default; a call that omits it validates.
+* **Default and limits**: it defaults to 300000 and accepts values up to 3600000. The effective deadline is at most 1800000, which is 30 minutes, so a larger accepted value is shortened to that
+* **At the deadline**: the watch ends and Claude receives one notice so it can start a new watch if it still needs one
+* **Required in the type**: the exported type marks `timeout_ms` as required because the schema fills in the default; a call that omits it validates
 
-When Monitor runs a command, it follows the same permission rules as Bash; a WebSocket watch prompts for approval separately. See the [Monitor tool reference](https://code.claude.com/docs/en/tools-reference.md#monitor-tool) for behavior and provider availability.
+When Monitor runs a command, it follows the same permission rules as Bash. See the [Monitor tool reference](https://code.claude.com/docs/en/tools-reference.md#monitor-tool) for WebSocket permissions, behavior, and provider availability.
 
 ### TaskOutput
 

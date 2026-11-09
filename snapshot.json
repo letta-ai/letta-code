@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.321:docs:abcadcb9e2f0fdcb95f05d96021a451c1a32831d06aac72204b43994960738e5:runtime:303821ed93660f9c18ac7c612915b2dc54f758916449abf3b09ec8eee43c327f",
+  "candidate_id": "claude@2.1.321:docs:1456dcc13ab39d6b0c075e71b5d3581f0e768f8a1a41f3610ef56fbe7edae4ea:runtime:303821ed93660f9c18ac7c612915b2dc54f758916449abf3b09ec8eee43c327f",
   "package_version": "2.1.321",
   "npm_integrity": "sha512-g9IMBKV0t092/KXM1iHE3LrsPzDaOqeYO6nHtXkztwP42Rf/w+pg/G4h5QVU51p3Nnkf/RyR0xi3V/1GEqmRsA==",
   "npm_published_at": "2026-11-09T19:02:47.641Z",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "fe04a609e137986ef60ff7fc649beebc563902b81150b81151f5b6092e6c4e54",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-11-09T20:18:21.997Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
@@ -134,7 +134,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/python.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/python.md",
-        "hash": "9f3b472f55331fb37ca576943b9a3d3a0ab10754e5bc5f5d15cd6a34bf02d26e",
+        "hash": "569c99cee9a3b178ee109a38e90841ac42fa462d886bfac2230235588bda1c13",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/python.md"
       },
@@ -218,7 +218,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "e59c1693982cd172828cb43d435d2cc2966302e2730305a632e9e697648da9a4",
+        "hash": "246583155e108f982f079635735533453ada1632b8979f6b4f5bde980e05c81c",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -296,7 +296,7 @@
       },
       "https://code.claude.com/docs/en/changelog.md": {
         "url": "https://code.claude.com/docs/en/changelog.md",
-        "hash": "a058698343515f68d9e8bd38f9424264a7560514f420392a30aa2f4f2ff5d9dc",
+        "hash": "b1059d8e42dd45a1c6176ebe2690741ce17057f244f3e19de9533ab2c1637304",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/changelog.md"
       },
@@ -398,7 +398,7 @@
       },
       "https://code.claude.com/docs/en/cli-reference.md": {
         "url": "https://code.claude.com/docs/en/cli-reference.md",
-        "hash": "1d7b735d97fa016124d3fd336223c8c17d463ea4a7dd1dfda48a772d8ae0073a",
+        "hash": "f622315862db657768e66ba01d7d29ac205c2d8e194ede7971457d6c2d05072d",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/cli-reference.md"
       },
@@ -452,7 +452,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "de2453f1ab84d75480ccaff768eb4a4511735d4efd3b0ce079b62d0d1ea182cf",
+        "hash": "4d849fc51819d0250405bfba137ca81c804ea0875a875596cd4dc2788862eac2",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -560,7 +560,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "0a275ff953ad44da402055e6add914e5da83d10ec11892742da8a31cc75c3ad2",
+        "hash": "31fea7e0c7158119ccdcff666f6f958cf0ad6cd68cbc769cd7b42e3cad72abf1",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -662,7 +662,7 @@
       },
       "https://code.claude.com/docs/en/hooks.md": {
         "url": "https://code.claude.com/docs/en/hooks.md",
-        "hash": "302eb7b421958a10745425535de466903450dc2f4ee601ab182d54e1f747fa56",
+        "hash": "9d41fc7bf6586da235e2bd156e9051adb9a790cd9c5d6ecb64082a6d4283ce8f",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/hooks.md"
       },
@@ -806,7 +806,7 @@
       },
       "https://code.claude.com/docs/en/permissions.md": {
         "url": "https://code.claude.com/docs/en/permissions.md",
-        "hash": "70a451a0e032374fd76562607b8b5cdffd8896c2ff52b69e90c644118df42384",
+        "hash": "e8e53655642e0f416e7edf6d8498e646b3ac424bda242b85dc01cabd7287e002",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/permissions.md"
       },
@@ -1124,13 +1124,13 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "426f5cdf02b12737de8a4636683db5a8c643f58ab1c0c359731d116fa1a081ae",
+        "hash": "d39b7b5344b17b39ba64a6d2e10fe6125ec64fbc25ce13c89f5482f788865069",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "448f49ae3a98bdf9510dd6b2f609ff34bf1d2811e25e949d3b471dcd635c7433",
+        "hash": "8edbc5d191ff7339f15b6e3893edcb2772c68007e3150c106f7306000013060b",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1160,7 +1160,7 @@
       },
       "https://code.claude.com/docs/en/sub-agents.md": {
         "url": "https://code.claude.com/docs/en/sub-agents.md",
-        "hash": "db8a532d4c04d8cec27622b3afd68f86f8d96efa121f4b498dcb430e2bc543b8",
+        "hash": "47e8c8b6739a522497dd10349af0c8e9a9f56898049017aafa44f0bfeb1047b6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/sub-agents.md"
       },
@@ -1178,7 +1178,7 @@
       },
       "https://code.claude.com/docs/en/tools-reference.md": {
         "url": "https://code.claude.com/docs/en/tools-reference.md",
-        "hash": "026f6372203b928bbf1d8e1707e5ba9d9bc93d835008c1f90a0a94f1d8ca6665",
+        "hash": "0bd9feb89bc2f4cc25af4459f397f5202b04083aeaee89f4ac9e1ee7d857e4e2",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/tools-reference.md"
       },
@@ -1393,7 +1393,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "abcadcb9e2f0fdcb95f05d96021a451c1a32831d06aac72204b43994960738e5"
+    "digest": "1456dcc13ab39d6b0c075e71b5d3581f0e768f8a1a41f3610ef56fbe7edae4ea"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1624,7 +1624,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "Probe task for exercising task tools.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1675,7 +1675,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1686,8 +1686,8 @@
     ],
     "digest": "303821ed93660f9c18ac7c612915b2dc54f758916449abf3b09ec8eee43c327f"
   },
-  "fetched_at": "2026-11-09T20:19:20.846Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/42691629027",
-  "state_commit_parent": "a54e1e5d5c25f8dfaaaabb9907f1d86fefad13f8",
-  "analysis_parent_sha": "a54e1e5d5c25f8dfaaaabb9907f1d86fefad13f8"
+  "fetched_at": "2026-11-09T22:19:01.073Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/42710582894",
+  "state_commit_parent": "51190097d364efc339dc665848a98f66affac8a8",
+  "analysis_parent_sha": "51190097d364efc339dc665848a98f66affac8a8"
 }
