@@ -24,10 +24,6 @@ declare const __USE_MAGICK__: boolean | undefined;
 const useMagick =
   typeof __USE_MAGICK__ !== "undefined" && __USE_MAGICK__ === true;
 
-const magickResizeImageIfNeeded = useMagick
-  ? (await import("@/utils/image-resize.magick.js")).resizeImageIfNeeded
-  : null;
-
 // Thrown when the built worker file is absent from an installed package,
 // which means the installation is incomplete (e.g. a file was removed after
 // install). Callers surface this message to the user and report it.
@@ -70,6 +66,9 @@ function resizeWithSharpWorker(
   return new Promise((resolve, reject) => {
     const workerPath = resolveImageWorkerPath();
     const child = spawn(process.execPath, [workerPath, inputMediaType], {
+      // Electron must execute the worker script in Node mode. Native GLib
+      // diagnostics stay isolated in its stderr pipe. Node and Bun ignore this flag.
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -129,7 +128,12 @@ async function resizeWithConfiguredBackend(
   buffer: Buffer,
   inputMediaType: string,
 ): Promise<ResizeResult> {
-  if (magickResizeImageIfNeeded) {
+  if (useMagick) {
+    // Loaded lazily rather than with top-level await so CommonJS consumers can
+    // require() the package's image-resize entrypoint.
+    const { resizeImageIfNeeded: magickResizeImageIfNeeded } = await import(
+      "@/utils/image-resize.magick.js"
+    );
     return await magickResizeImageIfNeeded(buffer, inputMediaType);
   }
   return await resizeWithSharpWorker(buffer, inputMediaType);

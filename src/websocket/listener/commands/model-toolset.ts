@@ -4,10 +4,9 @@ import {
   getCachedAvailableModels,
 } from "@/agent/available-models";
 import {
+  contextWindowToPreserveForModelSelection,
   getModelInfo,
   models,
-  preservableContextWindow,
-  shouldPreserveContextWindowForModelSelection,
 } from "@/agent/model";
 import {
   updateAgentLLMConfig,
@@ -448,28 +447,12 @@ export async function applyModelUpdateForRuntime(params: {
     agentId,
     conversationId,
   });
-  // Switching to a different model (or a different context-window variant of
-  // the same model, e.g. base <-> 1M dual listings) resets the context window
-  // to the selected catalog entry's preset. Only a tier change within the
-  // same variant preserves the current window — and it preserves by
-  // RE-SENDING the current value explicitly, never by omitting the field:
-  // the server treats an omitted context_window_limit as "re-derive from the
-  // handle" and clamps it to a legacy global default (128k). A current value
-  // that looks like that clamp is not preservable, so poisoned agents heal
-  // to the preset even on same-variant tier changes. See LET-9786.
-  const shouldPreserveContextWindow =
-    shouldPreserveContextWindowForModelSelection({
-      currentModelHandle: currentModelScope.modelHandle,
-      currentLlmConfig: currentModelScope.llmConfig,
-      selectedModelHandle: model.handle,
-      selectedContextWindow,
-    });
-  const preservedContextWindow = shouldPreserveContextWindow
-    ? preservableContextWindow(
-        currentModelScope.llmConfig?.context_window,
-        model.handle,
-      )
-    : undefined;
+  const preservedContextWindow = contextWindowToPreserveForModelSelection({
+    currentModelHandle: currentModelScope.modelHandle,
+    currentLlmConfig: currentModelScope.llmConfig,
+    selectedModelHandle: model.handle,
+    selectedContextWindow,
+  });
   const updateOptions =
     preservedContextWindow !== undefined
       ? { contextWindowOverride: preservedContextWindow }

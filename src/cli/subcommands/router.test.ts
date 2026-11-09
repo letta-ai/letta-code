@@ -210,6 +210,7 @@ describe("subcommand router", () => {
 
       expect(exitCode).toBe(0);
       expect(messages.join("\n")).toContain("letta sandbox upload");
+      expect(messages.join("\n")).toContain("letta sandbox expose <port>");
     } finally {
       console.log = originalLog;
     }

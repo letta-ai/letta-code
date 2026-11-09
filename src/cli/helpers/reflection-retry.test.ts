@@ -11,6 +11,7 @@ import {
   type ReflectionLaunchOptions,
   shouldRunQueuedReflectionLaunch,
 } from "@/cli/helpers/reflection-launcher";
+import * as reflectionRetry from "@/cli/helpers/reflection-retry";
 import {
   isReflectionRetryDeferred,
   recordReflectionIntegrationRetry,
@@ -175,8 +176,23 @@ test("failed integration defers repeated turns and queued launches without consu
 
 test("automatic retries back off, suppress duplicate warnings, and manual success clears the delay", async () => {
   let now = Date.now();
-  const clock = spyOn(Date, "now").mockImplementation(() => now);
-  cleanup.push(() => clock.mockRestore());
+  // Advance only the retry policy clock; file-lock deadlines must keep ticking.
+  const isDeferred = reflectionRetry.isReflectionRetryDeferred;
+  const recordRetry = reflectionRetry.recordReflectionIntegrationRetry;
+  const deferralClock = spyOn(
+    reflectionRetry,
+    "isReflectionRetryDeferred",
+  ).mockImplementation((agentId, trigger) => isDeferred(agentId, trigger, now));
+  const retryClock = spyOn(
+    reflectionRetry,
+    "recordReflectionIntegrationRetry",
+  ).mockImplementation((agentId, integration, success, trigger) =>
+    recordRetry(agentId, integration, success, trigger, now),
+  );
+  cleanup.push(
+    () => deferralClock.mockRestore(),
+    () => retryClock.mockRestore(),
+  );
   const f = await fixture();
   expect((await f.launch()).launched).toBe(true);
   await f.complete();

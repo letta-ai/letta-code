@@ -24,7 +24,7 @@ export interface NotificationScope {
 
 export interface TaskNotification {
   taskId: string;
-  status: "completed" | "failed";
+  status: "completed" | "failed" | "running";
   summary: string;
   result: string;
   outputFile?: string;

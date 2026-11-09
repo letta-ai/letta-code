@@ -131,6 +131,7 @@ afterAll(() => {
 });
 
 const launchArgs = {
+  fork_context: false,
   harness: "letta",
   prompt: "Check routing without executing a child",
   description: "Routing contract",

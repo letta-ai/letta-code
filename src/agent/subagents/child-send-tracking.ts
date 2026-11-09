@@ -9,10 +9,15 @@ import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
 import {
   getEnqueueAgentId,
   getExactSuperRun,
+  listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
-import { waitForAcceptedSuperRun } from "@/headless-super-run-wait";
+import {
+  readConversationRuntimeStatus,
+  waitForAcceptedSuperRun,
+} from "@/headless-super-run-wait";
 import { getErrorMessage } from "@/utils/error";
+import { createRemoteIdleNotifier } from "./remote-turn-wait";
 
 export interface ChildSubagentIdentity {
   name: string;
@@ -72,14 +77,16 @@ export interface TrackChildSendInput {
 function waitForChildRun(
   receipt: EnqueueReceipt,
   signal: AbortSignal,
+  onIdle: (text: string, count: number) => void,
 ): Promise<unknown> {
   const backend = getBackend();
   return waitForAcceptedSuperRun(receipt, signal, {
     exact: getExactSuperRun,
     run: (runId, readSignal) =>
       backend.retrieveRun(runId, { signal: readSignal }),
-    // Only the lifecycle matters here; the reply is never collected.
-    messages: async () => [],
+    messages: listEnqueuedRunMessages,
+    runtimeStatus: readConversationRuntimeStatus,
+    onIdle,
   });
 }
 
@@ -116,10 +123,11 @@ export function trackChildSend(input: TrackChildSendInput): string {
     }),
   });
 
-  void (input.waitForRun ?? waitForChildRun)(
-    receipt,
-    input.signal ?? new AbortController().signal,
-  ).then(
+  const onIdle = createRemoteIdleNotifier(subagentId, parentScope);
+  void (
+    input.waitForRun ??
+    ((receipt, signal) => waitForChildRun(receipt, signal, onIdle))
+  )(receipt, input.signal ?? new AbortController().signal).then(
     () => completeSubagent(subagentId, { success: true }),
     (error) =>
       completeSubagent(subagentId, {

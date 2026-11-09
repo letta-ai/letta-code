@@ -33,6 +33,10 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
+import {
+  findSelfMatchingPgrepPattern,
+  selfMatchingPgrepMessage,
+} from "./self-matching-pgrep.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildShellLaunchers,
@@ -390,6 +394,16 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   if (!run_in_background && commandRunsForegroundSleep(command)) {
     return {
       content: [{ type: "text", text: FOREGROUND_SLEEP_BLOCKED_MESSAGE }],
+      status: "error",
+    };
+  }
+
+  const selfMatchingPattern = findSelfMatchingPgrepPattern(command);
+  if (selfMatchingPattern !== null) {
+    return {
+      content: [
+        { type: "text", text: selfMatchingPgrepMessage(selfMatchingPattern) },
+      ],
       status: "error",
     };
   }

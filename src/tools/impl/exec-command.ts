@@ -82,6 +82,7 @@ interface WriteStdinArgs {
 }
 
 interface ExecCommandResult {
+  status?: "error";
   output: string;
 }
 
@@ -97,6 +98,7 @@ interface ExecSession {
   readOffset: number;
   status: ExecSessionStatus;
   exitCode: number | null;
+  terminationSignal?: string | number | null;
   tty: boolean;
   secrets: Readonly<Record<string, string>>;
   streamScrubbers: {
@@ -298,6 +300,7 @@ function formatExecOutput(params: {
   wallTimeMs: number;
   exitCode: number | null;
   sessionId: string | null;
+  terminationSignal?: string | number | null;
   output: string;
   originalTokenCount: number;
   maxOutputTokens?: number;
@@ -310,6 +313,14 @@ function formatExecOutput(params: {
 
   if (params.exitCode !== null) {
     sections.push(`Process exited with code ${params.exitCode}`);
+  }
+  if (params.exitCode === null && params.sessionId === null) {
+    const signal = params.terminationSignal
+      ? ` (${params.terminationSignal})`
+      : "";
+    sections.push(
+      `Command was terminated${signal}; it may not have completed.`,
+    );
   }
   if (params.sessionId !== null) {
     sections.push(`Process running with session ID ${params.sessionId}`);
@@ -518,12 +529,17 @@ function markSessionFailed(session: ExecSession, detail: string): void {
   scheduleExecSessionCleanup(session.id);
 }
 
-function markSessionClosed(session: ExecSession, code: number | null): void {
+function markSessionClosed(
+  session: ExecSession,
+  code: number | null,
+  signal?: string | number | null,
+): void {
   if (session.status !== "running") return;
   flushSessionStreamScrubbers(session);
   session.status =
     code === 0 && !session.outputWriteFailed ? "completed" : "failed";
   session.exitCode = code;
+  session.terminationSignal = signal;
   session.completionDetail =
     code === null
       ? "Terminated by signal before exiting"
@@ -685,7 +701,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   }
 
   void runningProcess.completion.then(
-    ({ exitCode }) => markSessionClosed(session, exitCode),
+    ({ exitCode, signal }) => markSessionClosed(session, exitCode, signal),
     (error: unknown) => {
       if (error instanceof ShellExecutionError) {
         appendOutput(error.message, "stderr");
@@ -729,6 +745,7 @@ export async function exec_command(
     chunkId: generateChunkId(),
     wallTimeMs,
     exitCode: session.exitCode,
+    terminationSignal: session.terminationSignal,
     sessionId,
     output,
     originalTokenCount: estimateTokenCount(output),
@@ -740,6 +757,9 @@ export async function exec_command(
   }
 
   return {
+    ...(session.status !== "running" && session.exitCode === null
+      ? { status: "error" as const }
+      : {}),
     output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }
@@ -801,6 +821,7 @@ export async function write_stdin(
     chunkId: generateChunkId(),
     wallTimeMs,
     exitCode: session.exitCode,
+    terminationSignal: session.terminationSignal,
     sessionId: nextSessionId,
     output,
     originalTokenCount: estimateTokenCount(output),
@@ -812,6 +833,9 @@ export async function write_stdin(
   }
 
   return {
+    ...(session.status !== "running" && session.exitCode === null
+      ? { status: "error" as const }
+      : {}),
     output: scrubSecretsFromString(formattedOutput, session.secrets),
   };
 }

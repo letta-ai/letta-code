@@ -1,4 +1,5 @@
 import type { RuntimeScope } from "./runtime-scope";
+import type { ToolsetPreference } from "./toolset-protocol";
 
 export interface ExternalToolDefinitionPayload {
   name: string;
@@ -11,19 +12,24 @@ export interface ExternalToolDefinitionPayload {
   auto_background?: boolean;
 }
 
+/**
+ * Tools a connection registers for a conversation. While the connection is
+ * open they are visible to every turn on that conversation; calls run through
+ * the registering connection.
+ */
 export interface RuntimeStartExternalToolsGroup {
-  /** Hidden controller-defined scope used to select these tools on input turns. */
-  scope_id?: string;
   tools: readonly ExternalToolDefinitionPayload[];
 }
 
 /**
  * Applies one external-tool definition set to one or more exact runtimes.
  * Empty external_tools removes the controller's tools for those runtimes.
+ * Omitting tool_policy clears the controller's policy for those runtimes.
  */
 export interface RuntimeExternalToolsUpdateGroup {
   runtimes: readonly RuntimeScope<string | null>[];
   external_tools: readonly RuntimeStartExternalToolsGroup[];
+  tool_policy?: RuntimeToolPolicy;
 }
 
 /**
@@ -47,7 +53,6 @@ export interface ExternalToolCallRequestMessage {
   type: "external_tool_call_request";
   request_id: string;
   runtime?: RuntimeScope<string | null>;
-  scope_id?: string;
   tool_call_id: string;
   tool_name: string;
   input: Record<string, unknown>;
@@ -70,4 +75,20 @@ export interface ExternalToolCallResponseCommand {
   request_id: string;
   result?: ExternalToolCallResult;
   error?: string;
+}
+
+/**
+ * Connection-level tool selection for one conversation. It lives as long as
+ * the connection's external-tool registration for that conversation and
+ * applies to every turn there, including turns the process starts (task
+ * notifications, cron prompts, recovery). Per-input fields override it for
+ * their own turn only; a per-input allowlist can only narrow this allowlist.
+ */
+export interface RuntimeToolPolicy {
+  /** Base toolset and extra bundled tools; same meaning as `client_toolset`. */
+  toolset?: { base?: ToolsetPreference; include?: readonly string[] };
+  /** Exact tool allowlist; same meaning as `client_tool_allowlist`. */
+  allowlist?: readonly string[];
+  /** Same meaning as `exclude_interactive_tools`. */
+  exclude_interactive?: boolean;
 }

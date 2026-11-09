@@ -1,6 +1,6 @@
 ---
 name: working-across-computers
-description: Guides work across Cloud, local, and other available computers, including teleporting conversations, running remote subagents, and transferring files. Load when a request needs the user's laptop or another machine's files, apps, or tools; when connecting a computer; or when moving or delegating work between local and Cloud in either direction, including running Cloud subagents from local.
+description: Guides work across Cloud, local, and other available computers, including teleporting conversations, running remote subagents, transferring files, and publishing an app from a managed Cloud sandbox. Load when a request needs the user's laptop or another machine's files, apps, or tools; when connecting a computer; when exposing an app running in a managed sandbox at a public URL; or when moving or delegating work between local and Cloud in either direction, including running Cloud subagents from local.
 ---
 
 # Working Across Computers
@@ -20,6 +20,7 @@ The current filesystem is not the full set of computers you can use. When a requ
 | Run work elsewhere while staying here | `Agent` |
 | Bring a remote file into a Cloud conversation | Remote agent: `sandbox upload` |
 | Put a Cloud file onto another computer | Remote agent: `sandbox download` |
+| Publish an app running in this managed Cloud sandbox | `sandbox expose` |
 | Continue this conversation elsewhere | `teleport` |
 
 Conversation history and agent memory follow the conversation. Files, working directories, installed tools, credentials, and running services belong to each computer; teleporting does not copy the workspace.
@@ -90,6 +91,27 @@ letta sandbox download <sandbox-path> --agent <agent-id> --to <local-path>
 - Download sources must be under `/root/downloads`; `--to` selects the destination path on the receiving computer. Without `--to`, download saves under the source file's basename.
 - Transfer files directly, not as base64 or file contents through model messages. Return the path and destination IDs; verify received contents or checksums.
 - These commands transfer files to/from Cloud sandboxes, not arbitrary remote filesystems. No sandbox ID or separate wake command is needed.
+
+## Publish an app from a managed Cloud sandbox
+
+After starting an HTTP, WebSocket, or SSE app on a sandbox port, expose it at a public Letta URL:
+
+```bash
+letta sandbox expose <port> --expires-in <duration>
+```
+
+Choose the lifetime explicitly with a whole-second, minute, or hour duration such as `30m`, `2h`, or `24h`. The supported range is 1 minute through 24 hours; there is no implicit default. This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt }`. Anyone holding the URL can access the app until the exact `expiresAt`, so share it only where the user requested.
+
+An exposed app only works while its sandbox is running. The sandbox sleeps after it has been idle for a while, and the app's server process does not survive a restart.
+Treat exposed apps as temporary demos. Anything meant to stay up goes on Vercel.
+
+To add time to the same URL and port, extend the active exposure before it expires:
+
+```bash
+letta sandbox expose <port> --extend-by <duration>
+```
+
+Extension adds to the current deadline, preserves the bearer URL, and fails if there is no active exposure or the port changed. The resulting remaining lifetime cannot exceed 24 hours. Use `--expires-in` instead when intentionally resetting the remaining lifetime from now; never pass both expiry flags.
 
 ## Share a live view of a Cloud sandbox desktop
 

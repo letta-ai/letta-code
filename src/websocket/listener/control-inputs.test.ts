@@ -43,7 +43,9 @@ describe("listener cwd change handling", () => {
       process.env.HOME = originalHome;
     }
     if (tempHome) {
-      await rm(tempHome, { recursive: true, force: true });
+      // Bun on Windows CI has failed this removal with EFAULT after the test
+      // passed. A leftover temp dir is harmless; don't fail the test for it.
+      await rm(tempHome, { recursive: true, force: true }).catch(() => {});
       tempHome = null;
     }
   });

@@ -11,6 +11,7 @@ import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
+import { priceUsageEvent } from "@/usage/cost";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -272,6 +273,7 @@ async function drainTurn(
   maxToolCalls: number,
   onUsage?: (totalTokens: number) => void,
   onStarted?: (conversationId: string) => void,
+  model?: string,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
@@ -290,6 +292,7 @@ async function drainTurn(
     }
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
+      if (message.event) message.event = priceUsageEvent(message.event, model);
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
@@ -607,6 +610,7 @@ export function createSdkSpawner(
               hooks?.onStarted?.(id);
             }
           },
+          model,
         ),
         stopped,
       ]);

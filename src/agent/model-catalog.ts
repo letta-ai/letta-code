@@ -30,7 +30,6 @@ export interface CatalogModel {
 export const models: CatalogModel[] = [];
 
 const BUILTIN_MODEL_ALIASES = new Map([
-  ["auto", "letta/auto"],
   ["auto-chat", "letta/auto-chat"],
   ["auto-fast", "letta/auto-fast"],
 ]);
@@ -101,19 +100,23 @@ export function resolveModel(modelIdentifier: string): string | null {
   return modelIdentifier.includes("/") ? modelIdentifier : null;
 }
 
+/**
+ * Handle for "no model selected yet". Backends treat it as unselected and ask
+ * the user to connect a provider key (or use credits) before the first turn.
+ */
+export const UNSELECTED_MODEL_HANDLE = "local/default";
+
+/** Letta-hosted handles are never picked as an implicit default. */
+export function isLettaHostedModelHandle(handle: string): boolean {
+  return handle.startsWith("letta/");
+}
+
 /** Get the default model handle from the active catalog. */
 export function getDefaultModel(): string {
-  if (models.length === 0) return "letta/auto";
-
-  const autoModel = models.find((model) => model.id === "auto");
-  if (autoModel) return autoModel.handle;
-
-  const defaultModel = models.find((model) => model.isDefault);
-  if (defaultModel) return defaultModel.handle;
-
-  const firstModel = models[0];
-  if (!firstModel) {
-    throw new Error("Model catalog is unavailable.");
-  }
-  return firstModel.handle;
+  const candidates = models.filter(
+    (model) => !isLettaHostedModelHandle(model.handle),
+  );
+  const defaultModel =
+    candidates.find((model) => model.isDefault) ?? candidates[0];
+  return defaultModel?.handle ?? UNSELECTED_MODEL_HANDLE;
 }

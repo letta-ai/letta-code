@@ -186,6 +186,69 @@ describe("sandbox subcommand", () => {
     ).toThrow("requires a Letta Cloud agent");
   });
 
+  test("exposes a port from the current managed sandbox without targeting by ID", async () => {
+    const calls: number[] = [];
+    const output: string[] = [];
+    const originalLog = console.log;
+    console.log = (message?: unknown) => output.push(String(message));
+    try {
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => true,
+          createPublicExposure: async (port, expiry) => {
+            calls.push(
+              port,
+              "expiresInSeconds" in expiry ? expiry.expiresInSeconds : -1,
+            );
+            return {
+              url: "https://opaque.dream.site",
+              port,
+              expiresAt: "2026-11-04T20:00:00.000Z",
+            };
+          },
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(calls).toEqual([3000, 7200]);
+      expect(JSON.parse(output[0] ?? "{}")).toEqual({
+        url: "https://opaque.dream.site",
+        port: 3000,
+        expiresAt: "2026-11-04T20:00:00.000Z",
+      });
+    } finally {
+      console.log = originalLog;
+    }
+  });
+
+  test("rejects exposure outside the current managed sandbox", async () => {
+    let exposed = false;
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      const exitCode = await runSandboxSubcommand(
+        ["expose", "3000", "--expires-in", "2h"],
+        {
+          initializeSettings: async () => {},
+          isCloud: async () => true,
+          isManagedRuntime: () => false,
+          createPublicExposure: async () => {
+            exposed = true;
+            throw new Error("Must not expose");
+          },
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(exposed).toBe(false);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test("uploads a local file after ensuring the sandbox", async () => {
     const calls: string[] = [];
     const output: string[] = [];

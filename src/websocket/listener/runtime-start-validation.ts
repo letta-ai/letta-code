@@ -1,7 +1,10 @@
 import { isSkillSourceArray } from "@/agent/skill-sources";
 import { isRuntimeExecutionSettings } from "@/runtime-execution-settings";
 import type { RuntimeStartCommand } from "@/types/runtime-start-protocol";
-import { isRuntimeStartExternalToolsGroup } from "./external-tool-protocol";
+import {
+  isRuntimeStartExternalToolsGroup,
+  isRuntimeToolPolicy,
+} from "./external-tool-protocol";
 import { isObjectRecord, isStringArray } from "./protocol-validation";
 
 function isDevicePermissionMode(value: unknown): boolean {
@@ -52,7 +55,8 @@ export function isRuntimeStartCommand(
     (c.teleport_id === undefined || typeof c.teleport_id === "string") &&
     (c.external_tools === undefined ||
       (Array.isArray(c.external_tools) &&
-        c.external_tools.every(isRuntimeStartExternalToolsGroup)))
+        c.external_tools.every(isRuntimeStartExternalToolsGroup))) &&
+    (c.tool_policy === undefined || isRuntimeToolPolicy(c.tool_policy))
   );
 }
 
