@@ -19,7 +19,11 @@ import {
 } from "@/cli/helpers/init-command";
 import { getReflectionSettings } from "@/cli/helpers/memory-reminder";
 import { parseReflectCommandArgs } from "@/cli/helpers/reflect-command";
-import { launchReflectionSubagent } from "@/cli/helpers/reflection-launcher";
+import {
+  getReflectionLaunchSkippedMessage,
+  launchReflectionSubagent,
+  type ReflectionLaunchResult,
+} from "@/cli/helpers/reflection-launcher";
 import { buildModCommandPrompt } from "@/cli/mods/command-runtime";
 import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 import { runPreCompactHooks } from "@/hooks";
@@ -753,6 +757,42 @@ async function handleChannelsCommand(
     : "Error: ChannelGateway returned an invalid slash-command response.";
 }
 
+/**
+ * Turn a failed reflection launch into an actionable message.
+ *
+ * Every non-launched reason is mapped, so the listener never reports a bare
+ * "Unknown error" for a condition the user can fix (for example a dirty
+ * parent memory repository).
+ */
+export function reflectionLaunchFailureMessage(
+  result: Extract<ReflectionLaunchResult, { launched: false }>,
+): string {
+  // The dirty-parent case is the one users hit most often, and the reason it
+  // matters is that an untracked file (a generated cache directory, for
+  // example) blocks reflection just like an uncommitted edit does.
+  if (result.reason === "parent_dirty") {
+    return "Reflection cannot start because the parent memory repository has uncommitted or untracked changes. Commit or discard them, then run /reflect again.";
+  }
+  const skippedMessage = getReflectionLaunchSkippedMessage(
+    result.reason,
+    "listener",
+  );
+  if (skippedMessage) return skippedMessage;
+  // The shared helper leaves the automatic-only reasons undefined; the
+  // listener still needs to say something better than "Unknown error".
+  if (result.reason === "windows_disabled") {
+    return "Automatic reflection is disabled for this agent.";
+  }
+  if (result.reason === "retry_backoff") {
+    return "Reflection is paused after a previous failure. Try again in a few minutes.";
+  }
+  return `Failed to start reflection: ${
+    result.error instanceof Error
+      ? result.error.message
+      : String(result.error ?? "Unknown error")
+  }`;
+}
+
 async function handleReflectCommand(
   socket: WebSocket,
   conversationRuntime: ConversationRuntime,
@@ -812,18 +852,5 @@ async function handleReflectCommand(
   ); // Ownership was resolved with the acting user above.
   if (result.launched)
     return "Started a reflection pass for this conversation.";
-  if (result.reason === "memfs_disabled") {
-    return "Reflection needs the memory filesystem to be enabled for this agent.";
-  }
-  if (result.reason === "already_active") {
-    return "A reflection agent is already running for this conversation.";
-  }
-  if (result.reason === "no_payload") {
-    return "No new transcript content to reflect on for this conversation.";
-  }
-  return `Failed to start reflection: ${
-    result.error instanceof Error
-      ? result.error.message
-      : String(result.error ?? "Unknown error")
-  }`;
+  return reflectionLaunchFailureMessage(result);
 }
