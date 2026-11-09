@@ -256,30 +256,15 @@ function filterExternalToolsByRuntimeContext(
         !tool.runtime ||
         ((tool.runtime.agentId ?? null) === (runtimeContext.agentId ?? null) &&
           tool.runtime.conversationId === runtimeContext.conversationId);
-      // An unscoped runtime tool belongs to its agent/conversation. The
-      // registration connection remains its execution return path, but turns
-      // for that runtime may originate from another connection or the process
-      // queue (for example, cron). Scoped tools remain connection-owned.
+      // A runtime tool belongs to its agent/conversation while its
+      // connection is open. The registration connection remains its execution
+      // return path, but turns for that runtime may originate from another
+      // connection or the process queue (for example, cron).
       const matchesConnection =
         tool.connectionId === undefined ||
         tool.connectionId === runtimeContext.connectionId ||
-        (tool.runtime !== undefined && tool.scopeId === undefined);
+        tool.runtime !== undefined;
       return matchesRuntime && matchesConnection;
-    }),
-  );
-}
-
-function filterExternalToolsByScopeIds(
-  externalTools: Map<string, ExternalToolDefinition>,
-  externalToolScopeIds?: string[],
-): Map<string, ExternalToolDefinition> {
-  const selectedScopes = new Set(externalToolScopeIds ?? []);
-  return new Map(
-    Array.from(externalTools.entries()).filter(([, tool]) => {
-      if (tool.scopeId === undefined) {
-        return true;
-      }
-      return selectedScopes.has(tool.scopeId);
     }),
   );
 }
@@ -758,7 +743,7 @@ function capturePreparedToolExecutionContext(
   },
   options?: {
     clientToolAllowlist?: string[];
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -785,16 +770,13 @@ function capturePreparedToolExecutionContext(
     toolRegistry: toolRegistrySnapshot,
     externalTools: selectModelFacingExternalTools(
       filterExternalToolsByClientAllowlist(
-        filterExternalToolsByScopeIds(
-          filterExternalToolsByRuntimeContext(
-            snapshot.externalTools,
-            runtimeContext,
-          ),
-          options?.externalToolScopeIds,
+        filterExternalToolsByRuntimeContext(
+          snapshot.externalTools,
+          runtimeContext,
         ),
         clientToolAllowlist,
       ),
-      runtimeContext.connectionId,
+      options?.externalToolOwnerConnectionId ?? runtimeContext.connectionId,
     ),
     externalExecutor: snapshot.externalExecutor,
     modContext: options?.modContext ?? snapshot.modContext,
@@ -897,7 +879,7 @@ export async function prepareToolExecutionContextForSpecificTools(
   toolNames: string[],
   options?: {
     clientToolAllowlist?: string[];
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;
@@ -938,7 +920,7 @@ type ModelToolsetOptions = {
 export async function prepareToolExecutionContextForModel(
   modelIdentifier?: string,
   options?: ModelToolsetOptions & {
-    externalToolScopeIds?: string[];
+    externalToolOwnerConnectionId?: string;
     workingDirectory?: string;
     permissionModeState?: PermissionModeState;
     modContext?: ModContext;

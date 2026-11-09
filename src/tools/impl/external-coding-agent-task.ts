@@ -11,6 +11,7 @@ import {
   type NativeSessionCaptureReservation,
   reportNativeSessionCaptureFailure,
 } from "./native-session-capture";
+import { getNextTaskId } from "./process_manager";
 import {
   type SpawnBackgroundSubagentTaskResult,
   spawnBackgroundSubagentTask,
@@ -18,6 +19,7 @@ import {
 import { externalWorkerProgressListeners } from "./task-transcript";
 
 export function trackExternalFollowupCompletion(args: {
+  taskId?: string;
   type: ExternalCodingAgentType;
   agentId: string;
   message: string;
@@ -42,6 +44,7 @@ export function trackExternalFollowupCompletion(args: {
   claimsParentRuntime?: boolean;
 }): SpawnBackgroundSubagentTaskResult {
   return spawnBackgroundSubagentTask({
+    taskId: args.taskId,
     subagentType: args.type,
     config: createExternalCodingAgentConfig(args.type),
     prompt: args.message,
@@ -106,6 +109,7 @@ export function trackExternalFollowupCompletion(args: {
 }
 
 export function spawnExternalCodingAgentFollowup(args: {
+  taskId?: string;
   agentId: string;
   message: string;
   parentScope: {
@@ -118,7 +122,9 @@ export function spawnExternalCodingAgentFollowup(args: {
   if (!target) {
     throw new Error(`Invalid external coding agent ID: ${args.agentId}`);
   }
+  const taskId = args.taskId ?? getNextTaskId();
   return spawnBackgroundSubagentTask({
+    taskId,
     subagentType: target.type,
     config: createExternalCodingAgentConfig(target.type),
     prompt: args.message,
@@ -129,6 +135,7 @@ export function spawnExternalCodingAgentFollowup(args: {
       spawnSubagentImpl: async (_type, prompt, _model, subagentId, signal) =>
         runExternalCodingAgent({
           type: target.type,
+          taskId,
           prompt,
           parentAgentId: args.parentScope.agentId,
           parentConversationId: args.parentScope.conversationId,

@@ -530,10 +530,14 @@ export async function recoverRecordedTurns(
           deferred = true;
           continue;
         }
+        // A finished run's approvals are stale, except when it finished by
+        // stopping for one: `completed` + `requires_approval` is how every
+        // client-side tool step ends, including while this listener was down.
         if (
           recordedRun &&
           recordedRun.status !== "running" &&
-          recordedRun.status !== "created"
+          recordedRun.status !== "created" &&
+          recordedRun.stop_reason !== "requires_approval"
         ) {
           pending = [];
         }

@@ -75,6 +75,7 @@ import {
   listSubagentTypes,
   preparedConversationConfig,
   resolveTaskAgentSelection,
+  shouldForkTaskContext,
 } from "./task-agent-selection";
 import {
   buildTaskResultHeader,
@@ -105,6 +106,7 @@ export {
 } from "@/agent/subagents/background-link";
 
 export interface SpawnBackgroundSubagentTaskArgs {
+  taskId?: string;
   subagentType: string;
   /** Configuration resolved by the caller; omitted by legacy internal callers. */
   config?: SubagentConfig;
@@ -313,7 +315,7 @@ export function spawnBackgroundSubagentTask(
     claimsParentRuntime,
   );
 
-  const taskId = getNextTaskId();
+  const taskId = args.taskId ?? getNextTaskId();
   const outputFile = createBackgroundOutputFile(taskId);
   const abortController = new AbortController();
 
@@ -699,7 +701,7 @@ export async function launchSubagent(
   const config: SubagentConfig | undefined = isExternalCodingAgent
     ? createExternalCodingAgentConfig(
         externalCodingAgentType,
-        args.fork_context === true,
+        shouldForkTaskContext(args),
       )
     : prepared
       ? preparedConversationConfig()
@@ -761,7 +763,7 @@ export async function launchSubagent(
           type: externalCodingAgentType,
           computer: resolvedComputer.computer,
           prompt: inputPrompt,
-          forkContext: args.fork_context === true,
+          forkContext: shouldForkTaskContext(args),
           description,
           model,
           mcp: args.mcp,
@@ -777,7 +779,7 @@ export async function launchSubagent(
     }
     const worker = await prepareExternalWorkerPrompt({
       prompt: inputPrompt,
-      forkContext: args.fork_context === true,
+      forkContext: shouldForkTaskContext(args),
       parentAgentId,
       parentConversationId: resolvedParentScope?.conversationId,
       signal,
@@ -815,6 +817,9 @@ export async function launchSubagent(
         ) =>
           runExternalCodingAgent({
             type: externalCodingAgentType,
+            taskId: [...backgroundTasks].find(
+              ([, task]) => task.subagentId === workerSubagentId,
+            )?.[0],
             prompt,
             model,
             parentAgentId,

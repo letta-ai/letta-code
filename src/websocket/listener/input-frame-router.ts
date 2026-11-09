@@ -295,7 +295,10 @@ export async function routeInputFrame(
       return;
     }
     if (admission.kind === "full") {
-      acknowledgeInput(false, "Stable input ledger is at capacity");
+      acknowledgeInput(
+        false,
+        admission.reason ?? "Stable input ledger is at capacity",
+      );
       return;
     }
     const reservation =

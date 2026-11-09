@@ -577,7 +577,6 @@ describe("app-server client", () => {
       create_conversation: { body: {} },
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [
             {
               name: "lookup_ticket",
@@ -593,7 +592,6 @@ describe("app-server client", () => {
       type: "runtime_start",
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [{ name: "lookup_ticket" }],
         },
       ],
@@ -616,7 +614,6 @@ describe("app-server client", () => {
       type: "external_tool_call_request",
       request_id: "external-tool-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      scope_id: "scope-1",
       tool_call_id: "call-1",
       tool_name: "lookup_ticket",
       input: { id: "ABC-123" },

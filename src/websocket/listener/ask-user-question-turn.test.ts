@@ -154,7 +154,11 @@ test("conversation preferences preserve serialized tools across idle, automatic 
     await settingsManager.initialize();
     expect(await prepare("web")).toBe(included);
     expect(await prepare("child")).not.toContain(name);
-    expect(await prepare("web", { client_toolset: {} })).toBe(baseline);
+    // Per field: an empty include drops the saved include for this turn only.
+    expect(await prepare("web", { client_toolset: {} })).toBe(included);
+    expect(await prepare("web", { client_toolset: { include: [] } })).toBe(
+      baseline,
+    );
     expect(await prepare("web")).toBe(included);
     expect(await prepare("web", { exclude_interactive_tools: true })).toBe(
       baseline,
