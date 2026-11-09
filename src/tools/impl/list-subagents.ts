@@ -3,16 +3,10 @@ import {
   getSubagentHistory,
   type SubagentHistoryEntry,
 } from "@/agent/subagent-state.js";
-import { INTERRUPTED_BY_USER } from "@/constants";
 import { subagentScopeMatches } from "@/utils/subagent-scope";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 
-export const LISTED_AGENT_STATUSES = [
-  "running",
-  "completed",
-  "failed",
-  "stopped",
-] as const;
+export const LISTED_AGENT_STATUSES = ["running", "idle"] as const;
 
 export type ListedAgentStatus = (typeof LISTED_AGENT_STATUSES)[number];
 
@@ -54,14 +48,8 @@ function currentScope(): { agentId: string; conversationId: string } | null {
 }
 
 function statusOf(entry: SubagentHistoryEntry): ListedAgentStatus {
-  const { agent } = entry;
-  if (agent.status === "pending" || agent.status === "running") {
-    return "running";
-  }
-  if (agent.status === "completed") return "completed";
-  return agent.stoppedByCaller || agent.error === INTERRUPTED_BY_USER
-    ? "stopped"
-    : "failed";
+  const { status } = entry.agent;
+  return status === "pending" || status === "running" ? "running" : "idle";
 }
 
 /**
@@ -105,11 +93,15 @@ function toListedAgent(
     started_at: new Date(first.agent.startTime).toISOString(),
     last_activity_at: new Date(latest.lastActivityMs).toISOString(),
     ...(computer ? { computer } : {}),
-    ...(status === "failed" && agent.error ? { error: agent.error } : {}),
+    // An idle row keeps the error its last run failed with.
+    ...(agent.status === "error" && agent.error ? { error: agent.error } : {}),
   };
 }
 
-/** This conversation's Agent launches, newest first, keyed by address. */
+/**
+ * This conversation's Agent launches, keyed by address, most recently active
+ * first.
+ */
 export function listSessionSubagents(
   scope: { agentId: string; conversationId: string } | null,
   history: SubagentHistoryEntry[] = getSubagentHistory(),
@@ -141,7 +133,11 @@ export function listSessionSubagents(
   }
   return Array.from(groups.values())
     .map(({ first, latest }) => toListedAgent(first, latest))
-    .sort((a, b) => b.started_at.localeCompare(a.started_at));
+    .sort(
+      (a, b) =>
+        b.last_activity_at.localeCompare(a.last_activity_at) ||
+        b.started_at.localeCompare(a.started_at),
+    );
 }
 
 const VALID_STATUSES = LISTED_AGENT_STATUSES.join(", ");
