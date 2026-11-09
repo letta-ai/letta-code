@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["running", "completed", "failed", "stopped"]
+      },
+      "minItems": 1,
+      "default": ["running"],
+      "description": "Only list agents with these statuses. Defaults to [\"running\"]; pass every status you want (e.g. [\"completed\", \"failed\", \"stopped\"]) to see finished ones."
+    }
+  },
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

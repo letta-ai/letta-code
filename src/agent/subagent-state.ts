@@ -272,7 +272,7 @@ export interface SubagentHistoryEntry {
 
 const MAX_SUBAGENT_HISTORY = 200;
 // The live store forgets finished rows within seconds so the TUI stays tidy;
-// ListAgents needs every child launched this session, so keep a bounded copy.
+// ListSubagents needs every child launched this session, so keep a bounded copy.
 const subagentHistory = new Map<string, SubagentHistoryEntry>();
 
 function putAgent(id: string, agent: SubagentState): void {

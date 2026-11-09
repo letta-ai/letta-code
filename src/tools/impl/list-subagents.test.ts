@@ -1,7 +1,4 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   clearAllSubagents,
   clearCompletedSubagents,
@@ -9,14 +6,13 @@ import {
   registerSubagent,
   updateSubagent,
 } from "@/agent/subagent-state";
-import { LocalBackend } from "@/backend/local/local-backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   caller,
   sendAgentMessageFixture,
 } from "@/test-utils/send-agent-message-fixture";
-import { list_agents } from "./list-agents";
+import { list_subagents } from "./list-subagents";
 import { backgroundTasks, createBackgroundOutputFile } from "./process_manager";
 import { send_agent_message } from "./send-agent-message";
 import { task_stop } from "./task-stop";
@@ -39,6 +35,12 @@ afterEach(() => {
   clearAllSubagents();
 });
 
+const FINISHED: ("completed" | "failed" | "stopped")[] = [
+  "completed",
+  "failed",
+  "stopped",
+];
+
 const EPHEMERAL_CONV = "conv-66666666-6666-4666-8666-666666666666";
 
 /**
@@ -52,7 +54,7 @@ function launchEphemeral(id: string, taskId: string) {
 }
 
 test("lists nothing before any agent is launched", async () => {
-  expect(await list_agents({}, { scope })).toEqual({ agents: [] });
+  expect(await list_subagents({}, { scope })).toEqual({ agents: [] });
 });
 
 test("lists a background Letta subagent and an external worker with their addresses", async () => {
@@ -70,7 +72,7 @@ test("lists a background Letta subagent and an external worker with their addres
     taskId: "task_2",
   });
 
-  const { agents } = await list_agents({}, { scope });
+  const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(2);
   const [external, letta] = [...agents].sort((a, b) =>
     a.type.localeCompare(b.type),
@@ -113,7 +115,10 @@ test("keeps finished agents after the live store drops them and reports how they
   clearCompletedSubagents();
 
   const byName = Object.fromEntries(
-    (await list_agents({}, { scope })).agents.map((a) => [a.name, a]),
+    (await list_subagents({ status: FINISHED }, { scope })).agents.map((a) => [
+      a.name,
+      a,
+    ]),
   );
   expect(byName.done?.status).toBe("completed");
   expect(byName.broken).toMatchObject({
@@ -142,7 +147,7 @@ test("a follow-up send to a finished child shows as one row with the latest stat
     agentURL: "x",
   });
 
-  const { agents } = await list_agents({}, { scope });
+  const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(1);
   expect(agents[0]).toMatchObject({
     name: "Draft the PR",
@@ -153,7 +158,7 @@ test("a follow-up send to a finished child shows as one row with the latest stat
 
 test("lists an ephemeral-conversation subagent by its conversation ID, live and finished", async () => {
   launchEphemeral("eph", "task_eph");
-  const live = (await list_agents({}, { scope })).agents;
+  const live = (await list_subagents({}, { scope })).agents;
   expect(live).toEqual([
     expect.objectContaining({
       name: "Audit the logs",
@@ -166,7 +171,8 @@ test("lists an ephemeral-conversation subagent by its conversation ID, live and 
 
   completeSubagent("eph", { success: true });
   clearCompletedSubagents();
-  const finished = (await list_agents({}, { scope })).agents;
+  const finished = (await list_subagents({ status: FINISHED }, { scope }))
+    .agents;
   expect(finished).toHaveLength(1);
   expect(finished[0]).toMatchObject({
     agent_id: null,
@@ -186,7 +192,7 @@ test("resuming an ephemeral conversation keeps one row", async () => {
     taskId: "task_resume",
   });
 
-  const { agents } = await list_agents({}, { scope });
+  const { agents } = await list_subagents({}, { scope });
   expect(agents).toHaveLength(1);
   expect(agents[0]).toMatchObject({
     name: "Audit the logs",
@@ -210,7 +216,7 @@ test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", as
     abortController,
     completion: Promise.resolve(),
   });
-  const [row] = (await list_agents({}, { scope })).agents;
+  const [row] = (await list_subagents({}, { scope })).agents;
   if (!row?.conversation_id || !row.task_id) throw new Error("no address");
 
   const f = sendAgentMessageFixture();
@@ -233,7 +239,10 @@ test("SendAgentMessage and TaskStop accept an ephemeral row's IDs as listed", as
   expect(abortController.signal.aborted).toBe(true);
   // The aborted run settles as a failure; the row reads as a deliberate stop.
   completeSubagent("eph", { success: false, error: "aborted" });
-  expect((await list_agents({}, { scope })).agents[0]?.status).toBe("stopped");
+  expect(
+    (await list_subagents({ status: ["stopped"] }, { scope })).agents[0]
+      ?.status,
+  ).toBe("stopped");
 });
 
 test("omits other conversations' children and memory workers", async () => {
@@ -244,100 +253,8 @@ test("omits other conversations' children and memory workers", async () => {
   });
   launch("memory", "memory", "memory upkeep");
 
-  const { agents } = await list_agents({}, { scope });
+  const { agents } = await list_subagents({}, { scope });
   expect(agents.map((a) => a.name)).toEqual(["mine"]);
-});
-
-test("subagents_only false lists all agents like `letta agents list`", async () => {
-  launch("sub-1", "general-purpose", "child");
-  const requests: unknown[] = [];
-  const backend = {
-    listAgents: async (body: unknown) => {
-      requests.push(body);
-      return {
-        getPaginatedItems: () => [
-          {
-            id: "agent-a",
-            name: "Alpha",
-            model: "anthropic/claude-opus-5-5",
-            created_at: "2026-11-01T00:00:00Z",
-            last_run_completion: "2026-11-09T00:00:00Z",
-          },
-          { id: "agent-b", name: "Beta" },
-        ],
-      };
-    },
-  } as never;
-
-  const result = await list_agents(
-    { subagents_only: false },
-    { scope, backend },
-  );
-  expect(requests).toEqual([{ limit: 51 }]);
-  expect(result).toEqual({
-    agents: [
-      {
-        agent_id: "agent-a",
-        name: "Alpha",
-        model: "anthropic/claude-opus-5-5",
-        created_at: "2026-11-01T00:00:00Z",
-        last_run_at: "2026-11-09T00:00:00Z",
-      },
-      { agent_id: "agent-b", name: "Beta" },
-    ],
-  });
-});
-
-test("subagents_only false caps the list and flags truncation", async () => {
-  const backend = {
-    listAgents: async () => ({
-      items: Array.from({ length: 51 }, (_, i) => ({
-        id: `agent-${i}`,
-        name: `A${i}`,
-      })),
-    }),
-  } as never;
-  const result = await list_agents(
-    { subagents_only: false },
-    { scope, backend },
-  );
-  expect(result.agents).toHaveLength(50);
-  expect(result.truncated).toBe(true);
-});
-
-test("subagents_only false works on the local backend", async () => {
-  const storageDir = await mkdtemp(join(tmpdir(), "list-agents-local-"));
-  try {
-    const backend = new LocalBackend({ storageDir, memfsEnabled: false });
-    const created = await backend.createAgent({ name: "Local" } as never);
-    const result = await list_agents(
-      { subagents_only: false },
-      { scope, backend },
-    );
-    expect(result.agents.map((agent) => agent.agent_id)).toEqual([created.id]);
-    expect(result.agents[0]?.name).toBe("Local");
-    expect(result.truncated).toBeUndefined();
-  } finally {
-    await rm(storageDir, { recursive: true, force: true });
-  }
-});
-
-test("subagents_only must be a boolean", async () => {
-  await expect(
-    list_agents({ subagents_only: "no" as never }, { scope }),
-  ).rejects.toThrow("subagents_only must be a boolean");
-});
-
-test("the default never calls the backend", async () => {
-  const backend = {
-    listAgents: async () => {
-      throw new Error("must not list agents");
-    },
-  } as never;
-  expect(await list_agents({}, { scope, backend })).toEqual({ agents: [] });
-  expect(
-    await list_agents({ subagents_only: true }, { scope, backend }),
-  ).toEqual({ agents: [] });
 });
 
 /** One child per reported status. */
@@ -360,7 +277,7 @@ const names = (agents: { name: string }[]) => agents.map((a) => a.name).sort();
 
 test("status filters to running agents", async () => {
   launchOnePerStatus();
-  const { agents } = await list_agents({ status: ["running"] }, { scope });
+  const { agents } = await list_subagents({ status: ["running"] }, { scope });
   expect(agents).toEqual([
     expect.objectContaining({ name: "run", status: "running" }),
   ]);
@@ -368,16 +285,27 @@ test("status filters to running agents", async () => {
 
 test("status accepts several values", async () => {
   launchOnePerStatus();
-  const { agents } = await list_agents(
+  const { agents } = await list_subagents(
     { status: ["stopped", "failed"] },
     { scope },
   );
   expect(names(agents)).toEqual(["broken", "halted"]);
 });
 
-test("omitting status lists every status", async () => {
+test("omitting status lists only running agents", async () => {
   launchOnePerStatus();
-  const { agents } = await list_agents({}, { scope });
+  const { agents } = await list_subagents({}, { scope });
+  expect(agents).toEqual([
+    expect.objectContaining({ name: "run", status: "running" }),
+  ]);
+});
+
+test("passing all four statuses lists every agent", async () => {
+  launchOnePerStatus();
+  const { agents } = await list_subagents(
+    { status: ["running", "completed", "failed", "stopped"] },
+    { scope },
+  );
   expect(names(agents)).toEqual(["broken", "done", "halted", "run"]);
 });
 
@@ -397,17 +325,17 @@ test("status filters after merging rows, on the latest status", async () => {
   });
 
   expect(
-    (await list_agents({ status: ["completed"] }, { scope })).agents,
+    (await list_subagents({ status: ["completed"] }, { scope })).agents,
   ).toEqual([]);
   expect(
-    (await list_agents({ status: ["running"] }, { scope })).agents,
+    (await list_subagents({ status: ["running"] }, { scope })).agents,
   ).toEqual([expect.objectContaining({ name: "Draft the PR" })]);
 });
 
 test("status filters an agentless row the same way", async () => {
   launchEphemeral("eph", "task_eph");
   expect(
-    (await list_agents({ status: ["running"] }, { scope })).agents,
+    (await list_subagents({ status: ["running"] }, { scope })).agents,
   ).toEqual([
     expect.objectContaining({
       agent_id: null,
@@ -416,13 +344,13 @@ test("status filters an agentless row the same way", async () => {
     }),
   ]);
   expect(
-    (await list_agents({ status: ["stopped"] }, { scope })).agents,
+    (await list_subagents({ status: ["stopped"] }, { scope })).agents,
   ).toEqual([]);
 
   updateSubagent("eph", { stoppedByCaller: true });
   completeSubagent("eph", { success: false, error: "aborted" });
   expect(
-    (await list_agents({ status: ["stopped"] }, { scope })).agents,
+    (await list_subagents({ status: ["stopped"] }, { scope })).agents,
   ).toEqual([
     expect.objectContaining({
       agent_id: null,
@@ -430,39 +358,25 @@ test("status filters an agentless row the same way", async () => {
     }),
   ]);
   expect(
-    (await list_agents({ status: ["running"] }, { scope })).agents,
+    (await list_subagents({ status: ["running"] }, { scope })).agents,
   ).toEqual([]);
 });
 
 test("an unknown status errors and lists the valid values", async () => {
   await expect(
-    list_agents({ status: ["running", "idle"] as never }, { scope }),
+    list_subagents({ status: ["running", "idle"] as never }, { scope }),
   ).rejects.toThrow(
     'Unknown status "idle"; valid values: running, completed, failed, stopped',
   );
   await expect(
-    list_agents({ status: "running" as never }, { scope }),
+    list_subagents({ status: "running" as never }, { scope }),
   ).rejects.toThrow(
     "status must be an array of: running, completed, failed, stopped",
   );
 });
 
 test("an empty status array errors instead of matching nothing", async () => {
-  await expect(list_agents({ status: [] }, { scope })).rejects.toThrow(
-    "status must list at least one of: running, completed, failed, stopped. Omit it to list all.",
+  await expect(list_subagents({ status: [] }, { scope })).rejects.toThrow(
+    "status must list at least one of: running, completed, failed, stopped. Omit it to list running agents.",
   );
-});
-
-test("status with subagents_only false errors without calling the backend", async () => {
-  const backend = {
-    listAgents: async () => {
-      throw new Error("must not list agents");
-    },
-  } as never;
-  await expect(
-    list_agents(
-      { subagents_only: false, status: ["running"] },
-      { scope, backend },
-    ),
-  ).rejects.toThrow("status applies only to subagents_only: true");
 });
