@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.48",
+  "version": "0.34.49",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -3411,9 +3411,9 @@
       "license": "ISC"
     },
     "node_modules/jose": {
-      "version": "6.2.16",
-      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.16.tgz",
-      "integrity": "sha512-4LSJpbuBuPdGrONCdZUy0xnxtLf8eEz+EY0SMXdHQEBU7bgUHDVblU/JAjryv3wID9/LK7/YuwFwq+AQNfMscQ==",
+      "version": "6.2.17",
+      "resolved": "https://registry.npmjs.org/jose/-/jose-6.2.17.tgz",
+      "integrity": "sha512-wOuK9V1yujQFH5S0ZWmLcDZN7+IKh9bUCC2ZPCf2HDlol3WWHy+PPyNjEI75FXRLMp3vDKQcupP59xhVU95hcg==",
       "license": "MIT",
       "funding": {
         "url": "https://github.com/sponsors/panva"
@@ -5080,7 +5080,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.48",
+      "version": "0.34.49",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^0.99.1",
