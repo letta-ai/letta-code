@@ -8,18 +8,28 @@ import {
 test("strips credentials case-insensitively, including nested headers and known secret values", () => {
   const raw = JSON.stringify({
     headers: {
-      Authorization: "Bearer secret",
-      "X-API-Key": "secret",
-      Cookie: "secret",
-      "Set-Cookie": "secret",
+      Authorization: "Bearer sk-long-secret",
+      "X-API-Key": "sk-long-secret",
+      Cookie: "sk-long-secret",
+      "Set-Cookie": "sk-long-secret",
       accept: "ok",
     },
-    messages: [{ content: "value secret" }],
+    messages: [{ content: "value sk-long-secret" }],
   });
-  const clean = sanitizeTraceJson(raw, ["secret"]);
-  expect(clean).not.toContain("secret");
+  const clean = sanitizeTraceJson(raw, ["sk-long-secret"]);
+  expect(clean).not.toContain("sk-long-secret");
   expect(JSON.parse(clean).headers.accept).toBe("ok");
   expect(JSON.parse(clean).headers.Authorization).toBe("[REDACTED]");
+});
+
+test("ignores short secret values so ordinary words are not redacted", () => {
+  const raw = JSON.stringify({
+    messages: [{ content: "thinking with sk-long-secret" }],
+  });
+  const clean = sanitizeTraceJson(raw, ["hi", "sk-long-secret"]);
+  expect(JSON.parse(clean).messages[0].content).toBe(
+    "thinking with [REDACTED]",
+  );
 });
 
 test("assembles Anthropic text, tool JSON, thinking and usage, retaining raw events", () => {

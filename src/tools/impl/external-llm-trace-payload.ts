@@ -1,4 +1,5 @@
 import { isCloudServerUrl } from "@/backend/api/server-url";
+import { MIN_REDACTED_SECRET_LENGTH } from "@/tools/secret-substitution";
 
 export const MAX_TRACE_PAYLOAD_BYTES = 2 * 1024 * 1024;
 const SENSITIVE =
@@ -21,6 +22,9 @@ export function traceCaptureEnabled(
 
 /** Headers are never captured. Also redact credential fields and known values in bodies. */
 export function sanitizeTraceJson(raw: string, secrets: string[]): string {
+  const values = secrets.filter(
+    (secret) => secret.length >= MIN_REDACTED_SECRET_LENGTH,
+  );
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -30,9 +34,8 @@ export function sanitizeTraceJson(raw: string, secrets: string[]): string {
   return JSON.stringify(value, (key, candidate: unknown) => {
     if (SENSITIVE.test(key)) return "[REDACTED]";
     if (typeof candidate !== "string") return candidate;
-    for (const secret of secrets)
-      if (secret)
-        candidate = (candidate as string).split(secret).join("[REDACTED]");
+    for (const secret of values)
+      candidate = (candidate as string).split(secret).join("[REDACTED]");
     return candidate;
   });
 }

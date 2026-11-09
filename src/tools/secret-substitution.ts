@@ -103,20 +103,12 @@ export async function resolveSecretEnvFromCommand(
 }
 
 /**
- * Ambient values shorter than this are not redacted. Real runtime credentials
- * are long high-entropy strings; short placeholder values (common in dev and
- * test environments, e.g. LETTA_API_KEY=test) would otherwise redact ordinary
- * words out of tool output.
+ * Secret values shorter than this are not redacted. Real credentials are long
+ * high-entropy strings; short placeholder values (common in dev and test
+ * environments, e.g. LETTA_API_KEY=test or MY_KEY=abc123) would otherwise
+ * redact ordinary words out of tool output and trace payloads.
  */
-const MIN_AMBIENT_SECRET_LENGTH = 8;
-
-/**
- * Vault values shorter than this are not redacted from tool output. Real
- * credentials are long high-entropy strings; short values (common in dev and
- * test environments, e.g. MY_KEY=abc123) would otherwise redact ordinary words
- * out of tool output. Matches the ambient guard above.
- */
-const MIN_VAULT_SECRET_LENGTH = 8;
+export const MIN_REDACTED_SECRET_LENGTH = 8;
 
 interface AmbientSecretValue {
   name: string;
@@ -140,7 +132,7 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
   const seen = new Set<string>();
   const add = (name: string, value: string | undefined): void => {
     const trimmed = value?.trim();
-    if (!trimmed || trimmed.length < MIN_AMBIENT_SECRET_LENGTH) return;
+    if (!trimmed || trimmed.length < MIN_REDACTED_SECRET_LENGTH) return;
     if (seen.has(trimmed)) return;
     seen.add(trimmed);
     candidates.push({ name, value: trimmed });
@@ -165,7 +157,7 @@ function collectAmbientSecretValues(): AmbientSecretValue[] {
   const sessionAccessToken = orgAccessToken ?? desktopAccessToken;
   if (sessionAccessToken) {
     const trimmed = sessionAccessToken.trim();
-    if (trimmed.length >= MIN_AMBIENT_SECRET_LENGTH) {
+    if (trimmed.length >= MIN_REDACTED_SECRET_LENGTH) {
       add("LETTA_API_KEY", Buffer.from(`letta:${trimmed}`).toString("base64"));
     }
   }
@@ -192,7 +184,7 @@ function collectVaultSecretValues(
   const candidates: AmbientSecretValue[] = [];
   for (const [name, value] of Object.entries(vault)) {
     const trimmed = value?.trim();
-    if (!trimmed || trimmed.length < MIN_VAULT_SECRET_LENGTH) continue;
+    if (!trimmed || trimmed.length < MIN_REDACTED_SECRET_LENGTH) continue;
     candidates.push({ name, value: trimmed });
   }
   return candidates;
