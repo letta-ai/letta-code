@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { MAX_TRACE_PAYLOAD_BYTES } from "./external-llm-trace-payload";
 import {
   type ExternalTraceRow,
   startTraceProxy,
@@ -101,7 +102,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
       task_id: "t",
       worker_session_id: "s",
     },
-    secrets: ["private-model", "a"],
+    secrets: ["private-model"],
     emit: (row) => rows.push(row),
   });
   try {
@@ -128,7 +129,7 @@ test("compressed responses pass through and oversized payloads keep a metadata r
     large = false;
     const third = await fetch(`${proxy.url}/responses`, {
       method: "POST",
-      body: JSON.stringify({ text: "a".repeat(300000) }),
+      body: JSON.stringify({ text: "a".repeat(MAX_TRACE_PAYLOAD_BYTES + 1) }),
     });
     expect(third.status).toBe(200);
     await third.text();
