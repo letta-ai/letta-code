@@ -8,10 +8,6 @@ Wake is always self-bound. It cannot target another agent, conversation, or comp
 
 Write `prompt` as a note to your future self, not a script: what you are waiting on, what you planned and why, and what to check before acting. When the wake fires, the situation or people's wishes may have changed since you wrote it.
 
-Use `after_seconds` for ordinary follow-ups such as checking again in five minutes. `scheduled_at` must be RFC 3339 with `Z` or an explicit UTC offset. `cron` is a recurring five-field UTC expression and cannot run more often than hourly.
+Use `after_seconds` for ordinary follow-ups. `scheduled_at` must be RFC 3339 with `Z` or an explicit UTC offset. `cron` is a recurring five-field UTC expression and cannot run more often than hourly. For calendar requests such as "tomorrow at 9am," resolve the time in the user's timezone (inferred from context), pass an explicit offset, and state the timezone you used.
 
-For calendar requests such as “tomorrow at 9am,” resolve the date in the user's timezone and pass `scheduled_at` with an explicit offset. Infer a reasonable timezone from available context instead of asking a redundant follow-up. State the timezone you used in the confirmation (for example, “Scheduled for 9:00 AM PT”) so the user can correct the assumption.
-
-Wakes created in a managed Cloud sandbox survive sandbox shutdown. Wakes created on a user-managed computer or self-hosted runtime use its local scheduler and only fire while a listener is active. List and cancel include both local and Cloud wakes already bound to this conversation, so older wakes remain manageable. The create result warns when no listener currently owns local schedules.
-
-For advanced scheduling, load the `scheduling-tasks` skill and use `letta cron`. The CLI can target fresh, default, or other conversations and, from managed Cloud, connected computers; it can also inspect run history and manage schedules outside the current conversation.
+Wakes created in a managed Cloud sandbox survive sandbox shutdown; elsewhere they fire only while a listener is active, and the create result warns when none is. For schedules targeting other conversations or computers, load the `scheduling-tasks` skill.

@@ -63,6 +63,12 @@ describe("prependParentContext", () => {
     );
     expect(result.prompt).toContain('"shown":[1,4]');
     expect(result.prompt).toContain('"content_ref":{"seq":1}');
+    expect(result.prompt).toContain(
+      'letta messages search --query "<words>" --agent agent-parent --conversation conv-parent',
+    );
+    expect(result.prompt).toContain(
+      'letta -p --agent agent-parent --conversation conv-parent --no-wait "<message>"',
+    );
     expect(result.prompt).toEndWith("Task:\nWrite the migration.");
   });
 

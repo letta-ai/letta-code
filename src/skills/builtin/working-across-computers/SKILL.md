@@ -102,6 +102,9 @@ letta sandbox expose <port> --expires-in <duration>
 
 Choose the lifetime explicitly with a whole-second, minute, or hour duration such as `30m`, `2h`, or `24h`. The supported range is 1 minute through 24 hours; there is no implicit default. This command works only inside the managed Cloud sandbox that owns the app. It does not accept `--agent` or `--conversation`; run it in the same sandbox as the service. The JSON result contains `{ url, port, expiresAt }`. Anyone holding the URL can access the app until the exact `expiresAt`, so share it only where the user requested.
 
+An exposed app only works while its sandbox is running. The sandbox sleeps after it has been idle for a while, and the app's server process does not survive a restart.
+Treat exposed apps as temporary demos. Anything meant to stay up goes on Vercel.
+
 To add time to the same URL and port, extend the active exposure before it expires:
 
 ```bash

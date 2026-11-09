@@ -188,9 +188,37 @@ function getCache(): SecretsCache {
   return global[SECRETS_CACHE_KEY];
 }
 
+/** When each cache entry was last written, for ensureSecretsLoaded staleness. */
+const SECRETS_LOADED_AT_KEY = Symbol.for("@letta/secretsLoadedAt");
+type GlobalWithLoadedAt = typeof globalThis & {
+  [key: symbol]: Map<string, number> | undefined;
+};
+function getLoadedAt(): Map<string, number> {
+  const global = globalThis as GlobalWithLoadedAt;
+  if (!global[SECRETS_LOADED_AT_KEY]) {
+    global[SECRETS_LOADED_AT_KEY] = new Map();
+  }
+  return global[SECRETS_LOADED_AT_KEY];
+}
+
 function setCache(agentId: string, secrets: Record<string, string>): void {
   getCache().set(agentId, { ...secrets });
+  getLoadedAt().set(agentId, Date.now());
 }
+
+/**
+ * How long an entry loaded by ensureSecretsLoaded is trusted before it is
+ * re-fetched. Matches the listener's own-agent freshness window.
+ */
+const DEFAULT_SECRETS_MAX_AGE_MS = 60_000;
+let testSecretsMaxAgeOverride: number | null = null;
+
+/** @internal */
+export function __testSetSecretsMaxAgeMs(ms: number | null): void {
+  testSecretsMaxAgeOverride = ms;
+}
+
+const staleRefreshes = new Map<string, Promise<void>>();
 
 const LOCAL_SECRET_NAME_PATTERN = /^[A-Z_][A-Z0-9_]*$/;
 
@@ -402,9 +430,29 @@ export function loadSecrets(agentId?: string): Record<string, string> {
   return { ...(getCache().get(resolvedAgentId) ?? {}) };
 }
 
-/** Populate an agent's cache entry from its vault only if it is not cached yet. */
+/**
+ * Populate an agent's cache entry from its vault if it is missing, or re-fetch
+ * it if it is older than the freshness window. Callers use this for vaults the
+ * listener does not hydrate itself (e.g. a subagent's parent), so without the
+ * age check a secret added to that vault after the first load would never be
+ * seen. A failed refresh keeps the previous entry.
+ */
 export async function ensureSecretsLoaded(agentId: string): Promise<void> {
-  if (!getCache().has(agentId)) await initSecretsFromServer(agentId);
+  if (!getCache().has(agentId)) {
+    await initSecretsFromServer(agentId);
+    return;
+  }
+  const loadedAt = getLoadedAt().get(agentId) ?? 0;
+  const maxAge = testSecretsMaxAgeOverride ?? DEFAULT_SECRETS_MAX_AGE_MS;
+  if (Date.now() - loadedAt < maxAge) return;
+  let refresh = staleRefreshes.get(agentId);
+  if (!refresh) {
+    refresh = initSecretsFromServer(agentId)
+      .catch(() => undefined)
+      .finally(() => staleRefreshes.delete(agentId));
+    staleRefreshes.set(agentId, refresh);
+  }
+  await refresh;
 }
 
 /**
@@ -559,12 +607,15 @@ export async function deleteSecretOnServer(
 export function clearSecretsCache(agentId?: string | null): void {
   if (agentId === null) {
     getCache().clear();
+    getLoadedAt().clear();
     return;
   }
   const resolvedAgentId = resolveSecretsAgentId(agentId);
   if (resolvedAgentId) {
     getCache().delete(resolvedAgentId);
+    getLoadedAt().delete(resolvedAgentId);
     return;
   }
   getCache().clear();
+  getLoadedAt().clear();
 }

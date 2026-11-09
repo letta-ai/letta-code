@@ -22,15 +22,23 @@ beforeEach(() => {
 
 describe("registerWithCloud", () => {
   it("returns connectionId and wsUrl on successful JSON response", async () => {
+    const onCredentialBootstrap = mock(async () => {});
     mockFetch.mockResolvedValueOnce(
       new Response(
-        JSON.stringify({ connectionId: "conn-1", wsUrl: "wss://example.com" }),
+        JSON.stringify({
+          connectionId: "conn-1",
+          wsUrl: "wss://example.com",
+          credentialBootstrap: {
+            refreshToken: "rt-let-computer-bootstrap",
+            expiresIn: 72_000,
+          },
+        }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
     );
 
     const result = await registerWithCloud(
-      defaultOpts,
+      { ...defaultOpts, onCredentialBootstrap },
       mockFetch as unknown as typeof fetch,
     );
 
@@ -39,6 +47,10 @@ describe("registerWithCloud", () => {
       wsUrl: "wss://example.com",
       supportsSplitStatusChannels: false,
       supportsPairedListenerGenerations: false,
+    });
+    expect(onCredentialBootstrap).toHaveBeenCalledWith({
+      refreshToken: "rt-let-computer-bootstrap",
+      expiresIn: 72_000,
     });
     expect(mockFetch).toHaveBeenCalledTimes(1);
 
@@ -66,6 +78,7 @@ describe("registerWithCloud", () => {
           architecture: process.arch,
         },
         supportsPairedListenerGenerations: true,
+        supportsComputerLinkCredentialBootstrap: true,
       },
     });
     // Not provided → omitted so legacy servers see an unchanged payload

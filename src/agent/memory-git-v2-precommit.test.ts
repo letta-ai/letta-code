@@ -64,6 +64,24 @@ describe("MemFS v2 pre-commit hook", () => {
     if (repo) rmSync(repo, { recursive: true, force: true });
   });
 
+  test.each(["skills/my skill.md", "skills/café.md"])(
+    "rejects flat skill path %s intact in v2 mode",
+    (path) => {
+      repo = initRepo("memfs-v2-skill-path-");
+      installPreCommitHook(repo, true);
+      writeFileSync(join(repo, "MEMORY.md"), "# Memory\n");
+      mkdirSync(join(repo, "skills"));
+      writeFileSync(join(repo, path), "# Skill\n");
+      execFileSync("git", ["add", "MEMORY.md", path], { cwd: repo });
+
+      const result = tryCommit(repo, "reject flat skill");
+      expect(result.status).not.toBe(0);
+      expect(result.stdout + result.stderr).toContain(
+        `${path}: invalid skill path`,
+      );
+    },
+  );
+
   test.each(["modify", "delete", "rename", "mode", "create"])(
     "protects config-selected files against %s, including non-Markdown",
     (operation) => {

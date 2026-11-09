@@ -18,8 +18,6 @@ export interface ExternalToolDefinition {
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;
-  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
-  scopeId?: string;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
     agentId?: string;

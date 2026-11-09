@@ -23,7 +23,7 @@ import {
   reportNativeSessionCaptureFailure,
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
-import { backgroundTasks } from "@/tools/impl/process_manager";
+import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
 import type {
   SubagentMessageCommand,
   SubagentMessageResponse,
@@ -163,6 +163,12 @@ export async function handleSubagentMessageCommand(
       if (!target.sessionId)
         throw new Error("External coding agent ID has no session ID");
       const sessionId = target.sessionId;
+      const traceContext = {
+        parent_agent_id: parent.agentId,
+        parent_conversation_id: parent.conversationId,
+        task_id: getNextTaskId(),
+        actingUserId: command.runtime.acting_user_id,
+      };
       if (target.type === "opencode")
         throw new Error("Remote OpenCode steering is not supported");
 
@@ -198,6 +204,10 @@ export async function handleSubagentMessageCommand(
             : target.type === "claude-code"
               ? (deps.sendClaude ?? sendClaudeMessage)(
                   {
+                    traceContext: {
+                      ...traceContext,
+                      secretValues: Object.values(worker?.secretEnv ?? {}),
+                    },
                     sessionId: target.sessionId,
                     prompt: command.message,
                     parentAgentId: command.runtime.agent_id,
@@ -217,6 +227,10 @@ export async function handleSubagentMessageCommand(
                 )
               : (deps.sendCodex ?? sendCodexMessage)(
                   {
+                    traceContext: {
+                      ...traceContext,
+                      secretValues: Object.values(worker?.secretEnv ?? {}),
+                    },
                     threadId: target.sessionId,
                     prompt: command.message,
                     parentAgentId: command.runtime.agent_id,
@@ -248,6 +262,7 @@ export async function handleSubagentMessageCommand(
         : receipt.completion;
       try {
         (deps.track ?? trackExternalFollowupCompletion)({
+          taskId: traceContext.task_id,
           type: target.type,
           agentId: command.agent_id,
           message: command.message,
