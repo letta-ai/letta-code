@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   getSubagents,
   subscribe as subscribeToSubagentState,
@@ -11,6 +12,7 @@ import {
 import { getCurrentWorkingDirectory } from "@/runtime-context";
 import { subscribeToBackgroundProcessState } from "@/tools/impl/process_manager";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { TO_SUBSCRIBERS } from "./connection";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import {
@@ -161,6 +163,7 @@ export function installProcessEventRouting(params: {
   runtime._stopDiskSpaceWatch = watchSandboxDiskSpace(
     getCurrentWorkingDirectory,
     (text) => deliverSandboxDiskAlert(runtime, text),
+    { reserveDirectory: join(resolveGlobalConfigDir(), "state") },
   );
 }
 
