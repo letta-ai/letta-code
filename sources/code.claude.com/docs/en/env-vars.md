@@ -583,7 +583,7 @@ With fetching off, you can't:
 * Run [`/restart`](https://code.claude.com/docs/en/commands) on Pro, Max, and Ultra plans
 * Sync the [skills](https://code.claude.com/docs/en/skills.md#where-synced-skills-load) and [plugins](https://code.claude.com/docs/en/plugins/loading.md#synced-plugins) enabled for your claude.ai account into your terminal sessions
 * Turn on the [You should know mod](https://code.claude.com/docs/en/interactive-mode.md#you-should-know-suggestions)
-* Use [the advisor tool](https://code.claude.com/docs/en/advisor.md#requirements)
+* Use [the advisor tool](https://code.claude.com/docs/en/advisor.md#requirements), except on Claude Platform on AWS with Claude Code v2.1.300 or later
 * Use [MCP tasks](https://code.claude.com/docs/en/mcp.md#mcp-tasks-that-run-on-the-server)
 * Read or reply to [comments on an artifact](https://code.claude.com/docs/en/artifacts.md#collect-comments-on-an-artifact)
 * Have Claude read [another organization's public artifact](https://code.claude.com/docs/en/artifacts.md#read-an-artifact-shared-with-you)
