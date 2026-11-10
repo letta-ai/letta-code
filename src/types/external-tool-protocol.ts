@@ -19,6 +19,7 @@ export interface ExternalToolDefinitionPayload {
  */
 export interface RuntimeStartExternalToolsGroup {
   tools: readonly ExternalToolDefinitionPayload[];
+  capabilities?: { external_tool_call_cancel?: boolean };
 }
 
 /**
@@ -57,6 +58,16 @@ export interface ExternalToolCallRequestMessage {
   tool_name: string;
   input: Record<string, unknown>;
 }
+
+export interface ExternalToolCallCancelMessage {
+  type: "external_tool_call_cancel";
+  request_id: string;
+  reason?: string;
+}
+
+export type ExternalToolCallMessage =
+  | ExternalToolCallRequestMessage
+  | ExternalToolCallCancelMessage;
 
 export interface ExternalToolCallResultContent {
   type: string;

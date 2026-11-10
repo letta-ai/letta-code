@@ -54,7 +54,6 @@ import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { autoBackgroundClientTool } from "@/tools/client-tool-background";
-import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
 import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
 import { executeExternalToolRequest } from "@/tools/external-tool-execution";
 import type {
@@ -62,6 +61,7 @@ import type {
   ExternalToolDefinition,
   ExternalToolExecutor,
 } from "@/tools/external-tool-types";
+import { autoBackgroundRemoteExternalTool } from "@/tools/remote-external-tool-background";
 import * as contextRetention from "@/tools/tool-context-retention";
 
 export type {
@@ -2102,16 +2102,16 @@ async function executeToolInner(
       );
     }
     return runWithRuntimeContext(executionScope, () =>
-      autoBackgroundExternalTool(
+      autoBackgroundRemoteExternalTool(
         name,
         externalTool,
-        executeExternalTool(
+        executeExternalTool.bind(
+          null,
           options?.toolCallId ?? `ext-${Date.now()}`,
           name,
           eventArgs as Record<string, unknown>,
           externalTool?.executor ?? activeExternalExecutor,
           externalTool,
-          options?.signal,
         ),
         listenerExternalToolBackgroundOptions(
           externalTool,

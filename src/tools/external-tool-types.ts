@@ -18,6 +18,7 @@ export interface ExternalToolDefinition {
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;
+  supportsCancellation?: boolean;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
     agentId?: string;
@@ -41,4 +42,5 @@ export type ExternalToolExecutor = (
     mimeType?: string;
   }>;
   isError: boolean;
+  cancellation?: "cancelled" | "timeout";
 }>;

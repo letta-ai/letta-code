@@ -51,7 +51,11 @@ export function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return (
     Array.isArray(value.tools) &&
-    value.tools.every(isExternalToolDefinitionPayload)
+    value.tools.every(isExternalToolDefinitionPayload) &&
+    (value.capabilities === undefined ||
+      (isRecord(value.capabilities) &&
+        (value.capabilities.external_tool_call_cancel === undefined ||
+          typeof value.capabilities.external_tool_call_cancel === "boolean")))
   );
 }
 

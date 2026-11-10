@@ -43,6 +43,7 @@ export interface BackgroundProcess {
   kind?: "monitor" | "workflow" | "tool";
   /** Tool execution lives on a controller that cannot be cancelled locally. */
   remote?: boolean;
+  cancel?: () => Promise<{ killed: boolean; output: string }>;
   description?: string;
   monitorSource?: "command" | "websocket" | "script" | "github_pull_request";
   persistent?: boolean;
