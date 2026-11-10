@@ -372,7 +372,10 @@ describe("runSharedMemorySubcommand", () => {
           "not found",
         );
       }
-      if (method === "GET" && path === "/v1/repositories?limit=50&offset=0") {
+      if (
+        method === "GET" &&
+        path === "/v1/repositories?name=repo-missing&limit=2&offset=0"
+      ) {
         return { repositories: [], has_next_page: false };
       }
       throw new Error(`Unexpected request: ${method} ${path}`);
@@ -399,15 +402,7 @@ describe("runSharedMemorySubcommand", () => {
           "not found",
         );
       }
-      if (path === "/v1/repositories?limit=50&offset=0") {
-        return {
-          repositories: [
-            { id: "repository-decoy", name: "repo-shared-notes-copy" },
-          ],
-          has_next_page: true,
-        };
-      }
-      if (path === "/v1/repositories?limit=50&offset=50") {
+      if (path === "/v1/repositories?name=repo-shared-notes&limit=2&offset=0") {
         return {
           repositories: [{ id: "repository-exact", name: "repo-shared-notes" }],
           has_next_page: false,
@@ -428,10 +423,12 @@ describe("runSharedMemorySubcommand", () => {
     );
 
     expect(code).toBe(0);
-    expect(calls.slice(0, 3)).toEqual([
+    expect(calls.slice(0, 2)).toEqual([
       { method: "GET", path: "/v1/repositories/repo-shared-notes" },
-      { method: "GET", path: "/v1/repositories?limit=50&offset=0" },
-      { method: "GET", path: "/v1/repositories?limit=50&offset=50" },
+      {
+        method: "GET",
+        path: "/v1/repositories?name=repo-shared-notes&limit=2&offset=0",
+      },
     ]);
     expect(JSON.parse(logs.join("\n")).repository).toBe("repo-shared-notes");
   });
@@ -451,10 +448,60 @@ describe("runSharedMemorySubcommand", () => {
     expect(errors.join("\n")).toContain("API error (403): forbidden");
   });
 
-  test("repository names remain exact across all repository pages", async () => {
+  test("resolves an exact name with one bounded filtered request", async () => {
     const calls: Array<{ method: string; path: string }> = [];
     const request = mock(async (method: string, path: string) => {
       calls.push({ method, path });
+      if (
+        method === "GET" &&
+        path === "/v1/repositories?name=shared-notes&limit=2&offset=0"
+      ) {
+        return {
+          repositories: [{ id: "repo-exact", name: "shared-notes" }],
+          has_next_page: false,
+        };
+      }
+      if (
+        method === "GET" &&
+        path === "/v1/repositories/repo-exact/versions?limit=20"
+      ) {
+        return { commits: [] };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "shared-notes"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(0);
+    expect(calls).toEqual([
+      {
+        method: "GET",
+        path: "/v1/repositories?name=shared-notes&limit=2&offset=0",
+      },
+      {
+        method: "GET",
+        path: "/v1/repositories/repo-exact/versions?limit=20",
+      },
+    ]);
+    expect(JSON.parse(logs.join("\n")).repository).toBe("shared-notes");
+  });
+
+  test("falls back to every page when an old server ignores the name filter", async () => {
+    const calls: Array<{ method: string; path: string }> = [];
+    const request = mock(async (method: string, path: string) => {
+      calls.push({ method, path });
+      if (
+        method === "GET" &&
+        path === "/v1/repositories?name=shared-notes&limit=2&offset=0"
+      ) {
+        return {
+          repositories: [{ id: "repo-decoy", name: "shared-notes-copy" }],
+          has_next_page: true,
+        };
+      }
       if (method === "GET" && path === "/v1/repositories?limit=50&offset=0") {
         return {
           repositories: [{ id: "repo-decoy", name: "shared-notes-copy" }],
@@ -482,11 +529,65 @@ describe("runSharedMemorySubcommand", () => {
     });
 
     expect(code).toBe(0);
-    expect(calls.slice(0, 2)).toEqual([
+    expect(calls.slice(0, 3)).toEqual([
+      {
+        method: "GET",
+        path: "/v1/repositories?name=shared-notes&limit=2&offset=0",
+      },
       { method: "GET", path: "/v1/repositories?limit=50&offset=0" },
       { method: "GET", path: "/v1/repositories?limit=50&offset=50" },
     ]);
     expect(JSON.parse(logs.join("\n")).repository).toBe("shared-notes");
+  });
+
+  test("falls back when an old server rejects the name filter", async () => {
+    const calls: string[] = [];
+    const request = mock(async (method: string, path: string) => {
+      calls.push(path);
+      if (path === "/v1/repositories?name=shared-notes&limit=2&offset=0") {
+        throw new ApiRequestError(
+          "API error (422): unknown query parameter",
+          422,
+          "unknown query parameter",
+        );
+      }
+      if (path === "/v1/repositories?limit=50&offset=0") {
+        return {
+          repositories: [{ id: "repo-exact", name: "shared-notes" }],
+          has_next_page: false,
+        };
+      }
+      if (path === "/v1/repositories/repo-exact/versions?limit=20") {
+        return { commits: [] };
+      }
+      throw new Error(`Unexpected request: ${method} ${path}`);
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "shared-notes"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(0);
+    expect(calls.slice(0, 2)).toEqual([
+      "/v1/repositories?name=shared-notes&limit=2&offset=0",
+      "/v1/repositories?limit=50&offset=0",
+    ]);
+  });
+
+  test("does not hide authorization failures from exact-name lookup", async () => {
+    const request = mock(async () => {
+      throw new ApiRequestError("API error (403): forbidden", 403, "forbidden");
+    });
+
+    const code = await runSharedMemorySubcommand(["history", "shared-notes"], {
+      initializeSettings: async () => {},
+      request: request as never,
+    });
+
+    expect(code).toBe(1);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(errors.join("\n")).toContain("API error (403): forbidden");
   });
 
   test("detach deletes the link and recompiles", async () => {

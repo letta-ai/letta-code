@@ -117,6 +117,11 @@ function parseLimit(value: unknown, fallback: number): number {
   return Number.isNaN(parsed) || parsed <= 0 ? fallback : parsed;
 }
 
+interface RepositoryListPage {
+  repositories: RepositorySummary[];
+  has_next_page: boolean;
+}
+
 async function listOrgRepositories(
   request: typeof apiRequest,
 ): Promise<RepositorySummary[]> {
@@ -124,15 +129,50 @@ async function listOrgRepositories(
   const limit = 50;
   let offset = 0;
   for (;;) {
-    const page = await request<{
-      repositories: RepositorySummary[];
-      has_next_page: boolean;
-    }>("GET", `/v1/repositories?limit=${limit}&offset=${offset}`);
+    const page = await request<RepositoryListPage>(
+      "GET",
+      `/v1/repositories?limit=${limit}&offset=${offset}`,
+    );
     repositories.push(...page.repositories);
     if (!page.has_next_page) break;
     offset += limit;
   }
   return repositories;
+}
+
+async function listOrgRepositoriesByExactName(
+  request: typeof apiRequest,
+  name: string,
+): Promise<RepositorySummary[] | null> {
+  const query = new URLSearchParams({ name, limit: "2", offset: "0" });
+  let page: RepositoryListPage;
+  try {
+    page = await request<RepositoryListPage>(
+      "GET",
+      `/v1/repositories?${query}`,
+    );
+  } catch (error) {
+    // Older strict servers can reject an unknown query parameter. Authentication,
+    // authorization, rate limiting, and server failures must still surface.
+    if (
+      error instanceof ApiRequestError &&
+      (error.status === 400 || error.status === 422)
+    ) {
+      return null;
+    }
+    throw error;
+  }
+
+  // An exact filter should produce only exact rows in one bounded page. Any
+  // mismatch or remaining page proves that an older/mixed-version server did
+  // not honor the contract, so preserve correctness with the legacy full scan.
+  if (
+    page.has_next_page ||
+    !page.repositories.every((repository) => repository.name === name)
+  ) {
+    return null;
+  }
+  return page.repositories;
 }
 
 async function listAgentRepositories(
@@ -188,9 +228,11 @@ async function resolveRepositoryReferenceFromApi(
     }
   }
 
-  // The repository list contract currently exposes only limit and offset; it
-  // has no exact-name filter. Keep scanning every page and match locally rather
-  // than using a lossy search or silently missing exact names on later pages.
+  const filtered = await listOrgRepositoriesByExactName(request, trimmed);
+  if (filtered !== null) {
+    return resolveRepositoryReference(filtered, trimmed);
+  }
+
   const repositories = await listOrgRepositories(request);
   return resolveRepositoryReference(repositories, trimmed);
 }
