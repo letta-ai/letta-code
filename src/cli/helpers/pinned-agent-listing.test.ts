@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LOCAL_DESKTOP_FAVORITE_TAG } from "@/agent/favorites";
@@ -8,6 +8,7 @@ import {
   LOCAL_BACKEND_EXPERIMENTAL_ENV,
 } from "@/backend/local/paths";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { setServiceName } from "@/utils/secrets";
 import { listPinnedAgentsForCurrentUser } from "./pinned-agent-listing";
 
@@ -31,8 +32,8 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await settingsManager.reset();
-  await rm(testHomeDir, { recursive: true, force: true });
-  await rm(storageDir, { recursive: true, force: true });
+  await removeTestDir(testHomeDir);
+  await removeTestDir(storageDir);
   process.env.HOME = originalHome;
   if (originalLocalBackendDir === undefined) {
     delete process.env[LOCAL_BACKEND_DIR_ENV];

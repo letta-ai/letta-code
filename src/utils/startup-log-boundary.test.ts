@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const root = process.cwd();
 const unixDescribe = process.platform === "win32" ? describe.skip : describe;
@@ -85,7 +86,7 @@ if (process.argv[2] === "failure" || process.argv[2] === "invalid") {
 });
 
 afterAll(async () => {
-  if (directory) await rm(directory, { recursive: true, force: true });
+  if (directory) await removeTestDir(directory);
 });
 
 for (const runtime of ["bun", "node"]) {
