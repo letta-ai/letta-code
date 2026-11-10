@@ -30,6 +30,7 @@ import { switchConversationWorkingDirectory } from "@/websocket/listener/cwd-cha
 import { registerRuntimeExternalTools } from "@/websocket/listener/external-tools";
 import {
   getOrCreateConversationPermissionModeStateRef,
+  getPermissionModeScopeKey,
   persistPermissionModeMapForRuntime,
 } from "@/websocket/listener/permission-mode";
 import { scheduleQueuePump } from "@/websocket/listener/queue";
@@ -429,6 +430,9 @@ async function applyRuntimeStartState(
     if (!mode) {
       throw new Error(`Unsupported permission mode: ${parsed.mode}`);
     }
+    const hadPermissionMode = context.runtime.permissionModeByConversation.has(
+      getPermissionModeScopeKey(scope.agent_id, scope.conversation_id),
+    );
     const state = getOrCreateConversationPermissionModeStateRef(
       context.runtime,
       scope.agent_id,
@@ -441,7 +445,7 @@ async function applyRuntimeStartState(
       state.mode = mode;
       if (!parsed.mode_is_default) state.explicit = true;
       persistPermissionModeMapForRuntime(context.runtime);
-      if (previousMode !== mode) {
+      if (hadPermissionMode && previousMode !== mode) {
         telemetry.trackPermissionModeChanged({
           agent_id: scope.agent_id,
           conversation_id: scope.conversation_id,
