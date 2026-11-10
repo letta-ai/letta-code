@@ -153,6 +153,16 @@ export function captureExternalToolNotificationGuard(
   };
 }
 
+export function captureNotificationWait(
+  listener: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+): () => Promise<boolean> {
+  return (
+    captureExternalToolNotificationGuard(listener, runtimeScope)
+      ?.waitUntilCurrent ?? (async () => false)
+  );
+}
+
 function toExternalToolDefinition(
   listener: ListenerRuntime,
   tool: ExternalToolDefinitionPayload,

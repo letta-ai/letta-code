@@ -16,6 +16,7 @@ import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getStoredClientPreferences } from "./client-preferences";
 import {
+  getExecutionContextById,
   getInternalToolName,
   isOpenAIModel,
   loadTools,
@@ -319,6 +320,7 @@ export async function prepareToolExecutionContextForScope(params: {
   foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
+  shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
@@ -464,6 +466,8 @@ export async function prepareToolExecutionContextForScope(params: {
       foregroundYieldMs,
     },
   });
+  const context = getExecutionContextById(result.preparedToolContext.contextId);
+  if (context) context.shouldEnqueueBackground = params.shouldEnqueueBackground;
   return { ...result, agent: agent as AgentState | null };
 }
 

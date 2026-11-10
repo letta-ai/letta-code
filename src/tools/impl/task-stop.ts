@@ -4,6 +4,7 @@ import { getErrorMessage } from "@/utils/error";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 import { killBackgroundProcess } from "./kill-bash.js";
 import {
+  backgroundProcesses,
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
 } from "./process_manager.js";
@@ -109,5 +110,17 @@ export async function task_stop(
 
   // Fall back to killing a Bash background process (bash shells share the
   // task id space).
-  return { killed: killBackgroundProcess(task_id) };
+  const process = backgroundProcesses.get(task_id);
+  if (process?.remote && process.status === "running") {
+    return {
+      killed: false,
+      output:
+        "The server for this tool doesn't support cancelling, so the call may still finish; its result will still arrive as a notification.",
+    };
+  }
+  const killed = killBackgroundProcess(task_id);
+  return {
+    killed,
+    ...(killed && process?.kind === "tool" ? { output: "Stopped" } : {}),
+  };
 }
