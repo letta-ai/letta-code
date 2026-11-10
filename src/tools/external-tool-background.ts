@@ -23,6 +23,7 @@ import {
 type ExternalResult = {
   status: "success" | "error";
   toolReturn: MessageCreate["content"];
+  cancellation?: "cancelled" | "timeout";
 };
 /** An external tool unwound early because the turn's abort signal fired. */
 export type InterruptedExternalResult = {
@@ -94,6 +95,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   operation: Promise<T>,
   options?: {
     abortController?: AbortController;
+    remoteAbortController?: AbortController;
     onBackground?: (outputFile: string) => void;
     yieldMs?: number;
     signal?: AbortSignal;
@@ -199,6 +201,34 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     outputFile,
     runtimeScope: scope,
     actingUserId: scope.actingUserId,
+    ...(options?.remoteAbortController
+      ? {
+          cancel: async () => {
+            options.remoteAbortController?.abort();
+            const outcome = await settled;
+            if (
+              outcome.kind === "result" &&
+              outcome.result.cancellation === "cancelled"
+            ) {
+              return { killed: true, output: "Stopped" };
+            }
+            if (
+              outcome.kind === "error" ||
+              outcome.result.cancellation === "timeout"
+            ) {
+              return {
+                killed: false,
+                output:
+                  "Cancellation was not confirmed; the remote tool may still finish.",
+              };
+            }
+            return {
+              killed: false,
+              output: `Already finished: ${notificationText(outcome.result.toolReturn)}`,
+            };
+          },
+        }
+      : {}),
   };
   backgroundProcesses.set(taskId, entry);
   options?.onBackground?.(outputFile);

@@ -111,6 +111,7 @@ export async function task_stop(
   // Fall back to killing a Bash background process (bash shells share the
   // task id space).
   const process = backgroundProcesses.get(task_id);
+  if (process?.cancel) return process.cancel();
   if (process?.remote && process.status === "running") {
     return {
       killed: false,

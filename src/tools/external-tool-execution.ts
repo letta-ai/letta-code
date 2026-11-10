@@ -17,6 +17,7 @@ export async function executeExternalToolRequest(
   signal?: AbortSignal,
 ): Promise<{
   status: "success" | "error";
+  cancellation?: "cancelled" | "timeout";
   toolReturn: ReturnType<typeof clampToolReturnContent>;
 }> {
   const executor = executorOverride;
@@ -44,6 +45,7 @@ export async function executeExternalToolRequest(
         toolName,
       ),
       status: result.isError ? "error" : "success",
+      ...(result.cancellation ? { cancellation: result.cancellation } : {}),
     };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

@@ -50,7 +50,7 @@ import type {
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
-  ExternalToolCallRequestMessage,
+  ExternalToolCallMessage,
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
@@ -2309,7 +2309,7 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | TurnFinishedMessage
   | SubagentStateUpdateMessage
-  | ExternalToolCallRequestMessage
+  | ExternalToolCallMessage
   | AbortMessageResponseMessage
   | import("./queue-update-protocol").ResumeQueueResponseMessage
   | SyncResponseMessage
