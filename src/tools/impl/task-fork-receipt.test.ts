@@ -23,6 +23,7 @@ import { __testSetBackend, type Backend, getBackend } from "@/backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { backgroundTasks } from "./process_manager";
+import * as wakes from "./wake";
 
 // Keep task(), the manager, and the state store real. Stub backend/credential I/O
 // and the child process, which emits no init event and exits only when requested.
@@ -241,6 +242,10 @@ describe("prepared conversation launch", () => {
 
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
     const cancelConversation = mock(async () => ({ "run-child": "cancelled" }));
+    const cancelWakes = spyOn(
+      wakes,
+      "cancelConversationWakes",
+    ).mockResolvedValue();
     __testSetBackend({
       ...getBackend(),
       cancelConversation,
@@ -289,6 +294,13 @@ describe("prepared conversation launch", () => {
       killed: true,
     });
     expect(cancelConversation).toHaveBeenCalledWith("conv-child");
+    expect(cancelWakes).toHaveBeenCalledWith({
+      agentId: "agent-parent",
+      conversationId: "conv-child",
+    });
+    expect(
+      backgroundTasks.get(receipt.task_id)?.abortController?.signal.aborted,
+    ).toBe(true);
     expect(backgroundTasks.get(receipt.task_id)?.status).toBe("failed");
   });
 
