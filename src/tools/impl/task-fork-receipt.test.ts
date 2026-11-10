@@ -240,6 +240,11 @@ describe("prepared conversation launch", () => {
   );
 
   test("uses the existing conversation without prompt or tool overrides and remains cancellable", async () => {
+    const cancelConversation = mock(async () => ({ "run-child": "cancelled" }));
+    __testSetBackend({
+      ...getBackend(),
+      cancelConversation,
+    } as unknown as Backend);
     const controller = new AbortController();
     const receipt = await runWithRuntimeContext(
       { workingDirectory: testHome },
@@ -282,7 +287,9 @@ describe("prepared conversation launch", () => {
     }
     expect(await task_stop({ task_id: receipt.task_id })).toEqual({
       killed: true,
+      output: "Cancelled the remote run",
     });
+    expect(cancelConversation).toHaveBeenCalledWith("conv-child");
     expect(backgroundTasks.get(receipt.task_id)?.status).toBe("failed");
   });
 
