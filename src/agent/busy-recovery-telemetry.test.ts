@@ -1,4 +1,12 @@
-import { afterAll, afterEach, describe, expect, spyOn, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
 import {
   getPreStreamErrorAction,
   resumeConversationBusyRequest,
@@ -7,6 +15,7 @@ import {
 import { sendMessageStreamWithBackend } from "@/agent/message";
 import { __testSetBackend, type Backend } from "@/backend/backend";
 import { telemetry } from "@/telemetry";
+import { __testResetBusyRecoveryBudget } from "@/telemetry/busy-recovery";
 
 const calls: Array<{
   phase: string;
@@ -178,3 +187,17 @@ describe("busy recovery diagnostic boundaries", () => {
 // Restore the process-local spy after this file finishes.
 
 afterAll(() => spy.mockRestore());
+
+const originalTelemetryEnv = process.env.LETTA_CODE_TELEM;
+const originalDoNotTrack = process.env.DO_NOT_TRACK;
+beforeEach(() => {
+  __testResetBusyRecoveryBudget();
+  process.env.LETTA_CODE_TELEM = "1";
+  delete process.env.DO_NOT_TRACK;
+});
+afterEach(() => {
+  if (originalTelemetryEnv === undefined) delete process.env.LETTA_CODE_TELEM;
+  else process.env.LETTA_CODE_TELEM = originalTelemetryEnv;
+  if (originalDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;
+  else process.env.DO_NOT_TRACK = originalDoNotTrack;
+});

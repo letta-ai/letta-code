@@ -1,5 +1,6 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { telemetry } from "@/telemetry";
+import { __testResetBusyRecoveryBudget } from "@/telemetry/busy-recovery";
 import {
   markBusyRequest,
   traceBusyRecoveryStream,
@@ -20,7 +21,149 @@ function capture() {
 }
 
 describe("busy recovery stream outcomes", () => {
-  test("normal sends are untouched; a retried OTID records stop and EOF separately", async () => {
+  test("opt-out installs no observer or timer", () => {
+    process.env.DO_NOT_TRACK = "1";
+    const stream = { async *[Symbol.asyncIterator]() {} };
+    const original = stream[Symbol.asyncIterator];
+    let scheduled = 0;
+    traceBusyRecoveryStream(
+      stream,
+      "conv-optout",
+      "otid-optout",
+      undefined,
+      {},
+      {
+        schedule: () => {
+          scheduled += 1;
+          return () => {};
+        },
+      },
+    );
+    expect(stream[Symbol.asyncIterator]).toBe(original);
+    expect(scheduled).toBe(0);
+  });
+
+  test("observer and timer allocation is capped at 128 active streams", () => {
+    let scheduled = 0;
+    const controller = new AbortController();
+    for (let n = 0; n < 160; n += 1) {
+      const stream = { async *[Symbol.asyncIterator]() {} };
+      traceBusyRecoveryStream(
+        stream,
+        "conv-cap",
+        `otid-${n}`,
+        controller.signal,
+        {},
+        {
+          schedule: () => {
+            scheduled += 1;
+            return () => {};
+          },
+        },
+      );
+    }
+    expect(scheduled).toBe(128);
+    controller.abort();
+  });
+
+  test("short original successful streams emit nothing", async () => {
+    capture();
+    const stream = {
+      async *[Symbol.asyncIterator]() {
+        yield { message_type: "stop_reason", stop_reason: "end_turn" };
+      },
+    };
+    for await (const _ of traceBusyRecoveryStream(
+      stream,
+      "conv-short",
+      "otid-short",
+      undefined,
+      {},
+    )) {
+    }
+    expect(diagnostics).toHaveLength(0);
+  });
+
+  test.each([false, true])(
+    "hung original/recovered stream emits two bounded last-state snapshots (recovered=%s)",
+    async (recovered) => {
+      capture();
+      let now = 0;
+      let callback: (() => void) | undefined;
+      let scheduled = 0;
+      let cancelled = 0;
+      const controller = new AbortController();
+      const backend = {};
+      if (recovered) markBusyRequest(backend, "conv-hang", "otid-hang");
+      let reads = 0;
+      const iterator = {
+        next: async () => {
+          reads += 1;
+          if (reads === 1)
+            return {
+              done: false as const,
+              value: {
+                message_type: "reasoning_message",
+                run_id: "run-original",
+                content: "secret text",
+              },
+            };
+          return new Promise<IteratorResult<unknown>>(() => {});
+        },
+      };
+      const stream = { [Symbol.asyncIterator]: () => iterator };
+      const observed = traceBusyRecoveryStream(
+        stream,
+        "conv-hang",
+        "otid-hang",
+        controller.signal,
+        backend,
+        {
+          now: () => now,
+          schedule: (cb, delay) => {
+            callback = cb;
+            scheduled += 1;
+            expect([60000, 240000]).toContain(delay);
+            return () => {
+              cancelled += 1;
+              callback = undefined;
+            };
+          },
+        },
+      );
+      const reader = observed[Symbol.asyncIterator]();
+      await reader.next();
+      let resolved = false;
+      void reader.next().then(() => {
+        resolved = true;
+      });
+      await Promise.resolve();
+      expect(resolved).toBe(false);
+      now = 60000;
+      callback?.();
+      expect(diagnostics[0]).toMatchObject({
+        phase: "stream_progress",
+        request_run_id: "run-original",
+        chunk_count: 1,
+        read_pending: true,
+        idle_ms: 60000,
+        last_chunk_type: "reasoning_message",
+      });
+      now = 300000;
+      callback?.();
+      expect(diagnostics.map((d) => d.phase)).toEqual([
+        "stream_progress",
+        "stream_waiting",
+      ]);
+      expect(scheduled).toBe(2);
+      expect(JSON.stringify(diagnostics)).not.toContain("secret");
+      controller.abort();
+      expect(diagnostics.at(-1)?.phase).toBe("stream_cancelled");
+      expect(cancelled).toBe(1);
+    },
+  );
+
+  test("a recovered stream aggregates stop reason into its terminal summary", async () => {
     capture();
     const backend = {};
     const chunks = [
@@ -40,16 +183,6 @@ describe("busy recovery stream outcomes", () => {
         yield* chunks;
       },
     };
-    expect(
-      traceBusyRecoveryStream(
-        stream,
-        "conv-example",
-        "otid-example",
-        undefined,
-        backend,
-      ),
-    ).toBe(stream);
-    expect(diagnostics).toHaveLength(0);
     markBusyRequest(backend, "conv-example", "otid-example");
     expect(
       traceBusyRecoveryStream(
@@ -60,14 +193,11 @@ describe("busy recovery stream outcomes", () => {
         backend,
       ),
     ).toBe(stream);
+    expect(diagnostics).toHaveLength(0);
     const output = [];
     for await (const chunk of stream) output.push(chunk);
     expect(output).toEqual(chunks);
-    expect(diagnostics.map((d) => d.phase)).toEqual([
-      "stream_attached",
-      "stream_stop_received",
-      "stream_eof",
-    ]);
+    expect(diagnostics.map((d) => d.phase)).toEqual(["stream_eof"]);
     expect(diagnostics.at(-1)).toMatchObject({
       request_run_id: "run-request",
       stop_reason: "end_turn",
@@ -126,10 +256,7 @@ describe("busy recovery stream outcomes", () => {
     ))
       break;
     expect(cleaned).toBe(true);
-    expect(diagnostics.map((d) => d.phase)).toEqual([
-      "stream_attached",
-      "stream_closed",
-    ]);
+    expect(diagnostics.map((d) => d.phase)).toEqual(["stream_closed"]);
   });
 
   test("abort is distinct from transport failure", async () => {
@@ -151,4 +278,18 @@ describe("busy recovery stream outcomes", () => {
     await expect(iterator.next()).rejects.toBe(error);
     expect(diagnostics.at(-1)?.phase).toBe("stream_cancelled");
   });
+});
+
+const originalTelemetryEnv = process.env.LETTA_CODE_TELEM;
+const originalDoNotTrack = process.env.DO_NOT_TRACK;
+beforeEach(() => {
+  __testResetBusyRecoveryBudget();
+  process.env.LETTA_CODE_TELEM = "1";
+  delete process.env.DO_NOT_TRACK;
+});
+afterEach(() => {
+  if (originalTelemetryEnv === undefined) delete process.env.LETTA_CODE_TELEM;
+  else process.env.LETTA_CODE_TELEM = originalTelemetryEnv;
+  if (originalDoNotTrack === undefined) delete process.env.DO_NOT_TRACK;
+  else process.env.DO_NOT_TRACK = originalDoNotTrack;
 });

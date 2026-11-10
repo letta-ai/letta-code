@@ -1,8 +1,14 @@
 import { telemetry } from "@/telemetry";
+import { BusyRecoveryBudget } from "./busy-recovery-budget";
+
+let budget = new BusyRecoveryBudget();
+export function __testResetBusyRecoveryBudget(): void {
+  budget = new BusyRecoveryBudget();
+}
 
 export type BusyRecoveryPhase =
-  | "stream_stop_received"
-  | "stream_attached"
+  | "stream_waiting"
+  | "stream_progress"
   | "stream_eof"
   | "stream_failed"
   | "stream_cancelled"
@@ -32,6 +38,17 @@ interface BusyRecoveryFields {
   pollCount?: number;
   elapsedMs?: number;
   runStatus?: unknown;
+  chunkCount?: number;
+  idleMs?: number;
+  lastChunkType?: unknown;
+  readPending?: boolean;
+}
+
+export function isBusyRecoveryEnabled(): boolean {
+  return (
+    !["0", "false"].includes(process.env.LETTA_CODE_TELEM ?? "") &&
+    process.env.DO_NOT_TRACK !== "1"
+  );
 }
 
 /** Fixed text and allowlisted fields only: never include errors or debug tails. */
@@ -40,12 +57,23 @@ export function reportBusyRecovery(
   fields: BusyRecoveryFields = {},
 ): void {
   try {
+    if (!isBusyRecoveryEnabled()) return;
     const safeId = (value: string | undefined) =>
-      value && /^[a-zA-Z0-9_-]{1,128}$/.test(value) ? value : undefined;
+      typeof value === "string" && value && /^[a-zA-Z0-9_-]{1,128}$/.test(value)
+        ? value
+        : undefined;
     const count = (value: number | undefined) =>
       typeof value === "number" && Number.isFinite(value) && value >= 0
         ? Math.floor(value)
         : undefined;
+    if (
+      !budget.allow(phase, {
+        conversationId: safeId(fields.conversationId),
+        otid: safeId(fields.otid),
+        blockerRunId: safeId(fields.blockerRunId),
+      })
+    )
+      return;
     telemetry.trackError(
       "conversation_busy_recovery",
       "Conversation busy recovery diagnostic",
@@ -57,6 +85,26 @@ export function reportBusyRecovery(
         blocker_run_id: safeId(fields.blockerRunId),
         request_run_id: safeId(fields.requestRunId),
         retry_count: count(fields.retryCount),
+        chunk_count: count(fields.chunkCount),
+        read_pending:
+          typeof fields.readPending === "boolean"
+            ? fields.readPending
+            : undefined,
+        idle_ms: count(fields.idleMs),
+        last_chunk_type:
+          typeof fields.lastChunkType === "string" &&
+          [
+            "reasoning_message",
+            "assistant_message",
+            "tool_call_message",
+            "tool_return_message",
+            "approval_request_message",
+            "ping",
+            "stop_reason",
+            "usage_statistics",
+          ].includes(fields.lastChunkType)
+            ? fields.lastChunkType
+            : undefined,
         stop_reason:
           typeof fields.stopReason === "string" &&
           [

@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { reportBusyRecovery } from "@/telemetry/busy-recovery";
+import {
+  __testResetBusyRecoveryBudget,
+  reportBusyRecovery,
+} from "@/telemetry/busy-recovery";
 import { type TelemetryEvent, telemetry } from "@/telemetry/index";
 
 const state = telemetry as unknown as { events: TelemetryEvent[] };
@@ -143,3 +146,5 @@ describe("busy recovery telemetry", () => {
     expect(state.events).toHaveLength(0);
   });
 });
+
+beforeEach(() => __testResetBusyRecoveryBudget());
