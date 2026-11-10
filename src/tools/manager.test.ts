@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
+import { resetPermissionLoaderCacheForTests } from "@/permissions/loader";
+import { permissionMode } from "@/permissions/mode";
 import { type TelemetryEvent, telemetry } from "@/telemetry";
 import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
-
 import {
+  checkToolPermission,
   clearExternalTools,
   executeExternalTool,
   executeTool,
@@ -135,6 +140,34 @@ describe("external tool execution", () => {
 
     expect(result.toolReturn).toBe("first\nsecond");
   });
+});
+
+test("tool permission checks fail when settings JSON is malformed", async () => {
+  const projectDir = await mkdtemp(
+    join(tmpdir(), "letta-invalid-permissions-"),
+  );
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  const previousMode = permissionMode.getMode();
+  permissionMode.setMode("unrestricted");
+
+  try {
+    await Bun.write(
+      settingsPath,
+      '{"permissions":{"mode":"strict","deny":["Bash"]}',
+    );
+
+    await expect(
+      checkToolPermission(
+        "Bash",
+        { command: "echo permission-check" },
+        projectDir,
+      ),
+    ).rejects.toThrow(settingsPath);
+  } finally {
+    permissionMode.setMode(previousMode);
+    resetPermissionLoaderCacheForTests();
+    await rm(projectDir, { recursive: true, force: true });
+  }
 });
 
 describe("external tool auto-background eligibility", () => {

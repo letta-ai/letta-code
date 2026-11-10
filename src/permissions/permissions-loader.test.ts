@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -544,18 +544,73 @@ test("Save permission preserves other settings fields", async () => {
 // Error Handling Tests
 // ============================================================================
 
-test("Load permissions handles invalid JSON gracefully", async () => {
+test("Load permissions rejects invalid JSON with its settings path", async () => {
   const projectDir = join(testDir, "project-invalid-json");
   const settingsPath = join(projectDir, ".letta", "settings.json");
 
-  // Write invalid JSON
+  await Bun.write(
+    settingsPath,
+    '{"permissions":{"mode":"strict","deny":["Bash"]}',
+  );
+
+  await expect(loadPermissions(projectDir)).rejects.toThrow(settingsPath);
+});
+
+test("Load permissions rejects invalid global settings", async () => {
+  const configDir = join(testDir, "global-config");
+  process.env.LETTA_CONFIG_DIR = configDir;
+  const settingsPath = join(configDir, "settings.json");
   await Bun.write(settingsPath, "{ invalid json ");
 
-  const permissions = await loadPermissions(projectDir);
+  await expect(loadPermissions(join(testDir, "project"))).rejects.toThrow(
+    settingsPath,
+  );
+});
 
-  // Should return empty permissions instead of crashing (silently skip invalid file)
-  expect(permissions.allow).toBeDefined();
-  expect(permissions.deny).toBeDefined();
+test("Load permissions rejects malformed permission rule values", async () => {
+  const projectDir = join(testDir, "project-invalid-permission-rules");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({ permissions: { deny: "Bash" } }),
+  );
+
+  await expect(loadPermissions(projectDir)).rejects.toThrow(settingsPath);
+});
+
+test("Load permissions rejects unknown permission modes", async () => {
+  const projectDir = join(testDir, "project-invalid-permission-mode");
+  const settingsPath = join(projectDir, ".letta", "settings.json");
+  await Bun.write(
+    settingsPath,
+    JSON.stringify({ permissions: { mode: "strcit" } }),
+  );
+
+  await expect(loadPermissions(projectDir)).rejects.toThrow(settingsPath);
+});
+
+test("Load permissions rejects invalid local settings after a cached miss", async () => {
+  const projectDir = join(testDir, "project-invalid-local-json");
+  const settingsPath = join(projectDir, ".letta", "settings.local.json");
+
+  await loadPermissions(projectDir);
+  await Bun.write(settingsPath, "{ invalid json ");
+
+  await expect(loadPermissions(projectDir)).rejects.toThrow(settingsPath);
+});
+
+test("Load permissions rejects settings paths that are not files", async () => {
+  const settingsPath = join(
+    testDir,
+    "project-invalid-settings-path",
+    ".letta",
+    "settings.json",
+  );
+  await mkdir(settingsPath, { recursive: true });
+
+  await expect(
+    loadPermissions(join(testDir, "project-invalid-settings-path")),
+  ).rejects.toThrow(settingsPath);
 });
 
 test("Load permissions handles missing permissions field", async () => {
