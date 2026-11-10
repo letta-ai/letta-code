@@ -259,7 +259,12 @@ async function handleChatCompletions(
 
   let outcome: TurnOutcome;
   try {
-    let turnPromise = replayPromise;
+    // The conversation lookup can wait behind another chat's creation. A
+    // matching retry may publish its outcome meanwhile, so recheck here with
+    // no await between this lookup and starting/registering a new turn.
+    let turnPromise =
+      replayPromise ??
+      (idempotencyKey ? getIdempotentOutcome(idempotencyKey) : undefined);
     const ownsTurn = !turnPromise;
     if (!turnPromise) {
       turnPromise = runBridgeTurn({

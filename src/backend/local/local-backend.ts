@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   GIT_MEMORY_ENABLED_TAG,
   isMemfsOptOutCreateTags,
@@ -203,7 +204,9 @@ export class LocalBackend extends HeadlessBackend {
       defaultAgentModelSettings: modelConfig.modelSettings,
       modelSettingsForModel: (handle) =>
         localModelSettingsForHandle(handle, runtime),
-      conversationIdPrefix: "local-conv-",
+      // Saved chat bindings can outlive deleted conversations. A fresh
+      // namespace prevents a later backend instance from reusing their IDs.
+      conversationIdPrefix: `local-conv-${randomUUID()}-`,
       storedMessageIdPrefix: "letta-msg-",
       localMessageIdPrefix: "ui-msg-",
     };

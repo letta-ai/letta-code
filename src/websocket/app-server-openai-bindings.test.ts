@@ -13,9 +13,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { __testSetBackend } from "@/backend";
 import { LocalBackend } from "@/backend/local/local-backend";
+import { LocalStore } from "@/backend/local/local-store";
 import { settingsManager } from "@/settings-manager";
 import { type AppServerHandle, startAppServer } from "@/websocket/app-server";
 import {
+  createConversationSerialized,
   rememberConversation,
   resetOpenAiCompatState,
   resolveConversationId,
@@ -52,8 +54,9 @@ describe("local server durable chat bindings", () => {
     key = `chat-key:${agentId}:fixture-chat`;
     __testSetBackend(backend);
     turns.length = 0;
-    __testSetRunTurnImpl(async ({ conversationId }) => {
+    __testSetRunTurnImpl(async ({ conversationId, onAssistantText }) => {
       turns.push(conversationId);
+      onAssistantText?.("pong");
       return {
         text: "pong",
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
@@ -102,6 +105,7 @@ describe("local server durable chat bindings", () => {
     history = false,
     extra = {},
     header = "x-openwebui-chat-id",
+    headers: Record<string, string> = {},
   ) {
     if (!handle) throw new Error("Expected a running server");
     const url = new URL(handle.url);
@@ -117,6 +121,7 @@ describe("local server durable chat bindings", () => {
       headers: {
         "content-type": "application/json",
         [header]: "fixture-chat",
+        ...headers,
       },
       body: JSON.stringify({
         model: agentId,
@@ -142,6 +147,97 @@ describe("local server durable chat bindings", () => {
     __testSetBackend(backend);
     expect(await resolveAndRemember()).toBe(original);
   });
+
+  test("restores an existing numeric conversation and version-1 binding", async () => {
+    const legacyStore = new LocalStore(agentId, {
+      storageDir,
+      seedDefaultAgent: false,
+      strictAgentAccess: true,
+    });
+    const legacy = legacyStore.createConversation({ agent_id: agentId });
+    expect(legacy.id).toMatch(/^local-conv-\d+$/);
+    rememberConversation(key, legacy.id);
+    resetOpenAiCompatState();
+    backend = new LocalBackend({ storageDir, memfsEnabled: false });
+    __testSetBackend(backend);
+    expect(await resolveAndRemember()).toBe(legacy.id);
+    expect(JSON.parse(await readFile(bindingPath(), "utf8")).version).toBe(1);
+  });
+
+  for (const stream of [false, true]) {
+    test(`an established-chat retry runs once while another chat is being created (stream=${stream})`, async () => {
+      const original = await resolveAndRemember();
+      await start();
+      const create = backend.createConversation.bind(backend);
+      const retrieveAgent = backend.retrieveAgent.bind(backend);
+      let release: () => void = () => {};
+      let started: () => void = () => {};
+      let received: () => void = () => {};
+      const creationStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const bothRequestsReceived = new Promise<void>((resolve) => {
+        received = resolve;
+      });
+      let requests = 0;
+      backend.createConversation = async (...args) => {
+        started();
+        await gate;
+        return create(...args);
+      };
+      backend.retrieveAgent = async (...args) => {
+        const agent = await retrieveAgent(...args);
+        requests += 1;
+        if (requests === 2) received();
+        return agent;
+      };
+      const blocked = createConversationSerialized(agentId);
+      try {
+        await creationStarted;
+        const headers = { "idempotency-key": "queued-chat-retry" };
+        const first = request(
+          "chat/completions",
+          false,
+          { stream },
+          "x-letta-chat-key",
+          headers,
+        );
+        const retry = request(
+          "chat/completions",
+          false,
+          { stream },
+          "x-letta-chat-key",
+          headers,
+        );
+        await bothRequestsReceived;
+        // Both handlers have resolved the agent and reached their queued
+        // conversation lookup before the unrelated creation is released.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(turns).toHaveLength(0);
+        release();
+        const responses = await Promise.all([first, retry]);
+        expect(responses.map((response) => response.status)).toEqual([
+          200, 200,
+        ]);
+        const texts = await Promise.all(
+          responses.map((response) => response.text()),
+        );
+        expect(texts.every((text) => text.includes("pong"))).toBe(true);
+        expect(turns).toEqual([original]);
+        expect(
+          await backend.listConversations({ agent_id: agentId }),
+        ).toHaveLength(2);
+      } finally {
+        release();
+        await blocked;
+        backend.createConversation = create;
+        backend.retrieveAgent = retrieveAgent;
+      }
+    });
+  }
 
   test("concurrent first requests publish one mapping inside the creation queue", async () => {
     const originalCreate = backend.createConversation.bind(backend);
@@ -294,6 +390,35 @@ describe("local server durable chat bindings", () => {
   });
 
   for (const endpoint of ["chat/completions", "responses"]) {
+    test(`${endpoint} rejects an old binding after missing native state and creation of a different chat`, async () => {
+      const original = await resolveAndRemember();
+      const conversationsDir = join(storageDir, "conversations");
+      for (const entry of await readdir(conversationsDir)) {
+        const path = join(conversationsDir, entry);
+        const record = JSON.parse(
+          await readFile(join(path, "conversation.json"), "utf8"),
+        ) as { id: string };
+        if (record.id === original)
+          await rm(path, { recursive: true, force: true });
+      }
+      resetOpenAiCompatState();
+      backend = new LocalBackend({ storageDir, memfsEnabled: false });
+      __testSetBackend(backend);
+      const other = await resolveAndRemember(
+        `chat-key:${agentId}:different-chat`,
+      );
+      await start();
+      const response = await request(endpoint, true);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: { code: "conversation_binding_unavailable" },
+      });
+      expect(other).not.toBe(original);
+      expect(turns).toHaveLength(0);
+      const messages = await backend.listConversationMessages(other, {});
+      expect(messages.getPaginatedItems()).toHaveLength(0);
+    });
+
     for (const stream of [false, true]) {
       test(`${endpoint} restores context after restart (stream=${stream})`, async () => {
         const header = stream ? "x-openwebui-chat-id" : "x-letta-chat-key";
