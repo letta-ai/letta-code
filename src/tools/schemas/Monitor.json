@@ -55,6 +55,16 @@
     },
     "args": {
       "description": "Optional input exposed to script as args."
+    },
+    "url": {
+      "type": "string",
+      "description": "Public http(s) URL that Letta Cloud polls with GET. Notifies only when the HTTP status or body changes. timeout_ms defaults to 24 hours here, up to 7 days. Cannot be combined with command, ws, or script."
+    },
+    "interval_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "default": 60,
+      "description": "Seconds between polls of url."
     }
   },
   "required": ["description"],

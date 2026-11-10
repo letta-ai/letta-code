@@ -32,6 +32,7 @@ import {
 } from "./monitor-event-stream.js";
 import { startScriptMonitor } from "./monitor-script.js";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
+import { startCloudUrlMonitor } from "./monitor-url-cloud";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -77,6 +78,9 @@ interface MonitorArgs {
   ws?: MonitorWebSocketSource;
   script?: string;
   args?: unknown;
+  url?: string;
+  interval_seconds?: number;
+  toolCallId?: string;
   backup_after_seconds?: number;
   backup_prompt?: string;
   secretEnv?: Record<string, string>;
@@ -286,8 +290,14 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
       normalized.ws.url === ""
     );
   if (Number(hasCommand) + Number(hasWebSocket) + Number(hasScript) !== 1) {
-    throw new Error("Monitor requires exactly one of command, ws, or script");
+    throw new Error(
+      "Monitor requires exactly one of command, ws, or script, or url",
+    );
   }
+  if (normalized.interval_seconds !== undefined) {
+    throw new Error("Monitor interval_seconds is only supported with url");
+  }
+  delete normalized.url;
   if (!hasScript) {
     delete normalized.script;
     delete normalized.args;
@@ -869,6 +879,10 @@ function backupScopeFor(taskId: string) {
 export async function monitor(args: MonitorArgs): Promise<MonitorResult> {
   // Hooks may have yielded since approval execution checked cancellation.
   args.signal?.throwIfAborted();
+  // A url monitor runs in Letta Cloud; nothing is started or retained here.
+  if (typeof args.url === "string" && args.url !== "") {
+    return startCloudUrlMonitor(args);
+  }
   const normalized = normalizeMonitorArgs(args);
   installMonitorProcessExitCleanup();
   const result =

@@ -7,6 +7,7 @@ import { stopClaudeSession } from "./claude-stream-session";
 import { stopCodexSession } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 import { killBackgroundProcess } from "./kill-bash.js";
+import { isCloudMonitorId, stopCloudUrlMonitor } from "./monitor-url-cloud";
 import {
   type BackgroundTask,
   backgroundProcesses,
@@ -113,6 +114,7 @@ export async function task_stop(
     stopRemoteExternal?: typeof stopRemoteExternalCodingAgent;
     remoteStopTimeoutMs?: number;
     completionTimeoutMs?: number;
+    stopCloudMonitor?: typeof stopCloudUrlMonitor;
   } = {},
 ): Promise<TaskStopResult> {
   validateRequiredParams(args, ["task_id"], "TaskStop");
@@ -275,6 +277,9 @@ export async function task_stop(
       output:
         "The server for this tool doesn't support cancelling, so the call may still finish; its result will still arrive as a notification.",
     };
+  }
+  if (!process && isCloudMonitorId(task_id)) {
+    return (deps.stopCloudMonitor ?? stopCloudUrlMonitor)(task_id);
   }
   const killed = killBackgroundProcess(task_id);
   return {
