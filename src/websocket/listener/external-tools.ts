@@ -1,5 +1,6 @@
 import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
 import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
+import { EXTERNAL_TOOL_FOREGROUND_INTERRUPTED } from "@/tools/external-tool-types";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -308,6 +309,15 @@ export function installExternalToolBridge(
             try {
               connection.writer.send(pending.requestFrame);
               pending.sentOn = connection.writer;
+              // A foreground interrupt has no result consumer left. Send cancel,
+              // then release local state without waiting for confirmation.
+              if (
+                context.signal?.reason === EXTERNAL_TOOL_FOREGROUND_INTERRUPTED
+              ) {
+                clearTimeout(pending.timeout);
+                getPendingExternalToolCalls(runtime).delete(requestKey);
+                reject(new Error("cancelled"));
+              }
             } catch (error) {
               clearTimeout(pending.timeout);
               getPendingExternalToolCalls(runtime).delete(requestKey);

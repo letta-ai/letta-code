@@ -98,20 +98,40 @@ function setup(
   );
   if (!tool) throw new Error("Missing registration");
   const notifications: unknown[] = [];
-  const start = (signal?: AbortSignal) =>
+  let executionsSettled = 0;
+  const start = (signal?: AbortSignal, yieldMs = 1) =>
     autoBackgroundRemoteExternalTool(
       "write",
       tool,
       (signal) =>
-        executeExternalTool("call", "write", {}, undefined, tool, signal),
+        executeExternalTool(
+          "call",
+          "write",
+          {},
+          undefined,
+          tool,
+          signal,
+        ).finally(() => {
+          executionsSettled++;
+        }),
       {
         signal,
-        yieldMs: 1,
+        yieldMs,
         runtimeScope: scope,
         enqueue: (message) => notifications.push(message),
       },
     );
-  return { runtime, frames, respond, start, notifications, tool };
+  return {
+    runtime,
+    frames,
+    respond,
+    start,
+    notifications,
+    tool,
+    get executionsSettled() {
+      return executionsSettled;
+    },
+  };
 }
 
 for (const answer of ["cancelled", "result", "silent"] as const) {
@@ -162,6 +182,39 @@ test("turn abort sends cancel to capable controller", async () => {
   await Bun.sleep(0);
   expect(f.frames[1]?.type).toBe("external_tool_call_cancel");
   expect(f.runtime.pendingExternalToolCalls.size).toBe(0);
+});
+
+test("foreground interrupt releases a silent controller's pending cancellation", async () => {
+  const f = setup(true, "silent");
+  const turn = new AbortController();
+  const running = f.start(turn.signal, 10_000);
+  const pending = [...f.runtime.pendingExternalToolCalls.values()][0];
+  expect(pending).toBeDefined();
+  turn.abort();
+  const cancelTimer = pending?.timeout;
+  const result = await running;
+  expect(result.status).toBe("error");
+  expect(result.toolReturn).toContain("interrupted by user");
+  expect(f.frames[1]?.type).toBe("external_tool_call_cancel");
+  expect(f.runtime.pendingExternalToolCalls.size).toBe(0);
+  expect(cancelTimer?.hasRef()).toBe(false);
+  expect(f.executionsSettled).toBe(1);
+  expect(backgroundProcesses.size).toBe(0);
+  f.respond(f.frames[0]?.request_id as string, false);
+  await Bun.sleep(30);
+  expect(f.notifications).toHaveLength(0);
+});
+
+test("turn abort after backgrounding still waits for controller confirmation", async () => {
+  const f = setup(true, "silent");
+  const turn = new AbortController();
+  await f.start(turn.signal);
+  turn.abort();
+  expect(f.runtime.pendingExternalToolCalls.size).toBe(1);
+  f.respond(f.frames[0]?.request_id as string, true);
+  await Bun.sleep(0);
+  expect(f.runtime.pendingExternalToolCalls.size).toBe(0);
+  expect(f.notifications).toHaveLength(1);
 });
 
 test("completed call does not send cancel on later abort", async () => {
