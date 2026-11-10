@@ -34,6 +34,8 @@ mock.module("@/agent/subagents", () => ({
   getAllSubagentConfigs: async () => ({
     "general-purpose": config,
     fork: { ...config, name: "fork", fork: true },
+    reviewer: { ...config, name: "reviewer" },
+    custom: { ...config, name: "custom" },
     memory: { ...config, name: "memory" },
   }),
   clearSubagentConfigCache: () => {},
@@ -129,12 +131,40 @@ afterAll(() => {
 });
 
 const launchArgs = {
-  subagent_type: "general-purpose",
+  fork_context: false,
+  harness: "letta",
   prompt: "Check routing without executing a child",
   description: "Routing contract",
 };
 
 describe("task computer routing", () => {
+  test.each(["reviewer", "custom"])(
+    "the %s preset ignores optional launch overrides",
+    async (subagent_type) => {
+      const result = await task({
+        ...launchArgs,
+        subagent_type,
+        harness: "codex",
+        fork_context: true,
+        model: "ignored-model",
+        computer: "ignored-computer",
+        agent_id: "ignored-agent",
+        conversation_id: "ignored-conversation",
+        mcp: { inherit: false },
+      });
+
+      expect(result).toContain("Task running in background");
+      expect(spawn.mock.calls[0]?.slice(0, 3)).toEqual([
+        subagent_type,
+        launchArgs.prompt,
+        undefined,
+      ]);
+      expect(spawn.mock.calls[0]?.slice(5, 7)).toEqual([undefined, undefined]);
+      expect(receivedEnvironment).toBeUndefined();
+      expect(forkConversation).not.toHaveBeenCalled();
+    },
+  );
+
   test("forwards a whitespace-padded selector trimmed to the child", async () => {
     const result = await task({ ...launchArgs, computer: " \t office-mac \n" });
 
@@ -144,13 +174,13 @@ describe("task computer routing", () => {
     expect(backgroundTasks.size).toBe(1);
   });
 
-  test.each(["general-purpose", "fork"])(
-    "rejects a non-routing backend before spawning or forking %s",
-    async (subagent_type) => {
+  test.each([false, true])(
+    "rejects a non-routing backend before spawning or forking (fork_context=%s)",
+    async (fork_context) => {
       capabilities.environmentRouting = false;
       const result = await task({
         ...launchArgs,
-        subagent_type,
+        fork_context,
         computer: " office-mac ",
       });
 
@@ -174,7 +204,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("memory is harness-only");
+      expect(result).toContain("not a selectable subagent_type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -232,7 +262,7 @@ describe("task computer routing", () => {
       await settingsManager.reset();
       await settingsManager.initialize();
       try {
-        const result = await task({ ...launchArgs, subagent_type: "fork" });
+        const result = await task({ ...launchArgs, fork_context: true });
 
         expect(result).toContain("Task running in background with task ID:");
         expect(forkConversation).toHaveBeenCalledTimes(1);
@@ -255,7 +285,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
       });
 
-      expect(result).toContain("memory is harness-only");
+      expect(result).toContain("not a selectable subagent_type");
       expect(receivedEnvironment).toBeUndefined();
     });
 

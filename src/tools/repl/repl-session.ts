@@ -131,7 +131,7 @@ export class ReplSession {
         void pending.catch(() => {});
         return pending;
       },
-      abortedMessage: SESSION_ABORTED,
+      abortError: () => new Error(SESSION_ABORTED),
     });
     this.toolHooksReset = toolHooks.resetToolInfo;
 

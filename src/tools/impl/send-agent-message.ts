@@ -1,11 +1,15 @@
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   resolveChildSubagent,
   trackChildSend,
 } from "@/agent/subagents/child-send-tracking";
+import { resolveSubagentLauncher } from "@/agent/subagents/subagent-launcher";
 import { type Backend, getBackend } from "@/backend";
 import {
+  buildAgentMessageRecoveryCommands,
   buildAgentSendContent,
+  buildAgentSendReminder,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
   validateAddress,
@@ -30,8 +34,11 @@ import { sendClaudeMessage } from "./claude-stream-session";
 import { sendCodexMessage } from "./codex-app-server";
 import { sendCursorMessage } from "./cursor-session";
 import {
+  buildExternalWorkerResumeEnv,
+  type ExternalWorkerResumeEnvDependencies,
   parseExternalCodingAgentId,
   resolveExternalCodingAgentSecretEnv,
+  scrubExternalWorkerResult,
 } from "./external-coding-agent";
 import { trackExternalFollowupCompletion } from "./external-coding-agent-task";
 import {
@@ -40,6 +47,7 @@ import {
   reserveNativeSessionCapture,
 } from "./native-session-capture";
 import { sendOpenCodeMessage } from "./opencode-session";
+import { getNextTaskId } from "./process_manager";
 import { sendRemoteExternalCodingAgentMessage } from "./remote-external-coding-agent";
 
 interface SendAgentMessageArgs {
@@ -64,6 +72,42 @@ interface SendAgentMessageDeps {
   sendCodexMessage?: typeof sendCodexMessage;
   trackExternalFollowup?: typeof trackExternalFollowupCompletion;
   sendRemoteExternalMessage?: typeof sendRemoteExternalCodingAgentMessage;
+  workerEnv?: ExternalWorkerResumeEnvDependencies;
+  spawnLocal?: (command: string, args: string[]) => void;
+}
+
+/** CLI args that deliver a message on the local backend. */
+export function buildLocalSendArgs(
+  destination: { agentId?: string; conversationId: string },
+  message: string,
+): string[] {
+  return [
+    "--backend",
+    "local",
+    "-p",
+    ...(destination.conversationId === "default" && destination.agentId
+      ? ["--agent", destination.agentId]
+      : []),
+    "--conv",
+    destination.conversationId,
+    message,
+  ];
+}
+
+function spawnDetached(command: string, args: string[]): void {
+  const child = spawn(command, args, {
+    cwd: getCurrentWorkingDirectory(),
+    env: getRuntimeExecutionEnv(
+      process.env,
+      getRuntimeContext()?.executionSettings,
+    ),
+    detached: true,
+    stdio: "ignore",
+  });
+  child.on("error", (error) =>
+    debugLog("SendAgentMessage", "Local send failed to start", error),
+  );
+  child.unref();
 }
 
 const FULL_CONVERSATION_ID =
@@ -132,7 +176,7 @@ export async function send_agent_message(
 ): Promise<{ content: string; status: "success" | "error" }> {
   const clientMessageId = randomUUID();
   let submissionAttempted = false;
-  let destination: { agentId: string; conversationId: string } | undefined;
+  let destination: { agentId?: string; conversationId: string } | undefined;
   try {
     if (!args.message?.trim()) throw new Error("Message must not be empty.");
     const context = getRuntimeContext();
@@ -265,27 +309,47 @@ export async function send_agent_message(
           throw error;
         }
       }
+      // A resumed worker process needs the same environment as a launch.
+      const worker = await buildExternalWorkerResumeEnv(
+        {
+          parentAgentId: parentScope.agentId,
+          actingUserId: getRuntimeActingUserAttribution(),
+        },
+        deps.workerEnv,
+      );
+      const traceContext = {
+        secretValues: Object.values(worker.secretEnv),
+        parent_agent_id: parentScope.agentId,
+        parent_conversation_id: parentScope.conversationId,
+        task_id: getNextTaskId(),
+        actingUserId: getRuntimeActingUserAttribution(),
+      };
       if (externalTarget.type === "codex") {
         let captureReservation: NativeSessionCaptureReservation | undefined;
         let receipt: Awaited<ReturnType<typeof sendCodexMessage>>;
         try {
-          receipt = await (deps.sendCodexMessage ?? sendCodexMessage)({
-            threadId: externalTarget.sessionId,
-            prompt: args.message,
-            parentAgentId: parentScope.agentId,
-            cwd: getCurrentWorkingDirectory(),
-            signal: args.signal,
-            beforeStart: async () => {
-              captureReservation = await reserveNativeSessionCapture(
-                "codex",
-                externalTarget.sessionId,
-                {
-                  ...parentScope,
-                  actingUserId: getRuntimeActingUserAttribution(),
-                },
-              );
+          receipt = await (deps.sendCodexMessage ?? sendCodexMessage)(
+            {
+              traceContext,
+              threadId: externalTarget.sessionId,
+              prompt: args.message,
+              parentAgentId: parentScope.agentId,
+              cwd: getCurrentWorkingDirectory(),
+              mcpReminder: worker.mcpReminder,
+              signal: args.signal,
+              beforeStart: async () => {
+                captureReservation = await reserveNativeSessionCapture(
+                  "codex",
+                  externalTarget.sessionId,
+                  {
+                    ...parentScope,
+                    actingUserId: getRuntimeActingUserAttribution(),
+                  },
+                );
+              },
             },
-          });
+            { env: worker.env },
+          );
         } catch (error) {
           await finishFailedNativeStartCapture(
             captureReservation,
@@ -310,11 +374,15 @@ export async function send_agent_message(
             "Codex turn/start returned an incomplete background-task receipt",
           );
         }
+        const completion = receipt.completion.then((result) =>
+          scrubExternalWorkerResult(result, worker.secretEnv),
+        );
         let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
         try {
           taskReceipt = (
             deps.trackExternalFollowup ?? trackExternalFollowupCompletion
           )({
+            taskId: traceContext.task_id,
             type: "codex",
             agentId: args.agent_id as string,
             message: args.message,
@@ -322,14 +390,14 @@ export async function send_agent_message(
               ...parentScope,
               actingUserId: getRuntimeActingUserAttribution(),
             },
-            completion: receipt.completion,
+            completion,
             interrupt: receipt.interrupt,
             captureReservation,
           });
         } catch (error) {
           await receipt.interrupt().catch(() => undefined);
           finishUntrackedNativeCapture(
-            receipt.completion,
+            completion,
             captureReservation,
             "codex",
             externalTarget.sessionId,
@@ -351,23 +419,28 @@ export async function send_agent_message(
       let captureReservation: NativeSessionCaptureReservation | undefined;
       let receipt: Awaited<ReturnType<typeof sendClaudeMessage>>;
       try {
-        receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)({
-          sessionId: externalTarget.sessionId,
-          prompt: args.message,
-          parentAgentId: parentScope.agentId,
-          cwd: getCurrentWorkingDirectory(),
-          signal: args.signal,
-          beforeStart: async () => {
-            captureReservation = await reserveNativeSessionCapture(
-              "claude_code",
-              externalTarget.sessionId,
-              {
-                ...parentScope,
-                actingUserId: getRuntimeActingUserAttribution(),
-              },
-            );
+        receipt = await (deps.sendClaudeMessage ?? sendClaudeMessage)(
+          {
+            traceContext,
+            sessionId: externalTarget.sessionId,
+            prompt: args.message,
+            parentAgentId: parentScope.agentId,
+            cwd: getCurrentWorkingDirectory(),
+            mcpReminder: worker.mcpReminder,
+            signal: args.signal,
+            beforeStart: async () => {
+              captureReservation = await reserveNativeSessionCapture(
+                "claude_code",
+                externalTarget.sessionId,
+                {
+                  ...parentScope,
+                  actingUserId: getRuntimeActingUserAttribution(),
+                },
+              );
+            },
           },
-        });
+          { env: worker.env },
+        );
       } catch (error) {
         await finishFailedNativeStartCapture(
           captureReservation,
@@ -391,11 +464,15 @@ export async function send_agent_message(
           "Claude resume returned an incomplete background-task receipt",
         );
       }
+      const completion = receipt.completion.then((result) =>
+        scrubExternalWorkerResult(result, worker.secretEnv),
+      );
       let taskReceipt: ReturnType<typeof trackExternalFollowupCompletion>;
       try {
         taskReceipt = (
           deps.trackExternalFollowup ?? trackExternalFollowupCompletion
         )({
+          taskId: traceContext.task_id,
           type: "claude-code",
           agentId: args.agent_id as string,
           message: args.message,
@@ -403,14 +480,14 @@ export async function send_agent_message(
             ...parentScope,
             actingUserId: getRuntimeActingUserAttribution(),
           },
-          completion: receipt.completion,
+          completion,
           interrupt: receipt.interrupt,
           captureReservation,
         });
       } catch (error) {
         await receipt.interrupt().catch(() => undefined);
         finishUntrackedNativeCapture(
-          receipt.completion,
+          completion,
           captureReservation,
           "claude_code",
           externalTarget.sessionId,
@@ -431,9 +508,6 @@ export async function send_agent_message(
 
     checkConversationId(args.conversation_id);
     const backend = deps.backend ?? getBackend();
-    if (!backend.capabilities.environmentRouting) {
-      throw new Error("SendAgentMessage requires a Cloud backend.");
-    }
     const computer = normalizeAgentMessageComputer(args.computer);
     const actingUserId = getRuntimeActingUserAttribution();
     if (!actingUserId) {
@@ -465,14 +539,23 @@ export async function send_agent_message(
       signal,
     );
     signal.throwIfAborted();
-    // A child spawned by this agent keeps doing its work; show it as running.
-    const child = await resolveChildSubagent(
-      backend,
-      destination.agentId,
-      sender.agentId,
-    );
-    signal.throwIfAborted();
     submissionAttempted = true;
+    if (!backend.capabilities.environmentRouting) {
+      const launcher = resolveSubagentLauncher(
+        buildLocalSendArgs(
+          destination,
+          buildAgentSendReminder(sender, true) + args.message,
+        ),
+      );
+      (deps.spawnLocal ?? spawnDetached)(launcher.command, launcher.args);
+      return {
+        content: JSON.stringify({
+          status: "spawned",
+          conversation_id: destination.conversationId,
+        }),
+        status: "success",
+      };
+    }
     const receipt = await (deps.enqueue ?? enqueueConversationMessage)(
       {
         ...destination,
@@ -483,6 +566,13 @@ export async function send_agent_message(
       },
       signal,
     );
+    // A child spawned by this agent keeps doing its work; show it as running.
+    // The receipt names the conversation's agent (older servers omit it, so
+    // fall back to the passed agent); with neither, tracking is skipped. The
+    // lookup never fails the send: it was already accepted.
+    const child = receipt.agent_id
+      ? await resolveChildSubagent(backend, receipt.agent_id, sender.agentId)
+      : null;
     if (child) {
       (deps.trackChildSend ?? trackChildSend)({
         receipt,
@@ -497,8 +587,10 @@ export async function send_agent_message(
     return {
       content: JSON.stringify({
         ...receipt,
-        status_command: `letta messages status --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}`,
-        messages_command: `letta messages list --agent ${receipt.agent_id} --conversation ${receipt.conversation_id}`,
+        ...buildAgentMessageRecoveryCommands({
+          agentId: receipt.agent_id,
+          conversationId: receipt.conversation_id,
+        }),
       }),
       status: "success",
     };
@@ -518,7 +610,7 @@ export async function send_agent_message(
         client_message_id: clientMessageId,
         ...(destination
           ? {
-              agent_id: destination.agentId,
+              ...(destination.agentId ? { agent_id: destination.agentId } : {}),
               conversation_id: destination.conversationId,
             }
           : {}),

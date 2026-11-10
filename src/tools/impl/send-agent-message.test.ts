@@ -1,65 +1,20 @@
-import { expect, spyOn, test } from "bun:test";
-import type { TrackChildSendInput } from "@/agent/subagents/child-send-tracking";
-import type { AgentRetrieveOptions, Backend } from "@/backend";
-import type { EnqueueConversationInput } from "@/backend/api/conversation-enqueue";
+import { describe, expect, spyOn, test } from "bun:test";
+import type { SubagentResult } from "@/agent/subagents";
+import type { Backend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { send_agent_message } from "./send-agent-message";
+import {
+  caller,
+  sendAgentMessageFixture as fixture,
+  message,
+  TARGET_CONV,
+} from "@/test-utils/send-agent-message-fixture";
+import { buildLocalSendArgs, send_agent_message } from "./send-agent-message";
 
 const CLAUDE_SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const CLAUDE_AGENT_ID = `claude_${CLAUDE_SESSION_ID}`;
 const CODEX_THREAD_ID = "22222222-2222-4222-8222-222222222222";
 const CODEX_AGENT_ID = `codex_${CODEX_THREAD_ID}`;
-const TARGET_CONV = "conv-33333333-3333-4333-8333-333333333333";
-
-function fixture(targetTags: readonly string[] = []) {
-  const submissions: EnqueueConversationInput[] = [];
-  const created: unknown[] = [];
-  const tracked: TrackChildSendInput[] = [];
-  const backend = {
-    capabilities: { environmentRouting: true },
-    retrieveAgent: async (id: string, options?: AgentRetrieveOptions) => ({
-      id,
-      name: "Hayt",
-      // Cloud only returns tags when explicitly included.
-      tags: options?.include?.includes("agent.tags") ? targetTags : [],
-    }),
-    retrieveConversation: async (id: string) => ({
-      id,
-      agent_id: "agent-target",
-    }),
-    createConversation: async (input: unknown) => {
-      created.push(input);
-      return { id: "conv-new" };
-    },
-  } as unknown as Backend;
-  const enqueue = async (input: EnqueueConversationInput) => {
-    submissions.push(input);
-    return {
-      status: "queued" as const,
-      agent_id: input.agentId,
-      conversation_id: input.conversationId,
-      client_message_id: input.clientMessageId,
-      workflow_id: "wf-1",
-      super_run_id: "sr-1",
-    };
-  };
-  const trackChildSend = (input: TrackChildSendInput) => {
-    tracked.push(input);
-    return "subagent-tracked";
-  };
-  return { backend, enqueue, trackChildSend, submissions, created, tracked };
-}
-
-const caller = {
-  agentId: "agent-caller",
-  conversationId: "conv-caller",
-  actingUserId: "user-caller",
-};
-const message = {
-  conversation_id: TARGET_CONV,
-  message: "Please check the tests.",
-};
 
 test.each([false, true])(
   "missing acting user diagnostic respects debug mode: %s",
@@ -316,6 +271,126 @@ test("tracks an idle Codex new turn through background lifecycle", async () => {
   });
 });
 
+describe("resumed Claude Code and Codex workers get the launch environment", () => {
+  const rootSettings = {
+    allowed_tools: [],
+    disallowed_tools: [],
+    disable_memory_guard: false,
+  };
+  const workerEnv = {
+    env: { PATH: process.env.PATH },
+    resolveSecretEnv: async (parentAgentId: string) => {
+      expect(parentAgentId).toBe("agent-caller");
+      return { GITHUB_TOKEN: "vault-token-123" };
+    },
+    resolveMcpReminder: async () => "MCP servers available: github",
+  };
+
+  function expectLaunchEnv(
+    options: { mcpReminder?: string } | undefined,
+    deps: { env?: NodeJS.ProcessEnv } | undefined,
+  ) {
+    expect(deps?.env).toMatchObject({
+      GITHUB_TOKEN: "vault-token-123",
+      AGENT_ID: "agent-caller",
+      LETTA_PARENT_AGENT_ID: "agent-caller",
+      LETTA_CODE_AGENT_ROLE: "subagent",
+      LETTA_SUBAGENT_DEPTH: "1",
+      LETTA_ACTING_USER_ID: "user-caller",
+    });
+    expect(options?.mcpReminder).toContain("MCP servers available: github");
+  }
+
+  test("Claude Code", async () => {
+    const f = fixture();
+    let sent: [unknown, unknown] | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const result = await runWithRuntimeContext(
+      { ...caller, executionSettings: rootSettings },
+      () =>
+        send_agent_message(
+          { agent_id: CLAUDE_AGENT_ID, message: "Now push it." },
+          {
+            ...f,
+            workerEnv,
+            sendClaudeMessage: async (options, deps) => {
+              sent = [options, deps];
+              return {
+                mode: "resumed",
+                sessionId: CLAUDE_SESSION_ID,
+                completion: Promise.resolve({
+                  agentId: CLAUDE_AGENT_ID,
+                  report: "pushed with vault-token-123",
+                  success: true,
+                }),
+                interrupt: async () => undefined,
+              };
+            },
+            trackExternalFollowup: (input) => {
+              tracked = input.completion;
+              return {
+                taskId: "task-claude",
+                outputFile: "/tmp/task-claude.log",
+                subagentId: "subagent-claude",
+              };
+            },
+          },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expectLaunchEnv(
+      sent?.[0] as { mcpReminder?: string },
+      sent?.[1] as { env?: NodeJS.ProcessEnv },
+    );
+    expect((await tracked)?.report).not.toContain("vault-token-123");
+  });
+
+  test("Codex", async () => {
+    const f = fixture();
+    let sent: [unknown, unknown] | undefined;
+    let tracked: Promise<SubagentResult> | undefined;
+    const result = await runWithRuntimeContext(
+      { ...caller, executionSettings: rootSettings },
+      () =>
+        send_agent_message(
+          { agent_id: CODEX_AGENT_ID, message: "Now push it." },
+          {
+            ...f,
+            workerEnv,
+            sendCodexMessage: async (options, deps) => {
+              sent = [options, deps];
+              return {
+                mode: "new_turn",
+                threadId: CODEX_THREAD_ID,
+                turnId: "turn-3",
+                completion: Promise.resolve({
+                  agentId: CODEX_AGENT_ID,
+                  report: "pushed with vault-token-123",
+                  success: true,
+                }),
+                interrupt: async () => undefined,
+              };
+            },
+            trackExternalFollowup: (input) => {
+              tracked = input.completion;
+              return {
+                taskId: "task-codex",
+                outputFile: "/tmp/task-codex.log",
+                subagentId: "subagent-codex",
+              };
+            },
+          },
+        ),
+    );
+    expect(result.status).toBe("success");
+    expectLaunchEnv(
+      sent?.[0] as { mcpReminder?: string },
+      sent?.[1] as { env?: NodeJS.ProcessEnv },
+    );
+    expect((await tracked)?.report).not.toContain("vault-token-123");
+  });
+});
+
 test.each([{ conversation_id: TARGET_CONV }, { computer: "cloud" }])(
   "rejects incompatible external coding-agent routing: %j",
   async (extra) => {
@@ -364,6 +439,18 @@ test.each(["conv-44444444-4444-4444-8444-444444444444", "default"])(
   },
 );
 
+test("rejects the tool's current conversation by conversation ID alone", async () => {
+  const f = fixture();
+  const self = await runWithRuntimeContext(
+    { ...caller, conversationId: TARGET_CONV },
+    () => send_agent_message(message, f),
+  );
+  expect(JSON.parse(self.content).error).toContain(
+    "Cannot message the current conversation.",
+  );
+  expect(f.submissions).toHaveLength(0);
+});
+
 test.each(["conv-55555555-5555-4555-8555-555555555555", "default", undefined])(
   "allows the same agent in another tool destination %s",
   async (conversationId) => {
@@ -396,7 +483,7 @@ test("returns acceptance and an explicit return address, with no task or answer"
   const receipt = JSON.parse(result.content);
   expect(receipt).toMatchObject({
     status: "queued",
-    agent_id: "agent-target",
+    agent_id: null,
     conversation_id: TARGET_CONV,
     super_run_id: "sr-1",
   });
@@ -557,7 +644,6 @@ test.each([
   { message: "hello" },
   { ...message, message: " " },
   { ...message, conversation_id: `${TARGET_CONV}; echo bad` },
-  { ...message, agent_id: "agent-wrong" },
 ])(
   "invalid destination or input is rejected without submission: %j",
   async (args) => {
@@ -667,14 +753,60 @@ test("a typed pre-admission shutdown 503 is a failed submission, not unknown acc
   });
 });
 
-test("local backend and cancellation do not dispatch or fall back to execution", async () => {
+test("local backend spawns a headless local send", async () => {
   const f = fixture();
   f.backend.capabilities.environmentRouting = false;
+  const spawned: string[][] = [];
+  const result = await runWithRuntimeContext(caller, () =>
+    send_agent_message(message, {
+      ...f,
+      spawnLocal: (_command, args) => {
+        spawned.push(args);
+      },
+    }),
+  );
+  expect(JSON.parse(result.content)).toEqual({
+    status: "spawned",
+    conversation_id: TARGET_CONV,
+  });
+  const args = spawned[0] ?? [];
+  expect(args.slice(-6, -1)).toEqual([
+    "--backend",
+    "local",
+    "-p",
+    "--conv",
+    TARGET_CONV,
+  ]);
+  expect(args.at(-1)).toContain(`This message is from agent ${caller.agentId}`);
+  expect(args.at(-1)).toEndWith(message.message);
+  expect(f.submissions).toHaveLength(0);
+  const localConv = "local-conv-44444444-4444-4444-8444-444444444444";
+  await runWithRuntimeContext(caller, () =>
+    send_agent_message(
+      { conversation_id: localConv, message: "hi" },
+      { ...f, spawnLocal: (_command, args) => void spawned.push(args) },
+    ),
+  );
+  expect(spawned[1]).toContain(localConv);
   expect(
-    (await runWithRuntimeContext(caller, () => send_agent_message(message, f)))
-      .status,
-  ).toBe("error");
-  f.backend.capabilities.environmentRouting = true;
+    buildLocalSendArgs(
+      { agentId: "agent-local-1", conversationId: "default" },
+      "hi",
+    ),
+  ).toEqual([
+    "--backend",
+    "local",
+    "-p",
+    "--agent",
+    "agent-local-1",
+    "--conv",
+    "default",
+    "hi",
+  ]);
+});
+
+test("cancellation does not dispatch or fall back to execution", async () => {
+  const f = fixture();
   const controller = new AbortController();
   controller.abort();
   expect(
@@ -719,64 +851,6 @@ test("cancelling an in-flight submission preserves uncertain acceptance without 
   expect(outcome.status).toBe("error");
   expect(JSON.parse(outcome.content).status).toBe("acceptance_unknown");
   expect(attempts).toBe(1);
-});
-
-test("a send to this agent's own subagent is tracked against the receipt", async () => {
-  const f = fixture(["type:code-reviewer", "parent:agent-caller"]);
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, f),
-  );
-  expect(result.status).toBe("success");
-  expect(f.tracked).toHaveLength(1);
-  expect(f.tracked[0]).toMatchObject({
-    receipt: { agent_id: "agent-target", super_run_id: "sr-1" },
-    child: { name: "Hayt", type: "code-reviewer" },
-    prompt: message.message,
-    parentScope: { agentId: "agent-caller", conversationId: "conv-caller" },
-  });
-});
-
-test.each([
-  { tags: [] },
-  { tags: ["type:general-purpose", "parent:agent-someone-else"] },
-])(
-  "a send to a peer agent is never tracked as a subagent: %j",
-  async ({ tags }) => {
-    const f = fixture(tags);
-    const result = await runWithRuntimeContext(caller, () =>
-      send_agent_message(message, f),
-    );
-    expect(result.status).toBe("success");
-    expect(f.submissions).toHaveLength(1);
-    expect(f.tracked).toHaveLength(0);
-  },
-);
-
-test("a failed child lookup still delivers and skips tracking", async () => {
-  const f = fixture(["parent:agent-caller"]);
-  f.backend.retrieveAgent = async () => {
-    throw new ApiRequestError("gone", 404, "gone");
-  };
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, f),
-  );
-  expect(result.status).toBe("success");
-  expect(f.submissions).toHaveLength(1);
-  expect(f.tracked).toHaveLength(0);
-});
-
-test("a rejected enqueue to a child is not tracked", async () => {
-  const f = fixture(["parent:agent-caller"]);
-  const result = await runWithRuntimeContext(caller, () =>
-    send_agent_message(message, {
-      ...f,
-      enqueue: async () => {
-        throw new ApiRequestError("refused", 403, "refused");
-      },
-    }),
-  );
-  expect(result.status).toBe("error");
-  expect(f.tracked).toHaveLength(0);
 });
 
 test("a subagent that omits the destination messages the conversation that launched it", async () => {

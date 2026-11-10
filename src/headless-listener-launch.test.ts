@@ -1,4 +1,4 @@
-import { expect, mock, test } from "bun:test";
+import { expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type {
   Message,
@@ -6,7 +6,10 @@ import type {
 } from "@letta-ai/letta-client/resources/agents/messages";
 import { createAppServerClient } from "@/app-server-client";
 import type { EnqueueReceipt } from "@/backend/api/conversation-enqueue";
+import * as enqueueApi from "@/backend/api/conversation-enqueue";
+import { ApiRequestError } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import { registerLocalSubagentStop } from "@/tools/impl/subagent-stop-bridge";
 import type {
   AgentRuntimeScope,
   ConversationRuntimeScope,
@@ -17,6 +20,7 @@ import {
   cancelListenerInput,
   launchListenerConversation,
   listenerControlUrl,
+  stopAcceptedListenerConversation,
 } from "./headless-listener-launch";
 import { buildHeadlessSenderReminder } from "./headless-message-sender";
 
@@ -140,7 +144,10 @@ test("listener resume keeps conversation identity separate from its parent", asy
         });
         expect(wire.commands[0]).not.toHaveProperty("agent_id");
         expect(input.agentId).toBe("agent-parent");
-        return { ...receipt(input.clientMessageId), agent_id: input.agentId };
+        return {
+          ...receipt(input.clientMessageId),
+          agent_id: input.agentId ?? null,
+        };
       },
     },
   );
@@ -706,4 +713,50 @@ test("subagent identity does not make an ordinary CLI launch return early", asyn
     },
   );
   expect(result).toMatchObject({ status: "completed", text: "Done" });
+});
+
+test("an accepted turn missing from the queue still reaches its owning listener stop", async () => {
+  const dequeue = spyOn(
+    enqueueApi,
+    "dequeueConversationMessage",
+  ).mockRejectedValue(new ApiRequestError("Queue message not found", 404, ""));
+  const stopped = mock(
+    async (
+      command: import("@/types/subagent-protocol").SubagentStopCommand,
+    ) => ({
+      type: "subagent_stop_response" as const,
+      request_id: command.request_id,
+      runtime: command.runtime,
+      agent_id: command.agent_id,
+      success: true,
+      stopped: true,
+      cleanup_confirmed: true,
+    }),
+  );
+  const unregister = registerLocalSubagentStop("conn-stop-test", stopped);
+  try {
+    const accepted = {
+      ...receipt("accepted-message"),
+      connection_id: "conn-stop-test",
+    };
+    await stopAcceptedListenerConversation(accepted);
+    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(stopped.mock.calls[0]?.[0]).toMatchObject({
+      type: "subagent_stop",
+      client_message_id: "accepted-message",
+      conversation: { agent_id: "agent-child", conversation_id: "conv-child" },
+    });
+    for (const status of [403, 500]) {
+      dequeue.mockRejectedValue(
+        new ApiRequestError("Queue request failed", status, ""),
+      );
+      await expect(stopAcceptedListenerConversation(accepted)).rejects.toThrow(
+        "Queue request failed",
+      );
+    }
+    expect(stopped).toHaveBeenCalledTimes(1);
+  } finally {
+    unregister();
+    dequeue.mockRestore();
+  }
 });

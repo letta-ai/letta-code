@@ -201,7 +201,7 @@ test("quarantine expiry permanently fences matching predecessor journals", () =>
       ...listener.acceptedInputDispositionLedger.entries.values(),
     ];
     const referencePrepared = structuredClone(
-      preparedEntries[1]?.preparedTerminal,
+      preparedEntries.find((entry) => entry.preparedTerminal)?.preparedTerminal,
     );
     expect(
       quarantinePreparedTerminalAuthority(

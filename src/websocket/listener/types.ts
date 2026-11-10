@@ -118,7 +118,6 @@ export interface IncomingMessage {
   clientToolAllowlist?: string[];
   clientToolset?: ClientToolsetConfig;
   clientPreferences?: import("@/types/client-preferences").ClientPreferences;
-  externalToolScopeIds?: string[];
   /** Exclude interactive user-input tools (AskUserQuestion) from this turn's toolset. */
   excludeInteractiveTools?: boolean;
   responseFormat?: Record<string, unknown>;
@@ -297,10 +296,14 @@ export type DurablePreparedInputTerminal = {
   preparedAt?: number;
   /** Durable monotonic order used to reconcile legacy retired authority. */
   preparationSequence?: number;
+  /** Canonical journal aliases stamped when restart promotion completes. */
+  inputDispositionKeys?: string[];
   /** Durable claim that orders this publication before later quarantine. */
   publicationClaimed?: true;
   /** Persist a crash proof even when no external terminal consumer exists. */
   persistWithoutConsumers?: true;
+  /** Consumers moved to a teleport continuation; source proof stays private. */
+  suppressConsumerPublication?: true;
   scope: { agentId: string | null; conversationId: string };
   message: {
     type: "turn_finished";
@@ -330,6 +333,7 @@ export type DurablePreparedInputTerminal = {
 export type InterruptedTerminalAuthority = {
   interruptedRevision: string;
   authorityRevision: string;
+  recoveryAuthorityBaseRevision?: string;
   recoveryLineageId?: string;
   terminalIdentity?: string;
   preparationSequence?: number;
@@ -726,6 +730,8 @@ export type ListenerRuntime = {
   _unsubscribeSubagentStreamEvents?: (() => void) | undefined;
   /** Unsubscribe from background process state (set on socket open, cleared on close). */
   _unsubscribeBackgroundProcessState?: (() => void) | undefined;
+  /** Stop the sandbox disk watcher (set with process services, cleared with them). */
+  _stopDiskSpaceWatch?: (() => void) | undefined;
 };
 
 export interface InterruptPopulateInput {

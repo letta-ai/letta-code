@@ -50,13 +50,14 @@ async function listModelHandlesWithRetry(
 }
 
 describeIntegration("cloud models list", () => {
-  test("includes letta/auto handle", async () => {
+  test("no longer lists the retired letta/auto handle", async () => {
     const client = new Letta({
       baseURL: LETTA_BASE_URL,
       apiKey: LETTA_API_KEY,
     });
 
     const handles = await listModelHandlesWithRetry(client);
-    expect(handles).toContain("letta/auto");
+    expect(handles.length).toBeGreaterThan(0);
+    expect(handles).not.toContain("letta/auto");
   });
 });

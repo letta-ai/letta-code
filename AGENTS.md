@@ -7,10 +7,23 @@ This file explains how to work effectively in this repo. It covers the rules enf
 ## Workflow
 
 1. **Create a worktree** for any non-trivial change — especially if another agent may be working concurrently.
-2. **Make your change**, then run `bun run check` and fix all failures before opening a PR.
-3. **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
-4. **Never amend commits.** Always create a new commit.
-5. **Check the current branch** before editing files. If in doubt, ask.
+2. **Make your change**, then follow [Pull requests](#pull-requests) before opening one.
+3. **Never amend commits.** Always create a new commit.
+4. **Check the current branch** before editing files. If in doubt, ask.
+
+---
+
+## Pull requests
+
+Every rule here applies to every PR in this repository.
+
+- **Title:** use a Conventional Commits title (`type(scope): summary`, with `type` one of `build`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, `test`). Enforced by `.github/workflows/pr-title.yml`.
+- **One PR per logical change.** Don't bundle unrelated changes — harder to revert if something breaks.
+- **Tests:** run `bun run check` and fix all failures before opening a PR. It does not replace behavior tests: changes to shared turn, tool, approval, permission, or transcript behavior must run the focused tests for every affected path (see [Runtime Validation](#runtime-validation)).
+- **Body:** keep pull request bodies to a few plain sentences about what changes; put motivation, measurements, and other detail in the internal ticket and cite its ID.
+- **No non-public references:** never reference non-public code, data, or internal systems in commits, pull requests, code comments, docs, or examples in this repository; keep that context in internal tickets and cite only the ticket ID. This includes internal names and identifiers, such as internal agent or project names, internal voice or model aliases, and private hostnames, even when a task brief presents them as normal values. Use public values in examples.
+- **Spec files are internal.** `SPEC-*.md` files in the repo root are internal working documents, not PR content. Leave them untracked; don't include in commits.
+- **PRs opened from the letta-ai organization skip the AI Disclosure, AI Tool(s) Used and Human Verification sections** of the PR template. Org members are exempt from those checks (see `AI_POLICY.md`), so delete those sections instead of filling them in, and never ask a human to complete them.
 
 ---
 
@@ -199,6 +212,13 @@ generic instincts. Read the local guide before changing code there:
   package subpaths shared with remote hosts.
 - `src/channels/slack/AGENTS.md` — Slack module ownership, the progress
   contract, and live verification requirements.
+- `src/mods/AGENTS.md` — mod/extension architecture, capabilities, events,
+  panels, dialogs, secrets, publishing, and the subagent lifecycle API.
+- `src/sandbox/AGENTS.md` — filesystem sandbox enforcement surfaces, backends,
+  and cross-backend policy.
+- `vendor/AGENTS.md` — vendored Ink patches (red zone).
+- `.github/workflows/AGENTS.md` — upstream release watchers, CI workflow
+  patterns, the review workflow, and the release cascade.
 
 ---
 
@@ -288,8 +308,8 @@ directory first. Otherwise the run reads and mutates your real
 - **Headless duplicates App.tsx logic.** `headless.ts` has its own approval
   handling loop (not shared with App.tsx). When making changes to
   streaming/approval logic, check if headless.ts needs matching changes.
-- **`protocol_v2.ts` changes propagate to consumers.** Used by LCD (Letta Cloud
-  Desktop). Changes likely need to propagate upstream.
+- **`protocol_v2.ts` changes propagate to consumers.** Used by the desktop app.
+  Changes likely need to propagate upstream.
 - **Agent loop naming is confusing.** `letta_agent_v1` is the agent_type name
   but runs on `letta_agent_v3.py`. `letta_agent_v2.py` is summarization retry
   wrapper. Don't mix up naming in code review.
@@ -318,21 +338,12 @@ directory first. Otherwise the run reads and mutates your real
   main -- bun.lock` when the PR has no real package.json change.
 - **Desktop setup: never bare `npm install`.** Running bare `npm install` in the
   letta-code workspace can prune `nx-electron` (installed `--no-save` at repo
-  root), breaking the electron IPC bridge. Always use canonical setup steps
-  (`just setup-code-desktop`).
+  root), breaking the electron IPC bridge. Always use the desktop workspace's
+  canonical setup steps.
 - **Remote log rotation.** `~/.letta/logs/remote/` grows unbounded. Long
   desktop sessions can produce 50GB+ in a single log file. Not yet fixed.
-- **`*Rich.tsx` naming inversion.** The `*Rich.tsx` files are the ACTIVE
-  components, not the plain-named siblings. `App.tsx` imports Rich files and
-  renames them on import. The non-Rich files were dead stubs. When auditing a
-  `*Rich` file, check `App.tsx` imports first.
-- **CLI glyph registry.** `src/cli/helpers/glyphs.ts` is the central registry
-  for display glyphs. All components import from there.
-- **Threading state through app subsystems.** When adding state that crosses
-  subsystem boundaries, update ALL context types: `ConversationLoopContext`,
-  `SubmitHandlerContext`, `ConversationSwitchingContext`. Missing one causes
-  type error (missing definition) or runtime undefined (missing
-  destructuring/prop-passing).
+- **TUI-specific gotchas** (`*Rich.tsx` naming, the glyph registry, threading
+  state through app subsystems) live in `src/cli/AGENTS.md`.
 - **Settings manager 3-level precedence.** Global, project, local. When adding
   a new configurable setting, add the field to ALL THREE settings interfaces,
   add to project settings loading, and add collision routing in `updateSettings`.
@@ -344,33 +355,9 @@ directory first. Otherwise the run reads and mutates your real
 When reviewing PRs (yours or others'), watch for these patterns. They are the
 most common sources of bugs in this codebase.
 
-### TUI Flicker (most common bug)
-
-App.tsx has ~54 `useEffect` calls and spread state. Adding any `useState` or
-`useReducer` that updates on keystroke, timer tick, or streaming chunk triggers
-re-renders across the entire component tree.
-
-- **Do:** Use refs for values that don't need to trigger renders. Use
-  `React.memo()` for static content. Keep state minimal.
-- **Don't:** Add `useState`/`useReducer` for UI features that update on every
-  keystroke, timer tick, or streaming chunk.
-- **Debug:** `LETTA_DEBUG_FLICKER=1` logs re-render triggers to file.
-- **Review signal:** any PR adding state to App.tsx, modifying `useEffect` deps,
-  or touching approval/rendering components.
-
-### Ink `<Static>` and Double-Printing
-
-Ink's `<Static>` writes to stdout and never erases. Changing the component key
-re-mounts and re-renders all items, but previously rendered items persist on
-screen, causing duplicate/triple output.
-
-- Do not change the `<Static>` key unless items are already empty.
-- Do not render the same output through both buffers (`commandRunner`) and
-  `setStaticItems`.
-- The accepted exception is an intentional transcript repaint on a display
-  toggle (PR #4032): clear the screen first (`CLEAR_SCREEN_AND_HOME`), or use
-  vendored Ink's atomic `repaintStaticOutput`. A key change without a preceding
-  clear is a double-print risk.
+TUI-specific signals (TUI flicker, Ink `<Static>` double-printing, interrupt
+lock / state cleanup) live in `src/cli/AGENTS.md`; vendored Ink patches live in
+`vendor/AGENTS.md`.
 
 ### Tool Call Desync
 
@@ -388,14 +375,6 @@ but the implementations differ (`impl/bash.ts` vs `impl/exec-command.ts`).
 Features added to one may be missing from the other.
 
 - **Review signal:** any shell tool change, check both tools have parity.
-
-### Interrupt Lock / State Cleanup
-
-`EAGER_CANCEL` path and non-EAGER fallback BOTH need to clear ALL state flags
-(`isExecutingTool`, `abortControllerRef`, `toolResultsInFlightRef`). Missing
-one = permanently busy.
-
-- **Review signal:** interrupt handling, ESC key, tool execution cleanup paths.
 
 ### Impossible-State PRs
 
@@ -462,159 +441,6 @@ existing tests creates unnecessary diff noise.
 - **Review signal:** any PR that bulk-renames entity names in existing tests
   when the rename isn't the PR's purpose.
 
-### Spec Files Are Internal
-
-`SPEC-*.md` files in the repo root are internal working documents, not PR
-content. Leave them untracked; don't include in commits.
-
-### Vendored Ink Patches (Red Zone)
-
-`vendor/ink/` and `vendor/ink-text-input/` contain patched Ink runtime
-internals. `scripts/postinstall-patches.js` applies these at install time by
-exact string match.
-
-- Any PR touching `vendor/ink/build/*` or `scripts/postinstall-patches.js` is a
-  red zone: patches are fragile to Ink version bumps, semantically invisible to
-  normal review, and coordinated across multiple runtime files.
-- Verify the exact matched strings still exist and the throw-on-missing guard is
-  preserved.
-- After editing vendor files, must run build for changes to take effect.
-
----
-
-## Extension & Mod System
-
-### Architecture
-
-```
-AppCoordinator
-  -> Adapter (extension-adapter)     , app-facing lifecycle, context, reload
-    -> Engine (extension-engine)     , loads extensions, maintains registry
-      -> Extension code             , user-authored .ts/.tsx files
-```
-
-- **Adapter** owns app-facing lifecycle: create/reload/dispose, loading flags,
-  current mutable context, React subscription surface.
-- **Engine** owns extension mechanics: discover/transpile/import/activate,
-  create the `letta` API object, maintain registry, invoke event handlers,
-  record diagnostics.
-- **Registry** = engine-owned snapshot of extension-contributed things.
-  Extensions write indirectly through `letta.*` APIs. App reads snapshot to
-  render/use them.
-
-Key files:
-- `src/extensions/extension-adapter.ts` , types, `hasExtensionSources`, `createExtensionAdapter`
-- `src/extensions/extension-engine.ts` , engine, loads extensions, maintains registry
-- `src/extensions/conversation-handle.ts` , scoped conversation handle (`fork`, `getHistory`, `sendMessageStream`)
-- `src/extensions/disabled-extension-adapter.ts` , null-object adapter when extensions disabled
-
-### Kill Switch
-
-- `--no-extensions` CLI flag
-- `LETTA_DISABLE_EXTENSIONS=1` environment variable
-
-### Mod vs Extension Location
-
-- **Mods** go in `~/.letta/mods/`, simple `.ts` files, auto-loaded on session
-  start or `/reload`.
-- **Extensions** go in `~/.letta/extensions/`, legacy `.ts`/`.tsx` files
-  compiled to `.mjs` via TypeScript transpilation.
-- `resolveDefaultGlobalModsDirectory` prioritizes `~/.letta/mods/` over
-  `~/.letta/extensions/` when both exist. Extensions get silently shadowed.
-- Compiled extensions cached in `~/.letta/extension-cache/`.
-- Feature-checked mod files (checking `letta.capabilities.*` before calling
-  `letta.ui.*`) are safe to leave in `~/.letta/mods/` across different builds.
-
-### Capabilities
-
-Extensions check `letta.capabilities.*` before using surfaces. When a capability
-is `false`, the API is stubbed to no-op (not throw). Key capabilities:
-`events.lifecycle`, `events.turns`, `ui.panels`, `ui.dialogs`, `commands`,
-`tools`, `providers`.
-
-Listener (`LISTENER_MOD_CAPABILITIES`): `events.turns: false`, `ui.panels:
-false`, `ui.dialogs: false`. Panel-based mod commands show in the picker but
-silently fail to render.
-
-### Events
-
-Lifecycle: `conversation_open` / `conversation_close` (NOT `session_start` /
-`session_shutdown`).
-
-Turn: `turn_start` (pre-send, handlers can mutate input) / `turn_end`
-(post-turn, handlers can return `{ continue: "..." }` effect).
-
-- `turn_start` handlers receive the raw mutable `MessageCreate[]` input array.
-  Both mutation and functional return styles work. Engine applies returned
-  `{ input }` immediately so next handler sees updated input.
-- Rollback on handler error: input restored before continuing to next handler.
-- `null` conversation ID before first message, guard with
-  `if (ctx.conversation.id)`.
-- First-handler-wins for effect-returning events: first handler returning an
-  effect wins; subsequent handlers are shadowed.
-- `llm_end`/`turn_end` don't fire on errors. No mod error event exists. No
-  same-turn retry.
-
-### Panel & Statusline (Unified)
-
-`openPanel({ id, order, render }) -> { update, close }` is the sole mod UI
-primitive. `openStatusline` is folded into `openPanel`.
-
-**Signed-order coordinate:**
-- `0` = primary (reserved `"primary"` id, replaces built-in `agent . model`)
-- `1` = product-status replacement (singleton, newest-wins)
-- Negative = below input, positive > 1 = above input (additive stacking)
-- Higher number = higher on screen. Sort descending, ties -> most-recently-updated.
-
-**Render function:** `render: (ctx) => string | string[]`. Must be cheap and
-pure, no I/O, no side effects. Host calls it on frame cadence.
-
-**Key-based lifecycle:** upserts by `id`. `closePanel(id)` removes. Handle
-methods: `{ update: () => void; close: () => void }`. `update()` is a dirty flag,
-not data passing, state works via closure mutation.
-
-**Render context:** `ModPanelRenderContext` extends `ModContext`, panels get
-the full live mod context plus `width`, `row(left, right, width)`,
-`columns(items, width)`, `chalk`.
-
-**Legacy `{ content }` API silently no-ops.** Runtime validation emits a warning
-diagnostic. When debugging a mod that "does nothing", check whether it uses
-`content` instead of `render`.
-
-**Async commands pattern:** fetch data outside render, store in closure, call
-`panel.update()` when data arrives, `render: () => state.result ?? loading_text`.
-
-### Mod Dialogs
-
-`letta.ui.select({ message, options }) -> Promise<string | null>` , blocking,
-modal, captures keyboard focus. Renders below input, preempts statusline +
-below panels. ESC resolves `null`.
-
-- `ui.dialogs` capability gated. When disabled: resolves `null` (not throw).
-- Self-dequeuing resolver: promise resolve function removes its own entry from
-  the queue. Without this, zombie dialogs persist.
-- Input blocking parity: must set `inputEnabled = false` in AppCoordinator
-  during active dialog, not just collapse input visually. Otherwise main input
-  and dialog both catch Enter.
-- Desktop transport: mod dialogs are registry-keyed by `id`, not tool calls, so
-  they can't ride the permission channel. Desktop needs new WS commands.
-
-### Mod Secrets
-
-`ctx.secret(KEY, { envFallback: true })` , minimal primitive, agent-scoped, env
-fallback opt-in, redacted from output. Secrets are substituted at command
-dispatch time, not as persistent env vars. Only literal `$NAME` references work
-(not `${NAME}`).
-
-### Mod Package Publishing
-
-- npm publish requires `./` prefix for package path.
-- `git:` prefix for GitHub-installed mods.
-- Package manifest: capability ID sourced from manifest, fail-closed.
-- Version bumping for breaking API migrations: bump package version, set
-  `engines.lettaCodeCli` to `>= N+1` where N is the current released Letta Code
-  version (the breaking change isn't released yet).
-
 ---
 
 ## App-Server Protocol
@@ -632,7 +458,7 @@ protocol for Desktop/app-server. It replaces the v1 session/headless protocol.
 5. Update `src/websocket/listener/protocol-inbound.ts` for outbound parsing.
 6. Add an `AppServerClient` helper method + tests in the same PR. Don't ship
    protocol commands without their client ergonomic.
-7. Cloud relay forwarding (`FORWARDABLE_COMMAND_TYPES` in letta-cloud) is a
+7. Cloud relay forwarding (`FORWARDABLE_COMMAND_TYPES` in the cloud relay service) is a
    separate PR.
 
 **Naming:** No "codex" references in codebase/commits/identifiers. Use
@@ -666,46 +492,6 @@ newly allocated.
 
 ---
 
-## Filesystem Sandbox
-
-OS-level filesystem sandboxing prevents agents sharing one machine from reading
-or writing each other's memory.
-
-### Enforcement Surfaces
-
-1. **Shell commands:** wrapped per invocation with cross-agent policy (deny
-   active agent-memory tree, carve current agent's own memory back out, leave
-   repo/home/tmp writable, network open).
-2. **Memory-mode subagents** (reflection, memory, init):
-   entire process wrapped. Reads broadly, writes restricted.
-3. **In-process file tools** (Read/Edit/Write): cannot fork, so kernel sandbox
-   can't see them. Old static cross-agent guard remains: resolves both lexical
-   and realpaths to cover symlink escapes.
-
-### Backends
-
-- **Seatbelt (macOS):** `detectSandboxBackend()` must actually probe
-  (`sandbox-exec -p '(version 1)(allow default)' /usr/bin/true`), not just check
-  file existence. If probe fails, degrade to no-sandbox.
-- **bwrap (Linux):** mount namespace, root `--bind / /` for cross-agent mode,
-  `--ro-bind / /` for memory mode. Denied roots `--tmpfs` masked.
-- **Windows:** C# helper with restricted tokens + temporary ACLs + kill-on-close
-  Job Object. Uses `S-1-5-21-*` domain-shaped SIDs (NOT `S-1-15-3-*` capability
-  SIDs which fail on standard Windows). `asInvoker` manifest to avoid UAC.
-
-### Cross-Backend Policy
-
-Sandbox policy must deny BOTH memory trees:
-- API/cloud: `~/.letta/agents`
-- Local backend: `$LETTA_LOCAL_BACKEND_DIR`/memfs
-
-### Environment Variables
-
-- `LETTA_FS_SANDBOX=0` , opt-out everywhere
-- `LETTA_SANDBOX=<backend>` , sentinel inside sandboxed children
-
----
-
 ## Runtime Model Catalog
 
 The model catalog is a dynamic runtime service, not a static `models.json` file.
@@ -730,6 +516,15 @@ like catalog rows.
 Key files: `src/agent/model-catalog.ts`, `src/agent/remote-model-catalog.ts`,
 `src/agent/available-models.ts`, `src/backend/local/local-model-config.ts`.
 
+**Adding a model:** add it at the source that owns it. Hosted presets belong in
+the server's catalog; local models belong in pi-ai or that provider's discovery
+runtime. Change this repository only for Letta Code-specific compatibility, such
+as an established CLI alias in `model-catalog.ts` or provider detection for
+toolset selection in `src/tools/manager.ts`, and derive handles and metadata
+from the runtime catalog instead of copying model definitions. Smoke-test with
+`bun run src/index.ts --new --model <id> -p "hi"`; the headless CI model matrix
+lives in `.github/workflows/ci.yml`.
+
 **Test fixture pattern:** The `models` array is shared mutable state across the
 test suite. Use `setupRuntimeModelCatalogFixture()` (bundles setup + cleanup) from
 `src/test-utils/runtime-model-catalog.ts`. All test files touching the model
@@ -737,32 +532,7 @@ catalog must use this fixture.
 
 ---
 
-## Subagent Lifecycle & Reflection
-
-### Subagent Lifecycle API
-
-- `ctx.subagents.list()` , returns fuller lifecycle items (type, status,
-  durationMs, agentId, visibleInTranscript). No `active` field (use `pending ||
-  running`). No `surface` field (use JS `.filter()`). No filter sugar.
-- `ctx.backgroundAgents` , slim projection (`type`, `status`, `durationMs`,
-  `agentId`). Sufficient for minimal text-only rendering.
-- Both read from the same source (`subagentLifecycleSnapshot` in `InputRich`).
-  Difference is projection depth.
-- Completed/error agents retained ~30s before cleanup. Consumers must filter on
-  `status` if they only want active agents.
-
-### Product-Status Panel
-
-- `order: 1` = product-status replacement (singleton, newest-wins).
-- Built-in default panel injected by `InputRich` when no user panel occupies
-  `order: 1`.
-- User mod at `order: 1` suppresses the built-in default.
-- `ctx.link(label, url)` helper for OSC-8 hyperlinks. In tmux, OSC-8 doesn't
-  work, default panel omits URL entirely.
-- Spinner state is host-owned, fed to default panel via options. A user mod at
-  `order: 1` runs its own `setInterval` + `panel.update()` to animate.
-
-### Reflection Worktree
+## Reflection Worktree
 
 Harness manages the worktree lifecycle (not the reflection agent):
 - State: `landed` (clean merge), `noop` (no commits), `retry` (dirty),
@@ -867,22 +637,22 @@ params; using `summary` returns ALL conversations for the agent.
 
 ---
 
-## Shared Remote Server (lettamate)
+## Shared Remote Server
 
-`/Users/lettamate/letta-code` is a shared remote macOS server. Multiple
+Some checkouts live on a shared remote macOS server. Multiple
 agents/people share worktrees here.
 
 1. **Never use someone else's git credentials.** Set `GIT_AUTHOR_NAME`,
    `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL` explicitly
    when committing.
 2. **Never commit directly on main.** Always work in worktrees.
-3. **Use clearly-named worktrees** prefixed with `amelia-` (e.g.
-   `.letta/worktrees/amelia-rebase-2184`).
+3. **Use clearly-named worktrees** prefixed with your own name (e.g.
+   `.letta/worktrees/<name>-rebase-2184`).
 4. **Check existing worktrees** before creating new ones.
 5. **Secrets** available via `$SECRET_NAME` substitution at exec time (not
    persistent env vars): `GITHUB_TOKEN`, `LETTA_API_KEY`, `SLACK_BOT_TOKEN`,
    `SLACK_APP_TOKEN`.
-6. **Pre-existing `gh` auth** is for `just-cameron`, do NOT use it.
+6. **Pre-existing `gh` auth** belongs to another user, do NOT use it.
 7. **Fine-grained PATs don't work for org repos.** Use a classic PAT (`ghp_`
    prefix) with `repo` scope.
 
@@ -890,50 +660,12 @@ agents/people share worktrees here.
 
 ## Watcher & Automation Workflows
 
-### Upstream Release Watchers
-
-Claude, Codex, and pi-ai watchers run every 2 hours, detect upstream releases,
-and create draft parity PRs when warranted.
-
-- Each run uses `--new` for a fresh conversation (isolated runs, no state
-  compounding).
-- Selective upgrade policy: only upgrade when there's concrete Letta Code
-  benefit, a consumed contract fix, or a specific risk avoidance. Default is
-  `no_upgrade`.
-- Slack notifications post to `#code-reviews` only for `pr_created` outcomes.
-  One random owner selected per notification.
-
-### CI Workflow Patterns
-
-- **Typecheck in workflow prompts:** After making edits in the target repo, run
-  `npx tsc --noEmit` before committing/pushing. Prevents pushing broken types.
-- **Draft-gate skip false failure:** Jobs with `if: github.event.pull_request.draft
-  == false` are marked as skipped (not failed) in draft mode. Downstream
-  `needs:` gates with `if: always()` treat skipped as non-success, causing false
-  failures. Fix: check `needs.draft-gate.result == 'success' || needs.draft-gate.result
-  == 'skipped'`.
-- **Action ref caching:** GitHub Actions resolves branch refs to SHAs at trigger
-  time and caches. Pushing new commits to the action branch doesn't update
-  already-triggered runs. Pin to a specific SHA instead of `@main`.
-
-### Review Workflow
-
-- `review.yml` runs on ALL non-draft PRs (not just Caren's).
-- Silent by default: only posts inline review comments when flagging issues.
-- Final response: `LGTM` or `Left comments`.
-- Conversation persistence via `summary_search` API lookup.
-- Review prompt (~600 tokens) is re-sent on each run (intentional: compaction
-  can evict old instructions).
-- Compact prompt for re-reviews (existing conversation detected).
-- Background agent gets stuck on complex reviews requiring repo setup + extensive
-  reading. Do those in the foreground.
-
 ### Secret Injection Syntax
 
 The harness only supports literal `$NAME` references for secret injection:
-- `$AMELIA_GITHUB_TOKEN` injected
-- `${AMELIA_GITHUB_TOKEN}` not expanded
-- `${AMELIA_GITHUB_TOKEN:?}` not supported
+- `$GITHUB_TOKEN` injected
+- `${GITHUB_TOKEN}` not expanded
+- `${GITHUB_TOKEN:?}` not supported
 
 ### Repositories API Write Gotcha
 
@@ -962,12 +694,3 @@ state.
 
 When desktop runs both a local and cloud listener, heartbeat oscillation can
 occur. Version compatibility between desktop and CLI must be maintained.
-
-### Release Cascade
-
-Automated cross-repository release orchestration publishes Agent SDK and ACP to
-follow every stable Letta Code release. Not Dependabot, it needs multi-step
-package releases in lockstep. Currently blocked by token permissions
-(`amelia-letta` has read-only access to downstream repos).
-
-- Never reference non-public code, data, or internal systems in commits, pull requests, or code comments in this repository; keep that context in internal tickets and cite only the ticket ID.

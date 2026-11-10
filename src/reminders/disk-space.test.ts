@@ -5,11 +5,13 @@ import {
   evaluateDiskSpaceReminder,
   getCachedDiskSpaceSample,
   isDiskSpaceLow,
+  isSandboxDiskWatchRunning,
   refreshDiskSpaceSample,
   resetDiskSpaceAlertForTests,
   resetDiskSpaceCacheForTests,
   takePendingDiskSpaceReminder,
   watchDiskSpaceDuring,
+  watchSandboxDiskSpace,
 } from "@/reminders/disk-space";
 import {
   clearPendingMessages,
@@ -252,5 +254,86 @@ describe("watchDiskSpaceDuring", () => {
       "task_notification",
     ]);
     expect(queued[0]?.conversationId).toBe("conv-1");
+  });
+});
+
+describe("watchSandboxDiskSpace", () => {
+  const managed = { LETTA_MANAGED_CLOUD_RUNTIME: "1" } as NodeJS.ProcessEnv;
+  const scope = { agentId: "agent-1", conversationId: "conv-1" };
+  let stop: () => void = () => {};
+  afterEach(() => {
+    stop();
+    resetDiskSpaceAlertForTests();
+    setMessageQueueAdder(null);
+    clearPendingMessages();
+  });
+
+  test("queues one alert when the disk crosses 90% with no tool running", async () => {
+    const queued: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => queued.push(message));
+    let free = 10 * GIB;
+    const statfsFn = async (path: string) =>
+      fakeStatfs(20 * GIB, free).fn(path);
+    stop = watchSandboxDiskSpace(
+      () => "/work",
+      (text) => deliverDiskSpaceReminder(text, scope),
+      { env: managed, statfsFn, intervalMs: 10 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(queued).toHaveLength(0);
+    free = 1.5 * GIB; // 92.5% used, written by something outside any tool
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(queued).toHaveLength(1);
+    expect(queued[0]?.kind).toBe("task_notification");
+    expect(queued[0]?.text).toContain("LOW DISK SPACE");
+    expect(queued[0]?.conversationId).toBe("conv-1");
+  });
+
+  test("repeat polls at the same level do not re-alert", async () => {
+    const delivered: string[] = [];
+    const { fn, calls } = fakeStatfs(20 * GIB, 1.5 * GIB);
+    stop = watchSandboxDiskSpace(
+      () => "/work",
+      (text) => delivered.push(text),
+      { env: managed, statfsFn: fn, intervalMs: 10 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(calls.length).toBeGreaterThan(2);
+    expect(delivered).toHaveLength(1);
+  });
+
+  test("does not start outside Cloud", async () => {
+    const { fn, calls } = fakeStatfs(20 * GIB, 0.5 * GIB);
+    stop = watchSandboxDiskSpace(
+      () => "/work",
+      () => {},
+      {
+        env: {},
+        statfsFn: fn,
+        intervalMs: 10,
+      },
+    );
+    expect(isSandboxDiskWatchRunning()).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(calls).toHaveLength(0);
+  });
+
+  test("stops polling once stopped", async () => {
+    const { fn, calls } = fakeStatfs(20 * GIB, 10 * GIB);
+    stop = watchSandboxDiskSpace(
+      () => "/work",
+      () => {},
+      {
+        env: managed,
+        statfsFn: fn,
+        intervalMs: 10,
+      },
+    );
+    expect(isSandboxDiskWatchRunning()).toBe(true);
+    stop();
+    expect(isSandboxDiskWatchRunning()).toBe(false);
+    const seen = calls.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(calls).toHaveLength(seen);
   });
 });

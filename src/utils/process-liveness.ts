@@ -14,6 +14,13 @@ export function isProcessAlive(pid: number): boolean {
 }
 
 /**
+ * PowerShell can take many seconds to start on a busy Windows machine. Lock
+ * owners record this value before they can proceed, so give up and report
+ * "unknown" (pid liveness then decides) instead of stalling the caller.
+ */
+const PROCESS_START_LOOKUP_TIMEOUT_MS = 5_000;
+
+/**
  * Start time of a process as the OS reports it, or null when it cannot be
  * read. Rendered in UTC with the C locale so every process on the machine
  * produces the same string for the same pid regardless of its own TZ.
@@ -23,15 +30,22 @@ export async function getProcessStartTime(pid: number): Promise<string | null> {
   try {
     const { stdout } =
       process.platform === "win32"
-        ? await promisify(execFile)("powershell", [
-            "-NoProfile",
-            "-Command",
-            `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
-          ])
+        ? await promisify(execFile)(
+            "powershell",
+            [
+              "-NoProfile",
+              "-Command",
+              `(Get-Process -Id ${pid}).StartTime.ToFileTimeUtc()`,
+            ],
+            { timeout: PROCESS_START_LOOKUP_TIMEOUT_MS, windowsHide: true },
+          )
         : await promisify(execFile)(
             "ps",
             ["-o", "lstart=", "-p", String(pid)],
-            { env: { ...process.env, TZ: "UTC", LC_ALL: "C" } },
+            {
+              env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
+              timeout: PROCESS_START_LOOKUP_TIMEOUT_MS,
+            },
           );
     const started = stdout.trim();
     return started.length > 0 ? started : null;
@@ -42,10 +56,27 @@ export async function getProcessStartTime(pid: number): Promise<string | null> {
 
 let ownStartTime: Promise<string | null> | undefined;
 
-/** This process's own start time, resolved once; it cannot change. */
+/**
+ * This process's own start time, resolved once; it cannot change. A null
+ * result (lookup failed or timed out, e.g. a slow PowerShell start on Windows)
+ * is not cached, so the next caller retries instead of recording "unknown"
+ * for the rest of the process's life.
+ */
 export function getOwnProcessStartTime(): Promise<string | null> {
-  ownStartTime ??= getProcessStartTime(process.pid);
+  if (!ownStartTime) {
+    const lookup = getProcessStartTime(process.pid);
+    ownStartTime = lookup;
+    void lookup.then((started) => {
+      if (started === null && ownStartTime === lookup) {
+        ownStartTime = undefined;
+      }
+    });
+  }
   return ownStartTime;
+}
+
+export function resetOwnProcessStartTimeForTests(): void {
+  ownStartTime = undefined;
 }
 
 export interface ProcessIdentity {

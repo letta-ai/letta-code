@@ -256,15 +256,49 @@ function scrubWithEntries(
   input: string,
   entries: ReadonlyArray<readonly [string, string]>,
 ): string {
+  // A value with quotes, backslashes, or newlines (a PEM key, a JSON blob)
+  // appears escaped inside JSON text such as serialized tool arguments; match
+  // that form too.
+  const forms = entries.flatMap(([name, value]) => {
+    const escaped = JSON.stringify(value).slice(1, -1);
+    return escaped === value
+      ? [[name, value] as const]
+      : [[name, value] as const, [name, escaped] as const];
+  });
   let result = input;
   // Replace longer values first to avoid partial matches
-  const sorted = [...entries].sort(([, a], [, b]) => b.length - a.length);
-  for (const [name, value] of sorted) {
+  forms.sort(([, a], [, b]) => b.length - a.length);
+  for (const [name, value] of forms) {
     if (value.length > 0) {
       result = result.replaceAll(value, `${name}=<REDACTED>`);
     }
   }
   return result;
+}
+
+/**
+ * Scrub secret values from every string in a JSON-like value (objects,
+ * arrays, strings), before it is serialized. Scrubbing a serialized form
+ * instead can miss values that JSON escapes. `secrets` is used as given;
+ * pass {@link captureSecretRedactions} output to include ambient values.
+ */
+export function scrubSecretsDeep<T>(
+  value: T,
+  secrets: Readonly<Record<string, string>>,
+): T {
+  const entries = Object.entries(secrets);
+  if (entries.length === 0) return value;
+  const walk = (node: unknown): unknown => {
+    if (typeof node === "string") return scrubWithEntries(node, entries);
+    if (Array.isArray(node)) return node.map(walk);
+    if (node && typeof node === "object") {
+      return Object.fromEntries(
+        Object.entries(node).map(([key, child]) => [key, walk(child)]),
+      );
+    }
+    return node;
+  };
+  return walk(value) as T;
 }
 
 /**

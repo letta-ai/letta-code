@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import {
   type AppServerSocketLike,
   type AppServerSocketOptions,
@@ -72,6 +74,62 @@ function createFakeClient() {
 describe("app-server client", () => {
   afterEach(() => {
     FakeSocket.instances = [];
+  });
+
+  test("includes the HTTP status and body when the WebSocket upgrade is rejected", async () => {
+    class RejectedSocket extends EventEmitter {
+      constructor(_url: string) {
+        super();
+      }
+      readyState = 0;
+      send() {}
+      close() {}
+    }
+    const client = createAppServerClient({
+      url: "http://localhost:4500",
+      WebSocket: RejectedSocket,
+    });
+    const pending = client.connect();
+    const response = Object.assign(new PassThrough(), { statusCode: 403 });
+    let aborted = false;
+    const request = new EventEmitter();
+    Object.assign(request, {
+      abort() {
+        aborted = true;
+        request.emit("close");
+      },
+    });
+    (client.socket as RejectedSocket).emit(
+      "unexpected-response",
+      request,
+      response,
+    );
+    response.end('Computer "workstation" is private to its owner.');
+    await expect(pending).rejects.toThrow(
+      'App-server WebSocket failed to open: HTTP 403: Computer "workstation" is private to its owner.',
+    );
+    expect(aborted).toBe(true);
+    expect(
+      (client.socket as RejectedSocket).listenerCount("unexpected-response"),
+    ).toBe(0);
+  });
+
+  test("rejects connect when the socket never opens", async () => {
+    const { client } = createFakeClient();
+    const started = Date.now();
+    await expect(client.connect()).rejects.toThrow(
+      "App-server WebSocket failed to open: timed out after 25ms",
+    );
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("rejects connect when the socket closes before opening", async () => {
+    const { client, control } = createFakeClient();
+    const pending = client.connect();
+    control.close();
+    await expect(pending).rejects.toThrow(
+      "App-server WebSocket failed to open: closed before opening",
+    );
   });
 
   test("launches a subagent and correlates success and failure responses", async () => {
@@ -537,7 +595,6 @@ describe("app-server client", () => {
       create_conversation: { body: {} },
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [
             {
               name: "lookup_ticket",
@@ -553,7 +610,6 @@ describe("app-server client", () => {
       type: "runtime_start",
       external_tools: [
         {
-          scope_id: "scope-1",
           tools: [{ name: "lookup_ticket" }],
         },
       ],
@@ -576,7 +632,6 @@ describe("app-server client", () => {
       type: "external_tool_call_request",
       request_id: "external-tool-1",
       runtime: { agent_id: "agent-1", conversation_id: "conv-1" },
-      scope_id: "scope-1",
       tool_call_id: "call-1",
       tool_name: "lookup_ticket",
       input: { id: "ABC-123" },

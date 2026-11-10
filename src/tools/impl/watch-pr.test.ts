@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
@@ -13,8 +15,8 @@ const url = "https://github.com/letta-ai/letta-code/pull/42";
 let previousManagedCloud: string | undefined;
 let previousMonitorMaxTimeout: string | undefined;
 beforeEach(() => {
-  previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
-  delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
+  previousMonitorMaxTimeout = process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
   previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 });
@@ -42,8 +44,9 @@ function snapshot(
 
 afterEach(() => {
   if (previousMonitorMaxTimeout === undefined)
-    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_MS;
-  else process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = previousMonitorMaxTimeout;
+    delete process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS;
+  else
+    process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = previousMonitorMaxTimeout;
   if (previousManagedCloud === undefined)
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
   else process.env.LETTA_MANAGED_CLOUD_RUNTIME = previousManagedCloud;
@@ -62,9 +65,106 @@ afterEach(() => {
 });
 
 describe("WatchPR background lifecycle", () => {
+  test("reports a comment posted between watches in the second initial result", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "watch-pr-resume-"));
+    const previousConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = configDir;
+    const args = {
+      url,
+      parentScope: { agentId: "agent-resume", conversationId: "conv-resume" },
+    };
+    const wait = async (signal: AbortSignal) => {
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+    try {
+      const first = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot(),
+        wait,
+      });
+      await task_stop({ task_id: first.taskId });
+      const second = await watch_pr(args, {
+        fetchSnapshot: async () =>
+          snapshot({
+            comments: [
+              {
+                id: "between-watches",
+                author: "alice",
+                body: "Please address this before merging",
+                url: "https://github.com/letta-ai/letta-code/pull/42#issuecomment-1",
+                updatedAt: "2",
+              },
+            ],
+          }),
+        wait,
+      });
+      await task_stop({ task_id: second.taskId });
+      expect(second.content[0]?.text).toContain(
+        "Changes since the previous watch ended",
+      );
+      expect(second.content[0]?.text).toContain(
+        "New PR comment from @alice: Please address this before merging",
+      );
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
+  test("restarting after a merge-ready poll reports no readiness change", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "watch-pr-readiness-"));
+    const previousConfigDir = process.env.LETTA_CONFIG_DIR;
+    process.env.LETTA_CONFIG_DIR = configDir;
+    const args = {
+      url,
+      parentScope: { agentId: "agent-ready", conversationId: "conv-ready" },
+    };
+    let pollFinished!: () => void;
+    const polled = new Promise<void>((resolve) => {
+      pollFinished = resolve;
+    });
+    let waits = 0;
+    const wait = async (signal: AbortSignal) => {
+      if (++waits === 1) return;
+      pollFinished();
+      await new Promise<void>((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      });
+    };
+    try {
+      const first = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await polled;
+      await task_stop({ task_id: first.taskId });
+      const second = await watch_pr(args, {
+        fetchSnapshot: async () => snapshot({ readinessConfirmed: false }),
+        wait,
+      });
+      await task_stop({ task_id: second.taskId });
+      expect(second.content[0]?.text).not.toContain(
+        "PR is no longer merge-ready",
+      );
+      expect(second.content[0]?.text).not.toContain(
+        "Changes since the previous watch ended",
+      );
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
+      else process.env.LETTA_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("Cloud deadline aborts an in-flight poll and sends one scoped notification", async () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
-    process.env.LETTA_MONITOR_MAX_TIMEOUT_MS = "86400000";
+    process.env.LETTA_MONITOR_MAX_TIMEOUT_SECONDS = "86400";
     const realSetTimeout = globalThis.setTimeout;
     const timers = spyOn(globalThis, "setTimeout").mockImplementation(
       Object.assign(

@@ -6,20 +6,24 @@ import { isLettaCloud } from "@/agent/memory-filesystem";
 import { getClient } from "@/backend/api/client";
 import {
   createSandboxDesktopSession,
+  createSandboxPublicExposure,
   downloadFileFromSandbox,
   ensureConversationSandbox,
   uploadFileToSandbox,
 } from "@/backend/api/sandbox-files";
 import { buildDesktopViewerUrl } from "@/cli/helpers/app-urls";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { type SessionRef, settingsManager } from "@/settings-manager";
 
 interface SandboxSubcommandDeps {
   createDesktopSession?: typeof createSandboxDesktopSession;
+  createPublicExposure?: typeof createSandboxPublicExposure;
   downloadFile?: typeof downloadFileFromSandbox;
   ensureSandbox?: typeof ensureConversationSandbox;
   getLastSession?: () => SessionRef | null;
   initializeSettings?: () => Promise<void>;
   isCloud?: () => Promise<boolean>;
+  isManagedRuntime?: () => boolean;
   retrieveConversation?: (id: string) => Promise<{ agent_id: string | null }>;
   readLocalFile?: (path: string) => Promise<Buffer>;
   statLocalPath?: (path: string) => Promise<{ isFile(): boolean }>;
@@ -32,7 +36,12 @@ const SANDBOX_OPTIONS = {
   to: { type: "string" },
   conversation: { type: "string" },
   agent: { type: "string" },
+  "expires-in": { type: "string" },
+  "extend-by": { type: "string" },
 } as const;
+
+const MIN_EXPOSURE_DURATION_SECONDS = 60;
+const MAX_EXPOSURE_DURATION_SECONDS = 24 * 60 * 60;
 
 function printUsage(): void {
   console.log(
@@ -41,6 +50,8 @@ Usage:
   letta sandbox upload <local-path>
   letta sandbox download <sandbox-path> [--to <local-path>]
   letta sandbox desktop-link
+  letta sandbox expose <port> --expires-in <duration>
+  letta sandbox expose <port> --extend-by <duration>
 
 Target another conversation (upload, download, or desktop-link):
   letta sandbox upload <local-path> --conversation <conv-id>
@@ -59,6 +70,11 @@ Notes:
     desktop in a browser tab with no sign-in. Anyone with the link can view
     and control the desktop until expiresAt (about one hour); share it only
     with the person who needs it.
+  - expose works only inside a Letta-managed sandbox. --expires-in creates or
+    renews the URL to the requested remaining lifetime; --extend-by adds time
+    to the current deadline while preserving the URL and port. Durations use
+    whole seconds, minutes, or hours (for example 30m, 2h, or 24h), from 1m to
+    24h. Anyone with the link can access the app; share it carefully.
   - Output is JSON only.
 `.trim(),
   );
@@ -71,6 +87,24 @@ function parseSandboxArgs(argv: string[]) {
     strict: true,
     allowPositionals: true,
   });
+}
+
+function parseExposureDuration(value: string, option: string): number {
+  const match = /^([1-9]\d*)(s|m|h)$/.exec(value.trim().toLowerCase());
+  if (!match) {
+    throw new Error(`${option} must be a duration such as 30m, 2h, or 24h`);
+  }
+  const amount = Number(match[1]);
+  const multiplier = match[2] === "h" ? 3600 : match[2] === "m" ? 60 : 1;
+  const seconds = amount * multiplier;
+  if (
+    !Number.isSafeInteger(seconds) ||
+    seconds < MIN_EXPOSURE_DURATION_SECONDS ||
+    seconds > MAX_EXPOSURE_DURATION_SECONDS
+  ) {
+    throw new Error(`${option} must be between 1m and 24h`);
+  }
+  return seconds;
 }
 
 function getEnvironmentSession(env: NodeJS.ProcessEnv): SessionRef | null {
@@ -170,7 +204,7 @@ export async function runSandboxSubcommand(
     return 1;
   }
 
-  const [action, path] = parsed.positionals;
+  const [action, path, ...extraPositionals] = parsed.positionals;
   if (parsed.values.help || !action || action === "help") {
     printUsage();
     return 0;
@@ -180,12 +214,50 @@ export async function runSandboxSubcommand(
     printUsage();
     return 1;
   }
+  if (action === "expose") {
+    if (
+      path === undefined ||
+      extraPositionals.length > 0 ||
+      parsed.values.to !== undefined
+    ) {
+      console.error("Error: expose requires exactly one port argument");
+      printUsage();
+      return 1;
+    }
+    const hasExpiry = parsed.values["expires-in"] !== undefined;
+    const hasExtension = parsed.values["extend-by"] !== undefined;
+    if (hasExpiry === hasExtension) {
+      console.error(
+        "Error: expose requires exactly one of --expires-in or --extend-by",
+      );
+      printUsage();
+      return 1;
+    }
+    if (
+      parsed.values.agent !== undefined ||
+      parsed.values.conversation !== undefined
+    ) {
+      console.error("Error: expose does not accept target flags");
+      printUsage();
+      return 1;
+    }
+  }
+  if (
+    action !== "expose" &&
+    (parsed.values["expires-in"] !== undefined ||
+      parsed.values["extend-by"] !== undefined)
+  ) {
+    console.error("Error: expiry flags are only valid with expose");
+    printUsage();
+    return 1;
+  }
   if (
     action !== "desktop-link" &&
+    action !== "expose" &&
     ((action !== "upload" && action !== "download") || !path)
   ) {
     console.error(
-      "Error: expected upload or download with a file path, or desktop-link",
+      "Error: expected upload or download with a file path, desktop-link, or expose with a port",
     );
     printUsage();
     return 1;
@@ -195,6 +267,36 @@ export async function runSandboxSubcommand(
     await (deps.initializeSettings ?? initializeSandboxSettings)();
     if (!(await (deps.isCloud ?? isLettaCloud)())) {
       throw new Error("The sandbox command is only available on Letta Cloud");
+    }
+    if (action === "expose") {
+      if (!(deps.isManagedRuntime ?? isManagedCloudRuntime)()) {
+        throw new Error(
+          "The expose command is only available inside a Letta-managed sandbox",
+        );
+      }
+      const port = Number(path);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        throw new Error("Port must be an integer between 1024 and 65535");
+      }
+      const expiry =
+        parsed.values["expires-in"] !== undefined
+          ? {
+              expiresInSeconds: parseExposureDuration(
+                parsed.values["expires-in"],
+                "--expires-in",
+              ),
+            }
+          : {
+              extendBySeconds: parseExposureDuration(
+                parsed.values["extend-by"] ?? "",
+                "--extend-by",
+              ),
+            };
+      const exposure = await (
+        deps.createPublicExposure ?? createSandboxPublicExposure
+      )(port, expiry);
+      console.log(JSON.stringify(exposure, null, 2));
+      return 0;
     }
     const session = await resolveSandboxTarget(
       parsed.values,

@@ -6,7 +6,7 @@ import { ApiRequestError } from "@/backend/api/request";
 import type { CloudSchedule } from "@/backend/api/schedules";
 import { type CronTask, listTasks } from "@/cron";
 import { runWithRuntimeContext } from "@/runtime-context";
-import { wake } from "./wake";
+import { cancelConversationWakes, wake } from "./wake";
 
 const NOW = new Date("2026-09-24T05:00:00.000Z");
 const originalManagedCloudRuntime = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
@@ -560,4 +560,26 @@ describe("Wake", () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+});
+
+test("conversation stop deletes its Cloud schedules and preserves sibling schedules", async () => {
+  const removed: string[] = [];
+  const own = cloudSchedule();
+  await inScope(() =>
+    cancelConversationWakes(SCOPE, {
+      listLocal: () => [],
+      listCloud: async () => ({
+        scheduled_messages: [
+          own,
+          cloudSchedule({ id: "sibling", conversation_id: "conv-sibling" }),
+        ],
+        has_next_page: false,
+      }),
+      getCloud: async () => own,
+      deleteCloud: async (_agent, id) => {
+        removed.push(id);
+      },
+    }),
+  );
+  expect(removed).toEqual([own.id]);
 });

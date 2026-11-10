@@ -694,6 +694,7 @@ describe("Startup Flow - Integration", () => {
       expect(result.exitCode).toBe(0);
       const output = result.output;
       expect(output.status).toBe("queued");
+      // The conversation is not read; the server's enqueue receipt names its agent.
       expect(output.agent_id).toBe(testAgentId);
       expect(output.conversation_id).toBe(testConversationId);
     },

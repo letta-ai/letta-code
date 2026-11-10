@@ -11,6 +11,7 @@ import { getAvailableModToolsRegistry } from "@/mods/tool-registry";
 import type { RuntimePermissionMode } from "@/runtime-context";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { getInternalToolName } from "@/tools/tool-name-mapping";
+import { priceUsageEvent } from "@/usage/cost";
 import type {
   AgentCallOptions,
   SdkClient,
@@ -46,6 +47,8 @@ export interface SdkSpawnerConfig {
   supportsAgentFreeResume?: boolean;
   /** Cloud exposes durable Runs; local completion is owned by this spawner. */
   verifyPersistedRuns?: boolean;
+  /** Override STOP_DRAIN_MS (focused tests). */
+  stopDrainMs?: number;
   /** Persisted conversation lookup (injected for focused tests). */
   retrieveConversation?: (id: string) => Promise<WorkerConversation>;
   /** Latest persisted conversation run (injected for focused tests). */
@@ -87,6 +90,11 @@ export const DEFAULT_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 /** How long a continuation waits for this spawner's own interrupt to settle. */
 const STOP_SETTLE_TIMEOUT_MS = 15_000;
 export const DEFAULT_MAX_SUBAGENT_TOOL_CALLS = 1000;
+/**
+ * After a stop, how long to wait for a model request already in flight to
+ * report its usage and for the interrupted stream to end.
+ */
+export const STOP_DRAIN_MS = 5_000;
 export const MAX_IDENTICAL_TOOL_CALLS = 3;
 
 const SUBAGENT_PREAMBLE = `You are a subagent inside a deterministic workflow. \
@@ -243,11 +251,37 @@ interface DrainedTurn {
   error?: string;
   structuredOutput?: unknown;
   totalTokens?: number;
+  costUsd?: number | null;
 }
 
-/** Token usage observed so far on a query; shared so an early stop keeps it. */
+/** Usage observed so far on a query; shared so an early stop keeps it. */
 interface RunningUsage {
   totalTokens?: number;
+  costUsd?: number;
+  /** A usage record arrived without `api_cost_usd`. */
+  unpriced?: boolean;
+}
+
+/**
+ * Loop states between sending a model request and receiving its usage. A
+ * request in flight bills even if the turn is interrupted, but an interrupted
+ * turn ends without reporting that usage.
+ */
+const PROVIDER_STEP_STATUSES = new Set([
+  "SENDING_API_REQUEST",
+  "WAITING_FOR_API_RESPONSE",
+  "PROCESSING_API_RESPONSE",
+]);
+
+/** Whether a model request is in flight, and who to tell when it ends. */
+interface StepState {
+  inFlight: boolean;
+  onStepEnd?: () => void;
+}
+
+/** Cumulative cost, or null once any step was unpriced. */
+function runningCost(usage: RunningUsage): number | null | undefined {
+  return usage.unpriced ? null : usage.costUsd;
 }
 
 /**
@@ -266,14 +300,34 @@ function usageTokensFromEvent(
     : undefined;
 }
 
+/**
+ * The shared client pricing path adds `api_cost_usd` for local and cloud
+ * usage. A null estimate leaves the run without an enforceable cost.
+ */
+function recordUsageCost(
+  event: Record<string, unknown> | undefined,
+  usage: RunningUsage,
+): boolean {
+  if (!event || event.message_type !== "usage_statistics") return false;
+  const cost = event.api_cost_usd;
+  if (typeof cost === "number" && Number.isFinite(cost) && cost >= 0) {
+    usage.costUsd = (usage.costUsd ?? 0) + cost;
+  } else {
+    usage.unpriced = true;
+  }
+  return true;
+}
+
 /** Consume the query stream to its result; `stop` is called on a runaway. */
 async function drainTurn(
   query: SdkQuery,
   usage: RunningUsage,
+  step: StepState,
   stop: (reason: string) => void,
   maxToolCalls: number,
-  onUsage?: (totalTokens: number) => void,
+  onUsage?: (totalTokens: number, costUsd?: number | null) => void,
   onStarted?: (conversationId: string) => void,
+  model?: string,
 ): Promise<DrainedTurn> {
   let assistantText = "";
   let resultText: string | undefined;
@@ -290,12 +344,21 @@ async function drainTurn(
       startedNotified = true;
       onStarted?.(id);
     }
+    if (message.type === "loop_status" && typeof message.status === "string") {
+      step.inFlight = PROVIDER_STEP_STATUSES.has(message.status);
+      if (!step.inFlight) step.onStepEnd?.();
+    }
     if (message.type === "assistant") assistantText += message.content ?? "";
     if (message.type === "stream_event") {
+      if (message.event) message.event = priceUsageEvent(message.event, model);
       const tokens = usageTokensFromEvent(message.event);
       if (tokens !== undefined) {
         usage.totalTokens = (usage.totalTokens ?? 0) + tokens;
-        onUsage?.(usage.totalTokens);
+      }
+      if (recordUsageCost(message.event, usage)) {
+        onUsage?.(usage.totalTokens ?? 0, runningCost(usage));
+        step.inFlight = false;
+        step.onStepEnd?.();
       }
     }
     if (message.type === "tool_call") {
@@ -324,6 +387,7 @@ async function drainTurn(
     error,
     structuredOutput,
     totalTokens: usage.totalTokens,
+    costUsd: runningCost(usage),
   };
 }
 
@@ -581,29 +645,48 @@ export function createSdkSpawner(
         "SDK resumed an unexpected worker conversation; refusing continuation.",
       );
     }
-    // Stopping early (abort, timeout, runaway) interrupts the turn and
-    // settles the outcome; the stream drain then ends on its own.
+    // Stopping early (abort, timeout, runaway) must still count a model
+    // request already in flight: it bills regardless, but an interrupted turn
+    // ends without reporting its usage. So the interrupt waits for that
+    // step's usage, and the outcome settles when the stream then ends, or
+    // after STOP_DRAIN_MS at the latest.
     let settleStopped!: (turn: DrainedTurn) => void;
     const stopped = new Promise<DrainedTurn>((resolve) => {
       settleStopped = resolve;
     });
     let finished = false;
-    const stop = (reason: string) => {
-      if (finished) return;
-      finished = true;
-      const interrupted = query.interrupt().then(
+    let stopReason: string | undefined;
+    let interrupted = false;
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    const step: StepState = { inFlight: false };
+    const interrupt = () => {
+      step.onStepEnd = undefined;
+      if (interrupted) return;
+      interrupted = true;
+      const acknowledged = query.interrupt().then(
         () => true,
         () => false,
       );
-      query.close();
       const stoppedId = activeId ?? query.conversationId;
-      if (stoppedId) trackStop(stoppedId, interrupted);
-      settleStopped({
-        finalText: "",
-        success: false,
-        error: reason,
-        totalTokens: usage.totalTokens,
-      });
+      if (stoppedId) trackStop(stoppedId, acknowledged);
+    };
+    const stop = (reason: string) => {
+      if (finished || stopReason !== undefined) return;
+      stopReason = reason;
+      if (step.inFlight) step.onStepEnd = interrupt;
+      else interrupt();
+      drainTimer = setTimeout(() => {
+        interrupt();
+        finished = true;
+        query.close();
+        settleStopped({
+          finalText: "",
+          success: false,
+          error: reason,
+          totalTokens: usage.totalTokens,
+          costUsd: runningCost(usage),
+        });
+      }, config.stopDrainMs ?? STOP_DRAIN_MS);
     };
     const abort = () => stop("Workflow subagent interrupted");
     signal.addEventListener("abort", abort, { once: true });
@@ -618,10 +701,11 @@ export function createSdkSpawner(
         drainTurn(
           query,
           usage,
+          step,
           stop,
           options.maxToolCalls ?? DEFAULT_MAX_SUBAGENT_TOOL_CALLS,
-          (totalTokens) => {
-            if (!finished) hooks?.onUsage?.(totalTokens);
+          (totalTokens, costUsd) => {
+            if (!finished) hooks?.onUsage?.(totalTokens, costUsd);
           },
           (id) => {
             if (resumeId && id !== resumeId) {
@@ -634,10 +718,22 @@ export function createSdkSpawner(
               hooks?.onStarted?.(id);
             }
           },
+          model,
         ),
         stopped,
-      ]);
-      if (!finished && query.conversationId) {
+      ]).then((drained): DrainedTurn => {
+        // A stopped turn fails with the stop reason even when the stream
+        // ended normally while draining; its usage is what it consumed.
+        if (stopReason === undefined) return drained;
+        return {
+          finalText: "",
+          success: false,
+          error: stopReason,
+          totalTokens: usage.totalTokens,
+          costUsd: runningCost(usage),
+        };
+      });
+      if (!finished && stopReason === undefined && query.conversationId) {
         locallyCompletedIds.add(query.conversationId);
       }
       if (resumeId && query.conversationId !== resumeId) {
@@ -650,6 +746,7 @@ export function createSdkSpawner(
         ...(turn.totalTokens !== undefined
           ? { totalTokens: turn.totalTokens }
           : {}),
+        ...(turn.costUsd !== undefined ? { costUsd: turn.costUsd } : {}),
         ...(query.conversationId
           ? { conversationId: query.conversationId }
           : {}),
@@ -704,6 +801,7 @@ export function createSdkSpawner(
     } finally {
       finished = true;
       clearTimeout(timeout);
+      clearTimeout(drainTimer);
       signal.removeEventListener("abort", abort);
       query.close();
       if (activeId) activeResumeIds.delete(activeId);

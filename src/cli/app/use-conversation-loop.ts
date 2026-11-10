@@ -23,7 +23,9 @@ import {
   overlayPartialResults,
 } from "@/agent/approval-execution";
 import {
+  CONVERSATION_BUSY_WAIT_TIMEOUT_MS,
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -34,8 +36,10 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputWithFreshDenials,
   refreshInputOtidsForNewRequest,
+  resumeConversationBusyRequest,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldAttemptApprovalRecovery,
+  waitForConversationBusyRunOrThrow,
 } from "@/agent/approval-recovery";
 import { getAvailableModelHandles } from "@/agent/available-models";
 import {
@@ -52,7 +56,7 @@ import {
   clearCompletedSubagents,
   hasActiveSubagents,
 } from "@/agent/subagent-state";
-import { type ConversationMessageStreamBody, getBackend } from "@/backend";
+import { getBackend } from "@/backend";
 import {
   type Buffers,
   type Line,
@@ -74,6 +78,7 @@ import {
   getRetryStatusMessage,
   isEncryptedContentError,
   isProviderStreamDisconnectErrorText,
+  KEY_OR_CREDITS_REQUIRED_MESSAGE,
 } from "@/cli/helpers/error-formatter";
 import { parsePatchOperations } from "@/cli/helpers/format-args-display";
 import {
@@ -87,8 +92,6 @@ import { safeJsonParseOr } from "@/cli/helpers/safe-json-parse";
 import {
   type ApprovalRequest,
   advanceStreamSequenceCursor,
-  type DrainResult,
-  drainStream,
   drainStreamWithResume,
   recordEmptyApprovalTelemetry,
   type StreamSequenceCursor,
@@ -127,7 +130,6 @@ import {
   ERROR_FEEDBACK_HINT,
   INTERRUPT_MESSAGE,
   LLM_API_ERROR_MAX_RETRIES,
-  TEMP_QUOTA_OVERRIDE_MODEL,
 } from "./constants";
 import { extractErrorMeta } from "./errors";
 import { uid } from "./ids";
@@ -239,7 +241,6 @@ type ConversationLoopContext = {
   queuedApprovalResultsRef: MutableRefObject<ApprovalResult[] | null>;
   queueApprovalResults: QueueApprovalResults;
   queueSnapshotRef: MutableRefObject<QueuedMessage[]>;
-  quotaAutoSwapAttemptedRef: MutableRefObject<boolean>;
   refreshDerived: () => void;
   refreshDerivedThrottled: () => void;
   resetTrajectoryBases: () => void;
@@ -336,7 +337,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     queuedApprovalResultsRef,
     queueApprovalResults,
     queueSnapshotRef,
-    quotaAutoSwapAttemptedRef,
     refreshDerived,
     refreshDerivedThrottled,
     resetTrajectoryBases,
@@ -364,7 +364,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
     setRestoredInput,
     setStreaming,
     setConversationSummary,
-    setTempModelOverride,
     setThinkingMessage,
     setTrajectoryElapsedBaseMs,
     setTrajectoryTokenBase,
@@ -614,7 +613,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
         llmApiErrorRetriesRef.current = 0;
         emptyResponseRetriesRef.current = 0;
         conversationBusyRetriesRef.current = 0;
-        quotaAutoSwapAttemptedRef.current = false;
         chatgptPlanSwapsRef.current = 0;
         chatgptExhaustedProvidersRef.current.clear();
       }
@@ -622,6 +620,7 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
       let currentRunId: string | undefined;
       let preserveTranscriptStartForApproval = false;
       let turnAbortController: AbortController | null = null;
+      let conversationBusyDeadlineMs: number | null = null;
       try {
         if (turnStartCancelReason) {
           const statusId = uid("status");
@@ -781,7 +780,6 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
           let stream: Awaited<ReturnType<typeof sendMessageStream>> | null =
             null;
           let turnToolContextId: string | null = null;
-          let preStreamResumeResult: DrainResult | null = null;
           let prefetchedAgent: AgentState | null = null;
           try {
             const preparedToolContext = await prepareScopedToolExecutionContext(
@@ -870,14 +868,11 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               continue;
             }
 
-            // Check for 409 "conversation busy" error - retry with exponential backoff
-            if (preStreamAction === "retry_conversation_busy") {
-              conversationBusyRetriesRef.current += 1;
-              const retryDelayMs = getRetryDelayMs({
-                category: "conversation_busy",
-                attempt: conversationBusyRetriesRef.current,
-              });
-
+            const blockingRunId = extractConversationBusyRunId(errorDetail);
+            if (
+              preStreamAction === "retry_conversation_busy" ||
+              blockingRunId
+            ) {
               // Log the conversation-busy error
               telemetry.trackError(
                 "retry_conversation_busy",
@@ -894,121 +889,100 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
                 },
               );
 
-              // Resume the in-flight run via the conversation stream endpoint (otid lookup, active-run fallback)
-              try {
-                const backend = getBackend();
-                const messageOtid = currentInput
-                  .map((item) => (item as Record<string, unknown>).otid)
-                  .find((v): v is string => typeof v === "string");
-                debugLog(
-                  "stream",
-                  "Conversation busy: resuming via stream endpoint (otid=%s)",
-                  messageOtid ?? "none",
-                );
-
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
-                  return;
-                }
-
-                const conversationId = conversationIdRef.current ?? "default";
-                const resumeStream = await backend.streamConversationMessages(
-                  conversationId,
-                  // Cast needed until SDK MessageStreamParams includes otid field
-                  {
-                    agent_id:
-                      conversationId === "default"
-                        ? (agentIdRef.current ?? undefined)
-                        : undefined,
-                    otid: messageOtid ?? undefined,
-                    starting_after: 0,
-                    batch_size: 1000,
-                  } as unknown as ConversationMessageStreamBody,
-                );
-
-                // Only reset buffer state after confirming stream is available
+              const resumeStream = await resumeConversationBusyRequest(
+                conversationIdRef.current ?? "default",
+                agentIdRef.current ?? undefined,
+                currentInput,
+                signal,
+              );
+              if (resumeStream) {
                 buffersRef.current.interrupted = false;
-                buffersRef.current.commitGeneration =
-                  (buffersRef.current.commitGeneration || 0) + 1;
-
-                preStreamResumeResult = await drainStream(
-                  resumeStream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal,
-                  undefined, // no handleFirstMessage on resume
-                  makeExecutionPhaseHook(setExecutionPhase),
-                  contextTrackerRef.current,
-                  streamSequenceCursor,
-                );
+                stream = resumeStream as Awaited<
+                  ReturnType<typeof sendMessageStream>
+                >;
+                turnToolContextId = getStreamToolContextId(stream);
+              } else {
                 debugLog(
                   "stream",
-                  "Pre-stream resume succeeded (stopReason=%s)",
-                  preStreamResumeResult.stopReason,
+                  "Pre-stream OTID resume unavailable; falling back to blocker wait or retry",
                 );
-                // Fall through — preStreamResumeResult will short-circuit drainStreamWithResume
-              } catch (resumeError) {
-                if (signal?.aborted || userCancelledRef.current) {
-                  const isStaleAtAbort =
-                    myGeneration !== conversationGenerationRef.current;
-                  if (!isStaleAtAbort) {
-                    setStreaming(false);
-                  }
-                  return;
-                }
-
-                debugLog(
-                  "stream",
-                  "Pre-stream resume failed, falling back to wait/retry: %s",
-                  resumeError instanceof Error
-                    ? resumeError.message
-                    : String(resumeError),
-                );
-                // Fall through to existing wait/retry behavior
               }
 
-              // If resume succeeded, skip the wait/retry loop
-              if (!preStreamResumeResult) {
-                // Show status message
+              if (!stream) {
                 const statusId = uid("status");
                 buffersRef.current.byId.set(statusId, {
                   kind: "status",
                   id: statusId,
-                  lines: ["Conversation is busy, waiting and retrying…"],
+                  lines: [
+                    blockingRunId
+                      ? `Conversation is busy; waiting for run ${blockingRunId} to finish…`
+                      : "Conversation is busy, waiting and retrying…",
+                  ],
                 });
                 buffersRef.current.order.push(statusId);
                 refreshDerived();
 
-                // Wait with abort checking (same pattern as LLM API error retry)
-                let cancelled = false;
-                const startTime = Date.now();
-                while (Date.now() - startTime < retryDelayMs) {
-                  if (
-                    abortControllerRef.current?.signal.aborted ||
-                    userCancelledRef.current
-                  ) {
-                    cancelled = true;
-                    break;
+                if (blockingRunId) {
+                  conversationBusyDeadlineMs ??=
+                    Date.now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
+                  let settled: boolean;
+                  try {
+                    settled = await waitForConversationBusyRunOrThrow(
+                      blockingRunId,
+                      signal,
+                      conversationBusyDeadlineMs,
+                    );
+                  } finally {
+                    buffersRef.current.byId.delete(statusId);
+                    buffersRef.current.order = buffersRef.current.order.filter(
+                      (id: string) => id !== statusId,
+                    );
+                    refreshDerived();
                   }
-                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  if (settled) {
+                    if (
+                      myGeneration !== conversationGenerationRef.current ||
+                      userCancelledRef.current
+                    )
+                      return;
+                    buffersRef.current.interrupted = false;
+                    restorePinnedPermissionMode();
+                    continue;
+                  }
                 }
 
-                // Remove status message
-                buffersRef.current.byId.delete(statusId);
-                buffersRef.current.order = buffersRef.current.order.filter(
-                  (id: string) => id !== statusId,
-                );
-                refreshDerived();
+                if (preStreamAction === "retry_conversation_busy") {
+                  conversationBusyRetriesRef.current += 1;
+                  const retryDelayMs = getRetryDelayMs({
+                    category: "conversation_busy",
+                    attempt: conversationBusyRetriesRef.current,
+                  });
+                  let cancelled = false;
+                  const startTime = Date.now();
+                  while (Date.now() - startTime < retryDelayMs) {
+                    if (
+                      abortControllerRef.current?.signal.aborted ||
+                      userCancelledRef.current
+                    ) {
+                      cancelled = true;
+                      break;
+                    }
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                  }
 
-                if (!cancelled) {
-                  // Reset interrupted flag so retry stream chunks are processed
-                  buffersRef.current.interrupted = false;
-                  restorePinnedPermissionMode();
-                  continue;
+                  if (!blockingRunId) {
+                    buffersRef.current.byId.delete(statusId);
+                    buffersRef.current.order = buffersRef.current.order.filter(
+                      (id: string) => id !== statusId,
+                    );
+                    refreshDerived();
+                  }
+
+                  if (!cancelled) {
+                    buffersRef.current.interrupted = false;
+                    restorePinnedPermissionMode();
+                    continue;
+                  }
                 }
               }
               // User pressed ESC - fall through to error handling
@@ -1176,9 +1150,10 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             }
 
             // Not a recoverable desync - re-throw to outer catch
-            throw preStreamError;
+            if (!stream) throw preStreamError;
           }
 
+          conversationBusyDeadlineMs = null;
           // Check again after network call - user may have pressed Escape during sendMessageStream
           if (signal?.aborted) {
             const isStaleAtAbort =
@@ -1289,25 +1264,17 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
             contextTrackerRef.current.currentTurnId++;
           }
 
-          const drainResult: Promise<DrainResult> = preStreamResumeResult
-            ? preStreamResumeResult
-            : (() => {
-                if (!stream) {
-                  throw new Error(
-                    "Expected stream when pre-stream resume did not succeed",
-                  );
-                }
-                return drainStreamWithResume(
-                  stream,
-                  buffersRef.current,
-                  refreshDerivedThrottled,
-                  signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
-                  handleFirstMessage,
-                  makeExecutionPhaseHook(setExecutionPhase),
-                  contextTrackerRef.current,
-                  streamSequenceCursor,
-                );
-              })();
+          if (!stream) throw new Error("Expected a stream after recovery");
+          const drainResult = drainStreamWithResume(
+            stream,
+            buffersRef.current,
+            refreshDerivedThrottled,
+            signal, // Use captured signal, not ref (which may be nulled by handleInterrupt)
+            handleFirstMessage,
+            makeExecutionPhaseHook(setExecutionPhase),
+            contextTrackerRef.current,
+            streamSequenceCursor,
+          );
 
           const {
             stopReason,
@@ -2356,60 +2323,15 @@ export function useConversationLoop(ctx: ConversationLoopContext) {
               buffersRef.current.interrupted = false;
               continue;
             }
-            // No sibling plan available; try the hosted Auto fallback below.
           }
 
-          // Quota-limit fallback: hosted Letta API can recover by switching to
-          // Auto. Local/embedded mode has no hosted Auto router, so surface the
-          // provider quota error and let the user choose/connect a local model.
-          const autoSwapOnQuotaLimitEnabled =
-            settingsManager.getSetting("autoSwapOnQuotaLimit") !== false;
-          const supportsHostedAutoQuotaFallback =
-            !getBackend().capabilities.localModelCatalog;
-          const isQuotaLimit = isQuotaLimitErrorDetail(
-            detailFromRun ?? fallbackError,
-          );
-          const alreadyOnTempAuto =
-            tempModelOverrideRef.current === TEMP_QUOTA_OVERRIDE_MODEL;
-          const canAttemptQuotaAutoSwap =
-            autoSwapOnQuotaLimitEnabled &&
-            supportsHostedAutoQuotaFallback &&
-            isQuotaLimit &&
-            !alreadyOnTempAuto &&
-            !quotaAutoSwapAttemptedRef.current;
-
-          if (canAttemptQuotaAutoSwap) {
-            quotaAutoSwapAttemptedRef.current = true;
-            setTempModelOverride(TEMP_QUOTA_OVERRIDE_MODEL);
-
-            const statusId = uid("status");
-            buffersRef.current.byId.set(statusId, {
-              kind: "status",
-              id: statusId,
-              lines: [
-                "Quota limit reached; temporarily switching to Auto and continuing...",
-              ],
-            });
-            buffersRef.current.order.push(statusId);
-            refreshDerived();
-
-            currentInput = [
-              ...currentInput,
-              {
-                type: "message",
-                role: "user",
-                content: "Keep going.",
-              },
-            ];
-
-            buffersRef.current.byId.delete(statusId);
-            buffersRef.current.order = buffersRef.current.order.filter(
-              (id: string) => id !== statusId,
-            );
-            refreshDerived();
-
-            buffersRef.current.interrupted = false;
-            continue;
+          // Quota/credits limits are not recoverable by switching models
+          // implicitly; tell the user how to continue.
+          if (
+            !getBackend().capabilities.localModelCatalog &&
+            isQuotaLimitErrorDetail(detailFromRun ?? fallbackError)
+          ) {
+            appendError(KEY_OR_CREDITS_REQUIRED_MESSAGE, true);
           }
 
           // Empty LLM response retry (e.g. Opus 4.6 occasionally returns no content).

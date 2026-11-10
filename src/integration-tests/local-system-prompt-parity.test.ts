@@ -68,7 +68,7 @@ describe("local/API system prompt parity", () => {
         name: `Parity Probe ${Date.now()}`,
         description: "temporary local/API system prompt parity probe",
         system: RAW_SYSTEM_PROMPT,
-        model: "letta/auto",
+        model: "anthropic/claude-sonnet-4-6",
         include_base_tools: false,
         include_base_tool_rules: false,
         initial_message_sequence: [],

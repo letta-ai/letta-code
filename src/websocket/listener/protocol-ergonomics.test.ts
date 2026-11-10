@@ -114,7 +114,6 @@ describe("listener protocol ergonomics", () => {
         ],
         client_tool_allowlist: undefined,
         client_toolset: undefined,
-        external_tool_scope_ids: undefined,
       },
     });
   });
@@ -189,6 +188,7 @@ describe("listener protocol ergonomics", () => {
           supported,
           drains_accepted_inputs: true,
           idempotent_continuation: true,
+          transfers_terminal_consumers: true,
         });
       } finally {
         setConfiguredBackendMode(previousBackend);

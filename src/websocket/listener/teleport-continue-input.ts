@@ -102,7 +102,10 @@ export function admitTeleportContinueInput(params: {
     return;
   }
   if (admission.kind === "full") {
-    acknowledgeInput(false, "Stable input ledger is at capacity");
+    acknowledgeInput(
+      false,
+      admission.reason ?? "Stable input ledger is at capacity",
+    );
     return;
   }
   const reservation =
@@ -134,6 +137,13 @@ export function admitTeleportContinueInput(params: {
         approvals: payload.continuation?.approvals,
       }),
       durableInputIdentities: [identity],
+      ...(payload.continuation?.terminal_consumer_ids?.length
+        ? {
+            terminalConsumerIds: [
+              ...new Set(payload.continuation.terminal_consumer_ids),
+            ],
+          }
+        : {}),
     };
     if (
       !(params.commitDisposition ?? commitInputDisposition)(

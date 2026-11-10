@@ -79,7 +79,8 @@ export interface ToolHooksConfig {
   /** Registers each call so its owner can drain or guard it. */
   track: <T>(pending: Promise<T>) => Promise<T>;
   journalPath?: string;
-  abortedMessage: string;
+  /** The error a call throws once `signal` has aborted. */
+  abortError: () => Error;
 }
 
 export interface ToolHooks {
@@ -130,7 +131,7 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
       throw new Error(`tools.${toolName}() arguments must be an object.`);
     }
     const signal = config.signal();
-    if (signal.aborted) throw new Error(config.abortedMessage);
+    if (signal.aborted) throw config.abortError();
     if (toolCallCounter >= config.maxTotalToolCalls) {
       throw new Error(
         `Lifetime tool call cap of ${config.maxTotalToolCalls} reached.`,
@@ -151,7 +152,7 @@ export function createToolHooks(config: ToolHooksConfig): ToolHooks {
     };
     let result: WorkflowToolResult;
     try {
-      if (signal.aborted) throw new Error(config.abortedMessage);
+      if (signal.aborted) throw config.abortError();
       result = await call(toolName, (args ?? {}) as Record<string, unknown>);
     } catch (error) {
       journal(true, error instanceof Error ? error.message : String(error));

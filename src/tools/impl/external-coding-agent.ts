@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { ACTING_USER_ID_ENV } from "@/agent/acting-user";
+import { getConversationId } from "@/agent/context";
 import { buildParentMemoryNote } from "@/agent/parent-memory-note";
 import type { SubagentConfig, SubagentResult } from "@/agent/subagents";
 import { getCurrentSubagentDepth } from "@/agent/subagents/subagent-depth";
@@ -21,14 +22,18 @@ import {
   getRuntimeActingUserAttribution,
   getRuntimeContext,
 } from "@/runtime-context";
-import { scrubSecretsFromString } from "@/tools/secret-substitution";
+import {
+  captureSecretRedactions,
+  scrubSecretsDeep,
+  scrubSecretsFromString,
+} from "@/tools/secret-substitution";
 import type { SubagentStartupErrorCode } from "@/types/subagent-protocol";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { SUBAGENT_DEPTH_ENV } from "@/utils/subagent-depth-env";
 import { runClaudeTurn } from "./claude-stream-session";
 import { CODEX_NOT_SIGNED_IN_ERROR, runCodexTurn } from "./codex-app-server";
 import { runCursorTurn } from "./cursor-session";
-import type { ExternalToolCallListener } from "./external-tool-call";
+import type { ExternalWorkerListeners } from "./external-tool-call";
 import {
   captureNativeSession,
   type NativeSessionCaptureReservation,
@@ -57,20 +62,20 @@ export interface ExternalCodingAgentMcpEntry {
   toolCount: number | null;
 }
 
-export interface ExternalCodingAgentRunOptions {
+/** Live progress: tool calls, their results, text, and reasoning. */
+export interface ExternalCodingAgentRunOptions extends ExternalWorkerListeners {
   type: ExternalCodingAgentType;
   prompt: string;
   model?: string;
   parentAgentId: string;
   parentConversationId?: string;
+  taskId?: string;
   actingUserId?: string | null;
   resumeSessionId?: string;
   cwd?: string;
   mcpReminder?: string;
   signal?: AbortSignal;
   onStarted?: (agentId: string) => void;
-  /** Live progress: called once per tool call the worker makes. */
-  onToolCall?: ExternalToolCallListener;
 }
 
 export interface ExternalCodingAgentCommand {
@@ -79,8 +84,11 @@ export interface ExternalCodingAgentCommand {
   stdin?: string;
 }
 
+/** `fork` marks a worker launched with the parent's transcript, which, like a
+ * Letta fork, keeps it off the ambient default computer. */
 export function createExternalCodingAgentConfig(
   type: ExternalCodingAgentType,
+  fork = false,
 ): SubagentConfig {
   return {
     name: type,
@@ -89,7 +97,7 @@ export function createExternalCodingAgentConfig(
     allowedTools: "all",
     recommendedModel: "inherit",
     skills: [],
-    fork: false,
+    fork,
     launchProfile: "default",
   };
 }
@@ -478,25 +486,36 @@ export async function resolveExternalCodingAgentSecretEnv(
   return { ...inherited, ...loadSecrets(parentAgentId) };
 }
 
-export async function runExternalCodingAgent(
-  options: ExternalCodingAgentRunOptions,
-  deps: ExternalCodingAgentDependencies = {},
-): Promise<SubagentResult> {
+export interface ExternalWorkerLaunchEnv {
+  env: NodeJS.ProcessEnv;
+  /** Vault values exported into `env`; scrub them from returned reports. */
+  secretEnv: Record<string, string>;
+  /** Parent memory note plus the MCP reminder, for the worker's prompt. */
+  mcpReminder?: string;
+}
+
+/**
+ * The environment and prompt note a worker process starts with. Launch and
+ * resume both build them here so a resumed worker matches a fresh one.
+ */
+export async function buildExternalWorkerLaunchEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "parentConversationId" | "actingUserId" | "mcpReminder"
+  >,
+  deps: Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> = {},
+): Promise<ExternalWorkerLaunchEnv> {
   const parentMemoryNote = buildParentMemoryNote(options.parentAgentId);
   // Compose once for both providers, independently of MCP inheritance.
-  options = {
-    ...options,
-    mcpReminder:
-      [
-        parentMemoryNote
-          ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
-          : undefined,
-        options.mcpReminder,
-      ]
-        .filter(Boolean)
-        .join("\n\n") || undefined,
-  };
-  const startedAt = Date.now();
+  const mcpReminder =
+    [
+      parentMemoryNote
+        ? `${SYSTEM_REMINDER_OPEN}\n${parentMemoryNote}\n${SYSTEM_REMINDER_CLOSE}`
+        : undefined,
+      options.mcpReminder,
+    ]
+      .filter(Boolean)
+      .join("\n\n") || undefined;
   const secretEnv = await (
     deps.resolveSecretEnv ?? resolveExternalCodingAgentSecretEnv
   )(options.parentAgentId);
@@ -506,6 +525,8 @@ export async function runExternalCodingAgent(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
     LETTA_PARENT_AGENT_ID: options.parentAgentId,
+    LETTA_PARENT_CONVERSATION_ID:
+      options.parentConversationId ?? getConversationId() ?? "default",
     LETTA_CODE_AGENT_ROLE: "subagent",
     // A Letta CLI launched from the worker's shell stays inside the depth bound.
     [SUBAGENT_DEPTH_ENV]: String(getCurrentSubagentDepth() + 1),
@@ -518,6 +539,84 @@ export async function runExternalCodingAgent(
   ) {
     delete env[ACTING_USER_ID_ENV];
   }
+  return { env, secretEnv, mcpReminder };
+}
+
+export interface ExternalWorkerResumeEnvDependencies
+  extends Pick<ExternalCodingAgentDependencies, "env" | "resolveSecretEnv"> {
+  resolveMcpReminder?: (parentAgentId: string) => Promise<string | undefined>;
+}
+
+/**
+ * Prepare a resumed Claude Code or Codex worker the same way as a launch.
+ * The launch's MCP selection is not persisted, so a resume lists the parent's
+ * default MCP inventory; an unreadable inventory drops the list, not the turn.
+ */
+export async function buildExternalWorkerResumeEnv(
+  options: Pick<
+    ExternalCodingAgentRunOptions,
+    "parentAgentId" | "actingUserId"
+  >,
+  deps: ExternalWorkerResumeEnvDependencies = {},
+): Promise<ExternalWorkerLaunchEnv> {
+  const mcpReminder = await (
+    deps.resolveMcpReminder ??
+    ((parentAgentId: string) =>
+      resolveExternalCodingAgentMcpReminder(parentAgentId, undefined))
+  )(options.parentAgentId).catch(() => undefined);
+  return buildExternalWorkerLaunchEnv({ ...options, mcpReminder }, deps);
+}
+
+/** Keep exported vault values out of a report returned to the parent. */
+export function scrubExternalWorkerResult(
+  result: SubagentResult,
+  secretEnv: Record<string, string>,
+): SubagentResult {
+  return {
+    ...result,
+    report: scrubSecretsFromString(result.report, secretEnv),
+    ...(result.error !== undefined && {
+      error: scrubSecretsFromString(result.error, secretEnv),
+    }),
+  };
+}
+
+/**
+ * Wrap progress listeners so values exported from the vault never reach the
+ * task's logs in tool arguments, outputs, or text. Every string field is
+ * scrubbed raw (and in its JSON-escaped form, as in `args`), so a value with
+ * quotes, backslashes, or newlines is caught too.
+ */
+export function scrubWorkerListeners(
+  listeners: ExternalWorkerListeners,
+  secretEnv: Record<string, string>,
+): ExternalWorkerListeners {
+  if (Object.keys(secretEnv).length === 0) return listeners;
+  const redactions = captureSecretRedactions(undefined, secretEnv);
+  const scrub = <T>(value: T) => scrubSecretsDeep(value, redactions);
+  const { onToolCall, onText, onToolResult, onReasoning } = listeners;
+  return {
+    onToolCall: onToolCall && ((call) => onToolCall(scrub(call))),
+    onText: onText && ((text) => onText(scrub(text))),
+    onToolResult: onToolResult && ((result) => onToolResult(scrub(result))),
+    onReasoning: onReasoning && ((text) => onReasoning(scrub(text))),
+  };
+}
+
+export async function runExternalCodingAgent(
+  options: ExternalCodingAgentRunOptions,
+  deps: ExternalCodingAgentDependencies = {},
+): Promise<SubagentResult> {
+  const startedAt = Date.now();
+  const { env, secretEnv, mcpReminder } = await buildExternalWorkerLaunchEnv(
+    options,
+    deps,
+  );
+  options = {
+    ...options,
+    ...scrubWorkerListeners(options, secretEnv),
+    mcpReminder,
+  };
   const cwd = options.cwd ?? getCurrentWorkingDirectory();
   const captureActingUserId =
     options.actingUserId !== undefined
@@ -548,13 +647,7 @@ export async function runExternalCodingAgent(
   ): Promise<SubagentResult> => {
     // The worker had the vault in its environment; keep exported values out
     // of the report that returns to the parent's context.
-    const result: SubagentResult = {
-      ...rawResult,
-      report: scrubSecretsFromString(rawResult.report, secretEnv),
-      ...(rawResult.error !== undefined && {
-        error: scrubSecretsFromString(rawResult.error, secretEnv),
-      }),
-    };
+    const result = scrubExternalWorkerResult(rawResult, secretEnv);
     const sessionId = result.runtimeSessionId ?? captureSessionId;
     if (scope && sessionId) {
       try {
@@ -629,6 +722,15 @@ export async function runExternalCodingAgent(
       return capture(
         await (deps.runCodexTurn ?? runCodexTurn)(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
@@ -637,6 +739,9 @@ export async function runExternalCodingAgent(
             signal: options.signal,
             resumeThreadId: options.resumeSessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
             beforeStart: async (threadId) => {
               if (scope && !captureReservation) {
                 if (!options.resumeSessionId) {
@@ -684,6 +789,15 @@ export async function runExternalCodingAgent(
       return capture(
         await runClaudeTurn(
           {
+            traceContext: scope
+              ? {
+                  actingUserId: scope.actingUserId,
+                  secretValues: Object.values(secretEnv),
+                  parent_agent_id: scope.agentId,
+                  parent_conversation_id: scope.conversationId,
+                  task_id: options.taskId ?? randomUUID(),
+                }
+              : undefined,
             prompt: options.prompt,
             parentAgentId: options.parentAgentId,
             cwd,
@@ -693,6 +807,9 @@ export async function runExternalCodingAgent(
             resumeSessionId: options.resumeSessionId,
             sessionId,
             onToolCall: options.onToolCall,
+            onText: options.onText,
+            onToolResult: options.onToolResult,
+            onReasoning: options.onReasoning,
           },
           { env },
         ),

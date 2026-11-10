@@ -17,6 +17,7 @@ import {
   parseExternalCodingAgentOutput,
   resolveExternalCodingAgentMcpReminder,
   runExternalCodingAgent,
+  scrubWorkerListeners,
   selectExternalCodingAgentMcpEntries,
   validateExternalCodingAgentMcpOptions,
 } from "./external-coding-agent";
@@ -125,6 +126,7 @@ describe("external coding agent MCP metadata", () => {
 
   test("inherits local and cloud MCP discovery by default, with explicit opt-out", async () => {
     const deps = {
+      lookupParentAgent: async () => undefined,
       getLocalServerNames: (id: string) => {
         expect(id).toBe("parent");
         return ["filesystem"];
@@ -406,7 +408,12 @@ describe("external coding agent output and preflight", () => {
     async (type, auth, output) => {
       let receivedEnv: NodeJS.ProcessEnv | undefined;
       const result = await runExternalCodingAgent(
-        { type, prompt: "test", parentAgentId: "parent" },
+        {
+          type,
+          prompt: "test",
+          parentAgentId: "parent",
+          parentConversationId: "conversation-parent",
+        },
         {
           env: { ...process.env, LETTA_ACTING_USER_ID: "ambient-user" },
           runPreflight: async () => ({ exitCode: 0, stdout: auth, stderr: "" }),
@@ -426,6 +433,9 @@ describe("external coding agent output and preflight", () => {
       expect(receivedEnv?.AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_AGENT_ID).toBe("parent");
       expect(receivedEnv?.LETTA_PARENT_AGENT_ID).toBe("parent");
+      expect(receivedEnv?.LETTA_PARENT_CONVERSATION_ID).toBe(
+        "conversation-parent",
+      );
       expect(receivedEnv?.LETTA_CODE_AGENT_ROLE).toBe("subagent");
       expect(receivedEnv?.LETTA_ACTING_USER_ID).toBe("ambient-user");
     },
@@ -586,6 +596,43 @@ describe("external coding agent vault secrets", () => {
     expect(result.success).toBe(true);
     expect(result.report).not.toContain(token);
     expect(result.report).toContain("the token is");
+  });
+
+  // Each secret's last 16 characters must not appear anywhere, raw or escaped.
+  test.each([
+    ["a plain token", "ghp_exported_vault_value_123"],
+    [
+      "a multi-line PEM key",
+      "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----",
+    ],
+    ["quotes and backslashes", 'p@ss"word\\with\\slashes"9f3k'],
+  ])("scrubs %s from live progress events", (_, secret) => {
+    const seen: unknown[] = [];
+    const listeners = scrubWorkerListeners(
+      {
+        onToolCall: (call) => seen.push(call),
+        onToolResult: (result) => seen.push(result),
+        onText: (text) => seen.push(text),
+        onReasoning: (text) => seen.push(text),
+      },
+      { DEPLOY_KEY: secret },
+    );
+    const input = { command: `printf '%s' "${secret}" > key` };
+    // Workers send `args` as serialized JSON, where the value is escaped.
+    listeners.onToolCall?.({
+      id: "c1",
+      name: "Bash",
+      args: JSON.stringify(input),
+      input,
+    });
+    listeners.onToolResult?.({ id: "c1", isError: false, output: secret });
+    listeners.onText?.(`key ${secret}`);
+    listeners.onReasoning?.(`key ${JSON.stringify({ key: secret })}`);
+    const tail = secret.slice(-16);
+    const written = JSON.stringify(seen);
+    expect(written).not.toContain(tail);
+    expect(written).not.toContain(JSON.stringify(tail).slice(1, -1));
+    expect(written.match(/DEPLOY_KEY=<REDACTED>/g)).toHaveLength(5);
   });
 });
 

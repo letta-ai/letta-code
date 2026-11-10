@@ -1,67 +1,26 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { PassThrough } from "node:stream";
 import {
   __resetClaudeSessionsForTests,
   buildClaudeStreamArgs,
-  type ClaudeSessionTransport,
   runClaudeTurn,
   sendClaudeMessage,
+  stopClaudeSession,
 } from "./claude-stream-session";
+import {
+  awaitWithLiveLoop,
+  BACKGROUND_TEST_TIMEOUT_MS,
+  base,
+  parseWrite,
+  SESSION_ID,
+  teardownFixture,
+  teardownOpenFixtures,
+  transportFixture,
+} from "./claude-stream-session.test-helpers";
 
-const SESSION_ID = "11111111-1111-4111-8111-111111111111";
-
-function transportFixture() {
-  const stdin = new PassThrough();
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  let finish!: (value: {
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-  }) => void;
-  const completion = new Promise<{
-    exitCode: number | null;
-    exitSignal: NodeJS.Signals | null;
-  }>((resolve) => {
-    finish = resolve;
-  });
-  const writes: string[] = [];
-  stdin.on("data", (chunk) => writes.push(chunk.toString()));
-  let ended = false;
-  const originalEnd = stdin.end.bind(stdin);
-  stdin.end = ((...args: Parameters<typeof stdin.end>) => {
-    ended = true;
-    return originalEnd(...args);
-  }) as typeof stdin.end;
-  stdin.on("finish", () => finish({ exitCode: 0, exitSignal: null }));
-  const transport: ClaudeSessionTransport = {
-    process: { stdin, stdout, stderr } as ClaudeSessionTransport["process"],
-    completion,
-    wasAborted: () => false,
-  };
-  const emit = (value: Record<string, unknown>) =>
-    stdout.write(`${JSON.stringify(value)}\n`);
-  return {
-    transport,
-    writes,
-    stdout,
-    stderr,
-    finish,
-    stdin,
-    emit,
-    ended: () => ended,
-  };
-}
-
-function parseWrite(
-  fixture: ReturnType<typeof transportFixture>,
-  index: number,
-) {
-  return JSON.parse(fixture.writes[index] ?? "") as Record<string, unknown>;
-}
-
-const base = { parentAgentId: "parent", cwd: "/repo" };
-
-afterEach(() => __resetClaudeSessionsForTests());
+afterEach(() => {
+  teardownOpenFixtures();
+  __resetClaudeSessionsForTests();
+});
 
 describe("Claude stream sessions", () => {
   test("launches unattended subagents with bypassed permissions", async () => {
@@ -71,6 +30,7 @@ describe("Claude stream sessions", () => {
       "bypassPermissions",
     );
     expect(args).not.toContain("--allowed-tools");
+    expect(args).toContain("--replay-user-messages");
 
     const fixture = transportFixture();
     let spawnedEnv: NodeJS.ProcessEnv | undefined;
@@ -201,6 +161,308 @@ describe("Claude stream sessions", () => {
     expect(await running).toMatchObject({ success: true, report: "done" });
     expect(fixture.ended()).toBe(true);
   });
+
+  test(
+    "keeps reading past a result while background tasks are running",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        let completed = false;
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          { createTransport: () => fixture.transport },
+        ).then((result) => {
+          completed = true;
+          return result;
+        });
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "stream_event",
+          event: { type: "message_start" },
+        });
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [
+            {
+              task_id: "bg1",
+              run_id: "run1",
+              task_type: "local_bash",
+              description: "run tests",
+            },
+          ],
+        });
+        fixture.emit({
+          type: "system",
+          subtype: "task_started",
+          task_id: "bg1",
+        });
+        fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+        await Bun.sleep(10);
+        expect(completed).toBe(false);
+        expect(fixture.ended()).toBe(false);
+
+        fixture.emit({
+          type: "system",
+          subtype: "task_updated",
+          task_id: "bg1",
+          patch: { status: "completed" },
+        });
+        fixture.emit({
+          type: "system",
+          subtype: "task_notification",
+          task_id: "bg1",
+          status: "completed",
+        });
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+        });
+        fixture.emit({
+          type: "stream_event",
+          event: { type: "message_start" },
+        });
+        fixture.emit({ type: "result", is_error: false, result: "FINISHED" });
+        expect(await running).toMatchObject({
+          success: true,
+          report: "FINISHED",
+        });
+        expect(fixture.ended()).toBe(true);
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "uses the provisional result when Claude exits cleanly after background work",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          { createTransport: () => fixture.transport },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+        await Bun.sleep(0);
+        fixture.finish({ exitCode: 0, exitSignal: null });
+        expect(await running).toMatchObject({
+          success: true,
+          report: "WAITING",
+        });
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "steers directly while Claude is idle on background tasks",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          { createTransport: () => fixture.transport },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "stream_event",
+          event: { type: "message_start" },
+        });
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+        await Bun.sleep(0);
+        const receipt = await sendClaudeMessage({
+          ...base,
+          prompt: "STEERED",
+          sessionId: SESSION_ID,
+        });
+        expect(receipt.mode).toBe("steered");
+        const steered = parseWrite(fixture, 1);
+        expect(steered.type).toBe("user");
+        expect(fixture.ended()).toBe(false);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [],
+        });
+        fixture.emit({
+          type: "stream_event",
+          event: { type: "message_start" },
+        });
+        fixture.emit({ type: "result", is_error: false, result: "STEERED" });
+        expect(await running).toMatchObject({
+          success: true,
+          report: "STEERED",
+        });
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "settles with the provisional report after the background wait cap",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          {
+            createTransport: () => fixture.transport,
+            backgroundTaskWaitCapMs: 20,
+          },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+        const result = await awaitWithLiveLoop(running);
+        expect(result.success).toBe(true);
+        expect(result.report).toStartWith("WAITING");
+        expect(result.report).toContain("background tasks were still running");
+        expect(fixture.ended()).toBe(true);
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "reports an errored held result as failed when the cap fires",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          {
+            createTransport: () => fixture.transport,
+            backgroundTaskWaitCapMs: 20,
+          },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: true, result: "BROKE" });
+        const result = await awaitWithLiveLoop(running);
+        expect(result.success).toBe(false);
+        expect(result.report).toStartWith("BROKE");
+        expect(result.report).toContain("background tasks were still running");
+        expect(result.error).toStartWith("BROKE");
+        expect(fixture.ended()).toBe(true);
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "ignores a result that arrives after the session settled",
+    async () => {
+      const fixture = transportFixture();
+      const capMs = 4_321;
+      const realSetTimeout = globalThis.setTimeout;
+      let capTimersArmed = 0;
+      globalThis.setTimeout = ((
+        handler: Parameters<typeof setTimeout>[0],
+        delay?: number,
+        ...rest: unknown[]
+      ) => {
+        if (delay === capMs) capTimersArmed++;
+        return realSetTimeout(handler, delay, ...rest);
+      }) as typeof setTimeout;
+      try {
+        const running = runClaudeTurn(
+          { ...base, prompt: "work", sessionId: SESSION_ID },
+          {
+            createTransport: () => fixture.transport,
+            backgroundTaskWaitCapMs: capMs,
+          },
+        );
+        await Bun.sleep(0);
+        fixture.emit({ type: "result", is_error: false, result: "DONE" });
+        const result = await running;
+        expect(result).toMatchObject({ success: true, report: "DONE" });
+        // Late lines flushed after settle must not re-arm the cap.
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "LATE" });
+        await Bun.sleep(10);
+        expect(capTimersArmed).toBe(0);
+        expect(result.report).toBe("DONE");
+      } finally {
+        globalThis.setTimeout = realSetTimeout;
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "cancellation while waiting on background tasks settles failed",
+    async () => {
+      const fixture = transportFixture();
+      try {
+        let aborted = false;
+        fixture.transport.wasAborted = () => aborted;
+        const controller = new AbortController();
+        const running = runClaudeTurn(
+          {
+            ...base,
+            prompt: "work",
+            sessionId: SESSION_ID,
+            signal: controller.signal,
+          },
+          { createTransport: () => fixture.transport },
+        );
+        await Bun.sleep(0);
+        fixture.emit({
+          type: "system",
+          subtype: "background_tasks_changed",
+          tasks: [{ task_id: "bg1", task_type: "local_bash" }],
+        });
+        fixture.emit({ type: "result", is_error: false, result: "WAITING" });
+        await Bun.sleep(0);
+        aborted = true;
+        controller.abort(new Error("cancelled"));
+        fixture.finish({ exitCode: null, exitSignal: "SIGTERM" });
+        expect(await running).toMatchObject({
+          success: false,
+          error: "cancelled",
+          report: "WAITING",
+        });
+      } finally {
+        teardownFixture(fixture);
+      }
+    },
+    BACKGROUND_TEST_TIMEOUT_MS,
+  );
 
   test("idle concurrent sends start one resume and serialize the second steer", async () => {
     const fixture = transportFixture();
@@ -497,7 +759,12 @@ describe("Claude stream sessions", () => {
 
   test("emits one tool call per assistant tool_use block", async () => {
     const fixture = transportFixture();
-    const calls: Array<{ id: string; name: string; args: string }> = [];
+    const calls: Array<{
+      id: string;
+      name: string;
+      args: string;
+      input?: unknown;
+    }> = [];
     const running = runClaudeTurn(
       {
         ...base,
@@ -546,6 +813,111 @@ describe("Claude stream sessions", () => {
     expect(calls[0]?.args).toBe('{"command":"ls"}');
     expect(calls[1]?.args.length).toBeLessThanOrEqual(1_001);
     expect(calls[1]?.args.endsWith("…")).toBe(true);
+    // The display args are short; the event log gets the full input.
+    expect(calls[1]?.input).toEqual({
+      file_path: "a.txt",
+      content: "x".repeat(2_000),
+    });
+  });
+
+  test("reports each tool_result once, in full, and thinking blocks", async () => {
+    const fixture = transportFixture();
+    const events: unknown[] = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+        onToolResult: (result) => events.push(result),
+        onReasoning: (text) => events.push(`reasoning:${text}`),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    fixture.emit({
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "Run the suite first." },
+          { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
+        ],
+      },
+    });
+    const output = `FAIL sum.test.ts\n${"x".repeat(5_000)}`;
+    const result = {
+      type: "user",
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "toolu_1",
+            is_error: true,
+            content: [{ type: "text", text: output }],
+          },
+        ],
+      },
+    };
+    fixture.emit(result);
+    fixture.emit(result);
+    fixture.emit({ type: "result", is_error: false, result: "done" });
+    expect(await running).toMatchObject({ success: true });
+    expect(events).toEqual([
+      "reasoning:Run the suite first.",
+      "tool:Bash",
+      { id: "toolu_1", name: "Bash", isError: true, output },
+    ]);
+  });
+
+  test("reports assistant text and tool_use blocks in stream order", async () => {
+    const fixture = transportFixture();
+    const events: string[] = [];
+    const running = runClaudeTurn(
+      {
+        ...base,
+        prompt: "work",
+        sessionId: SESSION_ID,
+        onText: (text) => events.push(`text:${text}`),
+        onToolCall: (call) => events.push(`tool:${call.name}`),
+      },
+      { createTransport: () => fixture.transport },
+    );
+    await Bun.sleep(0);
+    const text = {
+      type: "assistant",
+      message: {
+        id: "msg_1",
+        role: "assistant",
+        content: [
+          { type: "text", text: "Chat suite finished; continuing to wait." },
+          { type: "text", text: "  " },
+        ],
+      },
+    };
+    fixture.emit(text);
+    // A repeated message reports its text once.
+    fixture.emit(text);
+    fixture.emit({
+      type: "assistant",
+      message: {
+        id: "msg_2",
+        role: "assistant",
+        content: [
+          { type: "tool_use", id: "toolu_1", name: "Bash", input: {} },
+          { type: "text", text: "Tests passed." },
+        ],
+      },
+    });
+    fixture.emit({ type: "result", is_error: false, result: "done" });
+    expect(await running).toMatchObject({ success: true });
+    expect(events).toEqual([
+      "text:Chat suite finished; continuing to wait.",
+      "tool:Bash",
+      "text:Tests passed.",
+    ]);
   });
 
   test("cancellation settles failed and evicts the session", async () => {
@@ -568,4 +940,24 @@ describe("Claude stream sessions", () => {
     fixture.finish({ exitCode: null, exitSignal: "SIGINT" });
     expect(await running).toMatchObject({ success: false, error: "cancelled" });
   });
+});
+
+test("stopping Claude Code waits for its CLI process exit", async () => {
+  const fixture = transportFixture({ exitOnStdinEnd: false });
+  const running = runClaudeTurn(
+    { ...base, prompt: "work", sessionId: SESSION_ID },
+    { createTransport: () => fixture.transport },
+  );
+  await Bun.sleep(0);
+  let acknowledged = false;
+  const stopping = stopClaudeSession(SESSION_ID).then((result) => {
+    acknowledged = true;
+    return result;
+  });
+  await Bun.sleep(0);
+  expect(acknowledged).toBe(false);
+  fixture.finish({ exitCode: null, exitSignal: "SIGTERM" });
+  expect(await stopping).toBe(true);
+  await running;
+  teardownFixture(fixture);
 });

@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.36",
+  "version": "0.34.51",
   "lettaStartupLogProtocol": 1,
   "lettaConfigDirProtocol": 1,
   "description": "Letta Code is a CLI tool for interacting with stateful Letta agents from the terminal.",
@@ -14,6 +14,8 @@
     "README.md",
     "letta.js",
     "image-resize-worker.js",
+    "image-resize.js",
+    "image-resize.js.map",
     "cursor-worker.js",
     "npm-shrinkwrap.json",
     "assets/tutor-profile.png",
@@ -136,6 +138,11 @@
       "browser": "./dist/channels-telegram.js",
       "import": "./dist/channels-telegram.js",
       "default": "./dist/channels-telegram.js"
+    },
+    "./image-resize": {
+      "types": "./dist/types/image-resize-public.d.ts",
+      "import": "./image-resize.js",
+      "default": "./image-resize.js"
     }
   },
   "repository": {
@@ -153,7 +160,6 @@
   "dependencies": {
     "@cursor/sdk": "1.1.0",
     "@earendil-works/pi-ai": "^0.99.1",
-    "@janhapke/sharp-electron": "0.35.3-electron.1",
     "@letta-ai/letta-agent-sdk": "0.8.38",
     "@letta-ai/letta-client": "^1.10.2",
     "@letta-ai/trajectory": "0.2.0",
@@ -169,7 +175,7 @@
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "react": "18.2.0",
-    "sharp": "^0.34.5",
+    "sharp": "^0.35.5",
     "shiki": "^4.0.2",
     "strip-ansi": "^7.2.0",
     "ws": "^8.19.0"
@@ -271,6 +277,9 @@
       "channels/telegram": [
         "./dist/types/channels-telegram.d.ts"
       ],
+      "image-resize": [
+        "./dist/types/image-resize-public.d.ts"
+      ],
       "protocol": [
         "./dist/types/types/protocol.d.ts"
       ]
@@ -278,7 +287,7 @@
   },
   "lettaLifecycleProtocol": 1,
   "lettaRuntimeGraphProtocol": 1,
-  "lettaRuntimeGraphSha512": "sha512-tPPjQGBLt5+vA9W+Mv4yvHjYDOzBSNPnlU8rxk0g42xKGYf9HCuWpRA2cR5XvB6ETJFjJmcjMOcHZmQVjiwNuA==",
+  "lettaRuntimeGraphSha512": "sha512-GmjJ/74vZNtDFKXmDwMpgzMjlFhHg/1Z6htsfHHXZr+/FV80SDbpEr4GPuCyAZc5FK8zl+SRkG4oIRQQQ1LalA==",
   "patchedDependencies": {
     "@earendil-works/pi-ai@0.99.1": "patches/@earendil-works%2Fpi-ai@0.99.1.patch"
   }

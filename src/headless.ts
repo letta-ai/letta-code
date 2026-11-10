@@ -11,6 +11,7 @@ import type {
 import type { StopReasonType } from "@letta-ai/letta-client/resources/runs/runs";
 import { resolveActingUserId } from "@/agent/acting-user";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
+import { createSubagentConversation } from "@/agent/subagents/subagent-conversation";
 import { shouldLaunchThroughListener } from "@/agent/subagents/subagent-launcher";
 import { disableLocalBackendMemfsForProcess } from "@/backend/local/paths";
 import { INTERRUPTED_BY_USER } from "@/constants";
@@ -39,8 +40,10 @@ import { reportSubagentStdoutLoss } from "@/utils/subagent-stdout-failure";
 import { isAgentIdCompatibleWithBackend } from "./agent/agent-id";
 import type { ApprovalResult } from "./agent/approval-execution";
 import {
+  CONVERSATION_BUSY_WAIT_TIMEOUT_MS as BUSY_WAIT_MS,
   buildFreshDenialApprovals,
   extractConflictDetail,
+  extractConversationBusyRunId,
   fetchRunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
@@ -50,8 +53,10 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
+  resumeConversationBusyRequest as resumeBusy,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
+  waitForConversationBusyRunOrThrow as waitForBusyRun,
 } from "./agent/approval-recovery";
 import { handleBootstrapSessionState } from "./agent/bootstrap-handler";
 import {
@@ -61,7 +66,6 @@ import {
 } from "./agent/chatgpt-plan-rotation";
 import { setAgentContext, setConversationId } from "./agent/context";
 import { createAgent } from "./agent/create";
-import { prepareExistingHeadlessModel } from "./agent/headless-model-startup";
 import { handleListMessages } from "./agent/list-messages-handler";
 import { getStreamToolContextId, sendMessageStream } from "./agent/message";
 import { getModelUpdateArgs, resolveModel } from "./agent/model";
@@ -72,13 +76,13 @@ import {
   INTERRUPT_RECOVERY_ALERT,
   type MemoryPromptMode,
 } from "./agent/prompt-assets";
+import { prepareResumedAgentModel } from "./agent/resumed-agent-model";
 import { resolveSkillSourcesSelection } from "./agent/skill-sources";
 import type { SkillSource } from "./agent/skills";
 import { SessionStats } from "./agent/stats";
 import {
   type BackendMode,
   type ConversationCreateBody,
-  type ConversationMessageStreamBody,
   getBackend,
 } from "./backend";
 import type { ParsedCliArgs } from "./cli/args";
@@ -126,7 +130,9 @@ import {
 import {
   clearHeadlessClientToolRules,
   createHeadlessEphemeralConversation,
+  initHeadlessSecrets,
   prepareHeadlessEphemeralBackend,
+  resolveAmbientAgentId,
   retrieveHeadlessConversation,
 } from "./headless-ephemeral-startup";
 import { launchListenerConversation } from "./headless-listener-launch";
@@ -925,21 +931,18 @@ export async function handleHeadlessCommand(
     );
   }
 
-  const ambientAgentId = (
-    process.env.LETTA_AGENT_ID ||
-    process.env.AGENT_ID ||
-    ""
-  ).trim();
   // Infer the calling agent (ambient AGENT_ID) for --backend/--computer routes.
-  if (
-    (startupOptions.requestedBackendMode || usesRemoteEnvironment) &&
-    ambientAgentId &&
-    !specifiedAgentId &&
-    !specifiedAgentName &&
-    !specifiedConversationId &&
-    !forceNew &&
-    !fromAgentId
-  ) {
+  const ambientAgentId = resolveAmbientAgentId({
+    routed: startupOptions.requestedBackendMode || usesRemoteEnvironment,
+    ephemeral: ephemeralFlag,
+    explicitTarget:
+      specifiedAgentId ||
+      specifiedAgentName ||
+      specifiedConversationId ||
+      forceNew ||
+      fromAgentId,
+  });
+  if (ambientAgentId) {
     specifiedAgentId = ambientAgentId;
     specifiedAgentIdFromAmbient = true;
   }
@@ -1121,7 +1124,7 @@ export async function handleHeadlessCommand(
         systemPromptPreset,
         systemPromptCustom: systemCustom,
       });
-      agent = result.agent;
+      ({ agent, parentAgentId } = result);
       ephemeralConversationId = result.conversationId;
     } catch (error) {
       await reportStartupErrorAndExit(
@@ -1266,7 +1269,7 @@ export async function handleHeadlessCommand(
       console.error(`Error: Invalid model "${model}"`);
       process.exit(1);
     }
-    const prepared = await prepareExistingHeadlessModel({
+    const prepared = await prepareResumedAgentModel({
       agent,
       modelIdentifier: model,
       modelHandle: modelHandle ?? undefined,
@@ -1312,12 +1315,7 @@ export async function handleHeadlessCommand(
   let memfsBgPromise: Promise<unknown> | undefined;
 
   // Init secrets cache — runs in parallel with memfs sync below.
-  const secretsAgentId = isDetached ? undefined : agent?.id;
-  const secretsInitPromise = secretsAgentId
-    ? import("@/utils/secrets-store").then(({ initSecretsFromServer }) =>
-        initSecretsFromServer(secretsAgentId),
-      )
-    : Promise.resolve();
+  const secretsReady = initHeadlessSecrets(agent.id, isDetached, parentAgentId);
 
   // Apply MemFS startup policy only to agent-backed sessions.
   if (isStatelessSession || isDetached) {
@@ -1405,7 +1403,7 @@ export async function handleHeadlessCommand(
 
   // Ensure secrets cache is populated (non-fatal).
   try {
-    await secretsInitPromise;
+    await secretsReady;
   } catch (error) {
     import("@/utils/debug").then(({ debugLog }) =>
       debugLog(
@@ -1504,12 +1502,8 @@ export async function handleHeadlessCommand(
       }
     }
   } else if (forceNewConversation) {
-    // --new creates a conversation for concurrent sessions. With
-    // --from-agent (agent-to-agent messaging), mark it hidden so it
-    // doesn't clutter the target agent's conversation list. `hidden` is
-    // missing from @letta-ai/letta-client@1.10.1 types; the core endpoint
-    // accepts it and the SDK forwards unknown body fields — drop the cast
-    // once the SDK is bumped.
+    // Hide concurrent agent-to-agent sessions from the conversation list.
+    // The SDK forwards `hidden` until its types include it.
     const createParams: ConversationCreateBody = {
       agent_id: agent.id,
       ...conversationModel,
@@ -1521,9 +1515,12 @@ export async function handleHeadlessCommand(
     conversationId = conversation.id;
     conversationOpenReason = "new";
   } else if (isSubagent) {
-    // Freshly created subagents have no concurrency risk — use the default
-    // conversation so it's easy to inspect in the ADE.
-    conversationId = "default";
+    conversationId = await createSubagentConversation(
+      backend.capabilities.environmentRouting,
+      process.env.LETTA_PARENT_CONVERSATION_ID,
+      agent.id,
+      startupBackend.createConversation,
+    );
     conversationOpenReason = "startup";
   } else {
     // Headless default: new conversation, avoiding 409 "conversation busy"
@@ -2102,6 +2099,7 @@ export async function handleHeadlessCommand(
   let llmApiErrorRetries = 0;
   let emptyResponseRetries = 0;
   let conversationBusyRetries = 0;
+  let busyDeadline: number | null = null;
   let chatgptPlanSwaps = 0;
   const chatgptExhaustedProviders = new Set<string>();
   markMilestone("HEADLESS_FIRST_STREAM_START");
@@ -2214,6 +2212,7 @@ export async function handleHeadlessCommand(
           { maxRetries: 0, signal: sigintSignal },
         );
         turnToolContextId = getStreamToolContextId(stream);
+        busyDeadline = null;
       } catch (preStreamError) {
         if (sigintSignal.aborted) {
           await exitInterrupted();
@@ -2254,42 +2253,39 @@ export async function handleHeadlessCommand(
               "Pending approval detected, resolving before retry...",
             );
           }
-
           await resolveAllPendingApprovals();
           continue;
         }
 
-        // 409 "conversation busy": resume via the conversation stream
-        // endpoint. Server resolves otid lookup then active-run fallback;
-        // falls back to exponential backoff retry if the endpoint fails.
-        if (preStreamAction === "retry_conversation_busy") {
-          const messageOtid = currentInput
-            .map((item) => (item as Record<string, unknown>).otid)
-            .find((v): v is string => typeof v === "string");
-
-          try {
-            stream = (await getBackend().streamConversationMessages(
-              conversationId,
-              // Cast needed until SDK MessageStreamParams includes otid field
-              {
-                agent_id:
-                  conversationId === "default"
-                    ? (agent?.id ?? undefined)
-                    : undefined,
-                otid: messageOtid ?? undefined,
-                starting_after: 0,
-                batch_size: 1000,
-              } as unknown as ConversationMessageStreamBody,
-            )) as Awaited<ReturnType<typeof sendMessageStream>>;
+        const blockingRunId = extractConversationBusyRunId(errorDetail);
+        if (preStreamAction === "retry_conversation_busy" || blockingRunId) {
+          const resumeStream = await resumeBusy(
+            conversationId,
+            agent?.id,
+            currentInput,
+            sigintSignal,
+          );
+          if (resumeStream) {
+            stream = resumeStream as typeof stream;
             conversationBusyRetries = 0;
-            // Fall through to drain
-          } catch {
+            busyDeadline = null;
+          } else {
+            if (blockingRunId) {
+              busyDeadline ??= Date.now() + BUSY_WAIT_MS;
+              const settled = await waitForBusyRun(
+                blockingRunId,
+                sigintSignal,
+                busyDeadline,
+              );
+              if (settled) continue;
+            }
+            if (preStreamAction !== "retry_conversation_busy")
+              throw preStreamError;
             conversationBusyRetries += 1;
             const retryDelayMs = getRetryDelayMs({
               category: "conversation_busy",
               attempt: conversationBusyRetries,
             });
-
             if (outputFormat === "stream-json") {
               const retryMsg: RetryMessage = {
                 type: "retry",
@@ -2306,12 +2302,10 @@ export async function handleHeadlessCommand(
                 `Conversation is busy, waiting ${Math.round(retryDelayMs / 1000)}s and retrying...`,
               );
             }
-
             await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
             continue;
           }
         }
-
         if (preStreamAction === "retry_transient") {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;

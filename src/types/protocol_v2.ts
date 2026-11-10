@@ -50,7 +50,7 @@ import type {
 import type { ConversationForkBody } from "./conversation-fork-protocol";
 import type * as CwdProtocol from "./cwd-protocol";
 import type {
-  ExternalToolCallRequestMessage,
+  ExternalToolCallMessage,
   ExternalToolCallResponseCommand,
   RuntimeExternalToolsUpdateCommand,
   RuntimeExternalToolsUpdateResponseMessage,
@@ -547,7 +547,7 @@ export interface SubagentSnapshotToolCall {
   args: string;
 }
 
-export interface SubagentSnapshot {
+export interface SubagentSnapshot extends SubagentProtocol.SubagentEvents {
   subagent_id: string;
   subagent_type: string;
   description: string;
@@ -566,11 +566,11 @@ export interface SubagentSnapshot {
   parent_conversation_id?: string;
   start_time: number;
   tool_calls: SubagentSnapshotToolCall[];
+  progress_texts?: { id: string; at: string; text: string }[]; // Absent = none
   total_tokens: number;
   duration_ms: number;
   error?: string;
-  /** Truncated final report, set for `notify: "caller"` launches. */
-  result?: string;
+  result?: string; // Truncated final report for `notify: "caller"` launches.
 }
 
 export interface SubagentStateUpdateMessage extends RuntimeEnvelope {
@@ -597,13 +597,13 @@ export type {
   ClientToolsetConfig,
   InputCreateMessagePayload,
 } from "./input-create-message";
-
 export interface InputAcceptedResponseMessage {
   type: "input_accepted";
   request_id: string;
   runtime: ConversationRuntimeScope;
   accepted: boolean;
   disposition?: "started" | "queued";
+  duplicate_owner_live?: boolean;
   error?: string;
 }
 
@@ -2309,7 +2309,7 @@ export type WsProtocolMessage =
   | StreamDeltaMessage
   | TurnFinishedMessage
   | SubagentStateUpdateMessage
-  | ExternalToolCallRequestMessage
+  | ExternalToolCallMessage
   | AbortMessageResponseMessage
   | import("./queue-update-protocol").ResumeQueueResponseMessage
   | SyncResponseMessage

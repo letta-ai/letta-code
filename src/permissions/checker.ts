@@ -24,6 +24,7 @@ import {
 } from "./canonical";
 import { cliPermissions } from "./cli-permissions-instance";
 import { evaluateCrossAgentGuard, extractFilePath } from "./cross-agent-guard";
+import { expandPathArgs } from "./file-path-args";
 import {
   type MatcherOptions,
   matchesBashPattern,
@@ -125,6 +126,7 @@ export function checkPermission(
   agentId?: string,
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
 ): PermissionCheckResult {
+  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   const engine: PermissionEngine = isPermissionsV2Enabled() ? "v2" : "v1";
   const primary = checkPermissionForEngine(
     engine,
@@ -760,7 +762,7 @@ function matchesPattern(
 }
 
 /**
- * Subagent types that are safe to auto-approve by default.
+ * Letta subagent types (`subagent_type`) that are safe to auto-approve by default.
  * Some are read-only explorers; others are memory-rooted writers whose
  * mutations are constrained by the memory-subagent sandbox.
  */
@@ -861,6 +863,7 @@ export async function checkPermissionWithHooks(
   modTools: Map<string, ModToolDefinition> = getAvailableModToolsRegistry(),
   modPermissionOptions: ModPermissionCheckOptions = {},
 ): Promise<PermissionCheckResult> {
+  toolArgs = expandPathArgs(toolName, toolArgs, workingDirectory);
   // First, check permission using normal rules
   let result = checkPermission(
     toolName,

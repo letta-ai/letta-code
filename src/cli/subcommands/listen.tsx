@@ -12,11 +12,13 @@ import {
   RESTORE_ENABLED_CHANNELS_AGENT_SCOPE_ENV,
 } from "@/channels/restore-scope";
 import { ListenerStatusUI } from "@/cli/components/ListenerStatusUI";
+import type { AppServerCliOptions } from "@/cli/subcommands/app-server";
 import {
   createServerLifecycleOutput,
   hasJsonlLifecycleIntent,
   resolveServerLifecycleOutput,
 } from "@/cli/subcommands/lifecycle-output";
+import { createListenerAppServer } from "@/cli/subcommands/listen-app-server";
 import { printFirstRunWelcome } from "@/cli/subcommands/listen-first-run-welcome";
 import { shouldUseNonInteractiveListenerOutput } from "@/cli/subcommands/listen-output-mode";
 import { createListenerProcessAnchorPromise } from "@/cli/subcommands/listen-process-anchor";
@@ -35,7 +37,7 @@ import { CHANNEL_SERVICE_COMMAND_TYPES } from "@/types/service-protocol";
 import { isDebugEnabled } from "@/utils/debug";
 import { suppressStartupLogMarker } from "@/utils/startup-log-boundary";
 import type { AppServerHandle } from "@/websocket/app-server";
-import { RemoteSessionLog } from "@/websocket/listen-log";
+import { formatTimestamp, RemoteSessionLog } from "@/websocket/listen-log";
 import {
   type RegisterOptions,
   type RegisterResult,
@@ -64,15 +66,6 @@ import type {
   ListenerClientReplacement,
   ListenerRuntime,
 } from "@/websocket/listener/types";
-
-function formatTimestamp(): string {
-  const now = new Date();
-  const h = String(now.getHours()).padStart(2, "0");
-  const m = String(now.getMinutes()).padStart(2, "0");
-  const s = String(now.getSeconds()).padStart(2, "0");
-  const ms = String(now.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${ms}`;
-}
 
 async function flushListenerTelemetryEnd(exitReason: string): Promise<void> {
   try {
@@ -177,7 +170,10 @@ const LISTEN_OPTIONS = {
   "lifecycle-output": { type: "string" },
 } as const;
 
-export async function runListenSubcommand(argv: string[]): Promise<number> {
+export async function runListenSubcommand(
+  argv: string[],
+  appServer?: AppServerCliOptions,
+): Promise<number> {
   const lifecycleRequested = hasJsonlLifecycleIntent(argv);
   if (lifecycleRequested) suppressStartupLogMarker();
   let values: ReturnType<
@@ -371,6 +367,11 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
 
   const sessionLog = new RemoteSessionLog();
   sessionLog.init();
+  const listenerAppServer = createListenerAppServer(
+    appServer,
+    connectionName,
+    sessionLog,
+  );
   if (!lifecycleOutput) console.log(`Log file: ${sessionLog.path}`);
   const logListenerMessage = (message: string): void => {
     sessionLog.log(message);
@@ -501,6 +502,7 @@ export async function runListenSubcommand(argv: string[]): Promise<number> {
     );
     let startRuntimeChannelGateway: (() => Promise<void>) | null = null;
     const startChannelGateway = async (): Promise<void> => {
+      await listenerAppServer?.start();
       if (channelNames.length === 0 && !restoreEnabledChannels) return;
       if (!startRuntimeChannelGateway) {
         const { getActiveRuntime } = await import(

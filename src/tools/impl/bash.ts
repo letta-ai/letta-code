@@ -4,6 +4,7 @@ import {
   consumeWorkingDirectoryRecovery,
   getCurrentWorkingDirectory,
 } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -33,6 +34,10 @@ import {
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
+import {
+  findSelfMatchingPgrepPattern,
+  selfMatchingPgrepMessage,
+} from "./self-matching-pgrep.js";
 import { getShellEnv } from "./shell-env.js";
 import {
   buildShellLaunchers,
@@ -51,9 +56,6 @@ import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
 // Cache the working shell launcher after first successful spawn
 let cachedWorkingLauncher: string[] | null = null;
-
-/** Time to wait for an ordinary Bash command before returning it as a task. */
-const DEFAULT_FOREGROUND_YIELD_MS = 10_000;
 
 type ShellProcessStarter = typeof startShellProcess;
 let shellProcessStarter: ShellProcessStarter = startShellProcess;
@@ -345,7 +347,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     onOutput,
     secretEnv,
     parentScope,
-    foregroundYieldMs = DEFAULT_FOREGROUND_YIELD_MS,
+    foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
   const userCwd = getCurrentWorkingDirectory();
   assertSafeWindowsCommand(command, {
@@ -390,6 +392,16 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   if (!run_in_background && commandRunsForegroundSleep(command)) {
     return {
       content: [{ type: "text", text: FOREGROUND_SLEEP_BLOCKED_MESSAGE }],
+      status: "error",
+    };
+  }
+
+  const selfMatchingPattern = findSelfMatchingPgrepPattern(command);
+  if (selfMatchingPattern !== null) {
+    return {
+      content: [
+        { type: "text", text: selfMatchingPgrepMessage(selfMatchingPattern) },
+      ],
       status: "error",
     };
   }
@@ -479,6 +491,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   bgProcess = {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command,
     stdout: [],
     stderr: [],

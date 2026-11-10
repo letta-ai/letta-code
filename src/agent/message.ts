@@ -503,6 +503,8 @@ export async function sendMessageStreamWithBackend(
     clientSkills,
   );
 
+  reportAttachedRepositorySkillErrors(clientSkillDiscoveryErrors);
+
   if (isDebugEnabled()) {
     debugLog(
       "agent-message",
@@ -705,4 +707,23 @@ export async function sendMessageStreamWithBackend(
   });
 
   return stream;
+}
+
+/**
+ * Attached-repository resolution failures (e.g. the repository list fetch)
+ * change which skills reach the prompt, so surface them beyond debug logs.
+ * Only `shared-memory:` errors are reported: they carry server error messages
+ * and opaque ids, not local filesystem paths from project skill parsing.
+ */
+function reportAttachedRepositorySkillErrors(
+  errors: ReadonlyArray<{ path: string; message: string }>,
+): void {
+  for (const error of errors) {
+    if (!error.path.startsWith("shared-memory:")) continue;
+    trackBoundaryError({
+      errorType: "client_skills_attached_repositories_error",
+      error: error.message,
+      context: "send_message_client_skills",
+    });
+  }
 }

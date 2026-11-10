@@ -12,6 +12,7 @@ const CONFIG: SdkSpawnerConfig = {
   model: "openai/gpt-5.6-luna",
   supportsAgentFreeResume: true,
   verifyPersistedRuns: false,
+  stopDrainMs: 20,
   retrieveConversation: async () => ({
     agent_id: null,
     parent_agent_id: "agent-parent",

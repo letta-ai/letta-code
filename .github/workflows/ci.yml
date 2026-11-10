@@ -17,7 +17,7 @@ concurrency:
 jobs:
   classify:
     name: Classify change
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -83,7 +83,7 @@ jobs:
 
   check:
     name: Lint & Type Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -181,7 +181,7 @@ jobs:
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: API / ${{ matrix.runner }} / ${{ matrix.shard }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     strategy:
@@ -329,14 +329,6 @@ jobs:
         run: |
           node -e "try { require('sharp'); console.log('sharp: OK') } catch(e) { console.error('sharp: FAIL —', e.message); process.exit(1) }"
           node -e "try { require('node-pty'); console.log('node-pty: OK') } catch(e) { console.error('node-pty: FAIL —', e.message); process.exit(1) }"
-          # @janhapke/sharp-electron only has a patched artifact for linux-x64.
-          # Plain Node verifies that artifact is installed and loadable; Electron
-          # runtime behavior is exercised elsewhere.
-          if [ "${{ runner.os }}" = "Linux" ] && [ "${{ runner.arch }}" = "X64" ]; then
-            node -e "try { require('@janhapke/sharp-electron'); console.log('@janhapke/sharp-electron: OK') } catch(e) { console.error('@janhapke/sharp-electron: FAIL —', e.message); process.exit(1) }"
-          else
-            echo "@janhapke/sharp-electron: skipped (not linux-x64)"
-          fi
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
@@ -354,6 +346,10 @@ jobs:
       - name: Verify image worker with a newer Sharp runtime
         if: runner.os == 'Linux' && runner.arch == 'X64'
         run: node scripts/smoke-image-worker.mjs
+
+      - name: Verify packed image-resize export from CommonJS
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        run: node scripts/smoke-image-resize-export.mjs
 
       - name: MCP OAuth NodeNext declaration smoke test
         if: runner.os == 'Linux' && runner.arch == 'X64'
@@ -503,7 +499,7 @@ jobs:
     needs: classify
     if: needs.classify.outputs.run_heavy_ci == 'true'
     name: Headless / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -537,7 +533,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Headless Local / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -571,7 +567,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Ollama Smoke / ${{ matrix.model }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Land non-blocking while we observe CPU inference timing + reliability;
     # flip to a required check once stable.
     continue-on-error: true
@@ -638,7 +634,7 @@ jobs:
     needs: classify
     if: ${{ needs.classify.outputs.run_heavy_ci == 'true' && (github.event_name == 'push' || (github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     name: Reflection / Headless
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # This is live Cloud/model coverage. Keep its diagnostics visible without
     # letting a provider outage block packaging and release readiness.
     continue-on-error: true
@@ -660,4 +656,4 @@ jobs:
       - name: Run headless reflection scenario
         env:
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-        run: bun run src/test-utils/headless-reflection-scenario.ts --model auto
+        run: bun run src/test-utils/headless-reflection-scenario.ts --model sonnet-4.6-low

@@ -49,19 +49,30 @@ describe("server subcommand routing", () => {
     );
   });
 
-  test("rejects remote computer options in App Server mode", () => {
-    expect(() =>
-      resolveServerCommand(["--listen", "--computer-name", "work-laptop"]),
-    ).toThrow("--computer-name cannot be used with --listen");
-    expect(() =>
-      resolveServerCommand(["--listen", "--env-name", "work-laptop"]),
-    ).toThrow("--env-name cannot be used with --listen");
-    expect(() =>
-      resolveServerCommand(["--listen", "--org", "org-123"]),
-    ).toThrow("--org cannot be used with --listen");
-    expect(() =>
-      resolveServerCommand(["--listen", "--token", "dc_abc"]),
-    ).toThrow("--token cannot be used with --listen");
+  test("registers the App Server as a computer when given registration options", () => {
+    expect(
+      resolveServerCommand([
+        "--computer-name",
+        "gpu-box",
+        "--listen",
+        "ws://127.0.0.1:4500",
+        "--org=org-123",
+        "--ws-auth",
+        "capability-token",
+      ]),
+    ).toEqual({
+      kind: "registered-app-server",
+      argv: ["--computer-name", "gpu-box", "--org=org-123"],
+      appServerArgv: [
+        "--listen",
+        "ws://127.0.0.1:4500",
+        "--ws-auth",
+        "capability-token",
+      ],
+    });
+  });
+
+  test("rejects other remote computer options in App Server mode", () => {
     expect(() =>
       resolveServerCommand(["--channels=slack", "--listen"]),
     ).toThrow("--channels cannot be used with --listen");

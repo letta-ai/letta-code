@@ -1,7 +1,7 @@
 import { readMcpOriginatorDelivery } from "@/agent/mcp-originator-tokens";
 import type { InputCreateMessagePayload } from "@/types/protocol_v2";
 import type { ConversationRuntimeScope } from "@/types/runtime-scope";
-import { isDebugEnabled } from "@/utils/debug";
+import { debugLog, isDebugEnabled } from "@/utils/debug";
 import { getOrCreateProcessTransport } from "./connection";
 import {
   enqueueInboundUserMessage,
@@ -13,7 +13,10 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
-import { liveAcceptedInputOwnerProof } from "./input-disposition-ownership";
+import {
+  attachTerminalConsumerToLiveAcceptedInput,
+  hasLiveAcceptedInputOwner,
+} from "./input-disposition-ownership";
 import { rollbackInputDisposition } from "./input-disposition-rollback";
 import { scheduleQueuePump, shouldQueueInboundMessage } from "./queue";
 import {
@@ -57,6 +60,10 @@ export function createIncomingMessage(
   // rejected/dropped inputs never strand credentials.
   const mcpOriginator = readMcpOriginatorDelivery(frame);
   const terminalConsumerId = frame?.terminal_consumer_id ?? undefined;
+  if (Object.hasOwn(payload, "external_tool_scope_ids")) {
+    // Removed: every registered tool is visible to every turn of its runtime.
+    debugLog("Listen", "Ignoring deprecated external_tool_scope_ids");
+  }
   return {
     type: "message",
     connectionId,
@@ -65,7 +72,6 @@ export function createIncomingMessage(
     clientToolAllowlist: payload.client_tool_allowlist,
     clientToolset: payload.client_toolset,
     clientPreferences: payload.client_preferences,
-    externalToolScopeIds: payload.external_tool_scope_ids,
     excludeInteractiveTools: payload.exclude_interactive_tools,
     responseFormat: payload.response_format,
     imageFailureMode: payload.image_failure_mode,
@@ -160,6 +166,7 @@ export function dispatchInboundMessageWhenReady(params: {
       }
       const admission = reserveInputDisposition(runtime, identity);
       if (admission.kind === "duplicate") {
+        const terminalConsumerId = incoming.terminalConsumerIds?.[0];
         // Refresh-only re-ack: the originator token store may recreate a
         // lost entry only while the durable ledger shows a live owner for
         // this input; terminal tombstones fail the proof and stay rejected.
@@ -167,7 +174,14 @@ export function dispatchInboundMessageWhenReady(params: {
           accepted: true,
           disposition: admission.disposition,
           duplicate: true,
-          mayRecreateOwner: liveAcceptedInputOwnerProof(runtime, identity),
+          mayRecreateOwner: () =>
+            terminalConsumerId
+              ? attachTerminalConsumerToLiveAcceptedInput(
+                  runtime,
+                  identity,
+                  terminalConsumerId,
+                )
+              : hasLiveAcceptedInputOwner(runtime, identity),
         });
         return;
       }

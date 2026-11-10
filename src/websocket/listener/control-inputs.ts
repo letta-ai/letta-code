@@ -4,6 +4,7 @@ import type WebSocket from "ws";
 import { getBackend } from "@/backend";
 import { INTERRUPTED_BY_USER } from "@/constants";
 import { migratePermissionMode } from "@/permissions/mode";
+import { telemetry } from "@/telemetry";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import type {
   AbortMessageCommand,
@@ -110,9 +111,21 @@ export function handleModeChange(
       return;
     }
 
+    const previousMode = current.mode;
     current.mode = incomingMode;
+    current.explicit = true;
 
     persistPermissionModeMapForRuntime(runtime);
+    if (previousMode !== incomingMode) {
+      telemetry.trackPermissionModeChanged({
+        agent_id: agentId,
+        conversation_id: conversationId,
+        prev_mode: previousMode,
+        new_mode: incomingMode,
+        source: "user_toggle",
+        mode_is_default: false,
+      });
+    }
 
     emitRuntimeStateUpdates(runtime, scope);
 
@@ -351,6 +364,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
+    confirmBackendCancellation?: boolean;
     connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
@@ -397,7 +411,12 @@ export async function handleAbortMessageInput(
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
-      await getBackend().cancelConversation(cancelId);
+      const results = await getBackend().cancelConversation(cancelId);
+      if (
+        !Object.values(results).length ||
+        Object.values(results).some((value) => value !== "cancelled")
+      )
+        throw new Error("Backend did not confirm cancellation of every run");
     },
     cancelRun: async (agentId: string, runId: string) => {
       const result = await getBackend().cancelRun(agentId, runId);
@@ -588,33 +607,42 @@ export async function handleAbortMessageInput(
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
         : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
-  void backendCancellation
-    .catch(() => {
-      // Fire-and-forget
-    })
-    .finally(() => {
-      if (!cancellation.lease) {
-        return;
-      }
-      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-        cancellation.lease,
-      );
-      if (settlement.released) {
-        resolvedDeps.scheduleQueuePump(
-          scopedRuntime,
-          params.socket,
-          params.opts as StartListenerOptions,
-          params.processQueuedTurn,
-        );
-      }
-    });
+  const pumpQueue = () =>
+    resolvedDeps.scheduleQueuePump(
+      scopedRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
+  const settlementPromise = backendCancellation.finally(() => {
+    if (!cancellation.lease) {
+      return;
+    }
+    const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+      cancellation.lease,
+    );
+    if (settlement.released && !params.confirmBackendCancellation) pumpQueue();
+  });
 
-  resolvedDeps.scheduleQueuePump(
-    scopedRuntime,
-    params.socket,
-    params.opts as StartListenerOptions,
-    params.processQueuedTurn,
-  );
+  try {
+    if (params.confirmBackendCancellation) {
+      await settlementPromise;
+      const deadline = Date.now() + 10_000;
+      while (
+        cancellation.lease &&
+        scopedRuntime.turnLifecycle.isCurrent(cancellation.lease)
+      ) {
+        if (Date.now() >= deadline)
+          throw new Error("The listener turn did not stop");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } else {
+      void settlementPromise.catch(() => undefined);
+    }
+  } finally {
+    // Confirmation failures must pump too; the confirmed path schedules once.
+    pumpQueue();
+  }
   return true;
 }
 

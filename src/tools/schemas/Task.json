@@ -7,15 +7,24 @@
     },
     "prompt": {
       "type": "string",
-      "description": "The task for the agent to perform"
+      "description": "The task for the agent to perform. A forked agent already has this conversation: state the goal, what finished looks like as checks the agent can verify (a measurable threshold, not \"no bad output\"), and paths, links, or IDs to read. Without forked context, the prompt is all it knows."
+    },
+    "harness": {
+      "type": "string",
+      "enum": ["letta", "claude-code", "codex", "cursor", "opencode"],
+      "description": "The harness that executes the task. Defaults to letta (a Letta subagent). Set to override the harness that runs the subagent worker (requires the harness to be installed on the computer)."
     },
     "subagent_type": {
       "type": "string",
-      "description": "The type of specialized agent to use for this task. Required when launching a new subagent; optional with agent_id or conversation_id, where it defaults to general-purpose. Use claude-code, codex, or cursor for an external coding worker."
+      "description": "A preset from Available Agents (for example recall, or a custom agent). Supply only description and prompt alongside it: the preset determines launch settings and all other optional fields are ignored. Omit subagent_type to configure the launch yourself."
+    },
+    "fork_context": {
+      "type": "boolean",
+      "description": "When creating a Letta Code subagent (without subagent_type), whether to include the full conversation history in the subagent. Cannot be applied to existing agents or threads. Defaults to true for new default Letta agents and external workers; existing agent or conversation targets resume without forking."
     },
     "model": {
       "type": "string",
-      "description": "Optional except for new cursor sessions, which require a Cursor model ID (list IDs with `letta model list --worker cursor`). When omitted, Letta subagents inherit the parent's model and claude-code/codex use that CLI's own default model."
+      "description": "Optional except for new cursor sessions, which require a Cursor model ID (list IDs with `letta model list --worker cursor`). When omitted, Letta subagents inherit the parent's model and other harnesses use their own default model."
     },
     "agent_id": {
       "type": "string",

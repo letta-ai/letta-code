@@ -84,8 +84,8 @@ Add options:
                          conversation per fire; "self" for the current
                          conversation; "default" for the agent default)
   --computer <id>        (managed Cloud sandbox only) Run on a connected
-                         external computer (deviceId from \`letta computers
-                         list\`). If that computer is offline at fire
+                         external computer (deviceId, id, or name from
+                         \`letta computers list\`). If it is offline at fire
                          time, that run fails (no Cloud sandbox fallback);
                          omit --computer to run in the Cloud sandbox.
 

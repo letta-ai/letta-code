@@ -17,6 +17,11 @@ export interface RegisterResult {
   supportsPairedListenerGenerations: boolean;
 }
 
+export interface CredentialBootstrap {
+  refreshToken: string;
+  expiresIn: number;
+}
+
 export interface RegisterOptions {
   serverUrl: string;
   apiKey: string;
@@ -30,6 +35,7 @@ export interface RegisterOptions {
    * Optional: servers that predate the field ignore it.
    */
   listenerInstanceId?: string;
+  onCredentialBootstrap?: (bootstrap: CredentialBootstrap) => Promise<void>;
 }
 
 /**
@@ -138,6 +144,10 @@ export async function registerWithCloud(
         // Mirrors app_server_info so callers can check before connecting.
         launch_subagent_notify_caller: true,
         subagent_message: true,
+        external_fork_context: true,
+        supportsComputerLinkCredentialBootstrap: opts.onCredentialBootstrap
+          ? true
+          : undefined,
         self_update: getSelfUpdateStatus(),
       },
     }),
@@ -195,6 +205,25 @@ export async function registerWithCloud(
       "Server returned unexpected response shape (missing connectionId or wsUrl)",
       response.status,
     );
+  }
+
+  if (result.credentialBootstrap !== undefined) {
+    const bootstrap = result.credentialBootstrap as Record<string, unknown>;
+    if (
+      !bootstrap ||
+      typeof bootstrap !== "object" ||
+      typeof bootstrap.refreshToken !== "string" ||
+      typeof bootstrap.expiresIn !== "number"
+    ) {
+      throw new RegistrationError(
+        "Server returned unexpected credential bootstrap shape",
+        response.status,
+      );
+    }
+    await opts.onCredentialBootstrap?.({
+      refreshToken: bootstrap.refreshToken,
+      expiresIn: bootstrap.expiresIn,
+    });
   }
 
   return {

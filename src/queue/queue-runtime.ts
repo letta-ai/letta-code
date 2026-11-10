@@ -63,6 +63,8 @@ export type TaskNotificationQueueItem = QueueItemBase & {
   text: string;
   /** Original tool content, including image parts, delivered after the XML header. */
   content?: MessageCreate["content"];
+  /** Client message ids of the listener turn that started the work. */
+  clientMessageIds?: string[];
 };
 
 export type CronPromptQueueItem = QueueItemBase & {

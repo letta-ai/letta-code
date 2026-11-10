@@ -9,11 +9,9 @@
 
 import { rmSync } from "node:fs";
 import { platform } from "node:os";
-import { getConversationId, getCurrentAgentId } from "@/agent/context";
+import { getConversationId } from "@/agent/context";
 import { getScopedMemoryFilesystemRoot } from "@/agent/memory-filesystem";
 import { detectMemoryFormat } from "@/agent/memory-format";
-import recallSubagentPrompt from "@/agent/prompts/recall_subagent.md";
-import recallSubagentLocalPrompt from "@/agent/prompts/recall_subagent_local.md";
 import { updateSubagent } from "@/agent/subagent-state.js";
 import { wrapSubagentLauncher } from "@/agent/subagents/sandbox";
 import { getSessionAccessToken } from "@/auth/org-credentials-session";
@@ -23,11 +21,7 @@ import {
   getLocalBackendStorageDir,
 } from "@/backend";
 import { buildAgentReference } from "@/cli/helpers/app-urls";
-import {
-  INTERRUPTED_BY_USER,
-  SYSTEM_REMINDER_CLOSE,
-  SYSTEM_REMINDER_OPEN,
-} from "@/constants";
+import { INTERRUPTED_BY_USER } from "@/constants";
 import { cliPermissions } from "@/permissions/cli-permissions-instance";
 import { resolveAllowedMemoryRoots } from "@/permissions/memory-paths";
 import { sessionPermissions } from "@/permissions/session";
@@ -51,6 +45,11 @@ import {
   type SubagentResult,
 } from ".";
 import { buildSubagentPrompt } from "./context-budget";
+import {
+  getEffectiveAgentId,
+  resolveEffectiveAgentId,
+  shouldRunSubagentEphemerally,
+} from "./ephemeral-subagent";
 import { allocateSubagentName } from "./names";
 import { collectRemoteTurnResult } from "./remote-turn-wait";
 import { resolveSubagentHarnessTools } from "./subagent-depth";
@@ -67,8 +66,14 @@ import {
 } from "./subagent-model";
 import { spawnSubagentProcess } from "./subagent-process";
 import {
+  buildDeploySystemReminder,
+  buildForkSystemReminder,
+  shouldPrependDeploySystemReminder,
+} from "./subagent-reminders";
+import {
   describeSubagentExit,
   type ExecutionState,
+  flushPendingProgressText,
   hasSuccessfulToolCall,
   looksLikeTruncatedStreamJson,
   parseResultFromStdout,
@@ -128,6 +133,8 @@ interface BuildSubagentArgsOptions {
   environment?: string;
   /** Identity for the child's initial assignment, never inherited. */
   clientMessageId?: string;
+  /** Run a fresh subagent in an ephemeral conversation, not a new agent. */
+  ephemeral?: boolean;
 }
 
 /** Build CLI arguments for spawning a subagent. */
@@ -177,19 +184,22 @@ export function buildSubagentArgs(
     // Don't pass --system (existing agent keeps its prompt)
     // Don't pass --model (existing agent keeps its model)
   } else {
-    // Create new agent (original behavior). A systemPromptOverride replaces the
-    // configured persona with a caller-supplied prompt via `--system-custom`
-    // (mutually exclusive with `--system`).
+    // Create a fresh subagent: an ephemeral conversation linked to the parent
+    // (see ephemeral-subagent.ts) or a new hidden agent. A systemPromptOverride
+    // replaces the configured persona via `--system-custom`.
+    args.push(options.ephemeral ? "--ephemeral" : "--new-agent");
     if (options.systemPromptOverride) {
-      args.push("--new-agent", "--system-custom", options.systemPromptOverride);
+      args.push("--system-custom", options.systemPromptOverride);
     } else {
-      args.push("--new-agent", "--system", type);
+      args.push("--system", type);
     }
-    const subagentTags = [`type:${type}`];
-    if (options.parentAgentId) {
-      subagentTags.push(`parent:${options.parentAgentId}`);
+    if (!options.ephemeral) {
+      const subagentTags = [`type:${type}`];
+      if (options.parentAgentId) {
+        subagentTags.push(`parent:${options.parentAgentId}`);
+      }
+      args.push("--tags", subagentTags.join(","));
     }
-    args.push("--tags", subagentTags.join(","));
     // Newly spawned subagents are stateless (non-memfs). The headless
     // entrypoint derives this from LETTA_CODE_AGENT_ROLE=subagent — no CLI
     // flag needed, and no user-facing opt-out exists.
@@ -207,7 +217,8 @@ export function buildSubagentArgs(
 
     // Skip server-side base tools (web_search, fetch_webpage) for subagents
     // that operate purely on local memory/git state.
-    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type)) {
+    // Ephemeral conversations have no agent to attach base tools to.
+    if (NO_BASE_TOOL_SUBAGENT_TYPES.has(type) && !options.ephemeral) {
       args.push("--base-tools", "none");
     }
   }
@@ -313,10 +324,10 @@ async function executeSubagent(
       : "api";
     const boundedUserPrompt = buildSubagentPrompt(type, config, userPrompt);
 
-    let parentAgentId = parentAgentIdOverride;
+    let parentAgentId = resolveEffectiveAgentId(parentAgentIdOverride);
     if (!parentAgentId) {
       try {
-        parentAgentId = getCurrentAgentId();
+        parentAgentId = getEffectiveAgentId();
       } catch {
         // Context not available — subagent will have no parent scope.
       }
@@ -338,6 +349,12 @@ async function executeSubagent(
         systemPromptOverride,
         environment,
         clientMessageId,
+        ephemeral: shouldRunSubagentEphemerally({
+          backendMode,
+          existingAgentId,
+          existingConversationId,
+          environment,
+        }),
       },
     );
 
@@ -518,6 +535,7 @@ async function executeSubagent(
     if (stdoutBuffer.length > 0) {
       processStreamEvent(stdoutBuffer, state, subagentId);
     }
+    flushPendingProgressText(state, subagentId);
 
     // Check if process was aborted by user
     if (runningProcess.wasAborted()) {
@@ -734,71 +752,6 @@ async function executeSubagent(
 }
 
 /**
- * Build a system reminder prefix for deployed agents
- */
-function buildDeploySystemReminder(
-  senderAgentName: string,
-  senderAgentId: string,
-): string {
-  return `${SYSTEM_REMINDER_OPEN}
-This task is from "${senderAgentName}" (agent ID: ${senderAgentId}), which deployed you as a subagent inside the Letta Code CLI (docs.letta.com/letta-code).
-You have access to local tools (Bash, Read, Write, Edit, etc.) in their codebase.
-Your final message will be returned to the caller.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-}
-
-export function shouldPrependDeploySystemReminder(
-  existingAgentId: string | undefined,
-  parentAgentId: string,
-): boolean {
-  return !existingAgentId || existingAgentId !== parentAgentId;
-}
-
-export function recallPromptForBackend(backendMode?: BackendMode): string {
-  return backendMode === "local"
-    ? recallSubagentLocalPrompt
-    : recallSubagentPrompt;
-}
-
-function buildForkSystemReminder(
-  subagentType?: string,
-  backendMode?: BackendMode,
-): string {
-  if (subagentType === "recall") {
-    const recallPrompt = recallPromptForBackend(backendMode);
-    return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent and do not share its tools.
-
-**Your sole task is now to search previous conversation history and provide a report. Ignore any existing ongoing tasks.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
-
-Your toolset is limited to Bash and Read. You cannot edit files, run skills, dispatch further tasks, or take any action beyond searching messages and returning a report.
-
-You CANNOT ask questions mid-execution — all instructions are provided upfront.
-Your final message will be returned to the caller.
-
-${recallPrompt}
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-  }
-
-  return `${SYSTEM_REMINDER_OPEN}
-You have been forked from the primary conversational thread to run as an independent subagent. The fork only exists so you can see the parent agent's conversation trajectory in-context as reference — you are NOT the primary agent.
-
-**Your sole task is the one described in the user message below. Ignore any existing ongoing tasks from the inherited trajectory.** Do not attempt to continue, finish, or act on anything the primary agent was in the middle of doing.
-
-You inherit the primary agent's toolset.
-
-You CANNOT ask questions mid-execution — all instructions are provided upfront.
-Your final message will be returned to the caller.
-${SYSTEM_REMINDER_CLOSE}
-
-`;
-}
-
-/**
  * Spawn a subagent and execute it autonomously
  *
  * @param type - Subagent type (e.g., "code-reviewer", "general-purpose")
@@ -809,7 +762,7 @@ ${SYSTEM_REMINDER_CLOSE}
  * @param existingAgentId - Optional ID of an existing agent to deploy
  * @param existingConversationId - Optional conversation ID to resume
  * @param parentAgentId - Parent agent ID captured at the synchronous call
- *   site. Preferred over reading `getCurrentAgentId()` here because this
+ *   site. Preferred over reading `getEffectiveAgentId()` here because this
  *   function runs after several async yields and the in-process context
  *   may have drifted (e.g., the listener processing another agent's turn).
  */
@@ -859,10 +812,12 @@ async function spawnSubagentInContext(
     : "api";
   // Resolve parent scope before model selection so local subagents inherit the
   // active conversation's model override, not just the agent default.
-  let resolvedParentAgentId = parentAgentId;
+  // A detached subagent's context ID is its conversation; children link to
+  // the real parent agent instead.
+  let resolvedParentAgentId = resolveEffectiveAgentId(parentAgentId);
   if (!resolvedParentAgentId) {
     try {
-      resolvedParentAgentId = getCurrentAgentId();
+      resolvedParentAgentId = getEffectiveAgentId();
     } catch {
       // Context unavailable — carry forward undefined.
     }
