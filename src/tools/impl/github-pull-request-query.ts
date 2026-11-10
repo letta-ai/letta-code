@@ -64,6 +64,8 @@ query(
                   ... on CheckRun {
                     databaseId
                     name
+                    isRequired(pullRequestNumber: $number)
+                    checkSuite { app { id } workflowRun { workflow { id } } }
                     status
                     conclusion
                     detailsUrl
@@ -120,6 +122,8 @@ query($owner: String!, $name: String!, $number: Int!) {
                   ... on CheckRun {
                     databaseId
                     name
+                    isRequired(pullRequestNumber: $number)
+                    checkSuite { app { id } workflowRun { workflow { id } } }
                     status
                     conclusion
                     detailsUrl

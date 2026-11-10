@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { latestGitHubCheckContexts } from "./github-check-contexts";
 import {
   GITHUB_PULL_REQUEST_METADATA_QUERY,
   GITHUB_PULL_REQUEST_QUERY,
@@ -80,6 +81,11 @@ interface GraphQlReviewThread {
 interface GraphQlCheck {
   __typename?: string | null;
   databaseId?: number | null;
+  isRequired?: boolean | null;
+  checkSuite?: {
+    app?: { id?: string | null } | null;
+    workflowRun?: { workflow?: { id?: string | null } | null } | null;
+  } | null;
   name?: string | null;
   status?: string | null;
   conclusion?: string | null;
@@ -350,14 +356,21 @@ function mapSnapshot(
   );
   const rollup =
     pullRequest.commits?.nodes?.at(-1)?.commit?.statusCheckRollup ?? undefined;
-  const checks = (rollup?.contexts?.nodes ?? []).flatMap((check) => {
+  const contexts = rollup?.contexts?.nodes ?? [];
+  // A rollup can still reflect superseded contexts. Only synthesize a blocker
+  // when no original context explains it, rather than reviving an old attempt.
+  const originalChecks = contexts.flatMap((check) => {
+    const mapped = check ? mapGraphQlCheck(check) : undefined;
+    return mapped ? [mapped] : [];
+  });
+  const checks = latestGitHubCheckContexts(contexts).flatMap((check) => {
     const mapped = check ? mapGraphQlCheck(check) : undefined;
     return mapped ? [mapped] : [];
   });
   const rollupState = rollup?.state ?? "";
   if (
     (rollupState === "ERROR" || rollupState === "FAILURE") &&
-    !checks.some((check) => check.phase === "failure")
+    !originalChecks.some((check) => check.phase === "failure")
   ) {
     checks.push({
       key: "check-rollup",
@@ -367,7 +380,7 @@ function mapSnapshot(
     });
   } else if (
     (rollupState === "EXPECTED" || rollupState === "PENDING") &&
-    !checks.some((check) => check.phase === "pending")
+    !originalChecks.some((check) => check.phase === "pending")
   ) {
     checks.push({
       key: "check-rollup",
@@ -556,6 +569,8 @@ function pullRequestMetadataKey(pullRequest: GraphQlPullRequest): string {
         context?.name ?? context?.context,
         context?.status ?? context?.state,
         context?.conclusion,
+        context?.isRequired,
+        context?.checkSuite,
         context?.detailsUrl ?? context?.targetUrl,
       ]),
   ]);
