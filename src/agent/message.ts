@@ -19,12 +19,10 @@ import { takePendingDiskSpaceReminder } from "@/reminders/disk-space";
 import { getRuntimeContext } from "@/runtime-context";
 import {
   getBusyRecoveryHttpStatus,
-  reportBusyRecovery,
-} from "@/telemetry/busy-recovery";
-import {
   markBusyRequest,
+  reportBusyRecovery,
   traceBusyRecoveryStream,
-} from "@/telemetry/busy-recovery-stream";
+} from "@/telemetry/busy-recovery";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import {
   type ClientTool,

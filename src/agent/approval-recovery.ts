@@ -13,12 +13,9 @@ import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   getBusyRecoveryHttpStatus,
   reportBusyRecovery,
+  traceBusyRecoveryStream,
 } from "@/telemetry/busy-recovery";
-import { traceBusyRecoveryStream } from "@/telemetry/busy-recovery-stream";
 import {
-  extractConversationBusyRunId,
-  getPreStreamErrorAction as getPolicyAction,
-  isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
 } from "./turn-recovery-policy";
@@ -75,6 +72,7 @@ export {
   classifyPreStreamConflict,
   extractConflictDetail,
   extractConversationBusyRunId,
+  getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
   isApprovalPendingError,
@@ -94,24 +92,6 @@ export {
   shouldRetryPreStreamTransientError,
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
-
-/** Report the selected busy fallback budget without changing the pure policy. */
-export function getPreStreamErrorAction(
-  ...args: Parameters<typeof getPolicyAction>
-): ReturnType<typeof getPolicyAction> {
-  const action = getPolicyAction(...args);
-  if (isConversationBusyError(args[0])) {
-    reportBusyRecovery(
-      args[1] >= args[2] ? "retry_budget_exhausted" : "retry_selected",
-      {
-        blockerRunId: extractConversationBusyRunId(args[0]) ?? undefined,
-        retryCount: args[1],
-        httpStatus: args[3]?.status,
-      },
-    );
-  }
-  return action;
-}
 
 // ── Async helpers (network side effects — stay here) ────────────────
 
@@ -146,6 +126,35 @@ export async function waitForConversationBusyRun(
   options: BlockingRunWaitOptions = {},
 ): Promise<BlockingRunWaitResult> {
   const now = options.now ?? Date.now;
+  const start = now();
+  const report = (phase: Parameters<typeof reportBusyRecovery>[0]) =>
+    reportBusyRecovery(phase, {
+      blockerRunId: runId,
+      elapsedMs: now() - start,
+    });
+  report("poll_started");
+  try {
+    const result = await waitForBlockingRun(runId, signal, options);
+    report(
+      result === "settled"
+        ? "poll_settled"
+        : result === "timed_out"
+          ? "poll_timed_out"
+          : "poll_unavailable",
+    );
+    return result;
+  } catch (error) {
+    report(signal?.aborted ? "cancelled" : "poll_failed");
+    throw error;
+  }
+}
+
+async function waitForBlockingRun(
+  runId: string,
+  signal?: AbortSignal,
+  options: BlockingRunWaitOptions = {},
+): Promise<BlockingRunWaitResult> {
+  const now = options.now ?? Date.now;
   const deadlineMs =
     options.deadlineMs ?? now() + CONVERSATION_BUSY_WAIT_TIMEOUT_MS;
   const pollIntervalMs =
@@ -158,65 +167,40 @@ export async function waitForConversationBusyRun(
       }>);
   const sleep = options.sleep ?? sleepWithAbort;
 
-  const startedAt = now();
-  let pollCount = 0;
-  let status: unknown;
-  const report = (
-    phase: Parameters<typeof reportBusyRecovery>[0],
-    error?: unknown,
-  ) =>
-    reportBusyRecovery(phase, {
-      blockerRunId: runId,
-      runStatus: status,
-      pollCount,
-      elapsedMs: now() - startedAt,
-      httpStatus: getBusyRecoveryHttpStatus(error),
-    });
-  const timedOut = () => {
-    report("poll_timed_out");
-    return "timed_out" as const;
-  };
-  report("poll_started");
-  try {
-    while (true) {
+  while (true) {
+    signal?.throwIfAborted();
+    const remainingMs = deadlineMs - now();
+    if (remainingMs <= 0) return "timed_out";
+
+    let status: unknown;
+    try {
+      status = (
+        await retrieveRun(runId, {
+          signal,
+          maxRetries: 0,
+          timeout: Math.min(remainingMs, pollIntervalMs),
+        })
+      ).status;
+    } catch (error) {
       signal?.throwIfAborted();
-      const remainingMs = deadlineMs - now();
-      if (remainingMs <= 0) return timedOut();
-
-      try {
-        pollCount += 1;
-        status = (
-          await retrieveRun(runId, {
-            signal,
-            maxRetries: 0,
-            timeout: Math.min(remainingMs, pollIntervalMs),
-          })
-        ).status;
-      } catch (error) {
-        signal?.throwIfAborted();
-        report("poll_failed", error);
-        return "unavailable";
-      }
-
-      if (TERMINAL_BLOCKING_RUN_STATUSES.has(String(status))) {
-        const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
-        if (delayMs <= 0) return timedOut();
-        await sleep(delayMs, signal);
-        report("poll_settled");
-        return "settled";
-      }
-      if (!ACTIVE_BLOCKING_RUN_STATUSES.has(String(status))) {
-        report("poll_unknown_status");
-        return "unavailable";
-      }
-
-      const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
-      if (delayMs <= 0) return timedOut();
-      await sleep(delayMs, signal);
+      reportBusyRecovery("poll_failed", {
+        blockerRunId: runId,
+        httpStatus: getBusyRecoveryHttpStatus(error),
+      });
+      return "unavailable";
     }
-  } catch (error) {
-    if (signal?.aborted) report("cancelled");
-    throw error;
+
+    if (TERMINAL_BLOCKING_RUN_STATUSES.has(String(status))) {
+      const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
+      if (delayMs <= 0) return "timed_out";
+      await sleep(delayMs, signal);
+      return "settled";
+    }
+    if (!ACTIVE_BLOCKING_RUN_STATUSES.has(String(status))) return "unavailable";
+
+    const delayMs = Math.min(pollIntervalMs, deadlineMs - now());
+    if (delayMs <= 0) return "timed_out";
+    await sleep(delayMs, signal);
   }
 }
 
@@ -252,7 +236,6 @@ export async function resumeConversationBusyRequest(
     reportBusyRecovery("replay_missing_otid", fields);
     return null;
   }
-  reportBusyRecovery("replay_started", fields);
 
   try {
     const stream = await getBackend().streamConversationMessages(
@@ -265,7 +248,6 @@ export async function resumeConversationBusyRequest(
       } as unknown as ConversationMessageStreamBody,
       signal ? { signal } : undefined,
     );
-    reportBusyRecovery("replay_attached", fields);
     return traceBusyRecoveryStream(stream, conversationId, otid, signal);
   } catch (error) {
     reportBusyRecovery(signal?.aborted ? "cancelled" : "replay_unavailable", {
