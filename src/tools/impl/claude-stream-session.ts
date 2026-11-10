@@ -7,7 +7,9 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
+import { interruptInput } from "./claude-control-input";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
@@ -152,14 +154,6 @@ function userInput(prompt: string, uuid: string): string {
       role: "user",
       content: [{ type: "text", text: prompt }],
     },
-  })}\n`;
-}
-
-function interruptInput(requestId: string): string {
-  return `${JSON.stringify({
-    type: "control_request",
-    request_id: requestId,
-    request: { subtype: "interrupt" },
   })}\n`;
 }
 
@@ -986,6 +980,13 @@ export async function sendClaudeMessage(
   if (delivered.mode === "steered" && !options.beforeStart)
     return { mode: "steered", sessionId: options.sessionId };
   return trackedReceipt(delivered.session);
+}
+export async function stopClaudeSession(sessionId: string): Promise<void> {
+  const session = sessions.get(sessionId);
+  if (session) {
+    session.abortController.abort(new Error("Stopped by parent"));
+    await confirmProcessExit(session.exit, "Claude Code");
+  }
 }
 
 export function hasActiveClaudeTurn(sessionId: string): boolean {

@@ -17,18 +17,18 @@ export function buildBackgroundTaskAbortHook(
   // change for a task's lifetime. Remote killed:false preserves the retry
   // handle; only local fail-safe aborts.
   const bgTask = backgroundTasks.get(taskId);
-  const remote = bgTask?.remote ?? false;
-  const failSafeAbort = () => !remote && abortController.abort();
+  const isRemote = () => Boolean(bgTask?.remote || bgTask?.stop);
+  const failSafeAbort = () => !isRemote() && abortController.abort();
   const hook = () => {
     void import("./task-stop.js")
       .then((m) => m.task_stop({ task_id: taskId }))
       .then((result) => {
         if (!result.killed) failSafeAbort();
-        settleInterruptedCancel(bgTask, remote, result.killed, hook);
+        settleInterruptedCancel(bgTask, isRemote(), result.killed, hook);
       })
       .catch(() => {
         failSafeAbort();
-        settleInterruptedCancel(bgTask, remote, false, hook);
+        settleInterruptedCancel(bgTask, isRemote(), false, hook);
       });
   };
   return hook;

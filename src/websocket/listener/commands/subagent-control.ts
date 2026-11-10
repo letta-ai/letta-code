@@ -24,6 +24,7 @@ import {
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import type {
   SubagentMessageCommand,
   SubagentMessageResponse,
@@ -339,12 +340,18 @@ export async function handleSubagentStopCommand(
       return { ...base, success: true };
     return { ...base, error: "Subagent does not belong to this conversation" };
   }
-  const [, task] = owned;
-  if (task.status !== "running") return { ...base, success: true };
+  const [taskId, task] = owned;
+  if (task.status !== "running")
+    return { ...base, success: true, stopped: true };
   if (!task.abortController)
     return { ...base, error: "Subagent could not be stopped" };
-  task.abortController.abort(new Error("Stopped by remote parent"));
-  return { ...base, success: true, stopped: true };
+  const result = await task_stop({ task_id: taskId });
+  return {
+    ...base,
+    success: result.killed,
+    stopped: result.killed,
+    error: result.output,
+  };
 }
 
 export function __resetSubagentControlDedupeForTests(): void {

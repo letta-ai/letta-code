@@ -1,6 +1,9 @@
 import { getSubagents } from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { getErrorMessage } from "@/utils/error";
+import { stopClaudeSession } from "./claude-stream-session";
+import { stopCodexSession } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 import { killBackgroundProcess } from "./kill-bash.js";
 import {
@@ -12,7 +15,9 @@ import {
   REMOTE_EXTERNAL_WORKER_STOPPED,
   stopRemoteExternalCodingAgent,
 } from "./remote-external-coding-agent.js";
+import { stopConversationBackground } from "./stop-conversation-background";
 import { validateRequiredParams } from "./validation.js";
+import { cancelConversationWakes } from "./wake";
 
 interface TaskStopArgs {
   task_id: string;
@@ -87,13 +92,28 @@ export async function task_stop(
   const task = backgroundTasks.get(task_id);
   if (task) {
     if (task.status === "running" && task.abortController) {
+      const initialStop = task.stop;
       const child = getSubagents().find(
         (agent) => agent.id === task.subagentId,
       );
       const external = parseExternalCodingAgentId(child?.agentId ?? undefined);
       let remote: TaskStopResult | undefined;
       let remoteExternalStopped = false;
-      if (external?.computer) {
+      if (task.stop) {
+        try {
+          const result = await withTimeout(
+            task.stop(),
+            deps.remoteStopTimeoutMs ?? REMOTE_STOP_TIMEOUT_MS,
+          );
+          if (result === TIMED_OUT)
+            throw new Error(
+              "The owning listener did not answer; the subagent may still be running",
+            );
+          remote = { killed: true };
+        } catch (error) {
+          remote = { killed: false, output: getErrorMessage(error) };
+        }
+      } else if (external?.computer) {
         try {
           if (!task.runtimeScope)
             throw new Error("its parent conversation is not known");
@@ -108,7 +128,6 @@ export async function task_stop(
               actingUserId: task.actingUserId,
             },
           });
-          // A stop that settles after the timeout has nobody left to report to.
           stopping.catch(() => {});
           const result = await withTimeout(stopping, timeoutMs);
           if (result === TIMED_OUT)
@@ -128,30 +147,79 @@ export async function task_stop(
             output: `Couldn't stop the remote external subagent: ${getErrorMessage(error)}`,
           };
         }
-      } else if (task.remote) {
+      } else if (task.remote || (!external && child?.conversationId)) {
         remote = await cancelRemoteRun(task.subagentId);
       }
       if (remote && !remote.killed) return remote;
+      try {
+        if (external && !external.computer) {
+          if (external.type === "claude-code")
+            await stopClaudeSession(external.sessionId);
+          if (external.type === "codex")
+            await stopCodexSession(external.sessionId);
+        }
+      } catch (error) {
+        return { killed: false, output: getErrorMessage(error) };
+      }
       task.abortController.abort(
         remoteExternalStopped ? REMOTE_EXTERNAL_WORKER_STOPPED : undefined,
       );
       task.error = "Aborted by user";
-      // A remote follower can be stuck reconnecting; don't let it hold the turn.
-      const completionTimeoutMs =
-        deps.completionTimeoutMs ?? COMPLETION_TIMEOUT_MS;
-      const settled = external?.computer
-        ? await withTimeout(
-            Promise.resolve(task.completion),
-            completionTimeoutMs,
-          )
-        : await task.completion;
+      try {
+        if (!task.completion)
+          throw new Error("Subagent process exit cannot be confirmed");
+        const completionTimeoutMs =
+          deps.completionTimeoutMs ??
+          (external?.computer ? COMPLETION_TIMEOUT_MS : 10_000);
+        const settled = await withTimeout(task.completion, completionTimeoutMs);
+        if (settled === TIMED_OUT) {
+          if (!remoteExternalStopped)
+            throw new Error("Subagent process exit was not confirmed");
+          // The owning worker confirmed its process exit; only this follower's result is late.
+          task.status = "failed";
+          scheduleBackgroundTaskCleanup(task_id);
+          return {
+            killed: true,
+            output: `${remote?.output ?? "Stopped the task"}, but stopped waiting for its result after ${completionTimeoutMs / 1000}s`,
+          };
+        }
+      } catch (error) {
+        return { killed: false, output: getErrorMessage(error) };
+      }
+      // The launcher can hand off to a listener while its abort unwinds.
+      if (task.stop && task.stop !== initialStop) {
+        try {
+          const result = await withTimeout(
+            task.stop(),
+            deps.remoteStopTimeoutMs ?? REMOTE_STOP_TIMEOUT_MS,
+          );
+          if (result === TIMED_OUT)
+            throw new Error("The owning listener did not confirm cancellation");
+        } catch (error) {
+          return { killed: false, output: getErrorMessage(error) };
+        }
+      }
+      if (!external && !initialStop && child?.conversationId) {
+        const agentId = child.agentId ?? child.parentAgentId;
+        if (agentId) {
+          const scope = { agentId, conversationId: child.conversationId };
+          try {
+            await stopConversationBackground(scope);
+            await runWithRuntimeContext(
+              {
+                ...scope,
+                actingUserId: task.actingUserId ?? undefined,
+                suppressActingUserFallback: task.actingUserId === null,
+              },
+              () => cancelConversationWakes(scope),
+            );
+          } catch (error) {
+            return { killed: false, output: getErrorMessage(error) };
+          }
+        }
+      }
       task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
-      if (settled === TIMED_OUT)
-        return {
-          killed: true,
-          output: `${remote?.output ?? "Stopped the task"}, but stopped waiting for its result after ${completionTimeoutMs / 1000}s`,
-        };
       return remote ?? { killed: true };
     }
     // Task exists but isn't running or doesn't have abort controller

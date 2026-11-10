@@ -164,6 +164,30 @@ export function createListenerMessageHandler(
           getOrCreateScopedRuntime,
           runDetachedListenerTask,
           safeSocketSend,
+          abortConversation: async (scope) => {
+            const child = getOrCreateScopedRuntime(
+              runtime,
+              scope.agent_id,
+              scope.conversation_id,
+            );
+            child.queueRuntime.pause();
+            for (const item of [...child.queueRuntime.items]) {
+              if (item.source === "task_notification" || item.source === "cron")
+                child.queueRuntime.removeItem(item.id);
+            }
+            return handleAbortMessageInput(runtime, {
+              command: {
+                type: "abort_message",
+                request_id: parsed.request_id,
+                runtime: scope,
+              },
+              socket,
+              connectionId,
+              opts,
+              processQueuedTurn,
+              confirmBackendCancellation: true,
+            });
+          },
         });
         return;
       }

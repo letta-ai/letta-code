@@ -683,6 +683,8 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
 
   backgroundProcesses.set(id, {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command: args.cmd,
     status: session.status,
     exitCode: session.exitCode,

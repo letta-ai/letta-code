@@ -364,6 +364,7 @@ export async function handleAbortMessageInput(
   listener: ListenerRuntime,
   params: {
     command: AbortMessageCommand;
+    confirmBackendCancellation?: boolean;
     connectionId?: ListenerConnectionId;
     socket: ListenerTransport;
     opts: {
@@ -410,7 +411,12 @@ export async function handleAbortMessageInput(
         conversationId === "default" || !conversationId
           ? agentId
           : conversationId;
-      await getBackend().cancelConversation(cancelId);
+      const results = await getBackend().cancelConversation(cancelId);
+      if (
+        !Object.values(results).length ||
+        Object.values(results).some((value) => value !== "cancelled")
+      )
+        throw new Error("Backend did not confirm cancellation of every run");
     },
     cancelRun: async (agentId: string, runId: string) => {
       const result = await getBackend().cancelRun(agentId, runId);
@@ -601,27 +607,37 @@ export async function handleAbortMessageInput(
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
         : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
-  void backendCancellation
-    .catch(() => {
-      // Fire-and-forget
-    })
-    .finally(() => {
-      if (!cancellation.lease) {
-        return;
-      }
-      const settlement = scopedRuntime.turnLifecycle.settleCancellation(
-        cancellation.lease,
+  const settlementPromise = backendCancellation.finally(() => {
+    if (!cancellation.lease) {
+      return;
+    }
+    const settlement = scopedRuntime.turnLifecycle.settleCancellation(
+      cancellation.lease,
+    );
+    if (settlement.released) {
+      resolvedDeps.scheduleQueuePump(
+        scopedRuntime,
+        params.socket,
+        params.opts as StartListenerOptions,
+        params.processQueuedTurn,
       );
-      if (settlement.released) {
-        resolvedDeps.scheduleQueuePump(
-          scopedRuntime,
-          params.socket,
-          params.opts as StartListenerOptions,
-          params.processQueuedTurn,
-        );
-      }
-    });
+    }
+  });
 
+  if (params.confirmBackendCancellation) {
+    await settlementPromise;
+    const deadline = Date.now() + 10_000;
+    while (
+      cancellation.lease &&
+      scopedRuntime.turnLifecycle.isCurrent(cancellation.lease)
+    ) {
+      if (Date.now() >= deadline)
+        throw new Error("The listener turn did not stop");
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  } else {
+    void settlementPromise.catch(() => undefined);
+  }
   resolvedDeps.scheduleQueuePump(
     scopedRuntime,
     params.socket,

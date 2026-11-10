@@ -145,6 +145,43 @@ export async function cancelAcceptedListenerInput(
   }
 }
 
+/** Stop the owning harness, rather than only the CLI waiting for its receipt. */
+export async function stopAcceptedListenerConversation(
+  receipt: EnqueueReceipt,
+): Promise<void> {
+  if (!receipt.connection_id) throw new Error("The owning listener is unknown");
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+    acting_user_id: receipt.acting_user_id ?? undefined,
+  };
+  await dequeueConversationMessage(
+    {
+      agentId: getEnqueueAgentId(receipt),
+      conversationId: receipt.conversation_id,
+      clientMessageId: receipt.client_message_id,
+      actingUserId: receipt.acting_user_id,
+    },
+    AbortSignal.timeout(10_000),
+  );
+  const client = await createListenerClient(receipt.connection_id, scope);
+  try {
+    await client.connect();
+    const response = await client.stopSubagent({
+      runtime: { ...scope, agent_id: getEnqueueAgentId(receipt) },
+      agent_id: getEnqueueAgentId(receipt),
+      conversation: scope,
+      client_message_id: receipt.client_message_id,
+    });
+    if (!response.success || !response.stopped)
+      throw new Error(
+        response.error ?? "The listener did not confirm the stop",
+      );
+  } finally {
+    client.close();
+  }
+}
+
 /** The CLI remains the caller; the existing listener owns model and tool execution. */
 export async function launchListenerConversation(
   params: {
