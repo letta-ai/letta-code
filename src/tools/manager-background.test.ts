@@ -90,6 +90,30 @@ describe("shared executor background boundary", () => {
     expect(notifications[0]?.text).toContain("Process killed successfully");
   });
 
+  test("a replaced listener guard drops the late client-tool notification", async () => {
+    const done = deferred<unknown>();
+    const barrier = deferred<boolean>();
+    const notifications: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => notifications.push(message));
+    const options = await prepare("TaskStop", () => done.promise);
+    const context = getExecutionContextById(options.toolContextId);
+    if (!context) throw new Error("Missing context");
+    let checked = false;
+    context.shouldEnqueueBackground = () => {
+      checked = true;
+      return barrier.promise;
+    };
+    const receipt = await executeTool("TaskStop", {}, options);
+    done.resolve({ killed: true });
+    await Bun.sleep(10);
+    expect(checked).toBe(true);
+    expect(notifications).toHaveLength(0);
+    barrier.resolve(false);
+    await Bun.sleep(10);
+    expect(backgroundEntry(receipt)[1].status).toBe("completed");
+    expect(notifications).toHaveLength(0);
+  });
+
   test("TaskStop aborts the signal delivered to a built-in by the manager", async () => {
     const notifications: QueuedMessage[] = [];
     setMessageQueueAdder((message) => notifications.push(message));

@@ -19,6 +19,7 @@ import {
 import { LISTENER_STREAM_RESUME_POLICY } from "./constants";
 import { promotePreparedInputTerminals } from "./conversation-runtime";
 import { getConversationWorkingDirectory } from "./cwd";
+import { captureExternalToolNotificationGuard } from "./external-tools";
 import { createInterruptedTurnStore } from "./interrupted-turn-record";
 import {
   createToolExecutionOutputEmitter,
@@ -583,6 +584,9 @@ async function executeRecoveredApprovalContinuation(params: {
         ),
         modContext: createListenerAgentModContext(recovered.agentId),
         modAdapters,
+        shouldEnqueueBackground:
+          captureExternalToolNotificationGuard(runtime.listener, scope)
+            ?.waitUntilCurrent ?? (async () => false),
         modEvents: createListenerModEvents(modAdapters),
       });
       if (!hasRecoveryOwnership()) {

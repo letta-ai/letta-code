@@ -358,6 +358,7 @@ const toolRegistry = getRegistry();
 let toolExecutionContextCounter = 0;
 
 type ToolExecutionContextSnapshot = {
+  shouldEnqueueBackground?: () => Promise<boolean>;
   toolRegistry: ToolRegistry;
   externalTools: Map<string, ExternalToolDefinition>;
   externalExecutor?: ExternalToolExecutor;
@@ -1971,6 +1972,7 @@ async function executeToolInner(
         permissionModeState: context?.permissionModeState,
       });
   const backgroundOptions = {
+    shouldEnqueue: context?.shouldEnqueueBackground,
     runtimeScope: executionScope,
     signal: options?.signal,
     onOutput: options?.onOutput,

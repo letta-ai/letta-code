@@ -35,6 +35,7 @@ import {
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
+import { captureExternalToolNotificationGuard } from "./external-tools";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
@@ -410,6 +411,9 @@ export async function resolveStaleApprovals(
       ? { modContext: createListenerAgentModContext(runtime.agentId) }
       : {}),
     modAdapters,
+    shouldEnqueueBackground:
+      captureExternalToolNotificationGuard(runtime.listener, scope)
+        ?.waitUntilCurrent ?? (async () => false),
     modEvents: createListenerModEvents(modAdapters),
   });
   assertCurrentTurnLease();
