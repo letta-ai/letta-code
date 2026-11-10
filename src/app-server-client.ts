@@ -214,19 +214,53 @@ function onceSocketEvent(
   return detach;
 }
 
-function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
+/**
+ * Resolves once the socket opens. Rejects on an error, an HTTP upgrade
+ * failure, a close before opening, or after `timeoutMs`, so a connection that
+ * never completes cannot hang the caller.
+ */
+function waitForSocketOpen(
+  socket: AppServerSocketLike,
+  timeoutMs: number,
+): Promise<void> {
   if (socket.readyState === WEBSOCKET_OPEN_STATE) {
     return Promise.resolve();
   }
 
-  return new Promise((resolve, reject) => {
+  return new Promise((resolvePromise, rejectPromise) => {
+    let settled = false;
+    const resolve = () => {
+      if (settled) return;
+      settled = true;
+      resolvePromise();
+    };
+    const reject = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
     let detachOpen = () => {};
     let detachError = () => {};
+    let detachClose = () => {};
     let detachResponse = () => {};
     let detachBody = () => {};
+    let upgradeRejected = false;
+    const timer =
+      timeoutMs > 0
+        ? setTimeout(() => {
+            cleanup();
+            reject(
+              new Error(
+                `App-server WebSocket failed to open: timed out after ${timeoutMs}ms`,
+              ),
+            );
+          }, timeoutMs)
+        : undefined;
     const cleanup = () => {
+      clearTimeout(timer);
       detachOpen();
       detachError();
+      detachClose();
       detachResponse();
       detachBody();
     };
@@ -237,6 +271,7 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
     if (socket.on) {
       const onResponse = (_request: unknown, response?: IncomingMessage) => {
         if (!response) return;
+        upgradeRejected = true;
         const request = _request as ClientRequest;
         let body = Buffer.alloc(0);
         let finished = false;
@@ -281,6 +316,14 @@ function waitForSocketOpen(socket: AppServerSocketLike): Promise<void> {
       cleanup();
       reject(
         new Error(`App-server WebSocket failed to open: ${String(event)}`),
+      );
+    });
+    detachClose = onceSocketEvent(socket, "close", () => {
+      // An HTTP upgrade failure reports its status from the response handler.
+      if (upgradeRejected) return;
+      cleanup();
+      reject(
+        new Error("App-server WebSocket failed to open: closed before opening"),
       );
     });
   });
@@ -368,7 +411,7 @@ export class AppServerClient {
   }
 
   async connect(): Promise<this> {
-    await waitForSocketOpen(this.socket);
+    await waitForSocketOpen(this.socket, this.requestTimeoutMs);
     return this;
   }
 

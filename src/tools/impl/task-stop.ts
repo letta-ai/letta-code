@@ -47,9 +47,38 @@ async function cancelRemoteRun(subagentId: string): Promise<TaskStopResult> {
   }
 }
 
+/** Longest TaskStop waits for another computer to answer a stop request. */
+const REMOTE_STOP_TIMEOUT_MS = 30_000;
+/** Longest TaskStop waits for an aborted remote worker's task to settle. */
+const COMPLETION_TIMEOUT_MS = 5_000;
+
+const TIMED_OUT = Symbol("timed out");
+
+/** Resolves with `promise`, or with `TIMED_OUT` once `timeoutMs` passes. */
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+): Promise<T | typeof TIMED_OUT> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<typeof TIMED_OUT>((resolve) => {
+        timer = setTimeout(() => resolve(TIMED_OUT), timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function task_stop(
   args: TaskStopArgs,
-  deps: { stopRemoteExternal?: typeof stopRemoteExternalCodingAgent } = {},
+  deps: {
+    stopRemoteExternal?: typeof stopRemoteExternalCodingAgent;
+    remoteStopTimeoutMs?: number;
+    completionTimeoutMs?: number;
+  } = {},
 ): Promise<TaskStopResult> {
   validateRequiredParams(args, ["task_id"], "TaskStop");
   const { task_id } = args;
@@ -68,7 +97,8 @@ export async function task_stop(
         try {
           if (!task.runtimeScope)
             throw new Error("its parent conversation is not known");
-          const result = await (
+          const timeoutMs = deps.remoteStopTimeoutMs ?? REMOTE_STOP_TIMEOUT_MS;
+          const stopping = (
             deps.stopRemoteExternal ?? stopRemoteExternalCodingAgent
           )({
             agentId: child?.agentId as string,
@@ -78,6 +108,13 @@ export async function task_stop(
               actingUserId: task.actingUserId,
             },
           });
+          // A stop that settles after the timeout has nobody left to report to.
+          stopping.catch(() => {});
+          const result = await withTimeout(stopping, timeoutMs);
+          if (result === TIMED_OUT)
+            throw new Error(
+              `${external.computer} did not answer within ${timeoutMs / 1000}s, so the worker may still be running`,
+            );
           remote = {
             killed: result.stopped,
             output: result.stopped
@@ -99,9 +136,22 @@ export async function task_stop(
         remoteExternalStopped ? REMOTE_EXTERNAL_WORKER_STOPPED : undefined,
       );
       task.error = "Aborted by user";
-      await task.completion;
+      // A remote follower can be stuck reconnecting; don't let it hold the turn.
+      const completionTimeoutMs =
+        deps.completionTimeoutMs ?? COMPLETION_TIMEOUT_MS;
+      const settled = external?.computer
+        ? await withTimeout(
+            Promise.resolve(task.completion),
+            completionTimeoutMs,
+          )
+        : await task.completion;
       task.status = "failed";
       scheduleBackgroundTaskCleanup(task_id);
+      if (settled === TIMED_OUT)
+        return {
+          killed: true,
+          output: `${remote?.output ?? "Stopped the task"}, but stopped waiting for its result after ${completionTimeoutMs / 1000}s`,
+        };
       return remote ?? { killed: true };
     }
     // Task exists but isn't running or doesn't have abort controller
