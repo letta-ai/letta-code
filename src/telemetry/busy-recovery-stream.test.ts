@@ -21,6 +21,85 @@ function capture() {
 }
 
 describe("busy recovery stream outcomes", () => {
+  test("final checkpoint retires 128 abandoned/hung observers without double release on late cleanup", async () => {
+    capture();
+    let callbacks: Array<() => void> = [];
+    const oldController = new AbortController();
+    const oldReaders: AsyncIterator<unknown>[] = [];
+    const clock = {
+      schedule: (cb: () => void) => {
+        callbacks.push(cb);
+        return () => {};
+      },
+    };
+    for (let n = 0; n < 128; n += 1) {
+      const stream = {
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<unknown>>(() => {}),
+          return: async () => ({ done: true as const, value: undefined }),
+        }),
+      };
+      const observed = traceBusyRecoveryStream(
+        stream,
+        "conv-retire",
+        `old-${n}`,
+        oldController.signal,
+        {},
+        clock,
+      );
+      // Half never start iteration, half have genuinely hung reads.
+      if (n % 2 === 0) {
+        const reader = observed[Symbol.asyncIterator]();
+        oldReaders.push(reader);
+        void reader.next();
+      } else
+        oldReaders.push({
+          next: async () => ({ done: true as const, value: undefined }),
+          return: async () => observed[Symbol.asyncIterator]().return(),
+        });
+    }
+    expect(callbacks).toHaveLength(128);
+    const first = callbacks;
+    callbacks = [];
+    for (const callback of first) callback();
+    expect(callbacks).toHaveLength(128);
+    const last = callbacks;
+    callbacks = [];
+    for (const callback of last) callback();
+    expect(callbacks).toHaveLength(0);
+
+    const nextController = new AbortController();
+    const add = () =>
+      traceBusyRecoveryStream(
+        { async *[Symbol.asyncIterator]() {} },
+        "conv-later",
+        "later",
+        nextController.signal,
+        {},
+        clock,
+      );
+    for (let n = 0; n < 128; n += 1) add();
+    expect(callbacks).toHaveLength(128);
+    add();
+    expect(callbacks).toHaveLength(128);
+    oldController.abort();
+    for (const reader of oldReaders) await reader.return?.();
+    // Late terminal callbacks must not free slots owned by the next generation.
+    add();
+    expect(callbacks).toHaveLength(128);
+    // The telemetry rate budget is tested separately; isolate actual observation here.
+    __testResetBusyRecoveryBudget();
+    callbacks[0]?.();
+    expect(
+      diagnostics.some(
+        (record) =>
+          record.conversation_id === "conv-later" &&
+          record.phase === "stream_progress",
+      ),
+    ).toBe(true);
+    nextController.abort();
+  });
+
   test("opt-out installs no observer or timer", () => {
     process.env.DO_NOT_TRACK = "1";
     const stream = { async *[Symbol.asyncIterator]() {} };
@@ -158,7 +237,8 @@ describe("busy recovery stream outcomes", () => {
       expect(scheduled).toBe(2);
       expect(JSON.stringify(diagnostics)).not.toContain("secret");
       controller.abort();
-      expect(diagnostics.at(-1)?.phase).toBe("stream_cancelled");
+      // The observer retired at the last checkpoint; late abort is no longer watched.
+      expect(diagnostics.at(-1)?.phase).toBe("stream_waiting");
       expect(cancelled).toBe(1);
     },
   );

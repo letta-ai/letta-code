@@ -68,12 +68,22 @@ export function traceBusyRecoveryStream<T extends AsyncIterable<unknown>>(
     idleMs: now() - lastChunkAt,
   });
   let cancelTimer = () => {};
+  // Observation expires independently of the underlying stream ending.
+  let retired = false;
+  const retire = () => {
+    if (retired) return;
+    retired = true;
+    cancelTimer();
+    signal?.removeEventListener("abort", onAbort);
+    activeObservers -= 1;
+  };
   const checkpoint = () => {
     if (finished) return;
     reportedProgress = true;
     reportBusyRecovery("stream_progress", fields());
     cancelTimer = schedule(() => {
       if (!finished) reportBusyRecovery("stream_waiting", fields());
+      retire();
     }, 240000);
   };
   cancelTimer = schedule(() => checkpoint(), 60000);
@@ -86,9 +96,7 @@ export function traceBusyRecoveryStream<T extends AsyncIterable<unknown>>(
   ) => {
     if (finished) return;
     finished = true;
-    cancelTimer();
-    signal?.removeEventListener("abort", onAbort);
-    activeObservers -= 1;
+    retire();
     if (recovered || reportedProgress || phase === "stream_failed")
       reportBusyRecovery(phase, fields());
   };
