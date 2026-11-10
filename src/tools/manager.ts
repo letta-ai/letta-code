@@ -54,6 +54,7 @@ import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
 import { messageChannelTelemetry } from "@/telemetry/channel";
+import { autoBackgroundClientTool } from "@/tools/client-tool-background";
 import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
 import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
 import type {
@@ -999,13 +1000,6 @@ async function checkModPermissionForContext(options: {
   );
 }
 
-/**
- * Check permission for a tool execution using the full permission system.
- * @param toolName - Name of the tool
- * @param toolArgs - Tool arguments
- * @param workingDirectory - Current working directory (defaults to process.cwd())
- * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
- */
 export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
@@ -1067,13 +1061,6 @@ export async function checkToolPermission(
   );
 }
 
-/**
- * Save a permission rule to settings
- * @param rule - Permission rule (e.g., "Read(src/**)")
- * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
- * @param scope - Where to save ("project", "local", "user", or "session")
- * @param workingDirectory - Current working directory
- */
 export async function savePermissionRule(
   rule: string,
   ruleType: PermissionRuleType,
@@ -1959,14 +1946,6 @@ function toolExecutionModContext(
   });
 }
 
-/**
- * Executes a tool by name with the provided arguments.
- *
- * @param name - The name of the tool to execute
- * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
- * @returns Promise with the tool's execution result including status and optional stdout/stderr
- */
 async function executeToolInner(
   name: string,
   args: ToolArgs,
@@ -2068,14 +2047,22 @@ async function executeToolInner(
         return createModPermissionToolResult(permissionDecision);
       }
     }
-    return executeModTool(name, modTool, eventArgs, executionScope, {
-      signal: options?.signal,
-      toolCallId: options?.toolCallId,
-      onOutput: options?.onOutput,
-      workingDirectory,
-      scopedAgentId,
-      modContext,
-    });
+    return autoBackgroundClientTool(
+      name,
+      executeModTool(name, modTool, eventArgs, executionScope, {
+        signal: options?.signal,
+        toolCallId: options?.toolCallId,
+        onOutput: options?.onOutput,
+        workingDirectory,
+        scopedAgentId,
+        modContext,
+      }),
+      {
+        runtimeScope: executionScope,
+        signal: options?.signal,
+      },
+      modEvents,
+    );
   }
   // Check if this is an external tool (SDK-executed)
   if (activeExternalTools.has(name)) {
@@ -2106,6 +2093,23 @@ async function executeToolInner(
       permissionDecision.decision !== "allow"
     ) {
       return createModPermissionToolResult(permissionDecision);
+    }
+    if (externalTool?.executor && externalTool.autoBackground === undefined) {
+      return runWithRuntimeContext(executionScope, () =>
+        autoBackgroundClientTool(
+          name,
+          executeExternalTool(
+            options?.toolCallId ?? `ext-${Date.now()}`,
+            name,
+            eventArgs as Record<string, unknown>,
+            externalTool.executor,
+            externalTool,
+            options?.signal,
+          ),
+          { runtimeScope: executionScope, signal: options?.signal },
+          modEvents,
+        ),
+      );
     }
     return runWithRuntimeContext(executionScope, () =>
       autoBackgroundExternalTool(
@@ -2431,29 +2435,25 @@ async function executeToolInner(
     }
   };
 
-  return runWithRuntimeContext(executionScope, run);
+  return runWithRuntimeContext(executionScope, () =>
+    autoBackgroundClientTool(
+      internalName,
+      run(),
+      {
+        runtimeScope: executionScope,
+        signal: options?.signal,
+      },
+      modEvents,
+    ),
+  );
 }
 
-/**
- * Executes a tool and gives mods a chance to observe or replace the result via
- * the `tool_end` event. A handler returning `{ result: { status, output } }`
- * overrides what the agent sees (first handler wins). Only fires for string
- * results — multimodal/image results pass through unchanged. Delivery is
- * capability-gated (`events.tools`), so only enabled surfaces receive it.
- *
- * @param name - Name of the tool to execute
- * @param args - Arguments object to pass to the tool
- * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
- * @returns Promise with the tool's execution result including status and optional stdout/stderr
- */
+/** Execute a tool, then apply scoped tool_end overrides before delivery. */
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
-  // Snapshot ambient + vault secrets before the tool runs: a runtime
-  // credential can rotate mid-tool, and the post-run capture alone would
-  // miss the pre-rotation value coming back through a mod override.
   const preRunAgentId = options?.toolContextId
     ? getExecutionContextById(options.toolContextId)?.runtimeContext?.agentId
     : undefined;

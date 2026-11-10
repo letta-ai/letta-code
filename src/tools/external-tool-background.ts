@@ -85,6 +85,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   tool: { autoBackground?: boolean } | undefined,
   operation: Promise<T>,
   options?: {
+    clientTool?: boolean;
     yieldMs?: number;
     signal?: AbortSignal;
     scope?: NotificationScope;
@@ -101,6 +102,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
 ): Promise<
   T | { status: "success"; toolReturn: string } | InterruptedExternalResult
 > {
+  const label = options?.clientTool ? "Tool" : "External tool";
   const signal = options?.signal;
   const runtime = options?.runtimeScope;
   const scope =
@@ -189,6 +191,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
           String(outcome.kind === "error" ? outcome.error : "Unknown error"),
         );
     if (
+      !options?.clientTool &&
       status === "failed" &&
       (!result ||
         (typeof result.toolReturn === "string" &&
@@ -210,7 +213,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
       text: formatTaskNotification({
         taskId,
         status,
-        summary: `External tool ${toolName} ${status}`,
+        summary: `${label} ${toolName} ${status}`,
         result: content.content,
         usage: { durationMs: Date.now() - startedAt },
       }),
@@ -221,6 +224,6 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
 
   return {
     status: "success",
-    toolReturn: `External tool ${toolName} is still running. Task ID: ${taskId}. Its completion will arrive as a task notification. Do not retry an in-flight write or use this task ID as its result. A remote write cannot be cancelled by TaskStop.`,
+    toolReturn: `${label} ${toolName} is still running. Task ID: ${taskId}. Its completion will arrive as a task notification. Do not retry an in-flight write or use this task ID as its result.${options?.clientTool ? "" : " A remote write cannot be cancelled by TaskStop."}`,
   };
 }
