@@ -81,7 +81,7 @@ try {
     }
   })) {
     // The result message contains structured_output with validated data
-    if (message.type === "result" && message.subtype === "success" && message.structured_output) {
+    if (message.type === "result" && message.subtype === "success" && !message.is_error && message.structured_output) {
       console.log(message.structured_output);
       // { company_name: "Anthropic", founded_year: 2021, headquarters: "San Francisco, CA" }
     }
@@ -118,7 +118,11 @@ async def main():
             ),
         ):
             # The result message contains structured_output with validated data
-            if isinstance(message, ResultMessage) and message.structured_output:
+            if (
+                isinstance(message, ResultMessage)
+                and not message.is_error
+                and message.structured_output
+            ):
                 print(message.structured_output)
                 # {'company_name': 'Anthropic', 'founded_year': 2021, 'headquarters': 'San Francisco, CA'}
     except Exception as error:
@@ -173,7 +177,7 @@ try {
       }
     }
   })) {
-    if (message.type === "result" && message.subtype === "success" && message.structured_output) {
+    if (message.type === "result" && message.subtype === "success" && !message.is_error && message.structured_output) {
       // Validate and get fully typed result
       const parsed = FeaturePlan.safeParse(message.structured_output);
       if (parsed.success) {
@@ -223,7 +227,11 @@ async def main():
                 }
             ),
         ):
-            if isinstance(message, ResultMessage) and message.structured_output:
+            if (
+                isinstance(message, ResultMessage)
+                and not message.is_error
+                and message.structured_output
+            ):
                 # Validate and get fully typed result
                 plan = FeaturePlan.model_validate(message.structured_output)
                 print(f"Feature: {plan.feature_name}")
@@ -297,7 +305,7 @@ try {
       }
     }
   })) {
-    if (message.type === "result" && message.subtype === "success" && message.structured_output) {
+    if (message.type === "result" && message.subtype === "success" && !message.is_error && message.structured_output) {
       const data = message.structured_output as { total_count: number; todos: Array<{ file: string; line: number; text: string; author?: string; date?: string }> };
       console.log(`Found ${data.total_count} TODOs`);
       data.todos.forEach((todo) => {
@@ -352,7 +360,11 @@ async def main():
                 output_format={"type": "json_schema", "schema": todo_schema}
             ),
         ):
-            if isinstance(message, ResultMessage) and message.structured_output:
+            if (
+                isinstance(message, ResultMessage)
+                and not message.is_error
+                and message.structured_output
+            ):
                 data = message.structured_output
                 print(f"Found {data['total_count']} TODOs")
                 for todo in data["todos"]:
@@ -383,14 +395,19 @@ If your application shows or logs tool calls, skip the ones named `StructuredOut
 
 Structured output generation can fail when the agent cannot produce valid JSON matching your schema. This typically happens when the schema is too complex for the task, the task itself is ambiguous, or the agent hits its retry limit trying to fix validation errors. It can also happen without any validation failure: a [model fallback](https://code.claude.com/docs/en/model-config.md#automatic-model-fallback) can retract an already-completed output mid-stream, and if no retry replaces it the run ends with the same error. Check the `errors` list on the error result message to tell the two causes apart before debugging your schema.
 
-When an error occurs, the result message has a `subtype` indicating what went wrong:
+Check the result message's `subtype`:
 
 | Subtype | Meaning |
 | - | - |
-| `success` | Output was generated and validated successfully |
+| `success` | The run ended without an error subtype |
 | `error_max_structured_output_retries` | No valid output remained after multiple attempts (validation failures, or a model-fallback retraction with no successful retry) |
 
-A result can also end with subtype `success` but no `structured_output` value, for example when the run completes without the agent producing a structured output. Treat that case as a failure as well. The troubleshooting entry [structured\_output is None but the result says success](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md#structured_output-is-none-but-the-result-says-success) covers this case. The example below treats a result as successful only when the `subtype` is `success` and `structured_output` is present, and handles every other result as a failure:
+A `success` subtype doesn't by itself mean the run produced an answer. Treat a result as a failure when the result's `is_error` is `true` or `structured_output` is absent:
+
+* **`is_error` on the result is `true`**: for example, the final model request ended in an API error or a refusal. Don't use a `structured_output` value on such a result.
+* **`structured_output` is absent**: to find the cause, see [structured\_output is None but the result says success](https://code.claude.com/docs/en/agent-sdk/troubleshooting.md#structured_output-is-none-but-the-result-says-success)
+
+The example below applies these checks:
 
 ```typescript TypeScript theme={null}
 import { query } from "@anthropic-ai/claude-agent-sdk";
@@ -415,13 +432,13 @@ try {
     }
   })) {
     if (msg.type === "result") {
-      if (msg.subtype === "success" && msg.structured_output) {
+      if (msg.subtype === "success" && !msg.is_error && msg.structured_output) {
         // Use the validated output
         console.log(msg.structured_output);
       } else if (msg.subtype === "error_max_structured_output_retries") {
         console.error("Could not produce valid output");
       } else {
-        console.error("Run ended without a structured output");
+        console.error("Run ended with an error or without a structured output");
       }
     }
   }
@@ -456,13 +473,17 @@ async def main():
             ),
         ):
             if isinstance(message, ResultMessage):
-                if message.subtype == "success" and message.structured_output:
+                if (
+                    message.subtype == "success"
+                    and not message.is_error
+                    and message.structured_output
+                ):
                     # Use the validated output
                     print(message.structured_output)
                 elif message.subtype == "error_max_structured_output_retries":
                     print("Could not produce valid output")
                 else:
-                    print("Run ended without a structured output")
+                    print("Run ended with an error or without a structured output")
     except Exception as error:
         # A single-shot query() raises after yielding an error result. If the
         # failure was an error result, the error subtype branches above have

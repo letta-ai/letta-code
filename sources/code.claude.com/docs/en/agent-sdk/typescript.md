@@ -2007,7 +2007,7 @@ What `0` and an absent field tell you:
 
 #### `startup_failure_reason`
 
-Why Claude Code refused to start, so your application can offer the fix instead of a retry. Claude Code sets it on the `error_during_execution` result it writes before exiting on a known startup failure. That result carries zeroed totals, and its `errors` array carries the same text as stderr. The field is absent on every other result. Requires Agent SDK v0.3.274 or later.
+Why Claude Code refused to start, so your application can offer the fix instead of a retry. Claude Code sets it on the `error_during_execution` result it writes before exiting on a known startup failure. That result carries zeroed totals, and its `errors` array carries the failure message. The field is absent on every other result. Requires Agent SDK v0.3.274 or later.
 
 Set `CLAUDE_CODE_STARTUP_FAILURE_RESULTS` to `1` in [`env`](#options) to receive this result for every `SDKStartupFailureReason` value. Without that variable, Claude Code writes the result only for these failures, and the rest end with stderr output, a non-zero exit, and no result message:
 
@@ -5711,7 +5711,7 @@ type SDKAuthStatusMessage = {
 
 ### `SDKTaskStartedMessage`
 
-Emitted when a task begins. The `task_type` field is `"local_bash"` for Bash commands and [Monitor](#monitor) watches, `"local_agent"` for subagents, or `"remote_agent"`.
+Emitted when a task begins. `task_type` names the kind of task, such as `"local_bash"` for Bash commands and [Monitor](#monitor) watches, `"local_agent"` for subagents, `"mcp_task"` for [background MCP tool calls](https://code.claude.com/docs/en/mcp.md#automatic-backgrounding-of-long-tool-calls), or `"remote_agent"`.
 
 ```typescript theme={null}
 type SDKTaskStartedMessage = {
@@ -5920,6 +5920,7 @@ type SDKRateLimitEvent = {
     errorCode?: "credits_required";
     canUserPurchaseCredits?: boolean;
     hasChargeableSavedPaymentMethod?: boolean;
+    overageEnabled?: boolean;
   };
   uuid: UUID;
   session_id: string;
@@ -5927,6 +5928,8 @@ type SDKRateLimitEvent = {
 ```
 
 When `errorCode` is `"credits_required"`, the rejection is from a claude.ai subscription whose included usage is exhausted, and the session cannot continue until the user buys usage credits. `canUserPurchaseCredits` indicates whether the authenticated user can buy credits for the account, and `hasChargeableSavedPaymentMethod` indicates whether a saved payment method is on file. All three fields are absent on rate-limit events that are not credits-required rejections. Requires Claude Code v2.1.181 or later.
+
+On a warning about a plan usage limit, where `status` is `"allowed_warning"`, `overageEnabled` reports whether the account has [usage credits](https://code.claude.com/docs/en/costs.md#add-usage-credits-to-your-subscription) turned on. Requires Claude Code v2.1.295 or later.
 
 ### `SDKLocalCommandOutputMessage`
 

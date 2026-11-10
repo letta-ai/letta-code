@@ -1263,7 +1263,7 @@ Skip the one-time notice describing [auto mode](https://code.claude.com/docs/en/
 
 Skip the confirmation dialog Claude Code shows before a session enters `bypassPermissions` mode, whether from `--dangerously-skip-permissions` or from `defaultMode: "bypassPermissions"`. Claude Code writes `true` here in your user settings when you accept that dialog once.
 
-* **Scope**: [`User, local, or managed`](#scopes). An untrusted repository can't skip the dialog for you.
+* **Scope**: [`User, local, or managed`](#scopes), and files passed with `--settings`. [Background sessions](https://code.claude.com/docs/en/permission-modes.md#bypass-permissions-ignored-in-a-background-session) count only user and managed settings. An untrusted repository can't skip the dialog for you.
 * **Type**: Boolean
   * `true`: Claude Code skips the confirmation dialog before a session enters `bypassPermissions` mode
   * `false`: the same as unset; the dialog appears unless another of these files sets `true`
@@ -3193,7 +3193,7 @@ See [Subagent status lines](https://code.claude.com/docs/en/statusline.md#subage
 
 ### `syntaxHighlightingDisabled`
 
-Claude Code colors code by language in the diffs, code blocks, and file previews it shows in the terminal, with its built-in highlighter; no plugin or language server is involved. Set this key to `true` to show them as plain text instead, for example if the colors clash with your terminal theme or slow a screen reader.
+Claude Code colors code by language in the diffs, code blocks, and file previews it shows in the terminal, with its built-in highlighter. Set this key to `true` to show them as plain text instead, for example if the colors clash with your terminal theme or slow a screen reader.
 
 * **Scope**: [`Any file`](#scopes)
 * **Type**: Boolean

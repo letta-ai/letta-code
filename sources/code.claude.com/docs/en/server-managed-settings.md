@@ -95,6 +95,8 @@ The schema [can lag behind the newest releases](https://code.claude.com/docs/en/
 
 To confirm that settings are being applied, ask a user to restart Claude Code. If the configuration includes settings that trigger the [security approval dialog](#security-approval-dialogs), the user sees a prompt describing the managed settings the next time Claude Code fetches them: at the next start, or within an hour in a running interactive session. You can also verify that managed permission rules are active by having a user run `/permissions` to view their effective permission rules.
 
+In a session, have the user run `/status`. The [`Setting sources` line](https://code.claude.com/docs/en/managed-settings#read-the-source-in-/status) lists `Enterprise managed settings` with `remote` in parentheses when server-managed settings apply.
+
 To check the fetch outcome on a specific machine, have the user run `claude doctor` and read the `Managed settings (remote)` line. Requires Claude Code v2.1.248 or later. The line reports one of four outcomes:
 
 * The delivered settings loaded
@@ -247,7 +249,7 @@ Clients signed in through a [Claude apps gateway](#platform-availability) wait f
 * If the gateway answers an attended interactive launch with a `401` and this setting is off, the gateway has ended that sign-in. Claude Code prints [`Cloud gateway session expired — run /login to reconnect.`](https://code.claude.com/docs/en/errors#cloud-gateway-session-expired) and opens the session signed out of the gateway until the user runs `/login`.
 * When the fetch fails in any other way, or in any other kind of launch except a `claude auth` subcommand, the client exits with an error.
 
-When this setting is active in a session that fetches server-managed settings, the CLI blocks at startup until remote settings are freshly fetched. If the fetch fails, the CLI exits rather than proceeding without the policy. This setting self-perpetuates: once delivered from the server, it is also cached locally so that subsequent startups enforce the same behavior even before the first successful fetch of a new session. A session that [doesn't fetch server-managed settings](#platform-availability) starts without waiting.
+When this setting is active in a session that fetches server-managed settings, the CLI blocks at startup until remote settings are freshly fetched. If the fetch fails, the CLI exits rather than proceeding without the policy. A session that [doesn't fetch server-managed settings](#platform-availability) starts without waiting.
 
 To enable this, add the key to your managed settings configuration:
 
@@ -258,6 +260,8 @@ To enable this, add the key to your managed settings configuration:
 ```
 
 You can also set this key in an [endpoint-managed](https://code.claude.com/docs/en/managed-settings.md#delivery-mechanisms) MDM profile or system `managed-settings.json` file to enforce fail-closed behavior on first launch, before any server payload has arrived. This flag is an exception to the [precedence rule](#settings-precedence) above: Claude Code honors it when any admin-controlled managed source sets it, even if a cached server-managed payload is also present, so it doesn't ignore an MDM-delivered value when server-managed settings exist.
+
+On later startups, Claude Code reads a server-delivered value from the cached settings, so the setting is active before the new session's first fetch. To keep the setting active without relying on the cached copy, also set the key in an endpoint-managed source.
 
 When a [`policyHelper`](https://code.claude.com/docs/en/settings-reference#policyhelper) supplies managed settings, its output replaces every other managed source for the keys Claude Code reads after startup. For the sources Claude Code reads this key from, see [its settings entry](https://code.claude.com/docs/en/settings-reference.md#forceremotesettingsrefresh). The `policyHelper` entry says which sources Claude Code reads the helper from and when it runs.
 

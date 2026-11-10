@@ -903,9 +903,14 @@ On `PreToolUse`, a timed-out `command`, `http`, or `mcp_tool` hook doesn't block
 
 #### Hooks that start a background process
 
+A hook can start a long-running program, such as a dev server, and leave it running while the session continues. In the hook's script or [shell form](#exec-form-and-shell-form) command:
+
+* Run the program in the background
+* Redirect its stdout and stderr. For example, the Bash command `npm run dev > dev-server.log 2>&1 &` sends both to a file. If you don't redirect them, a hook that isn't [async](#run-hooks-in-the-background) takes up to 10 seconds to finish after its own process exits.
+
 If your command hook makes its decision in a background process and exits, a deny that process prints after Claude Code has stopped reading doesn't block the tool call. For a hook that isn't [async](#run-hooks-in-the-background), Claude Code finishes reading the hook's output shortly after the hook's own process exits.
 
-Print the decision before you start a background process, and redirect that process's stdout and stderr. If your script prints an allow, then starts a background process without redirecting that process's stdout and stderr, Claude Code blocks the tool call. The hook error includes `refusing to honor the suspect capture`.
+Print the decision before you start a background process, and redirect that process's stdout and stderr. If your script prints an allow, then starts a background process without redirecting that process's stdout and stderr, Claude Code blocks the tool call. The hook error includes `stdio went quiet` and `refusing to honor the suspect capture`.
 
 This `PreToolUse` hook script prints the decision with `policy-check.sh`, then uploads metrics in the background:
 

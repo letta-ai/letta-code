@@ -1858,7 +1858,7 @@ class ConversationResetMessage:
 
 ### `TaskStartedMessage`
 
-Emitted when a background task starts. A background task is anything tracked outside the main turn: a backgrounded Bash command, a [Monitor](#monitor) watch, a subagent spawned via the Agent tool, or a remote agent. The `task_type` field tells you which. This naming is unrelated to the `Task`-to-`Agent` tool rename.
+Emitted when a background task starts. A background task is anything tracked outside the main turn, such as a backgrounded Bash command, a [Monitor](#monitor) watch, a subagent spawned via the Agent tool, or a remote agent. This naming is unrelated to the `Task`-to-`Agent` tool rename.
 
 ```python theme={null}
 @dataclass
@@ -1878,7 +1878,7 @@ class TaskStartedMessage(SystemMessage):
 | `uuid` | `str` | Unique message identifier |
 | `session_id` | `str` | Session identifier |
 | `tool_use_id` | `str \| None` | Associated tool use ID |
-| `task_type` | `str \| None` | Which kind of background task: `"local_bash"` for background Bash and Monitor watches, `"local_agent"`, or `"remote_agent"` |
+| `task_type` | `str \| None` | Which kind of background task, such as `"local_bash"` for background Bash and Monitor watches, `"local_agent"` for subagents, `"mcp_task"` for [background MCP tool calls](https://code.claude.com/docs/en/mcp.md#automatic-backgrounding-of-long-tool-calls), or `"remote_agent"` |
 
 ### `TaskUsage`
 
