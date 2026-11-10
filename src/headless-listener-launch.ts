@@ -17,6 +17,7 @@ import {
 } from "@/backend/api/conversation-enqueue";
 import { getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import { stopLocalSubagent } from "@/tools/impl/subagent-stop-bridge";
 import type {
   ConversationRuntimeScope,
   LoopState,
@@ -24,6 +25,7 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
+import type { SubagentStopCommand } from "@/types/subagent-protocol";
 import {
   type ListenerLaunchResult,
   resolveEnvironmentMaxWaitMs,
@@ -164,19 +166,33 @@ export async function stopAcceptedListenerConversation(
     },
     AbortSignal.timeout(10_000),
   );
-  const client = await createListenerClient(receipt.connection_id, scope);
-  try {
-    await client.connect();
-    const response = await client.stopSubagent({
-      runtime: { ...scope, agent_id: getEnqueueAgentId(receipt) },
-      agent_id: getEnqueueAgentId(receipt),
-      conversation: scope,
-      client_message_id: receipt.client_message_id,
-    });
+  const command: SubagentStopCommand = {
+    type: "subagent_stop",
+    request_id: randomUUID(),
+    runtime: { ...scope, agent_id: getEnqueueAgentId(receipt) },
+    agent_id: getEnqueueAgentId(receipt),
+    conversation: scope,
+    client_message_id: receipt.client_message_id,
+  };
+  const requireStopped = (response: {
+    success: boolean;
+    stopped: boolean;
+    error?: string;
+  }) => {
     if (!response.success || !response.stopped)
       throw new Error(
         response.error ?? "The listener did not confirm the stop",
       );
+  };
+  const local = stopLocalSubagent(receipt.connection_id, command);
+  if (local) {
+    requireStopped(await local);
+    return;
+  }
+  const client = await createListenerClient(receipt.connection_id, scope);
+  try {
+    await client.connect();
+    requireStopped(await client.stopSubagent(command));
   } finally {
     client.close();
   }

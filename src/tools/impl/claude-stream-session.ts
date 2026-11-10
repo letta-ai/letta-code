@@ -9,7 +9,7 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
-import { interruptInput } from "./claude-control-input";
+import { interruptInput, userInput } from "./claude-control-input";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
@@ -144,17 +144,6 @@ export const SETTLED_EXIT_GRACE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function userInput(prompt: string, uuid: string): string {
-  return `${JSON.stringify({
-    type: "user",
-    uuid,
-    message: {
-      role: "user",
-      content: [{ type: "text", text: prompt }],
-    },
-  })}\n`;
 }
 
 export function buildClaudeStreamArgs(options: {
@@ -981,12 +970,14 @@ export async function sendClaudeMessage(
     return { mode: "steered", sessionId: options.sessionId };
   return trackedReceipt(delivered.session);
 }
-export async function stopClaudeSession(sessionId: string): Promise<void> {
+export async function stopClaudeSession(sessionId: string): Promise<boolean> {
   const session = sessions.get(sessionId);
   if (session) {
     session.abortController.abort(new Error("Stopped by parent"));
     await confirmProcessExit(session.exit, "Claude Code");
+    return true;
   }
+  return false;
 }
 
 export function hasActiveClaudeTurn(sessionId: string): boolean {

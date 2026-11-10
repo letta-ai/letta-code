@@ -14,6 +14,7 @@ import { getErrorMessage } from "@/utils/error";
 export async function stopListenerConversation(
   command: SubagentStopCommand,
   abort: (scope: ConversationRuntimeScope) => Promise<boolean>,
+  deps: { cancelWakes?: typeof cancelConversationWakes } = {},
 ): Promise<SubagentStopResponse> {
   const base: SubagentStopResponse = {
     type: "subagent_stop_response",
@@ -62,7 +63,7 @@ export async function stopListenerConversation(
     await stopConversationBackground(backgroundScope);
     await runWithRuntimeContext(
       { ...backgroundScope, actingUserId: command.runtime.acting_user_id },
-      () => cancelConversationWakes(backgroundScope),
+      () => (deps.cancelWakes ?? cancelConversationWakes)(backgroundScope),
     );
     return { ...base, success: true, stopped: true };
   } catch (error) {

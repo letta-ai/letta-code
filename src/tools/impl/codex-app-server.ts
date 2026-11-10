@@ -957,11 +957,12 @@ export async function runCodexTurn(
   }
 }
 
-export async function stopCodexSession(threadId: string): Promise<void> {
+export async function stopCodexSession(threadId: string): Promise<boolean> {
   const session = sessions.get(threadId);
-  if (!session) return;
+  if (!session) return false;
   await session.client.stop();
   if (sessions.get(threadId) === session) sessions.delete(threadId);
+  return true;
 }
 
 export function hasActiveCodexTurn(threadId: string): boolean {

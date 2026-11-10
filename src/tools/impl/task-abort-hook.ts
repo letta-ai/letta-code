@@ -13,11 +13,18 @@ export function buildBackgroundTaskAbortHook(
   taskId: string,
   abortController: AbortController,
 ): () => void {
-  // Snapshot at registration: remote-ness and the subagent row id never
-  // change for a task's lifetime. Remote killed:false preserves the retry
-  // handle; only local fail-safe aborts.
+  // A local launcher can hand off to a listener after registration. Preserve
+  // that listener's retry handle whenever cancellation is unconfirmed.
   const bgTask = backgroundTasks.get(taskId);
-  const isRemote = () => Boolean(bgTask?.remote || bgTask?.stop);
+  const isRemote = () =>
+    Boolean(
+      bgTask?.remote ||
+        bgTask?.stop ||
+        (bgTask?.status === "running" &&
+          getSubagents().some(
+            (child) => child.id === bgTask.subagentId && child.conversationId,
+          )),
+    );
   const failSafeAbort = () => !isRemote() && abortController.abort();
   const hook = () => {
     void import("./task-stop.js")

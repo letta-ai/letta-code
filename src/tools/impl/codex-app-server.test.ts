@@ -10,6 +10,7 @@ import {
   listCodexModels,
   sendCodexMessage,
   startCodexTurn,
+  stopCodexSession,
 } from "./codex-app-server";
 import { CODEX_CAPACITY_ERROR } from "./codex-app-server-payloads";
 
@@ -948,4 +949,35 @@ describe("Codex model discovery", () => {
       rmSync(emptyPath, { force: true, recursive: true });
     }
   });
+});
+
+test("stopping Codex waits for the CLI process exit rather than a turn interrupt", async () => {
+  const fake = new FakeCodexTransport();
+  let finish!: (exit: {
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }) => void;
+  const exited = new Promise<{
+    code: number | null;
+    signal: NodeJS.Signals | null;
+  }>((resolve) => {
+    finish = resolve;
+  });
+  const turn = await startCodexTurn(
+    { parentAgentId: "parent", cwd: "/repo", prompt: "work" },
+    {
+      createTransport: () => ({ ...fake.transport(), exited }),
+    },
+  );
+  let acknowledged = false;
+  const stopping = stopCodexSession(turn.threadId).then((result) => {
+    acknowledged = true;
+    return result;
+  });
+  await Bun.sleep(0);
+  expect(fake.killed).toBe(true);
+  expect(acknowledged).toBe(false);
+  finish({ code: null, signal: "SIGTERM" });
+  expect(await stopping).toBe(true);
+  await turn.completion;
 });

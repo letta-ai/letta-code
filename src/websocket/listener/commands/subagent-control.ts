@@ -4,8 +4,14 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
-import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
-import { sendCodexMessage } from "@/tools/impl/codex-app-server";
+import {
+  sendClaudeMessage,
+  stopClaudeSession,
+} from "@/tools/impl/claude-stream-session";
+import {
+  sendCodexMessage,
+  stopCodexSession,
+} from "@/tools/impl/codex-app-server";
 import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
   buildExternalWorkerResumeEnv,
@@ -334,10 +340,27 @@ export async function handleSubagentStopCommand(
   )
     return { ...base, error: "Parent runtime does not match the stop request" };
   const owned = findOwnedTask(parent, command.agent_id);
+  let nativeStopped = false;
+  if (owned || ownsNativeSession(parent, command.agent_id)) {
+    const target = parseExternalCodingAgentId(command.agent_id);
+    try {
+      if (target && !target.computer) {
+        if (target.type === "claude-code")
+          nativeStopped = await stopClaudeSession(target.sessionId);
+        if (target.type === "codex")
+          nativeStopped = await stopCodexSession(target.sessionId);
+      }
+    } catch (error) {
+      return {
+        ...base,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   if (!owned) {
     // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
-      return { ...base, success: true };
+      return { ...base, success: true, stopped: nativeStopped };
     return { ...base, error: "Subagent does not belong to this conversation" };
   }
   const [taskId, task] = owned;
