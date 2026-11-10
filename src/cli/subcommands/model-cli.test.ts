@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
   filterStructuredOutputRows,
   structuredOutputSupport,
 } from "@/cli/subcommands/model";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 test("a BYOK model's capability overrides a matching hosted preset", () => {
   const preset = {
@@ -184,7 +185,7 @@ describe("model CLI", () => {
   }, 30000);
 
   afterAll(async () => {
-    if (home) await rm(home, { recursive: true, force: true });
+    if (home) await removeTestDir(home);
   });
 
   test("removes agents config and its help/options", async () => {

@@ -14,6 +14,7 @@ import {
   decideWhatsAppAttachmentPolicy,
   type WhatsAppAttachmentPolicyInput,
 } from "@/channels/whatsapp/attachment-policy";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const directTarget = "15551234567@s.whatsapp.net";
 const groupTarget = "120363000000000000@g.us";
@@ -34,8 +35,8 @@ describe("WhatsApp attachment policy", () => {
   });
 
   afterEach(async () => {
-    await rm(root, { recursive: true, force: true });
-    await rm(outside, { recursive: true, force: true });
+    await removeTestDir(root);
+    await removeTestDir(outside);
   });
 
   function input(

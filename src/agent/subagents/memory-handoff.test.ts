@@ -1,10 +1,11 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend, type Backend } from "@/backend";
 import { DeterministicPongExecutor } from "@/backend/dev/headless-turn-executor";
 import { LocalBackend } from "@/backend/local/local-backend";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { prepareMemoryHandoff, withMemoryHandoff } from "./memory-handoff";
 
 const originalRoot = process.env.LETTA_TRANSCRIPT_ROOT;
@@ -13,7 +14,7 @@ afterEach(async () => {
   __testSetBackend(null);
   if (originalRoot === undefined) delete process.env.LETTA_TRANSCRIPT_ROOT;
   else process.env.LETTA_TRANSCRIPT_ROOT = originalRoot;
-  if (root) await rm(root, { recursive: true, force: true });
+  if (root) await removeTestDir(root);
 });
 
 test("local backend handoff includes history beyond the first page", async () => {
