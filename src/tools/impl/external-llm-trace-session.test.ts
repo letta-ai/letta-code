@@ -79,7 +79,11 @@ test("opt-out never resolves credentials or starts an upload", async () => {
 test("flush batches retain native session/task IDs and acting-user attribution", async () => {
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
-  const upstream = createServer((_req, res) => {
+  const upstream = createServer(async (req, res) => {
+    // Drain the POST body before replying so the connection can be reused.
+    for await (const _chunk of req) {
+      /* consume the request */
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test","usage":{"input_tokens":1,"output_tokens":2}}');
   }).listen(0, "127.0.0.1");
@@ -135,7 +139,11 @@ test("flush batches retain native session/task IDs and acting-user attribution",
 test("a 503 upload logs a single metadata-only warning per interval", async () => {
   const previous = process.env.LETTA_CODE_TELEM;
   process.env.LETTA_CODE_TELEM = "1";
-  const upstream = createServer((_req, res) => {
+  const upstream = createServer(async (req, res) => {
+    // Drain the POST body before replying so the connection can be reused.
+    for await (const _chunk of req) {
+      /* consume the request */
+    }
     res.writeHead(200, { "content-type": "application/json" });
     res.end('{"model":"test"}');
   }).listen(0, "127.0.0.1");
