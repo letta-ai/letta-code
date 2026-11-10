@@ -1,6 +1,7 @@
 import { telemetry } from "@/telemetry";
 
 type Phase =
+  | "retry_budget_exhausted"
   | "send_rejected"
   | "replay_unavailable"
   | "replay_missing_otid"
@@ -54,7 +55,7 @@ function category(phase: Phase): 0 | 1 | 2 {
   if (phase === "stream_progress" || phase === "stream_waiting") return 1;
   return oneOf(
     phase,
-    "stream_eof stream_failed stream_cancelled stream_closed poll_timed_out cancelled",
+    "stream_eof stream_failed stream_cancelled stream_closed poll_timed_out cancelled retry_budget_exhausted",
   )
     ? 2
     : 0;

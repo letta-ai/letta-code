@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
 import {
+  getPreStreamErrorAction,
   resumeConversationBusyRequest,
   waitForConversationBusyRun,
 } from "@/agent/approval-recovery";
@@ -90,6 +91,40 @@ test("existing HTTP path preserves safe identifiers, strips content, honors opt-
   expect(payload.events[0].data.surface).toBeString();
   expect(payload.events[0].data).not.toHaveProperty("debug_log_tail");
   expect(receipts[0]?.body).not.toMatch(/secret|synthetic-key/);
+});
+
+test("real busy policy emits one reserved exhaustion event after the fallback budget", async () => {
+  const detail =
+    "Another request (run_id=run-blocker) is currently being processed for this conversation. secret body";
+  const actions = [];
+  for (let attempt = 0; attempt <= 3; attempt += 1) {
+    report("send_rejected", { otid: "request", blockerRunId: "run-blocker" });
+    actions.push(getPreStreamErrorAction(detail, attempt, 3));
+    await waitForConversationBusyRun("run-blocker", undefined, {
+      retrieveRun: async () => {
+        throw { status: 503 };
+      },
+    });
+    expect(
+      contexts().filter((row) => row.phase === "retry_budget_exhausted"),
+    ).toHaveLength(attempt === 3 ? 1 : 0);
+  }
+  expect(actions).toEqual([
+    "retry_conversation_busy",
+    "retry_conversation_busy",
+    "retry_conversation_busy",
+    "rethrow",
+  ]);
+  for (let n = 0; n < 100; n += 1) getPreStreamErrorAction(detail, 3, 3);
+  expect(
+    contexts().filter((row) => row.phase === "retry_budget_exhausted"),
+  ).toHaveLength(1);
+  expect(contexts().some((row) => row.phase === "poll_unavailable")).toBe(true);
+  expect(JSON.stringify(state.events)).not.toContain("secret body");
+  getPreStreamErrorAction("unrelated secret error", 3, 3);
+  expect(
+    contexts().filter((row) => row.phase === "retry_budget_exhausted"),
+  ).toHaveLength(1);
 });
 
 test("replay 404 and blocker failure, settlement and timeout remain distinct", async () => {
