@@ -53,6 +53,7 @@ import {
   parseRetryAfterHeaderMs,
   rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
+  reportBusyRetryExhausted,
   resumeConversationBusyRequest as resumeBusy,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
   shouldRetryRunMetadataError,
@@ -2279,8 +2280,14 @@ export async function handleHeadlessCommand(
               );
               if (settled) continue;
             }
-            if (preStreamAction !== "retry_conversation_busy")
+            if (preStreamAction !== "retry_conversation_busy") {
+              reportBusyRetryExhausted(
+                errorDetail,
+                conversationBusyRetries,
+                CONVERSATION_BUSY_MAX_RETRIES,
+              );
               throw preStreamError;
+            }
             conversationBusyRetries += 1;
             const retryDelayMs = getRetryDelayMs({
               category: "conversation_busy",
@@ -2309,7 +2316,6 @@ export async function handleHeadlessCommand(
         if (preStreamAction === "retry_transient") {
           const attempt = llmApiErrorRetries + 1;
           llmApiErrorRetries = attempt;
-
           const retryAfterMs =
             preStreamError instanceof APIError
               ? parseRetryAfterHeaderMs(
@@ -2322,7 +2328,6 @@ export async function handleHeadlessCommand(
             detail: errorDetail,
             retryAfterMs,
           });
-
           if (outputFormat === "stream-json") {
             const retryMsg: RetryMessage = {
               type: "retry",
@@ -2340,26 +2345,25 @@ export async function handleHeadlessCommand(
               `Transient API error before streaming (attempt ${attempt} of ${LLM_API_ERROR_MAX_RETRIES}), retrying in ${delaySeconds}s...`,
             );
           }
-
           await new Promise((resolve) => setTimeout(resolve, delayMs));
           conversationBusyRetries = 0;
           continue;
         }
-
+        reportBusyRetryExhausted(
+          errorDetail,
+          conversationBusyRetries,
+          CONVERSATION_BUSY_MAX_RETRIES,
+        );
         // Reset conversation busy retry counter on other errors
         conversationBusyRetries = 0;
-
         // Re-throw to outer catch for other errors
         throw preStreamError;
       }
-
       let approvalPendingRecovery = false;
-
       let streamJsonHook: DrainStreamHook | undefined;
       if (outputFormat === "stream-json") {
         streamJsonHook = ({ chunk, shouldOutput, errorInfo }) => {
           let shouldOutputChunk = shouldOutput;
-
           if (errorInfo && shouldOutput) {
             const errorEvent: ErrorMessage = {
               type: "error",
@@ -2382,7 +2386,6 @@ export async function handleHeadlessCommand(
             writeWireMessage(errorEvent);
             shouldOutputChunk = false;
           }
-
           // Detect server conflict due to pending approval; handle it and retry
           // Check both detail and message fields since error formats vary
           if (
@@ -2403,7 +2406,6 @@ export async function handleHeadlessCommand(
             approvalPendingRecovery = true;
             return { stopReason: "error", shouldAccumulate: true };
           }
-
           // Approval-flow chunks are omitted from stream-json to match other
           // coding agents: the post-drain tool_call_message is the single call
           // event; approvals are out-of-band. See emitLocalToolCalls.
@@ -2414,14 +2416,12 @@ export async function handleHeadlessCommand(
           ) {
             shouldOutputChunk = false;
           }
-
           if (shouldOutputChunk) {
             const chunkWithIds = chunk as typeof chunk & {
               otid?: string;
               id?: string;
             };
             const uuid = chunkWithIds.otid || chunkWithIds.id;
-
             if (includePartialMessages) {
               const streamEvent: StreamEvent = {
                 type: "stream_event",

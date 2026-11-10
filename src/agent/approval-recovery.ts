@@ -17,7 +17,6 @@ import {
 } from "@/telemetry/busy-recovery";
 import {
   extractConversationBusyRunId,
-  getPreStreamErrorAction as getPolicyAction,
   isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
@@ -75,6 +74,7 @@ export {
   classifyPreStreamConflict,
   extractConflictDetail,
   extractConversationBusyRunId,
+  getPreStreamErrorAction,
   getRetryDelayMs,
   getTransientRetryDelayMs,
   isApprovalPendingError,
@@ -95,21 +95,17 @@ export {
   shouldRetryRunMetadataError,
 } from "./turn-recovery-policy";
 
-/** Report only exhausted busy fallback; named-blocker waiting may still recover. */
-export function getPreStreamErrorAction(
-  ...args: Parameters<typeof getPolicyAction>
-): ReturnType<typeof getPolicyAction> {
-  const action = getPolicyAction(...args);
-  if (
-    action === "rethrow" &&
-    isConversationBusyError(args[0]) &&
-    args[1] >= args[2]
-  ) {
+/** Call only at final fallthrough, after own-request replay and blocker waiting. */
+export function reportBusyRetryExhausted(
+  detail: unknown,
+  retries: number,
+  maxRetries: number,
+): void {
+  if (isConversationBusyError(detail) && retries >= maxRetries) {
     reportBusyRecovery("retry_budget_exhausted", {
-      blockerRunId: extractConversationBusyRunId(args[0]) ?? undefined,
+      blockerRunId: extractConversationBusyRunId(detail) ?? undefined,
     });
   }
-  return action;
 }
 
 // ── Async helpers (network side effects — stay here) ────────────────

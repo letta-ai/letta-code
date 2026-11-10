@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   getPreStreamErrorAction,
+  reportBusyRetryExhausted,
   resumeConversationBusyRequest,
   waitForConversationBusyRun,
 } from "@/agent/approval-recovery";
@@ -93,38 +95,109 @@ test("existing HTTP path preserves safe identifiers, strips content, honors opt-
   expect(receipts[0]?.body).not.toMatch(/secret|synthetic-key/);
 });
 
-test("real busy policy emits one reserved exhaustion event after the fallback budget", async () => {
+test("real caller busy branches recover before reporting final exhaustion", async () => {
   const detail =
     "Another request (run_id=run-blocker) is currently being processed for this conversation. secret body";
-  const actions = [];
-  for (let attempt = 0; attempt <= 3; attempt += 1) {
-    report("send_rejected", { otid: "request", blockerRunId: "run-blocker" });
-    actions.push(getPreStreamErrorAction(detail, attempt, 3));
-    await waitForConversationBusyRun("run-blocker", undefined, {
-      retrieveRun: async () => {
-        throw { status: 503 };
-      },
-    });
-    expect(
-      contexts().filter((row) => row.phase === "retry_budget_exhausted"),
-    ).toHaveLength(attempt === 3 ? 1 : 0);
+  for (const surface of ["tui", "headless"]) {
+    const source = readFileSync(
+      new URL(
+        surface === "tui"
+          ? "../cli/app/use-conversation-loop.ts"
+          : "../headless.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    const start = source.indexOf(
+      "const blockingRunId = extractConversationBusyRunId(errorDetail);",
+    );
+    const end = source.indexOf(
+      surface === "tui"
+        ? "// Retry pre-stream transient errors"
+        : 'if (preStreamAction === "retry_transient")',
+      start,
+    );
+    const finalStart = source.indexOf(
+      surface === "tui"
+        ? "if (!stream) {\n              reportBusyRetryExhausted"
+        : "reportBusyRetryExhausted(\n          errorDetail",
+      end,
+    );
+    const finalEnd = source.indexOf("throw preStreamError;", finalStart);
+    expect(start).toBeGreaterThan(0);
+    expect(finalStart).toBeGreaterThan(end);
+    // Execute the actual caller branch and final failure site, with network/UI boundaries mocked.
+    const code = new Bun.Transpiler({ loader: "ts" }).transformSync(
+      `async function run() { do { ${source.slice(start, end)} ${source.slice(finalStart, finalEnd + "throw preStreamError;".length)} ${surface === "tui" ? "}" : ""} return "replayed"; } while (false); return "settled"; }`,
+    );
+    for (const outcome of ["replayed", "settled", "unavailable"]) {
+      __testResetBusyRecoveryBudget();
+      state.events = [];
+      const error = new Error("synthetic rejection");
+      const scope = {
+        errorDetail: detail,
+        preStreamError: error,
+        preStreamAction: getPreStreamErrorAction(detail, 3, 3),
+        extractConversationBusyRunId: () => "run-blocker",
+        reportBusyRetryExhausted,
+        stream: undefined,
+        turnToolContextId: undefined,
+        conversationId: "conv",
+        agent: { id: "agent" },
+        currentInput: [],
+        conversationIdRef: { current: "conv" },
+        agentIdRef: { current: "agent" },
+        conversationBusyRetriesRef: { current: 3 },
+        conversationBusyRetries: 3,
+        CONVERSATION_BUSY_MAX_RETRIES: 3,
+        conversationBusyDeadlineMs: null,
+        busyDeadline: null,
+        CONVERSATION_BUSY_WAIT_TIMEOUT_MS: 300000,
+        BUSY_WAIT_MS: 300000,
+        signal: undefined,
+        sigintSignal: undefined,
+        resumeConversationBusyRequest: async () =>
+          outcome === "replayed" ? {} : null,
+        resumeBusy: async () => (outcome === "replayed" ? {} : null),
+        waitForConversationBusyRunOrThrow: async () => outcome === "settled",
+        waitForBusyRun: async () => outcome === "settled",
+        buffersRef: {
+          current: { byId: new Map(), order: [], interrupted: false },
+        },
+        telemetry: { trackError() {} },
+        formatTelemetryErrorMessage: () => "",
+        currentModelId: undefined,
+        APIError: Error,
+        debugLog() {},
+        getStreamToolContextId() {},
+        uid: () => "status",
+        refreshDerived() {},
+        myGeneration: 0,
+        conversationGenerationRef: { current: 0 },
+        userCancelledRef: { current: false },
+        restorePinnedPermissionMode() {},
+      };
+      const run = new Function(
+        "scope",
+        `with (scope) { ${code}; return run(); }`,
+      );
+      if (outcome === "unavailable")
+        await expect(run(scope)).rejects.toBe(error);
+      else if (surface === "headless" && outcome === "replayed") {
+        // Existing headless fallthrough still throws, but accepted replay must not be labelled exhausted.
+        await expect(run(scope)).rejects.toBe(error);
+      } else expect(await run(scope)).toBe(outcome);
+      expect(
+        contexts().filter((row) => row.phase === "retry_budget_exhausted"),
+      ).toHaveLength(outcome === "unavailable" ? 1 : 0);
+      reportBusyRetryExhausted(detail, 3, 3);
+      reportBusyRetryExhausted(detail, 3, 3);
+      expect(
+        contexts().filter((row) => row.phase === "retry_budget_exhausted"),
+      ).toHaveLength(1);
+      expect(JSON.stringify(state.events)).not.toContain("secret body");
+    }
   }
-  expect(actions).toEqual([
-    "retry_conversation_busy",
-    "retry_conversation_busy",
-    "retry_conversation_busy",
-    "rethrow",
-  ]);
-  for (let n = 0; n < 100; n += 1) getPreStreamErrorAction(detail, 3, 3);
-  expect(
-    contexts().filter((row) => row.phase === "retry_budget_exhausted"),
-  ).toHaveLength(1);
-  expect(contexts().some((row) => row.phase === "poll_unavailable")).toBe(true);
-  expect(JSON.stringify(state.events)).not.toContain("secret body");
-  getPreStreamErrorAction("unrelated secret error", 3, 3);
-  expect(
-    contexts().filter((row) => row.phase === "retry_budget_exhausted"),
-  ).toHaveLength(1);
 });
 
 test("replay 404 and blocker failure, settlement and timeout remain distinct", async () => {
