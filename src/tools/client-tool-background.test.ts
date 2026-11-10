@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import {
   backgroundProcesses,
@@ -7,12 +7,18 @@ import {
 import { task_stop } from "@/tools/impl/task-stop";
 import { autoBackgroundClientTool } from "./client-tool-background";
 
+const existingEntries = new Set<string>();
+beforeEach(() => {
+  existingEntries.clear();
+  for (const id of backgroundProcesses.keys()) existingEntries.add(id);
+});
 afterEach(() => {
   for (const [id, entry] of backgroundProcesses) {
+    if (existingEntries.has(id)) continue;
     clearBackgroundProcessCleanup(id);
     if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+    backgroundProcesses.delete(id);
   }
-  backgroundProcesses.clear();
 });
 type Result = { status: "success" | "error"; toolReturn: string };
 function deferred() {
@@ -23,6 +29,13 @@ function deferred() {
   return { promise, resolve };
 }
 const scope = { agentId: "agent-test", conversationId: "conv-test" };
+
+function backgroundEntry(receipt: { toolReturn: unknown }) {
+  const id = String(receipt.toolReturn).match(/task ID: (\S+)/)?.[1];
+  const entry = id ? backgroundProcesses.get(id) : undefined;
+  if (!id || !entry) throw new Error("Missing returned background task");
+  return [id, entry] as const;
+}
 
 describe("client tool foreground budget", () => {
   test("a stuck TaskStop yields once and delivers its late result", async () => {
@@ -39,7 +52,7 @@ describe("client tool foreground budget", () => {
     );
     expect(receipt.status).toBe("success");
     expect(notifications).toHaveLength(0);
-    const entry = [...backgroundProcesses.values()][0];
+    const [, entry] = backgroundEntry(receipt);
     expect(entry?.status).toBe("running");
     expect(readFileSync(entry?.outputFile as string, "utf8")).toBe("");
     operation.resolve({ status: "success", toolReturn: "stopped" });
@@ -60,7 +73,7 @@ describe("client tool foreground budget", () => {
     const notifications: unknown[] = [];
     let signal!: AbortSignal;
     let progress!: (chunk: string, stream: "stdout" | "stderr") => void;
-    await autoBackgroundClientTool(
+    const receipt = await autoBackgroundClientTool(
       "Grep",
       (callSignal, onOutput) => {
         signal = callSignal;
@@ -77,9 +90,7 @@ describe("client tool foreground budget", () => {
         enqueue: (message) => notifications.push(message),
       },
     );
-    const registered = [...backgroundProcesses.entries()][0];
-    if (!registered) throw new Error("Missing background tool");
-    const [id, entry] = registered;
+    const [id, entry] = backgroundEntry(receipt);
     progress("searching\n", "stdout");
     expect(readFileSync(entry.outputFile as string, "utf8")).toContain(
       "searching",

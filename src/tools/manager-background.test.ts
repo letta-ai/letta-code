@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
 import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
 import {
@@ -19,15 +19,21 @@ import {
 } from "@/utils/message-queue-bridge";
 
 const contexts: string[] = [];
+const existingEntries = new Set<string>();
+beforeEach(() => {
+  existingEntries.clear();
+  for (const id of backgroundProcesses.keys()) existingEntries.add(id);
+});
 afterEach(() => {
   for (const id of contexts.splice(0)) releaseToolExecutionContext(id);
   setMessageQueueAdder(null);
   clearPendingMessages();
   for (const [id, entry] of backgroundProcesses) {
+    if (existingEntries.has(id)) continue;
     clearBackgroundProcessCleanup(id);
     if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+    backgroundProcesses.delete(id);
   }
-  backgroundProcesses.clear();
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -55,6 +61,13 @@ async function prepare(
   if (!context || !tool) throw new Error("Missing test tool");
   context.toolRegistry.set(name, { ...tool, fn });
   return { toolContextId: prepared.contextId };
+}
+
+function backgroundEntry(receipt: { toolReturn: unknown }) {
+  const id = String(receipt.toolReturn).match(/task ID: (\S+)/)?.[1];
+  const entry = id ? backgroundProcesses.get(id) : undefined;
+  if (!id || !entry) throw new Error("Missing returned background task");
+  return [id, entry] as const;
 }
 
 describe("shared executor background boundary", () => {
@@ -95,10 +108,8 @@ describe("shared executor background boundary", () => {
           );
         }),
     });
-    await executeTool("TaskStop", {}, options);
-    const registered = [...backgroundProcesses.entries()][0];
-    if (!registered) throw new Error("Missing background tool");
-    const [id, entry] = registered;
+    const receipt = await executeTool("TaskStop", {}, options);
+    const [id, entry] = backgroundEntry(receipt);
     expect(await task_stop({ task_id: id })).toEqual({
       killed: true,
       output: "Stopped",
