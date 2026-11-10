@@ -6,7 +6,7 @@ Executes a shell command and returns its output.
 - `timeout` is in milliseconds. Without it, commands run until they exit; foreground timeouts max out at 600000.
 - If the output exceeds 30000 characters, you receive only the first 2000 characters plus the path of a file containing the full output. A failed command whose output exceeds 10000 characters returns a head-and-tail excerpt plus that file path. Read or search that file when you need the rest instead of re-running the command.
 - Commands still running after a brief wait continue in the background automatically: you receive a task ID and one completion notification. Do not predict command duration, set `run_in_background` merely because a command may be slow, or poll for completion. Set `run_in_background` only when you want the task ID immediately; no `&` needed.
-- Foreground `sleep` is blocked. To be notified once when a condition is true, run a command that exits then, e.g. `until grep -q "Ready" dev.log; do sleep 0.5; done`. For one notification per event, use Monitor.
+- Foreground `sleep` is blocked. To be told when a job finishes, start it with `run_in_background` and end your turn; its completion notification arrives on its own, so do not poll or start a separate waiter. For one notification per event, use Monitor. If you genuinely need to wait until a condition holds, the command must be guaranteed to exit, even if the condition never comes true.
 - Run independent commands as parallel tool calls; chain dependent ones with `&&`.
 
 # Git

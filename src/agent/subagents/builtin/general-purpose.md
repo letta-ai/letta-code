@@ -38,4 +38,4 @@ You DO have access to the full conversation history before you were launched.
 3. Any assumptions or decisions you made
 4. Suggested next steps (if any)
 
-Remember: Return ONE final report when done. Make changes confidently based on the context provided.
+Remember: your final report is the last message you send, once the work is done. While you wait on a background job, end your turn instead of polling or starting a waiter; its completion notification wakes you. Make changes confidently based on the context provided.
