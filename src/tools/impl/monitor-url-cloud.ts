@@ -35,15 +35,26 @@ type Request = typeof apiRequest;
 export interface CloudUrlMonitorDeps {
   isCloud?: () => boolean;
   request?: Request;
+  /** The conversation TaskStop runs in. */
+  scope?: () => { conversationId: string } | undefined;
 }
 
 function isLettaCloud(): boolean {
   return resolveBackendMode() === "api" && isCloudServerUrl();
 }
 
-/** Cloud monitor ids use a hyphen; local monitor ids are `monitor_<uuid>`. */
+/** Cloud monitor ids are `cmon-…`; local monitor ids are `monitor_<uuid>`. */
 export function isCloudMonitorId(taskId: string): boolean {
-  return taskId.startsWith("monitor-");
+  return taskId.startsWith("cmon-");
+}
+
+function cloudMonitorsPath(conversationId: string): string {
+  return `/v1/conversations/${encodeURIComponent(conversationId)}/cloud-monitors`;
+}
+
+/** The default conversation has no conversation id Cloud can scope to. */
+function isSavedConversation(conversationId: string): boolean {
+  return conversationId !== "" && conversationId !== "default";
 }
 
 function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
@@ -119,31 +130,32 @@ export async function startCloudUrlMonitor(
   if (!scope) {
     throw new Error("Monitor url needs an agent conversation to notify");
   }
+  if (!isSavedConversation(scope.conversationId)) {
+    throw new Error(
+      "Monitor url needs a saved conversation and is not available in the agent's default conversation. Use command with a polling loop instead.",
+    );
+  }
   const intervalSeconds =
     args.interval_seconds ?? URL_MONITOR_MIN_INTERVAL_SECONDS;
   const timeoutMs = args.timeout_ms ?? DEFAULT_URL_MONITOR_TIMEOUT_MS;
   const request = deps.request ?? apiRequest;
-  const created = await request<{ monitor_id: string }>(
+  const created = await request<{ id: string }>(
     "POST",
-    "/v1/monitors",
+    cloudMonitorsPath(scope.conversationId),
     {
-      conversation_id: scope.conversationId,
-      ...(scope.conversationId === "default" && { agent_id: scope.agentId }),
-      kind: "url",
-      command: url,
       description: args.description,
-      interval_seconds: intervalSeconds,
+      source: { type: "url", url, interval_seconds: intervalSeconds },
       timeout_ms: timeoutMs,
       ...(args.toolCallId && { tool_call_id: args.toolCallId }),
     },
     actingUserRequestOptions(scope.actingUserId),
   );
-  const taskId = created.monitor_id;
+  const taskId = created.id;
   return {
     content: [
       {
         type: "text",
-        text: `Monitor started in Letta Cloud (task ${taskId}, polls every ${intervalSeconds}s, timeout ${timeoutMs}ms). The first response is the baseline; you will be notified only when the HTTP status or body changes, even if this sandbox stops. Keep working — do not poll or sleep. Stop it with TaskStop.`,
+        text: `Cloud monitor started (task ${taskId}, polls every ${intervalSeconds}s, timeout ${timeoutMs}ms). The first response is the baseline; you will be notified only when the HTTP status or body changes, even if this sandbox stops. Keep working — do not poll or sleep. Stop it with TaskStop.`,
       },
     ],
     taskId,
@@ -152,7 +164,11 @@ export async function startCloudUrlMonitor(
   };
 }
 
-/** TaskStop for a Cloud monitor: deletes it, which stops its polling. */
+/**
+ * TaskStop for a Cloud monitor: deletes it, which stops its polling. Cloud
+ * monitors belong to a conversation, so this stops one started in the
+ * current conversation.
+ */
 export async function stopCloudUrlMonitor(
   taskId: string,
   deps: CloudUrlMonitorDeps = {},
@@ -163,11 +179,20 @@ export async function stopCloudUrlMonitor(
       output: `No task ${taskId} is running here, and Cloud monitors can only be stopped when connected to Letta Cloud.`,
     };
   }
+  const conversationId = (deps.scope ?? resolveNotificationScope)()
+    ?.conversationId;
+  if (!conversationId || !isSavedConversation(conversationId)) {
+    return {
+      killed: false,
+      output: `No Cloud monitor ${taskId} was found in this conversation.`,
+    };
+  }
   const request = deps.request ?? apiRequest;
+  let stopped: { status: string };
   try {
-    await request(
+    stopped = await request<{ status: string }>(
       "DELETE",
-      `/v1/monitors/${encodeURIComponent(taskId)}`,
+      `${cloudMonitorsPath(conversationId)}/${encodeURIComponent(taskId)}`,
       undefined,
       actingUserRequestOptions(getRuntimeActingUserAttribution()),
     );
@@ -175,10 +200,17 @@ export async function stopCloudUrlMonitor(
     if (error instanceof ApiRequestError && error.status === 404) {
       return {
         killed: false,
-        output: `No Cloud monitor ${taskId} was found; it may have already stopped.`,
+        output: `No Cloud monitor ${taskId} was found in this conversation.`,
       };
     }
     throw error;
+  }
+  // A monitor that had already ended keeps and reports its final status.
+  if (stopped.status !== "cancelled") {
+    return {
+      killed: false,
+      output: `Cloud monitor ${taskId} had already stopped (${stopped.status}).`,
+    };
   }
   return { killed: true, output: `Stopped Cloud monitor ${taskId}.` };
 }

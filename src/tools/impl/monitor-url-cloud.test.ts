@@ -39,51 +39,65 @@ describe("Monitor url source", () => {
       },
       {
         isCloud: () => true,
-        request: fakeRequest({ monitor_id: "monitor-url-abc" }, calls),
+        request: fakeRequest({ id: "cmon-abc" }, calls),
       },
     );
     expect(calls).toEqual([
       {
         method: "POST",
-        path: "/v1/monitors",
+        path: "/v1/conversations/conv-1/cloud-monitors",
         body: {
-          conversation_id: "conv-1",
-          kind: "url",
-          command: "https://example.com/status",
           description: "Deployment status changes",
-          interval_seconds: 60,
+          source: {
+            type: "url",
+            url: "https://example.com/status",
+            interval_seconds: 60,
+          },
           timeout_ms: 3_600_000,
           tool_call_id: "call-1",
         },
       },
     ]);
-    expect(result.taskId).toBe("monitor-url-abc");
+    expect(result.taskId).toBe("cmon-abc");
     expect(result.timeoutMs).toBe(3_600_000);
-    expect(result.content[0]?.text).toContain("task monitor-url-abc");
+    expect(result.content[0]?.text).toContain("task cmon-abc");
     expect(backgroundProcesses.size).toBe(before);
   });
 
-  test("scopes the default conversation by agent", async () => {
+  test("sends the interval and the default timeout", async () => {
     const calls: Call[] = [];
     await startCloudUrlMonitor(
       {
         description: "Status",
         url: "https://example.com/",
         interval_seconds: 300,
-        parentScope: { agentId: "agent-1", conversationId: "default" },
+        parentScope: scope,
       },
       {
         isCloud: () => true,
-        request: fakeRequest({ monitor_id: "monitor-1" }, calls),
+        request: fakeRequest({ id: "cmon-1" }, calls),
       },
     );
     expect(calls[0]?.body).toMatchObject({
-      conversation_id: "default",
-      agent_id: "agent-1",
-      interval_seconds: 300,
+      source: { interval_seconds: 300 },
       timeout_ms: 86_400_000,
     });
     expect(calls[0]?.body).not.toHaveProperty("tool_call_id");
+  });
+
+  test("needs a saved conversation, not the default one", async () => {
+    const calls: Call[] = [];
+    await expect(
+      startCloudUrlMonitor(
+        {
+          description: "Status",
+          url: "https://example.com/",
+          parentScope: { agentId: "agent-1", conversationId: "default" },
+        },
+        { isCloud: () => true, request: fakeRequest({}, calls) },
+      ),
+    ).rejects.toThrow("needs a saved conversation");
+    expect(calls).toEqual([]);
   });
 
   test("explains that url mode needs Letta Cloud", async () => {
@@ -141,15 +155,15 @@ describe("Monitor url source", () => {
 
 describe("TaskStop for Cloud monitors", () => {
   test("recognizes Cloud ids but not local monitor ids", () => {
-    expect(isCloudMonitorId("monitor-url-abc")).toBe(true);
-    expect(isCloudMonitorId("monitor-6f1c")).toBe(true);
+    expect(isCloudMonitorId("cmon-abc")).toBe(true);
     expect(isCloudMonitorId("monitor_6f1c")).toBe(false);
+    expect(isCloudMonitorId("monitor-6f1c")).toBe(false);
   });
 
   test("routes an unknown Cloud monitor id to the Cloud stop", async () => {
     const stopped: string[] = [];
     const result = await task_stop(
-      { task_id: "monitor-url-abc" },
+      { task_id: "cmon-abc" },
       {
         stopCloudMonitor: async (id) => {
           stopped.push(id);
@@ -157,7 +171,7 @@ describe("TaskStop for Cloud monitors", () => {
         },
       },
     );
-    expect(stopped).toEqual(["monitor-url-abc"]);
+    expect(stopped).toEqual(["cmon-abc"]);
     expect(result.killed).toBe(true);
     const local = await task_stop(
       { task_id: "monitor_missing" },
@@ -170,22 +184,39 @@ describe("TaskStop for Cloud monitors", () => {
     expect(local.killed).toBe(false);
   });
 
-  test("deletes the monitor and reports one that is already gone", async () => {
+  test("deletes the monitor in the current conversation", async () => {
     const calls: Call[] = [];
-    const stopped = await stopCloudUrlMonitor("monitor-url-abc", {
+    const stopped = await stopCloudUrlMonitor("cmon-abc", {
       isCloud: () => true,
-      request: fakeRequest({}, calls),
+      scope: () => scope,
+      request: fakeRequest({ status: "cancelled" }, calls),
     });
     expect(calls).toEqual([
       {
         method: "DELETE",
-        path: "/v1/monitors/monitor-url-abc",
+        path: "/v1/conversations/conv-1/cloud-monitors/cmon-abc",
         body: undefined,
       },
     ]);
-    expect(stopped.killed).toBe(true);
-    const gone = await stopCloudUrlMonitor("monitor-url-abc", {
+    expect(stopped).toEqual({
+      killed: true,
+      output: "Stopped Cloud monitor cmon-abc.",
+    });
+  });
+
+  test("reports a monitor that had already stopped or is unknown", async () => {
+    const ended = await stopCloudUrlMonitor("cmon-abc", {
       isCloud: () => true,
+      scope: () => scope,
+      request: fakeRequest({ status: "completed" }, []),
+    });
+    expect(ended).toEqual({
+      killed: false,
+      output: "Cloud monitor cmon-abc had already stopped (completed).",
+    });
+    const gone = await stopCloudUrlMonitor("cmon-abc", {
+      isCloud: () => true,
+      scope: () => scope,
       request: fakeRequest(
         new ApiRequestError("API error (404)", 404, "", new Headers()),
         [],
@@ -193,8 +224,15 @@ describe("TaskStop for Cloud monitors", () => {
     });
     expect(gone).toEqual({
       killed: false,
-      output:
-        "No Cloud monitor monitor-url-abc was found; it may have already stopped.",
+      output: "No Cloud monitor cmon-abc was found in this conversation.",
     });
+    const calls: Call[] = [];
+    const inDefault = await stopCloudUrlMonitor("cmon-abc", {
+      isCloud: () => true,
+      scope: () => ({ conversationId: "default" }),
+      request: fakeRequest({}, calls),
+    });
+    expect(inDefault.killed).toBe(false);
+    expect(calls).toEqual([]);
   });
 });
