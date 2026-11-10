@@ -84,7 +84,11 @@ interface GraphQlCheck {
   isRequired?: boolean | null;
   checkSuite?: {
     app?: { id?: string | null } | null;
-    workflowRun?: { workflow?: { id?: string | null } | null } | null;
+    workflowRun?: {
+      id?: string | null;
+      createdAt?: string | null;
+      workflow?: { id?: string | null } | null;
+    } | null;
   } | null;
   name?: string | null;
   status?: string | null;
@@ -357,12 +361,6 @@ function mapSnapshot(
   const rollup =
     pullRequest.commits?.nodes?.at(-1)?.commit?.statusCheckRollup ?? undefined;
   const contexts = rollup?.contexts?.nodes ?? [];
-  // A rollup can still reflect superseded contexts. Only synthesize a blocker
-  // when no original context explains it, rather than reviving an old attempt.
-  const originalChecks = contexts.flatMap((check) => {
-    const mapped = check ? mapGraphQlCheck(check) : undefined;
-    return mapped ? [mapped] : [];
-  });
   const checks = latestGitHubCheckContexts(contexts).flatMap((check) => {
     const mapped = check ? mapGraphQlCheck(check) : undefined;
     return mapped ? [mapped] : [];
@@ -370,7 +368,7 @@ function mapSnapshot(
   const rollupState = rollup?.state ?? "";
   if (
     (rollupState === "ERROR" || rollupState === "FAILURE") &&
-    !originalChecks.some((check) => check.phase === "failure")
+    !checks.some((check) => check.phase === "failure")
   ) {
     checks.push({
       key: "check-rollup",
@@ -380,7 +378,7 @@ function mapSnapshot(
     });
   } else if (
     (rollupState === "EXPECTED" || rollupState === "PENDING") &&
-    !originalChecks.some((check) => check.phase === "pending")
+    !checks.some((check) => check.phase === "pending")
   ) {
     checks.push({
       key: "check-rollup",
