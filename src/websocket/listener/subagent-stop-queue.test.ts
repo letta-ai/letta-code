@@ -1,6 +1,7 @@
 import { afterEach, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import WebSocket from "ws";
+import type { QueueItem } from "@/queue/queue-runtime";
 import { stopLocalSubagent } from "@/tools/impl/subagent-stop-bridge";
 import * as wakes from "@/tools/impl/wake";
 import { handleQueueCommand } from "./commands/queue";
@@ -57,13 +58,17 @@ test.each(["new user message", "resume_queue"])(
         messages: [{ role: "user", content: text }],
       });
     expect(enqueue("queued before stop")).toBe(true);
-    child.queueRuntime.enqueue({
+    const notification: Omit<
+      Extract<QueueItem, { kind: "task_notification" }>,
+      "id" | "enqueuedAt"
+    > = {
       kind: "task_notification",
       source: "task_notification",
       text: "old poller",
       agentId: scope.agent_id,
       conversationId: scope.conversation_id,
-    });
+    };
+    child.queueRuntime.enqueue(notification);
     const cancelWakes = spyOn(
       wakes,
       "cancelConversationWakes",
@@ -77,7 +82,7 @@ test.each(["new user message", "resume_queue"])(
       getParsedRuntimeScope: () => null,
       replaySyncStateForRuntime: async () => {},
       getOrCreateScopedRuntime,
-      handleApprovalResponseInput: async () => {},
+      handleApprovalResponseInput: async () => false,
       handleChangeDeviceStateInput: async () => false,
       handleAbortMessageInput: (runtime, params) =>
         handleAbortMessageInput(runtime, params, {
@@ -87,7 +92,7 @@ test.each(["new user message", "resume_queue"])(
           emitRuntimeStateUpdates: () => {},
           emitInterruptedStatusDelta: () => {},
         }),
-      stampInboundUserMessageOtids: () => {},
+      stampInboundUserMessageOtids: (incoming) => incoming,
       safeSocketSend: () => true,
       runDetachedListenerTask: () => {},
       trackListenerError: () => {},
