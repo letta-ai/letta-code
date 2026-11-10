@@ -62,7 +62,7 @@ This example enforces a permission deny list, prevents users from bypassing perm
 
 Hooks use the same format as in `settings.json`.
 
-This example runs an audit script after every file edit across the organization:
+This example runs an audit script after `Edit` and `Write` tool calls across the organization:
 
 ```json theme={null}
 {
