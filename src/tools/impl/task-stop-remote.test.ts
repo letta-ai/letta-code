@@ -287,6 +287,32 @@ describe("Background task interrupt hook", () => {
     expect(controller.signal.aborted).toBe(true);
   });
 
+  test("interrupt safety abort reaches a running local child with a conversation", async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation").mockRejectedValue(
+      new Error("Backend unavailable"),
+    );
+    try {
+      registerSubagent("local-safety", "general-purpose", "local");
+      updateSubagent("local-safety", { conversationId: "conv-local" });
+      const controller = new AbortController();
+      backgroundTasks.set("local-safety", {
+        description: "local",
+        subagentType: "general-purpose",
+        subagentId: "local-safety",
+        status: "running",
+        startTime: new Date(),
+        outputFile: createBackgroundOutputFile("local-safety"),
+        abortController: controller,
+        remote: false,
+      });
+      buildBackgroundTaskAbortHook("local-safety", controller)();
+      await Bun.sleep(20);
+      expect(controller.signal.aborted).toBe(true);
+    } finally {
+      cancel.mockRestore();
+    }
+  });
+
   test("restores the subagent row so a failed remote cancel stays retryable", async () => {
     const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
       "run-child": "failed",

@@ -4,8 +4,14 @@ import {
   runOutsideRuntimeContext,
   runWithRuntimeContext,
 } from "@/runtime-context";
-import { sendClaudeMessage } from "@/tools/impl/claude-stream-session";
-import { sendCodexMessage } from "@/tools/impl/codex-app-server";
+import {
+  sendClaudeMessage,
+  stopClaudeSession,
+} from "@/tools/impl/claude-stream-session";
+import {
+  sendCodexMessage,
+  stopCodexSession,
+} from "@/tools/impl/codex-app-server";
 import { sendCursorMessage } from "@/tools/impl/cursor-session";
 import {
   buildExternalWorkerResumeEnv,
@@ -24,6 +30,7 @@ import {
   reserveNativeSessionCapture,
 } from "@/tools/impl/native-session-capture";
 import { backgroundTasks, getNextTaskId } from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import type {
   SubagentMessageCommand,
   SubagentMessageResponse,
@@ -333,18 +340,47 @@ export async function handleSubagentStopCommand(
   )
     return { ...base, error: "Parent runtime does not match the stop request" };
   const owned = findOwnedTask(parent, command.agent_id);
+  let nativeStopped = false;
+  if (!owned && ownsNativeSession(parent, command.agent_id)) {
+    const target = parseExternalCodingAgentId(command.agent_id);
+    try {
+      if (target && !target.computer) {
+        if (target.type === "claude-code")
+          nativeStopped = await stopClaudeSession(target.sessionId);
+        if (target.type === "codex")
+          nativeStopped = await stopCodexSession(target.sessionId);
+      }
+    } catch (error) {
+      return {
+        ...base,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   if (!owned) {
     // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
-      return { ...base, success: true };
+      return {
+        ...base,
+        success: true,
+        stopped: nativeStopped,
+        cleanup_confirmed: true,
+      };
     return { ...base, error: "Subagent does not belong to this conversation" };
   }
-  const [, task] = owned;
-  if (task.status !== "running") return { ...base, success: true };
+  const [taskId, task] = owned;
+  if (task.status !== "running")
+    return { ...base, success: true, stopped: true, cleanup_confirmed: true };
   if (!task.abortController)
     return { ...base, error: "Subagent could not be stopped" };
-  task.abortController.abort(new Error("Stopped by remote parent"));
-  return { ...base, success: true, stopped: true };
+  const result = await task_stop({ task_id: taskId });
+  return {
+    ...base,
+    success: result.killed,
+    stopped: result.killed,
+    cleanup_confirmed: result.killed,
+    error: result.output,
+  };
 }
 
 export function __resetSubagentControlDedupeForTests(): void {

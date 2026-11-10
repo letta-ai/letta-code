@@ -23,6 +23,8 @@ export interface BackgroundRuntimeScope {
 
 export interface BackgroundProcess {
   process: BackgroundProcessHandle;
+  completion?: Promise<unknown>;
+  terminate?: () => void;
   command: string;
   /**
    * Recent output lines that Bash replays in its completion notification.
@@ -68,6 +70,10 @@ export interface BackgroundTask {
   abortController?: AbortController;
   /** Resolves once the local subagent launcher and its process tree have stopped. */
   completion?: Promise<void>;
+  /** Confirm cancellation with the listener that owns an accepted turn. */
+  stop?: () => Promise<void>;
+  /** Process exit is confirmed; only wake cancellation remains to retry. */
+  cancelPendingWakes?: () => Promise<void>;
   /** Runs on another computer or in Cloud; stopping it must cancel Cloud. */
   remote?: boolean;
   cleanupTimer?: TimerHandle;

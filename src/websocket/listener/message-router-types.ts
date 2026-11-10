@@ -103,6 +103,7 @@ export type MessageRouterParams = {
     listener: ListenerRuntime,
     params: {
       command: AbortMessageCommand;
+      confirmBackendCancellation?: boolean;
       connectionId: ListenerConnectionId;
       socket: WebSocket;
       opts: {

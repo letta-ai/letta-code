@@ -491,6 +491,8 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   bgProcess = {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command,
     stdout: [],
     stderr: [],

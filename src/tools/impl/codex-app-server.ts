@@ -1,15 +1,10 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SubagentResult } from "@/agent/subagents";
-import {
-  killWindowsProcessTree,
-  spawnManagedWorkloadProcess,
-} from "@/agent/subagents/subagent-process";
+import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
-import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
-import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
@@ -44,7 +39,6 @@ interface JsonRpcMessage {
   result?: Record<string, unknown>;
   error?: { code?: number; message?: string; data?: unknown };
 }
-
 export interface CodexAppServerTransport {
   stdout: Readable;
   stderr?: Readable;
@@ -52,7 +46,6 @@ export interface CodexAppServerTransport {
   kill?: () => void;
   exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
-
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
@@ -238,37 +231,32 @@ function errorMessage(error: unknown): string {
 function textInput(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
 }
-
 function spawnTransport(options: {
   configArgs?: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): CodexAppServerTransport {
-  const [command = "codex", ...args] = wrapManagedWorkloadLauncher(
-    ["codex", ...(options.configArgs ?? []), "app-server", "--stdio"],
-    { env: options.env },
+  const controller = new AbortController();
+  const { process: child, completion } = spawnManagedWorkloadProcess(
+    "codex",
+    [...(options.configArgs ?? []), "app-server", "--stdio"],
+    {
+      ...options,
+      signal: controller.signal,
+    },
   );
-  const child = getCommandProcessFactory()(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  }) as ChildProcessWithoutNullStreams;
   return {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
     // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
-    kill: () =>
-      process.platform === "win32"
-        ? void killWindowsProcessTree(child)
-        : child.kill(),
-    exited: new Promise((resolve) => {
-      child.once("close", (code, signal) => resolve({ code, signal }));
-    }),
+    kill: () => controller.abort(),
+    exited: completion.then((exit) => ({
+      code: exit.exitCode,
+      signal: exit.exitSignal,
+    })),
   };
 }
-
 class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -349,6 +337,14 @@ class CodexAppServerClient {
     if (!this.closed) {
       this.transport.stdin.write(`${JSON.stringify({ method, params })}\n`);
     }
+  }
+
+  async stop(): Promise<void> {
+    if (!this.transport.exited)
+      throw new Error("Codex process exit cannot be confirmed");
+    this.transport.kill?.();
+    await confirmProcessExit(this.transport.exited, "Codex");
+    await this.close();
   }
 
   dispose(): void {
@@ -984,6 +980,13 @@ export async function runCodexTurn(
       error: errorMessage(error),
     };
   }
+}
+export async function stopCodexSession(threadId: string): Promise<boolean> {
+  const session = sessions.get(threadId);
+  if (!session) return false;
+  await session.client.stop();
+  if (sessions.get(threadId) === session) sessions.delete(threadId);
+  return true;
 }
 
 export function hasActiveCodexTurn(threadId: string): boolean {
