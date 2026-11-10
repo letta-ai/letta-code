@@ -112,10 +112,12 @@ async function createBackupWake(backup: MonitorBackup): Promise<string> {
   return parsed.id;
 }
 
-async function cancelBackupWake(backup: MonitorBackup): Promise<void> {
-  const id = backup.wakeId;
+async function cancelBackupWake(
+  backup: MonitorBackup,
+  id = backup.wakeId,
+): Promise<void> {
   if (!id) return;
-  backup.wakeId = null;
+  if (backup.wakeId === id) backup.wakeId = null;
   // A wake that already fired or was cancelled by hand is fine to miss.
   await runInScope(backup.scope, () => wakeImpl({ action: "cancel", id }));
 }
@@ -181,9 +183,16 @@ export function noteMonitorBackupActivity(taskId: string): void {
     if (backup.stopped) return;
     enqueue(backup, async () => {
       if (backup.stopped) return;
-      await cancelBackupWake(backup);
-      if (backup.stopped) return;
-      backup.wakeId = await createBackupWake(backup);
+      const previousId = backup.wakeId;
+      // Keep the durable fallback until its replacement has been created.
+      const replacementId = await createBackupWake(backup);
+      if (backup.stopped) {
+        // Stop will cancel the old wake; process exit deliberately leaves it armed.
+        await cancelBackupWake(backup, replacementId);
+        return;
+      }
+      backup.wakeId = replacementId;
+      await cancelBackupWake(backup, previousId);
     });
   }, rearmCoalesceMs);
   backup.rearmTimer.unref?.();
