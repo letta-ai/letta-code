@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { autoBackgroundClientTool } from "./client-tool-background";
 
-type Result = { status: "success"; toolReturn: string };
+type Result = { status: "success" | "error"; toolReturn: string };
 function deferred() {
   let resolve!: (result: Result) => void;
   const promise = new Promise<Result>((done) => {
@@ -35,6 +35,41 @@ describe("client tool foreground budget", () => {
     });
     expect((notifications[0] as { text: string }).text).toContain("stopped");
   });
+
+  test.each([false, true])(
+    "abort preserves a built-in's result (notification delivery %s)",
+    async (connected) => {
+      const operation = deferred();
+      const controller = new AbortController();
+      const notifications: unknown[] = [];
+      let finished = false;
+      const pending = autoBackgroundClientTool("Grep", operation.promise, {
+        yieldMs: 5,
+        signal: controller.signal,
+        ...(connected
+          ? {
+              runtimeScope: scope,
+              enqueue: (message: unknown) => notifications.push(message),
+            }
+          : {}),
+      }).then((result) => {
+        finished = true;
+        return result;
+      });
+      controller.abort();
+      await Bun.sleep(10);
+      expect(finished).toBe(false);
+      operation.resolve({
+        status: "error",
+        toolReturn: "cancelled by implementation",
+      });
+      expect(await pending).toEqual({
+        status: "error",
+        toolReturn: "cancelled by implementation",
+      });
+      expect(notifications).toHaveLength(0);
+    },
+  );
 
   test.each([
     "Edit",

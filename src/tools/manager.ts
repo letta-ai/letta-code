@@ -53,10 +53,10 @@ import {
 import { getRuntimeExecutionEnv } from "@/runtime-execution-settings";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
-import { messageChannelTelemetry } from "@/telemetry/channel";
 import { autoBackgroundClientTool } from "@/tools/client-tool-background";
 import { autoBackgroundExternalTool } from "@/tools/external-tool-background";
 import { listenerExternalToolBackgroundOptions } from "@/tools/external-tool-background-eligibility";
+import { executeExternalToolRequest } from "@/tools/external-tool-execution";
 import type {
   ClientTool,
   ExternalToolDefinition,
@@ -79,7 +79,6 @@ import {
   selectModelFacingExternalTools,
   serializeClientTools,
 } from "./client-tool-serialization";
-import { normalizeExternalToolResultContent } from "./external-tool-content";
 import { toolFilter } from "./filter";
 import {
   appendHookFeedbackToText,
@@ -657,51 +656,14 @@ export async function executeExternalTool(
   toolDefinition?: ExternalToolDefinition,
   signal?: AbortSignal,
 ): Promise<ToolExecutionResult> {
-  const executor = executorOverride ?? getExternalToolExecutor();
-  if (!executor) {
-    return {
-      toolReturn: `External tool executor not set for tool: ${toolName}`,
-      status: "error",
-    };
-  }
-
-  const startedAt = Date.now();
-  let success = false;
-  try {
-    const tool = toolDefinition ?? getExternalToolDefinition(toolName);
-    const result = await executor(
-      toolCallId,
-      toolName,
-      input,
-      tool ? { tool, signal } : undefined,
-    );
-    success = !result.isError;
-    return {
-      toolReturn: clampToolReturnContent(
-        normalizeExternalToolResultContent(result.content),
-        toolName,
-      ),
-      status: result.isError ? "error" : "success",
-    };
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    return {
-      toolReturn: `External tool execution error: ${errorMessage}`,
-      status: "error",
-    };
-  } finally {
-    if (toolName === "MessageChannel" || toolName === "message_channel") {
-      telemetry.trackToolUsage(
-        toolName,
-        success,
-        Date.now() - startedAt,
-        undefined,
-        success ? undefined : "tool_error",
-        undefined,
-        messageChannelTelemetry(input),
-      );
-    }
-  }
+  return executeExternalToolRequest(
+    toolCallId,
+    toolName,
+    input,
+    executorOverride ?? getExternalToolExecutor(),
+    toolDefinition ?? getExternalToolDefinition(toolName),
+    signal,
+  );
 }
 
 /**
@@ -1000,6 +962,13 @@ async function checkModPermissionForContext(options: {
   );
 }
 
+/**
+ * Check permission for a tool execution using the full permission system.
+ * @param toolName - Name of the tool
+ * @param toolArgs - Tool arguments
+ * @param workingDirectory - Current working directory (defaults to process.cwd())
+ * @returns Permission decision: "allow", "deny", "ask", or "alwaysAsk"
+ */
 export async function checkToolPermission(
   toolName: string,
   toolArgs: ToolArgs,
@@ -1061,6 +1030,13 @@ export async function checkToolPermission(
   );
 }
 
+/**
+ * Save a permission rule to settings
+ * @param rule - Permission rule (e.g., "Read(src/**)")
+ * @param ruleType - Type of rule ("allow", "deny", "ask", or "alwaysAsk")
+ * @param scope - Where to save ("project", "local", "user", or "session")
+ * @param workingDirectory - Current working directory
+ */
 export async function savePermissionRule(
   rule: string,
   ruleType: PermissionRuleType,
@@ -1946,6 +1922,14 @@ function toolExecutionModContext(
   });
 }
 
+/**
+ * Executes a tool by name with the provided arguments.
+ *
+ * @param name - The name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
 async function executeToolInner(
   name: string,
   args: ToolArgs,
@@ -2448,12 +2432,26 @@ async function executeToolInner(
   );
 }
 
-/** Execute a tool, then apply scoped tool_end overrides before delivery. */
+/**
+ * Executes a tool and gives mods a chance to observe or replace the result via
+ * the `tool_end` event. A handler returning `{ result: { status, output } }`
+ * overrides what the agent sees (first handler wins). Only fires for string
+ * results — multimodal/image results pass through unchanged. Delivery is
+ * capability-gated (`events.tools`), so only enabled surfaces receive it.
+ *
+ * @param name - Name of the tool to execute
+ * @param args - Arguments object to pass to the tool
+ * @param options - Optional execution options (abort signal, tool call ID, streaming callback)
+ * @returns Promise with the tool's execution result including status and optional stdout/stderr
+ */
 export async function executeTool(
   ...params: Parameters<typeof executeToolInner>
 ): Promise<ToolExecutionResult> {
   const [name, args, options] = params;
   const toolEndArgsRef = { current: args };
+  // Snapshot ambient + vault secrets before the tool runs: a runtime
+  // credential can rotate mid-tool, and the post-run capture alone would
+  // miss the pre-rotation value coming back through a mod override.
   const preRunAgentId = options?.toolContextId
     ? getExecutionContextById(options.toolContextId)?.runtimeContext?.agentId
     : undefined;

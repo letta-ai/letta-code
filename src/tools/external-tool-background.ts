@@ -128,7 +128,7 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
     !scope ||
     (!options?.enqueue && !isQueueBridgeConnected())
   )
-    return signal
+    return signal && !options?.clientTool
       ? raceExternalOperationAbort(operation, signal, toolName)
       : operation;
 
@@ -142,7 +142,8 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   const abortSettled = signal
     ? new Promise<{ kind: "aborted" }>((resolve) => {
         onAbort = () => resolve({ kind: "aborted" });
-        signal?.addEventListener("abort", onAbort);
+        if (signal.aborted) onAbort();
+        else signal.addEventListener("abort", onAbort);
       })
     : undefined;
   const first = await Promise.race([
@@ -159,13 +160,18 @@ export async function autoBackgroundExternalTool<T extends ExternalResult>(
   if (onAbort !== undefined && signal) {
     signal.removeEventListener("abort", onAbort);
   }
-  if (first.kind === "aborted") return interruptedExternalToolResult(toolName);
+  // Built-ins receive the same signal directly and own their cancellation result.
+  // Do not replace it with remote-operation wording or create a late receipt.
+  if (first.kind === "aborted")
+    return options?.clientTool
+      ? operation
+      : interruptedExternalToolResult(toolName);
   if (first.kind === "result") return first.result;
   if (first.kind === "error") throw first.error;
   // A mod may reload while the operation is in the foreground window.
   // If a tool_end handler became active, wait for the real result inline.
   if (!canBackground()) {
-    return signal
+    return signal && !options?.clientTool
       ? raceExternalOperationAbort(operation, signal, toolName)
       : operation;
   }
