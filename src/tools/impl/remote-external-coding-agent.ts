@@ -649,6 +649,10 @@ export async function stopRemoteExternalCodingAgent(
       agent_id: formatExternalCodingAgentId(target.type, target.sessionId),
     });
     if (!response.success) throw new Error(response.error ?? "Stop failed");
+    if (!response.cleanup_confirmed)
+      throw new Error(
+        "The remote listener did not confirm process cleanup; update that listener and retry",
+      );
     return { stopped: response.stopped };
   } finally {
     client.close();

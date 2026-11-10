@@ -91,3 +91,17 @@ test("a rejected listener stop returns its reason without claiming a kill", asyn
   });
   expect(task.abortController.signal.aborted).toBe(false);
 });
+
+test("a stuck listener acknowledgement keeps the stop bounded and preserves the retry handle", async () => {
+  const task = listenerTask();
+  const stored = backgroundTasks.get("task-child");
+  if (!stored) throw new Error("Missing task");
+  stored.stop = () => new Promise(() => {});
+  const result = await task_stop(
+    { task_id: "task-child" },
+    { remoteStopTimeoutMs: 20 },
+  );
+  expect(result.killed).toBe(false);
+  expect(result.output).toContain("may still be running");
+  expect(task.abortController.signal.aborted).toBe(false);
+});

@@ -65,7 +65,7 @@ export async function stopListenerConversation(
       { ...backgroundScope, actingUserId: command.runtime.acting_user_id },
       () => (deps.cancelWakes ?? cancelConversationWakes)(backgroundScope),
     );
-    return { ...base, success: true, stopped: true };
+    return { ...base, success: true, stopped: true, cleanup_confirmed: true };
   } catch (error) {
     return { ...base, error: getErrorMessage(error) };
   }

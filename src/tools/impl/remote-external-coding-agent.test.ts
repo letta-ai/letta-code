@@ -115,6 +115,7 @@ class FakeComputer {
       agent_id: command.agent_id,
       success: true,
       stopped: true,
+      cleanup_confirmed: true,
     };
   }
 

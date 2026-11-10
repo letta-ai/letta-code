@@ -178,8 +178,9 @@ export async function stopAcceptedListenerConversation(
     success: boolean;
     stopped: boolean;
     error?: string;
+    cleanup_confirmed?: boolean;
   }) => {
-    if (!response.success || !response.stopped)
+    if (!response.success || !response.stopped || !response.cleanup_confirmed)
       throw new Error(
         response.error ?? "The listener did not confirm the stop",
       );

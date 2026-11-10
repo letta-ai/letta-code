@@ -360,12 +360,17 @@ export async function handleSubagentStopCommand(
   if (!owned) {
     // Its task was evicted after it finished: nothing is left to stop.
     if (ownsNativeSession(parent, command.agent_id))
-      return { ...base, success: true, stopped: nativeStopped };
+      return {
+        ...base,
+        success: true,
+        stopped: nativeStopped,
+        cleanup_confirmed: true,
+      };
     return { ...base, error: "Subagent does not belong to this conversation" };
   }
   const [taskId, task] = owned;
   if (task.status !== "running")
-    return { ...base, success: true, stopped: true };
+    return { ...base, success: true, stopped: true, cleanup_confirmed: true };
   if (!task.abortController)
     return { ...base, error: "Subagent could not be stopped" };
   const result = await task_stop({ task_id: taskId });
@@ -373,6 +378,7 @@ export async function handleSubagentStopCommand(
     ...base,
     success: result.killed,
     stopped: result.killed,
+    cleanup_confirmed: result.killed,
     error: result.output,
   };
 }

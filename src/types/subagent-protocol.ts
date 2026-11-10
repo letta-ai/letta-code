@@ -108,6 +108,8 @@ export interface SubagentStopCommand {
 }
 
 export interface SubagentStopResponse {
+  /** The owner confirmed process exit and conversation cleanup. */
+  cleanup_confirmed?: boolean;
   type: "subagent_stop_response";
   request_id: string;
   runtime: AgentRuntimeScope;
