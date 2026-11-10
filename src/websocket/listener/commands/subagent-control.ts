@@ -341,7 +341,7 @@ export async function handleSubagentStopCommand(
     return { ...base, error: "Parent runtime does not match the stop request" };
   const owned = findOwnedTask(parent, command.agent_id);
   let nativeStopped = false;
-  if (owned || ownsNativeSession(parent, command.agent_id)) {
+  if (!owned && ownsNativeSession(parent, command.agent_id)) {
     const target = parseExternalCodingAgentId(command.agent_id);
     try {
       if (target && !target.computer) {

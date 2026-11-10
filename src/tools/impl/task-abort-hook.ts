@@ -16,15 +16,7 @@ export function buildBackgroundTaskAbortHook(
   // A local launcher can hand off to a listener after registration. Preserve
   // that listener's retry handle whenever cancellation is unconfirmed.
   const bgTask = backgroundTasks.get(taskId);
-  const isRemote = () =>
-    Boolean(
-      bgTask?.remote ||
-        bgTask?.stop ||
-        (bgTask?.status === "running" &&
-          getSubagents().some(
-            (child) => child.id === bgTask.subagentId && child.conversationId,
-          )),
-    );
+  const isRemote = () => Boolean(bgTask?.remote || bgTask?.stop);
   const failSafeAbort = () => !isRemote() && abortController.abort();
   const hook = () => {
     void import("./task-stop.js")

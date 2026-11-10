@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { autoBackgroundClientTool } from "@/tools/client-tool-background";
 import {
   type QueuedMessage,
   setMessageQueueAdder,
@@ -52,5 +53,37 @@ test("stopping a child's real background shell suppresses its wake and leaves it
   expect(childProcess?.completionNotificationSuppressed).toBe(true);
   expect(parentProcess?.status).toBe("running");
   expect(parentProcess?.completionNotificationSuppressed).toBeUndefined();
+  expect(notifications).toEqual([]);
+});
+
+test("stopping a shared-executor tool entry aborts it and suppresses its notification", async () => {
+  const notifications: QueuedMessage[] = [];
+  setMessageQueueAdder((message) => notifications.push(message));
+  let signal!: AbortSignal;
+  const receipt = await autoBackgroundClientTool(
+    "TestTool",
+    (abort) => {
+      signal = abort;
+      return new Promise<{ status: "success"; toolReturn: string }>(
+        (resolve) => {
+          abort.addEventListener(
+            "abort",
+            () => resolve({ status: "success", toolReturn: "aborted" }),
+            { once: true },
+          );
+        },
+      );
+    },
+    { runtimeScope: child, yieldMs: 1 },
+  );
+  expect(receipt).toBeDefined();
+  const entry = [...backgroundProcesses.values()].find(
+    (process) => process.kind === "tool",
+  );
+  expect(entry).toBeDefined();
+  await stopConversationBackground(child);
+  expect(signal.aborted).toBe(true);
+  expect(entry?.completionNotificationSuppressed).toBe(true);
+  expect(entry?.status).toBe("failed");
   expect(notifications).toEqual([]);
 });

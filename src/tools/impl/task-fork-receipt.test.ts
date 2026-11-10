@@ -287,7 +287,6 @@ describe("prepared conversation launch", () => {
     }
     expect(await task_stop({ task_id: receipt.task_id })).toEqual({
       killed: true,
-      output: "Cancelled the remote run",
     });
     expect(cancelConversation).toHaveBeenCalledWith("conv-child");
     expect(backgroundTasks.get(receipt.task_id)?.status).toBe("failed");

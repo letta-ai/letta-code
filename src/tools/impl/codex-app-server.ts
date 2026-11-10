@@ -1,4 +1,5 @@
 import { createInterface } from "node:readline";
+import type { Readable, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SubagentResult } from "@/agent/subagents";
 import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
@@ -17,13 +18,6 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
-import {
-  type CodexAppServerTransport,
-  spawnCodexTransport,
-} from "./codex-app-server-transport";
-
-export type { CodexAppServerTransport } from "./codex-app-server-transport";
-
 import { traceCodexLaunch } from "./external-llm-trace-launch";
 import {
   type ExternalTraceContext,
@@ -45,7 +39,13 @@ interface JsonRpcMessage {
   result?: Record<string, unknown>;
   error?: { code?: number; message?: string; data?: unknown };
 }
-
+export interface CodexAppServerTransport {
+  stdout: Readable;
+  stderr?: Readable;
+  stdin: Writable;
+  kill?: () => void;
+  exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+}
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
@@ -231,7 +231,32 @@ function errorMessage(error: unknown): string {
 function textInput(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
 }
-
+function spawnTransport(options: {
+  configArgs?: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}): CodexAppServerTransport {
+  const controller = new AbortController();
+  const { process: child, completion } = spawnManagedWorkloadProcess(
+    "codex",
+    [...(options.configArgs ?? []), "app-server", "--stdio"],
+    {
+      ...options,
+      signal: controller.signal,
+    },
+  );
+  return {
+    stdin: child.stdin,
+    stdout: child.stdout,
+    stderr: child.stderr,
+    // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
+    kill: () => controller.abort(),
+    exited: completion.then((exit) => ({
+      code: exit.exitCode,
+      signal: exit.exitSignal,
+    })),
+  };
+}
 class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -582,7 +607,7 @@ async function createSession(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
   });
-  let transport = (deps.createTransport ?? spawnCodexTransport)({
+  let transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
   });
@@ -615,7 +640,7 @@ async function createSession(
       : await traceCodexLaunch(options.traceContext, env, client);
     if (trace) {
       client.dispose();
-      transport = spawnCodexTransport({
+      transport = spawnTransport({
         cwd: options.cwd,
         env,
         configArgs: trace.args,
@@ -956,7 +981,6 @@ export async function runCodexTurn(
     };
   }
 }
-
 export async function stopCodexSession(threadId: string): Promise<boolean> {
   const session = sessions.get(threadId);
   if (!session) return false;

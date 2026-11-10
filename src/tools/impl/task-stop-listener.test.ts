@@ -5,6 +5,7 @@ import {
   updateSubagent,
 } from "@/agent/subagent-state";
 import { getBackend } from "@/backend";
+import { ApiRequestError } from "@/backend/api/request";
 import { backgroundTasks } from "./process_manager";
 import { task_stop } from "./task-stop";
 
@@ -45,12 +46,13 @@ test("a child with no environment still cancels its conversation", async () => {
   }
 });
 
-test("an unconfirmed cancel preserves the local child's retry handle", async () => {
+test("an unconfirmed cancel preserves a remote child's retry handle", async () => {
   const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
     "run-child": "failed",
   });
   try {
     const task = listenerTask();
+    task.remote = true;
     expect(await task_stop({ task_id: "task-child" })).toMatchObject({
       killed: false,
     });
@@ -105,3 +107,56 @@ test("a stuck listener acknowledgement keeps the stop bounded and preserves the 
   expect(result.output).toContain("may still be running");
   expect(task.abortController.signal.aborted).toBe(false);
 });
+
+for (const idle of ["empty", "409"] as const) {
+  test(`a local child between runs (${idle}) still aborts without a completion handle`, async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation");
+    if (idle === "empty") cancel.mockResolvedValue({});
+    else
+      cancel.mockRejectedValue(new ApiRequestError("No active run", 409, ""));
+    try {
+      const task = listenerTask();
+      delete backgroundTasks.get("task-child")?.completion;
+      expect((await task_stop({ task_id: "task-child" })).killed).toBe(true);
+      expect(task.abortController.signal.aborted).toBe(true);
+      expect(backgroundTasks.get("task-child")?.status).toBe("failed");
+    } finally {
+      cancel.mockRestore();
+    }
+  });
+}
+
+test("a remote child without completion cannot claim confirmed exit", async () => {
+  const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue({
+    "run-child": "cancelled",
+  });
+  try {
+    const task = listenerTask();
+    task.remote = true;
+    delete backgroundTasks.get("task-child")?.completion;
+    expect(await task_stop({ task_id: "task-child" })).toMatchObject({
+      killed: false,
+      output: "Subagent process exit cannot be confirmed",
+    });
+  } finally {
+    cancel.mockRestore();
+  }
+});
+
+for (const idle of ["empty", "409"] as const) {
+  test(`an idle remote child (${idle}) still needs cancellation confirmation`, async () => {
+    const cancel = spyOn(getBackend(), "cancelConversation");
+    if (idle === "empty") cancel.mockResolvedValue({});
+    else
+      cancel.mockRejectedValue(new ApiRequestError("No active run", 409, ""));
+    try {
+      const task = listenerTask();
+      task.remote = true;
+      expect((await task_stop({ task_id: "task-child" })).killed).toBe(false);
+      expect(task.abortController.signal.aborted).toBe(false);
+      expect(task.status).toBe("running");
+    } finally {
+      cancel.mockRestore();
+    }
+  });
+}

@@ -9,7 +9,6 @@ import {
 } from "@/agent/subagents/subagent-process";
 import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
-import { interruptInput, userInput } from "./claude-control-input";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import type { ExternalTraceContext } from "./external-llm-trace-session";
 import {
@@ -313,7 +312,10 @@ function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
   const uuid = randomUUID();
   session.latestInputUuid = uuid;
   session.latestInputStarted = false;
-  return writeRaw(session.transport.process.stdin, userInput(prompt, uuid));
+  return writeRaw(
+    session.transport.process.stdin,
+    `${JSON.stringify({ type: "user", uuid, message: { role: "user", content: [{ type: "text", text: prompt }] } })}\n`,
+  );
 }
 
 /** Marks an input as picked up when Claude echoes or starts it by UUID. */
@@ -866,7 +868,7 @@ async function steerSession(
     try {
       await writeRaw(
         session.transport.process.stdin,
-        interruptInput(requestId),
+        `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`,
       );
       await response;
       interruptAcknowledged = true;
@@ -972,12 +974,10 @@ export async function sendClaudeMessage(
 }
 export async function stopClaudeSession(sessionId: string): Promise<boolean> {
   const session = sessions.get(sessionId);
-  if (session) {
-    session.abortController.abort(new Error("Stopped by parent"));
-    await confirmProcessExit(session.exit, "Claude Code");
-    return true;
-  }
-  return false;
+  if (!session) return false;
+  session.abortController.abort(new Error("Stopped by parent"));
+  await confirmProcessExit(session.exit, "Claude Code");
+  return true;
 }
 
 export function hasActiveClaudeTurn(sessionId: string): boolean {

@@ -1,5 +1,6 @@
 import { getSubagents } from "@/agent/subagent-state.js";
 import { getBackend } from "@/backend";
+import { ApiRequestError } from "@/backend/api/request";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { getErrorMessage } from "@/utils/error";
 import { stopClaudeSession } from "./claude-stream-session";
@@ -29,7 +30,10 @@ interface TaskStopResult {
 }
 
 /** Interrupt a remote child's conversation, as the UI's stop button does. */
-async function cancelRemoteRun(subagentId: string): Promise<TaskStopResult> {
+async function cancelRemoteRun(
+  subagentId: string,
+  allowIdle = false,
+): Promise<TaskStopResult> {
   const child = getSubagents().find((agent) => agent.id === subagentId);
   const target =
     child?.conversationId === "default" ? child.agentId : child?.conversationId;
@@ -38,13 +42,18 @@ async function cancelRemoteRun(subagentId: string): Promise<TaskStopResult> {
     const results = await getBackend().cancelConversation(target);
     const outcomes = Object.values(results);
     if (
-      outcomes.length === 0 ||
+      (!allowIdle && outcomes.length === 0) ||
       outcomes.some((status) => status !== "cancelled")
     ) {
       throw new Error("Cloud did not cancel every run");
     }
-    return { killed: true, output: "Cancelled the remote run" };
+    return allowIdle
+      ? { killed: true }
+      : { killed: true, output: "Cancelled the remote run" };
   } catch (error) {
+    // Local children can be between runs while their background work is live.
+    if (allowIdle && error instanceof ApiRequestError && error.status === 409)
+      return { killed: true };
     return {
       killed: false,
       output: `Couldn't cancel the remote run: ${getErrorMessage(error)}`,
@@ -148,7 +157,7 @@ export async function task_stop(
           };
         }
       } else if (task.remote || (!external && child?.conversationId)) {
-        remote = await cancelRemoteRun(task.subagentId);
+        remote = await cancelRemoteRun(task.subagentId, !task.remote);
       }
       if (remote && !remote.killed) return remote;
       try {
@@ -166,12 +175,14 @@ export async function task_stop(
       );
       task.error = "Aborted by user";
       try {
-        if (!task.completion)
+        if (!task.completion && (task.remote || external || initialStop))
           throw new Error("Subagent process exit cannot be confirmed");
         const completionTimeoutMs =
           deps.completionTimeoutMs ??
           (external?.computer ? COMPLETION_TIMEOUT_MS : 10_000);
-        const settled = await withTimeout(task.completion, completionTimeoutMs);
+        const settled = task.completion
+          ? await withTimeout(task.completion, completionTimeoutMs)
+          : undefined;
         if (settled === TIMED_OUT) {
           if (!remoteExternalStopped)
             throw new Error("Subagent process exit was not confirmed");
