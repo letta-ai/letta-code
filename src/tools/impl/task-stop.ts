@@ -8,6 +8,7 @@ import { stopCodexSession } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 import { killBackgroundProcess } from "./kill-bash.js";
 import {
+  type BackgroundTask,
   backgroundProcesses,
   backgroundTasks,
   scheduleBackgroundTaskCleanup,
@@ -86,6 +87,26 @@ async function withTimeout<T>(
   }
 }
 
+/** Retry schedule cleanup without re-aborting a process that already exited. */
+async function finishPendingWakeCancellation(
+  task: BackgroundTask,
+): Promise<TaskStopResult> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await task.cancelPendingWakes?.();
+      task.cancelPendingWakes = undefined;
+      return { killed: true };
+    } catch (error) {
+      if (attempt === 1)
+        return {
+          killed: false,
+          output: `The process stopped, but its wakes could not be cancelled: ${getErrorMessage(error)}. Retry TaskStop to cancel the wakes.`,
+        };
+    }
+  }
+  return { killed: false };
+}
+
 export async function task_stop(
   args: TaskStopArgs,
   deps: {
@@ -100,6 +121,7 @@ export async function task_stop(
   // Check if this is a background Task (subagent)
   const task = backgroundTasks.get(task_id);
   if (task) {
+    if (task.cancelPendingWakes) return finishPendingWakeCancellation(task);
     if (task.status === "running" && task.abortController) {
       const initialStop = task.stop;
       const child = getSubagents().find(
@@ -216,7 +238,14 @@ export async function task_stop(
           const scope = { agentId, conversationId: child.conversationId };
           try {
             await stopConversationBackground(scope);
-            await runWithRuntimeContext(
+          } catch (error) {
+            return { killed: false, output: getErrorMessage(error) };
+          }
+          // Process exit is confirmed even if schedule cleanup needs a retry.
+          task.status = "failed";
+          scheduleBackgroundTaskCleanup(task_id);
+          task.cancelPendingWakes = () =>
+            runWithRuntimeContext(
               {
                 ...scope,
                 actingUserId: task.actingUserId ?? undefined,
@@ -224,9 +253,8 @@ export async function task_stop(
               },
               () => cancelConversationWakes(scope),
             );
-          } catch (error) {
-            return { killed: false, output: getErrorMessage(error) };
-          }
+          const cleaned = await finishPendingWakeCancellation(task);
+          if (!cleaned.killed) return cleaned;
         }
       }
       task.status = "failed";

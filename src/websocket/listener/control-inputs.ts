@@ -607,6 +607,13 @@ export async function handleAbortMessageInput(
       : cancelAgentId
         ? resolvedDeps.cancelConversation(cancelAgentId, cancelConversationId)
         : resolvedDeps.cancelConversationRun(cancelConversationId, cancelRunId);
+  const pumpQueue = () =>
+    resolvedDeps.scheduleQueuePump(
+      scopedRuntime,
+      params.socket,
+      params.opts as StartListenerOptions,
+      params.processQueuedTurn,
+    );
   const settlementPromise = backendCancellation.finally(() => {
     if (!cancellation.lease) {
       return;
@@ -614,36 +621,28 @@ export async function handleAbortMessageInput(
     const settlement = scopedRuntime.turnLifecycle.settleCancellation(
       cancellation.lease,
     );
-    if (settlement.released) {
-      resolvedDeps.scheduleQueuePump(
-        scopedRuntime,
-        params.socket,
-        params.opts as StartListenerOptions,
-        params.processQueuedTurn,
-      );
-    }
+    if (settlement.released && !params.confirmBackendCancellation) pumpQueue();
   });
 
-  if (params.confirmBackendCancellation) {
-    await settlementPromise;
-    const deadline = Date.now() + 10_000;
-    while (
-      cancellation.lease &&
-      scopedRuntime.turnLifecycle.isCurrent(cancellation.lease)
-    ) {
-      if (Date.now() >= deadline)
-        throw new Error("The listener turn did not stop");
-      await new Promise((resolve) => setTimeout(resolve, 20));
+  try {
+    if (params.confirmBackendCancellation) {
+      await settlementPromise;
+      const deadline = Date.now() + 10_000;
+      while (
+        cancellation.lease &&
+        scopedRuntime.turnLifecycle.isCurrent(cancellation.lease)
+      ) {
+        if (Date.now() >= deadline)
+          throw new Error("The listener turn did not stop");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+    } else {
+      void settlementPromise.catch(() => undefined);
     }
-  } else {
-    void settlementPromise.catch(() => undefined);
+  } finally {
+    // Confirmation failures must pump too; the confirmed path schedules once.
+    pumpQueue();
   }
-  resolvedDeps.scheduleQueuePump(
-    scopedRuntime,
-    params.socket,
-    params.opts as StartListenerOptions,
-    params.processQueuedTurn,
-  );
   return true;
 }
 

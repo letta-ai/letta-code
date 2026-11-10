@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, mock, test } from "bun:test";
 import { handleAbortMessageInput } from "./control-inputs";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
@@ -65,44 +65,51 @@ test("a confirmed harness stop waits for both backend cancellation and the turn 
   expect(await stopping).toBe(true);
 });
 
-test("an unconfirmed backend cancellation rejects the harness stop", async () => {
-  const listener = createRuntime();
-  setActiveRuntime(listener);
-  const runtime = getOrCreateScopedRuntime(
-    listener,
-    "agent-child",
-    "conv-child",
-  );
-  const lease = runtime.turnLifecycle.begin({
-    origin: "message",
-    workingDirectory: "/tmp",
-  });
-  runtime.turnLifecycle.setRunId(lease, "run-child");
-  await expect(
-    handleAbortMessageInput(
+test.each([false, true])(
+  "an unconfirmed backend cancellation pumps once (owner finished: %s)",
+  async (ownerFinished) => {
+    const listener = createRuntime();
+    setActiveRuntime(listener);
+    const runtime = getOrCreateScopedRuntime(
       listener,
-      {
-        command: {
-          type: "abort_message",
-          request_id: "stop",
-          runtime: { agent_id: "agent-child", conversation_id: "conv-child" },
+      "agent-child",
+      "conv-child",
+    );
+    const lease = runtime.turnLifecycle.begin({
+      origin: "message",
+      workingDirectory: "/tmp",
+    });
+    runtime.turnLifecycle.setRunId(lease, "run-child");
+    const scheduleQueuePump = mock(() => {});
+    await expect(
+      handleAbortMessageInput(
+        listener,
+        {
+          command: {
+            type: "abort_message",
+            request_id: "stop",
+            runtime: { agent_id: "agent-child", conversation_id: "conv-child" },
+          },
+          confirmBackendCancellation: true,
+          socket,
+          opts: {},
+          processQueuedTurn: async () => {},
         },
-        confirmBackendCancellation: true,
-        socket,
-        opts: {},
-        processQueuedTurn: async () => {},
-      },
-      {
-        cancelRun: async () => {
-          throw new Error("Run cancellation failed");
+        {
+          cancelRun: async () => {
+            throw new Error("Run cancellation failed");
+          },
+          cancelConversation: async () => {
+            if (ownerFinished) runtime.turnLifecycle.finish(lease, "cancelled");
+            throw new Error("Conversation cancellation failed");
+          },
+          emitRuntimeStateUpdates: () => {},
+          emitInterruptedStatusDelta: () => {},
+          scheduleQueuePump,
         },
-        cancelConversation: async () => {
-          throw new Error("Conversation cancellation failed");
-        },
-        emitRuntimeStateUpdates: () => {},
-        emitInterruptedStatusDelta: () => {},
-        scheduleQueuePump: () => {},
-      },
-    ),
-  ).rejects.toThrow("Conversation cancellation failed");
-});
+      ),
+    ).rejects.toThrow("Conversation cancellation failed");
+    expect(scheduleQueuePump).toHaveBeenCalledTimes(1);
+    expect(runtime.turnLifecycle.currentLease !== null).toBe(!ownerFinished);
+  },
+);

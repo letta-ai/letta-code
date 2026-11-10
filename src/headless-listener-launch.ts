@@ -15,7 +15,7 @@ import {
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { getApiRequestConfig } from "@/backend/api/request";
+import { ApiRequestError, getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
 import { stopLocalSubagent } from "@/tools/impl/subagent-stop-bridge";
 import type {
@@ -157,15 +157,21 @@ export async function stopAcceptedListenerConversation(
     conversation_id: receipt.conversation_id,
     acting_user_id: receipt.acting_user_id ?? undefined,
   };
-  await dequeueConversationMessage(
-    {
-      agentId: getEnqueueAgentId(receipt),
-      conversationId: receipt.conversation_id,
-      clientMessageId: receipt.client_message_id,
-      actingUserId: receipt.acting_user_id,
-    },
-    AbortSignal.timeout(10_000),
-  );
+  try {
+    await dequeueConversationMessage(
+      {
+        agentId: getEnqueueAgentId(receipt),
+        conversationId: receipt.conversation_id,
+        clientMessageId: receipt.client_message_id,
+        actingUserId: receipt.acting_user_id,
+      },
+      AbortSignal.timeout(10_000),
+    );
+  } catch (error) {
+    // An accepted turn can already have left the queue; still stop its owner.
+    if (!(error instanceof ApiRequestError && error.status === 404))
+      throw error;
+  }
   const command: SubagentStopCommand = {
     type: "subagent_stop",
     request_id: randomUUID(),

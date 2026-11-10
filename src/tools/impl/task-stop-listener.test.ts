@@ -8,6 +8,7 @@ import { getBackend } from "@/backend";
 import { ApiRequestError } from "@/backend/api/request";
 import { backgroundTasks } from "./process_manager";
 import { task_stop } from "./task-stop";
+import * as wakes from "./wake";
 
 function listenerTask() {
   registerSubagent("child", "general-purpose", "child");
@@ -160,3 +161,42 @@ for (const idle of ["empty", "409"] as const) {
     }
   });
 }
+
+test("wake cleanup failure records process exit and retries only wakes on the same task ID", async () => {
+  const cancel = spyOn(getBackend(), "cancelConversation").mockResolvedValue(
+    {},
+  );
+  const cancelWakes = spyOn(wakes, "cancelConversationWakes")
+    .mockRejectedValueOnce(new Error("Schedules unavailable"))
+    .mockRejectedValueOnce(new Error("Schedules unavailable"))
+    .mockResolvedValueOnce();
+  const task = listenerTask();
+  updateSubagent("child", { agentId: "agent-child" });
+  const abort = spyOn(task.abortController, "abort");
+  try {
+    expect(await task_stop({ task_id: "task-child" })).toMatchObject({
+      killed: false,
+      output: expect.stringContaining(
+        "process stopped, but its wakes could not be cancelled",
+      ),
+    });
+    expect(backgroundTasks.get("task-child")?.status).toBe("failed");
+    expect(backgroundTasks.get("task-child")?.cleanupTimer).toBeDefined();
+    expect(cancelWakes).toHaveBeenCalledTimes(2);
+    expect(abort).toHaveBeenCalledTimes(1);
+    expect(await task_stop({ task_id: "task-child" })).toEqual({
+      killed: true,
+    });
+    expect(cancelWakes).toHaveBeenCalledTimes(3);
+    expect(cancelWakes).toHaveBeenLastCalledWith({
+      agentId: "agent-child",
+      conversationId: "conv-child",
+    });
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(abort).toHaveBeenCalledTimes(1);
+  } finally {
+    abort.mockRestore();
+    cancelWakes.mockRestore();
+    cancel.mockRestore();
+  }
+});

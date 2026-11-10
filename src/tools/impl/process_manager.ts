@@ -72,6 +72,8 @@ export interface BackgroundTask {
   completion?: Promise<void>;
   /** Confirm cancellation with the listener that owns an accepted turn. */
   stop?: () => Promise<void>;
+  /** Process exit is confirmed; only wake cancellation remains to retry. */
+  cancelPendingWakes?: () => Promise<void>;
   /** Runs on another computer or in Cloud; stopping it must cancel Cloud. */
   remote?: boolean;
   cleanupTimer?: TimerHandle;
