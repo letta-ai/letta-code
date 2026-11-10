@@ -4415,7 +4415,7 @@ Claude Code ignores project and local entries because it substitutes these value
 
 List the managed plugins whose [mods](https://code.claude.com/docs/en/plugins/mods/overview.md) run before every mod a user installs, in the listed order. When you set this key in managed settings, name `sec-default@builtin` in the list to keep the built-in guard. In managed settings, Claude Code skips an id whose plugin doesn't count as your organization's. See [Install your organization's mods and set the order](https://code.claude.com/docs/en/plugins/mods/admin.md#install-your-organizations-mods) for those conditions and for how the two ordering keys work together.
 
-* **Scope**: [`User or managed`](#scopes). Claude Code reads the key from managed settings. It reads the key from user settings only on a machine with no managed settings, in a session whose credential isn't a Team or Enterprise `/login`. It ignores the key in project and local settings and in a `--settings` file.
+* **Scope**: [`User or managed`](#scopes). Claude Code reads the key from managed settings. It reads the key from user settings only on a machine with no managed settings or `managed-mcp.json` file, in a session whose credential isn't a Team or Enterprise `/login`. It ignores the key in project and local settings and in a `--settings` file.
 * **Type**: array of `plugin-name@marketplace-name` strings
 * **Default**: unset
 
@@ -4435,7 +4435,7 @@ List the managed plugins whose [mods](https://code.claude.com/docs/en/plugins/mo
 
 List the managed plugins whose [mods](https://code.claude.com/docs/en/plugins/mods/overview.md) run after every mod a user installs, in the listed order. An id listed in both `prependPlugins` and `appendPlugins` is prepended. In managed settings, Claude Code skips an id whose plugin doesn't [count as your organization's](https://code.claude.com/docs/en/plugins/mods/admin.md#install-your-organizations-mods).
 
-* **Scope**: [`User or managed`](#scopes). Claude Code reads the key from managed settings. It reads the key from user settings only on a machine with no managed settings, in a session whose credential isn't a Team or Enterprise `/login`. It ignores the key in project and local settings and in a `--settings` file.
+* **Scope**: [`User or managed`](#scopes). Claude Code reads the key from managed settings. It reads the key from user settings only on a machine with no managed settings or `managed-mcp.json` file, in a session whose credential isn't a Team or Enterprise `/login`. It ignores the key in project and local settings and in a `--settings` file.
 * **Type**: array of `plugin-name@marketplace-name` strings
 * **Default**: unset
 

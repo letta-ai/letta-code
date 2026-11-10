@@ -964,7 +964,7 @@ With a hook in a settings file or a plugin's `hooks/hooks.json` you can't loosen
 
 > [!NOTE]
 >
-> If your machine has no [managed settings](https://code.claude.com/docs/en/settings.md#check-what-your-organization-enforces) and your session doesn't use [`/login` credentials](https://code.claude.com/docs/en/authentication#authentication-precedence) for a Team or Enterprise plan, a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) can approve a call your `PreToolUse` hook blocked. A session that runs on an API key or a long-lived [`CLAUDE_CODE_OAUTH_TOKEN`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) instead isn't using that login, even when that login is stored.
+> Your machine might lack [managed settings](https://code.claude.com/docs/en/settings.md#check-what-your-organization-enforces) and a [`managed-mcp.json` file](https://code.claude.com/docs/en/managed-mcp#deploy-managed-mcp-json), and your session might not use [`/login` credentials](https://code.claude.com/docs/en/authentication#authentication-precedence) for a Team or Enterprise plan. In that setup, a [mod](https://code.claude.com/docs/en/plugins/mods/overview.md) can approve a call your `PreToolUse` hook blocked. A session that runs on an API key or a long-lived [`CLAUDE_CODE_OAUTH_TOKEN`](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token) instead isn't using that login, even when that login is stored.
 >
 > In plan mode, a mod can approve such a blocked call only when it's read-only, so not a file edit. For the cases where a mod's approval doesn't get past your rules and hooks, see [Extend permissions with hooks](https://code.claude.com/docs/en/permissions.md#precedence-among-rules-hooks-and-mods).
 
