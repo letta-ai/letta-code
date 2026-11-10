@@ -58,7 +58,9 @@ describe("runtime_start default permission mode", () => {
     if (previousConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
     else process.env.LETTA_CONFIG_DIR = previousConfigDir;
     resetRemoteSettingsCache();
-    await rm(storageDir, { recursive: true, force: true });
+    // Bun on Windows CI has failed this removal with EFAULT after the test
+    // passed. A leftover temp dir is harmless; don't fail the test for it.
+    await rm(storageDir, { recursive: true, force: true }).catch(() => {});
   });
 
   async function createAgentId(): Promise<string> {
