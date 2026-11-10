@@ -424,15 +424,35 @@ test.each([
       f.install(incumbent);
       // Identity availability is an input to recovery. A real bounded OS probe
       // may return null, which must preserve the incumbent rather than evict it.
+      let clock = 0;
+      const budgets: number[] = [];
+      const waitMs = recovers ? 1_000 : 10;
       const acquire = () =>
         acquireDurableFileLock(f.path, {
-          waitMs: recovers ? 1_000 : 10,
+          waitMs,
+          now: () => clock,
+          sleep: (milliseconds) => {
+            clock += milliseconds;
+          },
           owner: {
             token: "replacement",
             pid: process.pid,
             processStart: "current",
           },
-          isOwnerAlive: (owner) => durableLockOwnerIsAlive(owner, () => actual),
+          readProcessStart: (pid, timeoutMs) => {
+            expect(pid).toBe(incumbent.pid);
+            budgets.push(timeoutMs);
+            return getProcessStart(
+              pid,
+              "win32",
+              (_command, _args, options) => {
+                expect(options?.timeout).toBe(timeoutMs);
+                if (actual === null) throw new Error("identity unavailable");
+                return actual;
+              },
+              timeoutMs,
+            );
+          },
         });
       if (recovers) {
         const release = acquire();
@@ -442,6 +462,10 @@ test.each([
         expect(acquire).toThrow("Timed out acquiring durable filesystem lock");
         expect(readdirSync(f.lock)).toEqual([f.ownerName(incumbent)]);
       }
+      expect(budgets.length).toBeGreaterThan(0);
+      expect(budgets.every((budget) => budget > 0 && budget <= waitMs)).toBe(
+        true,
+      );
     } finally {
       rmSync(f.root, { recursive: true, force: true });
     }
