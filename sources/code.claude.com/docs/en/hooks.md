@@ -2210,6 +2210,14 @@ The `updatedPermissions` output field and the [`permission_suggestions` input fi
 | `addDirectories` | `directories`, `destination` | Adds working directories. `directories` is an array of path strings |
 | `removeDirectories` | `directories`, `destination` | Removes working directories |
 
+In `rules`, for a [permission rule](https://code.claude.com/docs/en/permissions.md#permission-rule-syntax) written `Tool(specifier)`, `toolName` is the tool's name and `ruleContent` is the specifier:
+
+* `Bash(npm test)`: `{ "toolName": "Bash", "ruleContent": "npm test" }`
+* `Bash` or `Bash(*)`: `{ "toolName": "Bash" }`, because both match the whole tool
+* `mcp__github__get_issue`: `{ "toolName": "mcp__github__get_issue" }`
+
+Leave `ruleContent` out of an allow rule for an [MCP tool](https://code.claude.com/docs/en/permissions.md#mcp). If you add it, the rule doesn't match any call.
+
 > [!NOTE]
 >
 > `setMode` with `bypassPermissions` only takes effect if you launched the session with bypass mode already available: `--dangerously-skip-permissions`, `--permission-mode bypassPermissions`, `--allow-dangerously-skip-permissions`, or `permissions.defaultMode: "bypassPermissions"` in [user, `--settings`, or managed settings](https://code.claude.com/docs/en/settings-reference#permissions-defaultmode). Otherwise the update is a no-op. The update is also a no-op when [`permissions.disableBypassPermissionsMode`](https://code.claude.com/docs/en/permissions#managed-settings) disables the mode, or when the session starts in [restricted mode](https://code.claude.com/docs/en/cli-reference.md#cli-flags).

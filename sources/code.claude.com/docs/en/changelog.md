@@ -10,6 +10,12 @@ This page is generated from the [CHANGELOG.md on GitHub](https://github.com/anth
 
 Run `claude --version` to check your installed version.
 
+**2.1.322**
+
+November 10, 2026
+
+* Added fast mode on Vertex in the global, us and eu regions, falling back to standard speed if Vertex refuses it
+
 **2.1.321**
 
 November 9, 2026

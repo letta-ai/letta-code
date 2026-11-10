@@ -578,6 +578,8 @@ To match every tool from an MCP server, write `mcp__<server>__*`. To match one t
 * `mcp__puppeteer__*` uses wildcard syntax and also matches all tools from the `puppeteer` server
 * `mcp__puppeteer__puppeteer_navigate` matches the `puppeteer_navigate` tool provided by the `puppeteer` server
 
+Write allow rules for MCP tools without a [specifier](#use-specifiers-for-fine-grained-control), which a [permission update](https://code.claude.com/docs/en/hooks.md#permission-update-entries) calls `ruleContent`. If you add one to allow only some of a tool's calls, the rule doesn't match any call. To block some calls instead, see [Match by input parameter](#match-by-input-parameter).
+
 For `<server>`, write the server's name the way it appears in that server's tool names. These examples show the rule to write for a name with special characters, a server from a plugin, and a name that contains `__` or ends in `_`:
 
 * **Names with characters such as `.` or spaces**: those characters become `_`, so for a server you configured as `my.server`, write `mcp__my_server__*`
