@@ -1923,9 +1923,9 @@ Use the reason code to explain why fast mode is off in your own UI instead of re
 | `extra_usage_disabled` | Usage credits are turned off for the account |
 | `network_error` | The [availability check](https://code.claude.com/docs/en/fast-mode.md#use-fast-mode-behind-proxies-and-llm-gateways) couldn't reach `api.anthropic.com` |
 | `unknown` | Claude Code couldn't determine availability |
-| `not_first_party` | The session uses a provider other than the Anthropic API |
-| `disabled_by_env` | [`CLAUDE_CODE_DISABLE_FAST_MODE`](https://code.claude.com/docs/en/env-vars) is set |
-| `model_not_allowed` | The fast mode Opus model isn't in the organization's [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist |
+| `not_first_party` | The session uses a provider that doesn't offer fast mode |
+| `disabled_by_env` | [`CLAUDE_CODE_DISABLE_FAST_MODE`](https://code.claude.com/docs/en/env-vars) is set, or the model's region on [Google Cloud's Agent Platform](https://code.claude.com/docs/en/fast-mode.md#use-fast-mode-on-agent-platform) doesn't offer fast mode |
+| `model_not_allowed` | The fast mode model isn't in the organization's [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) allowlist, or the provider refused fast mode for the session's model |
 | `sdk_opt_in_required` | The session hasn't opted in to fast mode: pass `fastMode: true` in the [`settings`](#options) option or through [`applyFlagSettings()`](#applyflagsettings) |
 | `pending` | The availability check hasn't completed yet |
 

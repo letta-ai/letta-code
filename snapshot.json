@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.322:docs:452e60543159a956f242321e9d7237ffb0756af119edc25f52d863e93266e354:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
+  "candidate_id": "claude@2.1.322:docs:7f2deb794e234438f8cb893b55a985d19ee6dad36060036164e4ce416911bda6:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
   "package_version": "2.1.322",
   "npm_integrity": "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ==",
   "npm_published_at": "2026-11-10T01:58:41.811Z",
@@ -14,7 +14,7 @@
   },
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
-    "index_hash": "fe04a609e137986ef60ff7fc649beebc563902b81150b81151f5b6092e6c4e54",
+    "index_hash": "f6a20dc9c56dcdb36f559a6d7f0b004d5601a47e16e7ada41a8385efc81625f1",
     "full_scan": false,
     "scanned_at": "2026-11-10T04:19:31.567Z",
     "pages": {
@@ -218,7 +218,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "c61f9128045c118681f0d837ad180f12d6caed9f0864c42358c1d395f8fd9a76",
+        "hash": "bd7cea08ed2118c182a46236b71f38d9873520acfc0eec2a3978b08f75911f68",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -560,7 +560,7 @@
       },
       "https://code.claude.com/docs/en/env-vars.md": {
         "url": "https://code.claude.com/docs/en/env-vars.md",
-        "hash": "80c58b7ae088178381aa03c82dcc94d54c1bfb821fea648cbca97dc614ec85a5",
+        "hash": "124e683f9f310a69cf2a836ba129fc2b32bfeb10b57f81bd307c0b5b3f129895",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/env-vars.md"
       },
@@ -836,7 +836,7 @@
       },
       "https://code.claude.com/docs/en/plugins/cli-reference.md": {
         "url": "https://code.claude.com/docs/en/plugins/cli-reference.md",
-        "hash": "2714471fe96cb9b4679604f024a05543449eed702953c8891527e0de21b21323",
+        "hash": "8a7060722e6ad0c6b6bd3a00ad2f56c52a76f9b0d40936e1e7f4869715bb26fe",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/plugins/cli-reference.md"
       },
@@ -1124,13 +1124,13 @@
       },
       "https://code.claude.com/docs/en/settings-reference.md": {
         "url": "https://code.claude.com/docs/en/settings-reference.md",
-        "hash": "def1c1105eb8cb81a55dbd3287d9383a6616656eb334f1e250ca0b5e2c82ea87",
+        "hash": "790236dad1625db2841882ef35f2039c4d6c51dfba323c460b0803009b7e2307",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings-reference.md"
       },
       "https://code.claude.com/docs/en/settings.md": {
         "url": "https://code.claude.com/docs/en/settings.md",
-        "hash": "a990a481f11d432305626bd0c50f64d6ed61a6d8967307d1b7e35701edc6d261",
+        "hash": "e180e905de3bbf69dd932eb37a2ea9af8d7e937ade9cc98fdcd493df85ca18cc",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/settings.md"
       },
@@ -1218,156 +1218,6 @@
         "watched": false,
         "source_path": null
       },
-      "https://code.claude.com/docs/en/whats-new/2026-w13.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w13.md",
-        "hash": "cee080e16e3009aa260022aa49d79d115a537299898c4628148d60a6b3e0b9a5",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w14.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w14.md",
-        "hash": "3164c9dcbde6fd84e58dcb801ce96a1b7fc73872337eeea491f5ae9fe36b95fe",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w15.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w15.md",
-        "hash": "fe046e667e970468aa05b990d44d63ec44a731ee6ce272438f25baf38e49b92e",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w16.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w16.md",
-        "hash": "9aa831f6babb9b37636ca50036f69bd63597175ee88644b8cca0c90db7879dc1",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w17.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w17.md",
-        "hash": "b4b3bca9f13cc9ac1c627b07d820fb37054fd6e650b512ad197b0a0d1865d8ef",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w18.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w18.md",
-        "hash": "d85f8611ddf7f2b08140356eab5b90d58e235b1b710f013309f808e7fb1dccfa",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w19.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w19.md",
-        "hash": "83887648f971a02707094897959aaecc8cec68f456f11859f3fb09e96cdd6e5c",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w20.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w20.md",
-        "hash": "77fc81e1ebd952d913527ce298cb60a6afb0b0bebfa0f90595f5f9690019c845",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w21.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w21.md",
-        "hash": "6e5826cf338fa5f68a97d73afea04a8c8d456e6f75ed6734f6e2180639f1269f",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w22.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w22.md",
-        "hash": "ab1ac269d68e79ad437bc38973adb2fe693fd5e21a93ae4637215d841dbb58de",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w23.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w23.md",
-        "hash": "f011ca8d44110be6e10ceb79cf4c9b3b28cd5ce889d33fad9d0ffb9a623eed56",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w24.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w24.md",
-        "hash": "d10c924c0c80f70d2c7fed570293d62726d6113501de53886fa42b2371db4e95",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w25.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w25.md",
-        "hash": "0d764a626db8e2855e632e37fa1b8abbdef4b1f63f9c1bc103d4d203c9bcc0f0",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w26.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w26.md",
-        "hash": "a590f78a3d8a12f2340ab39e43022af61eb9c90104ebd75c7f56bccc9e969885",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w27.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w27.md",
-        "hash": "deb070b5a5d43dd05acecf875c77d963b536c878aa47ca07f417af8df9282278",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w28.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w28.md",
-        "hash": "68a42a8dcd04f494bfea73ce7bc095ccef6fb0dd6edaf671d69da327d17064bf",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w29.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w29.md",
-        "hash": "7e4c7e7afa05cae71f9c003b498d937c79ec9233c0cdac2e62d81afb118985f7",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w30.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w30.md",
-        "hash": "e045a0ada6dfe54fd8ad2cfb50c42399dffcf64c0c9f72ad16b4938629dcd466",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w32.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w32.md",
-        "hash": "79ab9188dbb824d71dd66d19e019ee15bea6e325847de7dc072320fe87ead935",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w33.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w33.md",
-        "hash": "c244b04265b9b9f34e9536ef3778ffbada49e0865fbd1280b4d4d141d3042470",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w34.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w34.md",
-        "hash": "738e0ed5bd823822b6c9b2721cd1c7eb6cdebab180274f85eb67f5336ca4f337",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w35.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w35.md",
-        "hash": "d8ff37f32c5da0e18f11d88e702de6a0ddff563e41de4664864c1d0f71ab4683",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w36.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w36.md",
-        "hash": "8cd44cde6016294cd4d8c4b4eecab2e6f8efedb6b5560f298964742d270b2078",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/2026-w37.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/2026-w37.md",
-        "hash": "db96f4caa10308fa675e5e0af61d50dae7ad656ac4cb1c178495670fe5cb149f",
-        "watched": false,
-        "source_path": null
-      },
-      "https://code.claude.com/docs/en/whats-new/index.md": {
-        "url": "https://code.claude.com/docs/en/whats-new/index.md",
-        "hash": "783a0b3d58dd48edf222a77dc5dcd52557ec18e6b738474f4ed47934b96966a5",
-        "watched": false,
-        "source_path": null
-      },
       "https://code.claude.com/docs/en/workflows.md": {
         "url": "https://code.claude.com/docs/en/workflows.md",
         "hash": "b940968734f59d5e7f3b58c9513d1b90c69c9a429436eadf6b9d1d95873bf4c5",
@@ -1393,7 +1243,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "452e60543159a956f242321e9d7237ffb0756af119edc25f52d863e93266e354"
+    "digest": "7f2deb794e234438f8cb893b55a985d19ee6dad36060036164e4ce416911bda6"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1686,8 +1536,8 @@
     ],
     "digest": "f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5"
   },
-  "fetched_at": "2026-11-10T18:20:04.565Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/42873904152",
-  "state_commit_parent": "e5ac596bc3bea7b296c555f931381bc6e0490f82",
-  "analysis_parent_sha": "e5ac596bc3bea7b296c555f931381bc6e0490f82"
+  "fetched_at": "2026-11-10T20:19:35.925Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/42893960045",
+  "state_commit_parent": "33e0bbf86c906c5f58d4cea2ad77dc2f754672ce",
+  "analysis_parent_sha": "33e0bbf86c906c5f58d4cea2ad77dc2f754672ce"
 }

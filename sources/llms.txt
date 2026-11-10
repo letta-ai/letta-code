@@ -532,36 +532,6 @@
 
 - [Agent SDK reference - TypeScript](https://code.claude.com/docs/en/agent-sdk/typescript.md): Complete API reference for the TypeScript Agent SDK, including all functions, types, and interfaces.
 
-## What's New
-
-### What's New
-
-- [What's new](https://code.claude.com/docs/en/whats-new/index.md): A weekly digest of notable Claude Code features, with code snippets, demos, and context on why they matter.
-- [Week 37 · September 7–11, 2026](https://code.claude.com/docs/en/whats-new/2026-w37.md): Test your plugins with claude plugin eval and pop Claude Code Desktop panes out into their own windows.
-- [Week 36 · August 31 – September 4, 2026](https://code.claude.com/docs/en/whats-new/2026-w36.md): Switch to Claude Fable 5.1, let computer use run in the background on Desktop, and watch Claude's edits in a live /diff panel.
-- [Week 35 · August 24–28, 2026](https://code.claude.com/docs/en/whats-new/2026-w35.md): Resume terminal sessions in the Claude Code Desktop app, review feedback reports that Claude drafts for you, and start a session in restricted mode.
-- [Week 34 · August 17–21, 2026](https://code.claude.com/docs/en/whats-new/2026-w34.md): Draft editable UI artboards with the /design skill, set the Concise output style, and start a Claude Code session on your machine from your phone.
-- [Week 33 · August 10–14, 2026](https://code.claude.com/docs/en/whats-new/2026-w33.md): Claude Code Desktop auto-continues after a usage limit resets, fork mode turns on by default, and GitLab merge requests and marketplaces join GitHub.
-- [Week 32 · August 3–7, 2026](https://code.claude.com/docs/en/whats-new/2026-w32.md): Claude Code sessions message each other, self-hosted environments run cloud sessions on your infrastructure, and auto mode becomes the default permission mode.
-- [Week 30 · July 20–24, 2026](https://code.claude.com/docs/en/whats-new/2026-w30.md): Opus 5 becomes the default Opus model, Claude Code Desktop adds an iOS Simulator pane, and the Claude Security plugin scans your code for vulnerabilities.
-- [Week 29 · July 13–17, 2026](https://code.claude.com/docs/en/whats-new/2026-w29.md): Pull live data into published artifacts through MCP connectors, and use Claude Code with a screen reader in the new screen reader mode.
-- [Week 28 · July 6–10, 2026](https://code.claude.com/docs/en/whats-new/2026-w28.md): Browse external sites from the Desktop app's built-in browser, run a full setup checkup with /doctor, and pick up auto mode transcript protections and agent view upgrades.
-- [Week 27 · June 29 – July 3, 2026](https://code.claude.com/docs/en/whats-new/2026-w27.md): Claude Sonnet 5 becomes the default model, Claude in Chrome reaches general availability, subagents run in the background by default, Claude Desktop arrives on Linux in beta, and /radio tunes into Claude FM.
-- [Week 26 · June 22–26, 2026](https://code.claude.com/docs/en/whats-new/2026-w26.md): Authenticate MCP servers from your shell with claude mcp login, get a response to shell mode command output with the ! prefix, and resume a conversation from before /clear with /rewind.
-- [Week 25 · June 15–19, 2026](https://code.claude.com/docs/en/whats-new/2026-w25.md): Publish a live, shareable page from your session with Artifacts, match tool parameters in deny and ask rules, and set any setting from the prompt with /config.
-- [Week 24 · June 8–12, 2026](https://code.claude.com/docs/en/whats-new/2026-w24.md): Move a session to a new directory with /cd, let subagents spawn their own subagents, and troubleshoot a broken configuration with safe mode.
-- [Week 23 · June 1–5, 2026](https://code.claude.com/docs/en/whats-new/2026-w23.md): Run auto mode on Amazon Bedrock, Google Cloud's Agent Platform, and Microsoft Foundry, prompt before writing files that can run code in acceptEdits mode, list installed plugins with /plugin list, and require an approved version range for managed deployments.
-- [Week 22 · May 25–29, 2026](https://code.claude.com/docs/en/whats-new/2026-w22.md): Run Claude Code on Claude Opus 4.8, orchestrate large tasks with dynamic workflows, catch security issues with the security-guidance plugin, and use fast mode on Opus 4.8 at a lower price.
-- [Week 21 · May 18–22, 2026](https://code.claude.com/docs/en/whats-new/2026-w21.md): Use auto mode on the Pro plan and with Sonnet 4.6, see which skills, subagents, and MCP servers drive your plan limits in /usage, and review diffs with the new /code-review command.
-- [Week 20 · May 11–15, 2026](https://code.claude.com/docs/en/whats-new/2026-w20.md): Manage every Claude Code session from one screen with agent view, keep Claude working toward a goal until a condition holds, and run fast mode on Opus 4.7 by default.
-- [Week 19 · May 4–8, 2026](https://code.claude.com/docs/en/whats-new/2026-w19.md): Load plugins from .zip archives and URLs, search command history across every project with Ctrl+R, branch new worktrees from local HEAD or the remote default, and block actions unconditionally with auto mode hard deny rules.
-- [Week 18 · April 27 – May 1, 2026](https://code.claude.com/docs/en/whats-new/2026-w18.md): Claude Code on Windows runs without Git Bash, claude auth login accepts a pasted OAuth code when the browser callback can't reach localhost, claude project purge cleans up local state per project, and pasting a PR URL into /resume finds the session that created it.
-- [Week 17 · April 20–24, 2026](https://code.claude.com/docs/en/whats-new/2026-w17.md): /ultrareview opens as a research preview, automatic session recaps when you return to a terminal, custom color themes you can build and ship in plugins, and a redesigned Claude Code on the web.
-- [Week 16 · April 13–17, 2026](https://code.claude.com/docs/en/whats-new/2026-w16.md): Claude Opus 4.7 with the new xhigh effort level, Routines on Claude Code on the web, mobile push notifications that ping your phone when Claude needs you, a /usage breakdown that shows what's driving your limits, and native binaries replacing the bundled JavaScript.
-- [Week 15 · April 6–10, 2026](https://code.claude.com/docs/en/whats-new/2026-w15.md): Ultraplan cloud planning, the Monitor tool with self-pacing /loop, /team-onboarding for packaging your setup, and /autofix-pr from your terminal.
-- [Week 14 · March 30 – April 3, 2026](https://code.claude.com/docs/en/whats-new/2026-w14.md): Computer use in the CLI, interactive in-product lessons, flicker-free rendering, per-tool MCP result-size overrides, and plugin executables on PATH.
-- [Week 13 · March 23–27, 2026](https://code.claude.com/docs/en/whats-new/2026-w13.md): Auto mode for hands-off permissions, computer use built in, PR auto-fix in the cloud, transcript search, and a PowerShell tool for Windows.
-
 ## Resources
 
 ### Resources
@@ -572,14 +542,14 @@
 
 ## Indexes
 
-- [French (228 pages)](https://code.claude.com/docs/_llms/fr.txt): Documentation for French.
-- [German (228 pages)](https://code.claude.com/docs/_llms/de.txt): Documentation for German.
-- [Italian (228 pages)](https://code.claude.com/docs/_llms/it.txt): Documentation for Italian.
-- [Japanese (228 pages)](https://code.claude.com/docs/_llms/jp.txt): Documentation for Japanese.
-- [Spanish (228 pages)](https://code.claude.com/docs/_llms/es.txt): Documentation for Spanish.
-- [Korean (228 pages)](https://code.claude.com/docs/_llms/ko.txt): Documentation for Korean.
-- [Simplified Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-cn.txt): Documentation for Simplified Chinese.
-- [Traditional Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-tw.txt): Documentation for Traditional Chinese.
-- [Russian (228 pages)](https://code.claude.com/docs/_llms/ru.txt): Documentation for Russian.
-- [Indonesian (228 pages)](https://code.claude.com/docs/_llms/id.txt): Documentation for Indonesian.
-- [Brazilian Portuguese (228 pages)](https://code.claude.com/docs/_llms/pt-br.txt): Documentation for Brazilian Portuguese.
+- [French (228 pages)](https://code.claude.com/docs/_llms/fr.txt): Premiers pas, Développer avec Claude Code, Plugins, Administration, Configuration, Référence, SDK Agent, Nouveautés, Ressources.
+- [German (228 pages)](https://code.claude.com/docs/_llms/de.txt): Erste Schritte, Mit Claude Code entwickeln, Plugins, Administration, Konfiguration, Referenz, Agent SDK, Neuigkeiten, Ressourcen.
+- [Italian (228 pages)](https://code.claude.com/docs/_llms/it.txt): Per iniziare, Crea con Claude Code, Plugin, Amministrazione, Configurazione, Riferimento, Agent SDK, Novità, Risorse.
+- [Japanese (228 pages)](https://code.claude.com/docs/_llms/jp.txt): はじめに, Claude Code で構築, プラグイン, 管理, 設定, リファレンス, Agent SDK, 新機能, リソース.
+- [Spanish (228 pages)](https://code.claude.com/docs/_llms/es.txt): Primeros pasos, Crea con Claude Code, Plugins, Administración, Configuración, Referencia, Agent SDK, Novedades, Recursos.
+- [Korean (228 pages)](https://code.claude.com/docs/_llms/ko.txt): 시작하기, Claude Code로 만들기, 플러그인, 관리, 구성, 레퍼런스, Agent SDK, 새로운 기능, 리소스.
+- [Simplified Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-cn.txt): 快速入门, 使用 Claude Code 构建, 插件, 管理, 配置, 参考, Agent SDK, 新功能, 资源.
+- [Traditional Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-tw.txt): 快速入門, 使用 Claude Code 打造, 外掛, 管理, 設定, 參考資料, Agent SDK, 最新消息, 資源.
+- [Russian (228 pages)](https://code.claude.com/docs/_llms/ru.txt): Начало работы, Разработка с Claude Code, Плагины, Администрирование, Конфигурация, Справочник, Agent SDK, Что нового, Ресурсы.
+- [Indonesian (228 pages)](https://code.claude.com/docs/_llms/id.txt): Memulai, Membangun dengan Claude Code, Plugin, Administrasi, Konfigurasi, Referensi, Agent SDK, Apa yang Baru, Sumber Daya.
+- [Brazilian Portuguese (228 pages)](https://code.claude.com/docs/_llms/pt-br.txt): Primeiros passos, Desenvolva com Claude Code, Plugins, Administração, Configuração, Referência, Agent SDK, Novidades, Recursos.
