@@ -1970,6 +1970,11 @@ async function executeToolInner(
         workingDirectory: context?.workingDirectory,
         permissionModeState: context?.permissionModeState,
       });
+  const backgroundOptions = {
+    runtimeScope: executionScope,
+    signal: options?.signal,
+    onOutput: options?.onOutput,
+  };
   const workingDirectory =
     executionScope.workingDirectory ?? getCurrentWorkingDirectory();
   const scopedAgentId = executionScope.agentId ?? undefined;
@@ -2033,18 +2038,16 @@ async function executeToolInner(
     }
     return autoBackgroundClientTool(
       name,
-      executeModTool(name, modTool, eventArgs, executionScope, {
-        signal: options?.signal,
-        toolCallId: options?.toolCallId,
-        onOutput: options?.onOutput,
-        workingDirectory,
-        scopedAgentId,
-        modContext,
-      }),
-      {
-        runtimeScope: executionScope,
-        signal: options?.signal,
-      },
+      (signal, onOutput) =>
+        executeModTool(name, modTool, eventArgs, executionScope, {
+          signal,
+          toolCallId: options?.toolCallId,
+          onOutput,
+          workingDirectory,
+          scopedAgentId,
+          modContext,
+        }),
+      backgroundOptions,
       modEvents,
     );
   }
@@ -2082,15 +2085,16 @@ async function executeToolInner(
       return runWithRuntimeContext(executionScope, () =>
         autoBackgroundClientTool(
           name,
-          executeExternalTool(
-            options?.toolCallId ?? `ext-${Date.now()}`,
-            name,
-            eventArgs as Record<string, unknown>,
-            externalTool.executor,
-            externalTool,
-            options?.signal,
-          ),
-          { runtimeScope: executionScope, signal: options?.signal },
+          (signal) =>
+            executeExternalTool(
+              options?.toolCallId ?? `ext-${Date.now()}`,
+              name,
+              eventArgs as Record<string, unknown>,
+              externalTool.executor,
+              externalTool,
+              signal,
+            ),
+          backgroundOptions,
           modEvents,
         ),
       );
@@ -2162,7 +2166,10 @@ async function executeToolInner(
   }
   const startTime = Date.now();
 
-  const run = async (): Promise<ToolExecutionResult> => {
+  const run = async (
+    signal: AbortSignal,
+    onOutput: NonNullable<typeof options>["onOutput"],
+  ): Promise<ToolExecutionResult> => {
     // Run PreToolUse hooks - can block tool execution
     const preHookResult = await runPreToolUseHooks(
       internalName,
@@ -2195,9 +2202,7 @@ async function executeToolInner(
     try {
       let enhancedArgs = expandPathArgs(internalName, args, workingDirectory);
 
-      if (options?.signal) {
-        enhancedArgs = { ...enhancedArgs, signal: options.signal };
-      }
+      enhancedArgs = { ...enhancedArgs, signal };
 
       if (STREAMING_SHELL_TOOLS.has(internalName)) {
         // Redact only this invocation's secrets.
@@ -2214,10 +2219,10 @@ async function executeToolInner(
           scopedAgentId,
           invocationSecrets,
         );
-        if (options?.onOutput) {
+        if (onOutput) {
           outputStreamer = createScrubbedOutputStreamer(
             invocationRedactions,
-            options.onOutput,
+            onOutput,
             stripAnsi,
           );
           enhancedArgs = { ...enhancedArgs, onOutput: outputStreamer.onOutput };
@@ -2420,15 +2425,7 @@ async function executeToolInner(
   };
 
   return runWithRuntimeContext(executionScope, () =>
-    autoBackgroundClientTool(
-      internalName,
-      run(),
-      {
-        runtimeScope: executionScope,
-        signal: options?.signal,
-      },
-      modEvents,
-    ),
+    autoBackgroundClientTool(internalName, run, backgroundOptions, modEvents),
   );
 }
 

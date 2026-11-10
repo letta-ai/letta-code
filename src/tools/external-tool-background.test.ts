@@ -1,7 +1,20 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "node:fs";
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import { autoBackgroundExternalTool } from "./external-tool-background";
 
+afterEach(() => {
+  for (const [id, entry] of backgroundProcesses) {
+    clearBackgroundProcessCleanup(id);
+    if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+  }
+  backgroundProcesses.clear();
+});
 const scope = {
   agentId: "agent-1",
   conversationId: "conv-1",
@@ -10,6 +23,37 @@ const scope = {
 const listenerTool = { autoBackground: true };
 
 describe("external tool auto-backgrounding", () => {
+  test("stopping a remote task reports unsupported cancellation and still notifies", async () => {
+    let complete!: (result: { status: "success"; toolReturn: string }) => void;
+    const notifications: unknown[] = [];
+    await autoBackgroundExternalTool(
+      "write",
+      listenerTool,
+      new Promise<{ status: "success"; toolReturn: string }>((resolve) => {
+        complete = resolve;
+      }),
+      {
+        yieldMs: 1,
+        runtimeScope: scope,
+        enqueue: (message) => notifications.push(message),
+      },
+    );
+    const registered = [...backgroundProcesses.entries()][0];
+    if (!registered) throw new Error("Missing background tool");
+    const [id, entry] = registered;
+    const stopped = await task_stop({ task_id: id });
+    expect(stopped.killed).toBe(false);
+    expect(stopped.output).toContain("doesn't support cancelling");
+    expect(stopped.output).toContain("will still arrive as a notification");
+    complete({ status: "success", toolReturn: "remote receipt" });
+    await Bun.sleep(0);
+    expect(entry.status).toBe("completed");
+    expect(readFileSync(entry.outputFile as string, "utf8")).toContain(
+      "remote receipt",
+    );
+    expect(notifications).toHaveLength(1);
+  });
+
   test("keeps quick results inline without a notification", async () => {
     const notifications: unknown[] = [];
     const result = await autoBackgroundExternalTool(
@@ -124,6 +168,10 @@ describe("external tool auto-backgrounding", () => {
     await Bun.sleep(0);
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.content).toEqual(richResult);
+    const entry = [...backgroundProcesses.values()][0];
+    expect(readFileSync(entry?.outputFile as string, "utf8")).toBe(
+      "before\n[Image result; see completion notification]\nafter\n",
+    );
   });
 
   test("does not hide a long result's overflow-file path in a second clamp", async () => {

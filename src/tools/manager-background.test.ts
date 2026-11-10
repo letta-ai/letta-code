@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync } from "node:fs";
 import { emptyEventEmissionResult, type ModEvents } from "@/mods/event-emitter";
+import {
+  backgroundProcesses,
+  clearBackgroundProcessCleanup,
+} from "@/tools/impl/process_manager";
+import { task_stop } from "@/tools/impl/task-stop";
 import {
   executeTool,
   getExecutionContextById,
@@ -17,6 +23,11 @@ afterEach(() => {
   for (const id of contexts.splice(0)) releaseToolExecutionContext(id);
   setMessageQueueAdder(null);
   clearPendingMessages();
+  for (const [id, entry] of backgroundProcesses) {
+    clearBackgroundProcessCleanup(id);
+    if (entry.outputFile) rmSync(entry.outputFile, { force: true });
+  }
+  backgroundProcesses.clear();
 });
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -64,6 +75,40 @@ describe("shared executor background boundary", () => {
       kind: "task_notification",
     });
     expect(notifications[0]?.text).toContain("Process killed successfully");
+  });
+
+  test("TaskStop aborts the signal delivered to a built-in by the manager", async () => {
+    const notifications: QueuedMessage[] = [];
+    setMessageQueueAdder((message) => notifications.push(message));
+    let receivedSignal: AbortSignal | undefined;
+    const options = await prepare("TaskStop", async () => ({}));
+    const context = getExecutionContextById(options.toolContextId);
+    const tool = context?.toolRegistry.get("TaskStop");
+    if (!context || !tool) throw new Error("Missing tool");
+    context.toolRegistry.set("TaskStop", {
+      ...tool,
+      fn: (args: Record<string, unknown>) =>
+        new Promise((resolve) => {
+          receivedSignal = args.signal as AbortSignal;
+          receivedSignal.addEventListener("abort", () =>
+            resolve({ killed: false }),
+          );
+        }),
+    });
+    await executeTool("TaskStop", {}, options);
+    const registered = [...backgroundProcesses.entries()][0];
+    if (!registered) throw new Error("Missing background tool");
+    const [id, entry] = registered;
+    expect(await task_stop({ task_id: id })).toEqual({
+      killed: true,
+      output: "Stopped",
+    });
+    expect(receivedSignal?.aborted).toBe(true);
+    await Bun.sleep(10);
+    expect(readFileSync(entry.outputFile as string, "utf8")).toContain(
+      "Failed to kill process",
+    );
+    expect(notifications).toHaveLength(0);
   });
 
   test("a client-local MCP executor yields without listener opt-in", async () => {
