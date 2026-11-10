@@ -161,9 +161,6 @@ async function buildSecretsInfoReminder(
   }
 }
 
-/** Cache tool counts, never the list of attached servers. */
-const MCP_TOOL_COUNTS_REFRESH_MS = 5 * 60 * 1000;
-
 export interface McpServerReminderEntry {
   name: string;
   /** Tool count when cheaply known (cloud-synced tools); null otherwise. */
@@ -181,7 +178,6 @@ export interface McpServersReminderDependencies {
 
 async function defaultListServerSideServers(
   agentId: string,
-  state: SharedReminderContext["state"],
 ): Promise<McpServerReminderEntry[] | null> {
   // An unavailable backend means no server-side MCP; local names are still
   // valid. A failed server fetch on an available backend throws instead, so a
@@ -199,9 +195,7 @@ async function defaultListServerSideServers(
   const { getClient } = await import("@/backend/api/client");
   const { getServerUrl } = await import("@/backend/api/server-url");
   const { LETTA_CLOUD_API_URL } = await import("@/auth/oauth");
-  const { listUnifiedMcpServers, listUnifiedMcpTools } = await import(
-    "@/backend/api/unified-mcp"
-  );
+  const { listUnifiedMcpServers } = await import("@/backend/api/unified-mcp");
   const client = (await getClient()) as Parameters<
     typeof listUnifiedMcpServers
   >[0];
@@ -212,31 +206,12 @@ async function defaultListServerSideServers(
     getServerUrl() === LETTA_CLOUD_API_URL
       ? allServers.filter((server) => server.serverType !== "stdio")
       : allServers;
-  const serverIds = new Set(servers.map((server) => server.id));
-  for (const id of state.mcpToolCounts.keys()) {
-    if (!serverIds.has(id)) state.mcpToolCounts.delete(id);
-  }
-  const now = Date.now();
-  return Promise.all(
-    servers.map(async (server) => {
-      const cached = state.mcpToolCounts.get(server.id);
-      if (cached && now - cached.fetchedAtMs < MCP_TOOL_COUNTS_REFRESH_MS) {
-        return { name: server.serverName, toolCount: cached.toolCount };
-      }
-      // New attachments get counts immediately. Existing servers reuse counts
-      // so fresh discovery costs one list request, not one per server as well.
-      const toolCount = await listUnifiedMcpTools(
-        client,
-        agentId,
-        server.id,
-        3_000,
-      )
-        .then((tools) => tools.length)
-        .catch(() => null);
-      state.mcpToolCounts.set(server.id, { toolCount, fetchedAtMs: now });
-      return { name: server.serverName, toolCount };
-    }),
-  );
+  // Counts are display-only. Fetching every server's tools delays the first
+  // response; discover names each turn and leave tool inventory to MCP commands.
+  return servers.map((server) => ({
+    name: server.serverName,
+    toolCount: null,
+  }));
 }
 
 function formatMcpServerEntry(entry: McpServerReminderEntry): string {
@@ -258,7 +233,7 @@ export function buildMcpServersReminderText(
 
 export async function listMcpServersForAgent(
   agentId: string,
-  state: SharedReminderContext["state"],
+  _state: SharedReminderContext["state"],
   deps: McpServersReminderDependencies = {},
 ): Promise<McpServerReminderEntry[]> {
   const localNames = (
@@ -271,8 +246,7 @@ export async function listMcpServersForAgent(
     toolCount: null,
   }));
   const serverSideEntries = await (
-    deps.listServerSideServers ??
-    ((id: string) => defaultListServerSideServers(id, state))
+    deps.listServerSideServers ?? defaultListServerSideServers
   )(agentId);
   if (serverSideEntries) entries.push(...serverSideEntries);
   return [...new Map(entries.map((entry) => [entry.name, entry])).values()];

@@ -1,10 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { LETTA_CLOUD_API_URL } from "@/auth/oauth";
+import { __testSetBackend } from "@/backend";
+import { __testOverrideGetClient } from "@/backend/api/client";
+import * as serverUrl from "@/backend/api/server-url";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   buildMcpServersInfoReminderText,
   type McpServersReminderDependencies,
 } from "./engine";
-import { createSharedReminderState } from "./state";
+import {
+  createSharedReminderState,
+  markPostCompactionContextRemindersPending,
+} from "./state";
 
 const MCP_AGENT_ID = "agent-reminder-mcp";
 
@@ -150,4 +158,76 @@ describe("mcp servers info reminder", () => {
       }),
     ).toContain("MCP servers with available tools: None");
   });
+});
+
+describe("MCP reminder API discovery", () => {
+  afterEach(() => {
+    mock.restore();
+    __testOverrideGetClient(null);
+    __testSetBackend(null);
+  });
+
+  test.each([LETTA_CLOUD_API_URL, "http://localhost:8283"])(
+    "discovers fresh attachments without listing tools on %s",
+    async (baseUrl) => {
+      spyOn(serverUrl, "getServerUrl").mockReturnValue(baseUrl);
+      const backend = new FakeHeadlessBackend(MCP_AGENT_ID);
+      Object.defineProperty(backend, "capabilities", {
+        value: { ...backend.capabilities, serverSideToolManagement: true },
+      });
+      __testSetBackend(backend);
+      let servers = [
+        { id: "remote", server_name: "search", mcp_server_type: "sse" },
+        { id: "local", server_name: "stdio", mcp_server_type: "stdio" },
+      ];
+      const requests: string[] = [];
+      let failDiscovery = false;
+      __testOverrideGetClient(async () => ({
+        get: async (path: string) => {
+          requests.push(path);
+          if (path.endsWith("/tools"))
+            throw new Error("tool listing must not run");
+          if (failDiscovery) throw new Error("discovery unavailable");
+          return servers;
+        },
+      }));
+      const state = createSharedReminderState();
+      let localNames = ["filesystem"];
+      const deps = { getLocalServerNames: () => localNames };
+      const initial = await buildReminder(state, deps);
+      expect(initial).toContain("filesystem, search");
+      expect(initial?.includes(", stdio")).toBe(
+        baseUrl !== LETTA_CLOUD_API_URL,
+      );
+      expect(initial).not.toContain(" tools)");
+      expect(await buildReminder(state, deps)).toBeNull();
+
+      servers = [
+        { id: "new", server_name: "calendar", mcp_server_type: "sse" },
+      ];
+      expect(await buildReminder(state, deps)).toContain(
+        "filesystem, calendar",
+      );
+      const lastSent = state.lastSentMcpServerNamesKey;
+      failDiscovery = true;
+      expect(await buildReminder(state, deps)).toBeNull();
+      expect(state.lastSentMcpServerNamesKey).toBe(lastSent);
+      failDiscovery = false;
+      servers = [];
+      expect(await buildReminder(state, deps)).toContain(
+        "available tools: filesystem",
+      );
+      markPostCompactionContextRemindersPending(state);
+      expect(await buildReminder(state, deps)).toContain(
+        "available tools: filesystem",
+      );
+      localNames = [];
+      expect(await buildReminder(state, deps)).toContain(
+        "available tools: None",
+      );
+      expect(requests).toEqual(
+        Array(7).fill(`/v1/agents/${MCP_AGENT_ID}/mcp-servers`),
+      );
+    },
+  );
 });
