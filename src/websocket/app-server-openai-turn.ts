@@ -376,7 +376,13 @@ async function runTurnViaListenerRuntime(
       // HTTP clients cannot surface Letta Code's interactive overlays. Keep
       // those tools out so the agent asks in ordinary assistant text.
       excludeInteractiveTools: true,
-      messages: params.messages,
+      // The durable queue requires an input identity before it can admit the
+      // request. Historical replay messages are context, not new admissions.
+      messages: params.messages.map((message) =>
+        message.otid === params.correlationOtid
+          ? { ...message, client_message_id: params.correlationOtid }
+          : message,
+      ),
     };
     try {
       dispatchInboundMessageWhenReady({
@@ -386,6 +392,11 @@ async function runTurnViaListenerRuntime(
         socket,
         options: dispatchOptions,
         processQueuedTurn,
+        onInputAccepted: ({ accepted }) => {
+          if (!accepted) {
+            finish("The API request was rejected before queue admission");
+          }
+        },
         processIncomingMessage: (
           incoming,
           incomingSocket,
@@ -408,6 +419,7 @@ async function runTurnViaListenerRuntime(
               error instanceof Error ? error.message : String(error)
             }`,
           );
+          finish(error instanceof Error ? error.message : String(error));
         },
       });
     } catch (error) {
