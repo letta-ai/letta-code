@@ -19,6 +19,8 @@ describe("expandDreamCommand", () => {
     expect(rest).toEqual([
       "--new-agent",
       "--memfs",
+      "--base-tools",
+      "none",
       "--yolo",
       "--model",
       "opus",

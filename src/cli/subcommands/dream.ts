@@ -6,7 +6,8 @@ const DREAM_USAGE = `Usage: letta dream <trajectories-dir> [options]
 Create a new agent and have it write its own memory from a directory of past
 trajectories (for example, the output of \`letta trajectories export\`). The
 agent shards the trajectories and runs one memory-writing worker per shard.
-Other options (such as --model) are passed through to the headless run.`;
+Other options are passed through to the headless run; choose the model and
+reasoning effort with a catalog ID such as --model opus-5.5-1m-max.`;
 
 /**
  * Rewrites `letta dream <dir> [options]` into a headless run that creates a
@@ -20,5 +21,14 @@ export function expandDreamCommand(args: string[]): string[] {
     process.exit(dir === "-h" || dir === "--help" ? 0 : 1);
   }
   const prompt = dreamPrompt.replaceAll("{{corpus}}", resolve(dir));
-  return ["-p", prompt, "--new-agent", "--memfs", "--yolo", ...rest];
+  return [
+    "-p",
+    prompt,
+    "--new-agent",
+    "--memfs",
+    "--base-tools",
+    "none",
+    "--yolo",
+    ...rest,
+  ];
 }
