@@ -4,6 +4,7 @@ import {
   buildClaudeStreamArgs,
   runClaudeTurn,
   sendClaudeMessage,
+  stopClaudeSession,
 } from "./claude-stream-session";
 import {
   awaitWithLiveLoop,
@@ -939,4 +940,24 @@ describe("Claude stream sessions", () => {
     fixture.finish({ exitCode: null, exitSignal: "SIGINT" });
     expect(await running).toMatchObject({ success: false, error: "cancelled" });
   });
+});
+
+test("stopping Claude Code waits for its CLI process exit", async () => {
+  const fixture = transportFixture({ exitOnStdinEnd: false });
+  const running = runClaudeTurn(
+    { ...base, prompt: "work", sessionId: SESSION_ID },
+    { createTransport: () => fixture.transport },
+  );
+  await Bun.sleep(0);
+  let acknowledged = false;
+  const stopping = stopClaudeSession(SESSION_ID).then((result) => {
+    acknowledged = true;
+    return result;
+  });
+  await Bun.sleep(0);
+  expect(acknowledged).toBe(false);
+  fixture.finish({ exitCode: null, exitSignal: "SIGTERM" });
+  expect(await stopping).toBe(true);
+  await running;
+  teardownFixture(fixture);
 });

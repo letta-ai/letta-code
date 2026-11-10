@@ -4,6 +4,9 @@ import {
   setSystemPromptDoctorState,
 } from "@/cli/helpers/system-prompt-warning";
 import { settingsManager } from "@/settings-manager";
+import { registerLocalSubagentStop } from "@/tools/impl/subagent-stop-bridge";
+import type { ConversationRuntimeScope } from "@/types/runtime-scope";
+import type { SubagentStopCommand } from "@/types/subagent-protocol";
 import { isDebugEnabled } from "@/utils/debug";
 import { getErrorMessage } from "@/utils/error";
 import { sealStartupLogs } from "@/utils/startup-log-boundary";
@@ -30,6 +33,7 @@ import { handleRuntimeStartProtocolCommand } from "./commands/runtime-start";
 import { handleSecretsCommand } from "./commands/secrets";
 import { handleSettingsProtocolCommand } from "./commands/settings";
 import { handleSkillAgentProtocolCommand } from "./commands/skills-agents";
+import { stopListenerConversation } from "./commands/stop-conversation";
 import {
   subscribeListenerConnection,
   waitForListenerConnectionStartup,
@@ -91,6 +95,46 @@ export function createListenerMessageHandler(
     runtime.connections.get(connectionId)?.startupOwner.lineageId ??
     connectionId ??
     runtime.sessionId;
+  const abortStoppedConversation = async (
+    scope: ConversationRuntimeScope,
+    command: SubagentStopCommand,
+  ) => {
+    const child = getOrCreateScopedRuntime(
+      runtime,
+      scope.agent_id,
+      scope.conversation_id,
+    );
+    child.queueRuntime.pause();
+    for (const item of [...child.queueRuntime.items]) {
+      if (
+        item.source === "task_notification" ||
+        item.source === "cron" ||
+        (command.client_message_id !== undefined &&
+          item.clientMessageId === command.client_message_id)
+      )
+        child.queueRuntime.removeItem(item.id);
+    }
+    return handleAbortMessageInput(runtime, {
+      command: {
+        type: "abort_message",
+        request_id: command.request_id,
+        runtime: scope,
+      },
+      socket,
+      connectionId,
+      opts,
+      processQueuedTurn,
+      confirmBackendCancellation: true,
+    });
+  };
+  const removeLocalStop = registerLocalSubagentStop(connectionId, (command) => {
+    if (runtime !== getActiveRuntime() || runtime.intentionallyClosed)
+      return undefined;
+    return stopListenerConversation(command, (scope) =>
+      abortStoppedConversation(scope, command),
+    );
+  });
+  socket.once?.("close", removeLocalStop);
   return async (data: WebSocket.RawData): Promise<void> => {
     if (
       !(await waitForListenerConnectionStartup(runtime, connectionId, socket))
@@ -164,6 +208,10 @@ export function createListenerMessageHandler(
           getOrCreateScopedRuntime,
           runDetachedListenerTask,
           safeSocketSend,
+          abortConversation:
+            parsed.type === "subagent_stop"
+              ? (scope) => abortStoppedConversation(scope, parsed)
+              : undefined,
         });
         return;
       }

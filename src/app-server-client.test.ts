@@ -114,6 +114,24 @@ describe("app-server client", () => {
     ).toBe(0);
   });
 
+  test("rejects connect when the socket never opens", async () => {
+    const { client } = createFakeClient();
+    const started = Date.now();
+    await expect(client.connect()).rejects.toThrow(
+      "App-server WebSocket failed to open: timed out after 25ms",
+    );
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("rejects connect when the socket closes before opening", async () => {
+    const { client, control } = createFakeClient();
+    const pending = client.connect();
+    control.close();
+    await expect(pending).rejects.toThrow(
+      "App-server WebSocket failed to open: closed before opening",
+    );
+  });
+
   test("launches a subagent and correlates success and failure responses", async () => {
     const { client, control } = createFakeClient();
     const opened = client.connect();

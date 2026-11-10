@@ -19,6 +19,7 @@ export interface ExternalToolDefinitionPayload {
  */
 export interface RuntimeStartExternalToolsGroup {
   tools: readonly ExternalToolDefinitionPayload[];
+  capabilities?: { external_tool_call_cancel?: boolean };
 }
 
 /**
@@ -58,6 +59,16 @@ export interface ExternalToolCallRequestMessage {
   input: Record<string, unknown>;
 }
 
+export interface ExternalToolCallCancelMessage {
+  type: "external_tool_call_cancel";
+  request_id: string;
+  reason?: string;
+}
+
+export type ExternalToolCallMessage =
+  | ExternalToolCallRequestMessage
+  | ExternalToolCallCancelMessage;
+
 export interface ExternalToolCallResultContent {
   type: string;
   text?: string;
@@ -91,4 +102,10 @@ export interface RuntimeToolPolicy {
   allowlist?: readonly string[];
   /** Same meaning as `exclude_interactive_tools`. */
   exclude_interactive?: boolean;
+  /**
+   * Milliseconds to wait before a long-running Bash, CodeMode, exec_command or
+   * external tool call is returned as a background task. Clamped to 1–30s;
+   * defaults to 10s when omitted.
+   */
+  foreground_yield_ms?: number;
 }

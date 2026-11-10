@@ -544,6 +544,7 @@ describe("agent/conversation management protocol-inbound validators", () => {
         toolset: { base: "none", include: ["AskUserQuestion"] },
         allowlist: ["Read", "lookup_ticket"],
         exclude_interactive: true,
+        foreground_yield_ms: 5_000,
       },
       external_tools: [
         {
@@ -703,6 +704,18 @@ describe("agent/conversation management protocol-inbound validators", () => {
       request_id: "r0",
       agent_id: "agent-1",
       tool_policy: { toolset: { base: "bad" }, allowlist: ["Read", 42] },
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { foreground_yield_ms: "5000" },
+    },
+    {
+      type: "runtime_start",
+      request_id: "r0",
+      agent_id: "agent-1",
+      tool_policy: { foreground_yield_ms: -1 },
     },
     {
       type: "external_tool_call_response",

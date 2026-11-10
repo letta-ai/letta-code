@@ -51,7 +51,11 @@ export function isRuntimeStartExternalToolsGroup(value: unknown): boolean {
   if (!isRecord(value)) return false;
   return (
     Array.isArray(value.tools) &&
-    value.tools.every(isExternalToolDefinitionPayload)
+    value.tools.every(isExternalToolDefinitionPayload) &&
+    (value.capabilities === undefined ||
+      (isRecord(value.capabilities) &&
+        (value.capabilities.external_tool_call_cancel === undefined ||
+          typeof value.capabilities.external_tool_call_cancel === "boolean")))
   );
 }
 
@@ -67,7 +71,11 @@ export function isRuntimeToolPolicy(
         (toolset.include === undefined || isStringList(toolset.include)))) &&
     (value.allowlist === undefined || isStringList(value.allowlist)) &&
     (value.exclude_interactive === undefined ||
-      typeof value.exclude_interactive === "boolean")
+      typeof value.exclude_interactive === "boolean") &&
+    (value.foreground_yield_ms === undefined ||
+      (typeof value.foreground_yield_ms === "number" &&
+        Number.isFinite(value.foreground_yield_ms) &&
+        value.foreground_yield_ms > 0))
   );
 }
 

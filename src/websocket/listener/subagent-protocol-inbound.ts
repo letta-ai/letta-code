@@ -160,7 +160,22 @@ export function isSubagentMessageCommand(
 export function isSubagentStopCommand(
   value: unknown,
 ): value is SubagentStopCommand {
-  return hasValidControlBase(value) && value.type === "subagent_stop";
+  if (!hasValidControlBase(value) || value.type !== "subagent_stop")
+    return false;
+  if (
+    value.client_message_id !== undefined &&
+    (typeof value.client_message_id !== "string" ||
+      !value.client_message_id.trim())
+  )
+    return false;
+  if (value.conversation === undefined) return true;
+  const scope = value.conversation as Record<string, unknown> | null;
+  return Boolean(
+    scope &&
+      typeof scope === "object" &&
+      typeof scope.conversation_id === "string" &&
+      (scope.agent_id === null || typeof scope.agent_id === "string"),
+  );
 }
 
 export function isReadSubagentEventsCommand(

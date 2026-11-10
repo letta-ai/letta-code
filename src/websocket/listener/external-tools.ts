@@ -1,5 +1,6 @@
 import type { ListenerExternalToolNotificationGuard } from "@/tools/external-tool-background-eligibility";
 import { enableListenerExternalToolBackground } from "@/tools/external-tool-background-eligibility";
+import { EXTERNAL_TOOL_FOREGROUND_INTERRUPTED } from "@/tools/external-tool-types";
 import {
   type ExternalToolDefinition,
   registerExternalTools,
@@ -7,6 +8,7 @@ import {
   unregisterExternalTools,
 } from "@/tools/manager";
 import type {
+  ExternalToolCallCancelMessage,
   ExternalToolCallRequestMessage,
   ExternalToolCallResponseCommand,
   ExternalToolDefinitionPayload,
@@ -153,6 +155,16 @@ export function captureExternalToolNotificationGuard(
   };
 }
 
+export function captureNotificationWait(
+  listener: ListenerRuntime,
+  runtimeScope: RuntimeScope<string | null>,
+): () => Promise<boolean> {
+  return (
+    captureExternalToolNotificationGuard(listener, runtimeScope)
+      ?.waitUntilCurrent ?? (async () => false)
+  );
+}
+
 function toExternalToolDefinition(
   listener: ListenerRuntime,
   tool: ExternalToolDefinitionPayload,
@@ -183,7 +195,10 @@ function toExternalToolDefinition(
   });
 }
 
-export function installExternalToolBridge(runtime: ListenerRuntime): void {
+export function installExternalToolBridge(
+  runtime: ListenerRuntime,
+  options?: { cancelTimeoutMs?: number },
+): void {
   setExternalToolExecutor(async (toolCallId, toolName, input, context) => {
     const registrationKey = context?.tool.registrationKey;
     const connectionId = registrationKey
@@ -237,49 +252,117 @@ export function installExternalToolBridge(runtime: ListenerRuntime): void {
 
     const requestFrame = JSON.stringify(request);
     const timeoutMs = context?.tool.timeoutMs ?? EXTERNAL_TOOL_CALL_TIMEOUT_MS;
-    const result = await new Promise<{
-      content: Array<{
-        type: string;
-        text?: string;
-        data?: string;
-        mimeType?: string;
-      }>;
-      isError: boolean;
-    }>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(
-          new Error(
-            `External tool call timed out after ${Math.ceil(timeoutMs / 1_000)}s: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
-          ),
-        );
-      }, timeoutMs);
+    let cancellationRequested = false;
+    let cancellationTimedOut = false;
+    let onAbort: (() => void) | undefined;
+    try {
+      const result = await new Promise<{
+        content: Array<{
+          type: string;
+          text?: string;
+          data?: string;
+          mimeType?: string;
+        }>;
+        isError: boolean;
+      }>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          getPendingExternalToolCalls(runtime).delete(requestKey);
+          reject(
+            new Error(
+              `External tool call timed out after ${Math.ceil(timeoutMs / 1_000)}s: ${toolName}. The remote tool may still finish; its outcome is unknown. Check the destination before retrying a write.`,
+            ),
+          );
+        }, timeoutMs);
 
-      getPendingExternalToolCalls(runtime).set(requestKey, {
-        connectionId: connection.id,
-        isOwningTurnCurrent,
-        requestFrame,
-        sentOn: writer,
-        resolve: (response) => {
-          resolve({
-            content: [...response.content],
-            isError: response.is_error === true,
-          });
-        },
-        reject,
-        timeout,
+        getPendingExternalToolCalls(runtime).set(requestKey, {
+          connectionId: connection.id,
+          isOwningTurnCurrent,
+          requestFrame,
+          sentOn: writer,
+          resolve: (response) => {
+            resolve({
+              content: [...response.content],
+              isError: response.is_error === true,
+            });
+          },
+          reject,
+          timeout,
+        });
+
+        if (context?.tool.supportsCancellation && context.signal) {
+          onAbort = () => {
+            const pending =
+              getPendingExternalToolCalls(runtime).get(requestKey);
+            if (!pending || cancellationRequested) return;
+            cancellationRequested = true;
+            clearTimeout(pending.timeout);
+            pending.requestFrame = JSON.stringify({
+              type: "external_tool_call_cancel",
+              request_id: requestId,
+              reason: "aborted",
+            } satisfies ExternalToolCallCancelMessage);
+            pending.timeout = setTimeout(() => {
+              cancellationTimedOut = true;
+              getPendingExternalToolCalls(runtime).delete(requestKey);
+              reject(new Error("External tool cancellation timed out"));
+            }, options?.cancelTimeoutMs ?? 30_000);
+            try {
+              connection.writer.send(pending.requestFrame);
+              pending.sentOn = connection.writer;
+              // A foreground interrupt has no result consumer left. Send cancel,
+              // then release local state without waiting for confirmation.
+              if (
+                context.signal?.reason === EXTERNAL_TOOL_FOREGROUND_INTERRUPTED
+              ) {
+                clearTimeout(pending.timeout);
+                getPendingExternalToolCalls(runtime).delete(requestKey);
+                reject(new Error("cancelled"));
+              }
+            } catch (error) {
+              clearTimeout(pending.timeout);
+              getPendingExternalToolCalls(runtime).delete(requestKey);
+              reject(error instanceof Error ? error : new Error(String(error)));
+            }
+          };
+          context.signal.addEventListener("abort", onAbort, { once: true });
+        }
+        try {
+          writer.send(requestFrame);
+          if (context?.signal?.aborted) onAbort?.();
+        } catch (error) {
+          clearTimeout(timeout);
+          getPendingExternalToolCalls(runtime).delete(requestKey);
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
       });
 
-      try {
-        writer.send(requestFrame);
-      } catch (error) {
-        clearTimeout(timeout);
-        getPendingExternalToolCalls(runtime).delete(requestKey);
-        reject(error instanceof Error ? error : new Error(String(error)));
+      return result;
+    } catch (error) {
+      if (
+        cancellationTimedOut ||
+        (cancellationRequested &&
+          error instanceof Error &&
+          error.message === "cancelled")
+      ) {
+        return {
+          content: [
+            {
+              type: "text",
+              text: cancellationTimedOut
+                ? "Cancellation was not confirmed; the remote tool may still finish."
+                : "cancelled",
+            },
+          ],
+          isError: true,
+          cancellation: cancellationTimedOut
+            ? ("timeout" as const)
+            : ("cancelled" as const),
+        };
       }
-    });
-
-    return result;
+      throw error;
+    } finally {
+      if (onAbort) context?.signal?.removeEventListener("abort", onAbort);
+    }
   });
 }
 
@@ -305,7 +388,13 @@ export function registerRuntimeExternalTools(
 
   const tools = resolvedGroups.flatMap((group) =>
     group.tools.map((tool) =>
-      toExternalToolDefinition(runtime, tool, connectionId, runtimeScope),
+      Object.assign(
+        toExternalToolDefinition(runtime, tool, connectionId, runtimeScope),
+        {
+          supportsCancellation:
+            group.capabilities?.external_tool_call_cancel === true,
+        },
+      ),
     ),
   );
   const controllers = getConnectionIdsByRegistrationKey(runtime);

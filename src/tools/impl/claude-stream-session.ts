@@ -7,6 +7,7 @@ import {
   type RunningSubagentProcess,
   spawnManagedWorkloadProcess,
 } from "@/agent/subagents/subagent-process";
+import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
 import { traceClaudeLaunch } from "./external-llm-trace-launch";
 import type { ExternalTraceContext } from "./external-llm-trace-session";
@@ -142,25 +143,6 @@ export const SETTLED_EXIT_GRACE_MS = 10_000;
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function userInput(prompt: string, uuid: string): string {
-  return `${JSON.stringify({
-    type: "user",
-    uuid,
-    message: {
-      role: "user",
-      content: [{ type: "text", text: prompt }],
-    },
-  })}\n`;
-}
-
-function interruptInput(requestId: string): string {
-  return `${JSON.stringify({
-    type: "control_request",
-    request_id: requestId,
-    request: { subtype: "interrupt" },
-  })}\n`;
 }
 
 export function buildClaudeStreamArgs(options: {
@@ -330,7 +312,10 @@ function writeInput(session: ClaudeSession, prompt: string): Promise<void> {
   const uuid = randomUUID();
   session.latestInputUuid = uuid;
   session.latestInputStarted = false;
-  return writeRaw(session.transport.process.stdin, userInput(prompt, uuid));
+  return writeRaw(
+    session.transport.process.stdin,
+    `${JSON.stringify({ type: "user", uuid, message: { role: "user", content: [{ type: "text", text: prompt }] } })}\n`,
+  );
 }
 
 /** Marks an input as picked up when Claude echoes or starts it by UUID. */
@@ -883,7 +868,7 @@ async function steerSession(
     try {
       await writeRaw(
         session.transport.process.stdin,
-        interruptInput(requestId),
+        `${JSON.stringify({ type: "control_request", request_id: requestId, request: { subtype: "interrupt" } })}\n`,
       );
       await response;
       interruptAcknowledged = true;
@@ -986,6 +971,13 @@ export async function sendClaudeMessage(
   if (delivered.mode === "steered" && !options.beforeStart)
     return { mode: "steered", sessionId: options.sessionId };
   return trackedReceipt(delivered.session);
+}
+export async function stopClaudeSession(sessionId: string): Promise<boolean> {
+  const session = sessions.get(sessionId);
+  if (!session) return false;
+  session.abortController.abort(new Error("Stopped by parent"));
+  await confirmProcessExit(session.exit, "Claude Code");
+  return true;
 }
 
 export function hasActiveClaudeTurn(sessionId: string): boolean {

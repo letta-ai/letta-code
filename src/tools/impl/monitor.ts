@@ -545,6 +545,7 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   });
 
   processState = {
+    completion: runningProcess.completion,
     process: {
       kill(signal) {
         events.cancel();

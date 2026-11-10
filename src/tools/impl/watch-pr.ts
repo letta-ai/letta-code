@@ -17,6 +17,7 @@ import {
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { resolveNotificationScope } from "@/utils/task-notifications";
+import { createGitHubPullRequestSnapshotFetcher } from "./github-pull-request-cloud";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
@@ -26,10 +27,7 @@ import type {
   GitHubPullRequestRef,
   GitHubPullRequestSnapshot,
 } from "./github-pull-request-types";
-import {
-  fetchGitHubPullRequestSnapshot,
-  parseGitHubPullRequestUrl,
-} from "./github-pull-request-watch";
+import { parseGitHubPullRequestUrl } from "./github-pull-request-watch";
 import {
   getMonitorTimeoutEvent,
   installMonitorProcessExitCleanup,
@@ -197,9 +195,7 @@ export async function watch_pr(
   const ref = parseGitHubPullRequestUrl(args.url);
   const cwd = getCurrentWorkingDirectory();
   const fetchSnapshot =
-    deps.fetchSnapshot ??
-    ((pullRequestRef, options) =>
-      fetchGitHubPullRequestSnapshot(pullRequestRef, options));
+    deps.fetchSnapshot ?? createGitHubPullRequestSnapshotFetcher();
   const runtimeContext = getRuntimeContext();
   const parentScope =
     args.parentScope ??

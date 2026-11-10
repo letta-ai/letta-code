@@ -64,6 +64,8 @@ export interface RuntimeContextSnapshot {
   permissionMode?: RuntimePermissionMode;
   workspaceSandbox?: RuntimeWorkspaceSandbox;
   executionSettings?: RuntimeExecutionSettings;
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
 }
 
 const runtimeContextStorage = new AsyncLocalStorage<RuntimeContextSnapshot>();

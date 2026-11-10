@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { isUsableDirectory } from "@/helpers/usable-directory";
 import { getCurrentWorkingDirectory } from "@/runtime-context";
+import { resolveForegroundYieldMs } from "@/tools/foreground-yield";
 import {
   captureSecretRedactions,
   createSecretStreamScrubber,
@@ -40,7 +41,6 @@ import { LIMITS, truncateByChars } from "./truncation.js";
 import { validateRequiredParams } from "./validation.js";
 import { assertSafeWindowsCommand } from "./windows-command-safety.js";
 
-const DEFAULT_EXEC_YIELD_TIME_MS = 10_000;
 const DEFAULT_WRITE_STDIN_YIELD_TIME_MS = 250;
 const MIN_YIELD_TIME_MS = 250;
 const MIN_EMPTY_WRITE_STDIN_YIELD_TIME_MS = 5_000;
@@ -683,6 +683,8 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
 
   backgroundProcesses.set(id, {
     process: runningProcess.process,
+    completion: runningProcess.completion,
+    terminate: runningProcess.terminate,
     command: args.cmd,
     status: session.status,
     exitCode: session.exitCode,
@@ -727,7 +729,7 @@ export async function exec_command(
   const session = await startExecSession(args);
   const yieldTimeMs = clampYieldTime(
     args.yield_time_ms,
-    DEFAULT_EXEC_YIELD_TIME_MS,
+    resolveForegroundYieldMs(),
   );
   const { output, wallTimeMs } = await waitForSessionOutput({
     session,

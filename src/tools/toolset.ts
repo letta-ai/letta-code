@@ -16,6 +16,7 @@ import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
 import { getStoredClientPreferences } from "./client-preferences";
 import {
+  getExecutionContextById,
   getInternalToolName,
   isOpenAIModel,
   loadTools,
@@ -315,8 +316,11 @@ export async function prepareToolExecutionContextForScope(params: {
   bundledSkills?: string[];
   workspaceSandbox?: RuntimeContextSnapshot["workspaceSandbox"];
   executionSettings?: RuntimeContextSnapshot["executionSettings"];
+  /** Foreground yield from the runtime tool policy; unset uses the default. */
+  foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
   modContext?: ModContext;
+  shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
   modAdapters?: ModAdapter[];
 }): Promise<PreparedScopeToolContext> {
@@ -343,6 +347,7 @@ export async function prepareToolExecutionContextForScope(params: {
     bundledSkills,
     workspaceSandbox,
     executionSettings,
+    foregroundYieldMs,
     cachedAgent,
     modContext,
     modEvents,
@@ -457,8 +462,12 @@ export async function prepareToolExecutionContextForScope(params: {
       ...(bundledSkills !== undefined ? { bundledSkills } : {}),
       ...(workspaceSandbox !== undefined ? { workspaceSandbox } : {}),
       executionSettings,
+      // Always set so a turn never inherits another conversation's yield.
+      foregroundYieldMs,
     },
   });
+  const context = getExecutionContextById(result.preparedToolContext.contextId);
+  if (context) context.shouldEnqueueBackground = params.shouldEnqueueBackground;
   return { ...result, agent: agent as AgentState | null };
 }
 
