@@ -29,7 +29,7 @@ import { detectShellContext } from "@/utils/shell-context";
 import { publishChannelRuntimeToolsForTurn } from "./channel-runtime-tools";
 import { resolveTurnExecutionConnectionId } from "./connection";
 import {
-  captureExternalToolNotificationGuard,
+  captureNotificationWait,
   recordRuntimeSubmittingConnection,
   resolveRuntimeToolOwner,
 } from "./external-tools";
@@ -391,9 +391,10 @@ export async function prepareListenerTurn(params: {
     cachedAgent,
     ...(agentId ? { modContext: createListenerAgentModContext(agentId) } : {}),
     modAdapters,
-    shouldEnqueueBackground:
-      captureExternalToolNotificationGuard(runtime.listener, toolRuntimeScope)
-        ?.waitUntilCurrent ?? (async () => false),
+    shouldEnqueueBackground: captureNotificationWait(
+      runtime.listener,
+      toolRuntimeScope,
+    ),
     modEvents: createListenerModEvents(modAdapters),
   });
   if (isInterrupted()) {

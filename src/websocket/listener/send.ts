@@ -35,7 +35,7 @@ import {
   MAX_PRE_STREAM_RECOVERY,
 } from "./constants";
 import { getConversationWorkingDirectory } from "./cwd";
-import { captureExternalToolNotificationGuard } from "./external-tools";
+import { captureNotificationWait } from "./external-tools";
 import { readInterruptedTurn } from "./interrupted-turn-read";
 import {
   createListenerAgentModContext,
@@ -411,9 +411,7 @@ export async function resolveStaleApprovals(
       ? { modContext: createListenerAgentModContext(runtime.agentId) }
       : {}),
     modAdapters,
-    shouldEnqueueBackground:
-      captureExternalToolNotificationGuard(runtime.listener, scope)
-        ?.waitUntilCurrent ?? (async () => false),
+    shouldEnqueueBackground: captureNotificationWait(runtime.listener, scope),
     modEvents: createListenerModEvents(modAdapters),
   });
   assertCurrentTurnLease();
@@ -425,7 +423,6 @@ export async function resolveStaleApprovals(
     runtime,
   );
   const recoveryActingUserId = recoveryRecord?.actingUserId;
-
   pendingApprovals = await filterStillPending(pendingApprovals);
   while (pendingApprovals.length > 0) {
     assertCurrentTurnLease();
