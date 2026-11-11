@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { runCronSubcommand } from "@/cli/subcommands/cron";
 import { listTasks } from "@/cron";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 
 const originalFetch = globalThis.fetch;
@@ -295,7 +296,7 @@ describe("cron add execution targeting", () => {
     expect(requests.some((request) => request.method === "POST")).toBe(false);
   });
 
-  test("Cloud API-backed local execution creates a local schedule without calling the schedule API", async () => {
+  test("registered listener creates a Cloud schedule pinned to its device", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-environment-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "registered-device";
@@ -307,8 +308,44 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
-      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+      expect(
+        requests.find((request) => request.method === "POST")?.body,
+      ).toMatchObject({ target_device_id: "registered-device" });
+      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "cloud" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("listener runtime context pins Cloud schedules and falls back when routes are unsupported", async () => {
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-listener-"));
+    process.env.LETTA_HOME = home;
+    const logs: string[] = [];
+    console.log = mock((line: string) => logs.push(String(line)));
+    try {
+      for (const scheduleRoutesStatus of [undefined, 404, 405]) {
+        const requests = installScheduleApi({
+          environments: { "listener-device": environment("listener-device") },
+          scheduleRoutesStatus,
+        });
+        logs.length = 0;
+        expect(
+          await runWithRuntimeContext(
+            { environmentDeviceId: "listener-device" },
+            () => runCronSubcommand(addArgs),
+          ),
+        ).toBe(0);
+        const created = requests.find((request) => request.method === "POST");
+        if (scheduleRoutesStatus) {
+          expect(created).toBeUndefined();
+          expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+        } else {
+          expect(created?.body).toMatchObject({
+            target_device_id: "listener-device",
+          });
+          expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "cloud" });
+        }
+      }
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -549,7 +586,9 @@ describe("cron add execution targeting", () => {
 
     try {
       expect(await runCronSubcommand(addArgs)).toBe(0);
-      expect(requests).toHaveLength(0);
+      expect(
+        requests.some((request) => request.pathname.includes("/schedule")),
+      ).toBe(false);
       expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
     } finally {
       rmSync(home, { recursive: true, force: true });

@@ -12,8 +12,8 @@
  *   letta cron delete --all [--agent <id>]
  *
  * Schedule ownership follows execution: managed Cloud sandboxes use durable
- * Cloud schedules; user-managed computers and self-hosted runtimes use their
- * local scheduler.
+ * Cloud schedules, registered Cloud API listeners pin them to their device,
+ * and other runtimes use their local scheduler.
  */
 
 import { parseArgs } from "node:util";
@@ -83,11 +83,11 @@ Add options:
   --conversation <id>    Conversation target (omit or "new" for a fresh
                          conversation per fire; "self" for the current
                          conversation; "default" for the agent default)
-  --computer <id>        (managed Cloud sandbox only) Run on a connected
+  --computer <id>        (Cloud sandbox or registered listener) Run on a connected
                          external computer (deviceId, id, or name from
                          \`letta computers list\`). If it is offline at fire
                          time, that run fails (no Cloud sandbox fallback);
-                         omit --computer to run in the Cloud sandbox.
+                         omit --computer to use the current execution target.
 
 List/filter options:
   --agent <id>           Filter by agent ID

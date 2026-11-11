@@ -7,15 +7,9 @@
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
  *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Runner ownership follows the execution environment:
- * - Letta-managed Cloud sandboxes use durable Cloud schedules.
- * - User-managed computers and self-hosted runtimes use local schedules.
- *
- * Cloud's owning spawner assigns the listener a `sandbox:` identity. Listener
- * bootstrap derives an inherited runtime marker before consuming that private
- * relay identity. Device registration is not an execution-environment signal:
- * Cloud API-backed laptops are still local computers, and a managed sandbox may
- * have a transient or unregistered listener device id.
+ * Managed Cloud sandboxes use durable Cloud schedules. Registered API-backed
+ * listeners use Cloud schedules pinned to their device; other runtimes use
+ * local schedules. Listeners fall back locally if schedule routes are absent.
  */
 
 import type { EnvironmentConnection } from "@/backend/api/environments";
@@ -23,6 +17,7 @@ import { ApiRequestError } from "@/backend/api/request";
 import { listCloudSchedules } from "@/backend/api/schedules";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import { getRuntimeContext } from "@/runtime-context";
 
 export type CronRunner = "local" | "cloud";
 
@@ -40,16 +35,30 @@ export interface ResolveCronRunnerParams {
   backendMode: "api" | "local";
   /** Whether the configured server serves the Cloud schedule routes. */
   cloudSchedulesSupported?: boolean;
+  listenerDeviceId?: string;
 }
 
 export type ResolveCronRunnerResult =
-  | { runner: CronRunner; reason: string }
+  | { runner: CronRunner; reason: string; targetDeviceId?: string }
   | { error: string };
 
 export function resolveCronRunner(
   params: ResolveCronRunnerParams,
 ): ResolveCronRunnerResult {
   const { managedCloudSandbox, backendMode, cloudSchedulesSupported } = params;
+
+  if (
+    !managedCloudSandbox &&
+    backendMode === "api" &&
+    params.listenerDeviceId &&
+    cloudSchedulesSupported !== false
+  ) {
+    return {
+      runner: "cloud",
+      reason: "registered listener",
+      targetDeviceId: params.listenerDeviceId,
+    };
+  }
 
   if (!managedCloudSandbox) {
     return { runner: "local", reason: "local execution environment" };
@@ -98,7 +107,21 @@ export async function resolveCronRunnerForAgent(
 ): Promise<ResolveCronRunnerResult> {
   const backendMode = resolveBackendMode();
   const managedCloudSandbox = isManagedCloudSandbox();
-  const preliminary = resolveCronRunner({ managedCloudSandbox, backendMode });
+  const deviceId =
+    getRuntimeContext()?.environmentDeviceId?.trim() ||
+    process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID?.trim();
+  let listenerDeviceId: string | undefined;
+  if (!managedCloudSandbox && backendMode === "api" && deviceId) {
+    const environment = await lookupEnvironmentForTarget(deviceId);
+    if (environment && validateTargetDevice(deviceId, environment).ok) {
+      listenerDeviceId = deviceId;
+    }
+  }
+  const preliminary = resolveCronRunner({
+    managedCloudSandbox,
+    backendMode,
+    listenerDeviceId,
+  });
   if ("error" in preliminary || preliminary.runner === "local") {
     return preliminary;
   }
@@ -109,6 +132,7 @@ export async function resolveCronRunnerForAgent(
     managedCloudSandbox,
     backendMode,
     cloudSchedulesSupported,
+    listenerDeviceId,
   });
 }
 
@@ -247,9 +271,8 @@ export type CronCreatePlacement =
 /**
  * Resolve where a newly-created schedule should live and execute.
  *
- * Both `letta cron` and Wake use this path. Managed Cloud sandboxes always
- * create Cloud schedules; every other execution environment creates local
- * schedules. `--computer` remains a Cloud-only target override.
+ * Both `letta cron` and Wake use this path. Registered listeners default to
+ * their own device; `--computer` overrides the target of a Cloud schedule.
  */
 export async function resolveCronCreatePlacement(params: {
   agentId: string;
@@ -262,11 +285,18 @@ export async function resolveCronCreatePlacement(params: {
   if (targetDeviceId && resolved.runner !== "cloud") {
     return {
       error:
-        "--computer is only available from a managed Cloud sandbox. Run the schedule on this computer instead.",
+        "--computer requires Cloud schedules on a managed Cloud sandbox or registered listener. Run the schedule on this computer instead.",
     };
   }
 
-  if (!targetDeviceId) return { runner: resolved.runner };
+  if (!targetDeviceId) {
+    return {
+      runner: resolved.runner,
+      ...(resolved.targetDeviceId && {
+        targetDeviceId: resolved.targetDeviceId,
+      }),
+    };
+  }
 
   const selectorValidity = validateTargetDevice(targetDeviceId, null);
   if (!selectorValidity.ok) return selectorValidity;
@@ -328,7 +358,7 @@ export const CLOUD_CRON_UTC_NOTE =
   "Recurring Cloud schedules currently interpret cron expressions in UTC (timezone support is tracked in LET-9815).";
 
 export const CLOUD_DEVICE_OFFLINE_NOTE =
-  "If the target computer is offline when the schedule fires, that occurrence fails (TARGET_DEVICE_UNAVAILABLE) and does not run; omit --computer to run in the Cloud sandbox.";
+  "If the target computer is offline when the schedule fires, that occurrence fails (TARGET_DEVICE_UNAVAILABLE) and does not run.";
 
 export function buildCloudScheduleInput(
   params: BuildCloudScheduleParams,
