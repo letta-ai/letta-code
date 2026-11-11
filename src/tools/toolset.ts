@@ -301,6 +301,7 @@ export async function prepareToolExecutionContextForScope(params: {
   mcpOriginatorSuperRunId?: string;
   /** Client message ids that started the listener turn owning this context. */
   resolveClientMessageIds?: () => string[];
+  turnStartedAt?: number;
   overrideModel?: string | null;
   overrideProviderType?: string | null;
   cachedEffectiveModel?: string | null;
@@ -333,6 +334,7 @@ export async function prepareToolExecutionContextForScope(params: {
     suppressActingUserFallback,
     mcpOriginatorSuperRunId,
     resolveClientMessageIds,
+    turnStartedAt,
     overrideModel,
     overrideProviderType,
     cachedEffectiveModel,
@@ -456,6 +458,7 @@ export async function prepareToolExecutionContextForScope(params: {
       mcpOriginatorSuperRunId: mcpOriginatorSuperRunId ?? null,
       // Nor another turn's client message ids.
       resolveClientMessageIds,
+      turnStartedAt,
       workingDirectory,
       ...(skillsDirectory !== undefined ? { skillsDirectory } : {}),
       ...(skillSources !== undefined ? { skillSources } : {}),
