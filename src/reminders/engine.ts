@@ -20,6 +20,7 @@ import {
 } from "./catalog";
 import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
+import { buildVariablesInfoReminder } from "./variables";
 
 export interface AgentReminderContext {
   id: string;
@@ -541,6 +542,7 @@ export const sharedReminderProviders: Record<
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
+  "variables-info": buildVariablesInfoReminder,
   "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,

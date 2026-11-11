@@ -29,6 +29,8 @@ export interface SharedReminderState {
   hasSentSessionContext: boolean;
   hasSentConversationBootstrap: boolean;
   pendingConversationBootstrap: boolean;
+  hasSentVariablesInfo: boolean;
+  lastSentVariablesKey: string | null;
   hasSentSecretsInfo: boolean;
   pendingSecretsInfoRefresh: boolean;
   lastSentSecretNamesKey: string | null;
@@ -53,6 +55,8 @@ export function createSharedReminderState(): SharedReminderState {
     hasSentSessionContext: false,
     hasSentConversationBootstrap: false,
     pendingConversationBootstrap: false,
+    hasSentVariablesInfo: false,
+    lastSentVariablesKey: null,
     hasSentSecretsInfo: false,
     pendingSecretsInfoRefresh: false,
     lastSentSecretNamesKey: null,
@@ -82,6 +86,7 @@ export function markPostCompactionContextRemindersPending(
   state.hasSentAgentInfo = false;
   state.hasSentSessionContext = false;
   state.pendingSessionContextReason ??= "post_compaction";
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.hasSentMcpServersInfo = false;
   state.mcpToolCounts.clear();
@@ -125,6 +130,7 @@ export function enqueueToolsetChangeReminder(
 export function markSecretsInfoReminderPending(
   state: SharedReminderState,
 ): void {
+  state.hasSentVariablesInfo = false;
   state.hasSentSecretsInfo = false;
   state.pendingSecretsInfoRefresh = true;
 }
