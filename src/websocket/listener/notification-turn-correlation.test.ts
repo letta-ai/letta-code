@@ -21,6 +21,7 @@ test("a background notification turn is correlated with the send that started th
   setActiveRuntime(listener);
   const runtime = getOrCreateScopedRuntime(listener, "agent-bg", "conv-bg");
   let notificationTurnRan = false;
+  let notificationOtid = "";
   installProcessEventRouting({
     runtime: listener,
     processTransport: new LocalListenerTransport(),
@@ -35,6 +36,11 @@ test("a background notification turn is correlated with the send that started th
     },
     processQueuedTurn: async (incoming, batch) => {
       if (incoming.conversationId !== "conv-bg") return;
+      const payload = incoming.messages[0];
+      notificationOtid =
+        payload && "content" in payload && typeof payload.otid === "string"
+          ? payload.otid
+          : "";
       createTurnCorrelation(runtime, incoming, batch.batchId).observeRun(
         "run-notification",
       );
@@ -73,10 +79,11 @@ test("a background notification turn is correlated with the send that started th
     const deadline = Date.now() + 5_000;
     while (!notificationTurnRan && Date.now() < deadline) await Bun.sleep(10);
     expect(notificationTurnRan).toBe(true);
+    expect(notificationOtid.length).toBeGreaterThan(0);
 
     expect(buildLoopStatus(runtime).client_message_ids_by_run_id).toEqual({
       "run-send": ["cm-x"],
-      "run-notification": ["cm-x"],
+      "run-notification": ["cm-x", notificationOtid],
     });
   } finally {
     clearProcessServices(listener);
