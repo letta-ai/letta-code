@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.322:docs:d802e1b8910034981684ed20badc0f36c4d94e072bfa2ee811d9eacdb1e42b85:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
+  "candidate_id": "claude@2.1.322:docs:d6728fcc49526de4291f53e583cede8c5cf94fa43460ad5e8c56c1dd5c213949:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
   "package_version": "2.1.322",
   "npm_integrity": "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ==",
   "npm_published_at": "2026-11-10T01:58:41.811Z",
@@ -452,7 +452,7 @@
       },
       "https://code.claude.com/docs/en/commands.md": {
         "url": "https://code.claude.com/docs/en/commands.md",
-        "hash": "e55acc52f1d5c3ae220d3555586c307e89f28d34e02ded783ae14611f08b9f70",
+        "hash": "7092d83ff34ae9fea6680a8e4b313df6e61f8b5328d0e18df5720fadf6e87ff4",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/commands.md"
       },
@@ -1243,7 +1243,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "d802e1b8910034981684ed20badc0f36c4d94e072bfa2ee811d9eacdb1e42b85"
+    "digest": "d6728fcc49526de4291f53e583cede8c5cf94fa43460ad5e8c56c1dd5c213949"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1536,8 +1536,8 @@
     ],
     "digest": "f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5"
   },
-  "fetched_at": "2026-11-11T18:19:55.919Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43076544141",
-  "state_commit_parent": "8cd2b0c4531e3e20482aba4bdd25681dd5f71038",
-  "analysis_parent_sha": "8cd2b0c4531e3e20482aba4bdd25681dd5f71038"
+  "fetched_at": "2026-11-11T22:19:09.211Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43110574158",
+  "state_commit_parent": "0cca816d50a8e346f8e4a439e0d31125defc0f27",
+  "analysis_parent_sha": "0cca816d50a8e346f8e4a439e0d31125defc0f27"
 }
