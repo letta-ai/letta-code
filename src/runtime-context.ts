@@ -25,8 +25,6 @@ export interface RuntimeContextSnapshot {
   environmentDeviceId?: string | null;
   agentId?: string | null;
   agentName?: string | null;
-  /** Parent address for tools running in an agentless subagent conversation. */
-  detachedParentAddress?: { agentId: string; conversationId?: string };
   conversationId?: string | null;
   /** Authenticated Cloud user responsible for the current turn. */
   actingUserId?: string;

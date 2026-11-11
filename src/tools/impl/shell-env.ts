@@ -405,8 +405,6 @@ export function getShellEnv(): NodeJS.ProcessEnv {
     // Context not set yet (e.g., during startup), try env fallback below.
   }
 
-  if (!agentId) agentId = getRuntimeContext()?.detachedParentAddress?.agentId;
-
   if (!agentId) {
     const fallbackAgentId = env.AGENT_ID || env.LETTA_AGENT_ID;
     if (typeof fallbackAgentId === "string" && fallbackAgentId.trim()) {

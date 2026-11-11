@@ -276,21 +276,6 @@ const MAX_SUBAGENT_HISTORY = 200;
 const subagentHistory = new Map<string, SubagentHistoryEntry>();
 
 function putAgent(id: string, agent: SubagentState): void {
-  // A resumed conversation can have a new tracking ID. Keep only its latest
-  // live row; old run callbacks must not overwrite the replacement row.
-  if (agent.conversationId && agent.conversationId !== "default") {
-    for (const [otherId, other] of store.agents) {
-      if (
-        otherId !== id &&
-        other.conversationId === agent.conversationId &&
-        other.parentAgentId === agent.parentAgentId &&
-        other.parentConversationId === agent.parentConversationId
-      ) {
-        clearCompletedSubagentCleanup(otherId);
-        store.agents.delete(otherId);
-      }
-    }
-  }
   store.agents.set(id, agent);
   if (
     !subagentHistory.has(id) &&
