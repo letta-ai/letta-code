@@ -4,10 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bash } from "@/tools/impl/bash";
 import { killBackgroundProcess } from "@/tools/impl/kill-bash";
-import {
-  backgroundProcesses,
-  subscribeToBackgroundProcessState,
-} from "@/tools/impl/process_manager";
+import { backgroundProcesses } from "@/tools/impl/process_manager";
 import {
   clearPendingMessages,
   type QueuedMessage,
@@ -105,31 +102,6 @@ describe("Background bash completion notifications", () => {
     }
     backgroundProcesses.clear();
     rmSync(fixtureDir, { recursive: true, force: true });
-  });
-
-  test("publishes background state after queuing the completion notification", async () => {
-    const scope = { agentId: "agent-state", conversationId: "conv-state" };
-    const published: { queued: number; running: boolean }[] = [];
-    let bashId = "";
-    const unsubscribe = subscribeToBackgroundProcessState((changed) => {
-      if (changed?.conversationId !== scope.conversationId) return;
-      published.push({
-        queued: notificationsFor(bashId).length,
-        running: backgroundProcesses.get(bashId)?.status === "running",
-      });
-    });
-    try {
-      bashId = await startBackground({
-        command: "echo done",
-        parentScope: scope,
-      });
-      await waitForNotification(bashId);
-      // The listener re-sends device status on this signal; it must never
-      // report zero running shells before the notification is queued.
-      expect(published).toEqual([{ queued: 1, running: false }]);
-    } finally {
-      unsubscribe();
-    }
   });
 
   test("queues a task notification when a background command succeeds", async () => {

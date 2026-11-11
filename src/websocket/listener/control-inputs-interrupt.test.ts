@@ -112,6 +112,13 @@ describe("listener interrupt queue handoff", () => {
         origin: "message",
         workingDirectory: process.cwd(),
       });
+      // Keep the control scopes busy so their real routed notifications remain inspectable.
+      for (const runtime of runtimes.slice(1)) {
+        runtime.turnLifecycle.begin({
+          origin: "message",
+          workingDirectory: process.cwd(),
+        });
+      }
       const script = join(scratchpad, "source.js");
       writeFileSync(
         script,
@@ -177,13 +184,6 @@ describe("listener interrupt queue handoff", () => {
         workingDirectory: process.cwd(),
       });
       target.turnLifecycle.setRunId(later, "run-later");
-      // Keep the control scopes busy so their real routed notifications remain inspectable.
-      for (const runtime of runtimes.slice(1)) {
-        runtime.turnLifecycle.begin({
-          origin: "message",
-          workingDirectory: process.cwd(),
-        });
-      }
       const baseline = target.queueRuntime.peek().map((item) => item.id);
       requireFixture(peers[0]).send("buffered-before-interrupt");
       const wsState = requireFixture(

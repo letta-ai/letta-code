@@ -2,8 +2,8 @@ import { cancelMonitorBackup } from "./monitor-backup.js";
 import {
   backgroundProcesses,
   clearBackgroundProcessCleanup,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
-  settleBackgroundWork,
 } from "./process_manager.js";
 
 export function killBackgroundProcess(shell_id: string): boolean {
@@ -34,7 +34,7 @@ export function killBackgroundProcess(shell_id: string): boolean {
     } else {
       backgroundProcesses.delete(shell_id);
     }
-    settleBackgroundWork(proc);
+    notifyBackgroundProcessStateChanged(proc.runtimeScope);
     return true;
   } catch {
     proc.status = previousStatus;

@@ -105,20 +105,6 @@ export function notifyBackgroundProcessStateChanged(
   }
 }
 
-/**
- * Record that background work left `running` and publish the change. Every
- * such transition must go through here, after queuing any completion
- * notification: the websocket listener keeps a conversation in memory while
- * its background work runs and only re-checks eviction on this signal.
- */
-export function settleBackgroundWork(
-  entry: BackgroundProcess | BackgroundTask,
-  status?: "completed" | "failed",
-): void {
-  if (status) entry.status = status;
-  notifyBackgroundProcessStateChanged(entry.runtimeScope);
-}
-
 let backgroundOutputDir: string | undefined;
 let bashIdCounter = 1;
 export function getNextBashId() {

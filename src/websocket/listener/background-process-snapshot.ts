@@ -18,25 +18,14 @@ function belongsToRuntime(
   );
 }
 
-/**
- * True while any background process or task launched by this conversation is
- * still running. The listener keeps the conversation runtime in memory until
- * then so a reconnect re-reports the running work.
- */
+/** Keep runtimes held only for running processes reported as Bash. */
 export function hasRunningBackgroundWork(
   agentId: string,
   conversationId: string,
 ): boolean {
-  const runtimeScope = { agentId, conversationId };
-  for (const entry of [
-    ...backgroundProcesses.values(),
-    ...backgroundTasks.values(),
-  ]) {
-    if (entry.status === "running" && belongsToRuntime(entry, runtimeScope)) {
-      return true;
-    }
-  }
-  return false;
+  return buildBackgroundProcessSnapshot(agentId, conversationId).some(
+    (process) => process.kind === "bash",
+  );
 }
 
 export function buildBackgroundProcessSnapshot(
@@ -52,9 +41,11 @@ export function buildBackgroundProcessSnapshot(
     backgroundProcesses.entries(),
   )
     .filter(
-      ([, proc]) =>
+      ([processId, proc]) =>
         proc.kind !== "monitor" &&
         proc.kind !== "workflow" &&
+        proc.kind !== "tool" &&
+        !processId.startsWith("code_mode_") &&
         proc.status === "running" &&
         (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
     )

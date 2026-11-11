@@ -6,11 +6,16 @@ import { bash } from "@/tools/impl/bash";
 import { exec_command } from "@/tools/impl/exec-command";
 import { killBackgroundProcess } from "@/tools/impl/kill-bash";
 import { backgroundProcesses } from "@/tools/impl/process_manager";
+import { stopConversationBackground } from "@/tools/impl/stop-conversation-background";
 import {
   addToMessageQueue,
   clearPendingMessages,
 } from "@/utils/message-queue-bridge";
-import { closeListenerConnection, openListenerConnection } from "./connection";
+import {
+  closeListenerConnection,
+  openListenerConnection,
+  subscribeListenerConnection,
+} from "./connection";
 import { emitInitialConnectionState } from "./connection-state-sync";
 import { getOrCreateScopedRuntime } from "./conversation-runtime";
 import { createRuntime } from "./lifecycle";
@@ -90,20 +95,7 @@ afterEach(() => {
 });
 
 test("a conversation with running background Bash stays held and is re-reported on reconnect", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "bg-evict-"));
-  fixtureDir = dir;
-  const releaseFile = join(dir, "release");
-  const script = join(dir, "wait.cjs");
-  writeFileSync(
-    script,
-    `const fs = require("node:fs");
-const timer = setInterval(() => {
-  if (fs.existsSync(${JSON.stringify(releaseFile)})) {
-    clearInterval(timer);
-    process.exit(0);
-  }
-}, 20);`,
-  );
+  const { script, releaseFile } = writeWaitScript();
 
   const listener = createRuntime();
   setActiveRuntime(listener);
@@ -253,20 +245,84 @@ test("a stopped exec_command session releases its held conversation", async () =
 }, 15_000);
 
 test("an exec_command session that exits with its notification suppressed releases its held conversation", async () => {
-  const { script, releaseFile } = writeWaitScript();
+  const { script } = writeWaitScript();
   const { listener, runtimeKey, sessionId } =
     await holdConversationWithExecSession(script);
   try {
     const proc = backgroundProcesses.get(sessionId);
     if (!proc) throw new Error("exec session missing");
-    proc.completionNotificationSuppressed = true;
-    writeFileSync(releaseFile, "");
+    await stopConversationBackground({
+      agentId: AGENT_ID,
+      conversationId: CONVERSATION_ID,
+    });
     await waitFor(() => proc.status !== "running", "session exit");
     await waitFor(
       () => !listener.conversationRuntimes.has(runtimeKey),
       "conversation eviction",
     );
   } finally {
+    clearProcessServices(listener);
+  }
+}, 15_000);
+
+test("Bash completion sends its queued notification before the zero-Bash device frame", async () => {
+  const { script, releaseFile } = writeWaitScript();
+  const listener = createRuntime();
+  setActiveRuntime(listener);
+  const runtime = getOrCreateScopedRuntime(listener, AGENT_ID, CONVERSATION_ID);
+  // Keep the notification queued while inspecting the actual transport frames.
+  const lease = runtime.turnLifecycle.begin({
+    origin: "message",
+    workingDirectory: "/tmp",
+  });
+  const transport = new MockTransport();
+  const connection = openListenerConnection({
+    runtime: listener,
+    connectionId: options.connectionId,
+    writer: transport,
+    options,
+  });
+  connection.initialized = true;
+  subscribeListenerConnection(listener, options.connectionId, {
+    agent_id: AGENT_ID,
+    conversation_id: CONVERSATION_ID,
+  });
+  installProcessEventRouting({
+    runtime: listener,
+    processTransport: transport,
+    opts: options,
+    processQueuedTurn: async () => {},
+  });
+  try {
+    await bash({
+      command: `"${process.execPath}" "${script}"`,
+      run_in_background: true,
+      parentScope: { agentId: AGENT_ID, conversationId: CONVERSATION_ID },
+    });
+    transport.sent.length = 0;
+    writeFileSync(releaseFile, "");
+    await waitFor(
+      () =>
+        transport.sent.some(
+          (frame) => JSON.parse(frame).type === "update_device_status",
+        ),
+      "completion device frame",
+    );
+    const frames = transport.sent.map((frame) => JSON.parse(frame));
+    const queueIndex = frames.findIndex(
+      (frame) => frame.type === "update_queue" && frame.queue.length === 1,
+    );
+    const deviceIndex = frames.findIndex(
+      (frame) =>
+        frame.type === "update_device_status" &&
+        frame.device_status.background_processes.filter(
+          (process: { kind: string }) => process.kind === "bash",
+        ).length === 0,
+    );
+    expect(queueIndex).toBeGreaterThanOrEqual(0);
+    expect(deviceIndex).toBeGreaterThan(queueIndex);
+  } finally {
+    runtime.turnLifecycle.finish(lease, "end_turn");
     clearProcessServices(listener);
   }
 }, 15_000);
