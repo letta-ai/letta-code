@@ -71,9 +71,9 @@ test.skipIf(process.platform === "win32")(
     );
     try {
       const result = await exec_command({
-        cmd: 'printf "%s %s" "$USERNAME" "$PASSWORD"',
+        cmd: 'printf "%s %s" "$AGENT_USERNAME" "$PASSWORD"',
         login: false,
-        variableEnv: { USERNAME: "example-account" },
+        variableEnv: { AGENT_USERNAME: "example-account" },
         secretEnv: { PASSWORD: "credential-value" },
         yield_time_ms: 1000,
       });
