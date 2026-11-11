@@ -10,7 +10,7 @@ runs:
       shell: bash
       run: |
         install_packages() {
-          timeout -k 10 90 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+          timeout -k 10 140 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
             apt-get install -y -o Dpkg::Use-Pty=0 \
             -o Acquire::http::Timeout=20 \
             -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 \
@@ -36,7 +36,8 @@ runs:
                 fi
               done
             fi
-            timeout -k 10 60 sudo apt-get update -qq -o Acquire::Retries=3 || true
+            timeout -k 10 30 sudo DEBIAN_FRONTEND=noninteractive dpkg --configure -a || true
+            timeout -k 10 45 sudo apt-get update -qq -o Acquire::Retries=3 || true
           fi
         done
         exit 1
