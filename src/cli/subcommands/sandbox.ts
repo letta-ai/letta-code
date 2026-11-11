@@ -366,7 +366,11 @@ export async function runSandboxSubcommand(
           {
             url:
               desktop.viewerUrl ??
-              buildDesktopViewerUrl(desktop.url, desktop.expiresAt),
+              buildDesktopViewerUrl(
+                desktop.url,
+                desktop.expiresAt,
+                desktop.protocols,
+              ),
             expiresAt: desktop.expiresAt,
             ...targetOutput,
           },
