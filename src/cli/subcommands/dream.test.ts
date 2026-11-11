@@ -28,5 +28,6 @@ describe("expandDreamCommand", () => {
     expect(prompt).toContain(`"corpus": "${resolve("trajectories")}"`);
     expect(prompt).not.toContain("{{corpus}}");
     expect(prompt).toContain("Call the Workflow tool with `wait: true`");
+    expect(prompt).toContain("worktree add");
   });
 });
