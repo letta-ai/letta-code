@@ -108,6 +108,45 @@ While the fetch is still in progress, the line reports that instead.
 
 In a running session, `/status` shows the same line after a failed fetch, and for some skipped-fetch causes, such as a third-party provider variable or a custom `ANTHROPIC_BASE_URL` exported in the user's shell.
 
+### Give groups different settings
+
+On an Enterprise plan, you can give each group of members its own configuration instead of one organization-wide configuration. If your organization has [HIPAA enabled](https://code.claude.com/docs/en/hipaa-setup.md), group configurations aren't available yet. Each group must already exist, either synced from your identity provider through SCIM or as a custom group you manage in the admin console.
+
+Each member receives at most one configuration, the same on every device:
+
+* **A member of a group with a configuration**: the configuration ranked highest among their groups
+* **Anyone else**, including a member whose only group with a configuration was deleted: the catch-all configuration, if you set one
+
+Configurations don't merge with each other or with the organization-wide configuration, so each one must hold every setting you want that group to have. To apply a restriction to every member, put it in every group configuration and in the catch-all.
+
+Members keep receiving the organization-wide configuration until the last of these steps, so you can set up and test everything first:
+
+**1. Add a configuration for each group**
+
+In [**Organization settings > Claude Code > Managed settings**](https://claude.ai/admin-settings/claude-code), click **Add configuration**, pick the group, and choose a starting point. To loosen policy for a group, pick a group that your identity provider syncs, so that no one can add themselves to it in the admin console.
+
+To keep what members have today and change a few settings, start from a copy of your organization-wide configuration. Edit the configuration and save it.
+
+**2. Set the catch-all**
+
+Click **Set** on **Everyone else** and add the JSON for members who match no group configuration. To leave them with what they have today, paste in your organization-wide configuration. If you skip this step, their local sessions receive no server-managed settings, and any [endpoint-managed settings](https://code.claude.com/docs/en/managed-settings.md#delivery-mechanisms) on the device still apply.
+
+**3. Rank the groups**
+
+Drag the configurations into order. A member of several groups receives only the highest-ranked configuration, so put your most restrictive or most specific groups at the top.
+
+**4. Check who gets what**
+
+Under **Check effective settings** at the bottom of the page, search for a member to see which configuration they would receive. Check a member from each group, a member of several groups, and a member who matches no group configuration.
+
+**5. Switch to group-based mode**
+
+Click **Switch to group-based configurations** in the banner at the top of the page and confirm. Members receive their configurations within about an hour, apart from the [keys that apply only at the next launch](#fetch-and-caching-behavior). To go back, switch to organization-wide mode from the same banner: the organization-wide configuration applies again, if you have one, and your group configurations are kept.
+
+A group's model limits hold only in local sessions. Cloud and remote Cowork sessions use the [`availableModels`](https://code.claude.com/docs/en/model-config#restrict-model-selection) list in the catch-all. If you set no catch-all, it comes from your organization-wide configuration, even after you switch to group-based mode. If you leave the key out of the catch-all, members aren't limited by this list in those sessions.
+
+If you use a group's configuration to set where API requests go, that applies only to Claude Code, not to other tools that call the API.
+
 ### Access control
 
 The following roles can manage server-managed settings:
@@ -115,7 +154,7 @@ The following roles can manage server-managed settings:
 * **Primary Owner**
 * **Owner**
 
-Restrict access to trusted personnel, as settings changes apply to all users in the organization.
+Restrict access to trusted personnel, as settings changes can apply to all users in the organization.
 
 ### Managed-only settings
 
@@ -125,7 +164,7 @@ Most [settings keys](https://code.claude.com/docs/en/settings-reference.md#all-s
 
 Server-managed settings have the following limitations:
 
-* Settings apply uniformly to all users in the organization. Per-group configurations are not yet supported.
+* On a Team plan, settings apply uniformly to all users in the organization. [Group configurations](#give-groups-different-settings) require an Enterprise plan.
 * You can't distribute a [`managed-mcp.json`](https://code.claude.com/docs/en/managed-mcp) file through server-managed settings. Deliver the `allowedMcpServers` and `deniedMcpServers` policy keys there instead. On Claude Code v2.1.259 or later, you can also provide remote servers with [`managedMcpServers`](https://code.claude.com/docs/en/managed-mcp#provide-servers-through-managed-settings), which accepts `http` and `sse` servers only and doesn't take exclusive control the way the file does.
 
   Claude Code reads a `managed-mcp.json` deployed at its [system path](https://code.claude.com/docs/en/managed-mcp.md#exclusive-control-with-managed-mcp-json) separately from the managed settings tier, so the file still applies when server-managed settings are in effect.

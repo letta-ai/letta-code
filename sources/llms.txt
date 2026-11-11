@@ -542,14 +542,14 @@
 
 ## Indexes
 
-- [French (228 pages)](https://code.claude.com/docs/_llms/fr.txt): Premiers pas, Développer avec Claude Code, Plugins, Administration, Configuration, Référence, SDK Agent, Nouveautés, Ressources.
-- [German (228 pages)](https://code.claude.com/docs/_llms/de.txt): Erste Schritte, Mit Claude Code entwickeln, Plugins, Administration, Konfiguration, Referenz, Agent SDK, Neuigkeiten, Ressourcen.
-- [Italian (228 pages)](https://code.claude.com/docs/_llms/it.txt): Per iniziare, Crea con Claude Code, Plugin, Amministrazione, Configurazione, Riferimento, Agent SDK, Novità, Risorse.
-- [Japanese (228 pages)](https://code.claude.com/docs/_llms/jp.txt): はじめに, Claude Code で構築, プラグイン, 管理, 設定, リファレンス, Agent SDK, 新機能, リソース.
-- [Spanish (228 pages)](https://code.claude.com/docs/_llms/es.txt): Primeros pasos, Crea con Claude Code, Plugins, Administración, Configuración, Referencia, Agent SDK, Novedades, Recursos.
-- [Korean (228 pages)](https://code.claude.com/docs/_llms/ko.txt): 시작하기, Claude Code로 만들기, 플러그인, 관리, 구성, 레퍼런스, Agent SDK, 새로운 기능, 리소스.
-- [Simplified Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-cn.txt): 快速入门, 使用 Claude Code 构建, 插件, 管理, 配置, 参考, Agent SDK, 新功能, 资源.
-- [Traditional Chinese (228 pages)](https://code.claude.com/docs/_llms/zh-tw.txt): 快速入門, 使用 Claude Code 打造, 外掛, 管理, 設定, 參考資料, Agent SDK, 最新消息, 資源.
-- [Russian (228 pages)](https://code.claude.com/docs/_llms/ru.txt): Начало работы, Разработка с Claude Code, Плагины, Администрирование, Конфигурация, Справочник, Agent SDK, Что нового, Ресурсы.
-- [Indonesian (228 pages)](https://code.claude.com/docs/_llms/id.txt): Memulai, Membangun dengan Claude Code, Plugin, Administrasi, Konfigurasi, Referensi, Agent SDK, Apa yang Baru, Sumber Daya.
-- [Brazilian Portuguese (228 pages)](https://code.claude.com/docs/_llms/pt-br.txt): Primeiros passos, Desenvolva com Claude Code, Plugins, Administração, Configuração, Referência, Agent SDK, Novidades, Recursos.
+- [French (203 pages)](https://code.claude.com/docs/_llms/fr.txt): Premiers pas, Développer avec Claude Code, Plugins, Administration, Configuration, Référence, SDK Agent, Ressources.
+- [German (203 pages)](https://code.claude.com/docs/_llms/de.txt): Erste Schritte, Mit Claude Code entwickeln, Plugins, Administration, Konfiguration, Referenz, Agent SDK, Ressourcen.
+- [Italian (203 pages)](https://code.claude.com/docs/_llms/it.txt): Per iniziare, Crea con Claude Code, Plugin, Amministrazione, Configurazione, Riferimento, Agent SDK, Risorse.
+- [Japanese (203 pages)](https://code.claude.com/docs/_llms/jp.txt): はじめに, Claude Code で構築, プラグイン, 管理, 設定, リファレンス, Agent SDK, リソース.
+- [Spanish (203 pages)](https://code.claude.com/docs/_llms/es.txt): Primeros pasos, Crea con Claude Code, Plugins, Administración, Configuración, Referencia, Agent SDK, Recursos.
+- [Korean (203 pages)](https://code.claude.com/docs/_llms/ko.txt): 시작하기, Claude Code로 만들기, 플러그인, 관리, 구성, 레퍼런스, Agent SDK, 리소스.
+- [Simplified Chinese (203 pages)](https://code.claude.com/docs/_llms/zh-cn.txt): 快速入门, 使用 Claude Code 构建, 插件, 管理, 配置, 参考, Agent SDK, 资源.
+- [Traditional Chinese (203 pages)](https://code.claude.com/docs/_llms/zh-tw.txt): 快速入門, 使用 Claude Code 打造, 外掛, 管理, 設定, 參考資料, Agent SDK, 資源.
+- [Russian (203 pages)](https://code.claude.com/docs/_llms/ru.txt): Начало работы, Разработка с Claude Code, Плагины, Администрирование, Конфигурация, Справочник, Agent SDK, Ресурсы.
+- [Indonesian (203 pages)](https://code.claude.com/docs/_llms/id.txt): Memulai, Membangun dengan Claude Code, Plugin, Administrasi, Konfigurasi, Referensi, Agent SDK, Sumber Daya.
+- [Brazilian Portuguese (203 pages)](https://code.claude.com/docs/_llms/pt-br.txt): Primeiros passos, Desenvolva com Claude Code, Plugins, Administração, Configuração, Referência, Agent SDK, Recursos.

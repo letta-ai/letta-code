@@ -245,7 +245,7 @@ A `managed-settings.json` file that shows the shape of the managed keys, with on
 * `cleanupPeriodDays` shortens retention of session transcripts and other local data to seven days
 * `companyAnnouncements` shows a message at startup
 
-Administrators deploy a file like this as `managed-settings.json`, or the same JSON through MDM or [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md). One deployed file applies to every machine or account it reaches. To give a group different values, deploy a different file or profile to that group, since [server-managed settings don't support per-group policy yet](https://code.claude.com/docs/en/server-managed-settings.md#current-limitations).
+Administrators deploy a file like this as `managed-settings.json`, or the same JSON through MDM or [server-managed settings](https://code.claude.com/docs/en/server-managed-settings.md). One deployed file applies to every machine or account it reaches. To give a group different values, deploy a different file or profile to that group. On an Enterprise plan, you can instead [give the group its own configuration](https://code.claude.com/docs/en/server-managed-settings.md#give-groups-different-settings) in server-managed settings.
 
 > [tab] Copyable settings file
 >
