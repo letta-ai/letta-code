@@ -19,7 +19,6 @@ import {
   isWhatsAppConflictDisconnect,
   isWhatsAppReactionMessage,
   previewWhatsAppText,
-  shouldProcessWhatsAppGroup,
   timestampToMs,
   withWhatsAppPayloadMessagePrefix,
 } from "./adapter-helpers";
@@ -37,6 +36,11 @@ import {
   type WhatsAppInboundDebounceEntry,
 } from "./inbound-debounce";
 import {
+  buildWhatsAppInboundMessage,
+  prepareWhatsAppInboundMessage,
+  type WhatsAppInboundPreparation,
+} from "./inbound-prepare";
+import {
   isGroupJid,
   isSelfChat,
   isStatusOrBroadcastJid,
@@ -50,9 +54,6 @@ import { createLidStore } from "./lid-store";
 import {
   buildWhatsAppOutboundPayload,
   collectWhatsAppAttachments,
-  extractMentionedJids,
-  extractReplyParticipant,
-  extractWhatsAppText,
   type WhatsAppResolvedOutboundMedia,
 } from "./media";
 import { createWhatsAppMessageStore } from "./message-store";
@@ -497,54 +498,57 @@ export function createWhatsAppAdapter(
         const dedupeKey = `${chatId}:${messageId}`;
         if (!dedupeClaims.tryClaim(dedupeKey, generation)) continue;
 
-        const text = extractWhatsAppText(msg.message);
-        let attachmentResult: Awaited<
-          ReturnType<typeof collectWhatsAppAttachments>
-        >;
+        const senderId = identity.senderId;
+
+        // Access checks run before any media is downloaded so unauthorized
+        // traffic never materializes files on disk, and so a dropped
+        // message leaves a log entry behind.
+        let prepared: WhatsAppInboundPreparation;
         try {
-          attachmentResult = await collectWhatsAppAttachments({
-            accountId: account.accountId,
+          prepared = await prepareWhatsAppInboundMessage({
+            account,
             chatId,
-            messageId,
+            senderId,
             message: msg.message,
-            downloadContentFromMessage: downloadContentFromMessage ?? undefined,
-            downloadMedia: account.downloadMedia === true,
-            mediaMaxBytes: account.mediaMaxBytes,
-            transcribeVoice: account.transcribeVoice === true,
+            isGroup: group,
+            selfPhoneJid,
+            selfLid,
+            collectAttachments: (downloadMedia) =>
+              collectWhatsAppAttachments({
+                accountId: account.accountId,
+                chatId,
+                messageId,
+                message: msg.message,
+                downloadContentFromMessage:
+                  downloadContentFromMessage ?? undefined,
+                downloadMedia,
+                mediaMaxBytes: account.mediaMaxBytes,
+                transcribeVoice: account.transcribeVoice === true,
+              }),
+            isActive: () => isActiveBatch(batchSocket, generation),
           });
         } catch (error) {
           dedupeClaims.release(dedupeKey, generation);
           throw error;
         }
-        if (!isActiveBatch(batchSocket, generation)) {
+        if (prepared.kind === "abort") {
           dedupeClaims.release(dedupeKey, generation);
           return;
         }
-        const body = attachmentResult.transcriptionText || text;
-        if (!body.trim() && attachmentResult.attachments.length === 0) {
+        if (prepared.kind === "drop") {
+          console.log(
+            `[WhatsApp:${account.accountId}] dropped inbound message chatId=${chatId} senderId=${senderId} reason=${prepared.reason}`,
+          );
           dedupeClaims.commit(dedupeKey, generation);
           continue;
         }
-
-        const senderId = identity.senderId;
-
-        const mentionedJids = extractMentionedJids(msg.message);
-        const replyParticipant = extractReplyParticipant(msg.message);
-        const groupAllowed = !group
-          ? true
-          : shouldProcessWhatsAppGroup({
-              account,
-              groupJid: chatId,
-              text: body,
-              mentionedJids,
-              replyParticipant,
-              selfPhoneJid,
-              selfLid,
-            });
-        if (!groupAllowed) {
-          dedupeClaims.commit(dedupeKey, generation);
-          continue;
+        if (prepared.mediaSkipReason) {
+          console.log(
+            `[WhatsApp:${account.accountId}] media download skipped chatId=${chatId} senderId=${senderId} reason=${prepared.mediaSkipReason}`,
+          );
         }
+        const body = prepared.body;
+        const attachments = prepared.attachments;
 
         const chatLabel = group
           ? await getGroupLabel(chatId, batchSocket)
@@ -556,9 +560,8 @@ export function createWhatsAppAdapter(
           return;
         }
 
-        const inbound: InboundChannelMessage = {
-          channel: CHANNEL_ID,
-          accountId: account.accountId,
+        const inbound = buildWhatsAppInboundMessage({
+          account,
           chatId,
           senderId,
           senderName: msg.pushName?.trim() || senderId,
@@ -566,14 +569,10 @@ export function createWhatsAppAdapter(
           text: body,
           timestamp,
           messageId,
-          chatType: group ? "channel" : "direct",
-          isMention: group ? account.groupMode !== "open" : true,
-          attachments:
-            attachmentResult.attachments.length > 0
-              ? attachmentResult.attachments
-              : undefined,
+          isGroup: group,
+          attachments,
           raw: msg,
-        };
+        });
 
         debugLog(
           `WhatsApp:${account.accountId}`,
