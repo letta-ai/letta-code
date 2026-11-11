@@ -22,6 +22,7 @@ The important part is choosing the right layer. Do not smear a preference into d
 | Skills | Reusable procedural knowledge or bundled scripts | Load `creating-skills` or `acquiring-skills` |
 | Channels | Slack/Discord/Telegram/WhatsApp/Signal accounts, pairing, routing, listener state | Use `letta channels` or channel commands |
 | Schedules | Reminders and recurring prompts | Load `scheduling-tasks` and use `letta cron` |
+| Agent variables | Plain, readable `$NAME` values for shell commands | Use `letta variable` (or `/variable` in a session) |
 | Agent secrets | Per-agent `$NAME` credential values for shell commands | Use `letta secret` (or `/secret` in a session) |
 
 Decision rule: if the model should remember and reason about it, use memory. If the runtime must enforce it or route it before the model decides anything, use settings, API fields, mods, channels, or schedules.
@@ -351,6 +352,18 @@ Use skills when the user wants you to become good at a repeatable workflow. Sour
 4. Bundled skills
 
 Load `creating-skills` to create or edit a skill. Load `acquiring-skills` when the user asks for a capability you do not already have. Project, global, bundled, and agent-owned skills have different visibility; verify the target scope before changing skills another agent may load.
+
+## Agent variables
+
+Variables are plain values the agent can read. They are never redacted. Use them for usernames and other non-secret configuration; use secrets for passwords and credentials. Reference `$NAME` in a shell command to load a variable into the child shell's environment. A secret wins if it has the same name.
+
+```bash
+letta variable set USERNAME example-user
+letta variable list                     # names and values
+letta variable unset USERNAME
+```
+
+Use `--agent <agent-id>` to target another agent. `set` also supports `--env SOURCE_VAR` and `--stdin`. Cloud agents store variables server-side; local agents store them as plain JSON. Running sessions refresh variables within a minute.
 
 ## Agent secrets
 

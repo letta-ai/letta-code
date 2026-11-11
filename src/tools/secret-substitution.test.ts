@@ -1,4 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { __testOverrideVariablesRequest } from "@/utils/variables-store";
+
+beforeEach(() =>
+  __testOverrideVariablesRequest(async () => {
+    throw { status: 404 };
+  }),
+);
+afterEach(() => __testOverrideVariablesRequest(null));
+
 import {
   mkdirSync,
   mkdtempSync,

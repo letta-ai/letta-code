@@ -86,3 +86,46 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test("subagents inherit parent variables with secret precedence", async () => {
+  const { __testSetBackend } = await import("@/backend");
+  const { resolveShellEnvironment } = await import("./secret-substitution");
+  const parent = "agent-variable-parent";
+  const child = "agent-variable-child";
+  const previousRole = process.env.LETTA_CODE_AGENT_ROLE;
+  const previousParent = process.env.LETTA_PARENT_AGENT_ID;
+  process.env.LETTA_CODE_AGENT_ROLE = "subagent";
+  process.env.LETTA_PARENT_AGENT_ID = parent;
+  __testSetBackend({
+    retrieveAgent: async (id: string) => ({
+      tags: id === child ? ["role:subagent", `parent:${parent}`] : [],
+    }),
+  } as unknown as import("@/backend").Backend);
+  __testSeedSecretsCache(child, {});
+  __testSeedSecretsCache(parent, { PASSWORD: "parent-credential" });
+  __testOverrideVariablesRequest(
+    async <T>(_method: string, path: string) =>
+      (path.includes(parent)
+        ? [{ key: "USERNAME", value: "parent-account" }]
+        : [{ key: "PASSWORD", value: "plain-password" }]) as T,
+  );
+  try {
+    const environment = await resolveShellEnvironment(
+      "$USERNAME $PASSWORD",
+      child,
+    );
+    expect({ ...environment.variableEnv, ...environment.secretEnv }).toEqual({
+      USERNAME: "parent-account",
+      PASSWORD: "parent-credential",
+    });
+    expect(environment.secretEnv).not.toHaveProperty("USERNAME");
+  } finally {
+    __testSetBackend(null);
+    clearSecretsCache(child);
+    clearSecretsCache(parent);
+    if (previousRole === undefined) delete process.env.LETTA_CODE_AGENT_ROLE;
+    else process.env.LETTA_CODE_AGENT_ROLE = previousRole;
+    if (previousParent === undefined) delete process.env.LETTA_PARENT_AGENT_ID;
+    else process.env.LETTA_PARENT_AGENT_ID = previousParent;
+  }
+});
