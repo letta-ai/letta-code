@@ -8,10 +8,22 @@ import { resolveNotificationScope } from "@/utils/task-notifications.js";
 export const URL_MONITOR_MIN_INTERVAL_SECONDS = 60;
 const DEFAULT_URL_MONITOR_TIMEOUT_MS = 86_400_000;
 
+/** Compared-value condition; every given test must hold. */
+export interface UrlMonitorMatch {
+  equals?: string[];
+  contains?: string;
+  gt?: number;
+  lt?: number;
+}
+
 export interface UrlMonitorArgs {
   description: string;
   url?: string;
   interval_seconds?: number;
+  headers?: Record<string, string>;
+  select?: string;
+  match?: UrlMonitorMatch;
+  stop_on_match?: boolean;
   timeout_ms?: number;
   persistent?: boolean;
   command?: string;
@@ -55,6 +67,128 @@ function cloudMonitorsPath(conversationId: string): string {
 /** The default conversation has no conversation id Cloud can scope to. */
 function isSavedConversation(conversationId: string): boolean {
   return conversationId !== "" && conversationId !== "default";
+}
+
+// Matches the forms Cloud fills: $NAME and ${NAME}.
+const SECRET_REFERENCE = /\$(?:\{[A-Z_][A-Z0-9_]*\}|[A-Z_][A-Z0-9_]*)/;
+// Headers that carry credentials must reference a secret instead of holding
+// one, so a raw token is never sent to or stored by Cloud.
+const CREDENTIAL_HEADER = /auth|cookie|token|secret|key|password|session/i;
+
+interface CloudUrlSource {
+  type: "url";
+  url: string;
+  interval_seconds: number;
+  headers?: Record<string, string>;
+  select?: { type: "json"; path: string };
+  notify_when?: { type: "match" } & UrlMonitorMatch;
+  stop_on_match?: boolean;
+}
+
+function validateHeaders(headers: unknown): Record<string, string> | undefined {
+  if (headers === undefined) return undefined;
+  if (
+    typeof headers !== "object" ||
+    headers === null ||
+    Array.isArray(headers) ||
+    !Object.values(headers).every((value) => typeof value === "string")
+  ) {
+    throw new Error("Monitor headers must map header names to strings");
+  }
+  const entries = Object.entries(headers as Record<string, string>);
+  for (const [name, value] of entries) {
+    if (CREDENTIAL_HEADER.test(name) && !SECRET_REFERENCE.test(value)) {
+      throw new Error(
+        `Monitor header ${name} carries a credential, so its value must reference an agent secret ($NAME) instead of containing it`,
+      );
+    }
+  }
+  return entries.length > 0 ? (headers as Record<string, string>) : undefined;
+}
+
+function validateMatch(match: unknown): UrlMonitorMatch | undefined {
+  if (match === undefined) return undefined;
+  if (typeof match !== "object" || match === null || Array.isArray(match)) {
+    throw new Error("Monitor match must be an object");
+  }
+  const { equals, contains, gt, lt } = match as UrlMonitorMatch;
+  const result: UrlMonitorMatch = {};
+  if (equals !== undefined) {
+    if (!Array.isArray(equals) || !equals.every((v) => typeof v === "string")) {
+      throw new Error("Monitor match.equals must be an array of strings");
+    }
+    if (equals.length > 0) result.equals = equals;
+  }
+  if (contains !== undefined) {
+    if (typeof contains !== "string" || contains === "") {
+      throw new Error("Monitor match.contains must be a non-empty string");
+    }
+    result.contains = contains;
+  }
+  for (const [key, value] of [
+    ["gt", gt],
+    ["lt", lt],
+  ] as const) {
+    if (value === undefined) continue;
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      throw new Error(`Monitor match.${key} must be a number`);
+    }
+    result[key] = value;
+  }
+  if (Object.keys(result).length === 0) {
+    throw new Error(
+      "Monitor match needs at least one of equals, contains, gt or lt",
+    );
+  }
+  return result;
+}
+
+/** The Cloud source for validated url arguments. */
+function buildCloudSource(args: UrlMonitorArgs, url: string): CloudUrlSource {
+  const source: CloudUrlSource = {
+    type: "url",
+    url,
+    interval_seconds: args.interval_seconds ?? URL_MONITOR_MIN_INTERVAL_SECONDS,
+  };
+  const headers = validateHeaders(args.headers);
+  if (headers) source.headers = headers;
+  if (args.select !== undefined) {
+    if (
+      typeof args.select !== "string" ||
+      args.select.split(".").some((segment) => segment === "")
+    ) {
+      throw new Error(
+        "Monitor select must be a dot-separated path into the JSON response, such as 0.status",
+      );
+    }
+    source.select = { type: "json", path: args.select };
+  }
+  const match = validateMatch(args.match);
+  if (match) source.notify_when = { type: "match", ...match };
+  if (args.stop_on_match !== undefined) {
+    if (typeof args.stop_on_match !== "boolean") {
+      throw new Error("Monitor stop_on_match must be a boolean");
+    }
+    if (args.stop_on_match && !match) {
+      throw new Error("Monitor stop_on_match needs match");
+    }
+    if (args.stop_on_match) source.stop_on_match = true;
+  }
+  return source;
+}
+
+/** What the agent will be told, so it knows when to expect a notice. */
+function notifyDescription(source: CloudUrlSource): string {
+  const what = source.select
+    ? `the value at ${source.select.path}`
+    : "the HTTP status or body";
+  if (!source.notify_when) {
+    return `The first response is the baseline; you will be notified only when ${what} changes`;
+  }
+  const then = source.stop_on_match
+    ? ", and then it stops"
+    : "; it notifies again each time a match begins";
+  return `You will be notified when ${what} first matches, including on the first poll${then}`;
 }
 
 function validateUrlMonitorArgs(args: UrlMonitorArgs): string {
@@ -121,6 +255,7 @@ export async function startCloudUrlMonitor(
   deps: CloudUrlMonitorDeps = {},
 ): Promise<UrlMonitorResult> {
   const url = validateUrlMonitorArgs(args);
+  const source = buildCloudSource(args, url);
   if (!(deps.isCloud ?? isLettaCloud)()) {
     throw new Error(
       "Monitor url runs in Letta Cloud and is only available when connected to Letta Cloud. Use command with a polling loop instead.",
@@ -135,8 +270,7 @@ export async function startCloudUrlMonitor(
       "Monitor url needs a saved conversation and is not available in the agent's default conversation. Use command with a polling loop instead.",
     );
   }
-  const intervalSeconds =
-    args.interval_seconds ?? URL_MONITOR_MIN_INTERVAL_SECONDS;
+  const intervalSeconds = source.interval_seconds;
   const timeoutMs = args.timeout_ms ?? DEFAULT_URL_MONITOR_TIMEOUT_MS;
   const request = deps.request ?? apiRequest;
   const created = await request<{ id: string }>(
@@ -144,7 +278,7 @@ export async function startCloudUrlMonitor(
     cloudMonitorsPath(scope.conversationId),
     {
       description: args.description,
-      source: { type: "url", url, interval_seconds: intervalSeconds },
+      source,
       timeout_ms: timeoutMs,
       ...(args.toolCallId && { tool_call_id: args.toolCallId }),
     },
@@ -155,7 +289,7 @@ export async function startCloudUrlMonitor(
     content: [
       {
         type: "text",
-        text: `Cloud monitor started (task ${taskId}, polls every ${intervalSeconds}s, timeout ${timeoutMs}ms). The first response is the baseline; you will be notified only when the HTTP status or body changes, even if this sandbox stops. Keep working — do not poll or sleep. Stop it with TaskStop.`,
+        text: `Cloud monitor started (task ${taskId}, polls every ${intervalSeconds}s, timeout ${timeoutMs}ms). ${notifyDescription(source)}, even if this sandbox stops. Keep working — do not poll or sleep. Stop it with TaskStop.`,
       },
     ],
     taskId,

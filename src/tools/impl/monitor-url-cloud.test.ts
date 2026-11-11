@@ -85,6 +85,45 @@ describe("Monitor url source", () => {
     expect(calls[0]?.body).not.toHaveProperty("tool_call_id");
   });
 
+  test("sends secret header templates, the selected field and the match as written", async () => {
+    const calls: Call[] = [];
+    const result = await startCloudUrlMonitor(
+      {
+        description: "Pipeline result",
+        url: "https://gitlab.example.com/api/v4/projects/1/pipelines?ref=main",
+        headers: {
+          "PRIVATE-TOKEN": "$GITLAB_TOKEN",
+          Accept: "application/json",
+        },
+        select: "0.status",
+        match: { equals: ["success", "failed", "canceled"] },
+        stop_on_match: true,
+        parentScope: scope,
+      },
+      {
+        isCloud: () => true,
+        request: fakeRequest({ id: "cmon-1" }, calls),
+      },
+    );
+    // $GITLAB_TOKEN stays a reference: Cloud fills it from the agent's
+    // secrets on every poll, so the value never leaves the vault.
+    expect(calls[0]?.body?.source).toEqual({
+      type: "url",
+      url: "https://gitlab.example.com/api/v4/projects/1/pipelines?ref=main",
+      interval_seconds: 60,
+      headers: { "PRIVATE-TOKEN": "$GITLAB_TOKEN", Accept: "application/json" },
+      select: { type: "json", path: "0.status" },
+      notify_when: {
+        type: "match",
+        equals: ["success", "failed", "canceled"],
+      },
+      stop_on_match: true,
+    });
+    expect(result.content[0]?.text).toContain(
+      "notified when the value at 0.status first matches, including on the first poll, and then it stops",
+    );
+  });
+
   test("needs a saved conversation, not the default one", async () => {
     const calls: Call[] = [];
     await expect(
@@ -123,6 +162,18 @@ describe("Monitor url source", () => {
     [{ interval_seconds: 30 }, "interval_seconds must be an integer"],
     [{ url: "ftp://example.com/" }, "absolute http or https URL"],
     [{ url: "not a url" }, "absolute http or https URL"],
+    [
+      // Tool arguments arrive as JSON, so a model can send a non-string value.
+      { headers: { "X-Count": 1 } as unknown as Record<string, string> },
+      "headers must map header names to strings",
+    ],
+    [
+      { headers: { "PRIVATE-TOKEN": "glpat-raw-token" } },
+      "must reference an agent secret ($NAME)",
+    ],
+    [{ select: "" }, "select must be a dot-separated path"],
+    [{ match: {} }, "match needs at least one of equals, contains, gt or lt"],
+    [{ stop_on_match: true }, "stop_on_match needs match"],
   ])("rejects invalid url monitor arguments %#", async (extra, message) => {
     const calls: Call[] = [];
     await expect(
@@ -150,6 +201,15 @@ describe("Monitor url source", () => {
         interval_seconds: 60,
       }),
     ).rejects.toThrow("interval_seconds is only supported with url");
+    await expect(
+      monitor({
+        description: "Lines",
+        command: "echo hi",
+        headers: { Accept: "text/plain" },
+      }),
+    ).rejects.toThrow(
+      "headers, select, match and stop_on_match are only supported with url",
+    );
   });
 });
 

@@ -32,7 +32,10 @@ import {
 } from "./monitor-event-stream.js";
 import { startScriptMonitor } from "./monitor-script.js";
 import { getMonitorMaxTimeoutMs } from "./monitor-timeout";
-import { startCloudUrlMonitor } from "./monitor-url-cloud";
+import {
+  startCloudUrlMonitor,
+  type UrlMonitorMatch,
+} from "./monitor-url-cloud";
 import {
   assertBackgroundProcessCapacity,
   type BackgroundProcess,
@@ -80,6 +83,10 @@ interface MonitorArgs {
   args?: unknown;
   url?: string;
   interval_seconds?: number;
+  headers?: Record<string, string>;
+  select?: string;
+  match?: UrlMonitorMatch;
+  stop_on_match?: boolean;
   toolCallId?: string;
   backup_after_seconds?: number;
   backup_prompt?: string;
@@ -296,6 +303,16 @@ function normalizeMonitorArgs(args: MonitorArgs): NormalizedMonitorArgs {
   }
   if (normalized.interval_seconds !== undefined) {
     throw new Error("Monitor interval_seconds is only supported with url");
+  }
+  if (
+    normalized.headers !== undefined ||
+    normalized.select !== undefined ||
+    normalized.match !== undefined ||
+    normalized.stop_on_match !== undefined
+  ) {
+    throw new Error(
+      "Monitor headers, select, match and stop_on_match are only supported with url",
+    );
   }
   delete normalized.url;
   if (!hasScript) {
