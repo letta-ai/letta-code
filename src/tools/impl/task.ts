@@ -28,6 +28,7 @@ import {
   waitForBackgroundSubagentAgentId,
   waitForBackgroundSubagentLink,
 } from "@/agent/subagents/background-link";
+import { resolveEffectiveAgentId } from "@/agent/subagents/ephemeral-subagent";
 import { forkParentConversation } from "@/agent/subagents/fork-conversation";
 import { spawnSubagent } from "@/agent/subagents/manager";
 import { getBackend } from "@/backend";
@@ -75,6 +76,7 @@ import {
   listSubagentTypes,
   preparedConversationConfig,
   resolveTaskAgentSelection,
+  shouldForkTaskContext,
 } from "./task-agent-selection";
 import {
   buildTaskResultHeader,
@@ -105,6 +107,7 @@ export {
 } from "@/agent/subagents/background-link";
 
 export interface SpawnBackgroundSubagentTaskArgs {
+  taskId?: string;
   subagentType: string;
   /** Configuration resolved by the caller; omitted by legacy internal callers. */
   config?: SubagentConfig;
@@ -313,7 +316,7 @@ export function spawnBackgroundSubagentTask(
     claimsParentRuntime,
   );
 
-  const taskId = getNextTaskId();
+  const taskId = args.taskId ?? getNextTaskId();
   const outputFile = createBackgroundOutputFile(taskId);
   const abortController = new AbortController();
 
@@ -699,7 +702,7 @@ export async function launchSubagent(
   const config: SubagentConfig | undefined = isExternalCodingAgent
     ? createExternalCodingAgentConfig(
         externalCodingAgentType,
-        args.fork_context === true,
+        shouldForkTaskContext(args),
       )
     : prepared
       ? preparedConversationConfig()
@@ -748,7 +751,9 @@ export async function launchSubagent(
       }
     : {};
   if (isExternalCodingAgent) {
-    const parentAgentId = resolvedParentScope?.agentId ?? getCurrentAgentId();
+    const parentAgentId = resolveEffectiveAgentId(
+      resolvedParentScope?.agentId ?? getCurrentAgentId(),
+    );
     if (!parentAgentId) {
       return {
         success: false,
@@ -761,7 +766,7 @@ export async function launchSubagent(
           type: externalCodingAgentType,
           computer: resolvedComputer.computer,
           prompt: inputPrompt,
-          forkContext: args.fork_context === true,
+          forkContext: shouldForkTaskContext(args),
           description,
           model,
           mcp: args.mcp,
@@ -777,7 +782,7 @@ export async function launchSubagent(
     }
     const worker = await prepareExternalWorkerPrompt({
       prompt: inputPrompt,
-      forkContext: args.fork_context === true,
+      forkContext: shouldForkTaskContext(args),
       parentAgentId,
       parentConversationId: resolvedParentScope?.conversationId,
       signal,
@@ -815,6 +820,9 @@ export async function launchSubagent(
         ) =>
           runExternalCodingAgent({
             type: externalCodingAgentType,
+            taskId: [...backgroundTasks].find(
+              ([, task]) => task.subagentId === workerSubagentId,
+            )?.[0],
             prompt,
             model,
             parentAgentId,
@@ -964,7 +972,9 @@ export async function launchSubagent(
 }
 
 /** Agent's text adapter; App Server callers consume launchSubagent directly. */
-export async function task(args: TaskArgs): Promise<string> {
+export async function task(
+  args: TaskArgs,
+): Promise<string | { content: string; status: "error" }> {
   if (args.command === "refresh") {
     clearSubagentConfigCache();
     const { subagents, errors } = await discoverSubagents();
@@ -976,7 +986,8 @@ export async function task(args: TaskArgs): Promise<string> {
     return `Refreshed subagents list: found ${Object.keys(allConfigs).length} total (${subagents.length} custom)${errorSuffix}`;
   }
   const result = await launchSubagent(applySubagentPreset(args));
-  if (!result.success) return `Error: ${result.error}`;
+  if (!result.success)
+    return { content: `Error: ${result.error}`, status: "error" };
   const agentIdLine = result.agent_id ? `\nAgent ID: ${result.agent_id}` : "";
   const conversationIdLine = result.conversation_id
     ? `\nConversation ID: ${result.conversation_id}`

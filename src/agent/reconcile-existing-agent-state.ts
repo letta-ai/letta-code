@@ -3,7 +3,6 @@ import type {
   AgentUpdateParams,
 } from "@letta-ai/letta-client/resources/agents/agents";
 import type { Tool } from "@letta-ai/letta-client/resources/tools";
-import { DEFAULT_SUMMARIZATION_MODEL } from "@/constants";
 
 export const DEFAULT_ATTACHED_BASE_TOOLS = [
   "web_search",
@@ -128,10 +127,10 @@ export async function reconcileExistingAgentState(
       ? agent.compaction_settings.model.trim()
       : "";
 
-  if (!configuredCompactionModel) {
+  if (!configuredCompactionModel && agent.model) {
     patch.compaction_settings = {
       ...(agent.compaction_settings ?? {}),
-      model: DEFAULT_SUMMARIZATION_MODEL,
+      model: agent.model,
     };
     appliedTweaks.push("set_compaction_model");
   }

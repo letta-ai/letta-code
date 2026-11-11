@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OAuthSelectPrompt } from "@earendil-works/pi-ai/oauth";
@@ -18,6 +18,7 @@ import {
 import { getLocalProviderRecordByName } from "@/backend/local/local-provider-auth-store";
 import { runLocalOAuthConnectFlow } from "@/cli/commands/connect-local-oauth";
 import type { ByokProvider } from "@/providers/byok-providers";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const FAKE_PROVIDER_ID = "fake-select-oauth";
 
@@ -93,7 +94,7 @@ describe("runLocalOAuthConnectFlow select prompts", () => {
     } else {
       process.env.LETTA_LOCAL_BACKEND_DIR = previousStorageDir;
     }
-    await rm(storageDir, { recursive: true, force: true });
+    await removeTestDir(storageDir);
   });
 
   test("auto-selects the first (default) option when no onSelect is provided", async () => {

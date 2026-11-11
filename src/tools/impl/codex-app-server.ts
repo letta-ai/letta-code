@@ -1,15 +1,10 @@
-import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { setTimeout as sleep } from "node:timers/promises";
 import type { SubagentResult } from "@/agent/subagents";
-import {
-  killWindowsProcessTree,
-  spawnManagedWorkloadProcess,
-} from "@/agent/subagents/subagent-process";
+import { spawnManagedWorkloadProcess } from "@/agent/subagents/subagent-process";
+import { confirmProcessExit } from "@/utils/confirm-process-exit";
 import { withNativeCliPath } from "@/utils/native-cli-env";
-import { getCommandProcessFactory } from "@/utils/package-manager-spawn";
-import { wrapManagedWorkloadLauncher } from "@/utils/systemd-workload-scope";
 import {
   asRecord,
   CAPACITY_RETRY_DELAYS_MS,
@@ -23,6 +18,11 @@ import {
   turnFailureMessage,
   turnReport,
 } from "./codex-app-server-payloads";
+import { traceCodexLaunch } from "./external-llm-trace-launch";
+import {
+  type ExternalTraceContext,
+  updateExternalTraceTask,
+} from "./external-llm-trace-session";
 import {
   type ExternalTextListener,
   type ExternalToolCallListener,
@@ -39,7 +39,6 @@ interface JsonRpcMessage {
   result?: Record<string, unknown>;
   error?: { code?: number; message?: string; data?: unknown };
 }
-
 export interface CodexAppServerTransport {
   stdout: Readable;
   stderr?: Readable;
@@ -47,7 +46,6 @@ export interface CodexAppServerTransport {
   kill?: () => void;
   exited?: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 }
-
 interface PendingRequest {
   resolve: (value: Record<string, unknown>) => void;
   reject: (error: Error) => void;
@@ -110,6 +108,7 @@ interface CodexSession {
 
 export interface CodexTurnOptions
   extends Pick<ExternalWorkerListeners, "onToolResult" | "onReasoning"> {
+  traceContext?: ExternalTraceContext;
   prompt: string;
   parentAgentId: string;
   cwd: string;
@@ -232,36 +231,32 @@ function errorMessage(error: unknown): string {
 function textInput(text: string): Array<{ type: "text"; text: string }> {
   return [{ type: "text", text }];
 }
-
 function spawnTransport(options: {
+  configArgs?: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
 }): CodexAppServerTransport {
-  const [command = "codex", ...args] = wrapManagedWorkloadLauncher(
-    ["codex", "app-server", "--stdio"],
-    { env: options.env },
+  const controller = new AbortController();
+  const { process: child, completion } = spawnManagedWorkloadProcess(
+    "codex",
+    [...(options.configArgs ?? []), "app-server", "--stdio"],
+    {
+      ...options,
+      signal: controller.signal,
+    },
   );
-  const child = getCommandProcessFactory()(command, args, {
-    cwd: options.cwd,
-    env: options.env,
-    stdio: ["pipe", "pipe", "pipe"],
-    windowsHide: true,
-  }) as ChildProcessWithoutNullStreams;
   return {
     stdin: child.stdin,
     stdout: child.stdout,
     stderr: child.stderr,
     // On Windows the child may be cmd.exe wrapping codex.cmd; kill the tree.
-    kill: () =>
-      process.platform === "win32"
-        ? void killWindowsProcessTree(child)
-        : child.kill(),
-    exited: new Promise((resolve) => {
-      child.once("close", (code, signal) => resolve({ code, signal }));
-    }),
+    kill: () => controller.abort(),
+    exited: completion.then((exit) => ({
+      code: exit.exitCode,
+      signal: exit.exitSignal,
+    })),
   };
 }
-
 class CodexAppServerClient {
   private readonly pending = new Map<number, PendingRequest>();
   private nextRequestId = 1;
@@ -342,6 +337,14 @@ class CodexAppServerClient {
     if (!this.closed) {
       this.transport.stdin.write(`${JSON.stringify({ method, params })}\n`);
     }
+  }
+
+  async stop(): Promise<void> {
+    if (!this.transport.exited)
+      throw new Error("Codex process exit cannot be confirmed");
+    this.transport.kill?.();
+    await confirmProcessExit(this.transport.exited, "Codex");
+    await this.close();
   }
 
   dispose(): void {
@@ -604,29 +607,51 @@ async function createSession(
     AGENT_ID: options.parentAgentId,
     LETTA_AGENT_ID: options.parentAgentId,
   });
-  const transport = (deps.createTransport ?? spawnTransport)({
+  let transport = (deps.createTransport ?? spawnTransport)({
     cwd: options.cwd,
     env,
   });
   let session: CodexSession | undefined;
   const pendingNotifications: JsonRpcMessage[] = [];
-  const client = new CodexAppServerClient(
-    transport,
-    (message) => {
-      if (!session) pendingNotifications.push(message);
-      // Replay swaps in a new queue, so always push to the current one.
-      else if (!handleNotification(session, message)) {
-        session.pendingNotifications.push(message);
-      }
-    },
-    (error) => {
-      if (session) failSession(session, error);
-    },
-  );
+  const makeClient = () => {
+    const owner = new CodexAppServerClient(
+      transport,
+      (message) => {
+        if (!session) pendingNotifications.push(message);
+        // Replay swaps in a new queue, so always push to the current one.
+        else if (!handleNotification(session, message)) {
+          session.pendingNotifications.push(message);
+        }
+      },
+      (error) => {
+        if (session?.client === owner) failSession(session, error);
+      },
+    );
+    return owner;
+  };
+  let client = makeClient();
+  let trace: Awaited<ReturnType<typeof traceCodexLaunch>>;
   let response: Record<string, unknown>;
   try {
     await client.initialize();
     await assertCodexSignedIn(client);
+    trace = deps.createTransport
+      ? undefined
+      : await traceCodexLaunch(options.traceContext, env, client);
+    if (trace) {
+      client.dispose();
+      transport = spawnTransport({
+        cwd: options.cwd,
+        env,
+        configArgs: trace.args,
+      });
+      client = makeClient();
+      await client.initialize();
+    }
+    if (trace)
+      void transport.exited
+        ?.finally(() => trace?.close())
+        .catch(() => undefined);
     const method = options.resumeThreadId ? "thread/resume" : "thread/start";
     const params = options.resumeThreadId
       ? {
@@ -642,8 +667,9 @@ async function createSession(
           sandbox: "danger-full-access",
           developerInstructions: options.mcpReminder,
         };
-    response = await client.request(method, params);
+    response = await client.request(method, { ...params, ...trace?.params });
   } catch (error) {
+    void trace?.close();
     client.dispose();
     throw error;
   }
@@ -653,6 +679,7 @@ async function createSession(
     client.dispose();
     throw new Error("Codex app-server returned no native thread ID");
   }
+  trace?.setSessionId(threadId);
   session = {
     threadId,
     client,
@@ -906,6 +933,7 @@ export async function sendCodexMessage(
         }
       }
       options.signal?.throwIfAborted();
+      updateExternalTraceTask(session.threadId, options.traceContext);
       await options.beforeStart?.(session.threadId);
       const handle = await startTurnUnlocked(
         session,
@@ -952,6 +980,13 @@ export async function runCodexTurn(
       error: errorMessage(error),
     };
   }
+}
+export async function stopCodexSession(threadId: string): Promise<boolean> {
+  const session = sessions.get(threadId);
+  if (!session) return false;
+  await session.client.stop();
+  if (sessions.get(threadId) === session) sessions.delete(threadId);
+  return true;
 }
 
 export function hasActiveCodexTurn(threadId: string): boolean {

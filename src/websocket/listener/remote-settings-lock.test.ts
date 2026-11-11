@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   releaseRemoteSettingsLockSync,
   tryAcquireRemoteSettingsLockSync,
@@ -11,7 +12,7 @@ describe("remote settings cross-process lock", () => {
   let tempRoot: string | null = null;
 
   afterEach(async () => {
-    if (tempRoot) await rm(tempRoot, { recursive: true, force: true });
+    if (tempRoot) await removeTestDir(tempRoot);
     tempRoot = null;
   });
 

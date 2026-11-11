@@ -1,3 +1,7 @@
+/** A foreground turn stopped consuming the remote result. */
+export const EXTERNAL_TOOL_FOREGROUND_INTERRUPTED =
+  "external_tool_foreground_interrupted";
+
 /** Model-facing client tool definition. */
 export interface ClientTool {
   name: string;
@@ -18,8 +22,7 @@ export interface ExternalToolDefinition {
   /** Internal registration key; model-facing calls still use name. */
   registrationKey?: string;
   connectionId?: string;
-  /** Optional visibility scope; scoped tools are hidden unless selected for a turn. */
-  scopeId?: string;
+  supportsCancellation?: boolean;
   /** Optional runtime owner; runtime-owned tools are visible only in that runtime. */
   runtime?: {
     agentId?: string;
@@ -43,4 +46,5 @@ export type ExternalToolExecutor = (
     mimeType?: string;
   }>;
   isError: boolean;
+  cancellation?: "cancelled" | "timeout";
 }>;

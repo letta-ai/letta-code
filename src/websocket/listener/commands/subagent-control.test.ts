@@ -410,6 +410,8 @@ describe("remote external subagent control", () => {
 
   test("stops the owning background task", async () => {
     const { parent, abortController } = fixture();
+    const task = backgroundTasks.get("task-1");
+    if (task) task.completion = Promise.resolve();
     const response = await handleSubagentStopCommand(
       {
         type: "subagent_stop",

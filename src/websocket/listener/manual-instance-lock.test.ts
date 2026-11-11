@@ -3,13 +3,13 @@ import {
   mkdir,
   mkdtemp,
   readFile,
-  rm,
   unlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   acquireManualListenerLock,
   getManualListenerLockRoot,
@@ -39,7 +39,7 @@ describe("manual listener instance lock", () => {
   });
 
   afterEach(async () => {
-    await rm(lockRoot, { recursive: true, force: true });
+    await removeTestDir(lockRoot);
   });
 
   test("uses the product config root for default lock ownership", () => {

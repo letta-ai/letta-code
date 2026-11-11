@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import type { TokenResponse } from "@/auth/oauth";
 import type { ChannelTurnSource } from "@/channels/types";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { getToolSchema } from "@/tools/manager";
 import {
   startListenerClient,
@@ -26,6 +27,7 @@ import { handleExternalToolCallResponseCommand } from "@/websocket/listener/exte
 import { getOrCreateConversationPermissionModeStateRef } from "@/websocket/listener/permission-mode";
 import { finalizeHandledRecoveryTurn } from "@/websocket/listener/recovery";
 import { getActiveRuntime } from "@/websocket/listener/runtime";
+import { settleWithin } from "@/websocket/listener/settle-within.test-helpers";
 import { MAX_PENDING_STARTUP_FRAMES } from "@/websocket/listener/startup-frame-buffer";
 import {
   isListenerTransportOpen,
@@ -160,7 +162,7 @@ describe("listener approval reconnect timing", () => {
     settingsManager.updateSettings = originalUpdateSettings;
     settingsManager.flush = originalFlush;
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
 
     process.env.HOME = originalHome;
     if (originalDisableCron === undefined) {
@@ -629,7 +631,7 @@ describe("listener approval reconnect timing", () => {
       connectedCount += 1;
       if (connectedCount !== 2) return;
       reportReplacementStartup();
-      await replacementStartupReady;
+      await settleWithin(replacementStartupReady, "startup never released");
     });
     await waitFor(
       () =>
@@ -705,7 +707,7 @@ describe("listener approval reconnect timing", () => {
         countConnectionsForChannel("stream") === 2,
       "listener did not reconnect after service restart",
     );
-    await replacementStartup;
+    await settleWithin(replacementStartup, "replacement startup never began");
     expect(listener.connections.get("connection-id")?.initialized).toBe(false);
     addSecondInitializedSubscriber(listener);
     expect(isListenerTransportOpen(capturedTransport)).toBe(true);
@@ -727,7 +729,9 @@ describe("listener approval reconnect timing", () => {
     );
 
     releaseReplacementStartup();
-    await expect(approvalStop).rejects.toThrow("client tool failed");
+    await expect(
+      settleWithin(approvalStop, "approval stop never settled"),
+    ).rejects.toThrow("client tool failed");
     await waitFor(
       () => countToolStreamDeltas("client_tool_end", approval.toolCallId) === 1,
       "aborted tool result did not reach the replacement listener connection",

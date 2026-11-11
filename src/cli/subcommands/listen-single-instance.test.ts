@@ -7,7 +7,7 @@ import {
   spyOn,
   test,
 } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/cli/subcommands/listen";
 import { settingsManager } from "@/settings-manager";
 import { telemetry } from "@/telemetry";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { deriveListenerInstanceId } from "@/websocket/listen-register";
 import { __listenerIdentityTestUtils } from "@/websocket/listener/identity";
 import {
@@ -124,7 +125,7 @@ describe("standalone listener single-instance wiring", () => {
     if (originalDebug === undefined) delete process.env.LETTA_DEBUG;
     else process.env.LETTA_DEBUG = originalDebug;
 
-    await rm(tempHome, { recursive: true, force: true });
+    await removeTestDir(tempHome);
   });
 
   function scope() {

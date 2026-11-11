@@ -236,6 +236,23 @@ describe("provider detail retry helpers", () => {
     ).toBe(true);
   });
 
+  test("detects Bun's unexpected socket close as retryable", () => {
+    const bunMessage =
+      "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
+    expect(isRetryableProviderErrorDetail(bunMessage)).toBe(true);
+    expect(
+      isRetryableProviderErrorDetail(
+        "Socket connection was closed unexpectedly",
+      ),
+    ).toBe(true);
+    expect(
+      shouldRetryPreStreamTransientError({
+        status: undefined,
+        detail: bunMessage,
+      }),
+    ).toBe(true);
+  });
+
   test("detects non-retryable auth patterns", () => {
     expect(
       isNonRetryableProviderErrorDetail("OpenAI API error: invalid API key"),

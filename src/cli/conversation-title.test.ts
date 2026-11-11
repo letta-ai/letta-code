@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   setConversationTitleSettings,
 } from "@/cli/helpers/conversation-title";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 const originalHome = process.env.HOME;
 const originalUserProfile = process.env.USERPROFILE;
@@ -28,7 +29,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await settingsManager.reset();
   if (testHomeDir) {
-    await rm(testHomeDir, { recursive: true, force: true });
+    await removeTestDir(testHomeDir);
     testHomeDir = "";
   }
 

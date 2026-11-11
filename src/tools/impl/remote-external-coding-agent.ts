@@ -26,6 +26,10 @@ import {
 import { getApiRequestConfig } from "@/backend/api/request";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
+import {
+  type ExternalWorkerFailureStage,
+  reportExternalWorkerLaunchFailure,
+} from "@/telemetry/error-reporting";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
 import type {
   SubagentLaunchResult,
@@ -183,6 +187,8 @@ class RemoteSubagentFollower {
   private detach: (() => void) | undefined;
   private wake = Promise.withResolvers<void>();
   private closed = false;
+  /** Aborted by close() so an in-flight reconnect stops waiting. */
+  private readonly stopping = new AbortController();
   private disconnected = false;
   /** The computer dropped the entry before this follower saw it finish. */
   private lost = false;
@@ -273,6 +279,25 @@ class RemoteSubagentFollower {
     this.detach?.();
     this.client?.close();
     this.wake.resolve();
+    this.stopping.abort();
+  }
+
+  /** Settles with `promise`, or rejects as soon as `signal` aborts or this follower closes. */
+  private untilStopped<T>(
+    promise: Promise<T>,
+    signal: AbortSignal | undefined,
+  ): Promise<T> {
+    const stop = signal
+      ? AbortSignal.any([signal, this.stopping.signal])
+      : this.stopping.signal;
+    if (stop.aborted) return Promise.reject(stop.reason);
+    return new Promise<T>((resolve, reject) => {
+      const onStop = () => reject(stop.reason);
+      stop.addEventListener("abort", onStop, { once: true });
+      promise.then(resolve, reject).finally(() => {
+        stop.removeEventListener("abort", onStop);
+      });
+    });
   }
 
   /** Resolves with the terminal snapshot, or throws once the computer is unreachable. */
@@ -318,16 +343,33 @@ class RemoteSubagentFollower {
           signal?.throwIfAborted();
           if (this.closed) throw new Error("Stopped following the subagent");
           try {
-            const client = await this.connect();
+            // Abort and close must interrupt a reconnect that never settles.
+            const connecting = this.connect();
+            const client = await this.untilStopped(connecting, signal).catch(
+              (error: unknown) => {
+                connecting.then(
+                  (late) => late.close(),
+                  () => {},
+                );
+                throw error;
+              },
+            );
+            if (this.closed) {
+              client.close();
+              throw new Error("Stopped following the subagent");
+            }
             this.attach(client);
             // Replays the snapshot, including a completion missed while offline.
-            await client.sync({
-              runtime: {
-                agent_id: this.scope.agentId,
-                conversation_id: this.scope.conversationId,
-              },
-              recover_approvals: false,
-            });
+            await this.untilStopped(
+              client.sync({
+                runtime: {
+                  agent_id: this.scope.agentId,
+                  conversation_id: this.scope.conversationId,
+                },
+                recover_approvals: false,
+              }),
+              signal,
+            );
             failedReconnects = 0;
             disconnectedSince = undefined;
           } catch (error) {
@@ -354,32 +396,49 @@ export async function launchRemoteExternalCodingAgent(
   deps: RemoteExternalCodingAgentDeps,
 ): Promise<SubagentLaunchResult> {
   const { type, computer, parentScope } = params;
+  const fail = (
+    stage: ExternalWorkerFailureStage,
+    error: string,
+    errorCode?: string,
+  ): SubagentLaunchResult => {
+    reportExternalWorkerLaunchFailure({
+      stage,
+      harness: type,
+      computer,
+      error,
+      errorCode,
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId,
+      toolCallId: params.toolCallId,
+    });
+    return { success: false, error };
+  };
   let connectionId: string;
   let deviceId: string;
   let supportsSteering: boolean;
+  let sendsForkContext: boolean;
   try {
     const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
       computer,
       parentScope,
     );
     if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
-      return {
-        success: false,
-        error: formatOutdatedComputerError(type, computer),
-      };
-    if (
-      params.forkContext &&
-      resolved.environment.metadata?.external_fork_context !== true
-    )
-      return {
-        success: false,
-        error: `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
-      };
+      return fail(
+        "outdated_computer",
+        formatOutdatedComputerError(type, computer),
+      );
+    sendsForkContext =
+      resolved.environment.metadata?.external_fork_context === true;
+    if (params.forkContext && !sendsForkContext)
+      return fail(
+        "outdated_computer",
+        `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
+      );
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
   } catch (error) {
-    return { success: false, error: errorMessage(error) };
+    return fail("resolve_computer", errorMessage(error));
   }
   params.signal?.throwIfAborted();
 
@@ -390,10 +449,7 @@ export async function launchRemoteExternalCodingAgent(
   try {
     client = await connect();
   } catch (error) {
-    return {
-      success: false,
-      error: `Can't reach ${computer}: ${errorMessage(error)}`,
-    };
+    return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
   const follower = new RemoteSubagentFollower(
     parentScope,
@@ -415,10 +471,12 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        // Older listeners accept only `subagent_type`; current listeners
-        // translate an external worker name there into `harness`.
-        ...(params.forkContext
-          ? { harness: type, fork_context: true }
+        // Listeners that advertise `external_fork_context` accept `harness`
+        // and default an omitted `fork_context` to a fork, so send the
+        // caller's choice explicitly. Older listeners accept only
+        // `subagent_type`, which they never fork.
+        ...(sendsForkContext
+          ? { harness: type, fork_context: params.forkContext === true }
           : { subagent_type: type }),
         prompt: params.prompt,
         description: params.description,
@@ -430,19 +488,20 @@ export async function launchRemoteExternalCodingAgent(
     });
   } catch (error) {
     follower.close();
-    return {
-      success: false,
-      error: `Couldn't launch ${type} on ${computer}: ${errorMessage(error)}`,
-    };
+    return fail(
+      "launch_request",
+      `Couldn't launch ${type} on ${computer}: ${errorMessage(error)}`,
+    );
   }
   if (!launched.success) {
     follower.close();
-    return {
-      success: false,
-      error: launched.error_code
+    return fail(
+      "launch_rejected",
+      launched.error_code
         ? formatRemoteStartupError(type, computer, launched.error_code)
         : `Couldn't launch ${type} on ${computer}: ${launched.error}`,
-    };
+      launched.error_code,
+    );
   }
 
   follower.markLaunched();
@@ -611,6 +670,10 @@ export async function stopRemoteExternalCodingAgent(
       agent_id: formatExternalCodingAgentId(target.type, target.sessionId),
     });
     if (!response.success) throw new Error(response.error ?? "Stop failed");
+    if (!response.cleanup_confirmed)
+      throw new Error(
+        "The remote listener did not confirm process cleanup; update that listener and retry",
+      );
     return { stopped: response.stopped };
   } finally {
     client.close();
@@ -620,6 +683,31 @@ export async function stopRemoteExternalCodingAgent(
 export async function sendRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps = {},
+): Promise<{
+  delivery: "steered" | "resumed";
+  taskId?: string;
+  outputFile?: string;
+}> {
+  try {
+    return await deliverRemoteExternalCodingAgentMessage(params, deps);
+  } catch (error) {
+    const target = parseExternalCodingAgentId(params.agentId);
+    reportExternalWorkerLaunchFailure({
+      stage: "follow_up",
+      harness: target?.type ?? "unknown",
+      computer: target?.computer,
+      error,
+      agentId: params.parentScope.agentId,
+      conversationId: params.parentScope.conversationId,
+      toolCallId: params.toolCallId,
+    });
+    throw error;
+  }
+}
+
+async function deliverRemoteExternalCodingAgentMessage(
+  params: RemoteExternalCodingAgentControl & { message: string },
+  deps: RemoteExternalCodingAgentControlDeps,
 ): Promise<{
   delivery: "steered" | "resumed";
   taskId?: string;

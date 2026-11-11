@@ -43,6 +43,8 @@ export type DurableFileLockOptions = {
   waitMs?: number;
   owner?: DurableLockOwner;
   isOwnerAlive?: (owner: DurableLockOwner) => boolean;
+  /** Deterministic identity input; retains the default reachability/reuse check. */
+  readProcessStart?: (pid: number, timeoutMs: number) => string | null;
   /** @deprecated Retained for source compatibility with the former file lock. */
   beforeExactUnlink?: (path: string) => void;
   /** Deterministic race injection used by the lock's adversarial tests. */
@@ -602,9 +604,11 @@ export function acquireDurableFileLock(
   // charging it to the acquisition deadline left no budget for acquisition
   // itself and every recovery path that yields once threw on its first retry —
   // a lock left behind by a dead process stayed unreclaimable. Resolve the
-  // owner under its own bounded budget and start the deadline after it.
-  const owner =
-    options.owner ?? currentDurableLockOwner(Math.max(1, Math.ceil(waitMs)));
+  // owner under its own short probe budget and start the deadline after it.
+  // The probe is synchronous, so its budget must not scale with waitMs: a
+  // multi-second PowerShell probe blocks the whole event loop. A timed-out
+  // probe records a null start and is retried after the cooldown.
+  const owner = options.owner ?? currentDurableLockOwner();
   // Validate injected owners before constructing any path from their fields.
   parseOwner(owner);
   const startedAt = now();
@@ -621,16 +625,15 @@ export function acquireDurableFileLock(
   const lockPath = `${path}.lock`;
   const legacyMarkerPath = `${lockPath}.recovery`;
   const legacyOwnersPath = `${lockPath}-owners`;
+  const readProcessStart =
+    options.readProcessStart ??
+    ((pid: number, timeoutMs: number) =>
+      getProcessStart(pid, process.platform, undefined, timeoutMs));
   const isAlive =
     options.isOwnerAlive ??
     ((candidate: DurableLockOwner) =>
       durableLockOwnerIsAlive(candidate, (pid) =>
-        getProcessStart(
-          pid,
-          process.platform,
-          undefined,
-          remainingProbeTimeoutMs(),
-        ),
+        readProcessStart(pid, remainingProbeTimeoutMs()),
       ));
   sweepDeadCandidates(lockPath, parent, isAlive);
   const candidatePath = prepareCandidate(lockPath, parent, owner);

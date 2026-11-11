@@ -131,10 +131,19 @@ afterAll(() => {
 });
 
 const launchArgs = {
+  fork_context: false,
   harness: "letta",
   prompt: "Check routing without executing a child",
   description: "Routing contract",
 };
+
+/** A failed launch must be recorded as a tool error, not a success. */
+function toolError(result: Awaited<ReturnType<typeof task>>): string {
+  if (typeof result === "string")
+    throw new Error(`Expected a tool error, got: ${result}`);
+  expect(result.status).toBe("error");
+  return result.content;
+}
 
 describe("task computer routing", () => {
   test.each(["reviewer", "custom"])(
@@ -183,10 +192,10 @@ describe("task computer routing", () => {
         computer: " office-mac ",
       });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
-      expect(result).toContain("omit the computer field");
+      expect(toolError(result)).toContain("omit the computer field");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -203,7 +212,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
         computer: " office-mac ",
       });
-      expect(result).toContain("not a selectable subagent_type");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(spawn).not.toHaveBeenCalled();
       expect(forkConversation).not.toHaveBeenCalled();
       expect(retrieveAgent).not.toHaveBeenCalled();
@@ -284,7 +293,7 @@ describe("task computer routing", () => {
         subagent_type: "memory",
       });
 
-      expect(result).toContain("not a selectable subagent_type");
+      expect(toolError(result)).toContain("not a selectable subagent_type");
       expect(receivedEnvironment).toBeUndefined();
     });
 
@@ -303,7 +312,7 @@ describe("task computer routing", () => {
       capabilities.environmentRouting = false;
       const result = await task({ ...launchArgs, computer: "office-mac" });
 
-      expect(result).toContain(
+      expect(toolError(result)).toContain(
         "Error: The computer option requires a Letta Cloud backend.",
       );
       expect(spawn).not.toHaveBeenCalled();

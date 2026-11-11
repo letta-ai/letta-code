@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   resetPermissionLoaderCacheForTests,
   savePermissionRule,
 } from "@/permissions/loader";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 let testDir: string;
 const originalConfigDir = process.env.LETTA_CONFIG_DIR;
@@ -23,7 +24,7 @@ beforeEach(async () => {
 afterEach(async () => {
   resetPermissionLoaderCacheForTests();
   // Clean up test directory
-  await rm(testDir, { recursive: true, force: true });
+  await removeTestDir(testDir);
   if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;
   else process.env.LETTA_CONFIG_DIR = originalConfigDir;
   if (originalHome === undefined) delete process.env.HOME;

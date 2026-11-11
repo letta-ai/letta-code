@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { tryAcquireFileLock, withFileLock } from "@/utils/file-lock";
 import { getProcessStartTime } from "@/utils/process-liveness";
 
@@ -14,7 +15,7 @@ describe("withFileLock", () => {
   });
 
   afterEach(async () => {
-    await rm(tmpDir, { recursive: true, force: true });
+    await removeTestDir(tmpDir);
   });
 
   test("releases the lock after the critical section", async () => {

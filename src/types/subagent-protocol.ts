@@ -1,4 +1,7 @@
-import type { AgentRuntimeScope } from "./runtime-scope";
+import type {
+  AgentRuntimeScope,
+  ConversationRuntimeScope,
+} from "./runtime-scope";
 
 /** The public launch arguments shared by Agent and App Server clients. */
 export interface SubagentLaunchArgs {
@@ -95,6 +98,9 @@ export type SubagentMessageResponse = {
 );
 
 export interface SubagentStopCommand {
+  /** Stop an accepted listener conversation, including its background work. */
+  conversation?: ConversationRuntimeScope;
+  client_message_id?: string;
   type: "subagent_stop";
   request_id: string;
   runtime: AgentRuntimeScope;
@@ -102,6 +108,8 @@ export interface SubagentStopCommand {
 }
 
 export interface SubagentStopResponse {
+  /** The owner confirmed process exit and conversation cleanup. */
+  cleanup_confirmed?: boolean;
   type: "subagent_stop_response";
   request_id: string;
   runtime: AgentRuntimeScope;

@@ -102,42 +102,54 @@ export async function uploadFileToSandbox(
 export interface SandboxDesktopSession {
   /** Optional browser viewer URL supplied by the server. */
   viewerUrl?: string;
-  /** Relay websocket URL carrying a bearer token; treat it as a secret. */
+  /**
+   * Relay websocket URL. Servers that honor `websocketProtocolAuth` return it
+   * without credentials and put the relay token in `protocols` instead.
+   */
   url: string;
+  /** WebSocket subprotocols carrying the relay token; treat them as secrets. */
+  protocols?: string[];
   expiresAt: string;
 }
 
-export interface SandboxPublicExposure {
+export interface SandboxExposure {
   url: string;
   port: number;
   expiresAt: string;
+  private?: boolean;
 }
 
-export type SandboxPublicExposureExpiry =
+export type SandboxExposureExpiry =
   | { expiresInSeconds: number }
   | { extendBySeconds: number };
 
-export async function createSandboxPublicExposure(
+export interface SandboxExposureOptions {
+  public?: boolean;
+}
+
+export async function createSandboxExposure(
   port: number,
-  expiry: SandboxPublicExposureExpiry,
+  expiry: SandboxExposureExpiry,
+  options: SandboxExposureOptions = {},
   deps: SandboxFilesApiDeps = defaultDeps,
-): Promise<SandboxPublicExposure> {
+): Promise<SandboxExposure> {
   const response = await request(
     "/v1/sandbox-exposures",
     {
       method: "POST",
-      body: JSON.stringify({ port, ...expiry }),
+      body: JSON.stringify({ port, ...expiry, ...options }),
       headers: { "Content-Type": "application/json" },
     },
     deps,
   );
-  return (await response.json()) as SandboxPublicExposure;
+  return (await response.json()) as SandboxExposure;
 }
 
 /**
  * Start the sandbox's graphical desktop and mint a short-lived relay session.
- * The server fixes the lifetime (one hour today); the body is intentionally
- * empty because the endpoint accepts no options.
+ * The server fixes the lifetime (one hour today). `websocketProtocolAuth`
+ * asks for the relay token in Sec-WebSocket-Protocol rather than the relay
+ * URL's query string, so it never lands in a request log.
  */
 export async function createSandboxDesktopSession(
   sandboxId: string,
@@ -145,7 +157,11 @@ export async function createSandboxDesktopSession(
 ): Promise<SandboxDesktopSession> {
   const response = await request(
     `/v1/sandboxes/${encodeURIComponent(sandboxId)}/desktop-session`,
-    { method: "POST", body: JSON.stringify({}) },
+    {
+      method: "POST",
+      body: JSON.stringify({ websocketProtocolAuth: true }),
+      headers: { "Content-Type": "application/json" },
+    },
     deps,
   );
   return (await response.json()) as SandboxDesktopSession;

@@ -1,28 +1,17 @@
 // Image resizing utilities for clipboard paste
 // Follows Codex CLI's approach (codex-rs/utils/image/src/lib.rs)
-import type sharpFactory from "sharp";
+import sharp from "sharp";
 import {
   assertImageHasDimensions,
   assertImageWithinBounds,
   buildResizeResult,
   canonicalizeOutputMediaType,
-  MAX_IMAGE_BYTES,
+  fitsImageByteLimit,
   MAX_IMAGE_HEIGHT,
   MAX_IMAGE_INPUT_PIXELS,
   MAX_IMAGE_WIDTH,
   type ResizeResult,
 } from "./image-resize.shared";
-
-// Electron and Sharp load different GLib copies into one Linux process. Use a
-// patched native build only for that combination; keep standard Sharp for the
-// CLI and for platforms that the patched build does not support.
-const sharp = (
-  process.platform === "linux" &&
-  process.arch === "x64" &&
-  process.versions.electron
-    ? await import("@janhapke/sharp-electron")
-    : await import("sharp")
-).default as typeof sharpFactory;
 
 function createSharpInstance(buffer: Buffer) {
   return sharp(buffer, {
@@ -87,7 +76,7 @@ async function buildVerifiedResizeResult(
 }
 
 /**
- * Compress an image to fit within MAX_IMAGE_BYTES using progressive JPEG quality reduction.
+ * Compress an image so its base64 encoding fits within MAX_IMAGE_BYTES using progressive JPEG quality reduction.
  * If quality reduction alone isn't enough, also reduces dimensions.
  * Returns null if compression is not needed (image already under limit).
  */
@@ -97,7 +86,7 @@ async function compressToFitByteLimit(
   currentHeight: number,
 ): Promise<ResizeResult | null> {
   // Check if compression is needed
-  if (buffer.length <= MAX_IMAGE_BYTES) {
+  if (fitsImageByteLimit(buffer)) {
     return null; // No compression needed
   }
 
@@ -107,7 +96,7 @@ async function compressToFitByteLimit(
     const compressed = await createSharpInstance(buffer)
       .jpeg({ quality })
       .toBuffer();
-    if (compressed.length <= MAX_IMAGE_BYTES) {
+    if (fitsImageByteLimit(compressed)) {
       return buildVerifiedResizeResult(
         compressed,
         "image/jpeg",
@@ -129,7 +118,7 @@ async function compressToFitByteLimit(
       })
       .jpeg({ quality: 70 })
       .toBuffer();
-    if (reduced.length <= MAX_IMAGE_BYTES) {
+    if (fitsImageByteLimit(reduced)) {
       return buildVerifiedResizeResult(
         reduced,
         "image/jpeg",
@@ -141,7 +130,7 @@ async function compressToFitByteLimit(
 
   // Extremely rare: even 25% scale at q70 doesn't fit
   throw new Error(
-    `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds 5MB limit even after compression`,
+    `Image too large: ${(buffer.length / 1024 / 1024).toFixed(1)}MB exceeds the 5MB base64 image limit even after compression`,
   );
 }
 

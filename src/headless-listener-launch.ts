@@ -15,8 +15,9 @@ import {
   getLatestConversationSuperRun,
   listEnqueuedRunMessages,
 } from "@/backend/api/conversation-enqueue";
-import { getApiRequestConfig } from "@/backend/api/request";
+import { ApiRequestError, getApiRequestConfig } from "@/backend/api/request";
 import type { RuntimeExecutionSettings } from "@/runtime-execution-settings";
+import { stopLocalSubagent } from "@/tools/impl/subagent-stop-bridge";
 import type {
   ConversationRuntimeScope,
   LoopState,
@@ -24,6 +25,7 @@ import type {
   RuntimeStartCommand,
   TurnFinishedMessage,
 } from "@/types/protocol_v2";
+import type { SubagentStopCommand } from "@/types/subagent-protocol";
 import {
   type ListenerLaunchResult,
   resolveEnvironmentMaxWaitMs,
@@ -141,6 +143,64 @@ export async function cancelAcceptedListenerInput(
     });
   } finally {
     detach();
+    client.close();
+  }
+}
+
+/** Stop the owning harness, rather than only the CLI waiting for its receipt. */
+export async function stopAcceptedListenerConversation(
+  receipt: EnqueueReceipt,
+): Promise<void> {
+  if (!receipt.connection_id) throw new Error("The owning listener is unknown");
+  const scope = {
+    agent_id: receipt.agent_id,
+    conversation_id: receipt.conversation_id,
+    acting_user_id: receipt.acting_user_id ?? undefined,
+  };
+  try {
+    await dequeueConversationMessage(
+      {
+        agentId: getEnqueueAgentId(receipt),
+        conversationId: receipt.conversation_id,
+        clientMessageId: receipt.client_message_id,
+        actingUserId: receipt.acting_user_id,
+      },
+      AbortSignal.timeout(10_000),
+    );
+  } catch (error) {
+    // An accepted turn can already have left the queue; still stop its owner.
+    if (!(error instanceof ApiRequestError && error.status === 404))
+      throw error;
+  }
+  const command: SubagentStopCommand = {
+    type: "subagent_stop",
+    request_id: randomUUID(),
+    runtime: { ...scope, agent_id: getEnqueueAgentId(receipt) },
+    agent_id: getEnqueueAgentId(receipt),
+    conversation: scope,
+    client_message_id: receipt.client_message_id,
+  };
+  const requireStopped = (response: {
+    success: boolean;
+    stopped: boolean;
+    error?: string;
+    cleanup_confirmed?: boolean;
+  }) => {
+    if (!response.success || !response.stopped || !response.cleanup_confirmed)
+      throw new Error(
+        response.error ?? "The listener did not confirm the stop",
+      );
+  };
+  const local = stopLocalSubagent(receipt.connection_id, command);
+  if (local) {
+    requireStopped(await local);
+    return;
+  }
+  const client = await createListenerClient(receipt.connection_id, scope);
+  try {
+    await client.connect();
+    requireStopped(await client.stopSubagent(command));
+  } finally {
     client.close();
   }
 }

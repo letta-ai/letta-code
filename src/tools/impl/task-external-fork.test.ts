@@ -175,14 +175,13 @@ afterAll(() => {
 const brief = { description: "Fork contract", prompt: "Do the work" };
 
 describe("fork_context for external coding workers", () => {
-  test("a forked local codex worker gets a transcript file and the task", async () => {
+  test("a local codex worker forks by default and gets a transcript file and the task", async () => {
     const result = await runWithRuntimeContext(
       { workingDirectory: scratchpad },
       () =>
         task({
           ...brief,
           harness: "codex",
-          fork_context: true,
           mcp: { inherit: false },
         }),
     );
@@ -202,17 +201,21 @@ describe("fork_context for external coding workers", () => {
   });
 
   test("an unforked codex worker gets the prompt verbatim", async () => {
-    await task({ ...brief, harness: "codex", mcp: { inherit: false } });
+    await task({
+      ...brief,
+      harness: "codex",
+      fork_context: false,
+      mcp: { inherit: false },
+    });
 
     expect(listConversationMessages).not.toHaveBeenCalled();
     expect(workerPrompts).toEqual(["Do the work"]);
   });
 
-  test("a forked remote worker prepares history at the destination, not the caller", async () => {
+  test("a remote worker forks by default and prepares history at the destination, not the caller", async () => {
     await task({
       ...brief,
       harness: "claude-code",
-      fork_context: true,
       computer: "office-mac",
     });
 
