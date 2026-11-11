@@ -246,10 +246,12 @@ export class LSPManager {
     for (const server of this.servers.values()) {
       promises.push(server.client.shutdown());
     }
-    await Promise.all(promises);
+    const results = await Promise.allSettled(promises);
     this.servers.clear();
     this.diagnostics.clear();
     this.openDocuments.clear();
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 }
 
