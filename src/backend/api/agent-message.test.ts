@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import type { Backend } from "@/backend";
 import {
+  buildAgentSendReminder,
   normalizeAgentMessageComputer,
   resolveAgentMessageDestination,
 } from "./agent-message";
@@ -202,4 +203,17 @@ test("another agent's default conversation is not the current one", async () => 
       f.backend,
     ),
   ).toEqual({ agentId: "agent-other", conversationId: "default" });
+});
+
+test("an agentless sender still supplies its return conversation in the wrapper", () => {
+  const reminder = buildAgentSendReminder(
+    { conversationId: "conv-child" },
+    true,
+  );
+  expect(reminder).toContain(
+    "This message is from agent (agentless), conversation conv-child.",
+  );
+  expect(reminder).toContain(
+    "SendAgentMessage with conversation_id conv-child",
+  );
 });

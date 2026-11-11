@@ -113,3 +113,38 @@ test("a failed or cancelled run marks the tracked child as errored", async () =>
   expect(agent?.status).toBe("error");
   expect(agent?.error).toBe("Remote Super Run sr-1 was cancelled.");
 });
+
+test("follow-up tracking replaces a live row for the same conversation", async () => {
+  let finishFirst!: () => void;
+  let finishSecond!: () => void;
+  const first = trackChildSend({
+    receipt: { ...receipt, agent_id: null },
+    child,
+    parentScope,
+    prompt: "first",
+    waitForRun: () =>
+      new Promise<void>((resolve) => {
+        finishFirst = resolve;
+      }),
+  });
+  const second = trackChildSend({
+    receipt: { ...receipt, agent_id: null, super_run_id: "sr-2" },
+    child,
+    parentScope,
+    prompt: "second",
+    waitForRun: () =>
+      new Promise<void>((resolve) => {
+        finishSecond = resolve;
+      }),
+  });
+  expect(first).not.toBe(second);
+  expect(getSubagents()).toHaveLength(1);
+  expect(getSubagents()[0]?.id).toBe(second);
+  finishFirst();
+  await Promise.resolve();
+  expect(getSubagents()).toHaveLength(1);
+  expect(getSubagents()[0]?.status).not.toBe("completed");
+  finishSecond();
+  await Promise.resolve();
+  expect(getSubagents()[0]?.status).toBe("completed");
+});

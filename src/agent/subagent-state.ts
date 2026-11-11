@@ -255,6 +255,26 @@ function armCompletedSubagentCleanup(id: string): void {
 let subagentCounter = 0;
 
 // ============================================================================
+function putAgent(id: string, agent: SubagentState): void {
+  // A resumed conversation can have a new tracking ID. Keep only its latest
+  // live row; old run callbacks must not overwrite the replacement row.
+  if (agent.conversationId && agent.conversationId !== "default") {
+    for (const [otherId, other] of store.agents) {
+      if (
+        otherId !== id &&
+        other.conversationId === agent.conversationId &&
+        other.parentAgentId === agent.parentAgentId &&
+        other.parentConversationId === agent.parentConversationId
+      ) {
+        clearCompletedSubagentCleanup(otherId);
+        store.agents.delete(otherId);
+      }
+    }
+  }
+  store.agents.set(id, agent);
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -324,7 +344,7 @@ export function registerSubagent(
   };
 
   clearCompletedSubagentCleanup(id);
-  store.agents.set(id, agent);
+  putAgent(id, agent);
   notifyListeners();
 }
 
@@ -359,7 +379,7 @@ export function updateSubagent(
 
   // Create a new object to ensure React.memo detects the change
   const updatedAgent = { ...agent, ...updates, maxToolCallsSeen: nextMax };
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   if (updatedAgent.status === "completed" || updatedAgent.status === "error") {
     scheduleCompletedSubagentCleanup(id);
   } else {
@@ -395,7 +415,7 @@ export function addToolCall(
       agent.toolCalls.length + 1,
     ),
   };
-  store.agents.set(subagentId, updatedAgent);
+  putAgent(subagentId, updatedAgent);
   notifyListeners();
 }
 
@@ -414,7 +434,7 @@ export function addProgressText(
   const previous = agent.progressTexts?.at(-1);
   if (!excerpt || previous?.text === excerpt) return;
   const count = (agent.progressTextCount ?? 0) + 1;
-  store.agents.set(subagentId, {
+  putAgent(subagentId, {
     ...agent,
     progressTexts: [
       ...(agent.progressTexts ?? []),
@@ -454,7 +474,7 @@ export function completeSubagent(
     totalTokens: result.totalTokens ?? agent.totalTokens,
     maxToolCallsSeen: Math.max(agent.maxToolCallsSeen, agent.toolCalls.length),
   } as SubagentState;
-  store.agents.set(id, updatedAgent);
+  putAgent(id, updatedAgent);
   scheduleCompletedSubagentCleanup(id);
   notifyListeners();
 }
@@ -690,7 +710,7 @@ export function interruptActiveSubagents(
         // re-marks stopFailed only if this cancel fails too.
         stopFailed: undefined,
       };
-      store.agents.set(id, updatedAgent);
+      putAgent(id, updatedAgent);
       scheduleCompletedSubagentCleanup(id);
       anyInterrupted = true;
     }
@@ -729,7 +749,7 @@ export function interruptStopFailedSubagents(
         : {}),
       stopFailed: undefined,
     };
-    store.agents.set(id, updatedAgent);
+    putAgent(id, updatedAgent);
     scheduleCompletedSubagentCleanup(id);
     interrupted.push(id);
   }
