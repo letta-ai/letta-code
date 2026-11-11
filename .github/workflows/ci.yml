@@ -168,7 +168,7 @@ jobs:
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
-        uses: t1m0thyj/unlock-keyring@v1
+        uses: ./.github/actions/unlock-keyring
 
       - name: Run unit tests
         shell: bash
@@ -209,7 +209,7 @@ jobs:
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
-        uses: t1m0thyj/unlock-keyring@v1
+        uses: ./.github/actions/unlock-keyring
 
       - name: Run integration tests (API)
         shell: bash
@@ -332,7 +332,7 @@ jobs:
 
       - name: Unlock GNOME Keyring
         if: runner.os == 'Linux'
-        uses: t1m0thyj/unlock-keyring@v1
+        uses: ./.github/actions/unlock-keyring
 
       - name: Build bundle
         run: bun run build
