@@ -1,6 +1,6 @@
 {
   "name": "@letta-ai/letta-code",
-  "version": "0.34.52",
+  "version": "0.34.53",
   "lockfileVersion": 3,
   "packages": {
     "node_modules/@alcalzone/ansi-tokenize": {
@@ -128,15 +128,15 @@
       }
     },
     "node_modules/@aws-sdk/credential-provider-ini": {
-      "version": "3.973.29",
-      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.29.tgz",
-      "integrity": "sha512-/idO4bVjw34b1OiNxDqFNr3BsPg9dRm1iS6XM/rTqA33RfUgTuwBCFFCz/TwxNHkrQ45tp+RpKE8P609Ino8XQ==",
+      "version": "3.973.30",
+      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-ini/-/credential-provider-ini-3.973.30.tgz",
+      "integrity": "sha512-r6r6499GWoGN943NA5YEhBEQ6TEOGTf7tTOBhHd/zw0UbNvSzd1/zPCNcDkPmRarA+e24X7KgxutqxjoWcskBg==",
       "license": "Apache-2.0",
       "dependencies": {
         "@aws-sdk/core": "^3.981.0",
         "@aws-sdk/credential-provider-env": "^3.972.84",
         "@aws-sdk/credential-provider-http": "^3.972.86",
-        "@aws-sdk/credential-provider-login": "^3.972.91",
+        "@aws-sdk/credential-provider-login": "^3.972.92",
         "@aws-sdk/credential-provider-process": "^3.972.84",
         "@aws-sdk/credential-provider-sso": "^3.973.28",
         "@aws-sdk/credential-provider-web-identity": "^3.972.90",
@@ -152,9 +152,9 @@
       }
     },
     "node_modules/@aws-sdk/credential-provider-login": {
-      "version": "3.972.91",
-      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.91.tgz",
-      "integrity": "sha512-MujcVZc7mnodrsp85NX0QpnQrt7kY6zbVUl+TcvzJEZzgEQkRj4iopj0kNs3uXJUArpkA64Rxa0ga86qdx0gag==",
+      "version": "3.972.92",
+      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-login/-/credential-provider-login-3.972.92.tgz",
+      "integrity": "sha512-96bcp9Pe/Xd60OEwncZ+kAQTQSu+fJnpUGz1qE6ghF5jnETmrk8XMU86mIP3lolvnCgR61XbZ+Ht6hdBjiQOmQ==",
       "license": "Apache-2.0",
       "dependencies": {
         "@aws-sdk/core": "^3.981.0",
@@ -169,14 +169,14 @@
       }
     },
     "node_modules/@aws-sdk/credential-provider-node": {
-      "version": "3.972.96",
-      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.96.tgz",
-      "integrity": "sha512-tBunyyRnxMvKsCn/pu1QrIxUYZ4Z25LkV8zGkFGpSE/YmI2W4m8SLQzloG/hZlelGP2vLRGtIQc5w1+DoXCK1A==",
+      "version": "3.972.97",
+      "resolved": "https://registry.npmjs.org/@aws-sdk/credential-provider-node/-/credential-provider-node-3.972.97.tgz",
+      "integrity": "sha512-E4a0IXXJVsIdo/K9roX4JAEfI0JJr7KTPymkbKgETRDqEcLygE4ZlLTe24+7Qkh8Dl5YpnPd+Tt0DOPJDFXIwA==",
       "license": "Apache-2.0",
       "dependencies": {
         "@aws-sdk/credential-provider-env": "^3.972.84",
         "@aws-sdk/credential-provider-http": "^3.972.86",
-        "@aws-sdk/credential-provider-ini": "^3.973.29",
+        "@aws-sdk/credential-provider-ini": "^3.973.30",
         "@aws-sdk/credential-provider-process": "^3.972.84",
         "@aws-sdk/credential-provider-sso": "^3.973.28",
         "@aws-sdk/credential-provider-web-identity": "^3.972.90",
@@ -407,9 +407,9 @@
       }
     },
     "node_modules/@babel/runtime": {
-      "version": "7.29.13",
-      "resolved": "https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.13.tgz",
-      "integrity": "sha512-v+oN26xP4YIlQsbQ/CbTH1WG5m/l/DjKKZNy/Kp3f/AFvbgt7Em/D0FeMM3O2hX0YzeN2M16W8lOpyhIkfCBcQ==",
+      "version": "7.29.14",
+      "resolved": "https://registry.npmjs.org/@babel/runtime/-/runtime-7.29.14.tgz",
+      "integrity": "sha512-Y5tqevQaUAZhhj82BpYMNC1ssvLQTVAfwKdm8iy8qwmhvC2/CpcAu8OC+QEtjM7pMk7knx83u1Qj8gzkicyelw==",
       "license": "MIT",
       "engines": {
         "node": ">=6.9.0"
@@ -5080,7 +5080,7 @@
     },
     "": {
       "name": "@letta-ai/letta-code",
-      "version": "0.34.52",
+      "version": "0.34.53",
       "dependencies": {
         "@cursor/sdk": "1.1.0",
         "@earendil-works/pi-ai": "^0.99.1",
