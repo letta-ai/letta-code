@@ -8,7 +8,10 @@ import {
   test,
 } from "bun:test";
 import { readFileSync, rmSync } from "node:fs";
-import Letta from "@letta-ai/letta-client";
+import Letta, {
+  APIConnectionError,
+  APIConnectionTimeoutError,
+} from "@letta-ai/letta-client";
 import { __testOverrideGetClient } from "@/backend/api/client";
 import { setConfiguredBackendMode } from "@/backend/backend-mode";
 import { telemetry } from "@/telemetry";
@@ -285,13 +288,14 @@ describe("Cloud snapshot fetcher", () => {
         request,
         wait,
         now: () => time,
+        random: () => 0,
         fetchGh,
       });
       const result = await fetchSnapshot(ref, {
         ...options,
         signal: controller.signal,
       });
-      expect(wait).toHaveBeenCalledWith(90_000, controller.signal);
+      expect(wait).toHaveBeenCalledWith(58_000, controller.signal);
       expect(request).toHaveBeenCalledTimes(2);
       expect(result).toEqual(expected);
       expect(trackError).toHaveBeenCalledTimes(1);
@@ -325,10 +329,57 @@ describe("Cloud snapshot fetcher", () => {
         request,
         wait,
         now: () => now,
+        random: () => 0,
       })(ref, options);
       expect(wait).toHaveBeenCalledWith(30_000, undefined);
     }
   });
+
+  test("persistent cooldown falls back once, then returns later polls to the watch loop", async () => {
+    const request = mock(async () => {
+      if (request.mock.calls.length > 4)
+        throw new Error("unbounded cooldown retries");
+      return rateLimited("2099-01-01T00:00:00Z", false);
+    });
+    const wait = mock(async (_ms: number) => {});
+    const fetchGh = mock(async () => expected);
+    const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+      isCloud: () => true,
+      request,
+      wait,
+      fetchGh,
+    });
+    expect(await fetchSnapshot(ref, options)).toBe(expected);
+    expect(wait).toHaveBeenCalledTimes(1);
+    expect(wait.mock.calls[0]?.[0]).toBeLessThanOrEqual(60_000);
+    expect(request).toHaveBeenCalledTimes(2);
+    await expect(fetchSnapshot(ref, options)).rejects.toThrow(
+      "still cooling down",
+    );
+    expect(fetchGh).toHaveBeenCalledTimes(1);
+    expect(wait).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(4);
+  });
+
+  for (const error of [
+    new APIConnectionError({}),
+    new APIConnectionTimeoutError(),
+  ]) {
+    test(`${error.name} on the initial read falls back without disabling Cloud`, async () => {
+      const request = mock(async () => success());
+      request.mockRejectedValueOnce(error);
+      const fetchGh = mock(async () => expected);
+      const fetchSnapshot = createGitHubPullRequestSnapshotFetcher({
+        isCloud: () => true,
+        request,
+        fetchGh,
+      });
+      expect(await fetchSnapshot(ref, options)).toBe(expected);
+      expect(await fetchSnapshot(ref, options)).toEqual(expected);
+      expect(fetchGh).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(2);
+    });
+  }
 
   test("stopping the watch aborts a quota wait without another request", async () => {
     const controller = new AbortController();
