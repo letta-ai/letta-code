@@ -11,7 +11,6 @@ import {
 } from "@/agent/context";
 import { loadPreloadedSkills } from "@/agent/preloaded-skills";
 import { INTERRUPT_RECOVERY_ALERT } from "@/agent/prompt-assets";
-import { lookupDetachedConversationParentAddress } from "@/agent/subagents/ephemeral-subagent";
 import { getBackend } from "@/backend";
 import type { Line } from "@/cli/helpers/accumulator";
 import {
@@ -19,7 +18,7 @@ import {
   prependReminderPartsToContent,
 } from "@/reminders/engine";
 import { buildListenReminderContext } from "@/reminders/listen-context";
-import { runWithRuntimeContext, updateRuntimeContext } from "@/runtime-context";
+import { runWithRuntimeContext } from "@/runtime-context";
 import { trackBoundaryError } from "@/telemetry/error-reporting";
 import { replaceClientPreferences } from "@/tools/client-preferences";
 import { INTERACTIVE_USER_INPUT_TOOL_NAMES } from "@/tools/interactive-policy";
@@ -118,15 +117,6 @@ export async function prepareListenerTurn(params: {
     return { kind: "interrupted" };
   }
 
-  const detachedParentAddress =
-    !agentId && conversationId.startsWith("conv-")
-      ? await lookupDetachedConversationParentAddress(
-          conversationId,
-          getBackend(),
-        )
-      : undefined;
-  if (isInterrupted()) return { kind: "interrupted" };
-  updateRuntimeContext({ detachedParentAddress });
   setCurrentAgentId(agentId);
   setCurrentAgentName(listenAgentMetadata?.name ?? null);
   setConversationId(conversationId);

@@ -843,24 +843,3 @@ test("getShellEnv does not inject hosted MemFS git header for other backends", (
   expect(env.GIT_CONFIG_KEY_0).toBeUndefined();
   expect(env.GIT_CONFIG_VALUE_0).toBeUndefined();
 });
-
-test("agentless listener tools export the parent agent and their own conversation", () => {
-  withTemporaryAgentEnv("agent-stale", () =>
-    runWithRuntimeContext(
-      {
-        agentId: null,
-        conversationId: "conv-child",
-        detachedParentAddress: {
-          agentId: "agent-parent",
-          conversationId: "conv-parent",
-        },
-      },
-      () => {
-        const env = getShellEnv();
-        expect(env.AGENT_ID).toBe("agent-parent");
-        expect(env.LETTA_AGENT_ID).toBe("agent-parent");
-        expect(env.CONVERSATION_ID).toBe("conv-child");
-      },
-    ),
-  );
-});

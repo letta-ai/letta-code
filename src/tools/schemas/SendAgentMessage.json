@@ -13,7 +13,6 @@
     "conversation_id": {
       "type": ["string", "null"],
       "description": "The conversation to send to, such as the Conversation ID returned by Agent (Letta agents and external coding agents). Use null to start a new conversation with agent_id or, as a subagent, to message your parent."
-
     },
     "computer": {
       "type": ["string", "null"],

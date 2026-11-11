@@ -9,7 +9,6 @@
 import type { MessageCreate } from "@letta-ai/letta-client/resources/agents/agents";
 import type { ApprovalCreate } from "@letta-ai/letta-client/resources/agents/messages";
 import { getResumeDataFromBackend } from "@/agent/check-approval";
-import { retrieveResumeState } from "@/agent/ephemeral-conversation";
 import { type ConversationMessageStreamBody, getBackend } from "@/backend";
 import {
   getBusyRecoveryHttpStatus,
@@ -349,16 +348,12 @@ export async function fetchRunErrorDetail(
 }
 
 export async function rebuildInputForApprovalResync(
-  agentId: string | null,
+  agentId: string,
   conversationId: string,
   currentInput: Array<MessageCreate | ApprovalCreate>,
 ): Promise<Array<MessageCreate | ApprovalCreate>> {
   const backend = getBackend();
-  const agent = await retrieveResumeState(
-    agentId?.startsWith("conv-") ? null : agentId,
-    conversationId,
-    backend,
-  );
+  const agent = await backend.retrieveAgent(agentId);
   const { pendingApprovals } = await getResumeDataFromBackend(
     agent,
     conversationId,

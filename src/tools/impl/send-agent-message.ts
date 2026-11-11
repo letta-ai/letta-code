@@ -5,10 +5,6 @@ import {
   resolveChildSubagent,
   trackChildSend,
 } from "@/agent/subagents/child-send-tracking";
-import {
-  lookupDetachedConversationParentAddress,
-  resolveEffectiveAgentId,
-} from "@/agent/subagents/ephemeral-subagent";
 import { resolveSubagentLauncher } from "@/agent/subagents/subagent-launcher";
 import { type Backend, getBackend } from "@/backend";
 import {
@@ -194,22 +190,8 @@ export async function send_agent_message(
   try {
     if (!args.message?.trim()) throw new Error("Message must not be empty.");
     const context = getRuntimeContext();
-    const env = getRuntimeExecutionEnv(process.env, context?.executionSettings);
-    const effectiveAgentId = resolveEffectiveAgentId(
-      context?.agentId ?? undefined,
-      env,
-    );
-    const detachedParent =
-      context?.detachedParentAddress ??
-      ((!effectiveAgentId || effectiveAgentId.startsWith("conv-")) &&
-      context?.conversationId
-        ? await lookupDetachedConversationParentAddress(
-            context.conversationId,
-            deps.backend ?? getBackend(),
-          )
-        : undefined);
     const senderAgentId = validateAddress(
-      detachedParent?.agentId ?? effectiveAgentId,
+      context?.agentId ?? undefined,
       "agent",
     );
     const senderConversationId = validateAddress(
@@ -565,9 +547,7 @@ export async function send_agent_message(
     const parent =
       args.agent_id || args.conversation_id
         ? undefined
-        : detachedParent?.conversationId
-          ? detachedParent
-          : resolveParentAddress(context?.executionSettings);
+        : resolveParentAddress(context?.executionSettings);
     destination = await resolveAgentMessageDestination(
       {
         agentId: parent?.agentId ?? args.agent_id,
