@@ -39,7 +39,7 @@ export async function buildVariablesInfoReminder(context: {
     const list = entries
       .map(([name, value]) => `- \`$${name}\` = ${JSON.stringify(value)}`)
       .join("\n");
-    return `${SYSTEM_REMINDER_OPEN}\nThe following variables are available on your agent:\n${list}\n\nVariables are plain values you can read. They are never redacted. Reference \`$NAME\` in a shell command to load it into the child shell's environment, just like a secret. Use secrets for passwords and credentials. Manage variables with \`letta variable set|list|unset\`.\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\nThe following variables are available on your agent:\n${list}\n\nVariables are plain values you can read. They are never redacted. Reference \`$NAME\` in a shell command to load it into the child shell's environment, just like a secret. Never put a password, token or key in a variable; use a secret. For a login, keep the username or email in a variable and the password in a secret, and reference both in one command, e.g. \`$X_USERNAME\` and \`$X_PASSWORD\`. Manage variables with \`letta variable set|list|unset\`.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch {
     return null;
   }
