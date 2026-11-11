@@ -664,7 +664,7 @@ interface Query extends AsyncGenerator<SDKMessage, void> {
 | `rewindFiles(userMessageId, options?)` | Restores files to their state at the specified user message. Pass `{ dryRun: true }` to preview changes. Requires `enableFileCheckpointing: true`. See [File checkpointing](https://code.claude.com/docs/en/agent-sdk/file-checkpointing.md) |
 | `setPermissionMode()` | Changes the permission mode (only available in streaming input mode) |
 | `setModel()` | Changes the model (only available in streaming input mode). Passing `undefined` or the string `"default"` resets to [Claude Code's default model](https://code.claude.com/docs/en/model-config.md). A session in `auto` mode [changes to `default` mode](https://code.claude.com/docs/en/agent-sdk/permissions#auto-mode-auto) if the new model doesn't support auto mode |
-| `setMaxThinkingTokens()` | *Deprecated:* Use the `thinking` option instead. Changes the maximum thinking tokens. Passing `null` resets thinking to the session default: a mid-session override is cleared, and thinking stays off for sessions that have it disabled |
+| `setMaxThinkingTokens()` | *Deprecated:* Use the `thinking` option instead. Changes the maximum thinking tokens. Pass `null` to undo earlier calls and restore the `thinking` or `maxThinkingTokens` option the session started with |
 | `applyFlagSettings(settings)` | Merges settings into the session's flag settings layer at runtime (only available in streaming input mode). See [`applyFlagSettings()`](#applyflagsettings) |
 | `updateSettings(source, settings)` | Writes one allowlisted key to the project's local settings file or your user settings file, so the value persists for later sessions. See [`updateSettings()`](#updatesettings). Requires TypeScript SDK v0.3.257 or later, which bundles Claude Code v2.1.257 |
 | `initializationResult()` | Returns the full initialization result including supported commands, models, account info, and output style configuration |
@@ -5432,8 +5432,10 @@ type ThinkingDisplay = "summarized" | "omitted";
 type ThinkingConfig =
   | { type: "adaptive"; display?: ThinkingDisplay } // The model determines when and how much to reason (Opus 4.6+)
   | { type: "enabled"; budgetTokens?: number; display?: ThinkingDisplay } // Fixed thinking token budget
-  | { type: "disabled" }; // No extended thinking
+  | { type: "disabled" }; // Turn thinking off where the model and provider allow it
 ```
+
+For `disabled`, see [where you can't turn thinking off](https://code.claude.com/docs/en/model-config.md#where-you-cant-turn-thinking-off).
 
 The optional `display` field controls whether thinking text is returned `"summarized"` or `"omitted"`. On Claude Opus 4.7 and later, the API default is `"omitted"`, so set `"summarized"` to receive thinking content in `thinking` blocks. On providers such as Amazon Bedrock and Google Cloud's Agent Platform, Claude Code doesn't pass `display` for earlier models it recognizes. Those are Opus 4.6, Sonnet 4.6, Haiku 4.5, and earlier models, which use their default.
 

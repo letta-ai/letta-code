@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.322:docs:c6b5abbfb4e3e592800f2d38924c76de659d3f2067223c22ba8d13661c61376b:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
+  "candidate_id": "claude@2.1.322:docs:303ecfc5df44ec244bbb2c3760f42290eabd0870a492bd7365bfefc051bb5c25:runtime:f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5",
   "package_version": "2.1.322",
   "npm_integrity": "sha512-oP7oW4vM5DREWfL1jn4JSGlmLcrJ5QmppgADrVNJBUPiC1mQ5YvRrke0on+YZ/3QhKIaCJtdr6jPvehcAQIHLQ==",
   "npm_published_at": "2026-11-10T01:58:41.811Z",
@@ -15,7 +15,7 @@
   "docs": {
     "index_url": "https://code.claude.com/docs/llms.txt",
     "index_hash": "d366085b7bdd639edbb94b706cfa4815462d7e6d5922747e051183baba1009d1",
-    "full_scan": true,
+    "full_scan": false,
     "scanned_at": "2026-11-11T04:20:02.988Z",
     "pages": {
       "https://code.claude.com/docs/en/accessibility.md": {
@@ -38,7 +38,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/agent-loop.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/agent-loop.md",
-        "hash": "cdcdc82c3740d17b2eaac637c0ab7e7855b98674f01718072b92607a95ae59c9",
+        "hash": "7a2fe2fc5eb8a5629b3893ad0f07638330eebd5cbe12496de63239701c736d91",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/agent-loop.md"
       },
@@ -134,7 +134,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/python.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/python.md",
-        "hash": "05bcb04a4586de2587ba0f61a717236b803191c79181cb16b86402976175bb26",
+        "hash": "3b0864a09edad8c5f7d04b4e9ce2ad866dd20d29abe3f38eb8a6afa52e3c3c1f",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/python.md"
       },
@@ -218,7 +218,7 @@
       },
       "https://code.claude.com/docs/en/agent-sdk/typescript.md": {
         "url": "https://code.claude.com/docs/en/agent-sdk/typescript.md",
-        "hash": "bd7cea08ed2118c182a46236b71f38d9873520acfc0eec2a3978b08f75911f68",
+        "hash": "44b865a87857a8bc4e8a4f5133dd624eb063c16fcd9cd67127cbea34d4c588b6",
         "watched": true,
         "source_path": "sources/code.claude.com/docs/en/agent-sdk/typescript.md"
       },
@@ -1243,7 +1243,7 @@
         "source_path": "sources/raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md"
       }
     },
-    "digest": "c6b5abbfb4e3e592800f2d38924c76de659d3f2067223c22ba8d13661c61376b"
+    "digest": "303ecfc5df44ec244bbb2c3760f42290eabd0870a492bd7365bfefc051bb5c25"
   },
   "runtime": {
     "probe_contract_version": 2,
@@ -1474,7 +1474,7 @@
           {
             "name": "TaskCreate",
             "input": {
-              "description": "Probe task for exercising task tools",
+              "description": "Probe task for exercising task tools.",
               "metadata": {
                 "keep": "yes",
                 "probe": "remove"
@@ -1525,7 +1525,7 @@
         "tool_results": [
           "Task #1 created successfully: probe-task",
           "Updated task #1 metadata",
-          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools",
+          "Task #1: probe-task\nStatus: pending\nDescription: Probe task for exercising task tools.",
           "Updated task #1 deleted",
           "Task not found",
           "No tasks found"
@@ -1536,8 +1536,8 @@
     ],
     "digest": "f6b0614e4c7586d560c42b57ffda0ae4654d8086a99d8a49cfb494c85f06e9d5"
   },
-  "fetched_at": "2026-11-11T04:20:55.878Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/42958498680",
-  "state_commit_parent": "daee9ec0a8f48541ce2779f9e0c9b550512ffa35",
-  "analysis_parent_sha": "daee9ec0a8f48541ce2779f9e0c9b550512ffa35"
+  "fetched_at": "2026-11-11T14:19:08.886Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43037118225",
+  "state_commit_parent": "6951bfd9105718eb3f4fd5809dca2c84ecb0c84e",
+  "analysis_parent_sha": "6951bfd9105718eb3f4fd5809dca2c84ecb0c84e"
 }
