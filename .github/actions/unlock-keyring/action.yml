@@ -1,0 +1,26 @@
+name: Unlock GNOME Keyring
+description: Install the keyring packages with bounded, retried apt-get calls, then unlock the keyring
+runs:
+  using: composite
+  steps:
+    # t1m0thyj/unlock-keyring runs an unbounded `apt-get install dbus-x11
+    # gnome-keyring`. A stalled mirror or dpkg lock can then consume the whole
+    # job timeout. Install the packages here first so its own install is a no-op.
+    - name: Install keyring packages
+      shell: bash
+      run: |
+        install_packages() {
+          timeout -k 10 90 sudo apt-get install -qq \
+            -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 \
+            dbus-x11 gnome-keyring
+        }
+        for attempt in 1 2 3; do
+          if install_packages; then exit 0; fi
+          echo "Keyring package install attempt $attempt failed"
+          if [ "$attempt" -lt 3 ]; then
+            timeout -k 10 60 sudo apt-get update -qq -o Acquire::Retries=3 || true
+          fi
+        done
+        exit 1
+
+    - uses: t1m0thyj/unlock-keyring@v1
