@@ -125,6 +125,16 @@ export async function lookupDetachedConversationParent(
   conversationId: string,
   backend: DetachedConversationLookup,
 ): Promise<string | undefined> {
+  return (
+    await lookupDetachedConversationParentAddress(conversationId, backend)
+  )?.agentId;
+}
+
+/** Both parent IDs persisted on an agentless subagent conversation. */
+export async function lookupDetachedConversationParentAddress(
+  conversationId: string,
+  backend: DetachedConversationLookup,
+): Promise<{ agentId: string; conversationId?: string } | undefined> {
   const conversation = await backend.retrieveConversation(conversationId);
   if (
     Reflect.get(conversation, "agent_id") !== null ||
@@ -133,5 +143,16 @@ export async function lookupDetachedConversationParent(
     return undefined;
   }
   const parentId = Reflect.get(conversation, "parent_agent_id");
-  return typeof parentId === "string" && parentId ? parentId : undefined;
+  if (typeof parentId !== "string" || !parentId) return undefined;
+  const parentConversationId = Reflect.get(
+    conversation,
+    "parent_conversation_id",
+  );
+  return {
+    agentId: parentId,
+    conversationId:
+      typeof parentConversationId === "string" && parentConversationId
+        ? parentConversationId
+        : undefined,
+  };
 }
