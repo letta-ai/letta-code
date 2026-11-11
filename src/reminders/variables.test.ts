@@ -4,7 +4,7 @@ import {
   clearSecretsCache,
 } from "@/utils/secrets-store";
 import {
-  __testOverrideVariablesRequest,
+  __testOverrideVariablesBackend,
   refreshAndListVariables,
 } from "@/utils/variables-store";
 import {
@@ -15,12 +15,14 @@ import { buildVariablesInfoReminder } from "./variables";
 
 const id = "agent-variable-reminder";
 afterEach(() => {
-  __testOverrideVariablesRequest(null);
+  __testOverrideVariablesBackend(null);
   clearSecretsCache(id);
 });
 test("reminder tracks value changes, removals, and compaction", async () => {
   let values = [{ key: "USERNAME", value: "first-account" }];
-  __testOverrideVariablesRequest(async <T>() => values as T);
+  __testOverrideVariablesBackend({
+    retrieveAgent: async () => ({ variables: values }),
+  });
   __testSeedSecretsCache(id, {});
   const context = { agent: { id }, state: createSharedReminderState() };
   expect(await buildVariablesInfoReminder(context)).toContain("first-account");

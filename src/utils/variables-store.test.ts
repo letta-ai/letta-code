@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  __testOverrideVariablesBackend,
   __testOverrideVariablesRequest,
   deleteVariableOnServer,
   ensureVariablesLoaded,
@@ -11,25 +12,48 @@ import {
   setVariableOnServer,
 } from "./variables-store";
 
-afterEach(() => __testOverrideVariablesRequest(null));
+afterEach(() => {
+  __testOverrideVariablesRequest(null);
+  __testOverrideVariablesBackend(null);
+});
 
 describe("agent variables", () => {
-  test("old server 404 is cached as no variables; other errors propagate", async () => {
+  test("missing variables field is cached as no variables; other errors propagate", async () => {
     let calls = 0;
-    __testOverrideVariablesRequest(async () => {
-      calls++;
-      throw { status: 404 };
+    __testOverrideVariablesBackend({
+      retrieveAgent: async (id, options) => {
+        calls++;
+        expect(id).toBe("agent-old");
+        expect(options).toEqual({ include: ["agent.variables"] });
+        return {};
+      },
     });
     expect(await refreshAndListVariables("agent-old")).toEqual([]);
     await ensureVariablesLoaded("agent-old");
     expect(calls).toBe(1);
     expect(loadVariables("agent-old")).toEqual({});
-    __testOverrideVariablesRequest(async () => {
-      throw { status: 403 };
+    __testOverrideVariablesBackend({
+      retrieveAgent: async () => {
+        throw { status: 403 };
+      },
     });
     await expect(refreshAndListVariables("agent-old")).rejects.toEqual({
       status: 403,
     });
+  });
+
+  test("cloud variables hydrate the cache from the agent read", async () => {
+    __testOverrideVariablesBackend({
+      retrieveAgent: async (id, options) => {
+        expect(id).toBe("agent-cloud");
+        expect(options).toEqual({ include: ["agent.variables"] });
+        return { variables: [{ key: "USERNAME", value: "example-user" }] };
+      },
+    });
+    expect(await refreshAndListVariables("agent-cloud")).toEqual([
+      { key: "USERNAME", value: "example-user" },
+    ]);
+    expect(loadVariables("agent-cloud")).toEqual({ USERNAME: "example-user" });
   });
 
   test("local variables persist per agent as plain JSON", async () => {
@@ -85,15 +109,24 @@ test("cloud unset checks existence and reports deletion races as not found", asy
   const calls: string[] = [];
   let exists = false;
   let race = false;
-  __testOverrideVariablesRequest(async <T>(method: string) => {
+  __testOverrideVariablesBackend({
+    retrieveAgent: async (id, options) => {
+      calls.push("retrieveAgent");
+      expect(id).toBe("agent-unset");
+      expect(options).toEqual({ include: ["agent.variables"] });
+      return {
+        variables: exists ? [{ key: "USERNAME", value: "example-user" }] : [],
+      };
+    },
+  });
+  __testOverrideVariablesRequest(async <T>(method: string, path: string) => {
     calls.push(method);
-    if (method === "GET")
-      return (exists ? [{ key: "USERNAME", value: "example-user" }] : []) as T;
+    expect(path).toBe("/v1/agents/agent-unset/variables/USERNAME");
     if (race) throw { status: 404 };
     return { success: true } as T;
   });
   expect(await deleteVariableOnServer("USERNAME", "agent-unset")).toBe(false);
-  expect(calls).toEqual(["GET"]);
+  expect(calls).toEqual(["retrieveAgent"]);
   exists = true;
   expect(await deleteVariableOnServer("USERNAME", "agent-unset")).toBe(true);
   race = true;

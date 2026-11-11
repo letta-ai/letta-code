@@ -3,10 +3,34 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { getCurrentAgentId } from "@/agent/context";
+import { getBackend } from "@/backend";
 import { type ApiRequestMethod, apiRequest } from "@/backend/api/request";
 import { getLocalBackendStorageDir } from "@/backend/local/paths";
 
 type Variables = Record<string, string>;
+type VariablesBackend = {
+  retrieveAgent: (
+    agentId: string,
+    options: { include: string[] },
+  ) => Promise<{ variables?: Array<{ key: string; value: string }> | null }>;
+};
+let backendOverride: VariablesBackend | null = null;
+
+export function __testOverrideVariablesBackend(
+  value: VariablesBackend | null,
+): void {
+  backendOverride = value;
+  cache.clear();
+}
+
+async function readCloudVariables(id: string) {
+  const backend =
+    backendOverride ?? (getBackend() as unknown as VariablesBackend);
+  const agent = await backend.retrieveAgent(id, {
+    include: ["agent.variables"],
+  });
+  return agent.variables ?? [];
+}
 type Request = <T>(
   method: ApiRequestMethod,
   path: string,
@@ -84,18 +108,8 @@ export async function refreshAndListVariables(
   let values: Variables;
   if (isLocalAgentId(target)) values = readLocal(target);
   else {
-    try {
-      const entries = await request<Array<{ key: string; value: string }>>(
-        "GET",
-        route(target),
-      );
-      values = Object.fromEntries(
-        entries.map(({ key, value }) => [key, value]),
-      );
-    } catch (error) {
-      if ((error as { status?: number }).status !== 404) throw error;
-      values = {};
-    }
+    const entries = await readCloudVariables(target);
+    values = Object.fromEntries(entries.map(({ key, value }) => [key, value]));
   }
   cache.set(target, { values, loadedAt: Date.now() });
   return Object.entries(values)
@@ -139,10 +153,7 @@ async function mutate(
     if (value === undefined) {
       cache.delete(resolved);
       try {
-        const entries = await request<Array<{ key: string }>>(
-          "GET",
-          route(resolved),
-        );
+        const entries = await readCloudVariables(resolved);
         if (!entries.some((entry) => entry.key === key)) return false;
         const result = await request<{ success: boolean }>(
           "DELETE",

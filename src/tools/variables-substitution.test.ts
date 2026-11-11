@@ -4,7 +4,7 @@ import {
   clearSecretsCache,
 } from "@/utils/secrets-store";
 import {
-  __testOverrideVariablesRequest,
+  __testOverrideVariablesBackend,
   ensureVariablesLoaded,
 } from "@/utils/variables-store";
 import {
@@ -17,16 +17,18 @@ import {
 
 const id = "agent-plain-variable-test";
 afterEach(() => {
-  __testOverrideVariablesRequest(null);
+  __testOverrideVariablesBackend(null);
   clearSecretsCache(id);
 });
 
 test.skipIf(process.platform === "win32")(
   "variables enter the shell environment without redacting output or user messages",
   async () => {
-    __testOverrideVariablesRequest(
-      async <T>() => [{ key: "USERNAME", value: "example-account" }] as T,
-    );
+    __testOverrideVariablesBackend({
+      retrieveAgent: async () => ({
+        variables: [{ key: "USERNAME", value: "example-account" }],
+      }),
+    });
     __testSeedSecretsCache(id, {});
     await ensureVariablesLoaded(id);
     const variables = await resolveVariableEnvFromCommand(
@@ -47,9 +49,11 @@ test.skipIf(process.platform === "win32")(
 );
 
 test("a secret wins when a variable has the same name", async () => {
-  __testOverrideVariablesRequest(
-    async <T>() => [{ key: "USERNAME", value: "plain-account" }] as T,
-  );
+  __testOverrideVariablesBackend({
+    retrieveAgent: async () => ({
+      variables: [{ key: "USERNAME", value: "plain-account" }],
+    }),
+  });
   __testSeedSecretsCache(id, { USERNAME: "secret-account" });
   const variables = await resolveVariableEnvFromCommand("$USERNAME", id);
   const secrets = extractSecretEnvFromCommand("$USERNAME", id);
@@ -103,12 +107,14 @@ test("subagents inherit parent variables with secret precedence", async () => {
   } as unknown as import("@/backend").Backend);
   __testSeedSecretsCache(child, {});
   __testSeedSecretsCache(parent, { PASSWORD: "parent-credential" });
-  __testOverrideVariablesRequest(
-    async <T>(_method: string, path: string) =>
-      (path.includes(parent)
-        ? [{ key: "USERNAME", value: "parent-account" }]
-        : [{ key: "PASSWORD", value: "plain-password" }]) as T,
-  );
+  __testOverrideVariablesBackend({
+    retrieveAgent: async (agentId: string) => ({
+      variables:
+        agentId === parent
+          ? [{ key: "USERNAME", value: "parent-account" }]
+          : [{ key: "PASSWORD", value: "plain-password" }],
+    }),
+  });
   try {
     const environment = await resolveShellEnvironment(
       "$USERNAME $PASSWORD",
@@ -133,9 +139,11 @@ test("subagents inherit parent variables with secret precedence", async () => {
 test("variable discovery failure does not block shell secrets or ordinary commands", async () => {
   const { resolveShellEnvironment } = await import("./secret-substitution");
   let calls = 0;
-  __testOverrideVariablesRequest(async () => {
-    calls++;
-    throw new Error("Variable discovery unavailable");
+  __testOverrideVariablesBackend({
+    retrieveAgent: async () => {
+      calls++;
+      throw new Error("Variable discovery unavailable");
+    },
   });
   __testSeedSecretsCache(id, { PASSWORD: "secret-credential" });
   expect(await resolveShellEnvironment("echo ordinary-text", id)).toEqual({
