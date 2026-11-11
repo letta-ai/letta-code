@@ -1486,7 +1486,7 @@ export function App({
       for (const task of activeTasks) {
         if (firedThisMinute.has(task.id)) continue;
 
-        if (handleTaskPreflight(task, now)) continue;
+        if (task.listener_id || handleTaskPreflight(task, now)) continue;
 
         if (shouldFireTask(task, now)) {
           firedThisMinute.add(task.id);

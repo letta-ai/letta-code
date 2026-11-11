@@ -20,6 +20,7 @@ import {
 import { join } from "node:path";
 import { isLocalAgentId } from "@/agent/agent-id";
 import { resolveGlobalStateDir } from "@/utils/settings-path";
+import * as listenerLease from "./listener-lease";
 import { estimatePeriodMs, isValidCron } from "./parse-interval";
 import { captureProcessIdentity, isProcessAlive } from "./process-identity";
 
@@ -64,7 +65,6 @@ export interface SchedulerOwner {
 export type CronSchedulerScope = "all" | "cloud" | "local";
 
 export interface CronTask {
-  // Identity
   id: string;
   agent_id: string;
   /**
@@ -75,6 +75,9 @@ export interface CronTask {
    */
   conversation_id: string;
 
+  /** Stable listener identity; absent on legacy and CLI-created schedules. */
+  listener_id?: string;
+
   // Metadata
   name: string;
   description: string;
@@ -84,7 +87,6 @@ export interface CronTask {
   timezone: string; // IANA
   recurring: boolean;
 
-  // Content
   prompt: string;
 
   // Lifecycle
@@ -96,7 +98,7 @@ export interface CronTask {
   cancel_reason: CancelReason | null;
   jitter_offset_ms: number;
 
-  // Last run outcome summary (for table/status display without reading logs)
+  // Last run outcome summary
   last_run_at: string | null;
   last_run_outcome: CronRunOutcome | null;
   last_run_reason: CronRunReason | null;
@@ -120,8 +122,6 @@ interface CronFileData {
   tasks: CronTask[];
 }
 
-// ── Constants ───────────────────────────────────────────────────────
-
 const CRON_FILE_NAME = "crons.json";
 const LOCK_DIR_NAME = "crons.lock";
 const LOCK_TOKEN_FILE = "owner.json";
@@ -130,12 +130,8 @@ const LOCK_RETRY_MS = 50;
 const LOCK_STALE_AGE_MS = 30_000;
 const MAX_ACTIVE_TASKS_PER_AGENT = 50;
 const TASK_ID_BYTES = 4; // 8 hex chars
-// Recurring tasks no longer auto-expire. They remain active until explicitly
-// cancelled. GC still removes terminal tasks (fired, missed, cancelled) after 24h.
-// One-shot tasks already use null for expires_at and are handled separately.
+// GC removes terminal tasks (fired, missed, cancelled) after 24h.
 const GC_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-
-// ── Paths ───────────────────────────────────────────────────────────
 
 function getLettaDir(): string {
   return resolveGlobalStateDir();
@@ -148,8 +144,6 @@ export function getCronFilePath(): string {
 function getLockDirPath(): string {
   return join(getLettaDir(), LOCK_DIR_NAME);
 }
-
-// ── File I/O ────────────────────────────────────────────────────────
 
 function emptyFile(): CronFileData {
   return {
@@ -450,6 +444,9 @@ export function addTask(input: AddTaskInput): AddTaskResult {
       id: taskId,
       agent_id: agentId,
       conversation_id: conversationId,
+      ...(listenerLease.getListenerCronOwner()
+        ? { listener_id: listenerLease.getListenerCronOwner() }
+        : {}),
       name: input.name,
       description: input.description,
       cron: input.cron,
@@ -491,6 +488,9 @@ export function addTask(input: AddTaskInput): AddTaskResult {
     // suppresses the warning.
     let warning: string | undefined;
     if (
+      !listenerLease.hasLiveListenerCronLease(
+        listenerLease.getListenerCronOwner(),
+      ) &&
       !hasLiveSchedulerOwner(
         data,
         isLocalAgentId(input.agent_id) ? "local" : "cloud",

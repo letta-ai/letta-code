@@ -357,6 +357,8 @@ export async function startConnectedListenerRuntime(
         processTransport,
         opts as StartListenerOptions,
         processQueuedTurn,
+        0,
+        true,
       );
     }
 

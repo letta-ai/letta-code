@@ -45,7 +45,17 @@ import {
   refreshSchedulerLease,
   releaseSchedulerLease,
   updateTask,
+  withLock,
 } from "./cron-file";
+import {
+  claimListenerCronLease,
+  clearListenerCronOwner,
+  configureListenerCronOwner,
+  getListenerCronOwner,
+  type ListenerCronLease,
+  releaseListenerCronLease,
+  verifyListenerCronLease,
+} from "./listener-lease";
 import { cronMatchesTime, isValidCron } from "./parse-interval";
 import {
   type CronPromptTiming,
@@ -72,6 +82,7 @@ type ProcessQueuedTurn = (
 
 interface SchedulerState {
   token: string;
+  listenerLease?: ListenerCronLease;
   scope: CronSchedulerScope;
   tickInterval: NodeJS.Timeout;
   gcInterval: NodeJS.Timeout;
@@ -95,6 +106,7 @@ interface SchedulerState {
 }
 
 let schedulerState: SchedulerState | null = null;
+let listenerSchedulerState: SchedulerState | null = null;
 
 export const CRON_SCHEDULER_SCOPE_ENV = "LETTA_CRON_SCHEDULER_SCOPE";
 
@@ -157,12 +169,13 @@ function holdSchedulerLease(
   state: SchedulerState,
   opts: StartListenerOptions,
 ): boolean {
+  if (state.listenerLease) return verifyListenerCronLease(state.listenerLease);
   if (refreshSchedulerLease(state.token, state.scope, state.tombstoneToken)) {
     return true;
   }
   if (state.scope === "all") {
     logScheduler(opts, "Scheduler lease lost. Stopping.");
-    stopScheduler();
+    stopSharedScheduler();
     return false;
   }
   try {
@@ -535,7 +548,17 @@ export async function runCronTaskNow(taskId: string): Promise<{
 
   // Prefer the full scheduler state, but fall back to the listener context.
   // "Send now" only needs the active listener — not the tick loop or the lease.
-  const ctx = schedulerState ?? listenerFireContext;
+  if (task.listener_id && task.listener_id !== getListenerCronOwner()) {
+    return {
+      success: false,
+      found: true,
+      task,
+      error: "Schedule belongs to another listener",
+    };
+  }
+  const ctx = task.listener_id
+    ? listenerSchedulerState
+    : (schedulerState ?? listenerFireContext);
   if (!ctx) {
     return {
       success: false,
@@ -597,6 +620,7 @@ function tick(
 
   for (const task of state.cachedTasks) {
     if (task.status !== "active") continue;
+    if (task.listener_id !== state.listenerLease?.id) continue;
     if (!taskMatchesCronSchedulerScope(task, state.scope)) continue;
 
     // Older clients could persist expressions that the current cron dialect
@@ -624,17 +648,17 @@ function tick(
       const doFire = () => {
         // Revalidate before firing. Catch lock timeouts so a skipped jitter
         // fire cannot terminate the listener.
-        if (!schedulerState) return;
+        if (state !== schedulerState && state !== listenerSchedulerState)
+          return;
         try {
-          if (
-            !refreshSchedulerLease(
-              schedulerState.token,
-              schedulerState.scope,
-              schedulerState.tombstoneToken,
-            )
-          ) {
-            return;
-          }
+          const holdsLease = state.listenerLease
+            ? verifyListenerCronLease(state.listenerLease)
+            : refreshSchedulerLease(
+                state.token,
+                state.scope,
+                state.tombstoneToken,
+              );
+          if (!holdsLease) return;
         } catch (err) {
           logScheduler(
             opts,
@@ -643,7 +667,12 @@ function tick(
           return;
         }
         const freshTask = getTask(taskId);
-        if (!freshTask || freshTask.status !== "active") return;
+        if (
+          !freshTask ||
+          freshTask.status !== "active" ||
+          freshTask.listener_id !== state.listenerLease?.id
+        )
+          return;
 
         const schedulerNow = new Date();
         void fireCronTask(
@@ -688,6 +717,49 @@ function tick(
   }
 }
 
+/** A named listener owns its tasks independently of the shared legacy lease. */
+function startListenerScheduler(
+  socket: ListenerTransport,
+  opts: StartListenerOptions,
+  processQueuedTurn: ProcessQueuedTurn,
+): void {
+  const id = configureListenerCronOwner(opts.deviceId, opts.connectionName);
+  if (listenerSchedulerState) return;
+  let listenerLease: ListenerCronLease;
+  try {
+    listenerLease = withLock(() => claimListenerCronLease(id));
+  } catch (error) {
+    logScheduler(
+      opts,
+      `Could not claim listener scheduler lease: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  const state: SchedulerState = {
+    token: listenerLease.token,
+    listenerLease,
+    scope: resolveCronSchedulerScope(),
+    tickInterval: null as unknown as NodeJS.Timeout,
+    gcInterval: null as unknown as NodeJS.Timeout,
+    socket,
+    opts,
+    processQueuedTurn,
+    lastMtime: 0,
+    cachedTasks: [],
+    firedThisMinute: new Set(),
+    lastMinuteKey: minuteKey(new Date()),
+    pendingTimers: new Set(),
+    tombstoneToken: undefined,
+    tombstoneInterval: null,
+  };
+  listenerSchedulerState = state;
+  tick(state, socket, opts, processQueuedTurn);
+  state.tickInterval = setInterval(
+    () => tick(state, socket, opts, processQueuedTurn),
+    TICK_INTERVAL_MS,
+  );
+}
+
 // ── Public API ──────────────────────────────────────────────────────
 
 /**
@@ -705,6 +777,7 @@ export function startScheduler(
   opts: StartListenerOptions,
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
+  bindToListener = false,
 ): void {
   if (isManagedCloudSandbox()) {
     return;
@@ -713,6 +786,7 @@ export function startScheduler(
   // Always store the listener context so runCronTaskNow ("Send now") works
   // even when this process doesn't hold the scheduler lease.
   listenerFireContext = { socket, opts, processQueuedTurn };
+  if (bindToListener) startListenerScheduler(socket, opts, processQueuedTurn);
 
   if (schedulerState) return;
 
@@ -730,16 +804,23 @@ export function startScheduler(
       );
       logScheduler(
         opts,
-        "Cron tasks will not fire until the scheduler starts. Retrying...",
+        `${bindToListener ? "Unbound cron tasks" : "Cron tasks"} will not fire until the shared scheduler starts. Retrying...`,
       );
       setTimeout(
-        () => startScheduler(socket, opts, processQueuedTurn, _retryCount + 1),
+        () =>
+          startScheduler(
+            socket,
+            opts,
+            processQueuedTurn,
+            _retryCount + 1,
+            bindToListener,
+          ),
         LEASE_RETRY_MS,
       );
     } else {
       logScheduler(
         opts,
-        `Failed to claim scheduler lease after ${MAX_LEASE_RETRIES + 1} attempts. Cron tasks will not fire.`,
+        `Failed to claim scheduler lease after ${MAX_LEASE_RETRIES + 1} attempts. ${bindToListener ? "Unbound cron tasks" : "Cron tasks"} will not fire.`,
       );
       logScheduler(
         opts,
@@ -756,6 +837,7 @@ export function startScheduler(
           ctx.opts,
           ctx.processQueuedTurn,
           _retryCount,
+          bindToListener,
         );
       }, SLOW_LEASE_RETRY_MS);
       slowLeaseRetryTimer.unref?.();
@@ -836,6 +918,22 @@ export function startScheduler(
 export function stopScheduler(): void {
   listenerFireContext = null;
   clearSlowLeaseRetry();
+  clearListenerCronOwner();
+  if (listenerSchedulerState) {
+    clearInterval(listenerSchedulerState.tickInterval);
+    clearPendingFireTimers(listenerSchedulerState);
+    try {
+      const lease = listenerSchedulerState.listenerLease;
+      if (lease) withLock(() => releaseListenerCronLease(lease));
+    } catch {
+      // Best effort; process identity also fences abandoned leases.
+    }
+    listenerSchedulerState = null;
+  }
+  stopSharedScheduler();
+}
+
+function stopSharedScheduler(): void {
   if (!schedulerState) return;
 
   clearInterval(schedulerState.tickInterval);
@@ -859,5 +957,5 @@ export function stopScheduler(): void {
  * Check if the scheduler is running.
  */
 export function isSchedulerRunning(): boolean {
-  return schedulerState !== null;
+  return schedulerState !== null || listenerSchedulerState !== null;
 }
