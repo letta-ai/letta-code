@@ -19,11 +19,12 @@ describe("resolveCronRunner", () => {
     ).toMatchObject({ runner: "cloud" });
   });
 
-  test("Cloud API-backed local execution uses local schedules", () => {
+  test("interactive Cloud API-backed execution uses local schedules", () => {
     expect(
       resolveCronRunner({
         managedCloudSandbox: false,
         backendMode: "api",
+        localSchedulesAllowed: true,
         cloudSchedulesSupported: true,
       }),
     ).toMatchObject({ runner: "local" });

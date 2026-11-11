@@ -7,17 +7,18 @@
  * - "cloud": durable Cloud schedules (`/v1/agents/:id/schedule`), fired by a
  *   cloud worker into a target listener or the agent's managed Cloud sandbox.
  *
- * Managed Cloud sandboxes use durable Cloud schedules. Registered API-backed
- * listeners use Cloud schedules pinned to their device; other runtimes use
- * local schedules. Listeners fall back locally if schedule routes are absent.
+ * Cloud runtimes use durable schedules. Only interactive TUI and Desktop
+ * sessions, local backends, and servers without schedule routes use local crons.
  */
 
+import { isLocalAgentId } from "@/agent/agent-id";
 import type { EnvironmentConnection } from "@/backend/api/environments";
 import { ApiRequestError } from "@/backend/api/request";
 import { listCloudSchedules } from "@/backend/api/schedules";
+import { isCloudServerUrl } from "@/backend/api/server-url";
 import { resolveBackendMode } from "@/backend/backend-mode";
 import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
-import { getRuntimeContext } from "@/runtime-context";
+import { getRuntimeContext, getRuntimeSessionSource } from "@/runtime-context";
 
 export type CronRunner = "local" | "cloud";
 
@@ -36,6 +37,8 @@ export interface ResolveCronRunnerParams {
   /** Whether the configured server serves the Cloud schedule routes. */
   cloudSchedulesSupported?: boolean;
   listenerDeviceId?: string;
+  localSchedulesAllowed?: boolean;
+  cloudServer?: boolean;
 }
 
 export type ResolveCronRunnerResult =
@@ -47,38 +50,66 @@ export function resolveCronRunner(
 ): ResolveCronRunnerResult {
   const { managedCloudSandbox, backendMode, cloudSchedulesSupported } = params;
 
-  if (
-    !managedCloudSandbox &&
-    backendMode === "api" &&
-    params.listenerDeviceId &&
-    cloudSchedulesSupported !== false
-  ) {
+  if (managedCloudSandbox) {
+    if (backendMode === "local") {
+      return {
+        error:
+          "Managed Cloud sandboxes cannot use the local backend for schedules.",
+      };
+    }
+    if (cloudSchedulesSupported === false) {
+      return {
+        error:
+          "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
+      };
+    }
+    return { runner: "cloud", reason: "managed Cloud sandbox" };
+  }
+  if (backendMode === "local" || params.localSchedulesAllowed) {
+    return { runner: "local", reason: "local execution environment" };
+  }
+  if (cloudSchedulesSupported === false) {
+    return params.cloudServer === false
+      ? { runner: "local", reason: "server has no schedule routes" }
+      : {
+          error:
+            "Cloud schedules are unavailable. No local schedule was created.",
+        };
+  }
+  if (params.listenerDeviceId) {
     return {
       runner: "cloud",
       reason: "registered listener",
       targetDeviceId: params.listenerDeviceId,
     };
   }
+  return {
+    error:
+      "This computer must be registered with Letta Cloud before scheduling. Connect it with `letta server`, then retry. No local schedule was created.",
+  };
+}
 
-  if (!managedCloudSandbox) {
-    return { runner: "local", reason: "local execution environment" };
+/** Local execution is reserved for interactive and Desktop-owned sessions. */
+function allowsLocalCloudSchedules(): boolean {
+  return (
+    process.env.LETTA_DESKTOP_MODE === "1" ||
+    getRuntimeSessionSource() === "interactive-cli"
+  );
+}
+
+/** Guard the legacy local scheduler and protocol mutations without altering inventory. */
+export function getLocalCronExecutionError(action = "run"): string | undefined {
+  if (isManagedCloudSandbox()) {
+    return `Local schedules cannot ${action === "run" ? "run" : `be ${action}`} in a managed Cloud sandbox`;
   }
-
-  if (backendMode === "local") {
-    return {
-      error:
-        "Managed Cloud sandboxes cannot use the local backend for schedules.",
-    };
+  if (
+    resolveBackendMode() === "api" &&
+    isCloudServerUrl() &&
+    !allowsLocalCloudSchedules()
+  ) {
+    return `Local schedules cannot ${action === "run" ? "run" : `be ${action}`} in this Cloud runtime. Register this computer with Letta Cloud and use Wake or letta cron to create a Cloud schedule.`;
   }
-
-  if (cloudSchedulesSupported === false) {
-    return {
-      error:
-        "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
-    };
-  }
-
-  return { runner: "cloud", reason: "managed Cloud sandbox" };
+  return undefined;
 }
 
 async function ensureSettingsForCloud(): Promise<void> {
@@ -105,27 +136,30 @@ async function probeCloudScheduleSupport(agentId: string): Promise<boolean> {
 export async function resolveCronRunnerForAgent(
   agentId: string,
 ): Promise<ResolveCronRunnerResult> {
-  const backendMode = resolveBackendMode();
+  const backendMode = isLocalAgentId(agentId) ? "local" : resolveBackendMode();
   const managedCloudSandbox = isManagedCloudSandbox();
+  const localSchedulesAllowed = allowsLocalCloudSchedules();
+  const cloudServer = isCloudServerUrl();
+  if (
+    backendMode === "local" ||
+    (!managedCloudSandbox && localSchedulesAllowed)
+  ) {
+    return resolveCronRunner({
+      managedCloudSandbox,
+      backendMode,
+      localSchedulesAllowed,
+    });
+  }
   const deviceId =
     getRuntimeContext()?.environmentDeviceId?.trim() ||
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID?.trim();
   let listenerDeviceId: string | undefined;
-  if (!managedCloudSandbox && backendMode === "api" && deviceId) {
+  if (!managedCloudSandbox && deviceId) {
     const environment = await lookupEnvironmentForTarget(deviceId);
     if (environment && validateTargetDevice(deviceId, environment).ok) {
       listenerDeviceId = deviceId;
     }
   }
-  const preliminary = resolveCronRunner({
-    managedCloudSandbox,
-    backendMode,
-    listenerDeviceId,
-  });
-  if ("error" in preliminary || preliminary.runner === "local") {
-    return preliminary;
-  }
-
   await ensureSettingsForCloud();
   const cloudSchedulesSupported = await probeCloudScheduleSupport(agentId);
   return resolveCronRunner({
@@ -133,6 +167,8 @@ export async function resolveCronRunnerForAgent(
     backendMode,
     cloudSchedulesSupported,
     listenerDeviceId,
+    localSchedulesAllowed,
+    cloudServer,
   });
 }
 

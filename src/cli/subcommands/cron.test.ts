@@ -238,6 +238,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("local schedules default to a new conversation per fire and ignore ambient conversation state", async () => {
+    setConfiguredBackendMode("local");
     const home = mkdtempSync(join(tmpdir(), "letta-cron-conversation-test-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_CONVERSATION_ID = "ambient-conversation";
@@ -317,13 +318,16 @@ describe("cron add execution targeting", () => {
     }
   });
 
-  test("listener runtime context pins Cloud schedules and falls back when routes are unsupported", async () => {
+  test("listener runtime context pins Cloud schedules and only falls back for OSS without routes", async () => {
     const home = mkdtempSync(join(tmpdir(), "letta-cron-listener-"));
     process.env.LETTA_HOME = home;
     const logs: string[] = [];
     console.log = mock((line: string) => logs.push(String(line)));
     try {
       for (const scheduleRoutesStatus of [undefined, 404, 405]) {
+        process.env.LETTA_BASE_URL = scheduleRoutesStatus
+          ? "http://localhost:8283"
+          : "https://api.letta.com";
         const requests = installScheduleApi({
           environments: { "listener-device": environment("listener-device") },
           scheduleRoutesStatus,
@@ -563,6 +567,7 @@ describe("cron add execution targeting", () => {
   });
 
   test("local execution rejects --computer without touching the schedule API", async () => {
+    setConfiguredBackendMode("local");
     const home = mkdtempSync(join(tmpdir(), "letta-cron-target-test-"));
     process.env.LETTA_HOME = home;
     const requests = installScheduleApi({});
@@ -576,7 +581,43 @@ describe("cron add execution targeting", () => {
     }
   });
 
-  test("unregistered local execution still creates a local schedule", async () => {
+  test("Cloud headless and listener runtimes error without creating local schedules", async () => {
+    process.env.LETTA_BASE_URL = "https://api.letta.com";
+    const home = mkdtempSync(join(tmpdir(), "letta-cron-unregistered-"));
+    process.env.LETTA_HOME = home;
+    const errors: string[] = [];
+    console.error = mock((line: string) => errors.push(String(line)));
+    try {
+      for (const sessionSource of ["headless", "listen"] as const) {
+        const requests = installScheduleApi({});
+        expect(
+          await runWithRuntimeContext({ sessionSource }, () =>
+            runCronSubcommand(addArgs),
+          ),
+        ).toBe(1);
+        expect(errors.join("\n")).toContain("computer must be registered");
+        expect(requests.some((request) => request.method === "POST")).toBe(
+          false,
+        );
+        expect(listTasks()).toEqual([]);
+      }
+      process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "registered-device";
+      const requests = installScheduleApi({
+        environments: { "registered-device": environment("registered-device") },
+        scheduleRoutesStatus: 404,
+      });
+      expect(await runCronSubcommand(addArgs)).toBe(1);
+      expect(errors.join("\n")).toContain("Cloud schedules are unavailable");
+      expect(requests.some((request) => request.method === "POST")).toBe(false);
+      expect(listTasks()).toEqual([]);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  test("Desktop execution still creates a local schedule", async () => {
+    const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+    process.env.LETTA_DESKTOP_MODE = "1";
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-test-"));
     process.env.LETTA_HOME = home;
     process.env.LETTA_RUNTIME_ENVIRONMENT_DEVICE_ID = "unregistered-device";
@@ -591,6 +632,9 @@ describe("cron add execution targeting", () => {
       ).toBe(false);
       expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
     } finally {
+      if (originalDesktopMode === undefined)
+        delete process.env.LETTA_DESKTOP_MODE;
+      else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
       rmSync(home, { recursive: true, force: true });
     }
   });

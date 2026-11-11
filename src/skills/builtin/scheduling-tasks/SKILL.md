@@ -21,8 +21,9 @@ For ordinary one-shot or recurring work in the current conversation, use Wake in
 Execution determines schedule ownership; there is no runner selection flag:
 
 - In a managed Cloud sandbox, schedules are durable Cloud schedules and run in the agent's Cloud sandbox.
-- On a registered computer listener using the Cloud API, schedules are durable Cloud schedules pinned to that computer. If Cloud schedule routes are unsupported, schedules fall back to local execution.
-- In the TUI without a registered computer, or with the local backend, schedules are local and fire only while a Letta session is running there.
+- On a registered computer listener using the Cloud API, schedules are durable Cloud schedules pinned to that computer. Cloud errors never create a local schedule.
+- Interactive TUI and Desktop-owned sessions use local schedules, which fire only while a Letta session is running there. The local backend and self-hosted servers without schedule routes also use local schedules.
+- Other Cloud API runtimes must have a registered computer; scheduling fails with registration instructions if none is available. Existing local schedules remain visible but cannot be started, resumed, or triggered in these runtimes.
 
 From a managed Cloud sandbox or a registered Cloud listener, `--computer <deviceId>` can run the scheduled work on a specific connected computer. Get the device ID from `letta computers list`. If that computer is offline at fire time, that occurrence fails (`TARGET_DEVICE_UNAVAILABLE`) and does not run; omit `--computer` to use the current listener on a registered computer or the Cloud sandbox in a managed sandbox. Local schedules cannot target another computer.
 

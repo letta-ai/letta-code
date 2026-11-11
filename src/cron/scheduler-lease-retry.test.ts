@@ -13,7 +13,10 @@ const TEST_DIR = path.join(import.meta.dir, "__scheduler_lease_retry_tmp__");
 const origHome = process.env.LETTA_HOME;
 const origSandboxId = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
 
+const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+
 beforeEach(() => {
+  process.env.LETTA_DESKTOP_MODE = "1";
   rmSync(TEST_DIR, { recursive: true, force: true });
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
@@ -21,6 +24,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalDesktopMode === undefined) delete process.env.LETTA_DESKTOP_MODE;
+  else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
   stopScheduler();
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   if (origHome) process.env.LETTA_HOME = origHome;

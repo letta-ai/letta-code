@@ -10,7 +10,10 @@ import type { ModAdapter } from "@/mods/mod-adapter";
 import type { ModPermissionDefinition } from "@/mods/permission-registry";
 import type { ModToolDefinition } from "@/mods/tool-registry";
 import type { ModContext } from "@/mods/types";
-import type { RuntimeContextSnapshot } from "@/runtime-context";
+import {
+  getRuntimeSessionSource,
+  type RuntimeContextSnapshot,
+} from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
 import { OPENAI_COMPATIBLE_PROXY_UPDATE_ARG } from "@/utils/openai-endpoint";
 import { isRecord } from "@/utils/type-guards";
@@ -445,6 +448,7 @@ export async function prepareToolExecutionContextForScope(params: {
     modAdapters,
     agent: agent as AgentState | null,
     runtimeContext: {
+      sessionSource: getRuntimeSessionSource(),
       connectionId,
       environmentDeviceId,
       agentId,

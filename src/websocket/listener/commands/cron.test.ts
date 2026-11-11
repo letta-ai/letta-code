@@ -17,7 +17,10 @@ const safeSocketSend: SafeSocketSend = (_socket, payload) => {
   return true;
 };
 
+const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
+
 beforeEach(() => {
+  process.env.LETTA_DESKTOP_MODE = "1";
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   mkdirSync(TEST_DIR, { recursive: true });
   process.env.LETTA_HOME = TEST_DIR;
@@ -26,6 +29,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  if (originalDesktopMode === undefined) delete process.env.LETTA_DESKTOP_MODE;
+  else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;
   if (existsSync(TEST_DIR)) rmSync(TEST_DIR, { recursive: true });
   if (originalHome) process.env.LETTA_HOME = originalHome;
   else delete process.env.LETTA_HOME;

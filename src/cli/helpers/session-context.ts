@@ -6,11 +6,12 @@ import { platform } from "node:os";
 import { basename } from "node:path";
 import { SYSTEM_REMINDER_CLOSE, SYSTEM_REMINDER_OPEN } from "@/constants";
 import type { SessionContextReason } from "@/reminders/state";
+import type { RuntimeSessionSource } from "@/runtime-context";
 import { detectShellContext, type ShellContext } from "@/utils/shell-context";
 import { getVersion } from "@/version";
 import { gatherGitContextSnapshot } from "./git-context";
 
-export type SessionContextSource = "interactive-cli" | "headless" | "listen";
+export type SessionContextSource = RuntimeSessionSource;
 
 /**
  * Get the current local time in a human-readable format

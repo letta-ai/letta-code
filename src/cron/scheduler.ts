@@ -53,7 +53,7 @@ import {
   getIntendedCronOccurrence,
 } from "./prompt";
 import { safeAppendCronRunLogForTask } from "./run-log";
-import { isManagedCloudSandbox } from "./runner";
+import { getLocalCronExecutionError } from "./runner";
 import { SCHEDULE_ORIGIN_TAG } from "./scheduled-task-prompt";
 
 export {
@@ -511,11 +511,12 @@ export async function runCronTaskNow(taskId: string): Promise<{
   task?: CronTask;
   error?: string;
 }> {
-  if (isManagedCloudSandbox()) {
+  const executionError = getLocalCronExecutionError();
+  if (executionError) {
     return {
       success: false,
       found: false,
-      error: "Local schedules cannot run in a managed Cloud sandbox",
+      error: executionError,
     };
   }
 
@@ -706,7 +707,7 @@ export function startScheduler(
   processQueuedTurn: ProcessQueuedTurn,
   _retryCount = 0,
 ): void {
-  if (isManagedCloudSandbox()) {
+  if (getLocalCronExecutionError()) {
     return;
   }
 
