@@ -129,3 +129,22 @@ test("subagents inherit parent variables with secret precedence", async () => {
     else process.env.LETTA_PARENT_AGENT_ID = previousParent;
   }
 });
+
+test("variable discovery failure does not block shell secrets or ordinary commands", async () => {
+  const { resolveShellEnvironment } = await import("./secret-substitution");
+  let calls = 0;
+  __testOverrideVariablesRequest(async () => {
+    calls++;
+    throw new Error("Variable discovery unavailable");
+  });
+  __testSeedSecretsCache(id, { PASSWORD: "secret-credential" });
+  expect(await resolveShellEnvironment("echo ordinary-text", id)).toEqual({
+    secretEnv: {},
+    variableEnv: {},
+  });
+  expect(calls).toBe(0);
+  expect(await resolveShellEnvironment("echo $PASSWORD $UNKNOWN", id)).toEqual({
+    secretEnv: { PASSWORD: "secret-credential" },
+    variableEnv: {},
+  });
+});

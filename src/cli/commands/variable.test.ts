@@ -13,7 +13,10 @@ test("slash command writes values, lists values, and removes values", async () =
     async <T>(method: string, path: string, body?: Record<string, unknown>) => {
       const key = path.split("/").at(-1) as string;
       if (method === "PUT") values[key] = body?.value as string;
-      if (method === "DELETE") delete values[key];
+      if (method === "DELETE") {
+        delete values[key];
+        return { success: true } as T;
+      }
       return Object.entries(values).map(([key, value]) => ({
         key,
         value,

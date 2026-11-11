@@ -65,3 +65,37 @@ describe("agent variables", () => {
     }
   });
 });
+
+test("unset reports absent local variables", async () => {
+  const root = mkdtempSync(join(tmpdir(), "letta-variables-missing-"));
+  const previous = process.env.LETTA_LOCAL_BACKEND_DIR;
+  process.env.LETTA_LOCAL_BACKEND_DIR = root;
+  try {
+    expect(await deleteVariableOnServer("MISSING", "agent-local-missing")).toBe(
+      false,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.LETTA_LOCAL_BACKEND_DIR;
+    else process.env.LETTA_LOCAL_BACKEND_DIR = previous;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("cloud unset checks existence and reports deletion races as not found", async () => {
+  const calls: string[] = [];
+  let exists = false;
+  let race = false;
+  __testOverrideVariablesRequest(async <T>(method: string) => {
+    calls.push(method);
+    if (method === "GET")
+      return (exists ? [{ key: "USERNAME", value: "example-user" }] : []) as T;
+    if (race) throw { status: 404 };
+    return { success: true } as T;
+  });
+  expect(await deleteVariableOnServer("USERNAME", "agent-unset")).toBe(false);
+  expect(calls).toEqual(["GET"]);
+  exists = true;
+  expect(await deleteVariableOnServer("USERNAME", "agent-unset")).toBe(true);
+  race = true;
+  expect(await deleteVariableOnServer("USERNAME", "agent-unset")).toBe(false);
+});

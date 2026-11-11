@@ -115,7 +115,7 @@ async function mutate(
   value: string | undefined,
   id?: string,
   restrictToMe?: boolean,
-): Promise<void> {
+): Promise<boolean> {
   const resolved = resolveAgentId(id);
   if (!/^[A-Z_][A-Z0-9_]*$/.test(key))
     throw new Error(
@@ -123,6 +123,10 @@ async function mutate(
     );
   if (isLocalAgentId(resolved)) {
     const values = readLocal(resolved);
+    if (value === undefined && !(key in values)) {
+      cache.set(resolved, { values, loadedAt: Date.now() });
+      return false;
+    }
     if (value === undefined) delete values[key];
     else values[key] = value;
     mkdirSync(getLocalBackendStorageDir(), { recursive: true, mode: 0o700 });
@@ -130,20 +134,32 @@ async function mutate(
       mode: 0o600,
     });
     cache.set(resolved, { values, loadedAt: Date.now() });
+    return true;
   } else {
-    await request(
-      value === undefined ? "DELETE" : "PUT",
-      route(resolved, key),
-      value === undefined
-        ? undefined
-        : {
-            value,
-            ...(restrictToMe === undefined
-              ? {}
-              : { restrict_to_me: restrictToMe }),
-          },
-    );
+    if (value === undefined) {
+      cache.delete(resolved);
+      try {
+        const entries = await request<Array<{ key: string }>>(
+          "GET",
+          route(resolved),
+        );
+        if (!entries.some((entry) => entry.key === key)) return false;
+        const result = await request<{ success: boolean }>(
+          "DELETE",
+          route(resolved, key),
+        );
+        return result.success;
+      } catch (error) {
+        if ((error as { status?: number }).status === 404) return false;
+        throw error;
+      }
+    }
+    await request("PUT", route(resolved, key), {
+      value,
+      ...(restrictToMe === undefined ? {} : { restrict_to_me: restrictToMe }),
+    });
     cache.delete(resolved);
+    return true;
   }
 }
 
@@ -160,6 +176,5 @@ export async function deleteVariableOnServer(
   key: string,
   id?: string,
 ): Promise<boolean> {
-  await mutate(key.toUpperCase(), undefined, id);
-  return true;
+  return mutate(key.toUpperCase(), undefined, id);
 }

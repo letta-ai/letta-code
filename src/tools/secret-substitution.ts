@@ -130,8 +130,21 @@ export async function resolveVariableEnvFromCommand(
   command: string | readonly string[],
   agentId?: string,
 ): Promise<Record<string, string>> {
-  await ensureVariablesLoaded(agentId);
-  let values = loadVariables(agentId);
+  const parts = typeof command === "string" ? [command] : command;
+  if (!parts.some((part) => [...part.matchAll(SECRET_PATTERN)].length > 0))
+    return {};
+  try {
+    await ensureVariablesLoaded(agentId);
+  } catch {
+    // Discovery must not prevent ordinary shell commands or secrets from working.
+    // A failed refresh preserves any variables already cached for this scope.
+  }
+  let values: Record<string, string>;
+  try {
+    values = loadVariables(agentId);
+  } catch {
+    return {};
+  }
   if (agentId) {
     try {
       const parent = await getMcpScopeAgentId(
