@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { __testSetBackend } from "@/backend";
+import * as backendMode from "@/backend/backend-mode";
 import { LocalBackend } from "@/backend/local/local-backend";
 import { LocalStore } from "@/backend/local/local-store";
 import { settingsManager } from "@/settings-manager";
@@ -256,9 +257,20 @@ describe("local server durable chat bindings", () => {
 
   test("cache eviction preserves the durable chat identity", async () => {
     const original = await resolveAndRemember();
-    for (let index = 0; index < 4096; index += 1) {
-      rememberConversation(`chat-key:${agentId}:other-${index}`, original);
+    // Fill the shared cache through its memory-only backend path. Only the
+    // original chat needs a disk-backed binding to verify restoration.
+    const memoryOnly = spyOn(
+      backendMode,
+      "isExperimentalLocalBackendEnabled",
+    ).mockReturnValue(false);
+    try {
+      for (let index = 0; index < 4096; index += 1) {
+        rememberConversation(`chat-key:${agentId}:other-${index}`, original);
+      }
+    } finally {
+      memoryOnly.mockRestore();
     }
+    expect(await readdir(dirname(bindingPath()))).toHaveLength(1);
     expect(await resolveAndRemember()).toBe(original);
   });
 
