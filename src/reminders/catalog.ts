@@ -58,7 +58,6 @@ export const SHARED_REMINDER_CATALOG: ReadonlyArray<SharedReminderDefinition> =
         "headless-one-shot",
         "headless-bidirectional",
         "listen",
-        "subagent",
       ],
     },
     {
