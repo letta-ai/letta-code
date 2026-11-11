@@ -4,6 +4,8 @@ import type {
   ChannelDefaultPermissionMode,
   DiscordChannelMode,
   DmPolicy,
+  FeishuDomain,
+  FeishuGroupMode,
   SignalGroupMode,
   SlackChannelMode,
   TelegramGroupMode,
@@ -36,7 +38,13 @@ export interface ChannelConfigSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
+  hasAppSecret?: boolean;
+  domain?: FeishuDomain;
+  groupMode?:
+    | TelegramGroupMode
+    | WhatsAppGroupMode
+    | SignalGroupMode
+    | FeishuGroupMode;
   agentId?: string | null;
   defaultPermissionMode?: ChannelDefaultPermissionMode;
   allowedChannels?: string[] | Record<string, DiscordChannelMode>;
@@ -117,7 +125,13 @@ export interface ChannelAccountSnapshot {
   hasToken?: boolean;
   hasBotToken?: boolean;
   hasAppToken?: boolean;
-  groupMode?: TelegramGroupMode | WhatsAppGroupMode | SignalGroupMode;
+  hasAppSecret?: boolean;
+  domain?: FeishuDomain;
+  groupMode?:
+    | TelegramGroupMode
+    | WhatsAppGroupMode
+    | SignalGroupMode
+    | FeishuGroupMode;
   transcribeVoice?: boolean;
   richPrivateChatDefault?: boolean;
   richDraftStreaming?: boolean;

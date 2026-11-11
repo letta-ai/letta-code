@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { isRecord } from "@/utils/type-guards";
 import { getChannelDir, getChannelsRoot } from "./config";
 import { CUSTOM_CHANNEL_CONFIG_SCHEMA } from "./custom/plugin";
+import { FEISHU_CONFIG_SCHEMA } from "./feishu/config-schema";
 import type {
   ChannelConfigSchema,
   ChannelPlugin,
@@ -124,6 +125,21 @@ const FIRST_PARTY_CHANNEL_PLUGIN_REGISTRATIONS: Record<
     load: async () => {
       const { signalChannelPlugin } = await import("@/channels/signal/plugin");
       return signalChannelPlugin;
+    },
+  },
+  feishu: {
+    metadata: {
+      id: "feishu",
+      displayName: "Feishu / Lark",
+      runtimePackages: ["@larksuiteoapi/node-sdk@1.67.0"],
+      runtimeModules: ["@larksuiteoapi/node-sdk"],
+      source: "first-party",
+      firstParty: true,
+      configSchema: FEISHU_CONFIG_SCHEMA,
+    },
+    load: async () => {
+      const { feishuChannelPlugin } = await import("@/channels/feishu/plugin");
+      return feishuChannelPlugin;
     },
   },
 };
