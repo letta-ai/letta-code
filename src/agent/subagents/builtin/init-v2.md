@@ -2,7 +2,6 @@
 name: init
 description: Fast initialization of agent memory — reads key project files and creates a minimal memory hierarchy
 tools: Read, Write, Edit, Bash
-model: auto-fast
 launchProfile: memory-subagent
 ---
 
