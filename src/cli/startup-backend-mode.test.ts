@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { __testSetBackend, configureBackendMode, getBackend } from "@/backend";
@@ -18,6 +18,7 @@ import {
   resolveSubcommandBackendMode,
   switchBackendForSelectedStartupAgent,
 } from "@/cli/startup-backend-mode";
+import { removeTestDir } from "@/test-utils/test-fs";
 
 describe("startup backend mode inference", () => {
   test("local agent IDs use the local backend", () => {
@@ -122,7 +123,7 @@ describe("startup picker backend selection", () => {
     }
     setConfiguredBackendMode(originalMode);
     __testSetBackend(originalBackend);
-    await rm(storageDir, { recursive: true, force: true });
+    await removeTestDir(storageDir);
   });
 
   test("local pin opens on its backend despite a Cloud startup preference", async () => {

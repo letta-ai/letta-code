@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
 import { startCheckout } from "@/utils/checkout-readiness";
 import {
@@ -42,7 +43,7 @@ afterEach(async () => {
   } else {
     process.env.USERPROFILE = originalUserProfile;
   }
-  await rm(tempHome, { recursive: true, force: true });
+  await removeTestDir(tempHome);
 });
 
 async function createSkill(

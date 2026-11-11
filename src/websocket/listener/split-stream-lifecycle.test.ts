@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import type { ControlRequest } from "@/types/protocol_v2";
 import {
   startListenerClient,
@@ -237,7 +238,7 @@ describe("split stream listener lifecycle", () => {
     settingsManager.updateSettings = originalUpdateSettings;
     settingsManager.flush = originalFlush;
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
 
     process.env.HOME = originalHome;
     if (originalDisableCron === undefined) {

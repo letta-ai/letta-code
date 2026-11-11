@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { isolateAmbientLettaTestEnv } from "@/test-utils/test-process-env";
 import * as attachedRepositories from "./attached-repositories";
 import * as memoryFilesystem from "./memory-filesystem";
@@ -40,7 +41,7 @@ afterEach(async () => {
   restoreAmbientEnv?.();
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
-  await rm(tempHome, { recursive: true, force: true });
+  await removeTestDir(tempHome);
 });
 
 function resolve() {

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, stat, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { saveSettings as saveLegacySettings } from "@/settings";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import {
   isHomeWorkingDirectory,
   resolveGlobalConfigDir,
@@ -26,7 +27,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await settingsManager.reset();
-  await rm(testHomeDir, { recursive: true, force: true });
+  await removeTestDir(testHomeDir);
   if (originalHome === undefined) delete process.env.HOME;
   else process.env.HOME = originalHome;
   if (originalConfigDir === undefined) delete process.env.LETTA_CONFIG_DIR;

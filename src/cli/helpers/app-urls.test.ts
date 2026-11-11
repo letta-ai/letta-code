@@ -18,4 +18,15 @@ describe("buildDesktopViewerUrl", () => {
     expect(hash.get("expiresAt")).toBe("2026-09-28T23:00:00.000Z");
     expect(url).not.toContain("api.letta.com");
   });
+
+  test("keeps a subprotocol relay token out of the relay path", () => {
+    const url = buildDesktopViewerUrl(
+      "https://api.letta.com/v1/sandboxes/sb-1/desktop-session/ws",
+      "2026-09-28T23:00:00.000Z",
+      ["binary", "letta-desktop-token.t0k"],
+    );
+    const hash = new URLSearchParams(new URL(url).hash.slice(1));
+    expect(hash.get("path")).toBe("/v1/sandboxes/sb-1/desktop-session/ws");
+    expect(hash.get("token")).toBe("t0k");
+  });
 });

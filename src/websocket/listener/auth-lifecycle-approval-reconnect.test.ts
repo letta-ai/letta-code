@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import type { ApprovalResult } from "@/agent/approval-execution";
 import type { TokenResponse } from "@/auth/oauth";
 import type { ChannelTurnSource } from "@/channels/types";
 import { settingsManager } from "@/settings-manager";
+import { removeTestDir } from "@/test-utils/test-fs";
 import { getToolSchema } from "@/tools/manager";
 import {
   startListenerClient,
@@ -161,7 +162,7 @@ describe("listener approval reconnect timing", () => {
     settingsManager.updateSettings = originalUpdateSettings;
     settingsManager.flush = originalFlush;
     await settingsManager.reset();
-    await rm(testHome, { recursive: true, force: true });
+    await removeTestDir(testHome);
 
     process.env.HOME = originalHome;
     if (originalDisableCron === undefined) {
