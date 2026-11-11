@@ -26,6 +26,10 @@ import {
 import { getApiRequestConfig } from "@/backend/api/request";
 import { isCloudEnvironmentSelector } from "@/headless-environment-response";
 import { listenerControlUrl } from "@/headless-listener-launch";
+import {
+  type ExternalWorkerFailureStage,
+  reportExternalWorkerLaunchFailure,
+} from "@/telemetry/error-reporting";
 import type { SubagentSnapshot } from "@/types/protocol_v2";
 import type {
   SubagentLaunchResult,
@@ -392,32 +396,49 @@ export async function launchRemoteExternalCodingAgent(
   deps: RemoteExternalCodingAgentDeps,
 ): Promise<SubagentLaunchResult> {
   const { type, computer, parentScope } = params;
+  const fail = (
+    stage: ExternalWorkerFailureStage,
+    error: string,
+    errorCode?: string,
+  ): SubagentLaunchResult => {
+    reportExternalWorkerLaunchFailure({
+      stage,
+      harness: type,
+      computer,
+      error,
+      errorCode,
+      agentId: parentScope.agentId,
+      conversationId: parentScope.conversationId,
+      toolCallId: params.toolCallId,
+    });
+    return { success: false, error };
+  };
   let connectionId: string;
   let deviceId: string;
   let supportsSteering: boolean;
+  let sendsForkContext: boolean;
   try {
     const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
       computer,
       parentScope,
     );
     if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
-      return {
-        success: false,
-        error: formatOutdatedComputerError(type, computer),
-      };
-    if (
-      params.forkContext &&
-      resolved.environment.metadata?.external_fork_context !== true
-    )
-      return {
-        success: false,
-        error: `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
-      };
+      return fail(
+        "outdated_computer",
+        formatOutdatedComputerError(type, computer),
+      );
+    sendsForkContext =
+      resolved.environment.metadata?.external_fork_context === true;
+    if (params.forkContext && !sendsForkContext)
+      return fail(
+        "outdated_computer",
+        `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
+      );
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
   } catch (error) {
-    return { success: false, error: errorMessage(error) };
+    return fail("resolve_computer", errorMessage(error));
   }
   params.signal?.throwIfAborted();
 
@@ -428,10 +449,7 @@ export async function launchRemoteExternalCodingAgent(
   try {
     client = await connect();
   } catch (error) {
-    return {
-      success: false,
-      error: `Can't reach ${computer}: ${errorMessage(error)}`,
-    };
+    return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
   const follower = new RemoteSubagentFollower(
     parentScope,
@@ -453,10 +471,12 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        // Older listeners accept only `subagent_type`; current listeners
-        // translate an external worker name there into `harness`.
-        ...(params.forkContext
-          ? { harness: type, fork_context: true }
+        // Listeners that advertise `external_fork_context` accept `harness`
+        // and default an omitted `fork_context` to a fork, so send the
+        // caller's choice explicitly. Older listeners accept only
+        // `subagent_type`, which they never fork.
+        ...(sendsForkContext
+          ? { harness: type, fork_context: params.forkContext === true }
           : { subagent_type: type }),
         prompt: params.prompt,
         description: params.description,
@@ -468,19 +488,20 @@ export async function launchRemoteExternalCodingAgent(
     });
   } catch (error) {
     follower.close();
-    return {
-      success: false,
-      error: `Couldn't launch ${type} on ${computer}: ${errorMessage(error)}`,
-    };
+    return fail(
+      "launch_request",
+      `Couldn't launch ${type} on ${computer}: ${errorMessage(error)}`,
+    );
   }
   if (!launched.success) {
     follower.close();
-    return {
-      success: false,
-      error: launched.error_code
+    return fail(
+      "launch_rejected",
+      launched.error_code
         ? formatRemoteStartupError(type, computer, launched.error_code)
         : `Couldn't launch ${type} on ${computer}: ${launched.error}`,
-    };
+      launched.error_code,
+    );
   }
 
   follower.markLaunched();
@@ -662,6 +683,31 @@ export async function stopRemoteExternalCodingAgent(
 export async function sendRemoteExternalCodingAgentMessage(
   params: RemoteExternalCodingAgentControl & { message: string },
   deps: RemoteExternalCodingAgentControlDeps = {},
+): Promise<{
+  delivery: "steered" | "resumed";
+  taskId?: string;
+  outputFile?: string;
+}> {
+  try {
+    return await deliverRemoteExternalCodingAgentMessage(params, deps);
+  } catch (error) {
+    const target = parseExternalCodingAgentId(params.agentId);
+    reportExternalWorkerLaunchFailure({
+      stage: "follow_up",
+      harness: target?.type ?? "unknown",
+      computer: target?.computer,
+      error,
+      agentId: params.parentScope.agentId,
+      conversationId: params.parentScope.conversationId,
+      toolCallId: params.toolCallId,
+    });
+    throw error;
+  }
+}
+
+async function deliverRemoteExternalCodingAgentMessage(
+  params: RemoteExternalCodingAgentControl & { message: string },
+  deps: RemoteExternalCodingAgentControlDeps,
 ): Promise<{
   delivery: "steered" | "resumed";
   taskId?: string;

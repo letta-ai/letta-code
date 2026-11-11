@@ -350,10 +350,7 @@ describe("launchRemoteExternalCodingAgent", () => {
         expect(computer.launches[0]).toMatchObject({
           runtime,
           notify: "caller",
-          args:
-            worker === 2
-              ? { harness: type, fork_context: true }
-              : { subagent_type: type },
+          args: { harness: type, fork_context: worker === 2 },
         });
         expect(requests.slice((worker - 1) * 3, worker * 3)).toEqual([
           {
