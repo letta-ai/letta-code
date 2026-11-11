@@ -10,13 +10,24 @@ runs:
       shell: bash
       run: |
         install_packages() {
-          timeout -k 10 90 sudo apt-get install -qq \
+          timeout -k 10 90 sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a \
+            apt-get install -y -o Dpkg::Use-Pty=0 \
+            -o Acquire::http::Timeout=20 \
             -o Acquire::Retries=3 -o DPkg::Lock::Timeout=60 \
             dbus-x11 gnome-keyring
         }
         for attempt in 1 2 3; do
-          if install_packages; then exit 0; fi
-          echo "Keyring package install attempt $attempt failed"
+          if install_packages; then
+            exit 0
+          else
+            status=$?
+          fi
+          echo "Keyring package install attempt $attempt failed (exit $status)"
+          if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+            ps -eo pid,etime,cmd | grep -E 'apt|dpkg|needrestart|debconf|systemctl' | grep -v grep || true
+            sudo tail -n 30 /var/log/apt/term.log || true
+            sudo tail -n 20 /var/log/dpkg.log || true
+          fi
           if [ "$attempt" -lt 3 ]; then
             timeout -k 10 60 sudo apt-get update -qq -o Acquire::Retries=3 || true
           fi
