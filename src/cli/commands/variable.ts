@@ -1,6 +1,6 @@
 /**
  * /variable command handler for managing variables.
- * Variables are stored per agent and can be referenced via $SECRET_NAME syntax
+ * Variables are stored per agent and can be referenced via $VARIABLE_NAME syntax
  * in shell commands.
  */
 
@@ -40,7 +40,7 @@ export async function handleVariableCommand(
 
       const normalizedKey = key.toUpperCase();
 
-      // Validate key format (must be valid for $SECRET_NAME pattern)
+      // Validate key format (must be valid for $VARIABLE_NAME pattern)
       if (!/^[A-Z_][A-Z0-9_]*$/.test(normalizedKey)) {
         return {
           output: `Invalid variable name '${key}'. Use uppercase letters, numbers, and underscores only. Must start with a letter or underscore.`,
@@ -82,7 +82,7 @@ export async function handleVariableCommand(
         ({ key, value }) => `  $${key} = ${JSON.stringify(value)}`,
       );
       return {
-        output: `Available variables (${names.length}):\n${lines.join("\n")}\n\nUse $SECRET_NAME in shell commands to reference them.`,
+        output: `Available variables (${names.length}):\n${lines.join("\n")}\n\nUse $VARIABLE_NAME in shell commands to reference them.`,
       };
     }
 
@@ -122,7 +122,7 @@ export async function handleVariableCommand(
         output: `Variable management commands:
 
   /variable set KEY value   Set a variable (KEY is normalized to uppercase)
-  /variable list            List available variable names
+  /variable list            List available variable names and values
   /variable unset KEY       Unset a variable
 
 Variables are plain values stored per agent. Use $NAME in shell commands to load them into the environment. Their values are readable by the agent and are never redacted. Use secrets for passwords and credentials.`,
