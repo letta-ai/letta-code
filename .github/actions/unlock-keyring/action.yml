@@ -29,6 +29,13 @@ runs:
             sudo tail -n 20 /var/log/dpkg.log || true
           fi
           if [ "$attempt" -lt 3 ]; then
+            if [ "$attempt" -eq 1 ]; then
+              for source in /etc/apt/sources.list.d/ubuntu.sources /etc/apt/sources.list; do
+                if [ -f "$source" ]; then
+                  sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#http://archive.ubuntu.com/ubuntu#g' "$source"
+                fi
+              done
+            fi
             timeout -k 10 60 sudo apt-get update -qq -o Acquire::Retries=3 || true
           fi
         done
