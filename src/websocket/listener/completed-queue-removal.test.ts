@@ -79,7 +79,12 @@ test("removing a restored item after replay completion retains its durable tombs
   }
 });
 
-test.each(["corrupt", "missing-marker", "missing-file"] as const)(
+test.each([
+  "corrupt",
+  "missing-marker",
+  "missing-file",
+  "missing-entry",
+] as const)(
   "%s ledger refuses removal even when memory contains completed evidence",
   (damage) => {
     const root = mkdtempSync(join(tmpdir(), "invalid-queue-removal-"));
@@ -91,8 +96,9 @@ test.each(["corrupt", "missing-marker", "missing-file"] as const)(
       else if (damage === "corrupt") writeFileSync(path, "{broken");
       else {
         const store = JSON.parse(readFileSync(path, "utf8"));
-        delete store.entries[dispositionKey(restarted.key, identity)]
-          .replayCompleted;
+        const key = dispositionKey(restarted.key, identity);
+        if (damage === "missing-entry") delete store.entries[key];
+        else delete store.entries[key].replayCompleted;
         writeFileSync(path, JSON.stringify(store));
       }
       expect(restarted.queueRuntime.removeItem(item.id)).toBeNull();
@@ -109,6 +115,7 @@ test("an active started payload survives restart and restored cancellation still
   try {
     const path = join(root, "ledger.json");
     const { original, restarted, identity, item } = restoreStarted(path);
+    expect(restoreDurableQueuedInputs(original.listener)).toBe(0);
     expect(original.queueRuntime.removeItem(item.id)).toBeNull();
     expect(getInputDisposition(original, identity)).toBe("started");
     expect(restarted.queueRuntime.removeItem(item.id)).toEqual(item);
