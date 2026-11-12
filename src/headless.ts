@@ -121,6 +121,10 @@ import {
   validateConversationDefaultRequiresAgent,
   validatePrimaryStartupFlagConflicts,
 } from "./cli/startup-flag-validation";
+import {
+  applyStartupReflectionOverrides,
+  parseReflectionOverrides,
+} from "./cli/startup-reflection-settings";
 import { tryCloudHeadlessSend } from "./headless-cloud-send";
 import {
   buildEnvironmentLaunchResult,
@@ -148,10 +152,6 @@ import {
   type HeadlessPermissionResult,
   waitForHeadlessPermissionResponse,
 } from "./headless-permission";
-import {
-  applyHeadlessReflectionOverrides,
-  type ReflectionOverrides,
-} from "./headless-reflection-settings";
 import {
   emitLocalToolCalls,
   emitLocalToolReturns,
@@ -367,47 +367,6 @@ export const __headlessTestUtils = {
   toBidirectionalQueuedInput,
   prepareHeadlessToolExecutionContext,
 };
-
-function parseReflectionOverrides(
-  values: ParsedCliArgs["values"],
-): ReflectionOverrides {
-  const triggerRaw = values["reflection-trigger"];
-  const stepCountRaw = values["reflection-step-count"];
-
-  if (!triggerRaw && !stepCountRaw) {
-    return {};
-  }
-
-  const overrides: ReflectionOverrides = {};
-
-  if (triggerRaw !== undefined) {
-    if (
-      triggerRaw !== "off" &&
-      triggerRaw !== "step-count" &&
-      triggerRaw !== "compaction-event"
-    ) {
-      throw new Error(
-        `Invalid --reflection-trigger "${triggerRaw}". Valid values: off, step-count, compaction-event`,
-      );
-    }
-    overrides.trigger = triggerRaw;
-  }
-
-  if (stepCountRaw !== undefined) {
-    try {
-      overrides.stepCount = parsePositiveIntFlag({
-        rawValue: stepCountRaw,
-        flagName: "reflection-step-count",
-      });
-    } catch {
-      throw new Error(
-        `Invalid --reflection-step-count "${stepCountRaw}". Expected a positive integer.`,
-      );
-    }
-  }
-
-  return overrides;
-}
 
 async function prepareHeadlessToolExecutionContext(params: {
   agentId: string;
@@ -1461,7 +1420,7 @@ export async function handleHeadlessCommand(
     if (isDetached) {
       effectiveReflectionSettings = { trigger: "off", stepCount: 0 };
     } else {
-      const resolvedReflectionSettings = await applyHeadlessReflectionOverrides(
+      const resolvedReflectionSettings = await applyStartupReflectionOverrides(
         agent.id,
         reflectionOverrides,
       );
