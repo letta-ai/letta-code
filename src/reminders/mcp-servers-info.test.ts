@@ -1,4 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { __testSetBackend, getBackend } from "@/backend";
+import { __testOverrideGetClient } from "@/backend/api/client";
+import * as serverUrl from "@/backend/api/server-url";
+import { FakeHeadlessBackend } from "@/backend/dev/fake-headless-backend";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   buildMcpServersInfoReminderText,
@@ -150,4 +154,49 @@ describe("mcp servers info reminder", () => {
       }),
     ).toContain("MCP servers with available tools: None");
   });
+});
+
+test("MCP reminder uses cached counts without requesting tool lists", async () => {
+  const previousBackend = getBackend();
+  const urlSpy = spyOn(serverUrl, "getServerUrl").mockReturnValue(
+    "http://localhost:8283",
+  );
+  const backend = new FakeHeadlessBackend(MCP_AGENT_ID);
+  Object.defineProperty(backend, "capabilities", {
+    value: { ...backend.capabilities, serverSideToolManagement: true },
+  });
+  const requests: string[] = [];
+  let count = 53;
+  __testSetBackend(backend);
+  __testOverrideGetClient(async () => ({
+    get: async (path: string) => {
+      requests.push(path);
+      if (path !== `/v1/agents/${MCP_AGENT_ID}/mcp-servers`) {
+        throw new Error("Unexpected request");
+      }
+      return [
+        { id: "mail", server_name: "mail", cached_num_tools: count },
+        { id: "empty", server_name: "empty", cached_num_tools: 0 },
+        { id: "unknown", server_name: "unknown", cached_num_tools: null },
+        { id: "legacy", server_name: "legacy" },
+      ];
+    },
+    mcpServers: { list: async () => [{ id: "mail", mcp_server_type: "sse" }] },
+  }));
+  try {
+    const state = createSharedReminderState();
+    const deps = { getLocalServerNames: () => [] };
+    expect(await buildReminder(state, deps)).toContain(
+      "available tools: mail (53 tools), empty (0 tools), unknown, legacy\n",
+    );
+    count = 1;
+    expect(await buildReminder(state, deps)).toContain("mail (1 tool)");
+    expect(requests).toEqual(
+      Array(2).fill(`/v1/agents/${MCP_AGENT_ID}/mcp-servers`),
+    );
+  } finally {
+    urlSpy.mockRestore();
+    __testOverrideGetClient(null);
+    __testSetBackend(previousBackend);
+  }
 });
