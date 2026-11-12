@@ -1,7 +1,7 @@
 You are responsible for rewriting an agent's context stored in `$MEMORY_DIR`.
 The agent's past trajectories are provided in `{{corpus}}`. Memory-writing workers will extract learnings from them; your job is only to shard the trajectories and run the workflow below.
 
-1. Split the trajectories into 15–25 shards of related tasks, using the task statements. Every trajectory belongs to exactly one shard; keep shard sizes roughly balanced. Do not analyze outcomes yourself.
+1. Split the trajectories into 15–25 shards of related tasks, using the task statements. Every trajectory belongs to exactly one shard; keep shard sizes roughly balanced. With fewer related-task groups than that, use fewer shards: never split one task across shards and never create an empty shard. Do not analyze outcomes yourself.
 2. Write `$MEMORY_DIR/MEMORY.md`: a short index with one line per shard directory saying when the agent should open it. Commit it.
 3. Call the Workflow tool with `wait: true`, `script` set to the exact script below, unmodified, `maxConcurrent` set to the number of shards, and `args` set to `{ "memoryDir": "<absolute $MEMORY_DIR>", "corpus": "{{corpus}}", "shards": [{ "key": "<shard-key>", "dir": "<memory directory for this shard>", "description": "<what tasks it covers>", "ids": ["<trajectory id>", ...] }, ...] }`.
 4. The workflow gives each worker its own git worktree and merges each worker's branch back into `$MEMORY_DIR` when it finishes. If it reports `unmerged` branches, merge each one yourself, resolving conflicts by keeping both sides (rename a colliding skill), then delete the branch. Then finish. Do not launch any other workers and do not edit memory beyond `MEMORY.md` and those merges.
@@ -15,7 +15,11 @@ export const meta = {
 
 const SKILLS = ['maintaining-core-memory', 'maintaining-deferred-memory', 'creating-skills']
 const TIMEOUT = 2 * 60 * 60 * 1000
-const { memoryDir, corpus, shards } = args
+const { memoryDir, corpus } = args
+// Shard dirs are relative to the repository; empty shards get no worker.
+const shards = args.shards
+  .filter(s => s.ids && s.ids.length > 0)
+  .map(s => ({ ...s, dir: String(s.dir).replace(memoryDir.replace(/\/+$/, ''), '').replace(/^\/+|\/+$/g, '') }))
 const RUN = Date.now().toString(36)
 const WORKTREES = memoryDir.replace(/\/+$/, '').replace(/[^/]+$/, 'memory-worktrees')
 const q = p => `'${String(p).replace(/'/g, `'\\''`)}'`
@@ -36,9 +40,9 @@ function workerPrompt(s, worktree) {
 
 Shard: ${s.key}: ${s.description}
 Trajectories (${s.ids.length}): ${s.ids.map(id => `${corpus}/${id}.json or .jsonl`).join(', ')}
-Files come in several harness formats; each includes the task, the attempt, and its outcome. Write throwaway scripts to extract what matters instead of reading large files linearly.
+Files come in several harness formats; each includes the task, the attempt, and its outcome. Write throwaway scripts to extract what matters instead of reading large files linearly. Learn only from these trajectories: do not search the filesystem for other trajectories, transcripts, memory, or task material.
 
-Memory repository: ${worktree} (your own git worktree on branch ${s.branch}; work and commit only here)
+Memory repository: ${worktree} (your own git worktree on branch ${s.branch}; change into it first, and write and commit only here)
 You own only:
 - ${s.dir}/ : deferred memory for this shard, including ${s.dir}/MEMORY.md, a frontmatter-free index with one line per file saying when to open it.
 - New skills you create under skills/. Choose names that do not already exist there.
