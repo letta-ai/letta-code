@@ -4,6 +4,7 @@ import { buildCreateAgentRequest } from "@/agent/create-agent-request";
 import { getModelUpdateArgs } from "@/agent/model";
 import type { MemoryPromptMode } from "@/agent/prompt-assets";
 import { resolveEphemeralSubagentLink } from "@/agent/subagents/ephemeral-subagent";
+import { resolveParentModelLimits } from "@/agent/subagents/parent-model-limits";
 import { resolveAndBuildSystemPrompt } from "@/agent/system-prompt-resolution";
 import { type Backend, getBackend } from "@/backend";
 import {
@@ -42,13 +43,25 @@ export async function buildEphemeralConversationCreateBody(
   const contextWindow =
     (modelSettings?.context_window as number | undefined) ??
     (await getModelContextWindow(request.model));
+  const link = resolveEphemeralSubagentLink(env);
+  const parent = link
+    ? await resolveParentModelLimits(
+        link.parent_agent_id,
+        env.LETTA_PARENT_CONVERSATION_ID,
+      )
+    : null;
+  const inherited = parent?.model === request.model ? parent : null;
   return {
     model: request.model,
     system: request.system ?? system,
-    ...(modelSettings ? { model_settings: modelSettings } : {}),
-    ...(contextWindow ? { context_window_limit: contextWindow } : {}),
+    ...(modelSettings || inherited?.modelSettings
+      ? { model_settings: { ...modelSettings, ...inherited?.modelSettings } }
+      : {}),
+    ...(inherited?.contextWindowLimit || contextWindow
+      ? { context_window_limit: inherited?.contextWindowLimit ?? contextWindow }
+      : {}),
     // A subagent's conversation links to the parent that launched it.
-    ...resolveEphemeralSubagentLink(env),
+    ...link,
   };
 }
 
