@@ -319,4 +319,73 @@ describe("fetchParentConversationMessages", () => {
     expect(calls).toBe(1);
     expect(messages).toEqual(all.slice(-100));
   });
+
+  test("filters to in-context IDs and stops at their oldest boundary", async () => {
+    const all = Array.from({ length: 500 }, (_, i) =>
+      msg({ id: `m${i}`, message_type: "user_message", content: `${i}` }),
+    );
+    const descending = [...all].reverse();
+    let calls = 0;
+    const backend = {
+      listConversationMessages: async (
+        _id: string,
+        body: { after?: string; limit: number },
+      ) => {
+        calls++;
+        const start = body.after
+          ? descending.findIndex((m) => m.id === body.after) + 1
+          : 0;
+        return {
+          getPaginatedItems: () => descending.slice(start, start + body.limit),
+        };
+      },
+    } as unknown as Pick<Backend, "listConversationMessages">;
+    const messages = await fetchParentConversationMessages({
+      backend,
+      agentId: "parent",
+      conversationId: "conv-parent",
+      inContextIds: ["m350", "m375", "m450", "m499"],
+      maxChars: 50_000,
+    });
+    expect(calls).toBe(2);
+    expect(messages.map((m) => m.id)).toEqual(["m350", "m375", "m450", "m499"]);
+  });
+
+  test.each([true, false])(
+    "bounds paging by budget or the safety limit (matching context=%s)",
+    async (matching) => {
+      const all = Array.from({ length: 2_000 }, (_, i) =>
+        msg({
+          id: `m${i}`,
+          message_type: "user_message",
+          content: "x".repeat(4_000),
+        }),
+      ).reverse();
+      let calls = 0;
+      const backend = {
+        listConversationMessages: async (
+          _id: string,
+          body: { after?: string; limit: number },
+        ) => {
+          calls++;
+          const start = body.after
+            ? all.findIndex((m) => m.id === body.after) + 1
+            : 0;
+          return {
+            getPaginatedItems: () => all.slice(start, start + body.limit),
+          };
+        },
+      } as unknown as Pick<Backend, "listConversationMessages">;
+      await fetchParentConversationMessages({
+        backend,
+        agentId: "parent",
+        conversationId: "conv-parent",
+        inContextIds: matching
+          ? [...all].reverse().map((m) => m.id)
+          : ["missing"],
+        maxChars: 50_000,
+      });
+      expect(calls).toBe(matching ? 1 : 10);
+    },
+  );
 });

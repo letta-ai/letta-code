@@ -46,43 +46,57 @@ export function serializeHistoryRecord(record: unknown): string {
     .replace(/>/g, "\\u003e");
 }
 
-/** Fetch a bounded recent tail and return it in chronological order. */
+/** Read newest in-context messages until the preview budget or context boundary. */
 export async function fetchParentConversationMessages(params: {
   backend: Pick<Backend, "listConversationMessages">;
   agentId: string;
   conversationId: string;
   signal?: AbortSignal;
+  inContextIds?: string[];
+  maxChars?: number;
 }): Promise<Message[]> {
-  params.signal?.throwIfAborted();
-  const page = await params.backend.listConversationMessages(
-    params.conversationId,
-    { agent_id: params.agentId, order: "desc", limit: PAGE_SIZE },
-    params.signal ? { signal: params.signal } : undefined,
-  );
-  return page.getPaginatedItems().reverse();
-}
-
-/** Compaction context is optional; unavailable summaries must not prevent launch. */
-export async function fetchParentCompactionSummary(params: {
-  backend: Pick<Backend, "retrieveConversation" | "retrieveMessage">;
-  conversationId: string;
-  signal?: AbortSignal;
-}): Promise<Message | undefined> {
-  try {
-    const options = params.signal ? { signal: params.signal } : undefined;
-    const conversation = await params.backend.retrieveConversation(
+  const contextIds = params.inContextIds && new Set(params.inContextIds);
+  const oldestId = params.inContextIds?.[0];
+  if (contextIds?.size === 0 || (params.maxChars ?? 1) <= 0) return [];
+  const messages: Message[] = [];
+  let after: string | undefined;
+  // At most ten API pages, even when context IDs are stale or missing in history.
+  for (let pageIndex = 0; pageIndex < (contextIds ? 10 : 1); pageIndex++) {
+    params.signal?.throwIfAborted();
+    const page = await params.backend.listConversationMessages(
       params.conversationId,
-      options,
+      {
+        agent_id: params.agentId,
+        order: "desc",
+        limit: PAGE_SIZE,
+        ...(after ? { after } : {}),
+      },
+      params.signal ? { signal: params.signal } : undefined,
     );
-    const summaryId = conversation.in_context_message_ids?.[1];
-    if (!summaryId) return undefined;
-    const messages = await params.backend.retrieveMessage(summaryId, options);
-    return messages.find(
-      (message) => message.message_type === "summary_message",
+    const items = page.getPaginatedItems();
+    const boundary = items.findIndex((message) => message.id === oldestId);
+    const withinBoundary = boundary >= 0 ? items.slice(0, boundary + 1) : items;
+    messages.push(
+      ...withinBoundary.filter(
+        (message) =>
+          (!contextIds || contextIds.has(message.id)) &&
+          message.message_type !== "summary_message",
+      ),
     );
-  } catch {
-    return undefined;
+    const preview = previewParentTranscript(
+      renderParentTranscript([...messages].reverse()).messages,
+    ).join("\n");
+    if (
+      boundary >= 0 ||
+      items.length < PAGE_SIZE ||
+      preview.length >= (params.maxChars ?? Infinity)
+    )
+      break;
+    const cursor = items.at(-1)?.id;
+    if (!cursor || cursor === after) break;
+    after = cursor;
   }
+  return messages.reverse();
 }
 
 function contentText(content: unknown): string {
@@ -254,6 +268,7 @@ export function previewParentTranscript(messages: string[]): string[] {
       seq: number;
       truncated?: boolean;
     };
+    if (event.type === "summary") return line;
     for (const field of ["text", "arguments"] as const) {
       const text = event[field];
       if (typeof text !== "string") continue;

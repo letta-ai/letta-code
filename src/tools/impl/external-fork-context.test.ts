@@ -6,16 +6,30 @@ import {
 } from "./external-fork-context";
 
 function fakeBackend(messages: Array<Record<string, unknown>>) {
+  const rows = messages.map((m, i) => ({ id: `m${i}`, date: "", ...m }));
+  const ids = ["system", ...rows.map((m) => m.id)];
   return {
-    retrieveConversation: async () => ({ in_context_message_ids: [] }),
+    retrieveAgent: async () => ({ message_ids: ids }),
+    retrieveConversation: async () => ({ in_context_message_ids: ids }),
     retrieveMessage: async () => [],
-    listConversationMessages: async () => ({
-      getPaginatedItems: () =>
-        messages.map((m, i) => ({ id: `m${i}`, date: "", ...m })).reverse(),
-    }),
+    listConversationMessages: async (
+      _id: string,
+      body: { after?: string; limit: number },
+    ) => {
+      const descending = [...rows].reverse();
+      const start = body.after
+        ? descending.findIndex((m) => m.id === body.after) + 1
+        : 0;
+      return {
+        getPaginatedItems: () => descending.slice(start, start + body.limit),
+      };
+    },
   } as unknown as Pick<
     Backend,
-    "listConversationMessages" | "retrieveConversation" | "retrieveMessage"
+    | "listConversationMessages"
+    | "retrieveConversation"
+    | "retrieveAgent"
+    | "retrieveMessage"
   >;
 }
 
@@ -132,7 +146,10 @@ describe("prependParentContext", () => {
         },
       } as unknown as Pick<
         Backend,
-        "listConversationMessages" | "retrieveConversation" | "retrieveMessage"
+        | "listConversationMessages"
+        | "retrieveConversation"
+        | "retrieveAgent"
+        | "retrieveMessage"
       >,
     });
 
@@ -141,48 +158,62 @@ describe("prependParentContext", () => {
     });
   });
 
-  test("includes the latest compaction summary before recent messages, even at the inline cap", async () => {
-    const backend = fakeBackend([
-      ...Array.from({ length: 99 }, () => ({
-        message_type: "user_message",
-        content: "x".repeat(4_000),
-      })),
-      { message_type: "user_message", content: "LATEST" },
-    ]);
-    backend.retrieveConversation = async () =>
-      ({
-        in_context_message_ids: ["system", "summary"],
-      }) as Awaited<ReturnType<Backend["retrieveConversation"]>>;
-    backend.retrieveMessage = async (id) => {
-      expect(id).toBe("summary");
-      return [
-        {
-          id,
-          date: "",
-          message_type: "summary_message",
-          summary: "Earlier decisions",
-        },
-      ];
-    };
-    const result = await prependParentContext({ ...base, backend });
-    if ("error" in result) throw new Error(result.error);
-    const inline = result.prompt
-      .split("<parent_history>\n")[1]
-      ?.split("\n</parent_history>")[0];
-    if (!inline) throw new Error("Missing history envelope");
-    const [metadata, ...records] = inline
-      .split("\n")
-      .map((line) => JSON.parse(line));
-    expect(records[0]).toMatchObject({
-      type: "summary",
-      text: "Earlier decisions",
-    });
-    expect(records.at(-1)).toMatchObject({ text: "LATEST" });
-    expect(metadata.shown).toBe(records.length);
-    expect(
-      records.map((record) => JSON.stringify(record)).join("\n").length,
-    ).toBeLessThanOrEqual(INLINE_CHARACTER_LIMIT);
-  });
+  test.each([10_000, 60_000])(
+    "includes a %i-character summary first and untruncated",
+    async (length) => {
+      const summaryText = "s".repeat(length);
+      const backend = fakeBackend([
+        ...Array.from({ length: 99 }, () => ({
+          message_type: "user_message",
+          content: "x".repeat(4_000),
+        })),
+        { message_type: "user_message", content: "LATEST" },
+      ]);
+      backend.retrieveConversation = async () =>
+        ({
+          in_context_message_ids: [
+            "system",
+            "summary",
+            ...Array.from({ length: 100 }, (_, i) => `m${i}`),
+          ],
+        }) as Awaited<ReturnType<Backend["retrieveConversation"]>>;
+      backend.retrieveMessage = async (id) => {
+        expect(id).toBe("summary");
+        return [
+          {
+            id,
+            date: "",
+            message_type: "summary_message",
+            summary: summaryText,
+          },
+        ];
+      };
+      const result = await prependParentContext({ ...base, backend });
+      if ("error" in result) throw new Error(result.error);
+      const inline = result.prompt
+        .split("<parent_history>\n")[1]
+        ?.split("\n</parent_history>")[0];
+      if (!inline) throw new Error("Missing history envelope");
+      const [metadata, ...records] = inline
+        .split("\n")
+        .map((line) => JSON.parse(line));
+      expect(records[0]).toMatchObject({
+        type: "summary",
+        text: summaryText,
+      });
+      if (length > INLINE_CHARACTER_LIMIT) {
+        expect(records).toHaveLength(1);
+      } else {
+        expect(records.at(-1)).toMatchObject({ text: "LATEST" });
+      }
+      expect(metadata.shown).toBe(records.length);
+      expect(
+        records.map((record) => JSON.stringify(record)).join("\n").length,
+      ).toBeLessThanOrEqual(
+        Math.max(INLINE_CHARACTER_LIMIT, JSON.stringify(records[0]).length),
+      );
+    },
+  );
 
   test.each(["conversation", "message"])(
     "a failed %s summary lookup still prepares the launch prompt",
@@ -190,9 +221,9 @@ describe("prependParentContext", () => {
       const backend = fakeBackend(conversation);
       backend.retrieveConversation = async () => {
         if (failure === "conversation") throw new Error("503");
-        return { in_context_message_ids: ["system", "summary"] } as Awaited<
-          ReturnType<Backend["retrieveConversation"]>
-        >;
+        return {
+          in_context_message_ids: ["system", "summary", "m0", "m1", "m2"],
+        } as Awaited<ReturnType<Backend["retrieveConversation"]>>;
       };
       backend.retrieveMessage = async () => {
         throw new Error("503");
@@ -208,7 +239,7 @@ describe("prependParentContext", () => {
     const backend = fakeBackend(conversation);
     backend.retrieveConversation = async () =>
       ({
-        in_context_message_ids: ["system", "user"],
+        in_context_message_ids: ["system", "m0", "m1", "m2"],
       }) as Awaited<ReturnType<Backend["retrieveConversation"]>>;
     backend.retrieveMessage = async () => [
       {
@@ -222,5 +253,27 @@ describe("prependParentContext", () => {
     if ("error" in result) throw new Error(result.error);
     expect(result.prompt).not.toContain("Not a summary");
     expect(result.prompt).toContain('"shown":3');
+  });
+
+  test("default conversations use the agent's message_ids", async () => {
+    const backend = fakeBackend(conversation);
+    backend.retrieveAgent = async (id) => {
+      expect(id).toBe(base.parentAgentId);
+      return { message_ids: ["system", "m2"] } as Awaited<
+        ReturnType<Backend["retrieveAgent"]>
+      >;
+    };
+    backend.retrieveConversation = async () => {
+      throw new Error("Must use agent state");
+    };
+    const result = await prependParentContext({
+      ...base,
+      parentConversationId: "default",
+      backend,
+    });
+    if ("error" in result) throw new Error(result.error);
+    expect(result.prompt).toContain("Now migrate the schema.");
+    expect(result.prompt).not.toContain("Use Postgres");
+    expect(result.prompt).toContain('"shown":1');
   });
 });
