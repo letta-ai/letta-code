@@ -55,6 +55,57 @@
     },
     "args": {
       "description": "Optional input exposed to script as args."
+    },
+    "url": {
+      "type": "string",
+      "description": "Public http(s) URL that Letta Cloud polls with GET. By default it notifies only when the HTTP status or body changes; use select and match to narrow that. timeout_ms defaults to 24 hours here, up to 7 days. Cannot be combined with command, ws, or script."
+    },
+    "interval_seconds": {
+      "type": "integer",
+      "minimum": 60,
+      "default": 60,
+      "description": "Seconds between polls of url."
+    },
+    "headers": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Request headers for url, at most 10. Reference agent secrets as $NAME, as in shell commands, e.g. {\"PRIVATE-TOKEN\": \"$GITLAB_TOKEN\"} or {\"Authorization\": \"Bearer $CI_TOKEN\"}. Cloud fills them in on every poll; the value is never sent from here. Credential headers must use a secret reference. Headers are dropped if a redirect leaves the URL's origin."
+    },
+    "select": {
+      "type": "string",
+      "description": "For url: a dot-separated path into the JSON response (numbers index arrays), e.g. 0.status. Only that value is compared and reported, so unrelated fields changing does not notify."
+    },
+    "match": {
+      "type": "object",
+      "properties": {
+        "equals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Matches when the value is one of these."
+        },
+        "contains": {
+          "type": "string",
+          "description": "Matches when the value contains this text."
+        },
+        "gt": {
+          "type": "number",
+          "description": "Matches when the value is a number greater than this."
+        },
+        "lt": {
+          "type": "number",
+          "description": "Matches when the value is a number less than this."
+        }
+      },
+      "additionalProperties": false,
+      "description": "For url: notify when the compared value starts to meet every given test, instead of on every change. The first response is checked too, and a value that keeps matching does not notify again. List every terminal state, e.g. equals [\"success\", \"failed\", \"canceled\"]."
+    },
+    "stop_on_match": {
+      "type": "boolean",
+      "description": "For url with match: stop after the first match notice."
     }
   },
   "required": ["description"],
