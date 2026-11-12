@@ -154,16 +154,36 @@ async function defaultConnect(connectionId: string, scope: ParentScope) {
   }
 }
 
-async function resolveQualifiedComputer(deviceId: string) {
+async function resolveQualifiedComputer(deviceId: string, scope: ParentScope) {
+  let environment: EnvironmentConnection;
   try {
-    const environment = await getEnvironmentConnection(deviceId);
-    if (!isEnvironmentOnline(environment) || !environment.connectionId)
-      throw new Error(`Computer "${deviceId}" is offline`);
-    return { connectionId: environment.connectionId, environment };
-  } catch (error) {
-    if (errorMessage(error).includes("offline")) throw error;
+    environment = await getEnvironmentConnection(deviceId);
+  } catch {
     return resolveEnvironmentConnectionId(deviceId);
   }
+
+  if (!isEnvironmentOnline(environment) || !environment.connectionId) {
+    // Neither the sandbox creation response nor the environment record exposes
+    // the conversation. Only accept the caller's exact sandbox device format.
+    const prefix = `sandbox-${scope.agentId}-`;
+    const suffix = deviceId.startsWith(prefix)
+      ? deviceId
+          .slice(prefix.length)
+          .match(
+            /^(conv-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})-linux-vm$/i,
+          )
+      : null;
+    if (environment.deviceId === deviceId && suffix) {
+      const resolved = await resolveAgentSandboxConnectionId(scope.agentId, {
+        conversationId: suffix[1],
+      });
+      if (resolved.environment.deviceId !== deviceId)
+        throw new Error("Cloud sandbox device changed while waking worker");
+      return resolved;
+    }
+    throw new Error(`Computer "${deviceId}" is offline`);
+  }
+  return { connectionId: environment.connectionId, environment };
 }
 
 function errorMessage(error: unknown): string {
@@ -635,6 +655,7 @@ async function connectQualifiedTarget(
     throw new Error(`Invalid remote external coding agent ID: ${agentId}`);
   const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
     target.computer,
+    parentScope,
   );
   if (resolved.environment.metadata?.subagent_message !== true)
     throw new Error(formatOutdatedSteeringError(target.computer));
@@ -723,6 +744,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   const connect = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,
+      params.parentScope,
     );
     return (deps.connect ?? defaultConnect)(
       resolved.connectionId,
@@ -787,6 +809,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   const interrupt = async () => {
     const resolved = await (deps.resolveComputer ?? resolveQualifiedComputer)(
       target.computer as string,
+      params.parentScope,
     );
     const stopClient = await (deps.connect ?? defaultConnect)(
       resolved.connectionId,
