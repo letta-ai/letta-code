@@ -84,7 +84,7 @@ test("Cursor edits files, streams tool calls, and resumes history and checkout t
       const task = backgroundTasks.get(receipt.task_id);
       expect(task).toBeDefined();
       await task?.completion;
-      expect(task?.status).toBe("completed");
+      expect(task?.status, task?.error).toBe("completed");
       expect((await readFile(join(cwd, "resumed.txt"), "utf8")).trim()).toBe(
         "CURSOR_PROOF_731",
       );
