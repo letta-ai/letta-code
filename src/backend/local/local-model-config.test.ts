@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { resolvePiModelForAgent } from "@/backend/dev/pi-model-factory";
 import {
   clearRegisteredPiProviders,
   registerPiProvider,
@@ -26,20 +27,26 @@ describe("local model catalog", () => {
       const fetchImpl = (async () =>
         new Response("not found", { status: 404 })) as unknown as typeof fetch;
 
-      const entry = (
-        await listLocalModels(storageDir, { fetch: fetchImpl })
-      ).find((model) => model.handle === "opencode/kimi-k2.6");
-
-      expect(entry).toMatchObject({
-        display_name: "Kimi K2.6",
-        handle: "opencode/kimi-k2.6",
-        max_context_window: 262144,
-        max_tokens: 65536,
-        model_id: "kimi-k2.6",
-        model_endpoint_type: "opencode",
-        name: "Kimi K2.6",
-        provider_type: "opencode",
-      });
+      const models = await listLocalModels(storageDir, { fetch: fetchImpl });
+      for (const id of ["muse-ember-1.0", "muse-wonder-1.0"]) {
+        const handle = `opencode/${id}`;
+        const projected = models.find((model) => model.handle === handle);
+        const resolved = await resolvePiModelForAgent(
+          handle,
+          { provider_type: "opencode" },
+          { localProviderAuthStorageDir: storageDir },
+        );
+        expect(projected).toMatchObject({
+          handle,
+          model_id: id,
+          model_endpoint_type: "opencode",
+        });
+        expect(resolved.model).toMatchObject({
+          id,
+          provider: "opencode",
+          api: "openai-responses",
+        });
+      }
     } finally {
       await rm(storageDir, { recursive: true, force: true });
     }
