@@ -29,6 +29,7 @@ import {
   getConversationRuntime,
 } from "./runtime";
 import { clearSubagentSnapshotCache } from "./subagent-state-cache";
+import { isRuntimeTeleportPending } from "./teleport";
 import type { ListenerTransport } from "./transport";
 import { isListenerTransportOpen } from "./transport";
 import type {
@@ -146,6 +147,14 @@ export function installProcessEventRouting(params: {
 
   setMessageQueueAdder((queuedMessage) => {
     if (!queuedMessage.agentId || !queuedMessage.conversationId) return;
+    if (
+      isRuntimeTeleportPending(
+        runtime,
+        queuedMessage.agentId,
+        queuedMessage.conversationId,
+      )
+    )
+      return;
     const targetRuntime = getOrCreateScopedRuntime(
       runtime,
       queuedMessage.agentId,
