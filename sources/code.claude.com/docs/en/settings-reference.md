@@ -86,6 +86,7 @@ Every key below links to its entry. Scope lists the [files](https://code.claude.
 | [`disabledMcpjsonServers`](#disabledmcpjsonservers) | Reject specific servers from a project's [`.mcp.json`](https://code.claude.com/docs/en/mcp#project-scope) | MCP | Any file |
 | [`disableMobileSimulatorTools`](#disablemobilesimulatortools) | Block Claude's tools in the [desktop](https://code.claude.com/docs/en/desktop.md) iOS Simulator pane | Tools | Managed |
 | [`disableRemoteControl`](#disableremotecontrol) | Turn off [Remote Control](https://code.claude.com/docs/en/remote-control.md) everywhere it can start | Remote, desktop, and notifications | Any file |
+| [`disableRemotePreviewScripts`](#disableremotepreviewscripts) | Turn off scripts in the [desktop](https://code.claude.com/docs/en/desktop.md#preview-html-files-in-ssh-and-wsl-sessions) app's HTML previews in SSH and WSL sessions | Remote, desktop, and notifications | Managed |
 | [`disableSideloadFlags`](#disablesideloadflags) | Reject the CLI flags that sideload [plugins](https://code.claude.com/docs/en/plugins/overview.md), [subagents](https://code.claude.com/docs/en/sub-agents.md), and [MCP servers](https://code.claude.com/docs/en/mcp.md) | Enterprise and managed settings | Managed |
 | [`disableSkillShellExecution`](#disableskillshellexecution) | Stop [skills](https://code.claude.com/docs/en/skills.md) and custom commands from running inline shell | Plugins and skills | Any file |
 | [`disableWorkflows`](#disableworkflows) | Turn [dynamic workflows](https://code.claude.com/docs/en/workflows.md) off for everyone; use `enableWorkflows` for yourself | Hooks and automation | Any file |
@@ -5004,6 +5005,30 @@ Turn off [Remote Control](https://code.claude.com/docs/en/remote-control.md): Cl
   "disableRemoteControl": true
 }
 ```
+
+### `disableRemotePreviewScripts`
+
+Keep scripts from running when people [preview an HTML file](https://code.claude.com/docs/en/desktop.md#preview-html-files-in-ssh-and-wsl-sessions) from an SSH or WSL session in the desktop app. External browsing in the Browser pane is unaffected.
+
+The desktop app reads this key; the terminal CLI ignores it. Requires Claude Desktop v5.1231.0 or later. Earlier versions ignore the key: to stop the scripts there, also set [`disableBrowserExternalNavigation`](#disablebrowserexternalnavigation), which turns off external browsing too.
+
+* **Scope**: [`Managed`](#scopes). The desktop app doesn't read the key from the remote machine or the WSL distribution.
+* **Type**: Boolean; only the JSON Boolean `true` takes effect
+  * `true`: HTML previews in SSH and WSL sessions don't run scripts
+  * `false`: the key doesn't turn scripts off
+* **Default**: unset, so the key has no effect
+
+If the computer that runs the desktop app receives no other Claude Code managed settings, also set [`parentSettingsBehavior`](#parentsettingsbehavior) to `"merge"` in the managed settings that you create. On Windows, if you create a managed settings file, users also lose WSL sessions until you [allow them](https://code.claude.com/docs/en/admin-setup.md#wsl-sessions-in-claude-code-desktop). [Turn off scripts in SSH and WSL previews for your organization](https://code.claude.com/docs/en/desktop.md#turn-off-scripts-in-ssh-and-wsl-previews-for-your-organization) explains both and says where to set the key.
+
+This example shows the key alone, as you'd add it to managed settings that a computer already receives:
+
+```json managed-settings.json theme={null}
+{
+  "disableRemotePreviewScripts": true
+}
+```
+
+The desktop app ignores any other value, and a value that isn't a Boolean, such as the string `"true"` or `1`, also logs a warning.
 
 ### `enableArtifact`
 
