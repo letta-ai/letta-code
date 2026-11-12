@@ -146,11 +146,28 @@ function main(): void {
   );
 }
 
-function verifyUpgradePr(
+interface UpgradePullRequest {
+  author: { login: string };
+  body: string;
+  isDraft: boolean;
+  state: string;
+}
+
+export function verifyUpgradePr(
   prUrl: string,
   expectedRepo: string,
   expectedGithubLogin: string,
-  analysis: PiAiWatchAnalysis,
+  analysis: Pick<PiAiWatchAnalysis, "previous_version" | "current_version">,
+  getPull: (number: string, repo: string) => UpgradePullRequest = (number, repo) =>
+    ghJson<UpgradePullRequest>([
+      "pr",
+      "view",
+      number,
+      "--repo",
+      repo,
+      "--json",
+      "author,body,isDraft,state",
+    ]),
 ): void {
   const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)$/.exec(
     prUrl,
@@ -160,27 +177,14 @@ function verifyUpgradePr(
   if (`${owner}/${repo}` !== expectedRepo) {
     throw new Error(`pi-ai upgrade PR must belong to ${expectedRepo}`);
   }
-  const pull = ghJson<{
-    author: { login: string };
-    body: string;
-    isDraft: boolean;
-    state: string;
-  }>([
-    "pr",
-    "view",
-    number as string,
-    "--repo",
-    `${owner}/${repo}`,
-    "--json",
-    "author,body,isDraft,state",
-  ]);
+  const pull = getPull(number as string, `${owner}/${repo}`);
   const marker = `Pi-ai-watch: ${analysis.previous_version}...${analysis.current_version}`;
   if (pull.author.login !== expectedGithubLogin) {
     throw new Error(
       `pi-ai PR author ${pull.author.login} does not match ${expectedGithubLogin}`,
     );
   }
-  if (!pull.isDraft) throw new Error("pi-ai upgrade PR must be a draft");
+  if (pull.isDraft) throw new Error("pi-ai upgrade PR must be ready for review");
   if (pull.state !== "OPEN") throw new Error("pi-ai upgrade PR must be open");
   if (!pull.body.includes(marker)) {
     throw new Error(`pi-ai upgrade PR is missing marker: ${marker}`);
@@ -212,4 +216,4 @@ function defaultNotes(outcome: TrackerOutcome): string {
   }
 }
 
-main();
+if (import.meta.main) main();
