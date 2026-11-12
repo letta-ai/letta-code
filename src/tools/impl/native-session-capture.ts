@@ -15,6 +15,7 @@ import { getServerUrl, isCloudServerUrl } from "@/backend/api/server-url";
 import { debugWarn } from "@/utils/debug";
 
 import {
+  clearNativeSessionOwnersForTests,
   persistNativeSessionOwner,
   readNativeSessionOwner,
 } from "./native-session-owner";
@@ -870,6 +871,7 @@ export async function clearNativeSessionCaptureForTests(): Promise<void> {
   const captured = [...states.values()];
   states.clear();
   owners.clear();
+  clearNativeSessionOwnersForTests();
   for (const admission of admissions.values()) admission.release();
   admissions.clear();
   for (const state of captured) {
