@@ -21,6 +21,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextExecSessionId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -526,6 +527,8 @@ function markSessionFailed(session: ExecSession, detail: string): void {
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 
@@ -552,6 +555,8 @@ function markSessionClosed(
     scheduleBackgroundProcessCleanup(session.id);
   }
   notifyExecCompletion(session);
+  // Publish even when the notification was suppressed or deferred.
+  if (bgProcess) notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
   scheduleExecSessionCleanup(session.id);
 }
 

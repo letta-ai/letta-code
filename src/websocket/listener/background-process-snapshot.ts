@@ -18,6 +18,16 @@ function belongsToRuntime(
   );
 }
 
+/** Keep runtimes held only for running processes reported as Bash. */
+export function hasRunningBackgroundWork(
+  agentId: string,
+  conversationId: string,
+): boolean {
+  return buildBackgroundProcessSnapshot(agentId, conversationId).some(
+    (process) => process.kind === "bash",
+  );
+}
+
 export function buildBackgroundProcessSnapshot(
   agentId?: string | null,
   conversationId = "default",
@@ -31,9 +41,11 @@ export function buildBackgroundProcessSnapshot(
     backgroundProcesses.entries(),
   )
     .filter(
-      ([, proc]) =>
+      ([processId, proc]) =>
         proc.kind !== "monitor" &&
         proc.kind !== "workflow" &&
+        proc.kind !== "tool" &&
+        !processId.startsWith("code_mode_") &&
         proc.status === "running" &&
         (!runtimeScope || belongsToRuntime(proc, runtimeScope)),
     )

@@ -31,10 +31,10 @@ export function killBackgroundProcess(shell_id: string): boolean {
     clearBackgroundProcessCleanup(shell_id);
     if (retainsEntry) {
       scheduleBackgroundProcessCleanup(shell_id);
-      notifyBackgroundProcessStateChanged(proc.runtimeScope);
     } else {
       backgroundProcesses.delete(shell_id);
     }
+    notifyBackgroundProcessStateChanged(proc.runtimeScope);
     return true;
   } catch {
     proc.status = previousStatus;

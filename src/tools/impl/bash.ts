@@ -31,6 +31,7 @@ import {
   backgroundProcesses,
   createBackgroundOutputFile,
   getNextBashId,
+  notifyBackgroundProcessStateChanged,
   scheduleBackgroundProcessCleanup,
   scrubCompletedBackgroundOutput,
 } from "./process_manager.js";
@@ -582,6 +583,15 @@ export async function bash(args: BashArgs): Promise<BashResult> {
         status,
         detail,
       });
+      // The queue frame is emitted in a microtask. Publish completion after
+      // that frame so zero running shells cannot overtake the notification.
+      if (bgProcess.completionNotificationSuppressed) {
+        notifyBackgroundProcessStateChanged(bgProcess.runtimeScope);
+      } else {
+        queueMicrotask(() =>
+          notifyBackgroundProcessStateChanged(bgProcess.runtimeScope),
+        );
+      }
       scheduleBackgroundProcessCleanup(bashId);
     });
   };
