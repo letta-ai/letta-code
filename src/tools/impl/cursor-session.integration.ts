@@ -58,7 +58,8 @@ test("Cursor edits files, streams tool calls, and resumes history and checkout t
     onToolCall: (call) => tools.push(call.name),
   });
   expect(first.success, first.error).toBe(true);
-  expect(first.model).toBe(model);
+  // Cursor reports the Auto selection under its canonical "default" ID.
+  expect(first.model).toBe(model === "auto" ? "default" : model);
   expect(first.agentId).toBe(handle);
   expect(tools.length).toBeGreaterThan(0);
   expect((await readFile(join(cwd, "proof.txt"), "utf8")).trim()).toBe(
