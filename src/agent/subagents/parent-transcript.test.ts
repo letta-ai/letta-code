@@ -187,7 +187,7 @@ describe("renderParentTranscript", () => {
       JSON.parse(line),
     );
     expect(preview[2].text.length).toBeLessThan(4_100);
-    expect(preview[2].content_ref).toEqual({ seq: 3 });
+    expect(preview[2].truncated).toBe(true);
   });
 
   test("renders client-side tool results from approval responses", () => {
@@ -289,41 +289,7 @@ describe("selectRecentMessages", () => {
 });
 
 describe("fetchParentConversationMessages", () => {
-  test("pages newest-first with an after cursor until a short page", async () => {
-    const all = Array.from({ length: 250 }, (_, i) =>
-      msg({ id: `m${i}`, message_type: "user_message", content: `${i}` }),
-    );
-    all.reverse();
-    const calls: Array<Record<string, unknown>> = [];
-    const backend = {
-      listConversationMessages: async (
-        _conversationId: string,
-        body: Record<string, unknown>,
-      ) => {
-        calls.push(body);
-        const start = body.after
-          ? all.findIndex((m) => m.id === body.after) + 1
-          : 0;
-        const items = all.slice(start, start + (body.limit as number));
-        return { getPaginatedItems: () => items };
-      },
-    } as unknown as Pick<Backend, "listConversationMessages">;
-
-    const messages = await fetchParentConversationMessages({
-      backend,
-      agentId: "agent-parent",
-      conversationId: "default",
-    });
-
-    expect(messages.map((m) => m.id)).toEqual(
-      [...all].reverse().map((m) => m.id),
-    );
-    expect(calls.map((c) => c.after)).toEqual([undefined, "m150", "m50"]);
-    expect(calls.every((c) => c.order === "desc")).toBe(true);
-    expect(calls.every((c) => c.agent_id === "agent-parent")).toBe(true);
-  });
-
-  test("stops after ten pages and returns the newest 1,000 messages chronologically", async () => {
+  test("fetches one page and returns the newest 100 messages chronologically", async () => {
     const all = Array.from({ length: 5_082 }, (_, i) =>
       msg({ id: `m${i}`, message_type: "user_message", content: `${i}` }),
     );
@@ -350,7 +316,7 @@ describe("fetchParentConversationMessages", () => {
       conversationId: "default",
     });
 
-    expect(calls).toBe(10);
-    expect(messages).toEqual(all.slice(-1_000));
+    expect(calls).toBe(1);
+    expect(messages).toEqual(all.slice(-100));
   });
 });

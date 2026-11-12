@@ -12,8 +12,6 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 
 const PAGE_SIZE = 100;
-/** Ten API pages bound external worker startup independently of parent age. */
-export const PARENT_HISTORY_MESSAGE_LIMIT = 1_000;
 const SYSTEM_REMINDER_PATTERN =
   /<system-reminder>[\s\S]*?<\/system-reminder>\s*/g;
 
@@ -55,33 +53,36 @@ export async function fetchParentConversationMessages(params: {
   conversationId: string;
   signal?: AbortSignal;
 }): Promise<Message[]> {
-  const messages: Message[] = [];
-  let after: string | undefined;
-  for (;;) {
-    params.signal?.throwIfAborted();
-    const page = await params.backend.listConversationMessages(
+  params.signal?.throwIfAborted();
+  const page = await params.backend.listConversationMessages(
+    params.conversationId,
+    { agent_id: params.agentId, order: "desc", limit: PAGE_SIZE },
+    params.signal ? { signal: params.signal } : undefined,
+  );
+  return page.getPaginatedItems().reverse();
+}
+
+/** Compaction context is optional; unavailable summaries must not prevent launch. */
+export async function fetchParentCompactionSummary(params: {
+  backend: Pick<Backend, "retrieveConversation" | "retrieveMessage">;
+  conversationId: string;
+  signal?: AbortSignal;
+}): Promise<Message | undefined> {
+  try {
+    const options = params.signal ? { signal: params.signal } : undefined;
+    const conversation = await params.backend.retrieveConversation(
       params.conversationId,
-      {
-        agent_id: params.agentId,
-        order: "desc",
-        limit: PAGE_SIZE,
-        ...(after ? { after } : {}),
-      },
-      params.signal ? { signal: params.signal } : undefined,
+      options,
     );
-    const items = page.getPaginatedItems();
-    messages.push(...items);
-    if (
-      items.length < PAGE_SIZE ||
-      messages.length >= PARENT_HISTORY_MESSAGE_LIMIT
-    )
-      break;
-    const cursor = items[items.length - 1]?.id;
-    // A page whose cursor cannot advance would otherwise be fetched forever.
-    if (!cursor || cursor === after) break;
-    after = cursor;
+    const summaryId = conversation.in_context_message_ids?.[1];
+    if (!summaryId) return undefined;
+    const messages = await params.backend.retrieveMessage(summaryId, options);
+    return messages.find(
+      (message) => message.message_type === "summary_message",
+    );
+  } catch {
+    return undefined;
   }
-  return messages.reverse();
 }
 
 function contentText(content: unknown): string {
@@ -246,13 +247,12 @@ export function renderParentTranscript(messages: Message[]): ParentTranscript {
   };
 }
 
-/** Bound individual preview records; the full JSONL keeps their exact content. */
+/** Bound individual preview records; earlier content is available through the CLI. */
 export function previewParentTranscript(messages: string[]): string[] {
   return messages.map((line) => {
     const event = JSON.parse(line) as HistoryEvent & {
       seq: number;
       truncated?: boolean;
-      content_ref?: { seq: number };
     };
     for (const field of ["text", "arguments"] as const) {
       const text = event[field];
@@ -264,13 +264,12 @@ export function previewParentTranscript(messages: string[]): string[] {
           `${text.slice(0, 2_000)}\n[... omitted ...]\n${text.slice(-2_000)}`;
       } else continue;
       event.truncated = true;
-      event.content_ref = { seq: event.seq };
     }
     return serializeHistoryRecord(event);
   });
 }
 
-/** Keep a complete suffix of messages inline; preserve the remainder in a file. */
+/** Keep a complete suffix of messages within the inline character budget. */
 export function selectRecentMessages(
   messages: string[],
   maxChars: number,
