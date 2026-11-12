@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 
@@ -50,4 +50,12 @@ export function persistNativeSessionOwner(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
+}
+
+// Test-only: persisted owners otherwise outlive the in-memory reset.
+export function clearNativeSessionOwnersForTests(): void {
+  rmSync(join(resolveGlobalConfigDir(), "native-session-owners"), {
+    recursive: true,
+    force: true,
+  });
 }

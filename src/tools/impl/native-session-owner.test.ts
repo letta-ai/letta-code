@@ -9,6 +9,11 @@ import {
   rememberNativeSession,
 } from "./native-session-capture";
 
+import {
+  persistNativeSessionOwner,
+  readNativeSessionOwner,
+} from "./native-session-owner";
+
 test("native owner survives listener state loss and cannot be reassigned", async () => {
   const directory = mkdtempSync(join(tmpdir(), "session-owner-"));
   const previous = process.env.LETTA_CONFIG_DIR;
@@ -16,6 +21,7 @@ test("native owner survives listener state loss and cannot be reassigned", async
   const scope = { agentId: "agent-parent", conversationId: "conv-parent" };
   const sessionId = "11111111-1111-4111-8111-111111111111";
   try {
+    await clearNativeSessionCaptureForTests();
     for (const source of ["codex", "claude_code"] as const) {
       const nativeDir =
         source === "codex"
@@ -29,8 +35,8 @@ test("native owner survives listener state loss and cannot be reassigned", async
           : `${sessionId}.jsonl`,
       );
       writeFileSync(path, "{}\n");
-      rememberNativeSession(source, sessionId, scope, "http://localhost:8283");
-      await clearNativeSessionCaptureForTests();
+      persistNativeSessionOwner(source, sessionId, scope);
+      expect(readNativeSessionOwner(source, sessionId)).toEqual(scope);
       expect(getNativeSessionOwner(source, sessionId)).toEqual(scope);
       expect(
         await findNativeSessionPath(source, sessionId, { HOME: directory }),
