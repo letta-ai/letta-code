@@ -4,7 +4,7 @@
  * Letta subagents fork the parent conversation server-side; claude-code,
  * codex, cursor and opencode cannot, so they get a rendered transcript
  * instead. Preparation runs on the worker's execution host: recent messages
- * go inline and full history goes to a file when the preview omits content.
+ * go inline and the fetched tail goes to a file when the preview omits content.
  */
 
 import { randomUUID } from "node:crypto";
@@ -90,6 +90,8 @@ export async function prependParentContext(params: {
       "<parent_history>",
       serializeHistoryRecord({
         type: "metadata",
+        history_scope:
+          "Recent fetched tail only; total, shown and full_history_path refer to this tail, not the entire conversation.",
         conversation_id: params.parentConversationId,
         parent_agent_id: params.parentAgentId,
         shown: [total - recent.messageCount + 1, total],

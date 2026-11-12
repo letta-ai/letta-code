@@ -289,10 +289,11 @@ describe("selectRecentMessages", () => {
 });
 
 describe("fetchParentConversationMessages", () => {
-  test("pages oldest-first with an after cursor until a short page", async () => {
+  test("pages newest-first with an after cursor until a short page", async () => {
     const all = Array.from({ length: 250 }, (_, i) =>
       msg({ id: `m${i}`, message_type: "user_message", content: `${i}` }),
     );
+    all.reverse();
     const calls: Array<Record<string, unknown>> = [];
     const backend = {
       listConversationMessages: async (
@@ -314,9 +315,42 @@ describe("fetchParentConversationMessages", () => {
       conversationId: "default",
     });
 
-    expect(messages.map((m) => m.id)).toEqual(all.map((m) => m.id));
-    expect(calls.map((c) => c.after)).toEqual([undefined, "m99", "m199"]);
-    expect(calls.every((c) => c.order === "asc")).toBe(true);
+    expect(messages.map((m) => m.id)).toEqual(
+      [...all].reverse().map((m) => m.id),
+    );
+    expect(calls.map((c) => c.after)).toEqual([undefined, "m150", "m50"]);
+    expect(calls.every((c) => c.order === "desc")).toBe(true);
     expect(calls.every((c) => c.agent_id === "agent-parent")).toBe(true);
+  });
+
+  test("stops after ten pages and returns the newest 1,000 messages chronologically", async () => {
+    const all = Array.from({ length: 5_082 }, (_, i) =>
+      msg({ id: `m${i}`, message_type: "user_message", content: `${i}` }),
+    );
+    const descending = [...all].reverse();
+    let calls = 0;
+    const backend = {
+      listConversationMessages: async (
+        _conversationId: string,
+        body: Record<string, unknown>,
+      ) => {
+        calls++;
+        expect(body.order).toBe("desc");
+        const start = body.after
+          ? descending.findIndex((m) => m.id === body.after) + 1
+          : 0;
+        const items = descending.slice(start, start + (body.limit as number));
+        return { getPaginatedItems: () => items };
+      },
+    } as unknown as Pick<Backend, "listConversationMessages">;
+
+    const messages = await fetchParentConversationMessages({
+      backend,
+      agentId: "agent-parent",
+      conversationId: "default",
+    });
+
+    expect(calls).toBe(10);
+    expect(messages).toEqual(all.slice(-1_000));
   });
 });

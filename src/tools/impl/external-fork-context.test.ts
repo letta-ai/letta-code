@@ -13,7 +13,7 @@ function fakeBackend(messages: Array<Record<string, unknown>>) {
   return {
     listConversationMessages: async () => ({
       getPaginatedItems: () =>
-        messages.map((m, i) => ({ id: `m${i}`, date: "", ...m })),
+        messages.map((m, i) => ({ id: `m${i}`, date: "", ...m })).reverse(),
     }),
   } as unknown as Pick<Backend, "listConversationMessages">;
 }

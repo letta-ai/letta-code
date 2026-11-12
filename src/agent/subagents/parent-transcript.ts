@@ -12,6 +12,8 @@ import type { Message } from "@letta-ai/letta-client/resources/agents/messages";
 import type { Backend } from "@/backend";
 
 const PAGE_SIZE = 100;
+/** Ten API pages bound external worker startup independently of parent age. */
+export const PARENT_HISTORY_MESSAGE_LIMIT = 1_000;
 const SYSTEM_REMINDER_PATTERN =
   /<system-reminder>[\s\S]*?<\/system-reminder>\s*/g;
 
@@ -46,7 +48,7 @@ export function serializeHistoryRecord(record: unknown): string {
     .replace(/>/g, "\\u003e");
 }
 
-/** Page through a conversation oldest-first, skipping reasoning and system rows. */
+/** Fetch a bounded recent tail and return it in chronological order. */
 export async function fetchParentConversationMessages(params: {
   backend: Pick<Backend, "listConversationMessages">;
   agentId: string;
@@ -61,7 +63,7 @@ export async function fetchParentConversationMessages(params: {
       params.conversationId,
       {
         agent_id: params.agentId,
-        order: "asc",
+        order: "desc",
         limit: PAGE_SIZE,
         ...(after ? { after } : {}),
       },
@@ -69,13 +71,17 @@ export async function fetchParentConversationMessages(params: {
     );
     const items = page.getPaginatedItems();
     messages.push(...items);
-    if (items.length < PAGE_SIZE) break;
+    if (
+      items.length < PAGE_SIZE ||
+      messages.length >= PARENT_HISTORY_MESSAGE_LIMIT
+    )
+      break;
     const cursor = items[items.length - 1]?.id;
     // A page whose cursor cannot advance would otherwise be fetched forever.
     if (!cursor || cursor === after) break;
     after = cursor;
   }
-  return messages;
+  return messages.reverse();
 }
 
 function contentText(content: unknown): string {
