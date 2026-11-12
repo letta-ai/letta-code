@@ -98,7 +98,9 @@ export async function withMonitorState<T>(
         output_file: process?.outputFile ?? null,
       },
       actingUserId,
-    );
+    ).catch((persistenceError: unknown) => {
+      console.error("Failed to persist monitor state:", persistenceError);
+    });
     throw error;
   }
 }

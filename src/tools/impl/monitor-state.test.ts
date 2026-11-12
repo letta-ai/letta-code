@@ -189,6 +189,24 @@ test("local monitors do not contact the server", async () => {
   expect(requests).toHaveLength(0);
 });
 
+test("a failed cleanup write preserves the original startup error", async () => {
+  rejectUpdates = true;
+  await expect(
+    withMonitorState(
+      {
+        description: "Failed cleanup",
+        command: "unused",
+        kind: "command",
+        persistent: false,
+        parentScope: scope,
+      },
+      () => {
+        throw new Error("Original startup failure");
+      },
+    ),
+  ).rejects.toThrow("Original startup failure");
+});
+
 test("failure to persist startup metadata stops the newly launched source", async () => {
   rejectFirstPatch = true;
   await expect(
