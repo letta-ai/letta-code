@@ -6,9 +6,8 @@ import type {
   Model,
   SimpleStreamOptions,
   Tool,
-  TSchema,
 } from "@earendil-works/pi-ai";
-import { isContextOverflow, Type } from "@earendil-works/pi-ai";
+import { isContextOverflow } from "@earendil-works/pi-ai";
 
 import type { LocalCompactionStats } from "@/backend/local/compaction";
 import {
@@ -160,8 +159,8 @@ function toPiTools(clientTools: unknown[]): Tool[] | undefined {
   for (const value of clientTools) {
     if (!isClientTool(value)) continue;
     const schema = isRecord(value.parameters)
-      ? (value.parameters as unknown as TSchema)
-      : Type.Object({});
+      ? value.parameters
+      : { type: "object", properties: {} };
     tools.push({
       name: value.name,
       description: value.description ?? "",
@@ -254,6 +253,9 @@ function toPiMessage(message: LocalMessage): Message | undefined {
     model: message.model,
     ...(message.responseModel ? { responseModel: message.responseModel } : {}),
     ...(message.responseId ? { responseId: message.responseId } : {}),
+    ...(message.providerThinkingLevel
+      ? { providerThinkingLevel: message.providerThinkingLevel }
+      : {}),
     ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
     usage: message.usage,
     stopReason: message.stopReason,
@@ -439,6 +441,9 @@ function toLocalAssistantMessage(
     model: message.model,
     ...(message.responseModel ? { responseModel: message.responseModel } : {}),
     ...(message.responseId ? { responseId: message.responseId } : {}),
+    ...(message.providerThinkingLevel
+      ? { providerThinkingLevel: message.providerThinkingLevel }
+      : {}),
     ...(message.diagnostics ? { diagnostics: message.diagnostics } : {}),
     usage: message.usage ?? emptyLocalUsage(),
     stopReason: message.stopReason,
@@ -675,7 +680,14 @@ export class PiStreamAdapter implements ProviderStreamAdapter {
         options.onPayload,
       );
     }
-    if (resolved.model.api === "anthropic-messages") {
+    if (
+      resolved.model.api === "anthropic-messages" &&
+      (
+        resolved.model.compat as
+          | { supportsMidConvoEffort?: boolean }
+          | undefined
+      )?.supportsMidConvoEffort !== true
+    ) {
       if (
         resolved.model.id.includes("claude-fable-5") &&
         anthropicEffortForSettings(input.agent.model_settings) === "max"
