@@ -115,7 +115,7 @@ In-place editing is not available. To change a schedule, create and verify the r
 
 ## Timezones
 
-Verify the schedule timezone before converting a requested recurring time. State the conversion in your reply so the user can catch a wrong assumption.
+Recurring expressions (both `--cron` and the expression `--every` compiles to) are interpreted in **UTC**. Convert the user's requested time to UTC before writing the expression: 9am PDT is 16:00 UTC, so use `--cron "0 16 * * *"` (17:00 UTC during PST). State the conversion in your reply so the user can catch a wrong assumption.
 
 For a one-shot calendar request such as "tomorrow at 9am," resolve the date in the user's timezone and pass `--at` an RFC 3339 timestamp with an explicit offset. Infer a reasonable timezone from available context instead of asking a redundant follow-up. State the timezone you used in the confirmation (for example, "Scheduled for 9:00 AM PT") so the user can correct the assumption. A bare clock such as `--at "9:00am"` uses the current process timezone, which may be UTC; use it only when that is the intended timezone. Relative values such as `--at "in 45m"` do not need a timezone.
 
@@ -131,7 +131,7 @@ letta cron add \
   --cron "0 16 * * *"
 ```
 
-Use `--cron` for a specific time of day, converting to the schedule timezone first.
+Note: `--every 1d` fires daily at midnight UTC, so use `--cron` for a specific time of day, converting the user's time to UTC first.
 
 ### "Check on the deploy in 30 minutes"
 
@@ -205,7 +205,7 @@ For `--cron`, use numeric 5-field cron syntax (named days/months, seconds, `?`, 
 * * * * *
 ```
 
-Common patterns (in the schedule timezone):
+Common patterns (UTC):
 - `*/5 * * * *` — every 5 minutes
 - `0 */2 * * *` — every 2 hours
 - `0 9 * * *` — daily at 9:00 UTC
