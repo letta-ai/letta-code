@@ -30,7 +30,9 @@ export async function createMonitorState(
   if ("error" in placement) throw new Error(placement.error);
   if (placement.runner === "local") return undefined;
   if (!scope)
-    throw new Error("Cloud monitor requires an agent and conversation scope");
+    throw new Error(
+      "Monitor needs an agent and conversation. Start it from a conversation.",
+    );
   const record = await createMonitorRecord(
     {
       ...fields,
@@ -41,7 +43,7 @@ export async function createMonitorState(
     actingUserId,
   ).catch((error: unknown) => {
     throw new Error(
-      `Cloud monitor storage is unavailable: ${getErrorMessage(error)}. No local monitor was started.`,
+      `Couldn't save the monitor: ${getErrorMessage(error)}. Retry.`,
     );
   });
   const state: PersistedMonitor = {

@@ -160,7 +160,9 @@ test("registered Cloud listeners persist Monitor state and unavailable Cloud rou
   monitorUnavailable = true;
   await expect(
     runWithRuntimeContext(context, () => monitor(input)),
-  ).rejects.toThrow("Cloud monitor storage is unavailable");
+  ).rejects.toThrow(
+    "Couldn't save the monitor: monitor route unavailable. Retry.",
+  );
   expect(
     [...backgroundProcesses.values()].some(
       (process) => process.status === "running",
