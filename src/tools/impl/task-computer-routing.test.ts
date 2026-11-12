@@ -147,7 +147,7 @@ function toolError(result: Awaited<ReturnType<typeof task>>): string {
 
 describe("task computer routing", () => {
   test.each(["reviewer", "custom"])(
-    "the %s preset ignores optional launch overrides",
+    "the %s preset preserves computer and ignores other launch overrides",
     async (subagent_type) => {
       const result = await task({
         ...launchArgs,
@@ -155,7 +155,7 @@ describe("task computer routing", () => {
         harness: "codex",
         fork_context: true,
         model: "ignored-model",
-        computer: "ignored-computer",
+        computer: "office-mac",
         agent_id: "ignored-agent",
         conversation_id: "ignored-conversation",
         mcp: { inherit: false },
@@ -168,7 +168,7 @@ describe("task computer routing", () => {
         undefined,
       ]);
       expect(spawn.mock.calls[0]?.slice(5, 7)).toEqual([undefined, undefined]);
-      expect(receivedEnvironment).toBeUndefined();
+      expect(receivedEnvironment).toBe("office-mac");
       expect(forkConversation).not.toHaveBeenCalled();
     },
   );
