@@ -320,6 +320,8 @@ export async function prepareToolExecutionContextForScope(params: {
   /** Foreground yield from the runtime tool policy; unset uses the default. */
   foregroundYieldMs?: number;
   cachedAgent?: AgentState | null;
+  /** Caller-owned retry/lease policy, applied only to scope metadata reads. */
+  readScopeState?: <T>(read: () => Promise<T>) => Promise<T>;
   modContext?: ModContext;
   shouldEnqueueBackground?: () => Promise<boolean>;
   modEvents?: ModEvents;
@@ -363,16 +365,19 @@ export async function prepareToolExecutionContextForScope(params: {
       getStoredClientPreferences(agentId, conversationId).toolset,
     );
   const backend = getBackend();
+  const readScopeState = params.readScopeState ?? ((read) => read());
   const agent = agentId
     ? ((cachedAgent ??
-        (await backend.retrieveAgent(agentId))) as ScopeModelCarrier)
+        (await readScopeState(() =>
+          backend.retrieveAgent(agentId),
+        ))) as ScopeModelCarrier)
     : null;
   const agentTarget = modelTargetFromCarrier(agent);
   const conversationTarget =
     conversationId && conversationId !== "default"
       ? modelTargetFromCarrier(
-          (await backend.retrieveConversation(
-            conversationId,
+          (await readScopeState(() =>
+            backend.retrieveConversation(conversationId),
           )) as ScopeModelCarrier,
         )
       : { model: null, providerType: null, openAICompatibleProxy: false };
