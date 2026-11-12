@@ -70,6 +70,7 @@ interface ExecCommandArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
 }
 
@@ -387,13 +388,14 @@ function buildExplicitShellLauncher(
 
 function buildExecLaunchers(args: ExecCommandArgs): string[][] {
   const login = args.login ?? true;
-  const envAliases = args.secretEnv ? Object.keys(args.secretEnv) : undefined;
+  const envAliases =
+    args.secretEnv || args.variableEnv
+      ? Object.keys({ ...args.variableEnv, ...args.secretEnv })
+      : undefined;
   if (!args.shell?.trim() || isPowerShell(args.shell)) {
     assertSafeWindowsCommand(args.cmd, {
       cwd: resolveShellWorkdir(args.workdir),
-      env: args.secretEnv
-        ? { ...getShellEnv(), ...args.secretEnv }
-        : getShellEnv(),
+      env: { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv },
     });
   }
   if (args.shell?.trim()) {
@@ -621,7 +623,7 @@ async function startExecSession(args: ExecCommandArgs): Promise<ExecSession> {
   const id = getNextExecSessionId();
   const outputFile = createBackgroundOutputFile(`exec_${id}`);
   const cwd = resolveShellWorkdir(args.workdir);
-  const env = { ...getShellEnv(), ...(args.secretEnv ?? {}) };
+  const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   const redactions = captureSecretRedactions(
     args.parentScope?.agentId,
     args.secretEnv ?? {},

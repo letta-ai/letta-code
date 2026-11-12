@@ -20,6 +20,7 @@ import {
 } from "./catalog";
 import { evaluateDiskSpaceReminder } from "./disk-space";
 import type { SessionContextReason, SharedReminderState } from "./state";
+import { buildVariablesInfoReminder } from "./variables";
 
 export interface AgentReminderContext {
   id: string;
@@ -151,7 +152,7 @@ async function buildSecretsInfoReminder(
       process.platform === "win32"
         ? "`$env:API_KEY = $API_KEY; python script.py`\n`$env:API_KEY = $API_KEY; bun run script.ts`"
         : '`API_KEY="$API_KEY" python3 script.py`\n`API_KEY="$API_KEY" bun run script.ts`';
-    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen a shell command contains \`$NAME\`, the harness loads the matching secret into the child shell's environment; it does not rewrite the command text. The shell expands \`$NAME\` at execution time. If a program needs a secret but the command would not otherwise reference it, include it on the launch line so the harness can detect it:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\` when a value was injected and then scrubbed from model-visible output. An empty direct \`$NAME\` expansion means that secret was not available to that invocation; do not describe it as command-string replacement.\n${SYSTEM_REMINDER_CLOSE}`;
+    return `${SYSTEM_REMINDER_OPEN}\n${intro}\n${list}\n\nWhen a shell command contains \`$NAME\`, the harness loads the matching secret into the child shell's environment; it does not rewrite the command text. The shell expands \`$NAME\` at execution time. If a program needs a secret but the command would not otherwise reference it, include it on the launch line so the harness can detect it:\n\n${launchExamples}\n\nInside the program, read it normally with \`os.environ["API_KEY"]\` or \`process.env.API_KEY\`.\n\nYou cannot read secret values. Tool output shows \`NAME=<REDACTED>\` when a value was injected and then scrubbed from model-visible output. An empty direct \`$NAME\` expansion means that secret was not available to that invocation; do not describe it as command-string replacement.\n\nA secret's value is redacted wherever it appears in context, so store only credentials as secrets. Put usernames, emails, URLs and other non-sensitive values in variables (\`letta variable set\`), which you can read and which are never redacted.\n${SYSTEM_REMINDER_CLOSE}`;
   } catch (error) {
     debugLog(
       "secrets",
@@ -541,6 +542,7 @@ export const sharedReminderProviders: Record<
   "agent-info": buildAgentInfoReminder,
   "conversation-bootstrap": buildConversationBootstrapReminderPart,
   "secrets-info": buildSecretsInfoReminder,
+  "variables-info": buildVariablesInfoReminder,
   "mcp-servers-info": buildMcpServersInfoReminder,
   "session-context": buildSessionContextReminder,
   "permission-mode": buildPermissionModeReminder,

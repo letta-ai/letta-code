@@ -324,6 +324,7 @@ interface BashArgs {
   signal?: AbortSignal;
   onOutput?: (chunk: string, stream: "stdout" | "stderr") => void;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   /** Test-only override; not exposed in the Bash tool schema. */
   foregroundYieldMs?: number;
@@ -346,10 +347,11 @@ export async function bash(args: BashArgs): Promise<BashResult> {
     run_in_background = false,
     signal,
     onOutput,
-    secretEnv,
+    secretEnv: invocationSecrets,
     parentScope,
     foregroundYieldMs = resolveForegroundYieldMs(),
   } = args;
+  const secretEnv = { ...args.variableEnv, ...invocationSecrets };
   const userCwd = getCurrentWorkingDirectory();
   assertSafeWindowsCommand(command, {
     cwd: userCwd,
@@ -357,7 +359,7 @@ export async function bash(args: BashArgs): Promise<BashResult> {
   });
   const redactions = captureSecretRedactions(
     parentScope?.agentId,
-    secretEnv ?? {},
+    invocationSecrets ?? {},
   );
   const sanitizeOutput = (text: string) =>
     scrubSecretsFromString(text, redactions);

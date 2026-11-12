@@ -80,6 +80,7 @@ interface MonitorArgs {
   backup_after_seconds?: number;
   backup_prompt?: string;
   secretEnv?: Record<string, string>;
+  variableEnv?: Record<string, string>;
   parentScope?: { agentId: string; conversationId: string };
   signal?: AbortSignal;
 }
@@ -444,12 +445,13 @@ function startCommandMonitor(args: NormalizedMonitorArgs): MonitorResult {
   assertBackgroundProcessCapacity();
   const command = args.command as string;
   const cwd = getCurrentWorkingDirectory();
-  const env = args.secretEnv
-    ? { ...getShellEnv(), ...args.secretEnv }
-    : getShellEnv();
+  const env = { ...getShellEnv(), ...args.variableEnv, ...args.secretEnv };
   assertSafeWindowsCommand(command, { cwd, env });
   const commandToRun = withStrictShellPrelude(command, env);
-  const launcher = getBackgroundLauncher(commandToRun, env, args.secretEnv);
+  const launcher = getBackgroundLauncher(commandToRun, env, {
+    ...args.variableEnv,
+    ...args.secretEnv,
+  });
   if (!launcher[0]) {
     throw new Error("No shell available");
   }
