@@ -129,8 +129,33 @@ async function defaultResolveComputer(computer: string, scope: ParentScope) {
     return resolveEnvironmentConnectionId(computer);
 
   const client = await getClient();
-  const createParams = { agent_id: scope.agentId, hidden: true };
-  const conversation = await client.conversations.create(createParams);
+  const parentConversationId =
+    scope.conversationId && scope.conversationId !== "default"
+      ? scope.conversationId
+      : undefined;
+  // The SDK forwards extra request fields until its types include ancestry.
+  const createParams = {
+    agent_id: scope.agentId,
+    hidden: true,
+    ...(parentConversationId
+      ? { parent_conversation_id: parentConversationId }
+      : {}),
+  };
+  const conversation = await client.conversations
+    .create(createParams)
+    .catch((error: unknown) => {
+      if (
+        !parentConversationId ||
+        !error ||
+        typeof error !== "object" ||
+        !("status" in error) ||
+        error.status !== 403
+      ) {
+        throw error;
+      }
+      const fallbackParams = { agent_id: scope.agentId, hidden: true };
+      return client.conversations.create(fallbackParams);
+    });
   return resolveAgentSandboxConnectionId(scope.agentId, {
     conversationId: conversation.id,
   });
