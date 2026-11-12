@@ -373,6 +373,7 @@ export async function prepareListenerTurn(params: {
     suppressActingUserFallback: msg.suppressActingUserFallback,
     mcpOriginatorSuperRunId: getEffectiveMcpOriginatorId(msg),
     resolveClientMessageIds,
+    turnStartedAt: msg.receivedAt,
     externalToolOwnerConnectionId: toolOwner.connectionId,
     clientToolset: toolSelection.clientToolset,
     clientToolAllowlist: toolSelection.clientToolAllowlist,

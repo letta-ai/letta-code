@@ -92,6 +92,8 @@ export type SyncReplayOptions = {
 };
 
 export interface IncomingMessage {
+  /** Epoch milliseconds when this input arrived at the listener. */
+  receivedAt?: number;
   type: "message";
   /**
    * Transport connection that delivered this message. Queueing carries this
