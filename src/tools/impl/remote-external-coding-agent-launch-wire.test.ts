@@ -77,7 +77,11 @@ function captureTelemetry() {
 
 function launch(
   client: AppServerClient,
-  options: { forkContext?: boolean; externalForkContext?: boolean } = {},
+  options: {
+    forkContext?: boolean;
+    externalForkContext?: boolean;
+    lettaCodeVersion?: string;
+  } = {},
 ) {
   return launchRemoteExternalCodingAgent(
     {
@@ -95,7 +99,13 @@ function launch(
       },
       resolveComputer: async () => ({
         connectionId: "conn-test",
-        environment: environment(options.externalForkContext ?? true),
+        environment: {
+          ...environment(options.externalForkContext ?? true),
+          metadata: {
+            ...environment(options.externalForkContext ?? true).metadata,
+            lettaCodeVersion: options.lettaCodeVersion,
+          },
+        },
       }),
       connect: async () => client,
     },
@@ -119,6 +129,24 @@ test.each([
   const received = toSubagentLaunchArgs(wire);
   expect(received.harness).toBe("claude-code");
   expect(shouldForkTaskContext(received)).toBe(options.forkContext === true);
+});
+
+test("a 0.34.51 listener receives an explicit no-fork launch", async () => {
+  captureTelemetry();
+  const computer = refusingComputer();
+  await launch(computer.client, {
+    forkContext: false,
+    externalForkContext: false,
+    lettaCodeVersion: "0.34.51",
+  });
+  const wire = computer.launches[0]?.args;
+  if (!wire) throw new Error("No launch was sent");
+  // Older listeners do not apply today's legacy no-fork mapping.
+  expect(wire.fork_context).toBe(false);
+  const received = toSubagentLaunchArgs(wire);
+  expect(received.harness).toBe("claude-code");
+  expect(received.fork_context).toBe(false);
+  expect(shouldForkTaskContext(received)).toBe(false);
 });
 
 test("a refused launch is reported with only its stage, status, and IDs", async () => {

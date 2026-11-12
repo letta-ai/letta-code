@@ -35,6 +35,7 @@ import type {
   SubagentLaunchResult,
   SubagentStartupErrorCode,
 } from "@/types/subagent-protocol";
+import { compareSemver } from "@/utils/version";
 import {
   createExternalCodingAgentConfig,
   type ExternalCodingAgentMcpOptions,
@@ -454,6 +455,11 @@ export async function launchRemoteExternalCodingAgent(
         "outdated_computer",
         `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
       );
+    sendsForkContext ||=
+      (compareSemver(
+        resolved.environment.metadata?.lettaCodeVersion ?? "",
+        "0.34.40",
+      ) ?? -1) >= 0;
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
@@ -491,10 +497,10 @@ export async function launchRemoteExternalCodingAgent(
           : {}),
       },
       args: {
-        // Listeners that advertise `external_fork_context` accept `harness`
-        // and default an omitted `fork_context` to a fork, so send the
-        // caller's choice explicitly. Older listeners accept only
-        // `subagent_type`, which they never fork.
+        // Listeners since 0.34.40 accept `harness` and `fork_context`, even
+        // before advertising `external_fork_context`. Send the choice explicitly
+        // so versions that fork by default preserve a no-fork launch.
+        // Older or unrecognized listeners keep the legacy `subagent_type` wire.
         ...(sendsForkContext
           ? { harness: type, fork_context: params.forkContext === true }
           : { subagent_type: type }),
