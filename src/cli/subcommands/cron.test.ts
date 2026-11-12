@@ -614,6 +614,8 @@ describe("cron add execution targeting", () => {
   });
 
   test("Desktop execution still creates a local schedule", async () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
     const originalDesktopMode = process.env.LETTA_DESKTOP_MODE;
     process.env.LETTA_DESKTOP_MODE = "1";
     const home = mkdtempSync(join(tmpdir(), "letta-cron-local-test-"));
@@ -629,7 +631,10 @@ describe("cron add execution targeting", () => {
         requests.some((request) => request.pathname.includes("/schedule")),
       ).toBe(false);
       expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
+      expect(listTasks()).toMatchObject([{ timezone: "UTC" }]);
     } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
       if (originalDesktopMode === undefined)
         delete process.env.LETTA_DESKTOP_MODE;
       else process.env.LETTA_DESKTOP_MODE = originalDesktopMode;

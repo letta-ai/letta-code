@@ -284,6 +284,7 @@ async function handleAdd(values: CronArgValues): Promise<number> {
       recurring,
       prompt,
       scheduled_for: scheduledFor,
+      timezone: "UTC",
     });
 
     const output: Record<string, unknown> = {
