@@ -13,7 +13,10 @@ import Letta, {
   APIConnectionTimeoutError,
 } from "@letta-ai/letta-client";
 import { __testOverrideGetClient } from "@/backend/api/client";
-import { setConfiguredBackendMode } from "@/backend/backend-mode";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { telemetry } from "@/telemetry";
 import {
   type CloudSnapshotResponse,
@@ -173,10 +176,13 @@ function rateLimited(retryAt: string, stale: boolean) {
 }
 
 let trackError: ReturnType<typeof spyOn<typeof telemetry, "trackError">>;
+let previousBackendMode = resolveBackendMode();
 beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
   trackError = spyOn(telemetry, "trackError").mockImplementation(() => {});
 });
 afterEach(() => {
+  setConfiguredBackendMode(previousBackendMode);
   trackError.mockRestore();
   __testOverrideGetClient(null);
 });
@@ -432,6 +438,7 @@ describe("Cloud snapshot fetcher", () => {
   });
 
   test("a background watch stays running during cooldown without poll-error output", async () => {
+    setConfiguredBackendMode("local");
     let requests = 0;
     let report!: () => void;
     const reported = new Promise<void>((resolve) => {
