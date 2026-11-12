@@ -312,7 +312,7 @@ describe("cron add execution targeting", () => {
       expect(
         requests.find((request) => request.method === "POST")?.body,
       ).toMatchObject({ target_device_id: "registered-device" });
-      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "cloud" });
+      expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
@@ -342,12 +342,12 @@ describe("cron add execution targeting", () => {
         const created = requests.find((request) => request.method === "POST");
         if (scheduleRoutesStatus) {
           expect(created).toBeUndefined();
-          expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+          expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
         } else {
           expect(created?.body).toMatchObject({
             target_device_id: "listener-device",
           });
-          expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "cloud" });
+          expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
         }
       }
     } finally {
@@ -422,7 +422,6 @@ describe("cron add execution targeting", () => {
       expect(JSON.parse(logs.at(-1) ?? "[]")).toEqual([
         expect.objectContaining({
           id: "legacy-cloud-schedule",
-          runner: "cloud",
         }),
       ]);
 
@@ -436,7 +435,6 @@ describe("cron add execution targeting", () => {
       ).toBe(0);
       expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
         deleted: "legacy-cloud-schedule",
-        runner: "cloud",
       });
       expect(
         requests.some(
@@ -595,7 +593,7 @@ describe("cron add execution targeting", () => {
             runCronSubcommand(addArgs),
           ),
         ).toBe(1);
-        expect(errors.join("\n")).toContain("computer must be registered");
+        expect(errors.join("\n")).toContain("Register this computer");
         expect(requests.some((request) => request.method === "POST")).toBe(
           false,
         );
@@ -607,7 +605,7 @@ describe("cron add execution targeting", () => {
         scheduleRoutesStatus: 404,
       });
       expect(await runCronSubcommand(addArgs)).toBe(1);
-      expect(errors.join("\n")).toContain("Cloud schedules are unavailable");
+      expect(errors.join("\n")).toContain("Scheduling is unavailable");
       expect(requests.some((request) => request.method === "POST")).toBe(false);
       expect(listTasks()).toEqual([]);
     } finally {
@@ -630,7 +628,7 @@ describe("cron add execution targeting", () => {
       expect(
         requests.some((request) => request.pathname.includes("/schedule")),
       ).toBe(false);
-      expect(JSON.parse(logs.join(""))).toMatchObject({ runner: "local" });
+      expect(JSON.parse(logs.join(""))).not.toHaveProperty("runner");
     } finally {
       if (originalDesktopMode === undefined)
         delete process.env.LETTA_DESKTOP_MODE;

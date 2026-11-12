@@ -38,7 +38,7 @@ describe("resolveCronRunner", () => {
     });
     expect(result).toEqual({
       error:
-        "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
+        "Scheduling is unavailable. Check the server connection, then retry.",
     });
   });
 
@@ -170,7 +170,7 @@ describe("validateTargetDevice", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error).toContain("Omit --computer");
+      expect(result.error).toContain("letta computers list");
     }
   });
 
@@ -189,7 +189,7 @@ describe("validateTargetDevice", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain("letta server");
-      expect(result.error).toContain("local desktop connection");
+      expect(result.error).toContain("not connected to your account");
     }
   });
 });

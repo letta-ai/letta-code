@@ -53,14 +53,13 @@ export function resolveCronRunner(
   if (managedCloudSandbox) {
     if (backendMode === "local") {
       return {
-        error:
-          "Managed Cloud sandboxes cannot use the local backend for schedules.",
+        error: "Scheduling requires the API backend. Configure it, then retry.",
       };
     }
     if (cloudSchedulesSupported === false) {
       return {
         error:
-          "Cloud schedules are unavailable in this managed Cloud sandbox. No local schedule was created.",
+          "Scheduling is unavailable. Check the server connection, then retry.",
       };
     }
     return { runner: "cloud", reason: "managed Cloud sandbox" };
@@ -73,7 +72,7 @@ export function resolveCronRunner(
       ? { runner: "local", reason: "server has no schedule routes" }
       : {
           error:
-            "Cloud schedules are unavailable. No local schedule was created.",
+            "Scheduling is unavailable. Check the server connection, then retry.",
         };
   }
   if (params.listenerDeviceId) {
@@ -84,8 +83,7 @@ export function resolveCronRunner(
     };
   }
   return {
-    error:
-      "This computer must be registered with Letta Cloud before scheduling. Connect it with `letta server`, then retry. No local schedule was created.",
+    error: "Register this computer with `letta server`, then retry.",
   };
 }
 
@@ -100,14 +98,14 @@ function allowsLocalCloudSchedules(): boolean {
 /** Guard the legacy local scheduler and protocol mutations without altering inventory. */
 export function getLocalCronExecutionError(action = "run"): string | undefined {
   if (isManagedCloudSandbox()) {
-    return `Local schedules cannot ${action === "run" ? "run" : `be ${action}`} in a managed Cloud sandbox`;
+    return `This schedule cannot ${action === "run" ? "run" : `be ${action}`} here. Create a replacement with Wake or letta cron.`;
   }
   if (
     resolveBackendMode() === "api" &&
     isCloudServerUrl() &&
     !allowsLocalCloudSchedules()
   ) {
-    return `Local schedules cannot ${action === "run" ? "run" : `be ${action}`} in this Cloud runtime. Register this computer with Letta Cloud and use Wake or letta cron to create a Cloud schedule.`;
+    return `This schedule cannot ${action === "run" ? "run" : `be ${action}`} here. Create a replacement with Wake or letta cron.`;
   }
   return undefined;
 }
@@ -206,8 +204,7 @@ export function validateTargetDevice(
   if (deviceId === SYNTHETIC_CLOUD_DEVICE_ID) {
     return {
       ok: false,
-      error:
-        '"Cloud" is not a computer. Omit --computer to run in the agent\'s Cloud sandbox.',
+      error: "Choose a computer from `letta computers list`.",
     };
   }
 
@@ -215,14 +212,14 @@ export function validateTargetDevice(
     return {
       ok: false,
       error:
-        '"local" is a placeholder entry, not a connected computer. Run `letta server` on the machine you want to target, then use its deviceId.',
+        "Choose a connected computer from `letta computers list`. Run `letta server` on that computer to connect it.",
     };
   }
 
   if (environment?.organizationId === "local") {
     return {
       ok: false,
-      error: `Device ${deviceId} is this computer's local desktop connection, not a computer connected to your Letta account. Cloud schedules can only target connected computers — run \`letta server\` on that machine to connect it.`,
+      error: `Device ${deviceId} is not connected to your account. Run \`letta server\` on that computer to connect it.`,
     };
   }
 
@@ -320,8 +317,7 @@ export async function resolveCronCreatePlacement(params: {
   const targetDeviceId = params.targetDeviceId?.trim() || undefined;
   if (targetDeviceId && resolved.runner !== "cloud") {
     return {
-      error:
-        "--computer requires Cloud schedules on a managed Cloud sandbox or registered listener. Run the schedule on this computer instead.",
+      error: "--computer isn't available here.",
     };
   }
 
@@ -391,7 +387,7 @@ export interface BuiltCloudSchedule {
  * yet (LET-9815). Surface that so agents/users aren't surprised.
  */
 export const CLOUD_CRON_UTC_NOTE =
-  "Recurring Cloud schedules currently interpret cron expressions in UTC (timezone support is tracked in LET-9815).";
+  "Recurring schedules interpret cron expressions in UTC.";
 
 export const CLOUD_DEVICE_OFFLINE_NOTE =
   "If the target computer is offline when the schedule fires, that occurrence fails (TARGET_DEVICE_UNAVAILABLE) and does not run.";
@@ -408,7 +404,7 @@ export function buildCloudScheduleInput(
   } else {
     const scheduledAt = params.scheduledFor?.getTime();
     if (!scheduledAt || Number.isNaN(scheduledAt)) {
-      throw new Error("One-shot Cloud schedules require a resolved --at time.");
+      throw new Error("One-shot schedules require a resolved --at time.");
     }
     schedule = { type: "one-time", scheduled_at: scheduledAt };
   }

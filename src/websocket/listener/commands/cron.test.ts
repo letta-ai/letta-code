@@ -78,7 +78,9 @@ test("managed Cloud sandbox rejects local schedule creation", async () => {
       type: "cron_add_response",
       request_id: "add-1",
       success: false,
-      error: expect.stringContaining("managed Cloud sandbox"),
+      error: expect.stringContaining(
+        "Create a replacement with Wake or letta cron",
+      ),
     }),
   ]);
 });
