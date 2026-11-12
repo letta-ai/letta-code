@@ -18,6 +18,7 @@ import type {
 export interface SdkSpawnerConfig {
   parentAgentId: string;
   model: string;
+  parentModelHandle?: string | null;
   resolveModel?: (identifier: string) => string | null;
   allowedTools?: string[];
   parentToolNames?: string[];
@@ -316,8 +317,19 @@ function buildQueryOptions(
   ]
     .filter(Boolean)
     .join("\n\n");
+  const parentModel =
+    config.parentModelHandle === undefined
+      ? config.model
+      : config.parentModelHandle;
+  const inheritParent = !options.conversationId && model === parentModel;
+  const parentSettings = inheritParent ? config.parentModelSettings : undefined;
+  const inheritedSettings = options.model
+    ? parentSettings?.max_output_tokens !== undefined
+      ? { max_output_tokens: parentSettings.max_output_tokens }
+      : undefined
+    : parentSettings;
   const modelSettings = {
-    ...(!options.model ? config.parentModelSettings : {}),
+    ...inheritedSettings,
     ...(options.effort ? { reasoning_effort: options.effort } : {}),
   };
   const explicitAllowedTools = options.allowedTools ?? config.allowedTools;
@@ -377,7 +389,7 @@ function buildQueryOptions(
     ...(config.cwd ? { cwd: config.cwd } : {}),
     disableMemoryGuard: true,
     ...(Object.keys(modelSettings).length > 0 ? { modelSettings } : {}),
-    ...(!options.model && config.parentContextWindowLimit !== undefined
+    ...(inheritParent && config.parentContextWindowLimit !== undefined
       ? { contextWindowLimit: config.parentContextWindowLimit }
       : {}),
   };
