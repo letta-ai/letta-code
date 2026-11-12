@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
+import * as monitorApi from "@/backend/api/monitors";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   executeTool,
@@ -73,6 +74,17 @@ describe("Monitor", () => {
   }
 
   beforeEach(() => {
+    spyOn(monitorApi, "createMonitorRecord").mockImplementation(
+      async (input) => ({
+        ...input,
+        monitor_id: `monitor_${crypto.randomUUID()}`,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }),
+    );
+    spyOn(monitorApi, "updateMonitorRecord").mockResolvedValue(
+      {} as monitorApi.CloudMonitor,
+    );
     previousManagedCloud = process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     previousScratchpad = process.env.LETTA_SCRATCHPAD;
@@ -85,6 +97,8 @@ describe("Monitor", () => {
   });
 
   afterEach(() => {
+    (monitorApi.createMonitorRecord as ReturnType<typeof spyOn>).mockRestore();
+    (monitorApi.updateMonitorRecord as ReturnType<typeof spyOn>).mockRestore();
     if (previousManagedCloud === undefined) {
       delete process.env.LETTA_MANAGED_CLOUD_RUNTIME;
     } else {
@@ -194,6 +208,7 @@ describe("Monitor", () => {
     process.env.LETTA_MANAGED_CLOUD_RUNTIME = "1";
     const result = await monitor({
       description: "short Cloud watch",
+      parentScope: { agentId: "agent-cloud", conversationId: "conv-cloud" },
       command: nodeCommand("setInterval(() => {}, 1000)"),
       timeout_ms: 1000,
     });

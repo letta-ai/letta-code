@@ -5,6 +5,7 @@ import type {
 import { addToMessageQueue } from "@/utils/message-queue-bridge";
 import { formatMonitorEventNotification } from "@/utils/task-notifications";
 import { killBackgroundProcess } from "./kill-bash";
+import { flushMonitorState } from "./monitor-state";
 import { backgroundProcesses } from "./process_manager";
 
 export async function stopMonitor(
@@ -31,11 +32,15 @@ export async function stopMonitor(
       error: "Monitor does not belong to this conversation",
     };
   }
-  if (process.status !== "running") return { ...response, success: true };
+  if (process.status !== "running") {
+    await flushMonitorState(command.process_id);
+    return { ...response, success: true };
+  }
 
   if (!killBackgroundProcess(command.process_id))
     return { ...response, error: "Monitor could not be stopped" };
 
+  await flushMonitorState(command.process_id);
   addToMessageQueue({
     kind: "task_notification",
     agentId: command.runtime.agent_id,

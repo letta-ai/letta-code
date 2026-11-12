@@ -7,6 +7,7 @@ import { stopClaudeSession } from "./claude-stream-session";
 import { stopCodexSession } from "./codex-app-server";
 import { parseExternalCodingAgentId } from "./external-coding-agent.js";
 import { killBackgroundProcess } from "./kill-bash.js";
+import { flushMonitorState } from "./monitor-state";
 import { isCloudMonitorId, stopCloudUrlMonitor } from "./monitor-url-cloud";
 import {
   type BackgroundTask,
@@ -282,6 +283,7 @@ export async function task_stop(
     return (deps.stopCloudMonitor ?? stopCloudUrlMonitor)(task_id);
   }
   const killed = killBackgroundProcess(task_id);
+  if (process?.kind === "monitor") await flushMonitorState(task_id);
   return {
     killed,
     ...(killed && process?.kind === "tool" ? { output: "Stopped" } : {}),
