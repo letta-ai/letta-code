@@ -1,9 +1,21 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type WebSocket, WebSocketServer } from "ws";
+import {
+  resolveBackendMode,
+  setConfiguredBackendMode,
+} from "@/backend/backend-mode";
 import { bash } from "@/tools/impl/bash";
+
+let previousBackendMode = resolveBackendMode();
+beforeEach(() => {
+  previousBackendMode = resolveBackendMode();
+  setConfiguredBackendMode("local");
+});
+afterEach(() => setConfiguredBackendMode(previousBackendMode));
+
 import { monitor } from "@/tools/impl/monitor";
 import { MONITOR_EVENT_BATCH_MS } from "@/tools/impl/monitor-event-stream";
 import {
