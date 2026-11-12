@@ -7,66 +7,26 @@ import type { SdkClient } from "@/tools/workflow/types";
 
 setupRuntimeModelCatalogFixture();
 
+const MODEL = "openai/gpt-5.6-luna";
 describe("workflow parent limit forwarding", () => {
+  // Backend, conversation model, workflow model, child model, inherits limits.
   test.each([
-    {
-      backendMode: "api",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: undefined,
-      childModel: undefined,
-      inherits: true,
-    },
-    {
-      backendMode: "api",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: undefined,
-      childModel: "gpt-5.6-luna",
-      inherits: true,
-    },
-    {
-      backendMode: "api",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: "gpt-5.6-luna",
-      childModel: undefined,
-      inherits: true,
-    },
-    {
-      backendMode: "api",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: "sonnet",
-      childModel: undefined,
-      inherits: false,
-    },
-    {
-      backendMode: "api",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: "sonnet",
-      childModel: "gpt-5.6-luna",
-      inherits: true,
-    },
-    {
-      backendMode: "local",
-      conversationModel: "openai/gpt-5.6-luna",
-      workflowModel: "sonnet",
-      childModel: undefined,
-      inherits: false,
-    },
-    {
-      backendMode: "local",
-      conversationModel: null,
-      workflowModel: "sonnet",
-      childModel: undefined,
-      inherits: false,
-    },
+    ["api", MODEL, undefined, undefined, true],
+    ["api", MODEL, undefined, MODEL, true],
+    ["api", MODEL, MODEL, undefined, true],
+    ["api", MODEL, "sonnet", undefined, false],
+    ["api", MODEL, "sonnet", MODEL, true],
+    ["local", MODEL, "sonnet", undefined, false],
+    ["local", null, "sonnet", undefined, false],
   ] as const)(
-    "$backendMode: workflow=$workflowModel child=$childModel",
-    async ({
+    "%s: conversation=%s workflow=%s child=%s inherits=%s",
+    async (
       backendMode,
+      conversationModel,
       workflowModel,
       childModel,
       inherits,
-      conversationModel,
-    }) => {
+    ) => {
       configureBackendMode(backendMode);
       const backend = getBackend();
       const agent = spyOn(backend, "retrieveAgent").mockResolvedValue({
