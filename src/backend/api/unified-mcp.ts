@@ -30,6 +30,7 @@ export interface UnifiedMcpServer {
   command?: string;
   args?: string[];
   serverUrl?: string;
+  cachedNumTools?: number | null;
 }
 
 export interface UnifiedMcpTool {
@@ -111,6 +112,10 @@ function parseServer(
     serverName,
     serverType,
     target,
+    ...(typeof value.cached_num_tools === "number" ||
+    value.cached_num_tools === null
+      ? { cachedNumTools: value.cached_num_tools }
+      : {}),
     ...(serverUrl ? { serverUrl } : {}),
     ...(command ? { command, args } : {}),
   };
