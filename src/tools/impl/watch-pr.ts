@@ -53,6 +53,7 @@ import {
 
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
+const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
 
 interface WatchPullRequestArgs {
   url: string;
@@ -73,6 +74,7 @@ interface WatchPullRequestDeps {
     ref: GitHubPullRequestRef,
     options: { cwd: string; signal?: AbortSignal },
   ) => Promise<GitHubPullRequestSnapshot>;
+  now?: () => number;
   wait?: (signal: AbortSignal, milliseconds: number) => Promise<void>;
   createOutputWriter?: (path: string) => { append(text: string): boolean };
 }
@@ -335,10 +337,12 @@ export async function watch_pr(
   }
 
   const wait = deps.wait ?? defaultWait;
+  const now = deps.now ?? Date.now;
   void (async () => {
     let previous = initial;
     let failedPolls = 0;
-    let lastError = "";
+    let failureStartedAt: number | undefined;
+    let lastNotifiedError: string | undefined;
     while (processState.status === "running") {
       try {
         await wait(controller.signal, pollDelayMs(failedPolls));
@@ -348,13 +352,14 @@ export async function watch_pr(
           signal: controller.signal,
         });
         if (processState.status !== "running") return;
-        if (failedPolls > 0) {
+        if (lastNotifiedError !== undefined) {
           emit([
             `WatchPR recovered after ${failedPolls} failed poll${failedPolls === 1 ? "" : "s"}.`,
           ]);
-          failedPolls = 0;
-          lastError = "";
         }
+        failedPolls = 0;
+        failureStartedAt = undefined;
+        lastNotifiedError = undefined;
         const sameHead = current.headSha === previous.headSha;
         const stableCurrent = { ...current, readinessConfirmed: false };
         stableCurrent.readinessConfirmed = Boolean(
@@ -378,6 +383,7 @@ export async function watch_pr(
           return;
         }
         failedPolls += 1;
+        failureStartedAt ??= now();
         const message = errorText(error);
         if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
           processState.completionNotificationSuppressed = true;
@@ -385,10 +391,13 @@ export async function watch_pr(
           controller.abort();
           return;
         }
-        if (failedPolls === 1 || message !== lastError) {
+        if (
+          now() - failureStartedAt >= WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS &&
+          message !== lastNotifiedError
+        ) {
           emit([`WatchPR could not refresh ${ref.url}: ${message}. Retrying.`]);
+          lastNotifiedError = message;
         }
-        lastError = message;
       }
     }
   })()
