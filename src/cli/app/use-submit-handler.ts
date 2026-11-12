@@ -82,10 +82,10 @@ import {
 } from "@/cli/helpers/reflection-arena";
 import { launchReflectionArena } from "@/cli/helpers/reflection-arena-launcher";
 import { finalizeMultiReflectionCompletion } from "@/cli/helpers/reflection-completion";
+import { getReflectionLaunchSkippedMessage } from "@/cli/helpers/reflection-launch-messages";
 import {
   AUTO_REFLECTION_DESCRIPTION,
   finalizeReflectionMemoryWorktreeLaunch,
-  getReflectionLaunchSkippedMessage,
   getReflectionMergeLaunchOptions,
   launchReflectionSubagent,
   prepareReflectionMemoryWorktreeLaunch,
