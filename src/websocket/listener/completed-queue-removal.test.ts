@@ -6,6 +6,7 @@ import {
   getOrCreateScopedRuntime,
   restoreDurableQueuedInputs,
 } from "./conversation-runtime";
+import { enqueueInboundUserMessage } from "./inbound-queue";
 import {
   commitInputDisposition,
   createAcceptedInputDispositionLedger,
@@ -14,7 +15,11 @@ import {
   ordinaryInputIdentity,
   reserveInputDisposition,
 } from "./input-disposition";
-import { completeInputReplay } from "./input-terminal-journal";
+import {
+  completeInputReplay,
+  loadPreparedInputTerminals,
+  prepareInputTerminal,
+} from "./input-terminal-journal";
 import { createRuntime } from "./lifecycle";
 import { consumeQueuedTurn } from "./queue";
 
@@ -56,28 +61,59 @@ function restoreStarted(path: string) {
   return { original, restarted, identity, item };
 }
 
-test("removing a restored item after replay completion retains its durable tombstone", () => {
-  const root = mkdtempSync(join(tmpdir(), "completed-queue-removal-"));
-  try {
-    const path = join(root, "ledger.json");
-    const { original, restarted, identity, item } = restoreStarted(path);
-    // A terminal writer retires the payload after the receiver restored it.
-    expect(completeInputReplay(original, [identity])).toBe(true);
-    const terminalLedger = readFileSync(path, "utf8");
-    expect(restarted.queueRuntime.removeItem(item.id)).toEqual(item);
-    expect(restarted.queueRuntime.length).toBe(0);
-    expect(restarted.queuedMessagesByItemId.has(item.id)).toBe(false);
-    expect(readFileSync(path, "utf8")).toBe(terminalLedger);
-    const afterRemoval = runtimeAt(path);
-    expect(restoreDurableQueuedInputs(afterRemoval.listener)).toBe(0);
-    expect(reserveInputDisposition(afterRemoval, identity)).toEqual({
-      kind: "duplicate",
-      disposition: "started",
-    });
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
+test.each(["completed", "prepared"] as const)(
+  "removing a restored item retains %s evidence and the original turn lease",
+  (terminal) => {
+    const root = mkdtempSync(join(tmpdir(), "completed-queue-removal-"));
+    try {
+      const path = join(root, "ledger.json");
+      const { original, restarted, identity, item } = restoreStarted(path);
+      const lease = original.turnLifecycle.begin({
+        origin: "message",
+        workingDirectory: root,
+      });
+      // Replay retirement can precede lease finalization in the terminal writer.
+      if (terminal === "completed") {
+        expect(completeInputReplay(original, [identity])).toBe(true);
+      } else {
+        expect(
+          prepareInputTerminal(original, [identity], {
+            scope: {
+              agentId: original.agentId,
+              conversationId: original.conversationId,
+            },
+            message: {
+              type: "turn_finished",
+              turn_id: "turn-test",
+              stop_reason: "end_turn",
+              terminal_consumer_ids: ["test-consumer"],
+            },
+            owner: { connectionId: null, canRotate: true, lineageId: null },
+          }),
+        ).toBe(true);
+      }
+      const terminalLedger = readFileSync(path, "utf8");
+      expect(restarted.queueRuntime.removeItem(item.id)).toEqual(item);
+      expect(restarted.queueRuntime.length).toBe(0);
+      expect(restarted.queuedMessagesByItemId.has(item.id)).toBe(false);
+      expect(readFileSync(path, "utf8")).toBe(terminalLedger);
+      expect(original.turnLifecycle.isCurrent(lease)).toBe(true);
+      expect(original.turnLifecycle.kind).toBe("active");
+      expect(lease.signal.aborted).toBe(false);
+      const afterRemoval = runtimeAt(path);
+      expect(restoreDurableQueuedInputs(afterRemoval.listener)).toBe(0);
+      expect(loadPreparedInputTerminals(afterRemoval.listener)).toHaveLength(
+        terminal === "prepared" ? 1 : 0,
+      );
+      expect(reserveInputDisposition(afterRemoval, identity)).toEqual({
+        kind: "duplicate",
+        disposition: "started",
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([
   "corrupt",
@@ -124,6 +160,29 @@ test("an active started payload survives restart and restored cancellation still
     expect(reserveInputDisposition(afterRemoval, identity).kind).toBe(
       "reserved",
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("an input without a stable identity remains removable with a durable ledger", () => {
+  const root = mkdtempSync(join(tmpdir(), "untracked-queue-removal-"));
+  try {
+    const runtime = runtimeAt(join(root, "ledger.json"));
+    expect(
+      enqueueInboundUserMessage(runtime, {
+        type: "message",
+        agentId: runtime.agentId,
+        conversationId: runtime.conversationId,
+        messages: [
+          { role: "user", content: "test input without a stable identity" },
+        ],
+      }),
+    ).toBe(true);
+    const item = runtime.queueRuntime.peek()[0];
+    if (!item) throw new Error("expected queued item");
+    expect(runtime.queueRuntime.removeItem(item.id)).toEqual(item);
+    expect(runtime.queueRuntime.length).toBe(0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
