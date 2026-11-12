@@ -298,9 +298,9 @@ When the store has nothing for the session, the SDK runs under your real config 
 
 ### Mirror writes are best-effort
 
-If `append()` rejects, the SDK retries the batch up to two more times with a short backoff, for at most three attempts in total. A call that times out isn't retried, since the original call may still land. If the batch still fails, the SDK logs the error, emits a `{ type: "system", subtype: "mirror_error" }` message into the iterator, drops the batch, and continues the query. Because a retried batch can re-deliver entries that already landed, deduplicate by `entry.uuid` in your `append()` implementation.
+If `append()` rejects, the SDK retries the batch up to two more times with a short backoff, for at most three attempts in total. A call that times out isn't retried, since the original call may still land. Because a retried batch can re-deliver entries that already landed, deduplicate by `entry.uuid` in your `append()` implementation, and keep every entry that has no `uuid`.
 
-A store outage doesn't interrupt the agent, since the subprocess writes locally first. Monitor for `mirror_error` if you need to detect store data loss. On a run [resumed from the store](#resume-from-the-store), a dropped batch has no surviving copy once the run ends.
+If the batch still fails, the SDK logs the error, emits a `{ type: "system", subtype: "mirror_error" }` message into the iterator, drops the batch, and continues the query. A store outage doesn't interrupt the agent, since the subprocess writes locally first. Monitor for `mirror_error` to detect store data loss. On a run [resumed from the store](#resume-from-the-store), a dropped batch has no surviving copy once the run ends.
 
 ### `getSessionMessages` returns the post-compaction chain
 
