@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -260,4 +268,14 @@ describe("Monitor backup wake", () => {
     await Bun.sleep(100);
     expect(calls).toEqual([]);
   });
+});
+
+const previousSessionSource = process.env.LETTA_RUNTIME_SESSION_SOURCE;
+beforeAll(() => {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "interactive-cli";
+});
+afterAll(() => {
+  if (previousSessionSource === undefined)
+    delete process.env.LETTA_RUNTIME_SESSION_SOURCE;
+  else process.env.LETTA_RUNTIME_SESSION_SOURCE = previousSessionSource;
 });

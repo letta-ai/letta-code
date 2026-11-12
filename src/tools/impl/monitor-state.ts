@@ -3,9 +3,8 @@ import {
   type MonitorFields,
   updateMonitorRecord,
 } from "@/backend/api/monitors";
-import { resolveBackendMode } from "@/backend/backend-mode";
-import { resolveCronRunner } from "@/cron/runner";
-import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
+import { resolveCronRunnerForAgent } from "@/cron/runner";
+import { getErrorMessage } from "@/utils/error";
 import {
   type BackgroundProcess,
   backgroundProcesses,
@@ -27,10 +26,7 @@ export async function createMonitorState(
   scope: { agentId: string; conversationId: string } | undefined,
   actingUserId?: string | null,
 ): Promise<string | undefined> {
-  const placement = resolveCronRunner({
-    backendMode: resolveBackendMode(),
-    managedCloudSandbox: isManagedCloudRuntime(),
-  });
+  const placement = await resolveCronRunnerForAgent(scope?.agentId ?? "");
   if ("error" in placement) throw new Error(placement.error);
   if (placement.runner === "local") return undefined;
   if (!scope)
@@ -38,11 +34,16 @@ export async function createMonitorState(
   const record = await createMonitorRecord(
     {
       ...fields,
+      device_id: placement.targetDeviceId ?? null,
       agent_id: scope.agentId,
       conversation_id: scope.conversationId,
     },
     actingUserId,
-  );
+  ).catch((error: unknown) => {
+    throw new Error(
+      `Cloud monitor storage is unavailable: ${getErrorMessage(error)}. No local monitor was started.`,
+    );
+  });
   const state: PersistedMonitor = {
     actingUserId,
     pending: Promise.resolve(),

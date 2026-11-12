@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -203,4 +211,14 @@ describe("stopMonitor", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+});
+
+const previousSessionSource = process.env.LETTA_RUNTIME_SESSION_SOURCE;
+beforeAll(() => {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "interactive-cli";
+});
+afterAll(() => {
+  if (previousSessionSource === undefined)
+    delete process.env.LETTA_RUNTIME_SESSION_SOURCE;
+  else process.env.LETTA_RUNTIME_SESSION_SOURCE = previousSessionSource;
 });

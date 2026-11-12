@@ -1,4 +1,11 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  expect,
+  test,
+} from "bun:test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -266,3 +273,13 @@ test("requires exactly one source and excludes Monitor from nested tools", async
   expect(queued.at(-1)?.text).toContain('["undefined","function","function"]');
   expect(backgroundProcesses.get(taskId)?.status).toBe("completed");
 }, 15000);
+
+const previousSessionSource = process.env.LETTA_RUNTIME_SESSION_SOURCE;
+beforeAll(() => {
+  process.env.LETTA_RUNTIME_SESSION_SOURCE = "interactive-cli";
+});
+afterAll(() => {
+  if (previousSessionSource === undefined)
+    delete process.env.LETTA_RUNTIME_SESSION_SOURCE;
+  else process.env.LETTA_RUNTIME_SESSION_SOURCE = previousSessionSource;
+});

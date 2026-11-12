@@ -11,6 +11,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocketServer } from "ws";
 import * as monitorApi from "@/backend/api/monitors";
+import * as cronRunner from "@/cron/runner";
+import { isManagedCloudRuntime } from "@/managed-cloud-runtime";
 import { runWithRuntimeContext } from "@/runtime-context";
 import {
   executeTool,
@@ -74,6 +76,14 @@ describe("Monitor", () => {
   }
 
   beforeEach(() => {
+    spyOn(cronRunner, "resolveCronRunnerForAgent").mockImplementation(
+      async () =>
+        cronRunner.resolveCronRunner({
+          managedCloudSandbox: isManagedCloudRuntime(),
+          backendMode: "api",
+          localSchedulesAllowed: true,
+        }),
+    );
     spyOn(monitorApi, "createMonitorRecord").mockImplementation(
       async (input) => ({
         ...input,
@@ -97,6 +107,9 @@ describe("Monitor", () => {
   });
 
   afterEach(() => {
+    (
+      cronRunner.resolveCronRunnerForAgent as ReturnType<typeof spyOn>
+    ).mockRestore();
     (monitorApi.createMonitorRecord as ReturnType<typeof spyOn>).mockRestore();
     (monitorApi.updateMonitorRecord as ReturnType<typeof spyOn>).mockRestore();
     if (previousManagedCloud === undefined) {
