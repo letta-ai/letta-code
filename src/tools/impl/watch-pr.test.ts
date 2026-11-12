@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkPermission } from "@/permissions/checker";
@@ -314,15 +314,68 @@ describe("WatchPR background lifecycle", () => {
     expect(backgroundProcesses.size).toBe(0);
   });
 
-  test("reports a refresh error once and reports recovery", async () => {
+  test("keeps short alternating cooldown failures and recoveries silent", async () => {
+    let now = 0;
+    let fetchCount = 0;
+    let finish!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const queued: string[] = [];
+    setMessageQueueAdder((message) => queued.push(message.text));
+    const result = await watch_pr(
+      { url },
+      {
+        now: () => now,
+        fetchSnapshot: async () => {
+          if (++fetchCount % 2 === 0) {
+            throw new Error("Cloud PR snapshot is still cooling down");
+          }
+          return snapshot();
+        },
+        wait: async (signal, milliseconds) => {
+          if (fetchCount >= 13) {
+            finish();
+            await new Promise<void>((_resolve, reject) => {
+              signal.addEventListener("abort", () => reject(signal.reason), {
+                once: true,
+              });
+            });
+          }
+          now += milliseconds;
+        },
+      },
+    );
+    await finished;
+    await Bun.sleep(250);
+    await task_stop({ task_id: result.taskId });
+    expect(queued).toEqual([]);
+    const outputFile = backgroundProcesses.get(result.taskId)?.outputFile;
+    expect(outputFile).toBeDefined();
+    expect(
+      readFileSync(outputFile!, "utf8").match(/\[poll error 1\]/g),
+    ).toHaveLength(6);
+  });
+
+  test("reports a sustained refresh error once and reports recovery", async () => {
+    let now = 0;
     let fetchCount = 0;
     const waits: number[] = [];
+    let output = "";
+    let earlyOutput = "";
     const queued: string[] = [];
     setMessageQueueAdder((message) => queued.push(message.text));
 
     const result = await watch_pr(
       { url },
       {
+        now: () => now,
+        createOutputWriter: () => ({
+          append: (text) => {
+            output += text;
+            return true;
+          },
+        }),
         fetchSnapshot: async () => {
           fetchCount += 1;
           if (fetchCount >= 2 && fetchCount <= 6) {
@@ -331,6 +384,8 @@ describe("WatchPR background lifecycle", () => {
           return fetchCount >= 8 ? snapshot({ state: "MERGED" }) : snapshot();
         },
         wait: async (_signal, milliseconds) => {
+          if (waits.length === 3) earlyOutput = output;
+          now += milliseconds;
           waits.push(milliseconds);
           if (waits.length > 8) throw new Error("test loop escaped");
         },
@@ -338,6 +393,7 @@ describe("WatchPR background lifecycle", () => {
     );
 
     await Bun.sleep(250);
+    expect(earlyOutput).not.toContain("could not refresh");
     const notifications = queued.join("\n");
     expect(
       queued.filter((notification) =>
@@ -345,6 +401,8 @@ describe("WatchPR background lifecycle", () => {
       ),
     ).toHaveLength(1);
     expect(notifications).toContain("recovered after 5 failed polls");
+    expect(output.match(/WatchPR could not refresh/g)).toHaveLength(1);
+    expect(output.match(/WatchPR recovered/g)).toHaveLength(1);
     expect(waits).toEqual([
       30_000, 60_000, 120_000, 240_000, 300_000, 300_000, 30_000,
     ]);
