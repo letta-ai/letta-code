@@ -103,6 +103,81 @@ describe("remote external subagent control", () => {
     expect(response).toMatchObject({ success: false });
   });
 
+  for (const evicted of [false, true]) {
+    test(`accepts a same-agent handoff and rejects another agent (${evicted ? "persisted session" : "live task"})`, async () => {
+      if (evicted) evictedFixture();
+      else {
+        fixture();
+        const task = backgroundTasks.get("task-1");
+        if (task) task.completion = Promise.resolve();
+      }
+      for (const agentId of [runtime.agent_id, "agent-other"]) {
+        const scope = { agent_id: agentId, conversation_id: "conv-handoff" };
+        const parent = createConversationRuntime(
+          createRuntime(),
+          scope.agent_id,
+          scope.conversation_id,
+        );
+        let trackedScope: unknown;
+        let sends = 0;
+        const response = await handleSubagentMessageCommand(
+          {
+            type: "subagent_message",
+            request_id: `handoff-${agentId}`,
+            runtime: scope,
+            agent_id: nativeId,
+            message: "Continue here",
+          },
+          parent,
+          {
+            workerEnv,
+            sendClaude: async () => {
+              sends += 1;
+              return {
+                mode: "resumed",
+                sessionId: nativeId,
+                completion: Promise.resolve({
+                  agentId: nativeId,
+                  success: true,
+                  report: "Done",
+                }),
+                interrupt: async () => {},
+              };
+            },
+            track: (args) => {
+              trackedScope = args.parentScope;
+              return {
+                taskId: "followup",
+                outputFile: "/tmp/followup",
+                subagentId: "followup",
+              };
+            },
+          },
+        );
+        const owned = agentId === runtime.agent_id;
+        expect(response.success).toBe(owned);
+        expect(sends).toBe(owned ? 1 : 0);
+        if (owned) {
+          expect(response).toMatchObject({ delivery: "resumed" });
+          expect(trackedScope).toMatchObject({
+            agentId,
+            conversationId: scope.conversation_id,
+          });
+        }
+        const stopped = await handleSubagentStopCommand(
+          {
+            type: "subagent_stop",
+            request_id: `handoff-stop-${agentId}`,
+            runtime: scope,
+            agent_id: nativeId,
+          },
+          parent,
+        );
+        expect(stopped.success).toBe(owned);
+      }
+    });
+  }
+
   test("reports steered without passing a disconnect signal", async () => {
     const { parent } = fixture();
     let signal: AbortSignal | undefined;
@@ -483,9 +558,9 @@ describe("remote external subagent control", () => {
       expect(tracked).toBe(true);
     });
 
-    test("rejects another conversation", async () => {
+    test("rejects another agent", async () => {
       evictedFixture();
-      const other = { agent_id: "agent-a", conversation_id: "conv-other" };
+      const other = { agent_id: "agent-other", conversation_id: "conv-other" };
       const otherParent = createConversationRuntime(
         createRuntime(),
         other.agent_id,

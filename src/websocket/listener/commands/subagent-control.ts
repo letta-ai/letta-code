@@ -75,9 +75,7 @@ function finishUntrackedNativeCapture(
 function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
   const subagent = getSubagents().find(
     (entry) =>
-      entry.agentId === agentId &&
-      entry.parentAgentId === runtime.agentId &&
-      entry.parentConversationId === runtime.conversationId,
+      entry.agentId === agentId && entry.parentAgentId === runtime.agentId,
   );
   if (!subagent) return undefined;
   return [...backgroundTasks.entries()].find(
@@ -88,7 +86,7 @@ function findOwnedTask(runtime: ConversationRuntime, agentId: string) {
 /**
  * Completed background tasks and their subagent rows are evicted within
  * minutes, but the native session stays resumable on disk. Fall back to the
- * record of which conversation launched it.
+ * record of which agent launched it.
  */
 function ownsNativeSession(
   runtime: ConversationRuntime,
@@ -101,10 +99,7 @@ function ownsNativeSession(
     target.type === "claude-code" ? "claude_code" : "codex",
     target.sessionId,
   );
-  return (
-    owner?.agentId === runtime.agentId &&
-    owner.conversationId === runtime.conversationId
-  );
+  return owner?.agentId === runtime.agentId;
 }
 
 function runtimeContext(
