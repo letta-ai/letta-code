@@ -130,7 +130,7 @@ export async function lookupDetachedConversationParent(
   )?.agentId;
 }
 
-/** Both parent IDs persisted on an agentless subagent conversation. */
+/** Cloud returns the parent agent, but does not expose its conversation ID. */
 export async function lookupDetachedConversationParentAddress(
   conversationId: string,
   backend: DetachedConversationLookup,
@@ -144,15 +144,5 @@ export async function lookupDetachedConversationParentAddress(
   }
   const parentId = Reflect.get(conversation, "parent_agent_id");
   if (typeof parentId !== "string" || !parentId) return undefined;
-  const parentConversationId = Reflect.get(
-    conversation,
-    "parent_conversation_id",
-  );
-  return {
-    agentId: parentId,
-    conversationId:
-      typeof parentConversationId === "string" && parentConversationId
-        ? parentConversationId
-        : undefined,
-  };
+  return { agentId: parentId };
 }

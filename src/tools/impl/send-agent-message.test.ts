@@ -887,3 +887,20 @@ test("a subagent that omits the destination messages the conversation that launc
   expect(root.status).toBe("error");
   expect(root.content).toContain("Choose a destination");
 });
+
+test("an ephemeral restart without settings fails clearly with the Cloud response shape", async () => {
+  const f = fixture();
+  f.backend.retrieveConversation = async () =>
+    ({
+      agent_id: null,
+      parent_agent_id: "agent-parent",
+      is_subagent: true,
+    }) as never;
+  const result = await runWithRuntimeContext(
+    { agentId: "conv-child", conversationId: "conv-child" },
+    () => send_agent_message({ message: "reply" }, f),
+  );
+  expect(result.content).toContain("Cannot recover the parent conversation");
+  expect(result.status).toBe("error");
+  expect(f.submissions).toHaveLength(0);
+});

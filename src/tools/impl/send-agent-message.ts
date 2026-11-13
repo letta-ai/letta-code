@@ -547,6 +547,11 @@ export async function send_agent_message(
         : detachedParent?.conversationId
           ? detachedParent
           : resolveParentAddress(context?.executionSettings);
+    if (!args.agent_id && !args.conversation_id && detachedParent && !parent) {
+      throw new Error(
+        "Cannot recover the parent conversation for this ephemeral subagent. Supply conversation_id explicitly; the parent agent ID alone does not identify the launching conversation.",
+      );
+    }
     destination = await resolveAgentMessageDestination(
       {
         agentId: parent?.agentId ?? args.agent_id,
