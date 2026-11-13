@@ -104,6 +104,13 @@ function startup(params?: {
 | `options` | [`Options`](#options) | Optional configuration object. Same as the `options` parameter to `query()` |
 | `initializeTimeoutMs` | `number` | Maximum time in milliseconds to wait for subprocess initialization. Defaults to `60000`. If initialization does not complete in time, the promise rejects with a timeout error |
 
+Slow [SessionStart](https://code.claude.com/docs/en/hooks.md#sessionstart) and [Setup](https://code.claude.com/docs/en/hooks.md#setup) [command hooks](https://code.claude.com/docs/en/hooks.md#command-hook-fields) get extra time only when `initializeTimeoutMs` is unset:
+
+* **If you leave it unset:** time these hooks spend running doesn't count toward the 60-second default, up to 10 minutes in total, so initialization can take 11 minutes at most.
+* **If you set a value, including `60000`:** that value is the limit, even while a hook is running.
+
+The extra time requires TypeScript Agent SDK v0.3.304 or later.
+
 #### Returns
 
 Returns a `Promise<`[`WarmQuery`](#warmquery)`>` that resolves once the subprocess has spawned and completed its initialize handshake.
@@ -128,9 +135,9 @@ for await (const message of warm.query("What files are here?")) {
 
 ### `prewarm()`
 
-*Alpha.* Starts a Claude Code process as a spare before you know which session it will serve, so you can bind it to a session later with [`claim()`](#spareprocess). Use it in an application that boots before the user picks a folder. Requires TypeScript Agent SDK v0.3.282 or later.
+*Alpha.* Starts a Claude Code process as a spare before you know which session it will serve, so you can bind it to a session later with [`claim()`](#spareprocess). Requires TypeScript Agent SDK v0.3.282 or later.
 
-`prewarm()` completes the same initialize handshake as [`startup()`](#startup), with the process waiting in `options.cwd` when you set it and otherwise in a private temporary directory under your Claude Code config directory. The session's working directory, its `SessionStart` hooks, its stdio MCP servers, and its CLAUDE.md and git context wait for the claim. A spare holds roughly 230 to 260 MB of memory while it waits. If your [`spawnClaudeCodeProcess`](#options) runs Claude Code on another machine or in a container, set `options.cwd` to a directory that exists there for the spare to wait in.
+Use `prewarm()` when your application boots before the user picks a folder.
 
 ```typescript theme={null}
 function prewarm(params?: {
@@ -139,7 +146,33 @@ function prewarm(params?: {
 }): Promise<SpareProcess>;
 ```
 
-`options` and `initializeTimeoutMs` mean the same as for `startup()`, except that `options.cwd` sets only the directory the spare waits in. The promise resolves with a [`SpareProcess`](#spareprocess) once the process has completed its initialize handshake. `prewarm()` throws if `options` sets `resume`, `continue`, or `forkSession`, because a spare has no session yet. Everything a claim can't set, such as `mcpServers`, `hooks`, `canUseTool`, `settingSources`, `systemPrompt`, and `plugins`, is fixed for the life of the spare, so keep one spare per distinct set of those options and prewarm again when they change.
+#### Parameters
+
+| Parameter | Type | Description |
+| :- | :- | :- |
+| `options` | [`Options`](#options) | Optional configuration object, the same type that `startup()` takes |
+| `initializeTimeoutMs` | `number` | Maximum time in milliseconds to wait for the spare's initialization. Defaults to `60000`. If initialization doesn't complete in time, the promise rejects with a timeout error |
+
+`prewarm()` counts time spent in [Setup](https://code.claude.com/docs/en/hooks.md#setup) hooks toward `initializeTimeoutMs`, even when you leave it unset. To give slow Setup hooks more time, set a longer value.
+
+#### Returns
+
+Returns a `Promise<`[`SpareProcess`](#spareprocess)`>` that resolves once the spare is ready to claim.
+
+The promise rejects if you ask for `resume`, `continue`, or `forkSession` in `options`, because a spare has no session yet.
+
+#### How a spare works
+
+* **Where a spare waits:** in a private temporary directory under your Claude Code config directory, or in `options.cwd` if you set it in `prewarm()`.
+* **If your [`spawnClaudeCodeProcess`](#options) runs Claude Code on another machine or in a container:** pass `prewarm()` an `options.cwd` that exists there, because the default temporary directory is created on your machine.
+* **Memory:** each spare uses roughly 230 to 260 MB while it waits.
+* **What doesn't happen until you call `claim()`:**
+  * Moving to the working directory you pass to `claim()`
+  * Running SessionStart hooks
+  * Starting stdio MCP servers
+  * Loading CLAUDE.md and git context
+* **What a claim can't change:** options such as `mcpServers`, `hooks`, `canUseTool`, `settingSources`, and `plugins` keep their values from `prewarm()`. [`SpareProcess`](#spareprocess) lists what a claim can set.
+* **If sessions need different values for these:** keep a separate spare for each set of values.
 
 #### Example
 

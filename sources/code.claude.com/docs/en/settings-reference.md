@@ -4870,7 +4870,7 @@ Configure Remote Control, cloud environments, the desktop app, and the notificat
 
 ### `agentPushNotifEnabled`
 
-Allow Claude to send a push notification to your phone when it decides one is worth sending, for example when a long task finishes. In a local session, Claude can send one while [Remote Control](https://code.claude.com/docs/en/remote-control.md) is connected. Appears in `/config` as **Push when Claude decides**. When you change it there, Claude Code also saves the value to your account.
+Allow Claude to send a push notification to your phone when it decides one is worth sending, for example when a long task finishes. In a local session, Claude can send one while [Remote Control](https://code.claude.com/docs/en/remote-control.md) is connected. Appears in `/config` as **Push when Claude decides**.
 
 * **Scope**: [`Any file`](#scopes). Claude Code also reads a value left in `~/.claude.json` by older versions.
 * **Type**: Boolean
@@ -4884,9 +4884,9 @@ Allow Claude to send a push notification to your phone when it decides one is wo
 }
 ```
 
-If you run sessions under a [`claude remote-control`](https://code.claude.com/docs/en/remote-control#start-a-remote-control-session) server, they follow the value saved to your account rather than this key. To change that value, run `/config` in a Claude Code session in your terminal and turn **Push when Claude decides** on or off. If the toggle already shows the value you want, change it and change it back so that Claude Code saves that value to your account.
+You don't receive notifications with this key alone. To set them up, follow the steps in [Mobile push notifications](https://code.claude.com/docs/en/remote-control.md#mobile-push-notifications).
 
-See [Mobile push notifications](https://code.claude.com/docs/en/remote-control.md#mobile-push-notifications).
+If you run sessions under a [`claude remote-control`](https://code.claude.com/docs/en/remote-control#start-a-remote-control-session) server, they follow the value saved to your account rather than this key. To change that value, run `/config` in a Claude Code session in your terminal and turn **Push when Claude decides** on or off. If the toggle already shows the value you want, change it and change it back so that Claude Code saves that value to your account.
 
 ### `awaySummaryEnabled`
 
@@ -5043,7 +5043,7 @@ Get a push notification on your phone when a permission prompt or question is wa
 }
 ```
 
-See [Mobile push notifications](https://code.claude.com/docs/en/remote-control.md#mobile-push-notifications).
+You don't receive notifications with this key alone. To set them up, follow the steps in [Mobile push notifications](https://code.claude.com/docs/en/remote-control.md#mobile-push-notifications).
 
 ### `preferredNotifChannel`
 

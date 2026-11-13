@@ -496,7 +496,7 @@ The four customization methods differ in where they live, how they're shared, an
 | **Persistence** | Per-project file | Saved as files | Session only | Session only |
 | **Reusability** | Per-project | Across projects | Code duplication | Code duplication |
 | **Management** | On filesystem | CLI + files | In code | In code |
-| **Default tools** | Preserved | Preserved | Preserved | Lost (unless included) |
+| **Tool guidance** | Preserved | Preserved | Preserved | Lost (unless included) |
 | **Built-in safety** | Maintained | Maintained | Maintained | Must be added |
 | **Customization level** | Additions only | Additions; can omit coding instructions | Additions only | Complete control |
 | **Version control** | With project | Yes | With code | With code |

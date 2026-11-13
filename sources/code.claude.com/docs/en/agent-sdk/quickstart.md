@@ -340,6 +340,8 @@ Each of these snippets sets fields on the same options object. For more informat
 | `Read`, `Edit`, `Glob` | Analyze and modify code |
 | `Read`, `Edit`, `Bash`, `Glob`, `Grep` | Full automation |
 
+To limit the agent's built-in tools to one of these sets, pass it as `tools`. If you list a set in `allowedTools` instead, you [pre-approve those tools](https://code.claude.com/docs/en/agent-sdk/custom-tools.md#configure-allowed-tools), and the agent can still call the others, subject to your permission mode.
+
 **Permission modes** control how much human oversight you want. The SDK evaluates the active mode together with your allow and deny rules in a fixed order, described in [How permissions are evaluated](https://code.claude.com/docs/en/agent-sdk/permissions.md#how-permissions-are-evaluated). For the full list of modes, their behavior, and when to use each, see [Permission mode in How the agent loop works](https://code.claude.com/docs/en/agent-sdk/agent-loop.md#permission-mode).
 
 ## Next steps
