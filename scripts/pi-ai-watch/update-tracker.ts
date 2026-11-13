@@ -158,10 +158,7 @@ export function verifyUpgradePr(
   expectedRepo: string,
   expectedGithubLogin: string,
   analysis: Pick<PiAiWatchAnalysis, "previous_version" | "current_version">,
-  getPull: (number: string, repo: string) => UpgradePullRequest = (
-    number,
-    repo,
-  ) =>
+  getPull: (number: string, repo: string) => UpgradePullRequest = (number, repo) =>
     ghJson<UpgradePullRequest>([
       "pr",
       "view",
@@ -187,8 +184,7 @@ export function verifyUpgradePr(
       `pi-ai PR author ${pull.author.login} does not match ${expectedGithubLogin}`,
     );
   }
-  if (pull.isDraft)
-    throw new Error("pi-ai upgrade PR must be ready for review");
+  if (pull.isDraft) throw new Error("pi-ai upgrade PR must be ready for review");
   if (pull.state !== "OPEN") throw new Error("pi-ai upgrade PR must be open");
   if (!pull.body.includes(marker)) {
     throw new Error(`pi-ai upgrade PR is missing marker: ${marker}`);
