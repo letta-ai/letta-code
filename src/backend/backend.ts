@@ -33,6 +33,10 @@ import {
   resolveBackendMode,
   setConfiguredBackendMode,
 } from "./backend-mode";
+import {
+  notifyConversationCompacted,
+  tapConversationCompaction,
+} from "./compaction-events";
 import { LocalBackend } from "./local/local-backend";
 import {
   getLocalBackendStorageDir as getLocalBackendStorageDirFromPaths,
@@ -570,7 +574,17 @@ export class APIBackend implements Backend {
     options?: ConversationMessageCompactOptions,
   ) {
     const client = await this.getClient();
-    return client.conversations.messages.compact(conversationId, body, options);
+    const result = await client.conversations.messages.compact(
+      conversationId,
+      body,
+      options,
+    );
+    notifyConversationCompacted({
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
+    return result;
   }
 
   async listAgentMessages(
@@ -679,7 +693,12 @@ export class APIBackend implements Backend {
     withClientUsageCost(stream, () =>
       conversationCostModel(client, conversationId, body?.agent_id),
     );
-    return stream;
+    // Resumes a run started by an earlier request; it can carry a compaction.
+    return tapConversationCompaction(stream, {
+      backend: this,
+      conversationId,
+      agentId: body?.agent_id,
+    });
   }
 
   async cancelConversation(conversationIdOrAgentId: string) {

@@ -17,6 +17,7 @@ import type {
   ConversationMessageStreamBody,
   ConversationRecompileBody,
 } from "@/backend/backend";
+import { notifyConversationCompacted } from "@/backend/compaction-events";
 import {
   HEADLESS_BACKEND_CAPABILITIES,
   HeadlessBackend,
@@ -455,6 +456,7 @@ export class LocalBackend extends HeadlessBackend {
       "manual",
       body,
     );
+    notifyConversationCompacted({ backend: this, conversationId, agentId });
     return {
       num_messages_before: result.numMessagesBefore,
       num_messages_after: result.numMessagesAfter,
