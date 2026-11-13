@@ -332,7 +332,7 @@ function createDeferredDrain() {
 
 async function waitFor(
   predicate: () => boolean,
-  timeoutMs: number = 5_000,
+  timeoutMs: number = process.platform === "win32" ? 20_000 : 5_000,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!predicate()) {
