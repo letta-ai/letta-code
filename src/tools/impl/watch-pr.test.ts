@@ -6,6 +6,7 @@ import { checkPermission } from "@/permissions/checker";
 import { TOOL_DEFINITIONS } from "@/tools/tool-definitions";
 import { TOOLSET_CATALOG } from "@/tools/toolset-catalog";
 import { setMessageQueueAdder } from "@/utils/message-queue-bridge";
+import { GitHubPullRequestSnapshotPending } from "./github-pull-request-cloud";
 import type { GitHubPullRequestSnapshot } from "./github-pull-request-types";
 import { backgroundProcesses } from "./process_manager";
 import { task_stop } from "./task-stop";
@@ -356,6 +357,76 @@ describe("WatchPR background lifecycle", () => {
       readFileSync(outputFile!, "utf8").match(/\[poll error 1\]/g),
     ).toHaveLength(6);
   });
+
+  for (const pendingMinutes of [20, 35]) {
+    test(`${pendingMinutes} minutes of pending polls only reports prolonged silence and its recovery`, async () => {
+      let now = 0;
+      let fetchCount = 0;
+      let output = "";
+      const queued: string[] = [];
+      const waits: number[] = [];
+      let finish!: () => void;
+      const finished = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      setMessageQueueAdder((message) => queued.push(message.text));
+      const result = await watch_pr(
+        { url },
+        {
+          now: () => now,
+          createOutputWriter: () => ({
+            append: (text) => {
+              output += text;
+              return true;
+            },
+          }),
+          fetchSnapshot: async () => {
+            fetchCount++;
+            if (fetchCount > 1 && now <= pendingMinutes * 60_000) {
+              throw new GitHubPullRequestSnapshotPending();
+            }
+            return snapshot();
+          },
+          wait: async (signal, milliseconds) => {
+            if (now > pendingMinutes * 60_000) {
+              finish();
+              await new Promise<void>((_resolve, reject) => {
+                signal.addEventListener("abort", () => reject(signal.reason), {
+                  once: true,
+                });
+              });
+            }
+            waits.push(milliseconds);
+            now += milliseconds;
+          },
+        },
+      );
+      await finished;
+      await Bun.sleep(250);
+      await task_stop({ task_id: result.taskId });
+      expect(waits.every((ms) => ms === 30_000)).toBe(true);
+      expect(output).toContain("[poll pending]");
+      expect(output).not.toContain("[poll error");
+      expect(output).not.toContain("could not refresh");
+      expect(output).not.toContain("recovered after");
+      if (pendingMinutes === 20) {
+        expect(queued).toEqual([]);
+        expect(output).not.toContain("WatchPR hasn't received");
+        expect(output).not.toContain("receiving PR updates again");
+      } else {
+        expect(
+          output.match(
+            /WatchPR hasn't received fresh PR data for 30 minutes; still watching\./g,
+          ),
+        ).toHaveLength(1);
+        expect(
+          output.match(/WatchPR is receiving PR updates again\./g),
+        ).toHaveLength(1);
+        expect(queued.join("\n")).toContain("still watching.");
+        expect(queued.join("\n")).toContain("receiving PR updates again.");
+      }
+    });
+  }
 
   test("reports a sustained refresh error once and reports recovery", async () => {
     let now = 0;

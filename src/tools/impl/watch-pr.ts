@@ -17,7 +17,10 @@ import {
 import { scrubSecretsFromString } from "@/tools/secret-substitution";
 import { resolveGlobalConfigDir } from "@/utils/settings-path";
 import { resolveNotificationScope } from "@/utils/task-notifications";
-import { createGitHubPullRequestSnapshotFetcher } from "./github-pull-request-cloud";
+import {
+  createGitHubPullRequestSnapshotFetcher,
+  GitHubPullRequestSnapshotPending,
+} from "./github-pull-request-cloud";
 import { diffGitHubPullRequestSnapshots } from "./github-pull-request-diff";
 import {
   describeGitHubPullRequestSnapshot,
@@ -54,6 +57,7 @@ import {
 const WATCH_POLL_MS = 30_000;
 const WATCH_MAX_POLL_MS = 5 * 60_000;
 const WATCH_REFRESH_ERROR_NOTIFY_AFTER_MS = 5 * 60_000;
+const WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS = 30 * 60_000;
 
 interface WatchPullRequestArgs {
   url: string;
@@ -340,18 +344,27 @@ export async function watch_pr(
   const now = deps.now ?? Date.now;
   void (async () => {
     let previous = initial;
+    let lastFreshSnapshotAt = now();
+    let freshnessNoticeSent = false;
+    let nextPollMs = WATCH_POLL_MS;
     let failedPolls = 0;
     let failureStartedAt: number | undefined;
     let lastNotifiedError: string | undefined;
     while (processState.status === "running") {
       try {
-        await wait(controller.signal, pollDelayMs(failedPolls));
+        await wait(controller.signal, nextPollMs);
         if (processState.status !== "running") return;
         const current = await fetchSnapshot(ref, {
           cwd,
           signal: controller.signal,
         });
         if (processState.status !== "running") return;
+        lastFreshSnapshotAt = now();
+        if (freshnessNoticeSent) {
+          emit(["WatchPR is receiving PR updates again."]);
+          freshnessNoticeSent = false;
+        }
+        nextPollMs = WATCH_POLL_MS;
         if (lastNotifiedError !== undefined) {
           emit([
             `WatchPR recovered after ${failedPolls} failed poll${failedPolls === 1 ? "" : "s"}.`,
@@ -382,7 +395,27 @@ export async function watch_pr(
         if (controller.signal.aborted || processState.status !== "running") {
           return;
         }
+        if (
+          !freshnessNoticeSent &&
+          now() - lastFreshSnapshotAt >= WATCH_FRESH_SNAPSHOT_NOTIFY_AFTER_MS
+        ) {
+          emit([
+            "WatchPR hasn't received fresh PR data for 30 minutes; still watching.",
+          ]);
+          freshnessNoticeSent = true;
+        }
+        if (error instanceof GitHubPullRequestSnapshotPending) {
+          nextPollMs = WATCH_POLL_MS;
+          if (!output.append("[poll pending] Waiting for fresh PR data\n")) {
+            processState.completionNotificationSuppressed = true;
+            markMonitorFinished(taskId, processState, "failed", null);
+            controller.abort();
+            return;
+          }
+          continue;
+        }
         failedPolls += 1;
+        nextPollMs = pollDelayMs(failedPolls);
         failureStartedAt ??= now();
         const message = errorText(error);
         if (!output.append(`[poll error ${failedPolls}] ${message}\n`)) {
