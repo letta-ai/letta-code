@@ -11,6 +11,7 @@ import {
   type SkillDiscoveryResult,
   type SkillSource,
 } from "./skills";
+import { resolveEffectiveAgentId } from "./subagents/ephemeral-subagent";
 
 const ATTACHED_REPOSITORIES_CACHE_KEY = Symbol.for(
   "@letta/attachedRepositoriesCache",
@@ -80,7 +81,7 @@ async function getAttachedRepositories(
 
   const promise = import("./attached-repositories").then(
     async ({ listAttachedAgentRepositories }) =>
-      (await listAttachedAgentRepositories(agentId)).sort(
+      (await listAttachedAgentRepositories(resolveEffectiveAgentId(agentId))).sort(
         (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
       ),
   );

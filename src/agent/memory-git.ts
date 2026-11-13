@@ -2,7 +2,6 @@
  * Git operations for agent memory. The remote defaults to api.letta.com;
  * Desktop may proxy transport through localhost but never persists that URL.
  */
-
 import {
   existsSync,
   mkdirSync,
@@ -42,6 +41,7 @@ import {
 } from "./memory-git-hooks";
 import { GIT_DISABLE_COMMIT_SIGNING_ARGS } from "./memory-git-signing";
 import { writeWindowsCredentialHelper } from "./memory-git-windows-credentials";
+import { resolveEffectiveAgentId } from "./subagents/ephemeral-subagent";
 
 const RETRYABLE_GIT_HTTP_ERROR_RE =
   /(?:\bHTTP\s+(?:503|520|521|522|523|524)\b|The requested URL returned error:\s*(?:503|520|521|522|523|524))/i;
@@ -1397,7 +1397,6 @@ async function syncAttachedRepository(args: {
   const repositoryName = validateAgentRepositoryName(args.repositoryName);
   const directory = getRepositoryMountDir(args.agentId, repositoryName);
   const remoteUrl = getRepositoryRemoteUrl(args.agentId, repositoryName);
-
   await startCheckout(
     args.agentId,
     directory,
@@ -1417,12 +1416,13 @@ async function syncAttachedRepository(args: {
 export async function syncAttachedAgentRepositories(
   agentId: string,
 ): Promise<SyncAgentRepositoriesResult> {
-  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>> =
-    [];
+  let repositories: Awaited<ReturnType<typeof listAttachedAgentRepositories>> = [];
   let jobs: Promise<string>[] = [];
   try {
     const registered = trackCheckoutDiscovery(agentId, async () => {
-      repositories = await listAttachedAgentRepositories(agentId);
+      repositories = await listAttachedAgentRepositories(
+        resolveEffectiveAgentId(agentId),
+      );
       retainCheckouts(
         agentId,
         repositories.map((repository) =>
