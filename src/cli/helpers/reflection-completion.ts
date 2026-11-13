@@ -6,12 +6,12 @@ import {
   updateCloudReflectionConversationProgress,
 } from "@/backend/api/reflection";
 import { KEY_OR_CREDITS_REQUIRED_MESSAGE } from "@/cli/helpers/error-formatter";
-import type { MemorySubagentSuccessMessageOverride } from "@/cli/helpers/memory-subagent-completion";
-import { classifyReflectionConfigurationError } from "@/cli/helpers/reflection-configuration-error";
 import {
   getReflectionSettings,
   type ReflectionSettings,
 } from "@/cli/helpers/memory-reminder";
+import type { MemorySubagentSuccessMessageOverride } from "@/cli/helpers/memory-subagent-completion";
+import { classifyReflectionConfigurationError } from "@/cli/helpers/reflection-configuration-error";
 import {
   finalizeAutoReflectionPayload,
   finalizeMultiReflectionPayload,
