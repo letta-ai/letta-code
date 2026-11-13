@@ -331,13 +331,7 @@ export function getRetryDelayMs(opts: {
   const { category, attempt, detail, retryAfterMs = null } = opts;
 
   if (category === "transient_provider") {
-    if (
-      retryAfterMs !== null &&
-      Number.isFinite(retryAfterMs) &&
-      retryAfterMs >= 0
-    ) {
-      return Math.min(60_000, Math.round(retryAfterMs));
-    }
+    if (retryAfterMs !== null) return retryAfterMs;
     const baseDelayMs = isCloudflareEdge52xDetail(detail)
       ? CLOUDFLARE_EDGE_52X_RETRY_BASE_DELAY_MS
       : DEFAULT_TRANSIENT_RETRY_BASE_DELAY_MS;
@@ -365,6 +359,13 @@ export function getTransientRetryDelayMs(opts: {
     detail: opts.detail,
     retryAfterMs: opts.retryAfterMs,
   });
+}
+
+/** Accept only a bounded numeric delay from run error metadata. */
+export function getRunRetryAfterMs(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.min(60_000, Math.round(value))
+    : undefined;
 }
 
 // ── Pre-stream conflict routing ─────────────────────────────────────

@@ -17,6 +17,7 @@ import {
 } from "@/telemetry/busy-recovery";
 import {
   extractConversationBusyRunId,
+  getRunRetryAfterMs,
   isConversationBusyError,
   rebuildInputWithFreshDenials,
   STALE_APPROVAL_RECOVERY_DENIAL_REASON,
@@ -326,7 +327,9 @@ export async function fetchRunErrorInfo(
         nestedError?.error_code,
       status_code: metaError?.status_code ?? nestedError?.status_code,
       retryable: metaError?.retryable ?? nestedError?.retryable,
-      retry_after_ms: metaError?.retry_after_ms ?? nestedError?.retry_after_ms,
+      retry_after_ms: getRunRetryAfterMs(
+        metaError?.retry_after_ms ?? nestedError?.retry_after_ms,
+      ),
       message: metaError?.message ?? nestedError?.message,
       detail: metaError?.detail ?? nestedError?.detail,
       raw: metaError?.raw ?? nestedError?.raw,

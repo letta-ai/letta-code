@@ -5,6 +5,7 @@ import {
   extractConversationBusyRunId,
   getPreStreamErrorAction,
   getRetryDelayMs,
+  getRunRetryAfterMs,
   getTransientRetryDelayMs,
   isApprovalPendingError,
   isConversationBusyError,
@@ -501,28 +502,19 @@ describe("getRetryDelayMs", () => {
     ).toBe(7000);
   });
 
-  test("bounds server retry delays and falls back for invalid values", () => {
+  test("bounds run metadata delay without changing Retry-After headers", () => {
+    expect(getRunRetryAfterMs(900_000)).toBe(60_000);
+    expect(getRunRetryAfterMs(14_000)).toBe(14_000);
+    expect(getRunRetryAfterMs(-1)).toBeUndefined();
+    expect(getRunRetryAfterMs(Number.NaN)).toBeUndefined();
+    expect(getRunRetryAfterMs("14000")).toBeUndefined();
     expect(
       getRetryDelayMs({
         category: "transient_provider",
         attempt: 1,
         retryAfterMs: 900_000,
       }),
-    ).toBe(60_000);
-    expect(
-      getRetryDelayMs({
-        category: "transient_provider",
-        attempt: 1,
-        retryAfterMs: -1,
-      }),
-    ).toBe(1000);
-    expect(
-      getRetryDelayMs({
-        category: "transient_provider",
-        attempt: 1,
-        retryAfterMs: Number.NaN,
-      }),
-    ).toBe(1000);
+    ).toBe(900_000);
   });
 
   test("uses exponential conversation_busy profile", () => {

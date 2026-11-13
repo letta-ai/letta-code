@@ -45,13 +45,13 @@ import {
   extractConflictDetail,
   extractConversationBusyRunId,
   fetchRunErrorInfo,
-  type RunErrorInfo,
   getPreStreamErrorAction,
   getRetryDelayMs,
   isApprovalPendingError,
   isEmptyResponseRetryable,
   isInvalidToolCallIdsError,
   parseRetryAfterHeaderMs,
+  type RunErrorInfo,
   rebuildInputForApprovalResync,
   refreshInputOtidsForNewRequest,
   reportBusyRetryExhausted,
@@ -2751,7 +2751,7 @@ export async function handleHeadlessCommand(
           let errorType: string | undefined;
           let detail = detailFromRun ?? latestErrorText ?? "";
           let explicitRetryable: boolean | undefined;
-          let retryAfterMs = runErrorInfo?.retry_after_ms;
+          const retryAfterMs = runErrorInfo?.retry_after_ms;
 
           if (lastRunId) {
             const run = await getBackend().retrieveRun(lastRunId);
@@ -2764,10 +2764,6 @@ export async function handleHeadlessCommand(
             detail = metaError?.detail ?? metaError?.error?.detail ?? detail;
             explicitRetryable =
               metaError?.retryable ?? metaError?.error?.retryable;
-            retryAfterMs =
-              metaError?.retry_after_ms ??
-              metaError?.error?.retry_after_ms ??
-              retryAfterMs;
           }
 
           // Empty LLM response retry (Opus 4.6 SADs): retry 1 sends the same
