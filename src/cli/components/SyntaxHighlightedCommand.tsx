@@ -1,34 +1,40 @@
-import catppuccinLatte from "@shikijs/themes/catppuccin-latte";
-import catppuccinMocha from "@shikijs/themes/catppuccin-mocha";
+import { existsSync } from "node:fs";
+import {
+  MessageChannel,
+  type MessagePort,
+  receiveMessageOnPort,
+  Worker,
+} from "node:worker_threads";
 import { Box } from "ink";
 import { memo } from "react";
-import { createHighlighterCoreSync } from "shiki/core";
-import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
 import { colors } from "./colors";
-import {
-  CORE_GRAMMARS,
-  configureSyntaxLanguages,
-  ensureLanguageLoaded,
-} from "./syntax-languages";
+import type { HighlightRequest, StyledSpan } from "./syntax-highlight-worker";
 import { Text } from "./Text";
 
-// Created lazily on first highlight: grammar parsing costs ~150-250ms of CPU,
-// which shouldn't run at module load on every process start.
-let shikiHighlighter: ReturnType<typeof createHighlighterCoreSync> | null =
-  null;
+const HIGHLIGHT_TIMEOUT_MS = 1_000;
+let highlightWorker: { worker: Worker; port: MessagePort } | undefined;
+const timedOutCode = new Map<string, string>();
 
-function getShikiHighlighter(): ReturnType<typeof createHighlighterCoreSync> {
-  if (shikiHighlighter === null) {
-    shikiHighlighter = createHighlighterCoreSync({
-      themes: [catppuccinMocha, catppuccinLatte],
-      langs: CORE_GRAMMARS,
-      engine: createJavaScriptRegexEngine(),
-    });
-    configureSyntaxLanguages({
-      registerGrammar: (grammar) => shikiHighlighter?.loadLanguageSync(grammar),
-    });
-  }
-  return shikiHighlighter;
+function getHighlightWorker(): typeof highlightWorker {
+  if (highlightWorker) return highlightWorker;
+  const source = new URL("./syntax-highlight-worker.ts", import.meta.url);
+  const entry = existsSync(source)
+    ? source
+    : new URL("./syntax-highlight-worker.js", import.meta.url);
+  if (!existsSync(entry)) return undefined;
+  const { port1, port2 } = new MessageChannel();
+  const worker = new Worker(entry, {
+    workerData: port2,
+    transferList: [port2],
+  });
+  worker.unref();
+  port1.unref();
+  worker.on("error", () => {
+    port1.close();
+    if (highlightWorker?.worker === worker) highlightWorker = undefined;
+  });
+  highlightWorker = { worker, port: port1 };
+  return highlightWorker;
 }
 const BASH_LANGUAGE = "bash";
 const FIRST_LINE_PROMPT = "$";
@@ -45,7 +51,7 @@ type Props = {
 };
 
 /** Styled text span with a resolved color. */
-export type StyledSpan = { text: string; color: string };
+export type { StyledSpan } from "./syntax-highlight-worker";
 
 export type ClippedSpans = {
   spans: StyledSpan[];
@@ -240,23 +246,34 @@ export function highlightCode(
   language: string,
 ): StyledSpan[][] | undefined {
   try {
-    // Create the highlighter (and its registration hook) first so a long-tail
-    // grammar loaded on first use registers before tokenizing.
-    const highlighter = getShikiHighlighter();
-    if (!ensureLanguageLoaded(language)) return undefined;
-    const result = highlighter.codeToTokens(code, {
-      lang: language,
+    if (timedOutCode.get(language) === code) {
+      return undefined;
+    }
+    const current = getHighlightWorker();
+    if (!current) return undefined;
+    const signal = new Int32Array(new SharedArrayBuffer(4));
+    const request: HighlightRequest = {
+      code,
+      language,
       theme:
         colors.shellSyntax === colors.shellSyntaxLight
           ? "catppuccin-latte"
           : "catppuccin-mocha",
-    });
-    return result.tokens.map((line) =>
-      line.map((token) => ({
-        text: token.content,
-        color: token.color ?? colors.shellSyntax.text,
-      })),
-    );
+      color: colors.shellSyntax.text,
+      signal,
+    };
+    current.worker.postMessage(request);
+    // A worker can be terminated even while its regex engine is stuck.
+    if (Atomics.wait(signal, 0, 0, HIGHLIGHT_TIMEOUT_MS) === "timed-out") {
+      void current.worker.terminate();
+      current.port.close();
+      highlightWorker = undefined;
+      timedOutCode.set(language, code);
+      return undefined;
+    }
+    return receiveMessageOnPort(current.port)?.message as
+      | StyledSpan[][]
+      | undefined;
   } catch {
     return undefined;
   }

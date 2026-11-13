@@ -122,6 +122,15 @@ await Bun.build({
 });
 
 await Bun.build({
+  entrypoints: ["./src/cli/components/syntax-highlight-worker.ts"],
+  outdir: ".",
+  target: "node",
+  format: "esm",
+  naming: { entry: "syntax-highlight-worker.js" },
+  external: ["@shikijs/langs", "@shikijs/langs/*"],
+});
+
+await Bun.build({
   entrypoints: ["./src/utils/image-resize-worker.ts"],
   outdir: ".",
   target: "node",
