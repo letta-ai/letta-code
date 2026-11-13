@@ -269,9 +269,10 @@ export async function startConnectedListenerRuntime(
     promotePreparedInputTerminalsSafely(runtime);
   const restoreQueuedInputs =
     options.restoreDurableQueuedInputs ?? restoreDurableQueuedInputs;
+  // Started inputs are recovered at startup, not when queue capacity frees.
   runtime.restoreDurableQueuedInputs = () =>
     runtime === getActiveRuntime() && !runtime.intentionallyClosed
-      ? restoreQueuedInputs(runtime)
+      ? restoreQueuedInputs(runtime, undefined, undefined, { queuedOnly: true })
       : 0;
   runtime.promotePreparedInputTerminals();
   const isExactOpenConnection = (): boolean =>
