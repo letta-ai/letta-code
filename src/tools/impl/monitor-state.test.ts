@@ -27,8 +27,10 @@ let rejectFirstPatch: boolean;
 let rejectUpdates: boolean;
 let requests: Array<{ method: string; actor: string | null; body: unknown }>;
 let record: MonitorState | undefined;
+let existingProcessIds: Set<string>;
 
 beforeEach(async () => {
+  existingProcessIds = new Set(backgroundProcesses.keys());
   home = mkdtempSync(join(tmpdir(), "monitor-state-"));
   process.env.HOME = home;
   await settingsManager.reset();
@@ -71,12 +73,13 @@ beforeEach(async () => {
 
 afterEach(async () => {
   for (const [id, process] of backgroundProcesses) {
+    if (existingProcessIds.has(id)) continue;
     process.completionNotificationSuppressed = true;
     process.process.kill("SIGKILL");
     await process.persistState?.().catch(() => {});
     clearBackgroundProcessCleanup(id);
+    backgroundProcesses.delete(id);
   }
-  backgroundProcesses.clear();
   server.stop(true);
   setConfiguredBackendMode(originalMode);
   await settingsManager.reset();
@@ -107,7 +110,9 @@ test("API create failure prevents the source from starting", async () => {
     ),
   ).rejects.toThrow("503");
   expect(started).toBe(false);
-  expect(backgroundProcesses.size).toBe(0);
+  expect(
+    [...backgroundProcesses.keys()].filter((id) => !existingProcessIds.has(id)),
+  ).toEqual([]);
 });
 
 test("server ID, captured actor and redacted metadata survive a stop in another turn", async () => {
@@ -218,7 +223,7 @@ test("failure to persist startup metadata stops the newly launched source", asyn
     }),
   ).rejects.toThrow("503");
   expect(record?.status).toBe("failed");
-  const source = [...backgroundProcesses.values()][0];
+  const source = record && backgroundProcesses.get(record.monitor_id);
   expect(source?.status).toBe("failed");
   expect(source?.cleanupTimer).toBeDefined();
   await source?.completion?.catch(() => {});
