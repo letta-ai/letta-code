@@ -434,27 +434,21 @@ export async function launchRemoteExternalCodingAgent(
     });
     return { success: false, error };
   };
-  let connectionId: string;
-  let deviceId: string;
-  let supportsSteering: boolean;
-  let sendsForkContext: boolean;
-  try {
-    const resolved = await (deps.resolveComputer ?? defaultResolveComputer)(
-      computer,
-      parentScope,
-    );
+  let connectionId = "";
+  let deviceId = "";
+  let supportsSteering = false;
+  let sendsForkContext = false;
+  const resolveComputer = deps.resolveComputer ?? defaultResolveComputer;
+  function configureComputer(resolved: {
+    connectionId: string;
+    environment: EnvironmentConnection;
+  }): string | undefined {
     if (resolved.environment.metadata?.launch_subagent_notify_caller !== true)
-      return fail(
-        "outdated_computer",
-        formatOutdatedComputerError(type, computer),
-      );
+      return formatOutdatedComputerError(type, computer);
     sendsForkContext =
       resolved.environment.metadata?.external_fork_context === true;
     if (params.forkContext && !sendsForkContext)
-      return fail(
-        "outdated_computer",
-        `Update Letta Code on ${computer} to fork external workers with destination-local history files.`,
-      );
+      return `Update Letta Code on ${computer} to fork external workers with destination-local history files.`;
     sendsForkContext ||=
       (compareSemver(
         resolved.environment.metadata?.lettaCodeVersion ?? "",
@@ -463,6 +457,13 @@ export async function launchRemoteExternalCodingAgent(
     connectionId = resolved.connectionId;
     deviceId = resolved.environment.deviceId;
     supportsSteering = resolved.environment.metadata?.subagent_message === true;
+    return undefined;
+  }
+  try {
+    const outdated = configureComputer(
+      await resolveComputer(computer, parentScope),
+    );
+    if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
     return fail("resolve_computer", errorMessage(error));
   }
@@ -477,17 +478,20 @@ export async function launchRemoteExternalCodingAgent(
   } catch (error) {
     return fail("connect", `Can't reach ${computer}: ${errorMessage(error)}`);
   }
-  const follower = new RemoteSubagentFollower(
-    parentScope,
-    toolCallId,
-    connect,
-    deps.reconnectDelayMs ?? 2_000,
-  );
-  // Listen before launching: a fast worker can finish before the response.
-  follower.attach(client);
-  let launched: Awaited<ReturnType<AppServerClient["launchSubagent"]>>;
-  try {
-    launched = await client.launchSubagent({
+  const createFollower = () => {
+    const next = new RemoteSubagentFollower(
+      parentScope,
+      toolCallId,
+      connect,
+      deps.reconnectDelayMs ?? 2_000,
+    );
+    // Listen before launching: a fast worker can finish before the response.
+    next.attach(client);
+    return next;
+  };
+  let follower = createFollower();
+  const launch = () =>
+    client.launchSubagent({
       request_id: `launch-subagent-${randomUUID()}`,
       runtime: {
         agent_id: parentScope.agentId,
@@ -512,6 +516,35 @@ export async function launchRemoteExternalCodingAgent(
       tool_call_id: toolCallId,
       notify: "caller",
     });
+
+  let launched: Awaited<ReturnType<AppServerClient["launchSubagent"]>>;
+  try {
+    try {
+      launched = await launch();
+    } catch (error) {
+      follower.close();
+      // Resolving "cloud" again would create a different sandbox.
+      let resolved: Awaited<ReturnType<typeof resolveComputer>>;
+      try {
+        resolved = await resolveComputer(
+          isCloudEnvironmentSelector(computer) ? deviceId : computer,
+          parentScope,
+        );
+      } catch (resolveError) {
+        if (/\boffline\b/i.test(errorMessage(resolveError)))
+          throw new Error(
+            `${computer} disconnected during the launch: ${errorMessage(resolveError)}`,
+          );
+        throw resolveError;
+      }
+      if (resolved.connectionId === connectionId) throw error;
+      const outdated = configureComputer(resolved);
+      if (outdated) throw new Error(outdated);
+      params.signal?.throwIfAborted();
+      client = await connect();
+      follower = createFollower();
+      launched = await launch();
+    }
   } catch (error) {
     follower.close();
     return fail(
