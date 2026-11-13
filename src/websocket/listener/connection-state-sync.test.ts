@@ -226,7 +226,7 @@ test("an unsubscribed app-server connection receives no existing runtime state",
   }
 });
 
-test("waits for asynchronous Git status before emitting the state sync", async () => {
+test("replays state without waiting for Git and sends fresh device status afterward", async () => {
   const listener = createRuntime();
   const runtime = getOrCreateScopedRuntime(listener, "agent-1", "conv-1");
   const transport = new MockTransport();
@@ -263,18 +263,28 @@ test("waits for asynchronous Git status before emitting the state sync", async (
     { agent_id: "agent-1", conversation_id: "conv-1" },
     { forceDeviceStatus: true, refreshGitContext },
   );
-  await Promise.resolve();
-  expect(transport.sent).toEqual([]);
-
-  releaseGit();
-  await replay;
-
-  expect(transport.sent.map((payload) => JSON.parse(payload).type)).toEqual([
-    "update_device_status",
-    "update_loop_status",
-    "update_queue",
-    "update_subagent_state",
-  ]);
+  try {
+    const replayCompleted = await Promise.race([
+      replay.then(() => true),
+      new Promise<boolean>((resolve) => setImmediate(() => resolve(false))),
+    ]);
+    expect(replayCompleted).toBe(true);
+    expect(transport.sent.map((payload) => JSON.parse(payload).type)).toEqual([
+      "update_device_status",
+      "update_loop_status",
+      "update_queue",
+      "update_subagent_state",
+    ]);
+    releaseGit();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(JSON.parse(transport.sent.at(-1) as string).type).toBe(
+      "update_device_status",
+    );
+    expect(transport.sent).toHaveLength(5);
+  } finally {
+    releaseGit();
+    stopRuntime(listener, true);
+  }
 });
 
 test("a blocked initial Git refresh cannot emit into a same-ID replacement", async () => {
