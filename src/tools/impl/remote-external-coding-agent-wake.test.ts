@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, expect, mock, spyOn, test } from "bun:test";
 import type { AppServerClient } from "@/app-server-client";
 import { settingsManager } from "@/settings-manager";
+import { telemetry } from "@/telemetry";
 import {
   sendRemoteExternalCodingAgentMessage,
   stopRemoteExternalCodingAgent,
@@ -141,4 +142,49 @@ test.each([
     }),
   ).rejects.toThrow("offline");
   expect(requests).toBe(1);
+});
+
+test("follow-up ownership rejection distinguishes outdated listeners", async () => {
+  const report = spyOn(telemetry, "trackError").mockImplementation(() => {});
+  spyOn(telemetry, "flush").mockResolvedValue(undefined);
+  const rejection = "Subagent does not belong to this conversation";
+  for (const version of ["0.34.24", undefined, "invalid", "0.34.54"]) {
+    report.mockClear();
+    const resolveComputer = mock(async () => ({
+      connectionId: "conn-1",
+      environment: {
+        ...environment(),
+        deviceId: "computer",
+        lastHeartbeat: Date.now(),
+        connectionId: "conn-1",
+        metadata: { subagent_message: true, lettaCodeVersion: version },
+      },
+    }));
+    const close = mock(() => {});
+    const client = {
+      sendSubagentMessage: async () => ({ success: false, error: rejection }),
+      onMessage: () => () => {},
+      onDisconnect: () => () => {},
+      close,
+    } as unknown as AppServerClient;
+    await expect(
+      sendRemoteExternalCodingAgentMessage(
+        {
+          agentId: "claude_22222222-2222-4222-8222-222222222222@computer",
+          parentScope: scope,
+          message: "Continue",
+        },
+        { resolveComputer, connect: async () => client },
+      ),
+    ).rejects.toThrow(
+      version === "0.34.54"
+        ? rejection
+        : `computer is running Letta Code ${version ?? "(unknown version)"}, which doesn't keep track of finished or restarted workers, so it can't resume this one. Update Letta Code on computer, or launch a new worker.`,
+    );
+    expect(JSON.parse(report.mock.calls[0]?.[2] as string).stage).toBe(
+      version === "0.34.54" ? "follow_up" : "outdated_computer",
+    );
+    expect(resolveComputer).toHaveBeenCalledTimes(1);
+    expect(close).toHaveBeenCalledTimes(1);
+  }
 });
