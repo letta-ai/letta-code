@@ -3,7 +3,10 @@ import type {
   AppServerClient,
   AppServerMessageHandler,
 } from "@/app-server-client";
-import type { EnvironmentConnection } from "@/backend/api/environments";
+import {
+  type EnvironmentConnection,
+  resolveEnvironmentConnectionId,
+} from "@/backend/api/environments";
 import { telemetry } from "@/telemetry";
 import type {
   LaunchSubagentCommand,
@@ -405,3 +408,40 @@ test.each([
     }
   },
 );
+
+test("an offline computer reports its resolution code without its name or error text", async () => {
+  const trackError = captureTelemetry();
+  const computer = "Developer's computer";
+  const result = await launchRemoteExternalCodingAgent(
+    {
+      type: "codex",
+      computer,
+      prompt: "Fix the bug",
+      description: "Fix the bug",
+      parentScope,
+    },
+    {
+      spawn: () => {
+        throw new Error("An offline computer must not start a follow task");
+      },
+      resolveComputer: (selector) =>
+        resolveEnvironmentConnectionId(selector, async () => ({
+          connections: [{ ...environment(true), connectionName: computer }],
+          hasNextPage: false,
+        })),
+    },
+  );
+  expect(result.success).toBe(false);
+  if (!result.success)
+    expect(result.error).toContain(`Computer "${computer}" is offline.`);
+  expect(trackError).toHaveBeenCalledTimes(1);
+  const [, message, context] = trackError.mock.calls[0] ?? [];
+  expect(message).toBe("External worker launch failed");
+  expect(JSON.parse(context ?? "")).toEqual({
+    stage: "resolve_computer",
+    harness: "codex",
+    error_code: "computer_offline",
+    agent_id: "agent-parent",
+    conversation_id: "conv-parent",
+  });
+});

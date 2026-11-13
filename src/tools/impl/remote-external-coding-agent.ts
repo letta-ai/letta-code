@@ -17,6 +17,7 @@ import {
 } from "@/app-server-client";
 import { getClient } from "@/backend/api/client";
 import {
+  ComputerResolutionError,
   type EnvironmentConnection,
   getEnvironmentConnection,
   isEnvironmentOnline,
@@ -452,7 +453,7 @@ export async function launchRemoteExternalCodingAgent(
     reportExternalWorkerLaunchFailure({
       stage,
       harness: type,
-      computer,
+      computer: stage === "resolve_computer" ? undefined : computer,
       error,
       errorCode,
       agentId: parentScope.agentId,
@@ -492,7 +493,11 @@ export async function launchRemoteExternalCodingAgent(
     );
     if (outdated) return fail("outdated_computer", outdated);
   } catch (error) {
-    return fail("resolve_computer", errorMessage(error));
+    return fail(
+      "resolve_computer",
+      errorMessage(error),
+      error instanceof ComputerResolutionError ? error.code : undefined,
+    );
   }
   params.signal?.throwIfAborted();
 
