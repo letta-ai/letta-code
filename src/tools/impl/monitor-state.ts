@@ -103,8 +103,15 @@ export async function withMonitorState<T>(
     if (!process) throw new Error("Monitor did not register its process");
     let pending = Promise.resolve();
     process.persistState = () => {
+      let status = process.monitorEndStatus ?? process.status;
+      // A strict legacy create response has no saved-args capability.
+      if (
+        record.args === undefined &&
+        ["expired", "stopped", "paused"].includes(status)
+      )
+        status = "failed";
       const state = {
-        status: process.monitorEndStatus ?? process.status,
+        status,
         exit_code: process.exitCode,
         output_file: process.outputFile ?? null,
       };

@@ -9,6 +9,10 @@ import {
 } from "@/backend/backend-mode";
 import { runWithRuntimeContext } from "@/runtime-context";
 import { settingsManager } from "@/settings-manager";
+import {
+  clearPendingMessages,
+  setMessageQueueAdder,
+} from "@/utils/message-queue-bridge";
 import { monitor } from "./monitor";
 import { withMonitorState } from "./monitor-state";
 import {
@@ -25,6 +29,7 @@ let home: string;
 let server: ReturnType<typeof Bun.serve>;
 let rejectCreate: boolean;
 let legacyServer: boolean;
+let legacyValidation: "generic" | "zod";
 let rejectFirstPatch: boolean;
 let rejectUpdates: boolean;
 let requests: Array<{ method: string; actor: string | null; body: unknown }>;
@@ -40,6 +45,9 @@ beforeEach(async () => {
   setConfiguredBackendMode("api");
   rejectCreate = false;
   legacyServer = false;
+  legacyValidation = "generic";
+  setMessageQueueAdder(() => {});
+  clearPendingMessages();
   rejectFirstPatch = false;
   rejectUpdates = false;
   requests = [];
@@ -59,7 +67,22 @@ beforeEach(async () => {
           body.expires_at !== undefined ||
           ["stopped", "expired", "paused"].includes(body.status ?? ""))
       )
-        return Response.json({ detail: "Invalid request" }, { status: 400 });
+        return Response.json(
+          legacyValidation === "generic"
+            ? { detail: "Invalid request" }
+            : {
+                issues: [
+                  request.method === "POST"
+                    ? {
+                        code: "unrecognized_keys",
+                        keys: ["expires_at", "args"],
+                        path: [],
+                      }
+                    : { code: "invalid_enum_value", path: ["status"] },
+                ],
+              },
+          { status: 400 },
+        );
       requests.push({
         method: request.method,
         actor: request.headers.get("X-Letta-Acting-User-Id"),
@@ -86,6 +109,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  setMessageQueueAdder(null);
+  clearPendingMessages();
   for (const [id, process] of backgroundProcesses) {
     if (existingProcessIds.has(id)) continue;
     process.completionNotificationSuppressed = true;
@@ -307,18 +332,22 @@ test("expired resumes never start a process and timeout persists expired", async
   expect(backgroundProcesses.get(started.taskId)?.status).toBe("failed");
 });
 
-test("strict older servers still create and stop monitors", async () => {
-  legacyServer = true;
-  const started = await monitor({
-    description: "Legacy compatibility",
-    command: `"${process.execPath}" -e "setInterval(() => {}, 1000)"`,
-    persistent: true,
-    parentScope: scope,
-  });
-  expect(record?.args).toBeUndefined();
-  expect((await task_stop({ task_id: started.taskId })).killed).toBe(true);
-  expect(record?.status).toBe("failed");
-});
+test.each(["generic", "zod"] as const)(
+  "strict older servers still create and stop monitors (%s)",
+  async (validation) => {
+    legacyValidation = validation;
+    legacyServer = true;
+    const started = await monitor({
+      description: "Legacy compatibility",
+      command: `"${process.execPath}" -e "setInterval(() => {}, 1000)"`,
+      persistent: true,
+      parentScope: scope,
+    });
+    expect(record?.args).toBeUndefined();
+    expect((await task_stop({ task_id: started.taskId })).killed).toBe(true);
+    expect(record?.status).toBe("failed");
+  },
+);
 
 test("WatchPR resume restores filters and the original id", async () => {
   const url = "https://github.com/example/repo/pull/1";

@@ -18,6 +18,31 @@ export interface MonitorState {
   args?: Record<string, unknown>;
 }
 
+function isLegacyMonitorValidation(
+  error: unknown,
+  operation: "create" | "update",
+): boolean {
+  if (!(error instanceof ApiRequestError) || error.status !== 400) return false;
+  try {
+    const body = JSON.parse(error.responseText) as {
+      detail?: string;
+      issues?: Array<{ code: string; keys?: string[]; path?: string[] }>;
+    };
+    if (body.detail === "Invalid request") return true;
+    return (
+      body.issues?.some((issue) =>
+        operation === "create"
+          ? issue.code === "unrecognized_keys" &&
+            Boolean(issue.keys?.length) &&
+            issue.keys?.every((key) => key === "args" || key === "expires_at")
+          : issue.code === "invalid_enum_value" && issue.path?.[0] === "status",
+      ) ?? false
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function createMonitorState(
   input: Omit<MonitorState, "monitor_id">,
   actingUserId?: string | null,
@@ -28,12 +53,7 @@ export async function createMonitorState(
       signal: AbortSignal.timeout(15_000),
     });
   } catch (error) {
-    if (
-      !(error instanceof ApiRequestError) ||
-      error.status !== 400 ||
-      !error.responseText.includes("Invalid request")
-    )
-      throw error;
+    if (!isLegacyMonitorValidation(error, "create")) throw error;
     // Older servers validate strict request bodies and reject lifecycle fields.
     const { args: _args, expires_at: _expires, ...legacy } = input;
     return apiRequest("POST", "/v1/monitors", legacy, {
@@ -57,9 +77,7 @@ export async function updateMonitorState(
     });
   } catch (error) {
     if (
-      !(error instanceof ApiRequestError) ||
-      error.status !== 400 ||
-      !error.responseText.includes("Invalid request") ||
+      !isLegacyMonitorValidation(error, "update") ||
       !["expired", "stopped", "paused"].includes(input.status)
     )
       throw error;
