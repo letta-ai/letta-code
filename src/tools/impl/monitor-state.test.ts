@@ -174,11 +174,13 @@ test("registered Cloud listeners persist Monitor state and unavailable Cloud rou
       { sessionSource: "headless", environmentDeviceId: null },
       () => monitor(input),
     ),
-  ).rejects.toThrow("must be registered");
+  ).rejects.toThrow("Register this computer with `letta server`, then retry.");
   routesUnavailable = true;
   await expect(
     runWithRuntimeContext(context, () => monitor(input)),
-  ).rejects.toThrow("Cloud schedules are unavailable");
+  ).rejects.toThrow(
+    "Scheduling is unavailable. Check the server connection, then retry.",
+  );
 });
 
 test("TUI, Desktop, local agents and self-hosted servers without routes retain in-memory Monitor storage", async () => {
