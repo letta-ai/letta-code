@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "candidate_id": "claude@2.1.323:docs:312732f2d2aa1032d74a02adf68374dc1e67f0b2292014d2321df2695c0c8c09:runtime:3db1b71258fdceac0afd0c3967618e91b7f1fe45213cd6c20d859707ee44d7ac",
+  "candidate_id": "claude@2.1.323:docs:312732f2d2aa1032d74a02adf68374dc1e67f0b2292014d2321df2695c0c8c09:runtime:cfbed24f29fd6cb5c855a1f4e50b71a685a67c1276c944427d73555895a27327",
   "package_version": "2.1.323",
   "npm_integrity": "sha512-6YjP5aY9xKZfYsYOoUDZ/AKNbPCSOnjMvSI2vdfoBjBN5adCeQIZ3u/QkEFK21Z0PMdssQWOyw75a1IeS0B65g==",
   "npm_published_at": "2026-11-12T20:29:28.626Z",
@@ -1388,6 +1388,7 @@
         "ListAgents",
         "Monitor",
         "NotebookEdit",
+        "PushNotification",
         "Read",
         "ReportFindings",
         "ScheduleWakeup",
@@ -1536,10 +1537,10 @@
         ]
       }
     ],
-    "digest": "3db1b71258fdceac0afd0c3967618e91b7f1fe45213cd6c20d859707ee44d7ac"
+    "digest": "cfbed24f29fd6cb5c855a1f4e50b71a685a67c1276c944427d73555895a27327"
   },
-  "fetched_at": "2026-11-13T10:18:44.173Z",
-  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43408087502",
-  "state_commit_parent": "7a69b206138126b77ccaf4d9826c3040ee4df8a3",
-  "analysis_parent_sha": "7a69b206138126b77ccaf4d9826c3040ee4df8a3"
+  "fetched_at": "2026-11-13T12:24:42.776Z",
+  "workflow_run_url": "https://github.com/letta-ai/letta-code/actions/runs/43424773479",
+  "state_commit_parent": "f2ee1adaa9c36dbb63eba73962498d1c4e0cd153",
+  "analysis_parent_sha": "f2ee1adaa9c36dbb63eba73962498d1c4e0cd153"
 }
