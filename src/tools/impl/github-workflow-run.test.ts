@@ -75,3 +75,26 @@ test("old-server fallback stays local to one watch and preserves failed steps an
     }).state,
   ).toBe("OPEN");
 });
+
+test("an initial Cloud cooldown falls back once without advancing later stale snapshots", async () => {
+  const ref = parseGitHubWorkflowRunUrl(
+    "https://github.com/owner/repo/actions/runs/42",
+  );
+  let localReads = 0;
+  const fetch = createGitHubWorkflowRunFetcher({
+    isCloud: () => true,
+    request: async () => ({ snapshot: null, inaccessible: false, stale: true }),
+    runGh: async () => {
+      localReads++;
+      return JSON.stringify({
+        headSha: "abc",
+        status: "in_progress",
+        conclusion: null,
+        jobs: [],
+      });
+    },
+  });
+  expect((await fetch(ref, { cwd: "/tmp" })).state).toBe("OPEN");
+  await expect(fetch(ref, { cwd: "/tmp" })).rejects.toThrow("cooling down");
+  expect(localReads).toBe(1);
+});

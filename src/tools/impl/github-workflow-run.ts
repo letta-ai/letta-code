@@ -141,6 +141,7 @@ async function requestRun(ref: GitHubPullRequestRef, signal?: AbortSignal) {
 
 export function createGitHubWorkflowRunFetcher(deps: RunFetcherDeps = {}) {
   let unsupported = false;
+  let hasSnapshot = false;
   const runGh =
     deps.runGh ??
     (async (args, options) =>
@@ -173,12 +174,21 @@ export function createGitHubWorkflowRunFetcher(deps: RunFetcherDeps = {}) {
             throw new GitHubPullRequestSnapshotPending();
           if (!entry.snapshot)
             throw new Error("Cloud returned no workflow run snapshot");
-          return workflowRunSnapshot(ref, entry.snapshot);
+          const snapshot = workflowRunSnapshot(ref, entry.snapshot);
+          hasSnapshot = true;
+          return snapshot;
         }
         unsupported = true;
       } catch (error) {
         options.signal?.throwIfAborted();
-        if (!(error instanceof APIConnectionError)) throw error;
+        if (
+          hasSnapshot ||
+          !(
+            error instanceof APIConnectionError ||
+            error instanceof GitHubPullRequestSnapshotPending
+          )
+        )
+          throw error;
       }
     }
     const run = JSON.parse(
@@ -195,6 +205,8 @@ export function createGitHubWorkflowRunFetcher(deps: RunFetcherDeps = {}) {
         options,
       ),
     ) as WorkflowRun;
-    return workflowRunSnapshot(ref, run);
+    const snapshot = workflowRunSnapshot(ref, run);
+    hasSnapshot = true;
+    return snapshot;
   };
 }

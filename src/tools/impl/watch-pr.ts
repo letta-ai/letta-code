@@ -172,6 +172,7 @@ function saveSnapshot(
 function resumedChanges(
   path: string | undefined,
   initial: GitHubPullRequestSnapshot,
+  notifyOn?: readonly PullRequestEventKind[],
 ): string {
   if (!path) return "";
   try {
@@ -181,6 +182,7 @@ function resumedChanges(
     const changes = diffGitHubPullRequestSnapshots(
       saved.snapshot,
       initial,
+      notifyOn,
     ).events;
     if (!changes.length) return "";
     // Use the same line and notification limits as live monitor events.
@@ -207,7 +209,7 @@ export async function watch_pr(
   if (typeof args.url !== "string") {
     throw new Error("WatchPR url is required");
   }
-  const isRun = new URL(args.url).pathname.includes("/actions/runs/");
+  const isRun = args.url.includes("/actions/runs/");
   const ref = isRun
     ? parseGitHubWorkflowRunUrl(args.url)
     : parseGitHubPullRequestUrl(args.url);
@@ -256,9 +258,11 @@ export async function watch_pr(
   }
   const initial = await fetchSnapshot(ref, { cwd, signal: args.signal });
   args.signal?.throwIfAborted();
-  const changesSincePreviousWatch = args.notify_on
-    ? ""
-    : resumedChanges(snapshotPath, initial);
+  const changesSincePreviousWatch = resumedChanges(
+    snapshotPath,
+    initial,
+    args.notify_on,
+  );
   if (isRun && initial.state !== "OPEN") {
     return {
       content: [{ type: "text", text: describe(initial) }],
