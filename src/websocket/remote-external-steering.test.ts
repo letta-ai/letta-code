@@ -271,9 +271,13 @@ test.skipIf(process.platform === "win32")(
     }, "fake Claude steering input");
     expect(steeredLog).toBeDefined();
 
-    const wrongRuntime = {
+    const handoffRuntime = {
       ...runtime,
       conversation_id: "different-conversation",
+    };
+    const wrongRuntime = {
+      ...handoffRuntime,
+      agent_id: "different-agent",
     };
     expect(
       await client.sendSubagentMessage({
@@ -298,7 +302,7 @@ test.skipIf(process.platform === "win32")(
     expect(resumed).toMatchObject({ success: true, delivery: "resumed" });
     expect(
       await client.sendSubagentMessage({
-        runtime,
+        runtime: handoffRuntime,
         agent_id: bareAgentId,
         message: "finish resumed run",
       }),
@@ -353,7 +357,7 @@ test.skipIf(process.platform === "win32")(
     const stopTask = backgroundTasks.get(stopLaunch.task_id);
     expect(stopTask?.status).toBe("running");
     const stopped = await client.stopSubagent({
-      runtime,
+      runtime: handoffRuntime,
       agent_id: stopAgentId,
     });
     expect(stopped).toMatchObject({ success: true, stopped: true });
