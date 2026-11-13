@@ -402,6 +402,7 @@ const origSessionContext = sharedReminderProviders["session-context"];
 const origAgentInfo = sharedReminderProviders["agent-info"];
 const originalGetLocalProjectSettings = settingsManager.getLocalProjectSettings;
 const originalGetSettings = settingsManager.getSettings;
+const originalMemfsDisabled = settingsManager.isMemfsExplicitlyDisabled;
 const originalTranscriptRoot = process.env.LETTA_TRANSCRIPT_ROOT;
 let testTranscriptRoot: string | null = null;
 
@@ -415,13 +416,13 @@ describe("listen-client multi-worker concurrency", () => {
     // No-op stubs for providers that need settingsManager / process.cwd
     sharedReminderProviders["session-context"] = async () => null;
     sharedReminderProviders["agent-info"] = async () => null;
-    (settingsManager as typeof settingsManager).getSettings = (() =>
-      ({
-        memoryReminderInterval: null,
-      }) as ReturnType<
+    // These fake agents exercise turns, not memory checkout or Cloud repair.
+    settingsManager.isMemfsExplicitlyDisabled = () => true;
+    settingsManager.getSettings = () =>
+      ({ memoryReminderInterval: null }) as ReturnType<
         typeof settingsManager.getSettings
-      >) as typeof settingsManager.getSettings;
-    (settingsManager as typeof settingsManager).getLocalProjectSettings = () =>
+      >;
+    settingsManager.getLocalProjectSettings = () =>
       ({}) as ReturnType<typeof settingsManager.getLocalProjectSettings>;
 
     queueSkillContent("__test-cleanup__", "__test-cleanup__");
@@ -454,10 +455,9 @@ describe("listen-client multi-worker concurrency", () => {
   afterEach(() => {
     sharedReminderProviders["session-context"] = origSessionContext;
     sharedReminderProviders["agent-info"] = origAgentInfo;
-    (settingsManager as typeof settingsManager).getSettings =
-      originalGetSettings;
-    (settingsManager as typeof settingsManager).getLocalProjectSettings =
-      originalGetLocalProjectSettings;
+    settingsManager.getSettings = originalGetSettings;
+    settingsManager.isMemfsExplicitlyDisabled = originalMemfsDisabled;
+    settingsManager.getLocalProjectSettings = originalGetLocalProjectSettings;
     __testOverrideSecretsBackend(null);
     clearSecretsCache("agent-secret-payload");
     clearTools();
