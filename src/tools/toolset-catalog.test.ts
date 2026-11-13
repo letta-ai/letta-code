@@ -57,6 +57,17 @@ test("does not register removed background output pollers", () => {
   }
 });
 
+test("url monitoring is CloudMonitor, offered wherever Monitor is", () => {
+  expect(TOOL_DEFINITIONS.CloudMonitor.schema.required).toEqual([
+    "description",
+    "url",
+  ]);
+  expect(TOOL_DEFINITIONS.Monitor.schema.properties).not.toHaveProperty("url");
+  for (const { tools } of Object.values(TOOLSET_CATALOG)) {
+    expect(tools.includes("CloudMonitor")).toBe(tools.includes("Monitor"));
+  }
+});
+
 test("each nonempty preset exposes SendAgentMessage in the model's tool payload", async () => {
   for (const toolsetPreference of ["letta", "default", "codex"] as const) {
     const prepared = await prepareToolExecutionContextForResolvedTarget({

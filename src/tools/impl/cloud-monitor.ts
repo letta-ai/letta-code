@@ -142,7 +142,8 @@ function buildCloudSource(args: CloudMonitorArgs, url: string): CloudUrlSource {
   const source: CloudUrlSource = {
     type: "url",
     url,
-    interval_seconds: args.interval_seconds ?? CLOUD_MONITOR_MIN_INTERVAL_SECONDS,
+    interval_seconds:
+      args.interval_seconds ?? CLOUD_MONITOR_MIN_INTERVAL_SECONDS,
   };
   const headers = validateHeaders(args.headers);
   if (headers) source.headers = headers;
@@ -201,7 +202,8 @@ function validateCloudMonitorArgs(args: CloudMonitorArgs): string {
   const interval = args.interval_seconds;
   if (
     interval !== undefined &&
-    (!Number.isInteger(interval) || interval < CLOUD_MONITOR_MIN_INTERVAL_SECONDS)
+    (!Number.isInteger(interval) ||
+      interval < CLOUD_MONITOR_MIN_INTERVAL_SECONDS)
   ) {
     throw new Error(
       `CloudMonitor interval_seconds must be an integer of at least ${CLOUD_MONITOR_MIN_INTERVAL_SECONDS}`,
@@ -211,7 +213,9 @@ function validateCloudMonitorArgs(args: CloudMonitorArgs): string {
     args.timeout_ms !== undefined &&
     (!Number.isInteger(args.timeout_ms) || args.timeout_ms < 1000)
   ) {
-    throw new Error("CloudMonitor timeout_ms must be an integer of at least 1000");
+    throw new Error(
+      "CloudMonitor timeout_ms must be an integer of at least 1000",
+    );
   }
   return parsed.toString();
 }

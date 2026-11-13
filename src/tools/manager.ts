@@ -126,12 +126,7 @@ const STREAMING_SHELL_TOOLS = new Set([
   "Workflow",
 ]);
 /** Background tools whose completion notification targets the invoking scope. */
-const SCOPED_BACKGROUND_TOOLS = new Set([
-  "Monitor",
-  "CloudMonitor",
-  "Workflow",
-  "CodeMode",
-]);
+const SCOPED_BACKGROUND_TOOLS = new Set(["Monitor", "Workflow", "CodeMode"]);
 const TOOL_CALL_ID_TOOLS = new Set(["Task", "Skill", "CloudMonitor"]); // executor ids, never model-supplied
 // Tools that write files — used to trigger onFileWrite broadcast after execution.
 const FILE_MUTATING_TOOLS = new Set(["Edit", "Write"]);
