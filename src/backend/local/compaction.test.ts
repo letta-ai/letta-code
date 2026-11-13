@@ -24,6 +24,62 @@ function summaryAssistantMessage(): AssistantMessage {
 }
 
 describe("local compaction summarizer options", () => {
+  test("passes sampling overrides and omits them when unset", async () => {
+    const storageDir = await mkdtemp(join(tmpdir(), "local-compaction-"));
+    try {
+      await createOrUpdateLocalProvider({
+        storageDir,
+        providerType: "anthropic",
+        providerName: "lc-anthropic",
+        apiKey: "secret-key",
+      });
+
+      for (const samplingParams of [{ store: true }, undefined]) {
+        let capturedOptions:
+          | (SimpleStreamOptions & Record<string, unknown>)
+          | undefined;
+        const summary = await summarizeLocalMessagesAll({
+          conversationId: "conv-sampling-compaction",
+          agent: {
+            id: "agent-local-1",
+            name: "Local",
+            description: null,
+            system: "",
+            tags: [],
+            model: "anthropic/claude-sonnet-4-6",
+            model_settings: {
+              provider_type: "anthropic",
+              ...(samplingParams ? { sampling_params: samplingParams } : {}),
+            },
+          },
+          messages: [
+            {
+              id: "ui-msg-1",
+              role: "user",
+              content: "please summarize this conversation",
+              timestamp: Date.now(),
+            },
+          ],
+          localProviderAuthStorageDir: storageDir,
+          complete: async (_model, _context, options) => {
+            capturedOptions = options;
+            return summaryAssistantMessage();
+          },
+        });
+
+        expect(summary).toBe("summary of prior work");
+        expect(capturedOptions).toBeDefined();
+        if (samplingParams) {
+          expect(capturedOptions?.samplingParams).toEqual(samplingParams);
+        } else {
+          expect(capturedOptions).not.toHaveProperty("samplingParams");
+        }
+      }
+    } finally {
+      await rm(storageDir, { recursive: true, force: true });
+    }
+  });
+
   test("sends the OpenCode Go conversation identity during compaction", async () => {
     const previousKey = process.env.OPENCODE_API_KEY;
     process.env.OPENCODE_API_KEY = "test-opencode-key";
