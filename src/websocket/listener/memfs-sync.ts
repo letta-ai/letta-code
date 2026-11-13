@@ -8,6 +8,11 @@
  */
 
 import { debugLog, debugWarn } from "@/utils/debug";
+import {
+  isMemoryAccessRefusal,
+  isMemoryUnavailable,
+  markMemoryUnavailable,
+} from "@/utils/memory-access";
 import type { ListenerRuntime } from "./types";
 
 /**
@@ -37,9 +42,8 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
   const { GIT_MEMORY_ENABLED_TAG, isStatelessSubagentTags } = await import(
     "@/agent/agent-tags"
   );
-  const { applyMemfsFlags, isLettaCloud } = await import(
-    "@/agent/memory-filesystem"
-  );
+  const { applyMemfsFlags, ensureLocalMemfsCheckout, isLettaCloud } =
+    await import("@/agent/memory-filesystem");
 
   if (!agent.tags?.includes(GIT_MEMORY_ENABLED_TAG)) {
     if (isStatelessSubagentTags(agent.tags)) {
@@ -58,12 +62,13 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
       );
       return;
     }
+    await ensureLocalMemfsCheckout(agentId, { pullOnExistingRepo: true });
     debugWarn(
       "memfs-sync",
       `Agent ${agentId} is missing the memfs tag on Letta Cloud — repairing (auto-enabling memfs).`,
     );
     await applyMemfsFlags(agentId, true, {
-      pullOnExistingRepo: true,
+      pullOnExistingRepo: false,
       agentTags: agent.tags ?? [],
     });
     debugLog("memfs-sync", `Memfs repair complete for agent ${agentId}`);
@@ -72,8 +77,9 @@ async function syncMemfsForAgent(agentId: string): Promise<void> {
 
   debugLog("memfs-sync", `Syncing memfs for agent ${agentId}`);
 
+  await ensureLocalMemfsCheckout(agentId, { pullOnExistingRepo: true });
   await applyMemfsFlags(agentId, undefined, {
-    pullOnExistingRepo: true,
+    pullOnExistingRepo: false,
     agentTags: agent.tags,
     skipPromptUpdate: true,
   });
@@ -98,6 +104,7 @@ export async function ensureMemfsSyncedForAgent(
   listener: ListenerRuntime,
   agentId: string,
 ): Promise<boolean> {
+  if (isMemoryUnavailable(agentId)) return false;
   const existing = listener.memfsSyncedAgents.get(agentId);
   if (existing) {
     return existing;
@@ -111,8 +118,12 @@ export async function ensureMemfsSyncedForAgent(
         "memfs-sync",
         `Failed to sync memfs for agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`,
       );
-      // Remove so next turn retries.
-      listener.memfsSyncedAgents.delete(agentId);
+      if (isMemoryAccessRefusal(err)) {
+        markMemoryUnavailable(agentId);
+      } else {
+        // Transient failures may succeed on the next turn.
+        listener.memfsSyncedAgents.delete(agentId);
+      }
       return false;
     },
   );

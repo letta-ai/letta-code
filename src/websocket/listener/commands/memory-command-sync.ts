@@ -17,7 +17,9 @@ export function createMemfsSyncedTaskRunner(
 
   return (commandName, task) => {
     runDetachedListenerTask(commandName, async () => {
-      await ensureMemfsSyncedForAgent(runtime, agentId);
+      if (!(await ensureMemfsSyncedForAgent(runtime, agentId))) {
+        throw new Error("Memory is not available on this machine.");
+      }
       await task();
     });
   };
