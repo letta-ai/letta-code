@@ -223,6 +223,8 @@ function errorMessage(error: unknown): string {
  */
 class RemoteWorkerLostError extends Error {}
 
+class OutdatedRemoteWorkerError extends Error {}
+
 /** Longest wait between reconnect attempts while the computer is unreachable. */
 const MAX_RECONNECT_DELAY_MS = 30_000;
 
@@ -713,6 +715,7 @@ async function connectQualifiedTarget(
 ): Promise<{
   target: NonNullable<ReturnType<typeof parseExternalCodingAgentId>>;
   client: AppServerClient;
+  lettaCodeVersion?: string;
 }> {
   const target = parseExternalCodingAgentId(agentId);
   if (!target?.computer || target.type === "opencode")
@@ -725,6 +728,7 @@ async function connectQualifiedTarget(
     throw new Error(formatOutdatedSteeringError(target.computer));
   return {
     target,
+    lettaCodeVersion: resolved.environment.metadata?.lettaCodeVersion,
     client: await (deps.connect ?? defaultConnect)(
       resolved.connectionId,
       parentScope,
@@ -778,7 +782,10 @@ export async function sendRemoteExternalCodingAgentMessage(
   } catch (error) {
     const target = parseExternalCodingAgentId(params.agentId);
     reportExternalWorkerLaunchFailure({
-      stage: "follow_up",
+      stage:
+        error instanceof OutdatedRemoteWorkerError
+          ? "outdated_computer"
+          : "follow_up",
       harness: target?.type ?? "unknown",
       computer: target?.computer,
       error,
@@ -799,7 +806,7 @@ async function deliverRemoteExternalCodingAgentMessage(
   outputFile?: string;
 }> {
   const requestId = `subagent-message-${randomUUID()}`;
-  const { target, client } = await connectQualifiedTarget(
+  const { target, client, lettaCodeVersion } = await connectQualifiedTarget(
     params.agentId,
     params.parentScope,
     deps,
@@ -847,6 +854,14 @@ async function deliverRemoteExternalCodingAgentMessage(
   }
   if (!response.success) {
     follower.close();
+    if (
+      response.error === "Subagent does not belong to this conversation" &&
+      (compareSemver(lettaCodeVersion ?? "", "0.34.54") ?? -1) < 0
+    ) {
+      throw new OutdatedRemoteWorkerError(
+        `${target.computer} is running Letta Code ${lettaCodeVersion ?? "(unknown version)"}, which doesn't keep track of finished or restarted workers, so it can't resume this one. Update Letta Code on ${target.computer}, or launch a new worker.`,
+      );
+    }
     throw new Error(response.error);
   }
   if (response.delivery === "steered") {
