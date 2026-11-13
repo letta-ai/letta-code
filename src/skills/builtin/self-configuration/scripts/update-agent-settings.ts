@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 
 type Args = Record<string, string | boolean>;
@@ -9,7 +9,7 @@ const SECRET_FIELD_PATTERN =
 
 function usage(): never {
   console.error(`Usage:
-  npx tsx scripts/update-agent-settings.ts --target agent|conversation [options]
+  node scripts/update-agent-settings.ts --target agent|conversation [options]
 
 Options:
   --target <agent|conversation>       Required
