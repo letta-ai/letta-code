@@ -127,8 +127,6 @@ To [limit what a subagent can reach](https://code.claude.com/docs/en/sub-agents.
 
 Claude uses `AskUserQuestion` to ask you multiple-choice questions when it needs a decision or a clarification. Answer by picking an option, or type your own text through the `Other` row or the notes field.
 
-When you answer by typing your own text, Claude Code relays the answer with neutral wording so Claude follows what you wrote, including a request to wait or explain first.
-
 ### Question auto-continue timeout
 
 Questions stay open until you answer them. If you want a question you leave unanswered to eventually close and let Claude continue without you, set the [`askUserQuestionTimeout`](https://code.claude.com/docs/en/settings-reference#askuserquestiontimeout) setting to `60s`, `5m`, or `10m`, either in your user `settings.json` or from the **Question auto-continue timeout** row in `/config`.
@@ -525,7 +523,7 @@ The PowerShell tool has the following known limitations during the preview:
 
 ## Read tool behavior
 
-The Read tool takes a file path and returns the contents with line numbers. Claude is instructed to always pass absolute paths.
+The Read tool takes a file path and returns the contents with line numbers.
 
 Reading an empty file returns a notice that the file exists but its contents are empty, and an `offset` past the last line returns a notice giving the file's line count.
 

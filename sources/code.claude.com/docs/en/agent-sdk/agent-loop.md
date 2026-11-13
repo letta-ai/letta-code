@@ -254,7 +254,7 @@ Here's how each component affects context in the SDK:
 | Source | When it loads | Impact |
 | :- | :- | :- |
 | **System prompt** | Every request | Small fixed cost, always present |
-| **CLAUDE.md files** | Session start, via [`settingSources`](https://code.claude.com/docs/en/agent-sdk/claude-code-features) | Full content in every request (but prompt-cached, so only the first request pays full cost) |
+| **CLAUDE.md files** | Session start, via [`settingSources`](https://code.claude.com/docs/en/agent-sdk/claude-code-features) | Full content in every request (but prompt-cached) |
 | **Tool definitions** | Every request for core built-in tools such as Bash, Read, and Edit; on demand for MCP tools and other built-in tools, which [tool search](https://code.claude.com/docs/en/agent-sdk/mcp.md#mcp-tool-search) defers by default | Every schema loads upfront in the cases under [Configure tool search](https://code.claude.com/docs/en/agent-sdk/tool-search.md#configure-tool-search) |
 | **Conversation history** | Accumulates over turns | Grows with each turn: prompts, responses, tool inputs, tool outputs |
 | **Skill descriptions** | Session start, via setting sources | Short summaries; full content loads only when invoked |

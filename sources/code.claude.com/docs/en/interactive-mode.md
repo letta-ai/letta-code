@@ -36,7 +36,7 @@
 | `Esc` | Interrupt Claude, or close a dialog | Stop the current response or tool call mid-turn so you can redirect. Claude keeps the work done so far. If you have [messages queued](#queue-messages-while-claude-works), Claude Code sends them next. When a dialog is open, `Esc` closes the dialog. While a footer item is selected, such as a row in the [subagent panel](https://code.claude.com/docs/en/sub-agents.md#run-subagents-in-foreground-or-background) below the prompt, `Esc` [deselects it](https://code.claude.com/docs/en/keybindings.md#footer-actions) instead of interrupting. On a permission prompt, `Esc` declines the action, the same as [**No** without a comment](https://code.claude.com/docs/en/permissions.md#add-a-comment-when-you-answer-a-permission-prompt) |
 | `Esc` + `Esc` | Clear input draft, or rewind | When the prompt input contains text, double `Esc` clears it and saves the draft to history so `Up` recalls it. When the input is empty, double `Esc` opens the [rewind menu](https://code.claude.com/docs/en/checkpointing.md) to restore or summarize code and conversation from a previous point |
 | `Ctrl+Enter` or `Ctrl+X Ctrl+S` | Send queued messages now | Sends your [queued messages](#queue-messages-while-claude-works), and your draft with them, right away. [When Claude Code sends what you queued](#when-claude-code-sends-what-you-queued) covers what happens to the turn Claude is working on. In [shell mode](#shell-mode-with-prefix), the key only queues your command. In terminals that don't report extended keys, `Ctrl+Enter` arrives as plain `Enter`; `Ctrl+X Ctrl+S` works in any terminal. Requires Claude Code v2.1.275 or later |
-| `Shift+Tab`, or `Alt+M` on Windows when the Node or Bun runtime doesn't enable VT input mode | Cycle permission modes | Cycle through `default` (labeled Manual in the mode indicator), `acceptEdits`, `plan`, and, when available, `bypassPermissions` and then `auto`. From `auto`, the first press switches to `default`. See [permission modes](https://code.claude.com/docs/en/permission-modes.md). On a file permission prompt, the same key closes an open [comment field](https://code.claude.com/docs/en/permissions.md#add-a-comment-when-you-answer-a-permission-prompt). With no field open, it selects the option that allows the action for the rest of the session, when the prompt offers that option |
+| `Shift+Tab`, or `Alt+M` on Windows when the Node or Bun runtime doesn't enable VT input mode | Cycle permission modes | Cycle through `default` (labeled Manual in the mode indicator), `acceptEdits`, and `plan`, then `bypassPermissions` and `auto` where available. See [permission modes](https://code.claude.com/docs/en/permission-modes.md). On a file permission prompt, the same key closes an open [comment field](https://code.claude.com/docs/en/permissions.md#add-a-comment-when-you-answer-a-permission-prompt). With no field open, it selects the option that allows the action for the rest of the session, when the prompt offers that option. At the plan approval prompt, it approves the plan |
 | `Option+P` (macOS) or `Alt+P` (Windows/Linux) | Switch model | Switch models without clearing your prompt |
 | `Option+T` (macOS) or `Alt+T` (Windows/Linux) | Toggle extended thinking | Enable or disable extended thinking mode. Has no effect on Opus 5.5, Sonnet 5.5, Haiku 5.5, or the Fable models, which always use extended thinking. Works on macOS without configuring Option as Meta |
 | `Option+O` (macOS) or `Alt+O` (Windows/Linux) | Toggle fast mode | Enable or disable [fast mode](https://code.claude.com/docs/en/fast-mode.md) |
@@ -81,7 +81,7 @@ You can't remap these shortcuts in the [keybindings configuration file](https://
 | :- | :- | :- |
 | Quick escape | `\` + `Enter` | Works in all terminals |
 | Option key | `Option+Enter` | After enabling [Option as Meta](https://code.claude.com/docs/en/terminal-config.md#enable-option-key-shortcuts-on-macos) on macOS |
-| Shift+Enter | `Shift+Enter` | Native in iTerm2, WezTerm, Ghostty, Kitty, Warp, Apple Terminal, Windows Terminal. For other terminals, see [Enter multiline prompts](https://code.claude.com/docs/en/terminal-config.md#enter-multiline-prompts) |
+| Shift+Enter | `Shift+Enter` | Native in iTerm2, WezTerm, Ghostty, Kitty, Warp, Windows Terminal. For other terminals, see [Enter multiline prompts](https://code.claude.com/docs/en/terminal-config.md#enter-multiline-prompts) |
 | Control sequence | `Ctrl+J` | Works in any terminal without configuration |
 | Paste mode | Paste directly | For code blocks, logs |
 
@@ -136,8 +136,6 @@ A plugin skill matches on its bare name too, so `/deploy` finds a skill named `m
 ## Vim editor mode
 
 Enable vim-style editing via `/config` → Editor mode.
-
-Claude Code keeps your vim mode and cursor position when you toggle the [transcript viewer](#transcript-viewer) with `Ctrl+O` or open and close a panel such as `/config`. If you leave the prompt in NORMAL mode, it's still in NORMAL mode when you return, with the cursor where you left it.
 
 ### Mode switching
 
@@ -301,8 +299,6 @@ In the dialog, press `Ctrl+S` to cycle the scope through this session, this proj
 6. **Cancel search**:
    * Press `Ctrl+C` to cancel and restore your original input
    * Press `Backspace` on empty search to cancel
-
-Accepting a match or canceling the search takes effect immediately, even while Claude Code is still loading the history.
 
 To find an earlier prompt when all you remember is something long you pasted into it, such as an error log, press `Ctrl+R` and type a word from the paste. Requires Claude Code v2.1.314 or later.
 
@@ -600,7 +596,7 @@ If more than one of the three places has a `spellcheck` setting, Claude Code use
 
 ### What Claude Code underlines
 
-Shortly after you pause typing, Claude Code underlines the words the dictionary doesn't know. It leaves the word you're still typing alone until you move past it, and it never changes your text. It also skips text that looks like code:
+Shortly after you pause typing, Claude Code underlines the words the dictionary doesn't know. It leaves the word you're still typing alone until you move past it. It also skips text that looks like code:
 
 * Commands such as `/help`, `@` mentions, URLs, file paths, and flags such as `--verbose`
 * Words with digits, underscores, or a capital letter after the first, and text in backticks

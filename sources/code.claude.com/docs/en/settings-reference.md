@@ -1533,6 +1533,8 @@ This lets a build write under `/tmp/build` and lets `kubectl` update your kubeco
 }
 ```
 
+On Linux and WSL2, an entry for a path that doesn't exist yet has no effect, so create the path first.
+
 Claude Code merges `allowWrite` entries and the paths from your `Edit(...)` allow permission rules across the settings scopes the session loads, leaving out the ones from repository settings while [`permissions.blockReadsOutsideWorkingDirectories`](#sandboxed-commands-under-the-block) is on. [Repository locks](https://code.claude.com/docs/en/sandboxing.md#repository-settings-under-an-admin-required-sandbox) can leave out a repository's entries too. An `allowWrite` entry can't lift a [protected path](https://code.claude.com/docs/en/sandboxing.md#protected-paths).
 
 ### `sandbox.filesystem.denyWrite`
