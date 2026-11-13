@@ -4,7 +4,6 @@ Use Monitor when you need one notification per occurrence: until the timeout ("e
 
 For open github.com pull requests, use WatchPR instead. It covers the whole PR surface and keeps watching after CI finishes. Use Monitor only when WatchPR does not apply.
 
-- A `url` monitor runs in Letta Cloud, keeps running when this sandbox or machine stops, and is available only when connected to Letta Cloud.
 - Cloud polls the URL with GET every 60s by default. Set `interval_seconds` to 60 or more. The first response is the baseline; by default, it notifies only when the HTTP status or body changes.
 - Use `select` to compare one JSON field instead of the whole body, and `match` to be notified when it reaches a value, with `stop_on_match` to finish after that. The first response is checked against `match` too, so a pipeline that already finished notifies right away. A value that keeps matching does not notify again.
 - Every event is a conversation message, so filter to the events you'd act on.
