@@ -246,7 +246,17 @@ export function reflectionIntegrationShouldRecompile(
 
 async function getStatusPorcelain(cwd: string): Promise<string> {
   const { stdout } = await runGit(cwd, ["status", "--porcelain"]);
-  return stdout.trim();
+  return stdout.replace(/[\r\n]+$/, "");
+}
+
+function formatUncommittedStatus(status: string): string {
+  const entries = status.split(/\r?\n/).filter(Boolean);
+  const visibleEntries = entries.slice(0, 3).map((entry) => {
+    const quoted = JSON.stringify(entry) ?? '""';
+    return quoted.length <= 120 ? quoted : `${quoted.slice(0, 116)}..."`;
+  });
+  const remaining = entries.length - visibleEntries.length;
+  return `${visibleEntries.join(", ")}${remaining > 0 ? `, +${remaining} more` : ""}`;
 }
 
 export async function reflectionMemoryParentHasChanges(
@@ -423,8 +433,7 @@ export async function finalizeReflectionMemoryWorktreeUnlocked(
       reflectionBranch: worktree.branchName,
       commitCount,
       head,
-      summary:
-        "Reflection memory worktree had uncommitted changes; it was cleaned up so the transcript can be retried.",
+      summary: `Tried to reflect, but memory changes were not committed cleanly; will retry later. Uncommitted status: ${formatUncommittedStatus(status)}`,
     };
   }
 

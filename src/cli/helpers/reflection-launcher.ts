@@ -430,7 +430,7 @@ function getReflectionCompletionMessage(
     case "merge_conflict":
       return "Tried to reflect, but memory updates conflicted with newer changes; will retry later.";
     case "dirty_uncommitted":
-      return "Tried to reflect, but memory changes were not committed cleanly; will retry later.";
+      return integration.summary;
     case "failed": {
       if (integration.failurePhase === "integration") {
         return `${integration.summary} Will retry later.`;
